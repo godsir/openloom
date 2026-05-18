@@ -467,9 +467,11 @@ name = "openloom"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "openloom-memory",
  "openloom-models",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
 ]
