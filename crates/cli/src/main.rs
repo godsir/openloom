@@ -7,37 +7,81 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "openloom", about = "Local-first private AI assistant")]
+#[command(
+    name = "openloom",
+    about = "Local-first private AI assistant",
+    long_about = "A local-first AI kernel that replaces chat logs with a cognitive graph.\n\n\
+                  Phase 0 — Memory Kernel MVP: extract behavioral patterns from conversation\n\
+                  text and generate cognitive profiles.\n\n\
+                  Input format (pipe-delimited):  session_id|context|text\n\n\
+                  Examples:\n  \
+                  openloom analyze -i chat.log\n  \
+                  openloom analyze -i chat.log -o profile.json -t 3\n  \
+                  openloom analyze -i chat.log -t 1 -v  # low threshold = more triggers",
+    after_help = "Data stored in ~/.openloom/ (or %APPDATA%/openLoom/ on Windows).\n\
+                  Project: https://github.com/godsir/openloom"
+)]
 struct Cli {
+    /// Increase log verbosity (-v for DEBUG, -vv for TRACE)
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
+
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Analyze a chat log file and produce a cognitive profile.
+    /// Extract behavioral patterns from a chat log and generate a cognitive profile.
+    ///
+    /// The input file uses pipe-delimited format: session_id|context|text
+    /// - session_id: any identifier to group messages from the same session
+    /// - context: a label for the conversation domain (e.g. trading, coding, mood)
+    /// - text: the actual conversation content in Chinese or English
+    ///
+    /// Lines starting with '#' are treated as comments.
+    ///
+    /// Examples:
+    ///   openloom analyze -i test_data/sample_chat.log
+    ///   openloom analyze -i my_chat.log -o profile.json -t 1 -v
+    #[command(after_help = "INPUT FORMAT:\n  \
+        Each line: session_id|context|text\n\n  \
+        Example:\n  \
+        s1|trading|亏了30%我又加仓了\n  \
+        s1|coding|我还是更喜欢用Rust\n  \
+        s2|mood|今天真的很沮丧\n\n  \
+        The threshold (-t) controls how many occurrences of the same pattern\n  \
+        are needed before triggering a cognition. Default is 3. Set to 1 for\n  \
+        debugging or highly sensitive detection.")]
     Analyze {
-        /// Input chat log file (one line per session: session_id|context|text)
-        #[arg(short, long)]
+        /// Input chat log file
+        #[arg(short, long, value_hint = clap::ValueHint::FilePath)]
         input: String,
+
         /// Output JSON profile file
-        #[arg(short, long, default_value = "profile.json")]
+        #[arg(short, long, default_value = "profile.json", value_hint = clap::ValueHint::FilePath)]
         output: String,
+
         /// SQLite database path for event storage
-        #[arg(short, long, default_value = "memory.db")]
+        #[arg(short, long, default_value = "memory.db", value_hint = clap::ValueHint::FilePath)]
         db: String,
-        /// Number of observations needed to trigger a cognition
+
+        /// Pattern occurrence threshold before triggering cognition (1-100)
         #[arg(short = 't', long, default_value = "3")]
         threshold: usize,
     },
 }
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter("openloom=info")
-        .init();
-
     let cli = Cli::parse();
+
+    let log_level = match cli.verbose {
+        0 => "openloom=info",
+        1 => "openloom=debug",
+        _ => "openloom=trace",
+    };
+    tracing_subscriber::fmt().with_env_filter(log_level).init();
+
     match cli.command {
         Commands::Analyze {
             input,
