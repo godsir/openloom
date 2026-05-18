@@ -126,16 +126,27 @@ impl SqliteEventStore {
             id: Some(row.get(0)?),
             timestamp: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(1)?)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Failed to parse event timestamp, using current time: {}", e);
+                    chrono::Utc::now()
+                }),
             event_type,
             action: row.get(3)?,
             context: row.get(4)?,
             confidence: row.get(5)?,
             source_session: row.get(6)?,
             source_text: row.get(7)?,
-            payload: row
-                .get::<_, Option<String>>(8)?
-                .and_then(|s| serde_json::from_str(&s).ok()),
+            payload: row.get::<_, Option<String>>(8)?.and_then(|s| {
+                serde_json::from_str(&s)
+                    .map_err(|e| {
+                        tracing::warn!(
+                            "Failed to deserialize event payload for row {}: {}",
+                            row.get::<_, i64>(0).unwrap_or(-1),
+                            e
+                        );
+                    })
+                    .ok()
+            }),
         })
     }
 }
@@ -191,6 +202,8 @@ mod tests {
 
         let results = store.search("loss").unwrap();
         assert!(!results.is_empty());
+        assert_eq!(results[0].action, "loss_chase");
+        assert_eq!(results[0].confidence, 0.87);
     }
 
     #[test]
@@ -201,5 +214,25 @@ mod tests {
 
         assert!(store.query_all(10).unwrap().is_empty());
         assert_eq!(store.count_by_action("anything").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_payload_roundtrip() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let mut store = SqliteEventStore::open(&db_path).unwrap();
+
+        let event = make_event("test_action", 0.99)
+            .with_payload(serde_json::json!({"key": "value", "num": 42}));
+
+        let id = store.insert(&event).unwrap();
+        let all = store.query_all(1).unwrap();
+        assert_eq!(all.len(), 1);
+        let retrieved = &all[0];
+        assert_eq!(retrieved.id, Some(id));
+        assert!(retrieved.payload.is_some());
+        let payload = retrieved.payload.as_ref().unwrap();
+        assert_eq!(payload["key"], "value");
+        assert_eq!(payload["num"], 42);
     }
 }

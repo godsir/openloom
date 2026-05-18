@@ -78,7 +78,10 @@ impl Event {
             "fact" => EventType::Fact,
             "relationship" => EventType::Relationship,
             "emotional_state" => EventType::EmotionalState,
-            _ => EventType::Fact,
+            _ => {
+                tracing::warn!("Unknown event type string '{}', defaulting to Fact", s);
+                EventType::Fact
+            }
         }
     }
 }
