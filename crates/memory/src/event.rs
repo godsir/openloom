@@ -60,6 +60,27 @@ impl Event {
         self.source_session = Some(session_id.into());
         self
     }
+
+    pub fn event_type_as_str(&self) -> &str {
+        match self.event_type {
+            EventType::BehaviorPattern => "behavior_pattern",
+            EventType::Preference => "preference",
+            EventType::Fact => "fact",
+            EventType::Relationship => "relationship",
+            EventType::EmotionalState => "emotional_state",
+        }
+    }
+
+    pub fn event_type_from_str(s: &str) -> EventType {
+        match s {
+            "behavior_pattern" => EventType::BehaviorPattern,
+            "preference" => EventType::Preference,
+            "fact" => EventType::Fact,
+            "relationship" => EventType::Relationship,
+            "emotional_state" => EventType::EmotionalState,
+            _ => EventType::Fact,
+        }
+    }
 }
 
 #[cfg(test)]
