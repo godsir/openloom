@@ -23,6 +23,7 @@
 - Agent Loop（Milestone B）
 - 8B LLM 认知提取（Milestone C）
 - KV Cache 磁盘持久化（Phase 3）
+- 消息历史持久化（Milestone B；Phase A `get_working_memory()` 返回空 Vec）
 
 ---
 
@@ -77,6 +78,20 @@ pub struct ModelConfig {
 pub trait PersonaProvider: Send + Sync {
     async fn summarize(&self) -> Result<String>;  // ~50 token one-sentence profile
 }
+
+/// Milestone A stub: always returns empty string
+pub struct NoopPersonaProvider;
+#[async_trait]
+impl PersonaProvider for NoopPersonaProvider {
+    async fn summarize(&self) -> Result<String> { Ok(String::new()) }
+}
+
+// === Router Cloud 路由规则 ===
+// SmartRouter::classify_sync() 新增规则：
+//   当 complexity > 0.8 且 cloud 已配置且无 skill 匹配时
+//   → 返回 TargetModel::Cloud
+// 这需要在 SmartRouter 中增加一个字段：cloud_available: bool
+// Engine::new() 中根据是否加载了 CloudClient 设置此字段
 ```
 
 ### 3.2 crates/inference/ — CloudClient trait
@@ -129,11 +144,37 @@ pub fn create_cloud_client(config: &ModelConfig) -> Result<Box<dyn CloudClient>>
 ### 3.3 crates/memory/ — V2 表读写层
 
 ```rust
+// === CognitionRow 类型 ===
+pub struct CognitionRow {
+    pub id: i64,
+    pub subject: String,
+    pub trait_name: String,
+    pub value: String,
+    pub confidence: f64,
+    pub evidence_count: usize,
+    pub first_seen: i64,     // Unix timestamp, auto-set to now()
+    pub last_updated: i64,   // Unix timestamp, auto-set to now()
+    pub version: i64,        // auto-increment on update
+}
+
+// === TokenUsageRow 类型 ===
+pub struct TokenUsageRow {
+    pub id: i64,
+    pub timestamp: String,
+    pub session_id: String,
+    pub model: String,
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub cached_tokens: usize,
+    pub latency_ms: u64,
+}
+
 // === CognitionStore ===
 pub struct CognitionStore { conn: Connection }
 
 impl CognitionStore {
     pub fn new(conn: Connection) -> Self;
+    /// 内部自动设置 first_seen 和 last_updated 为当前 Unix 时间戳
     pub fn insert(&self, subject: &str, trait_name: &str, value: &str, confidence: f64, evidence_count: usize) -> Result<i64>;
     pub fn query_by_subject(&self, subject: &str, limit: usize) -> Result<Vec<CognitionRow>>;
     pub fn latest_version(&self, subject: &str, trait_name: &str) -> Option<i64>;
@@ -144,7 +185,8 @@ pub struct SessionStore { conn: Connection }
 
 impl SessionStore {
     pub fn new(conn: Connection) -> Self;
-    pub fn insert(&self, id: &str, created_at: &str) -> Result<()>;
+    /// created_at 接受 DateTime<Utc>（非 &str），内部序列化为 RFC3339
+    pub fn insert(&self, id: &str, created_at: DateTime<Utc>) -> Result<()>;
     pub fn list_all(&self, limit: usize) -> Result<Vec<SessionInfo>>;
     pub fn update_message_count(&self, id: &str, count: usize) -> Result<()>;
 }
@@ -160,6 +202,21 @@ impl TokenStore {
 ```
 
 这些 Store 不管理 Connection 生命周期——由调用方（Engine 的 memory_thread 和 session_thread）传入 Connection。
+
+**Connection 共享：** memory_thread 中 `SqliteEventStore` 和 `CognitionStore` 需要在同一线程中使用同一条 Connection。`SqliteEventStore` 新增 `from_connection(conn: Connection) -> Self` 构造函数，接受外部创建的 Connection。
+sessions 和 token_usage 的 DDL 已在 `migrations/V2__add_cognitions_sessions.sql` 中定义，无需新增迁移脚本。
+
+### 3.3b SkillRegistry 补充方法
+
+```rust
+impl SkillRegistry {
+    // 已有方法: find_by_trigger, list_all, invoke, register, all_skills
+
+    /// Milestone A 新增：按名称查找 skill
+    pub fn find_by_name(&self, name: &str) -> Option<&dyn Skill> {
+        self.skills.iter().find(|s| s.name() == name).map(|s| s.as_ref())
+    }
+}
 
 ### 3.4 crates/cache/ — KvCache trait
 
@@ -233,10 +290,12 @@ pub struct Engine {
     cloud: Option<Arc<dyn CloudClient>>,        // NEW
     weaver: ContextWeaver,                       // NEW
     memory_tx: mpsc::Sender<ProcessRequest>,
-    session_tx: mpsc::Sender<SessionCommand>,    // NEW (replaces HashMap)
-    sessions: Arc<RwLock<HashMap<String, SessionInfo>>>,  // kept as cache
+    session_tx: mpsc::Sender<SessionCommand>,    // NEW (纯通道，无内存缓存)
     event_bus: broadcast::Sender<EngineEvent>,
 }
+// 注：sessions 的 Arc<RwLock<HashMap>> 已移除。
+// 所有 session 操作经 session_tx + oneshot reply 走 SessionStore。
+// 读写频率极低，通道往返 <1ms，缓存无必要。
 
 enum SessionCommand {
     Create { reply: oneshot::Sender<SessionInfo> },
@@ -266,7 +325,8 @@ async fn handle_message(&self, msg: ChatMessage, session_id: &str) -> Result<Cha
     // Route: Cloud vs Local
     let response = match out.target_model {
         TargetModel::None => {
-            let name = out.skill_match.as_ref().unwrap();
+            let name = out.skill_match.as_ref()
+                .ok_or_else(|| anyhow::anyhow!("skill_match is None but target_model is None"))?;
             self.skills.invoke(name, serde_json::json!({"text": msg.content})).await?.to_string()
         }
         TargetModel::Local => {
@@ -293,6 +353,11 @@ async fn handle_message(&self, msg: ChatMessage, session_id: &str) -> Result<Cha
 
     // Background memory + token recording (unchanged)
     // ...
+}
+
+/// Milestone A: returns empty Vec. Message history persistence deferred to Milestone B.
+fn get_working_memory(&self, _session_id: &str) -> Result<Vec<ChatMessage>> {
+    Ok(Vec::new())
 }
 ```
 
@@ -331,6 +396,8 @@ if let Some(cog) = result.cognition_triggered {
 | `session.create` | `{}` → `{id, created_at}` |
 | `memory.cognitions` | `{subject?, limit?}` → `{cognitions: [{trait, value, confidence}]}` |
 | `agent.status` | `{}` → `{state: "idle", active_session, model_info}` |
+
+**实现注意：** `server/src/jsonrpc.rs` 和 `server/src/ws.rs` 各自维护方法派发表。为防止新增方法时分叉，将公共派发逻辑抽取到 `server/src/dispatch.rs`，两个 handler 调用同一 `dispatch_method()`。
 
 ### 3.9 CLI 新增命令
 
