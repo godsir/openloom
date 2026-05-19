@@ -60,6 +60,11 @@ enum Commands {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// Manage sessions
+    Session {
+        #[command(subcommand)]
+        action: SessionAction,
+    },
     /// System diagnostic
     Doctor,
     /// Version info
@@ -88,6 +93,12 @@ enum ConfigAction {
     Get { key: Option<String> },
     Set { key: String, value: String },
     Path,
+}
+
+#[derive(Subcommand)]
+enum SessionAction {
+    List,
+    Create,
 }
 
 fn config_path(custom: Option<&str>) -> PathBuf {
@@ -263,6 +274,32 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Version => {
             println!("openLoom {}", env!("CARGO_PKG_VERSION"));
+        }
+        Commands::Session { action } => {
+            let data_dir = dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("openLoom");
+            let engine = Engine::new(EngineConfig {
+                data_dir,
+                threshold: 3,
+                cloud_config: None,
+            })?;
+            match action {
+                SessionAction::List => {
+                    let sessions = engine.list_sessions().await?;
+                    if sessions.is_empty() {
+                        println!("No sessions.");
+                    } else {
+                        for s in &sessions {
+                            println!("{}  {}  ({} msgs)", s.id, s.created_at, s.message_count);
+                        }
+                    }
+                }
+                SessionAction::Create => {
+                    let s = engine.create_session().await?;
+                    println!("Created session: {}", s.id);
+                }
+            }
         }
     }
 

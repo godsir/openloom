@@ -1,3 +1,4 @@
+pub mod dispatch;
 pub mod jsonrpc;
 pub mod sse;
 pub mod ws;
