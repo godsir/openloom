@@ -169,6 +169,226 @@ impl SqliteEventStore {
     }
 }
 
+use chrono::{DateTime, Utc};
+
+// === Row types ===
+
+pub struct CognitionRow {
+    pub id: i64,
+    pub subject: String,
+    pub trait_name: String,
+    pub value: String,
+    pub confidence: f64,
+    pub evidence_count: usize,
+    pub first_seen: i64,
+    pub last_updated: i64,
+    pub version: i64,
+}
+
+pub struct TokenUsageRow {
+    pub id: i64,
+    pub timestamp: String,
+    pub session_id: String,
+    pub model: String,
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub cached_tokens: usize,
+    pub latency_ms: u64,
+}
+
+// === SqliteEventStore additions ===
+
+impl SqliteEventStore {
+    /// Creates an EventStore from an externally-owned Connection (shared with other stores)
+    pub fn from_connection(conn: Connection) -> Self {
+        Self { conn }
+    }
+
+    /// Expose the underlying connection for use by other stores in the same thread
+    pub fn conn(&self) -> &Connection {
+        &self.conn
+    }
+}
+
+// === CognitionStore ===
+
+pub struct CognitionStore<'a> {
+    conn: &'a Connection,
+}
+
+impl<'a> CognitionStore<'a> {
+    pub fn new(conn: &'a Connection) -> Self {
+        Self { conn }
+    }
+
+    pub fn insert(
+        &self,
+        subject: &str,
+        trait_name: &str,
+        value: &str,
+        confidence: f64,
+        evidence_count: usize,
+    ) -> anyhow::Result<i64> {
+        let now = Utc::now().timestamp();
+        self.conn.execute(
+            "INSERT INTO cognitions (subject, trait, value, confidence, evidence_count, first_seen, last_updated, version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
+            rusqlite::params![subject, trait_name, value, confidence, evidence_count, now, now],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn query_by_subject(&self, subject: &str, limit: usize) -> anyhow::Result<Vec<CognitionRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, subject, trait, value, confidence, evidence_count, first_seen, last_updated, version
+             FROM cognitions WHERE subject = ?1 ORDER BY last_updated DESC LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![subject, limit as i64], |row| {
+                Ok(CognitionRow {
+                    id: row.get(0)?,
+                    subject: row.get(1)?,
+                    trait_name: row.get(2)?,
+                    value: row.get(3)?,
+                    confidence: row.get(4)?,
+                    evidence_count: row.get(5)?,
+                    first_seen: row.get(6)?,
+                    last_updated: row.get(7)?,
+                    version: row.get(8)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn latest_version(&self, subject: &str, trait_name: &str) -> Option<i64> {
+        self.conn
+            .query_row(
+                "SELECT version FROM cognitions WHERE subject = ?1 AND trait = ?2 ORDER BY version DESC LIMIT 1",
+                rusqlite::params![subject, trait_name],
+                |row| row.get(0),
+            )
+            .ok()
+    }
+}
+
+// === SessionStore ===
+
+pub struct SessionStore<'a> {
+    conn: &'a Connection,
+}
+
+impl<'a> SessionStore<'a> {
+    pub fn new(conn: &'a Connection) -> Self {
+        Self { conn }
+    }
+
+    pub fn insert(&self, id: &str, created_at: DateTime<Utc>) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO sessions (id, created_at, message_count) VALUES (?1, ?2, 0)",
+            rusqlite::params![id, created_at.to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_all(&self, limit: usize) -> anyhow::Result<Vec<openloom_models::SessionInfo>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, created_at, message_count FROM sessions ORDER BY created_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![limit as i64], |row| {
+                let created_at_str: String = row.get(1)?;
+                Ok(openloom_models::SessionInfo {
+                    id: row.get(0)?,
+                    created_at: DateTime::parse_from_rfc3339(&created_at_str)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                    message_count: row.get(2)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn update_message_count(&self, id: &str, count: usize) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET message_count = ?1 WHERE id = ?2",
+            rusqlite::params![count, id],
+        )?;
+        Ok(())
+    }
+}
+
+// === TokenStore ===
+
+pub struct TokenStore<'a> {
+    conn: &'a Connection,
+}
+
+impl<'a> TokenStore<'a> {
+    pub fn new(conn: &'a Connection) -> Self {
+        Self { conn }
+    }
+
+    pub fn insert(
+        &self,
+        session_id: &str,
+        model: &str,
+        prompt_tokens: usize,
+        completion_tokens: usize,
+        latency_ms: u64,
+    ) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO token_usage (timestamp, session_id, model, prompt_tokens, completion_tokens, cached_tokens, latency_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
+            rusqlite::params![
+                Utc::now().to_rfc3339(),
+                session_id,
+                model,
+                prompt_tokens,
+                completion_tokens,
+                latency_ms,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn query_by_session(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<TokenUsageRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, timestamp, session_id, model, prompt_tokens, completion_tokens, cached_tokens, latency_ms
+             FROM token_usage WHERE session_id = ?1 ORDER BY id DESC LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![session_id, limit as i64], |row| {
+                Ok(TokenUsageRow {
+                    id: row.get(0)?,
+                    timestamp: row.get(1)?,
+                    session_id: row.get(2)?,
+                    model: row.get(3)?,
+                    prompt_tokens: row.get(4)?,
+                    completion_tokens: row.get(5)?,
+                    cached_tokens: row.get(6)?,
+                    latency_ms: row.get(7)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn total_usage(&self) -> anyhow::Result<(usize, usize)> {
+        let (prompt, completion): (i64, i64) = self.conn.query_row(
+            "SELECT COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0) FROM token_usage",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok((prompt as usize, completion as usize))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,5 +472,82 @@ mod tests {
         let payload = retrieved.payload.as_ref().unwrap();
         assert_eq!(payload["key"], "value");
         assert_eq!(payload["num"], 42);
+    }
+}
+
+#[cfg(test)]
+mod store_v2_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn setup_v2_tables(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS cognitions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject TEXT NOT NULL,
+                trait TEXT NOT NULL,
+                value TEXT NOT NULL,
+                confidence REAL,
+                evidence_count INTEGER,
+                first_seen INTEGER,
+                last_updated INTEGER,
+                version INTEGER DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                message_count INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS token_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                session_id TEXT,
+                model TEXT NOT NULL,
+                prompt_tokens INTEGER,
+                completion_tokens INTEGER,
+                cached_tokens INTEGER DEFAULT 0,
+                latency_ms INTEGER
+            );",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_cognition_insert_and_query() {
+        let dir = tempdir().unwrap();
+        let conn = Connection::open(dir.path().join("test.db")).unwrap();
+        setup_v2_tables(&conn);
+        let store = CognitionStore::new(&conn);
+        store.insert("USER", "risk_tendency", "gambler_chase", 0.91, 5).unwrap();
+        let rows = store.query_by_subject("USER", 10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].trait_name, "risk_tendency");
+        assert_eq!(rows[0].value, "gambler_chase");
+        assert!(rows[0].first_seen > 0);
+    }
+
+    #[test]
+    fn test_session_insert_and_list() {
+        let dir = tempdir().unwrap();
+        let conn = Connection::open(dir.path().join("test.db")).unwrap();
+        setup_v2_tables(&conn);
+        let store = SessionStore::new(&conn);
+        store.insert("s1", Utc::now()).unwrap();
+        store.insert("s2", Utc::now()).unwrap();
+        let sessions = store.list_all(10).unwrap();
+        assert_eq!(sessions.len(), 2);
+    }
+
+    #[test]
+    fn test_token_insert_and_total() {
+        let dir = tempdir().unwrap();
+        let conn = Connection::open(dir.path().join("test.db")).unwrap();
+        setup_v2_tables(&conn);
+        let store = TokenStore::new(&conn);
+        store.insert("s1", "test-model", 100, 50, 200).unwrap();
+        store.insert("s1", "test-model", 200, 100, 300).unwrap();
+        let (prompt, completion) = store.total_usage().unwrap();
+        assert_eq!(prompt, 300);
+        assert_eq!(completion, 150);
     }
 }

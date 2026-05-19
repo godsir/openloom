@@ -11,6 +11,7 @@ rusqlite = { version = "0.32", features = ["bundled", "vtab"] }
 anyhow = "1"
 tracing = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
+openloom-models = { path = "../models" }
 regex = "1"
 
 [dev-dependencies]
