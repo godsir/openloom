@@ -194,6 +194,7 @@ async fn main() -> anyhow::Result<()> {
                 let msg = ChatMessage {
                     role: "user".into(),
                     content: line,
+                    timestamp: chrono::Utc::now(),
                 };
                 match engine.handle_message(msg, &sid).await {
                     Ok(resp) => println!("{}", resp.response),
@@ -217,6 +218,7 @@ async fn main() -> anyhow::Result<()> {
             let msg = ChatMessage {
                 role: "user".into(),
                 content: task,
+                timestamp: chrono::Utc::now(),
             };
             let resp = engine.handle_message(msg, &sid).await?;
             println!("{}", resp.response);
@@ -242,16 +244,27 @@ async fn main() -> anyhow::Result<()> {
                 println!("Showing last {} events (Phase 2 storage query)", limit);
             }
             MemoryAction::Cognitions { subject } => {
-                let data_dir = dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("openLoom");
-                let engine = Engine::new(EngineConfig { data_dir, threshold: 3, cloud_config: None })?;
+                let data_dir = dirs::data_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join("openLoom");
+                let engine = Engine::new(EngineConfig {
+                    data_dir,
+                    threshold: 3,
+                    cloud_config: None,
+                })?;
                 let cognitions = engine.list_cognitions(&subject, 20).await?;
                 if cognitions.is_empty() {
                     println!("No cognitions for subject '{}'.", subject);
                 } else {
                     for c in &cognitions {
-                        println!("[{}] {} (confidence: {:.0}%, evidence: {}, v{})",
-                            c.trait_name, c.value,
-                            c.confidence * 100.0, c.evidence_count, c.version);
+                        println!(
+                            "[{}] {} (confidence: {:.0}%, evidence: {}, v{})",
+                            c.trait_name,
+                            c.value,
+                            c.confidence * 100.0,
+                            c.evidence_count,
+                            c.version
+                        );
                     }
                 }
             }

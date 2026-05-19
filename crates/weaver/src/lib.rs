@@ -96,7 +96,12 @@ mod tests {
     #[test]
     fn test_assemble_with_skill_context() {
         let weaver = make_weaver();
-        let result = weaver.assemble(SYSTEM_INSTRUCTION, "open file", Some("file-manager: list/read/write files"), &[]);
+        let result = weaver.assemble(
+            SYSTEM_INSTRUCTION,
+            "open file",
+            Some("file-manager: list/read/write files"),
+            &[],
+        );
         assert!(result.prompt.contains("[Skill Context]"));
         assert!(result.prompt.contains("file-manager"));
     }
@@ -105,8 +110,16 @@ mod tests {
     fn test_assemble_with_working_memory() {
         let weaver = make_weaver();
         let memory = vec![
-            ChatMessage { role: "user".into(), content: "hi".into() },
-            ChatMessage { role: "assistant".into(), content: "hello".into() },
+            ChatMessage {
+                role: "user".into(),
+                content: "hi".into(),
+                timestamp: chrono::Utc::now(),
+            },
+            ChatMessage {
+                role: "assistant".into(),
+                content: "hello".into(),
+                timestamp: chrono::Utc::now(),
+            },
         ];
         let result = weaver.assemble(SYSTEM_INSTRUCTION, "how are you", None, &memory);
         assert!(result.prompt.contains("[Conversation History]"));
@@ -117,7 +130,12 @@ mod tests {
     #[test]
     fn test_static_prefix_before_dynamic() {
         let weaver = make_weaver();
-        let result = weaver.assemble(SYSTEM_INSTRUCTION, "test message", Some("skill context"), &[]);
+        let result = weaver.assemble(
+            SYSTEM_INSTRUCTION,
+            "test message",
+            Some("skill context"),
+            &[],
+        );
         let static_part = &result.prompt[..result.static_prefix_len];
         let dynamic_part = &result.prompt[result.static_prefix_len..];
         assert!(static_part.contains(SYSTEM_INSTRUCTION));

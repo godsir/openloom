@@ -1,14 +1,14 @@
 pub mod memory_thread;
 
 use anyhow::Result;
-use openloom_cache::{NoopCache};
+use openloom_cache::NoopCache;
 use openloom_inference::{CloudClient, CompletionRequest, InferenceEngine};
-use openloom_models::*;
+use openloom_memory::store::SessionStore;
 use openloom_models::NoopPersonaProvider;
+use openloom_models::*;
 use openloom_router::SmartRouter;
 use openloom_skills::{SkillRegistry, builtins};
 use openloom_weaver::ContextWeaver;
-use openloom_memory::store::SessionStore;
 use std::path::PathBuf;
 use std::sync::{Arc, mpsc};
 use tokio::sync::{broadcast, oneshot};
@@ -32,9 +32,16 @@ pub struct Engine {
 
 #[allow(dead_code)]
 enum SessionCommand {
-    Create { reply: oneshot::Sender<SessionInfo> },
-    List { reply: oneshot::Sender<Vec<SessionInfo>> },
-    UpdateCount { id: String, count: usize },
+    Create {
+        reply: oneshot::Sender<SessionInfo>,
+    },
+    List {
+        reply: oneshot::Sender<Vec<SessionInfo>>,
+    },
+    UpdateCount {
+        id: String,
+        count: usize,
+    },
 }
 
 pub struct EngineConfig {
@@ -53,14 +60,19 @@ fn spawn_session_thread(db_path: PathBuf) -> mpsc::Sender<SessionCommand> {
                 id TEXT PRIMARY KEY,
                 created_at TEXT NOT NULL,
                 message_count INTEGER DEFAULT 0
-            );"
-        ).unwrap();
+            );",
+        )
+        .unwrap();
         let store = SessionStore::new(&conn);
         for cmd in rx {
             match cmd {
                 SessionCommand::Create { reply } => {
                     let id = uuid::Uuid::new_v4().to_string();
-                    let info = SessionInfo { id: id.clone(), created_at: chrono::Utc::now(), message_count: 0 };
+                    let info = SessionInfo {
+                        id: id.clone(),
+                        created_at: chrono::Utc::now(),
+                        message_count: 0,
+                    };
                     let _ = store.insert(&info.id, info.created_at);
                     let _ = reply.send(info);
                 }
@@ -114,7 +126,9 @@ impl Engine {
 
         // 4. Cloud client
         let cloud: Option<Arc<dyn CloudClient>> = config.cloud_config.as_ref().and_then(|cfg| {
-            openloom_inference::create_cloud_client(cfg).ok().map(Arc::from)
+            openloom_inference::create_cloud_client(cfg)
+                .ok()
+                .map(Arc::from)
         });
         router.set_cloud_available(cloud.is_some());
 
@@ -128,7 +142,8 @@ impl Engine {
         let db_path = config.data_dir.join("data").join("db.sqlite");
         let _ = std::fs::create_dir_all(db_path.parent().unwrap());
 
-        let memory_tx = memory_thread::spawn_memory_thread(db_path.clone(), config.threshold, event_tx.clone());
+        let memory_tx =
+            memory_thread::spawn_memory_thread(db_path.clone(), config.threshold, event_tx.clone());
 
         // 8. Session persistence thread
         let session_tx = spawn_session_thread(db_path.clone());
@@ -153,26 +168,55 @@ impl Engine {
 
         // 2. Gather context for prompt assembly
         let skill_ctx = out.skill_match.as_ref().and_then(|name| {
-            self.skills.find_by_name(name).map(|s| s.context_md().to_string())
+            self.skills
+                .find_by_name(name)
+                .map(|s| s.context_md().to_string())
         });
         let working_memory = self.get_working_memory(session_id)?;
-        let assembled = self.weaver.assemble(SYSTEM_INSTRUCTION, &msg.content, skill_ctx.as_deref(), &working_memory);
+        let assembled = self.weaver.assemble(
+            SYSTEM_INSTRUCTION,
+            &msg.content,
+            skill_ctx.as_deref(),
+            &working_memory,
+        );
 
         // 3. Execute based on target model
         let response = match out.target_model {
             TargetModel::None => {
-                let name = out.skill_match.as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("skill_match is None but target_model is None"))?;
-                self.skills.invoke(name, serde_json::json!({"text": msg.content})).await?.to_string()
+                let name = out.skill_match.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("skill_match is None but target_model is None")
+                })?;
+                self.skills
+                    .invoke(name, serde_json::json!({"text": msg.content}))
+                    .await?
+                    .to_string()
             }
             TargetModel::Local => {
-                self.inference.complete(CompletionRequest { prompt: assembled.prompt.clone(), ..Default::default() }).await?.text
+                self.inference
+                    .complete(CompletionRequest {
+                        prompt: assembled.prompt.clone(),
+                        ..Default::default()
+                    })
+                    .await?
+                    .text
             }
             TargetModel::Cloud => {
                 if let Some(ref cloud) = self.cloud {
-                    cloud.complete(CompletionRequest { prompt: assembled.prompt.clone(), ..Default::default() }).await?.text
+                    cloud
+                        .complete(CompletionRequest {
+                            prompt: assembled.prompt.clone(),
+                            ..Default::default()
+                        })
+                        .await?
+                        .text
                 } else {
-                    self.inference.complete(CompletionRequest { prompt: assembled.prompt.clone(), ..Default::default() }).await?.text
+                    self.inference
+                        .complete(CompletionRequest {
+                            prompt: assembled.prompt.clone(),
+                            ..Default::default()
+                        })
+                        .await?
+                        .text
                 }
             }
         };
@@ -219,17 +263,25 @@ impl Engine {
 
     pub async fn create_session(&self) -> Result<SessionInfo> {
         let (tx, rx) = oneshot::channel();
-        self.session_tx.send(SessionCommand::Create { reply: tx }).map_err(|e| anyhow::anyhow!("{}", e))?;
+        self.session_tx
+            .send(SessionCommand::Create { reply: tx })
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         rx.await.map_err(|e| anyhow::anyhow!("{}", e))
     }
 
     pub async fn list_sessions(&self) -> Result<Vec<SessionInfo>> {
         let (tx, rx) = oneshot::channel();
-        self.session_tx.send(SessionCommand::List { reply: tx }).map_err(|e| anyhow::anyhow!("{}", e))?;
+        self.session_tx
+            .send(SessionCommand::List { reply: tx })
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         rx.await.map_err(|e| anyhow::anyhow!("{}", e))
     }
 
-    pub async fn list_cognitions(&self, subject: &str, limit: usize) -> Result<Vec<openloom_memory::store::CognitionRow>> {
+    pub async fn list_cognitions(
+        &self,
+        subject: &str,
+        limit: usize,
+    ) -> Result<Vec<openloom_memory::store::CognitionRow>> {
         let conn = rusqlite::Connection::open(&self.db_path)?;
         let store = openloom_memory::store::CognitionStore::new(&conn);
         store.query_by_subject(subject, limit)
@@ -243,7 +295,11 @@ impl Engine {
         self.skills.list_all()
     }
 
-    pub async fn invoke_skill(&self, name: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+    pub async fn invoke_skill(
+        &self,
+        name: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
         self.skills.invoke(name, params).await
     }
 
@@ -282,6 +338,7 @@ mod tests {
         let msg = ChatMessage {
             role: "user".into(),
             content: "hello".into(),
+            timestamp: chrono::Utc::now(),
         };
         let sid = engine.create_session().await.unwrap().id;
         let resp = engine.handle_message(msg, &sid).await.unwrap();
@@ -302,6 +359,7 @@ mod tests {
         let msg = ChatMessage {
             role: "user".into(),
             content: "hello".into(),
+            timestamp: chrono::Utc::now(),
         };
         let sid = engine.create_session().await.unwrap().id;
         engine.handle_message(msg, &sid).await.unwrap();
@@ -315,6 +373,7 @@ mod tests {
         let msg = ChatMessage {
             role: "user".into(),
             content: "帮我管理文件".into(),
+            timestamp: chrono::Utc::now(),
         };
         let sid = engine.create_session().await.unwrap().id;
         let resp = engine.handle_message(msg, &sid).await.unwrap();

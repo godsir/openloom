@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 openloom-engine = { path = "../engine" }
 openloom-models = { path = "../models" }
+chrono = "0.4"
 axum = { version = "0.7", features = ["ws"] }
 tokio = { version = "1", features = ["rt", "sync", "macros", "net"] }
 tower = "0.4"

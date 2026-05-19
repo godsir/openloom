@@ -64,6 +64,7 @@ impl Default for ModelConfig {
 #[async_trait::async_trait]
 pub trait PersonaProvider: Send + Sync {
     async fn summarize(&self) -> anyhow::Result<String>;
+    fn invalidate(&self);
 }
 
 pub struct NoopPersonaProvider;
@@ -73,6 +74,7 @@ impl PersonaProvider for NoopPersonaProvider {
     async fn summarize(&self) -> anyhow::Result<String> {
         Ok(String::new())
     }
+    fn invalidate(&self) {}
 }
 
 // === Router types ===
@@ -125,6 +127,8 @@ pub struct ClassifyOutput {
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    #[serde(default = "Utc::now")]
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,6 +136,12 @@ pub struct ChatResponse {
     pub response: String,
     pub session_id: String,
     pub token_usage: TokenUsage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub tool: String,
+    pub params: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -152,6 +162,14 @@ pub struct HealthStatus {
     pub status: String,
     pub uptime: u64,
     pub gpu_info: GpuInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentState {
+    Idle,
+    Thinking,
+    Acting,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

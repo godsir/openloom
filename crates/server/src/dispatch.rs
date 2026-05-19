@@ -29,6 +29,7 @@ pub async fn dispatch_method(
             let msg = ChatMessage {
                 role: "user".into(),
                 content: content.to_string(),
+                timestamp: chrono::Utc::now(),
             };
             engine
                 .handle_message(msg, &session_id)
@@ -44,11 +45,13 @@ pub async fn dispatch_method(
             let skills: Vec<Value> = engine
                 .list_skills()
                 .iter()
-                .map(|s| serde_json::json!({
-                    "name": s.name,
-                    "description": s.description,
-                    "triggers": s.triggers,
-                }))
+                .map(|s| {
+                    serde_json::json!({
+                        "name": s.name,
+                        "description": s.description,
+                        "triggers": s.triggers,
+                    })
+                })
                 .collect();
             Ok(serde_json::json!({"skills": skills}))
         }
@@ -83,37 +86,48 @@ pub async fn dispatch_method(
             Ok(serde_json::to_value(session).unwrap_or_default())
         }
         "memory.cognitions" => {
-            let subject = params.as_ref()
+            let subject = params
+                .as_ref()
                 .and_then(|p| p.get("subject"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("USER");
-            let limit = params.as_ref()
+            let limit = params
+                .as_ref()
                 .and_then(|p| p.get("limit"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(20) as usize;
-            let cognitions = engine.list_cognitions(subject, limit).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
-            let rows: Vec<serde_json::Value> = cognitions.iter().map(|c| serde_json::json!({
-                "trait": c.trait_name,
-                "value": c.value,
-                "confidence": c.confidence,
-                "evidence_count": c.evidence_count,
-                "version": c.version,
-            })).collect();
+            let cognitions =
+                engine
+                    .list_cognitions(subject, limit)
+                    .await
+                    .map_err(|e| JsonRpcError {
+                        code: ErrorCode::InternalError,
+                        message: e.to_string(),
+                        data: None,
+                    })?;
+            let rows: Vec<serde_json::Value> = cognitions
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "trait": c.trait_name,
+                        "value": c.value,
+                        "confidence": c.confidence,
+                        "evidence_count": c.evidence_count,
+                        "version": c.version,
+                    })
+                })
+                .collect();
             Ok(serde_json::json!({"cognitions": rows}))
         }
-        "memory.persona" => {
-            Ok(serde_json::json!({"summary": "", "traits": [], "note": "Persona Projector in Milestone B"}))
-        }
-        "memory.query" => {
-            Ok(serde_json::json!({"events": [], "cognitions": [], "note": "FTS5 search in Phase 2"}))
-        }
-        "agent.status" => {
-            Ok(serde_json::json!({"state": "idle", "active_session": null, "model_info": {"router": "qwen3-1.7b"}}))
-        }
+        "memory.persona" => Ok(
+            serde_json::json!({"summary": "", "traits": [], "note": "Persona Projector in Milestone B"}),
+        ),
+        "memory.query" => Ok(
+            serde_json::json!({"events": [], "cognitions": [], "note": "FTS5 search in Phase 2"}),
+        ),
+        "agent.status" => Ok(
+            serde_json::json!({"state": "idle", "active_session": null, "model_info": {"router": "qwen3-1.7b"}}),
+        ),
         "cache.stats" => {
             Ok(serde_json::json!({"hit_rate": 0.0, "block_count": 0, "total_size_mb": 0}))
         }

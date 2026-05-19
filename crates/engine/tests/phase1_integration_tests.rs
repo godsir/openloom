@@ -16,6 +16,7 @@ async fn scenario_1_skill_path_file_operation() {
     let msg = ChatMessage {
         role: "user".into(),
         content: "帮我打开这个文件看看".into(),
+        timestamp: chrono::Utc::now(),
     };
     let resp = engine.handle_message(msg, &sid).await.unwrap();
     assert!(!resp.session_id.is_empty());
@@ -28,6 +29,7 @@ async fn scenario_2_llm_path_chat() {
     let msg = ChatMessage {
         role: "user".into(),
         content: "你好啊，很高兴见到你".into(),
+        timestamp: chrono::Utc::now(),
     };
     let resp = engine.handle_message(msg, &sid).await.unwrap();
     assert_eq!(resp.session_id, sid);
@@ -40,6 +42,7 @@ async fn scenario_3_empty_input() {
     let msg = ChatMessage {
         role: "user".into(),
         content: String::new(),
+        timestamp: chrono::Utc::now(),
     };
     let resp = engine.handle_message(msg, &sid).await;
     assert!(resp.is_ok());
@@ -53,6 +56,7 @@ async fn scenario_4_consistent_classification() {
         let msg = ChatMessage {
             role: "user".into(),
             content: "帮我写一段Python代码".into(),
+            timestamp: chrono::Utc::now(),
         };
         let resp = engine.handle_message(msg, &sid).await;
         assert!(resp.is_ok());
@@ -67,6 +71,7 @@ async fn scenario_5_long_text() {
     let msg = ChatMessage {
         role: "user".into(),
         content: long_text,
+        timestamp: chrono::Utc::now(),
     };
     let resp = engine.handle_message(msg, &sid).await;
     assert!(resp.is_ok());
@@ -80,6 +85,7 @@ async fn scenario_6_memory_pipeline_non_blocking() {
         let msg = ChatMessage {
             role: "user".into(),
             content: format!("消息 {}", i),
+            timestamp: chrono::Utc::now(),
         };
         let resp = engine.handle_message(msg, &sid).await;
         assert!(resp.is_ok());
@@ -93,6 +99,7 @@ async fn scenario_7_code_assist_skill() {
     let msg = ChatMessage {
         role: "user".into(),
         content: "修复这个bug".into(),
+        timestamp: chrono::Utc::now(),
     };
     let resp = engine.handle_message(msg, &sid).await.unwrap();
     assert!(!resp.session_id.is_empty());
@@ -124,6 +131,7 @@ async fn scenario_10_event_bus_token_usage() {
     let msg = ChatMessage {
         role: "user".into(),
         content: "你好".into(),
+        timestamp: chrono::Utc::now(),
     };
     engine.handle_message(msg, &sid).await.unwrap();
 
