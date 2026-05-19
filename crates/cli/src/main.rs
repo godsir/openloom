@@ -1,110 +1,271 @@
 use clap::{Parser, Subcommand};
-use openloom_memory::aggregator::PatternAggregator;
-use openloom_memory::extractor::RuleBasedExtractor;
-use openloom_memory::pipeline::MemoryPipeline;
-use openloom_memory::store::SqliteEventStore;
-use std::fs;
+use openloom_engine::Engine;
+use openloom_engine::EngineConfig;
+use openloom_models::{AppConfig, ChatMessage};
+use openloom_server::Server;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(
-    name = "openloom",
-    about = "Local-first private AI assistant",
-    long_about = "A local-first AI kernel that replaces chat logs with a cognitive graph.\n\n\
-                  Phase 0 — Memory Kernel MVP: extract behavioral patterns from conversation\n\
-                  text and generate cognitive profiles.\n\n\
-                  Input format (pipe-delimited):  session_id|context|text\n\n\
-                  Examples:\n  \
-                  openloom analyze -i chat.log\n  \
-                  openloom analyze -i chat.log -o profile.json -t 3\n  \
-                  openloom analyze -i chat.log -t 1 -v  # low threshold = more triggers",
-    after_help = "Data stored in ~/.openloom/ (or %APPDATA%/openLoom/ on Windows).\n\
-                  Project: https://github.com/godsir/openloom"
-)]
+#[command(name = "openloom", about = "Local-first private AI assistant", version)]
 struct Cli {
-    /// Increase log verbosity (-v for DEBUG, -vv for TRACE)
-    #[arg(short, long, action = clap::ArgAction::Count)]
-    verbose: u8,
-
     #[command(subcommand)]
     command: Commands,
+    #[arg(short, long, global = true)]
+    verbose: bool,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Extract behavioral patterns from a chat log and generate a cognitive profile.
-    ///
-    /// The input file uses pipe-delimited format: session_id|context|text
-    /// - session_id: any identifier to group messages from the same session
-    /// - context: a label for the conversation domain (e.g. trading, coding, mood)
-    /// - text: the actual conversation content in Chinese or English
-    ///
-    /// Lines starting with '#' are treated as comments.
-    ///
-    /// Examples:
-    ///   openloom analyze -i test_data/sample_chat.log
-    ///   openloom analyze -i my_chat.log -o profile.json -t 1 -v
-    #[command(after_help = "INPUT FORMAT:\n  \
-        Each line: session_id|context|text\n\n  \
-        Example:\n  \
-        s1|trading|亏了30%我又加仓了\n  \
-        s1|coding|我还是更喜欢用Rust\n  \
-        s2|mood|今天真的很沮丧\n\n  \
-        The threshold (-t) controls how many occurrences of the same pattern\n  \
-        are needed before triggering a cognition. Default is 3. Set to 1 for\n  \
-        debugging or highly sensitive detection.")]
+    /// Analyze chat log offline -> cognition profile
     Analyze {
-        /// Input chat log file
-        #[arg(short, long, value_hint = clap::ValueHint::FilePath)]
+        #[arg(short, long)]
         input: String,
-
-        /// Output JSON profile file
-        #[arg(short, long, default_value = "profile.json", value_hint = clap::ValueHint::FilePath)]
+        #[arg(short, long, default_value = "profile.json")]
         output: String,
-
-        /// SQLite database path for event storage
-        #[arg(short, long, default_value = "memory.db", value_hint = clap::ValueHint::FilePath)]
+        #[arg(short, long, default_value = "memory.db")]
         db: String,
-
-        /// Pattern occurrence threshold before triggering cognition (1-100)
         #[arg(short = 't', long, default_value = "3")]
         threshold: usize,
     },
+    /// Start HTTP + WebSocket server (Electron sidecar mode)
+    Serve {
+        #[arg(long, default_value = "0")]
+        port: u16,
+        #[arg(long)]
+        config: Option<String>,
+    },
+    /// Interactive chat (TUI)
+    Chat {
+        #[arg(long)]
+        config: Option<String>,
+    },
+    /// Single task execution
+    Run {
+        task: String,
+        #[arg(long)]
+        config: Option<String>,
+    },
+    /// Manage skills
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
+    /// View memory / cognitions
+    Memory {
+        #[command(subcommand)]
+        action: MemoryAction,
+    },
+    /// View / modify config
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+    /// System diagnostic
+    Doctor,
+    /// Version info
+    Version,
 }
 
-fn main() -> anyhow::Result<()> {
+#[derive(Subcommand)]
+enum SkillAction {
+    List,
+    Install { path: String },
+    Remove { name: String },
+}
+
+#[derive(Subcommand)]
+enum MemoryAction {
+    Persona,
+    Events {
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+    Cognitions,
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    Get { key: Option<String> },
+    Set { key: String, value: String },
+    Path,
+}
+
+fn config_path(custom: Option<&str>) -> PathBuf {
+    if let Some(p) = custom {
+        return PathBuf::from(p);
+    }
+    let data_dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("openLoom");
+    data_dir.join("config.toml")
+}
+
+fn load_config(custom_path: Option<&str>) -> AppConfig {
+    let path = config_path(custom_path);
+    if !path.exists() {
+        tracing::warn!(path = %path.display(), "config file not found, using defaults");
+        return AppConfig::default();
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(content) => match toml::from_str(&content) {
+            Ok(config) => config,
+            Err(e) => {
+                tracing::warn!(error = %e, "config parse error, using defaults");
+                AppConfig::default()
+            }
+        },
+        Err(e) => {
+            tracing::warn!(error = %e, "cannot read config, using defaults");
+            AppConfig::default()
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter("openloom=info")
+        .init();
+
     let cli = Cli::parse();
 
-    let log_level = match cli.verbose {
-        0 => "openloom=info",
-        1 => "openloom=debug",
-        _ => "openloom=trace",
-    };
-    tracing_subscriber::fmt().with_env_filter(log_level).init();
-
     match cli.command {
-        Commands::Analyze {
-            input,
-            output,
-            db,
-            threshold,
-        } => run_analyze(&input, &output, &db, threshold)?,
+        Commands::Analyze { input, output, db, threshold } => {
+            run_analyze(&input, &output, &db, threshold)?;
+        }
+        Commands::Serve { port, config } => {
+            let _app_config = load_config(config.as_deref());
+            let data_dir = dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("openLoom");
+
+            let engine = Engine::new(EngineConfig {
+                data_dir,
+                threshold: 3,
+            })?;
+
+            let server = Server::new(engine);
+            server.serve(port).await?;
+        }
+        Commands::Chat { config } => {
+            let _app_config = load_config(config.as_deref());
+            let data_dir = dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("openLoom");
+
+            let engine = Engine::new(EngineConfig {
+                data_dir,
+                threshold: 3,
+            })?;
+
+            let sid = engine.create_session().await?.id;
+            println!("openLoom chat (type /exit to quit)");
+            loop {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                let line = line.trim().to_string();
+                if line == "/exit" {
+                    break;
+                }
+                if line.is_empty() {
+                    continue;
+                }
+                let msg = ChatMessage { role: "user".into(), content: line };
+                match engine.handle_message(msg, &sid).await {
+                    Ok(resp) => println!("{}", resp.response),
+                    Err(e) => eprintln!("Error: {}", e),
+                }
+            }
+        }
+        Commands::Run { task, config } => {
+            let _app_config = load_config(config.as_deref());
+            let data_dir = dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("openLoom");
+
+            let engine = Engine::new(EngineConfig {
+                data_dir,
+                threshold: 3,
+            })?;
+
+            let sid = engine.create_session().await?.id;
+            let msg = ChatMessage { role: "user".into(), content: task };
+            let resp = engine.handle_message(msg, &sid).await?;
+            println!("{}", resp.response);
+        }
+        Commands::Skill { action } => match action {
+            SkillAction::List => {
+                println!("Skills: file-manager, info-retriever, schedule-reminder, code-assistant, web-browser");
+            }
+            SkillAction::Install { path } => {
+                println!("Install skill from: {} (Phase 2 WASM)", path);
+            }
+            SkillAction::Remove { name } => {
+                println!("Remove skill: {} (not yet implemented)", name);
+            }
+        },
+        Commands::Memory { action } => match action {
+            MemoryAction::Persona => {
+                println!("Persona: Phase 2 will display cognition summary");
+            }
+            MemoryAction::Events { limit } => {
+                println!("Showing last {} events (Phase 2 storage query)", limit);
+            }
+            MemoryAction::Cognitions => {
+                println!("Cognitions: Phase 2 will display cognition graph");
+            }
+        },
+        Commands::Config { action } => match action {
+            ConfigAction::Get { key } => {
+                let path = config_path(None);
+                println!("Config file: {}", path.display());
+                if let Some(k) = key {
+                    println!("Get: {}", k);
+                }
+            }
+            ConfigAction::Set { key, value } => {
+                println!("Set {} = {}", key, value);
+            }
+            ConfigAction::Path => {
+                let path = config_path(None);
+                println!("{}", path.display());
+            }
+        },
+        Commands::Doctor => {
+            println!("openLoom System Diagnostic");
+            println!("=========================");
+            let gpu = openloom_inference::InferenceEngine::detect_gpu();
+            println!("GPU: vendor={}, vram={}MB, supported={}", gpu.vendor, gpu.vram_mb, gpu.supported);
+            let data_dir = dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("openLoom");
+            println!("Data dir: {}", data_dir.display());
+            println!("Config: {}", config_path(None).display());
+        },
+        Commands::Version => {
+            println!("openLoom {}", env!("CARGO_PKG_VERSION"));
+        },
     }
+
     Ok(())
 }
 
+// === Phase 0 analyze logic (PRESERVED from original) ===
 fn run_analyze(
     input_path: &str,
     output_path: &str,
     db_path: &str,
     threshold: usize,
 ) -> anyhow::Result<()> {
-    let content = fs::read_to_string(input_path)?;
+    use openloom_memory::aggregator::PatternAggregator;
+    use openloom_memory::extractor::RuleBasedExtractor;
+    use openloom_memory::pipeline::MemoryPipeline;
+    use openloom_memory::store::SqliteEventStore;
+
+    let content = std::fs::read_to_string(input_path)?;
 
     let extractor = RuleBasedExtractor::with_default_rules();
     let aggregator = PatternAggregator::new(threshold);
     let db_file = PathBuf::from(db_path);
-    let _ = fs::remove_file(&db_file);
+    let _ = std::fs::remove_file(&db_file);
     let store = SqliteEventStore::open(&db_file)?;
 
     let mut pipeline = MemoryPipeline::new(extractor, aggregator, store);
@@ -152,10 +313,46 @@ fn run_analyze(
         "generated_at": chrono::Utc::now().to_rfc3339(),
     });
 
-    fs::write(output_path, serde_json::to_string_pretty(&profile)?)?;
+    std::fs::write(output_path, serde_json::to_string_pretty(&profile)?)?;
     println!("\nProfile written to {}", output_path);
     println!("Total events extracted: {}", total_events);
     println!("Cognitions discovered: {}", all_cognitions.len());
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_cli_serve_default() {
+        let args = Cli::try_parse_from(["openloom", "serve"]);
+        assert!(args.is_ok());
+    }
+
+    #[test]
+    fn test_cli_serve_with_port() {
+        let args = Cli::try_parse_from(["openloom", "serve", "--port", "8080"]);
+        assert!(args.is_ok());
+    }
+
+    #[test]
+    fn test_cli_analyze() {
+        let args = Cli::try_parse_from(["openloom", "analyze", "--input", "test.log"]);
+        assert!(args.is_ok());
+    }
+
+    #[test]
+    fn test_cli_version() {
+        let args = Cli::try_parse_from(["openloom", "version"]);
+        assert!(args.is_ok());
+    }
+
+    #[test]
+    fn test_cli_doctor() {
+        let args = Cli::try_parse_from(["openloom", "doctor"]);
+        assert!(args.is_ok());
+    }
 }
