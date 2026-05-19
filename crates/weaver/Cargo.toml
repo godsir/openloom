@@ -1,0 +1,9 @@
+[package]
+name = "openloom-weaver"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+openloom-models = { path = "../models" }
+openloom-cache = { path = "../cache" }
+anyhow = "1"
