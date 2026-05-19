@@ -167,8 +167,10 @@ impl Engine {
         let persona = self.persona.clone();
         let mut rx = self.event_bus.subscribe();
         tokio::spawn(async move {
-            while rx.recv().await.is_ok() {
-                persona.invalidate();
+            while let Ok(event) = rx.recv().await {
+                if matches!(event, EngineEvent::CognitionUpdated { .. }) {
+                    persona.invalidate();
+                }
             }
         });
     }
@@ -219,14 +221,10 @@ impl Engine {
 
         let response = match out.target_model {
             TargetModel::None => {
-                let name = out
-                    .skill_match
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("skill_match is None"))?;
-                self.skills
-                    .invoke(name, serde_json::json!({"text": msg.content}))
-                    .await?
-                    .to_string()
+                // skill_match.is_some() routes to agent_loop above; this branch is unreachable
+                unreachable!(
+                    "TargetModel::None with no skill_match — should have gone to agent_loop"
+                )
             }
             TargetModel::Local => {
                 self.inference
@@ -332,9 +330,13 @@ impl Engine {
                     });
                     all_tool_messages.push(ChatMessage {
                         role: "tool".into(),
-                        content: result,
+                        content: result.clone(),
                         timestamp: ts,
                     });
+                    // On the last iteration, use the tool result as the response
+                    if _iteration == 2 {
+                        last_response = result;
+                    }
                 } else {
                     last_response = response;
                     break;
