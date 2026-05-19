@@ -2,6 +2,7 @@ use anyhow::Result;
 use openloom_models::GpuInfo;
 use std::path::Path;
 
+#[derive(Debug, Clone)]
 pub struct CompletionRequest {
     pub prompt: String,
     pub max_tokens: usize,
@@ -20,12 +21,14 @@ impl Default for CompletionRequest {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct CompletionResponse {
     pub text: String,
     pub prompt_tokens: usize,
     pub completion_tokens: usize,
 }
 
+#[derive(Debug)]
 pub struct InferenceEngine {
     _model_path: std::path::PathBuf,
     _n_gpu_layers: usize,
@@ -82,7 +85,7 @@ impl InferenceEngine {
     /// Count tokens in text using the loaded model's tokenizer
     pub fn token_count(&self, text: &str) -> usize {
         // Simplified estimation: ~4 chars per token
-        text.len() / 4
+        text.chars().count() / 4
     }
 }
 
