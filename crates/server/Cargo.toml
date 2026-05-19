@@ -1,0 +1,16 @@
+[package]
+name = "openloom-server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+openloom-engine = { path = "../engine" }
+openloom-models = { path = "../models" }
+axum = { version = "0.7", features = ["ws"] }
+tokio = { version = "1", features = ["rt", "sync", "macros", "net"] }
+tower = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tracing = "0.1"
+futures = "0.3"
