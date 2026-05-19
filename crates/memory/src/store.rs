@@ -1,7 +1,10 @@
 use crate::event::Event;
 use anyhow::Result;
+use refinery::embed_migrations;
 use rusqlite::{Connection, params};
 use std::path::Path;
+
+embed_migrations!("../../migrations");
 
 /// SQLite-backed event store with FTS5 full-text search.
 pub struct SqliteEventStore {
@@ -46,6 +49,21 @@ impl SqliteEventStore {
             END;",
         )?;
         Ok(())
+    }
+
+    /// Run refinery migrations (Phase 1)
+    /// Phase 0 compatibility: V1 uses CREATE IF NOT EXISTS, safe no-op on existing DBs
+    pub fn run_migrations(conn: &mut Connection) -> Result<()> {
+        migrations::runner().run(conn)?;
+        Ok(())
+    }
+
+    /// Phase 1 recommended: open database with refinery migrations
+    pub fn open_with_migrations(path: &std::path::Path) -> Result<Self> {
+        let mut conn = Connection::open(path)?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        Self::run_migrations(&mut conn)?;
+        Ok(Self { conn })
     }
 
     /// Insert an event and return its assigned ID.
