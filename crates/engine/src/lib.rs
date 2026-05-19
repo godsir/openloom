@@ -148,60 +148,70 @@ impl Engine {
         if self.interruptible.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
             return Err(anyhow::anyhow!("Agent is busy, please wait"));
         }
-        // Reset immediately for simple path; agent_loop will set it again
-        self.interruptible.store(false, Ordering::SeqCst);
+        // C1 fix: do NOT release the gate here — only at the end of each path
 
         let out = self.router.classify_sync(&msg.content);
 
-        if out.complexity < 0.5 && out.skill_match.is_none() {
-            let skill_ctx = out.skill_match.as_ref()
-                .and_then(|name| self.skills.find_by_name(name).map(|s| s.context_md().to_string()));
-            let working_memory = self.get_working_memory(session_id).unwrap_or_default();
-            // Persona failure → empty string fallback
-            let persona_summary = self.persona.summarize().await.unwrap_or_default();
-            let assembled = self.weaver.assemble(
-                SYSTEM_INSTRUCTION, &msg.content, &persona_summary, skill_ctx.as_deref(), &working_memory,
-            );
+        // C2 fix: feed cognition extraction pipeline (non-blocking)
+        let _ = self.memory_tx.send(memory_thread::ProcessRequest {
+            session_id: session_id.to_string(),
+            text: msg.content.clone(),
+            context: out.intent.to_string(),
+        });
 
-            let response = match out.target_model {
-                TargetModel::None => {
-                    let name = out.skill_match.as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("skill_match is None"))?;
-                    self.skills.invoke(name, serde_json::json!({"text": msg.content})).await?.to_string()
-                }
-                TargetModel::Local => {
-                    self.inference.complete(CompletionRequest { prompt: assembled.prompt.clone(), ..Default::default() }).await?.text
-                }
-                TargetModel::Cloud => {
-                    if let Some(ref cloud) = self.cloud {
-                        cloud.complete(CompletionRequest { prompt: assembled.prompt.clone(), ..Default::default() }).await?.text
-                    } else {
-                        self.inference.complete(CompletionRequest { prompt: assembled.prompt.clone(), ..Default::default() }).await?.text
-                    }
-                }
-            };
-
-            // save_messages is non-fatal
-            let _ = self.save_messages(session_id, &msg, &response);
-
-            let prompt_tokens = self.inference.token_count(&assembled.prompt);
-            let completion_tokens = self.inference.token_count(&response);
-            let _ = self.event_bus.send(EngineEvent::TokenUsage {
-                session_id: session_id.to_string(),
-                model: "qwen3-1.7b".into(),
-                prompt_tokens,
-                completion_tokens,
-            });
-
-            return Ok(ChatResponse {
-                response,
-                session_id: session_id.to_string(),
-                token_usage: TokenUsage { prompt_tokens, completion_tokens },
-            });
+        // C3 fix: complex intent or skill match -> agent loop
+        if out.complexity >= 0.8 || out.skill_match.is_some() {
+            return self.agent_loop(&msg, session_id).await;
         }
 
-        // Complex → Agent Loop
-        self.agent_loop(&msg, session_id).await
+        // Simple path: direct dispatch based on router's target_model
+        let skill_ctx = out.skill_match.as_ref()
+            .and_then(|name| self.skills.find_by_name(name).map(|s| s.context_md().to_string()));
+        let working_memory = self.get_working_memory(session_id).unwrap_or_default();
+        // Persona failure → empty string fallback
+        let persona_summary = self.persona.summarize().await.unwrap_or_default();
+        let assembled = self.weaver.assemble(
+            SYSTEM_INSTRUCTION, &msg.content, &persona_summary, skill_ctx.as_deref(), &working_memory,
+        );
+
+        let response = match out.target_model {
+            TargetModel::None => {
+                let name = out.skill_match.as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("skill_match is None"))?;
+                self.skills.invoke(name, serde_json::json!({"text": msg.content})).await?.to_string()
+            }
+            TargetModel::Local => {
+                self.inference.complete(CompletionRequest { prompt: assembled.prompt.clone(), ..Default::default() }).await?.text
+            }
+            TargetModel::Cloud => {
+                if let Some(ref cloud) = self.cloud {
+                    cloud.complete(CompletionRequest { prompt: assembled.prompt.clone(), ..Default::default() }).await?.text
+                } else {
+                    self.inference.complete(CompletionRequest { prompt: assembled.prompt.clone(), ..Default::default() }).await?.text
+                }
+            }
+        };
+
+        // save_messages is non-fatal
+        let _ = self.save_messages(session_id, &msg, &response);
+
+        let prompt_tokens = self.inference.token_count(&assembled.prompt);
+        let completion_tokens = self.inference.token_count(&response);
+        let _ = self.event_bus.send(EngineEvent::TokenUsage {
+            session_id: session_id.to_string(),
+            model: "qwen3-1.7b".into(),
+            prompt_tokens,
+            completion_tokens,
+        });
+
+        // C1 fix: reset interruptible flag only at end of simple path
+        self.interruptible.store(false, Ordering::SeqCst);
+
+        return Ok(ChatResponse {
+            response,
+            session_id: session_id.to_string(),
+            token_usage: TokenUsage { prompt_tokens, completion_tokens },
+        });
     }
 
     // === Agent Loop ===
