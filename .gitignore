@@ -13,3 +13,7 @@ debug/
 .DS_Store
 Thumbs.db
 *.db
+
+# Node / Electron
+node_modules/
+dist/
