@@ -3,7 +3,7 @@ pub mod sse;
 pub mod ws;
 
 use anyhow::Result;
-use axum::{Router, routing::get};
+use axum::{Router, extract::State, routing::get};
 use openloom_engine::Engine;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -29,20 +29,15 @@ impl Server {
         let app = Router::new()
             .route(
                 "/health",
-                get({
-                    let engine = engine.clone();
-                    move || {
-                        let engine = engine.clone();
-                        async move {
-                            let health = engine.health_check().await;
-                            axum::Json(serde_json::to_value(health).unwrap_or_default())
-                        }
-                    }
+                get(|State(state): State<Arc<Engine>>| async move {
+                    let health = state.health_check().await;
+                    axum::Json(serde_json::to_value(health).unwrap_or_default())
                 }),
             )
             .route("/ws", get(ws::ws_handler))
             .route("/sse/{session_id}", get(sse::sse_handler))
-            .route("/api", axum::routing::post(jsonrpc::handle_jsonrpc));
+            .route("/api", axum::routing::post(jsonrpc::handle_jsonrpc))
+            .with_state(engine);
 
         let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
         tracing::info!("server starting on {}", addr);

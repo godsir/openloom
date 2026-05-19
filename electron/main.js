@@ -5,9 +5,11 @@ const path = require('path');
 let mainWindow = null;
 let engineProcess = null;
 let enginePort = null;
+let engineReady = false;
 let retryCount = 0;
 const MAX_RETRIES = 5;
 const RETRY_DELAYS = [1000, 2000, 4000, 8000, 30000];
+const READY_TIMEOUT_MS = 10000;
 
 function startEngine() {
     const isDev = process.argv.includes('--dev');
@@ -15,13 +17,22 @@ function startEngine() {
         ? path.join(__dirname, '..', 'target', 'debug', 'openloom')
         : path.join(__dirname, '..', 'target', 'release', 'openloom');
 
-    // On Windows, append .exe
     const exePath = process.platform === 'win32' ? engineExe + '.exe' : engineExe;
 
     console.log(`Starting engine: ${exePath}`);
     engineProcess = spawn(exePath, ['serve', '--port', '0'], {
         stdio: ['pipe', 'pipe', 'pipe'],
     });
+
+    // 10-second ready timeout
+    const readyTimer = setTimeout(() => {
+        if (!engineReady) {
+            console.error('Engine failed to start within 10 seconds');
+            if (mainWindow) {
+                mainWindow.loadURL('data:text/html,<h1>Startup Failed</h1><p>Engine did not start. Check logs.</p>');
+            }
+        }
+    }, READY_TIMEOUT_MS);
 
     engineProcess.stdout.on('data', (data) => {
         const lines = data.toString().trim().split('\n');
@@ -30,8 +41,16 @@ function startEngine() {
                 const msg = JSON.parse(line);
                 if (msg.type === 'ready') {
                     enginePort = msg.port;
+                    engineReady = true;
+                    clearTimeout(readyTimer);
                     console.log(`Engine ready on port ${enginePort}`);
                     retryCount = 0;
+                    // Inject port into renderer
+                    if (mainWindow) {
+                        mainWindow.webContents.executeJavaScript(
+                            `window.__enginePort__ = ${enginePort};`
+                        ).catch(() => {});
+                    }
                 }
             } catch (e) {
                 // Non-JSON line (log output), ignore
@@ -44,6 +63,7 @@ function startEngine() {
     });
 
     engineProcess.on('exit', (code) => {
+        engineReady = false;
         console.log(`Engine exited with code ${code}`);
         if (retryCount < MAX_RETRIES) {
             const delay = RETRY_DELAYS[retryCount] || 30000;
@@ -66,7 +86,15 @@ function createWindow() {
         },
     });
 
-    // Load React build if available, otherwise placeholder
+    // Inject engine port if already known
+    if (enginePort) {
+        mainWindow.webContents.on('did-finish-load', () => {
+            mainWindow.webContents.executeJavaScript(
+                `window.__enginePort__ = ${enginePort};`
+            ).catch(() => {});
+        });
+    }
+
     const reactDist = path.join(__dirname, '..', 'web', 'dist', 'index.html');
     mainWindow.loadFile(reactDist).catch(() => {
         mainWindow.loadURL(
@@ -77,18 +105,34 @@ function createWindow() {
 
 app.whenReady().then(() => {
     startEngine();
-    // Give engine time to start before creating window
     setTimeout(createWindow, 2000);
 });
 
-app.on('before-quit', () => {
-    if (engineProcess) {
-        engineProcess.kill('SIGTERM');
+app.on('before-quit', async () => {
+    if (engineProcess && enginePort) {
+        try {
+            // Send graceful shutdown via JSON-RPC before killing
+            await fetch(`http://127.0.0.1:${enginePort}/api`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    method: 'system.shutdown',
+                    params: {},
+                    id: 1,
+                }),
+            });
+        } catch (e) {
+            // Engine may already be down
+        }
+        // Give engine time to drain and clean up
         setTimeout(() => {
             if (engineProcess && !engineProcess.killed) {
                 engineProcess.kill('SIGKILL');
             }
         }, 5000);
+    } else if (engineProcess) {
+        engineProcess.kill('SIGTERM');
     }
 });
 

@@ -2,8 +2,10 @@ use openloom_memory::aggregator::PatternAggregator;
 use openloom_memory::extractor::RuleBasedExtractor;
 use openloom_memory::pipeline::MemoryPipeline;
 use openloom_memory::store::SqliteEventStore;
+use openloom_models::EngineEvent;
 use std::path::PathBuf;
 use std::sync::mpsc;
+use tokio::sync::broadcast;
 
 pub struct ProcessRequest {
     pub session_id: String,
@@ -11,8 +13,14 @@ pub struct ProcessRequest {
     pub context: String,
 }
 
-/// Spawn a dedicated thread for MemoryPipeline (rusqlite Connection is not Send)
-pub fn spawn_memory_thread(db_path: PathBuf, threshold: usize) -> mpsc::Sender<ProcessRequest> {
+/// Spawn a dedicated thread for MemoryPipeline (rusqlite Connection is not Send).
+/// Returns a channel sender for submitting requests, and broadcasts cognition
+/// updates back to the Engine via event_tx.
+pub fn spawn_memory_thread(
+    db_path: PathBuf,
+    threshold: usize,
+    event_tx: broadcast::Sender<EngineEvent>,
+) -> mpsc::Sender<ProcessRequest> {
     let (tx, rx) = mpsc::channel::<ProcessRequest>();
 
     std::thread::spawn(move || {
@@ -29,12 +37,29 @@ pub fn spawn_memory_thread(db_path: PathBuf, threshold: usize) -> mpsc::Sender<P
                 text_len = req.text.len(),
                 "memory pipeline processing"
             );
-            if let Err(e) = pipeline.process(&req.session_id, &req.text, &req.context) {
-                tracing::error!(
-                    session = %req.session_id,
-                    error = %e,
-                    "memory pipeline error"
-                );
+            match pipeline.process(&req.session_id, &req.text, &req.context) {
+                Ok(result) => {
+                    if let Some(cog) = result.cognition_triggered {
+                        tracing::info!(
+                            trait_name = %cog.trait_name,
+                            confidence = cog.confidence,
+                            "cognition triggered"
+                        );
+                        let _ = event_tx.send(EngineEvent::CognitionUpdated {
+                            trait_name: cog.trait_name.clone(),
+                            old_value: String::new(),
+                            new_value: cog.summary.clone(),
+                            confidence: cog.confidence,
+                        });
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        session = %req.session_id,
+                        error = %e,
+                        "memory pipeline error"
+                    );
+                }
             }
         }
     });

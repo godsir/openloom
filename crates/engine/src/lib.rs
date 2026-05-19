@@ -48,20 +48,29 @@ impl Engine {
         )?);
 
         // 2. Router (keyword-first)
-        let router =
+        let mut router =
             SmartRouter::new_keywords_only(openloom_router::keywords::default_keyword_rules());
 
         // 3. Skill registry with built-in skills
         let mut skills = SkillRegistry::new();
         builtins::register_all(&mut skills);
 
+        // Wire skill triggers into router
+        for skill in skills.all_skills() {
+            let manifest = skill.manifest();
+            router.register_skill_triggers(skill.name(), manifest.triggers.clone());
+        }
+
         // 4. Memory pipeline in dedicated thread
         let db_path = config.data_dir.join("data").join("db.sqlite");
         let _ = std::fs::create_dir_all(db_path.parent().unwrap());
-        let memory_tx = memory_thread::spawn_memory_thread(db_path, config.threshold);
 
         // 5. EventBus
         let (event_tx, _) = broadcast::channel(256);
+
+        let memory_tx = memory_thread::spawn_memory_thread(db_path, config.threshold, event_tx.clone());
+
+        // 6. Wire skill triggers into router (router is mut after step 2)
 
         Ok(Self {
             router,
@@ -104,18 +113,24 @@ impl Engine {
             context: out.intent.to_string(),
         });
 
+        let prompt_tokens = self.inference.token_count(&msg.content);
+        let completion_tokens = self.inference.token_count(&response);
+
         // 4. Broadcast token usage event
         let _ = self.event_bus.send(EngineEvent::TokenUsage {
             session_id: session_id.to_string(),
             model: "qwen3-1.7b".into(),
-            prompt_tokens: self.inference.token_count(&msg.content),
-            completion_tokens: self.inference.token_count(&response),
+            prompt_tokens,
+            completion_tokens,
         });
 
         Ok(ChatResponse {
             response,
             session_id: session_id.to_string(),
-            token_usage: TokenUsage::default(),
+            token_usage: TokenUsage {
+                prompt_tokens,
+                completion_tokens,
+            },
         })
     }
 
@@ -145,6 +160,14 @@ impl Engine {
 
     pub fn subscribe(&self) -> broadcast::Receiver<EngineEvent> {
         self.event_bus.subscribe()
+    }
+
+    pub fn list_skills(&self) -> Vec<openloom_skills::SkillInfo> {
+        self.skills.list_all()
+    }
+
+    pub async fn invoke_skill(&self, name: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+        self.skills.invoke(name, params).await
     }
 
     pub async fn shutdown(&self) -> Result<()> {

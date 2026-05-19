@@ -54,13 +54,18 @@ impl InferenceEngine {
     }
 
     /// Complete text completion (returns full text at once)
-    pub async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResponse> {
-        // Phase 1 placeholder: returns empty response
-        // Actual implementation: call llama-cpp-2 inference
+    pub async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse> {
+        let prompt_chars = req.prompt.chars().count();
+        let response = format!(
+            "[openLoom] Local model (Qwen3-1.7B) is not yet loaded. Install the GGUF model file to enable inference.\n\nYour message ({} chars): {}...",
+            prompt_chars,
+            &req.prompt[..req.prompt.len().min(100)]
+        );
+        let response_tokens = response.chars().count() / 4;
         Ok(CompletionResponse {
-            text: String::new(),
-            prompt_tokens: 0,
-            completion_tokens: 0,
+            text: response,
+            prompt_tokens: prompt_chars / 4,
+            completion_tokens: response_tokens,
         })
     }
 
@@ -75,8 +80,31 @@ impl InferenceEngine {
 
     /// Detect GPU info (vendor, VRAM, support status)
     pub fn detect_gpu() -> GpuInfo {
+        // Try nvidia-smi on Windows/Linux
+        if let Ok(output) = std::process::Command::new("nvidia-smi")
+            .args(["--query-gpu=name,memory.total", "--format=csv,noheader"])
+            .output()
+            && output.status.success()
+        {
+            let info = String::from_utf8_lossy(&output.stdout);
+            if let Some(line) = info.lines().next() {
+                let parts: Vec<&str> = line.split(',').collect();
+                let vendor = parts.first().map(|s| s.trim().to_string()).unwrap_or_default();
+                let vram_mb = parts
+                    .get(1)
+                    .and_then(|s| s.trim().strip_suffix(" MiB"))
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+                return GpuInfo {
+                    vendor,
+                    vram_mb,
+                    supported: vram_mb >= 4096,
+                };
+            }
+        }
+        // Fallback: no GPU detected
         GpuInfo {
-            vendor: String::new(),
+            vendor: "none".into(),
             vram_mb: 0,
             supported: false,
         }
