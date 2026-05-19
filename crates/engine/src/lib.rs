@@ -16,6 +16,8 @@ use tokio::sync::{broadcast, oneshot};
 // Re-export EngineEvent from models
 pub use openloom_models::EngineEvent;
 
+const SYSTEM_INSTRUCTION: &str = "You are openLoom, a private AI assistant running locally.";
+
 pub struct Engine {
     router: SmartRouter,
     skills: SkillRegistry,
@@ -25,6 +27,7 @@ pub struct Engine {
     memory_tx: mpsc::Sender<memory_thread::ProcessRequest>,
     session_tx: mpsc::Sender<SessionCommand>,
     event_bus: broadcast::Sender<EngineEvent>,
+    db_path: PathBuf,
 }
 
 #[allow(dead_code)]
@@ -128,7 +131,7 @@ impl Engine {
         let memory_tx = memory_thread::spawn_memory_thread(db_path.clone(), config.threshold, event_tx.clone());
 
         // 8. Session persistence thread
-        let session_tx = spawn_session_thread(db_path);
+        let session_tx = spawn_session_thread(db_path.clone());
 
         Ok(Self {
             router,
@@ -139,6 +142,7 @@ impl Engine {
             memory_tx,
             session_tx,
             event_bus: event_tx,
+            db_path,
         })
     }
 
@@ -152,7 +156,7 @@ impl Engine {
             self.skills.find_by_name(name).map(|s| s.context_md().to_string())
         });
         let working_memory = self.get_working_memory(session_id)?;
-        let assembled = self.weaver.assemble(&msg.content, skill_ctx.as_deref(), &working_memory);
+        let assembled = self.weaver.assemble(SYSTEM_INSTRUCTION, &msg.content, skill_ctx.as_deref(), &working_memory);
 
         // 3. Execute based on target model
         let response = match out.target_model {
@@ -223,6 +227,12 @@ impl Engine {
         let (tx, rx) = oneshot::channel();
         self.session_tx.send(SessionCommand::List { reply: tx }).map_err(|e| anyhow::anyhow!("{}", e))?;
         rx.await.map_err(|e| anyhow::anyhow!("{}", e))
+    }
+
+    pub async fn list_cognitions(&self, subject: &str, limit: usize) -> Result<Vec<openloom_memory::store::CognitionRow>> {
+        let conn = rusqlite::Connection::open(&self.db_path)?;
+        let store = openloom_memory::store::CognitionStore::new(&conn);
+        store.query_by_subject(subject, limit)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<EngineEvent> {

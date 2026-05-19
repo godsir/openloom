@@ -83,7 +83,27 @@ pub async fn dispatch_method(
             Ok(serde_json::to_value(session).unwrap_or_default())
         }
         "memory.cognitions" => {
-            Ok(serde_json::json!({"cognitions": [], "note": "Query via CLI in Phase 2 Milestone B"}))
+            let subject = params.as_ref()
+                .and_then(|p| p.get("subject"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("USER");
+            let limit = params.as_ref()
+                .and_then(|p| p.get("limit"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(20) as usize;
+            let cognitions = engine.list_cognitions(subject, limit).await.map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            let rows: Vec<serde_json::Value> = cognitions.iter().map(|c| serde_json::json!({
+                "trait": c.trait_name,
+                "value": c.value,
+                "confidence": c.confidence,
+                "evidence_count": c.evidence_count,
+                "version": c.version,
+            })).collect();
+            Ok(serde_json::json!({"cognitions": rows}))
         }
         "memory.persona" => {
             Ok(serde_json::json!({"summary": "", "traits": [], "note": "Persona Projector in Milestone B"}))
