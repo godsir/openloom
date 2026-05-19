@@ -1,0 +1,20 @@
+[package]
+name = "openloom-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+openloom-models = { path = "../models" }
+openloom-router = { path = "../router" }
+openloom-skills = { path = "../skills" }
+openloom-inference = { path = "../inference" }
+openloom-memory = { path = "../memory" }
+tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }
+anyhow = "1"
+tracing = "0.1"
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
