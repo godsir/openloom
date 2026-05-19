@@ -85,6 +85,29 @@ pub async fn dispatch_method(
             })?;
             Ok(serde_json::to_value(session).unwrap_or_default())
         }
+        "session.switch" => {
+            let session_id = params.as_ref()
+                .and_then(|p| p.get("session_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default")
+                .to_string();
+            let sessions = engine.list_sessions().await.map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            let found = sessions.iter().any(|s| s.id == session_id);
+            if found {
+                Ok(serde_json::json!({"session_id": session_id}))
+            } else {
+                let session = engine.create_session().await.map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
+                Ok(serde_json::json!({"session_id": session.id}))
+            }
+        }
         "memory.cognitions" => {
             let subject = params
                 .as_ref()
@@ -119,15 +142,17 @@ pub async fn dispatch_method(
                 .collect();
             Ok(serde_json::json!({"cognitions": rows}))
         }
-        "memory.persona" => Ok(
-            serde_json::json!({"summary": "", "traits": [], "note": "Persona Projector in Milestone B"}),
-        ),
+        "memory.persona" => {
+            let summary = engine.persona_summary().await;
+            Ok(serde_json::json!({"summary": summary, "traits": []}))
+        }
         "memory.query" => Ok(
             serde_json::json!({"events": [], "cognitions": [], "note": "FTS5 search in Phase 2"}),
         ),
-        "agent.status" => Ok(
-            serde_json::json!({"state": "idle", "active_session": null, "model_info": {"router": "qwen3-1.7b"}}),
-        ),
+        "agent.status" => {
+            let state = engine.agent_state().await;
+            Ok(serde_json::json!({"state": state, "active_session": null, "model_info": {"router": "qwen3-1.7b"}}))
+        }
         "cache.stats" => {
             Ok(serde_json::json!({"hit_rate": 0.0, "block_count": 0, "total_size_mb": 0}))
         }
