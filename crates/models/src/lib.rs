@@ -14,18 +14,13 @@ pub enum ModelType {
 
 // === Phase 0 扩展 ===
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum ModelBackend {
+    #[default]
     LlamaCpp,
     Anthropic,
     OpenAI,
     DeepSeek,
-}
-
-impl Default for ModelBackend {
-    fn default() -> Self {
-        Self::LlamaCpp
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,7 +38,9 @@ pub struct ModelConfig {
     pub api_key_env: Option<String>,
 }
 
-fn default_context_size() -> usize { 4096 }
+fn default_context_size() -> usize {
+    4096
+}
 
 impl Default for ModelConfig {
     fn default() -> Self {
@@ -252,8 +249,12 @@ pub struct RouterPrefs {
     pub fallback_threshold: f32,
 }
 
-fn default_keyword_threshold() -> f32 { 0.85 }
-fn default_fallback_threshold() -> f32 { 0.7 }
+fn default_keyword_threshold() -> f32 {
+    0.85
+}
+fn default_fallback_threshold() -> f32 {
+    0.7
+}
 
 impl Default for RouterPrefs {
     fn default() -> Self {
@@ -270,11 +271,15 @@ pub struct ServerPrefs {
     pub host: String,
 }
 
-fn default_host() -> String { "127.0.0.1".into() }
+fn default_host() -> String {
+    "127.0.0.1".into()
+}
 
 impl Default for ServerPrefs {
     fn default() -> Self {
-        Self { host: default_host() }
+        Self {
+            host: default_host(),
+        }
     }
 }
 
@@ -294,11 +299,17 @@ pub struct LoggingPrefs {
     pub dir: Option<String>,
 }
 
-fn default_log_level() -> String { "INFO".into() }
+fn default_log_level() -> String {
+    "INFO".into()
+}
 
 impl Default for LoggingPrefs {
     fn default() -> Self {
-        Self { level: default_log_level(), log_content: false, dir: None }
+        Self {
+            level: default_log_level(),
+            log_content: false,
+            dir: None,
+        }
     }
 }
 
@@ -350,7 +361,10 @@ mod tests {
         let resp = ChatResponse {
             response: "hello".into(),
             session_id: "s1".into(),
-            token_usage: TokenUsage { prompt_tokens: 10, completion_tokens: 5 },
+            token_usage: TokenUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+            },
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("session_id"));
