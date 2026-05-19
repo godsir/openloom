@@ -4,7 +4,7 @@ use anyhow::Result;
 use openloom_inference::{CompletionRequest, InferenceEngine};
 use openloom_models::*;
 use openloom_router::SmartRouter;
-use openloom_skills::{builtins, SkillRegistry};
+use openloom_skills::{SkillRegistry, builtins};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -40,14 +40,16 @@ impl Engine {
     pub fn new(config: EngineConfig) -> Result<Self> {
         // 1. Inference engine (Phase 1: placeholder, no model file needed)
         let inference = Arc::new(InferenceEngine::load_blocking(
-            &config.data_dir.join("models").join("qwen3-1.7b-q4_k_m.gguf"),
+            &config
+                .data_dir
+                .join("models")
+                .join("qwen3-1.7b-q4_k_m.gguf"),
             0,
         )?);
 
         // 2. Router (keyword-first)
-        let router = SmartRouter::new_keywords_only(
-            openloom_router::keywords::default_keyword_rules(),
-        );
+        let router =
+            SmartRouter::new_keywords_only(openloom_router::keywords::default_keyword_rules());
 
         // 3. Skill registry with built-in skills
         let mut skills = SkillRegistry::new();
@@ -72,20 +74,18 @@ impl Engine {
     }
 
     /// Core request handler
-    pub async fn handle_message(
-        &self,
-        msg: ChatMessage,
-        session_id: &str,
-    ) -> Result<ChatResponse> {
+    pub async fn handle_message(&self, msg: ChatMessage, session_id: &str) -> Result<ChatResponse> {
         // 1. Classify intent
         let out = self.router.classify_sync(&msg.content);
 
         // 2. Execute based on target model
         let response = match out.target_model {
             TargetModel::None => {
-                let skill_name = out.skill_match.as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("skill_match is None but target_model is None"))?;
-                let params = serde_json::json!({"text": msg.content, "intent": out.intent.to_string()});
+                let skill_name = out.skill_match.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("skill_match is None but target_model is None")
+                })?;
+                let params =
+                    serde_json::json!({"text": msg.content, "intent": out.intent.to_string()});
                 self.skills.invoke(skill_name, params).await?.to_string()
             }
             TargetModel::Local => {
@@ -179,7 +179,10 @@ mod tests {
     #[tokio::test]
     async fn test_handle_message_llm_path() {
         let (engine, _dir) = setup_test_engine().await;
-        let msg = ChatMessage { role: "user".into(), content: "hello".into() };
+        let msg = ChatMessage {
+            role: "user".into(),
+            content: "hello".into(),
+        };
         let sid = engine.create_session().await.unwrap().id;
         let resp = engine.handle_message(msg, &sid).await.unwrap();
         assert_eq!(resp.session_id, sid);
@@ -196,20 +199,23 @@ mod tests {
     async fn test_event_bus_subscribe() {
         let (engine, _dir) = setup_test_engine().await;
         let mut rx = engine.subscribe();
-        let msg = ChatMessage { role: "user".into(), content: "hello".into() };
+        let msg = ChatMessage {
+            role: "user".into(),
+            content: "hello".into(),
+        };
         let sid = engine.create_session().await.unwrap().id;
         engine.handle_message(msg, &sid).await.unwrap();
-        let event = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            rx.recv(),
-        ).await;
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await;
         assert!(event.is_ok(), "should receive TokenUsage event");
     }
 
     #[tokio::test]
     async fn test_handle_message_skill_path() {
         let (engine, _dir) = setup_test_engine().await;
-        let msg = ChatMessage { role: "user".into(), content: "帮我管理文件".into() };
+        let msg = ChatMessage {
+            role: "user".into(),
+            content: "帮我管理文件".into(),
+        };
         let sid = engine.create_session().await.unwrap().id;
         let resp = engine.handle_message(msg, &sid).await.unwrap();
         assert!(!resp.session_id.is_empty());

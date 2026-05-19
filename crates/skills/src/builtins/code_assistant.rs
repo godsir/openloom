@@ -1,12 +1,14 @@
 use crate::{Skill, SkillManifest, SkillPermissions};
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub struct CodeAssistant;
 
 #[async_trait::async_trait]
 impl Skill for CodeAssistant {
-    fn name(&self) -> &str { "code-assistant" }
+    fn name(&self) -> &str {
+        "code-assistant"
+    }
 
     fn manifest(&self) -> &SkillManifest {
         static M: std::sync::OnceLock<SkillManifest> = std::sync::OnceLock::new();
@@ -14,9 +16,16 @@ impl Skill for CodeAssistant {
             name: "code-assistant".into(),
             description: "Code assistance: write, debug, refactor, run tests".into(),
             triggers: vec![
-                "代码".into(), "编程".into(), "写".into(), "实现".into(),
-                "修复".into(), "bug".into(), "测试".into(), "编译".into(),
-                "运行".into(), "git".into(),
+                "代码".into(),
+                "编程".into(),
+                "写".into(),
+                "实现".into(),
+                "修复".into(),
+                "bug".into(),
+                "测试".into(),
+                "编译".into(),
+                "运行".into(),
+                "git".into(),
             ],
             permissions: SkillPermissions {
                 shell: true,
@@ -28,12 +37,13 @@ impl Skill for CodeAssistant {
     }
 
     async fn invoke(&self, params: Value) -> Result<Value> {
-        let action = params.get("action").and_then(|v| v.as_str()).unwrap_or("analyze");
+        let action = params
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("analyze");
         match action {
             "run_test" => {
-                let output = std::process::Command::new("cargo")
-                    .args(["test"])
-                    .output();
+                let output = std::process::Command::new("cargo").args(["test"]).output();
                 match output {
                     Ok(out) => {
                         let stdout = String::from_utf8_lossy(&out.stdout).to_string();

@@ -130,7 +130,12 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Analyze { input, output, db, threshold } => {
+        Commands::Analyze {
+            input,
+            output,
+            db,
+            threshold,
+        } => {
             run_analyze(&input, &output, &db, threshold)?;
         }
         Commands::Serve { port, config } => {
@@ -170,7 +175,10 @@ async fn main() -> anyhow::Result<()> {
                 if line.is_empty() {
                     continue;
                 }
-                let msg = ChatMessage { role: "user".into(), content: line };
+                let msg = ChatMessage {
+                    role: "user".into(),
+                    content: line,
+                };
                 match engine.handle_message(msg, &sid).await {
                     Ok(resp) => println!("{}", resp.response),
                     Err(e) => eprintln!("Error: {}", e),
@@ -189,13 +197,18 @@ async fn main() -> anyhow::Result<()> {
             })?;
 
             let sid = engine.create_session().await?.id;
-            let msg = ChatMessage { role: "user".into(), content: task };
+            let msg = ChatMessage {
+                role: "user".into(),
+                content: task,
+            };
             let resp = engine.handle_message(msg, &sid).await?;
             println!("{}", resp.response);
         }
         Commands::Skill { action } => match action {
             SkillAction::List => {
-                println!("Skills: file-manager, info-retriever, schedule-reminder, code-assistant, web-browser");
+                println!(
+                    "Skills: file-manager, info-retriever, schedule-reminder, code-assistant, web-browser"
+                );
             }
             SkillAction::Install { path } => {
                 println!("Install skill from: {} (Phase 2 WASM)", path);
@@ -235,14 +248,19 @@ async fn main() -> anyhow::Result<()> {
             println!("openLoom System Diagnostic");
             println!("=========================");
             let gpu = openloom_inference::InferenceEngine::detect_gpu();
-            println!("GPU: vendor={}, vram={}MB, supported={}", gpu.vendor, gpu.vram_mb, gpu.supported);
-            let data_dir = dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("openLoom");
+            println!(
+                "GPU: vendor={}, vram={}MB, supported={}",
+                gpu.vendor, gpu.vram_mb, gpu.supported
+            );
+            let data_dir = dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("openLoom");
             println!("Data dir: {}", data_dir.display());
             println!("Config: {}", config_path(None).display());
-        },
+        }
         Commands::Version => {
             println!("openLoom {}", env!("CARGO_PKG_VERSION"));
-        },
+        }
     }
 
     Ok(())

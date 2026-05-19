@@ -32,8 +32,12 @@ pub struct SkillPermissions {
     pub max_runtime_sec: u32,
 }
 
-fn default_max_memory() -> u32 { 128 }
-fn default_max_runtime() -> u32 { 30 }
+fn default_max_memory() -> u32 {
+    128
+}
+fn default_max_runtime() -> u32 {
+    30
+}
 
 impl Default for SkillPermissions {
     fn default() -> Self {
@@ -80,28 +84,35 @@ impl SkillRegistry {
     }
 
     pub fn find_by_trigger(&self, text: &str) -> Option<&dyn Skill> {
-        self.skills.iter().find(|s| {
-            s.manifest()
-                .triggers
-                .iter()
-                .any(|t| text.contains(t.as_str()))
-        })
-        .map(|s| s.as_ref())
+        self.skills
+            .iter()
+            .find(|s| {
+                s.manifest()
+                    .triggers
+                    .iter()
+                    .any(|t| text.contains(t.as_str()))
+            })
+            .map(|s| s.as_ref())
     }
 
     pub fn list_all(&self) -> Vec<SkillInfo> {
-        self.skills.iter().map(|s| {
-            let m = s.manifest();
-            SkillInfo {
-                name: m.name.clone(),
-                description: m.description.clone(),
-                triggers: m.triggers.clone(),
-            }
-        }).collect()
+        self.skills
+            .iter()
+            .map(|s| {
+                let m = s.manifest();
+                SkillInfo {
+                    name: m.name.clone(),
+                    description: m.description.clone(),
+                    triggers: m.triggers.clone(),
+                }
+            })
+            .collect()
     }
 
     pub async fn invoke(&self, name: &str, params: Value) -> Result<Value> {
-        let skill = self.skills.iter()
+        let skill = self
+            .skills
+            .iter()
             .find(|s| s.name() == name)
             .ok_or_else(|| anyhow::anyhow!("skill '{}' not found", name))?;
         skill.invoke(params).await
@@ -137,7 +148,8 @@ impl CliBridge {
             ("npm", "Node.js package manager"),
             ("python", "Python interpreter"),
         ];
-        common_tools.into_iter()
+        common_tools
+            .into_iter()
             .filter(|(binary, _)| Self::is_on_path(binary))
             .map(|(binary, desc)| CliTool {
                 name: binary.to_string(),
@@ -182,7 +194,9 @@ mod tests {
     struct TestSkill;
     #[async_trait::async_trait]
     impl Skill for TestSkill {
-        fn name(&self) -> &str { "test" }
+        fn name(&self) -> &str {
+            "test"
+        }
         fn manifest(&self) -> &SkillManifest {
             static M: std::sync::OnceLock<SkillManifest> = std::sync::OnceLock::new();
             M.get_or_init(|| SkillManifest {
@@ -196,7 +210,9 @@ mod tests {
         async fn invoke(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
             Ok(json!({"echo": params}))
         }
-        fn context_md(&self) -> &str { "Test skill context" }
+        fn context_md(&self) -> &str {
+            "Test skill context"
+        }
     }
 
     #[test]
@@ -228,7 +244,10 @@ mod tests {
     async fn test_invoke_skill() {
         let mut registry = SkillRegistry::new();
         registry.register(Box::new(TestSkill));
-        let result = registry.invoke("test", json!({"key": "value"})).await.unwrap();
+        let result = registry
+            .invoke("test", json!({"key": "value"}))
+            .await
+            .unwrap();
         assert_eq!(result["echo"]["key"], "value");
     }
 

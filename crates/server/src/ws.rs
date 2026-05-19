@@ -9,9 +9,7 @@ async fn handle_ws(mut socket: WebSocket) {
     while let Some(Ok(msg)) = socket.recv().await {
         match msg {
             Message::Text(text) => {
-                if let Ok(req) =
-                    serde_json::from_str::<openloom_models::JsonRpcRequest>(&text)
-                {
+                if let Ok(req) = serde_json::from_str::<openloom_models::JsonRpcRequest>(&text) {
                     let resp = openloom_models::JsonRpcResponse {
                         jsonrpc: "2.0".into(),
                         result: Some(serde_json::json!({"echo": req.method})),

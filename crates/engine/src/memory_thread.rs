@@ -12,10 +12,7 @@ pub struct ProcessRequest {
 }
 
 /// Spawn a dedicated thread for MemoryPipeline (rusqlite Connection is not Send)
-pub fn spawn_memory_thread(
-    db_path: PathBuf,
-    threshold: usize,
-) -> mpsc::Sender<ProcessRequest> {
+pub fn spawn_memory_thread(db_path: PathBuf, threshold: usize) -> mpsc::Sender<ProcessRequest> {
     let (tx, rx) = mpsc::channel::<ProcessRequest>();
 
     std::thread::spawn(move || {

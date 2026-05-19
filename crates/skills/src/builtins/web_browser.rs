@@ -1,12 +1,14 @@
 use crate::{Skill, SkillManifest, SkillPermissions};
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub struct WebBrowser;
 
 #[async_trait::async_trait]
 impl Skill for WebBrowser {
-    fn name(&self) -> &str { "web-browser" }
+    fn name(&self) -> &str {
+        "web-browser"
+    }
 
     fn manifest(&self) -> &SkillManifest {
         static M: std::sync::OnceLock<SkillManifest> = std::sync::OnceLock::new();
@@ -14,8 +16,14 @@ impl Skill for WebBrowser {
             name: "web-browser".into(),
             description: "Web browsing: search the web and fetch content".into(),
             triggers: vec![
-                "网页".into(), "浏览".into(), "网址".into(), "链接".into(),
-                "打开".into(), "搜索".into(), "百度".into(), "Google".into(),
+                "网页".into(),
+                "浏览".into(),
+                "网址".into(),
+                "链接".into(),
+                "打开".into(),
+                "搜索".into(),
+                "百度".into(),
+                "Google".into(),
             ],
             permissions: SkillPermissions {
                 network: vec!["*".into()],

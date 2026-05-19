@@ -1,12 +1,14 @@
 use crate::{Skill, SkillManifest, SkillPermissions};
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub struct FileManager;
 
 #[async_trait::async_trait]
 impl Skill for FileManager {
-    fn name(&self) -> &str { "file-manager" }
+    fn name(&self) -> &str {
+        "file-manager"
+    }
 
     fn manifest(&self) -> &SkillManifest {
         static M: std::sync::OnceLock<SkillManifest> = std::sync::OnceLock::new();
@@ -14,8 +16,12 @@ impl Skill for FileManager {
             name: "file-manager".into(),
             description: "File management: read, write, list, and search files".into(),
             triggers: vec![
-                "文件".into(), "文档".into(), "读写".into(), "保存".into(),
-                "目录".into(), "文件夹".into(),
+                "文件".into(),
+                "文档".into(),
+                "读写".into(),
+                "保存".into(),
+                "目录".into(),
+                "文件夹".into(),
             ],
             permissions: SkillPermissions {
                 fs_read: vec!["~".into()],
@@ -27,7 +33,10 @@ impl Skill for FileManager {
     }
 
     async fn invoke(&self, params: Value) -> Result<Value> {
-        let action = params.get("action").and_then(|v| v.as_str()).unwrap_or("list");
+        let action = params
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("list");
         let path = params.get("path").and_then(|v| v.as_str()).unwrap_or(".");
         match action {
             "list" => {

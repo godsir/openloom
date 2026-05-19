@@ -1,12 +1,14 @@
 use crate::{Skill, SkillManifest, SkillPermissions};
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub struct InfoRetriever;
 
 #[async_trait::async_trait]
 impl Skill for InfoRetriever {
-    fn name(&self) -> &str { "info-retriever" }
+    fn name(&self) -> &str {
+        "info-retriever"
+    }
 
     fn manifest(&self) -> &SkillManifest {
         static M: std::sync::OnceLock<SkillManifest> = std::sync::OnceLock::new();
@@ -14,7 +16,11 @@ impl Skill for InfoRetriever {
             name: "info-retriever".into(),
             description: "Information retrieval: knowledge query and document search".into(),
             triggers: vec![
-                "搜索".into(), "查找".into(), "查询".into(), "检索".into(), "信息".into(),
+                "搜索".into(),
+                "查找".into(),
+                "查询".into(),
+                "检索".into(),
+                "信息".into(),
             ],
             permissions: SkillPermissions::default(),
             min_engine_version: "0.1.0".into(),

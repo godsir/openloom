@@ -27,16 +27,19 @@ impl Server {
         let engine = self.engine.clone();
 
         let app = Router::new()
-            .route("/health", get({
-                let engine = engine.clone();
-                move || {
+            .route(
+                "/health",
+                get({
                     let engine = engine.clone();
-                    async move {
-                        let health = engine.health_check().await;
-                        axum::Json(serde_json::to_value(health).unwrap_or_default())
+                    move || {
+                        let engine = engine.clone();
+                        async move {
+                            let health = engine.health_check().await;
+                            axum::Json(serde_json::to_value(health).unwrap_or_default())
+                        }
                     }
-                }
-            }))
+                }),
+            )
             .route("/ws", get(ws::ws_handler))
             .route("/sse/{session_id}", get(sse::sse_handler))
             .route("/api", axum::routing::post(jsonrpc::handle_jsonrpc));
