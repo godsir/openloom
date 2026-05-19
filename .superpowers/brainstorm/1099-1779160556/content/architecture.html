@@ -1,0 +1,101 @@
+<h2>Phase 1 架构总览</h2>
+<p class="subtitle">新增 5 个 crate + 扩展现有 CLI + Electron 壳</p>
+
+<div class="mockup">
+  <div class="mockup-header">Crate 依赖关系 & 数据流</div>
+  <div class="mockup-body" style="font-family: monospace; font-size: 13px; line-height: 1.8; padding: 20px;">
+<pre style="margin:0; white-space:pre; background:#1a1a2e; color:#e0e0e0; padding:16px; border-radius:8px;">
+                    ┌──────────────┐
+                    │  Electron 壳  │  ← sidecar 管理 + 聊天 UI
+                    └──────┬───────┘
+                           │ WSS + JSON-RPC 2.0
+                    ┌──────▼───────┐
+                    │  server      │  ← Axum HTTP + WSS + SSE
+                    └──────┬───────┘
+                           │
+              ┌────────────┼────────────┐
+              │            │            │
+     ┌───────▼───┐  ┌─────▼─────┐  ┌──▼──────────┐
+     │  router   │  │  skills   │  │  inference   │
+     │ 意图分类  │  │ WASM 运行时│  │ llama-cpp-2  │
+     │ 复杂度评分│  │ CLI Bridge │  │ 模型加载+推理│
+     │ 技能匹配  │  │ manifest   │  └──────────────┘
+     └───────┬───┘  └─────┬─────┘
+             │            │
+     ┌───────▼────────────▼─────┐
+     │         memory           │  ← Phase 0: 事件管线 (复用)
+     └──────────────────────────┘
+</pre>
+  </div>
+</div>
+
+<h3 style="margin-top: 24px;">请求处理流</h3>
+
+<div class="mockup">
+  <div class="mockup-header">用户输入 → 响应 全路径</div>
+  <div class="mockup-body" style="font-family: monospace; font-size: 13px; line-height: 1.8; padding: 20px;">
+<pre style="margin:0; white-space:pre; background:#1a1a2e; color:#e0e0e0; padding:16px; border-radius:8px;">
+用户输入 (CLI 或 Electron)
+  │
+  ▼
+Router.classify(text)
+  ├─ 意图: "file_operation" | "web_search" | "code_assist" | ...
+  ├─ 复杂度: 0.0 ~ 1.0
+  └─ 技能匹配: Some("file-manager") | None
+  │
+  ├─ 匹配到 Skill (复杂度 < 0.5)
+  │    └─▶ SkillEngine.invoke(skill, params) → 结果
+  │
+  └─ 未匹配 或 复杂度 >= 0.5
+       └─▶ inference.complete(prompt) → LLM 响应
+           │
+           └─▶ MemoryPipeline.process(session, text, context)
+                └─ 事件提取 + 聚合 (后台异步)
+</pre>
+  </div>
+</div>
+
+<h3 style="margin-top: 24px;">新增 CLI 命令</h3>
+
+<div class="mockup">
+  <div class="mockup-header">CLI 扩展 (Phase 0 → Phase 1)</div>
+  <div class="mockup-body" style="padding: 16px;">
+    <table style="width:100%; border-collapse:collapse; font-size:14px;">
+      <tr style="background:#2a2a4a;">
+        <th style="padding:8px;text-align:left;">命令</th>
+        <th style="padding:8px;text-align:left;">Phase</th>
+        <th style="padding:8px;text-align:left;">说明</th>
+      </tr>
+      <tr style="border-bottom:1px solid #333;">
+        <td style="padding:8px;"><code>openloom analyze</code></td>
+        <td style="padding:8px;color:#4a9;">Phase 0 ✓</td>
+        <td style="padding:8px;">离线分析对话日志</td>
+      </tr>
+      <tr style="border-bottom:1px solid #333;">
+        <td style="padding:8px;"><code>openloom serve</code></td>
+        <td style="padding:8px;color:#f90;">Phase 1 新增</td>
+        <td style="padding:8px;">启动 HTTP + WSS 服务</td>
+      </tr>
+      <tr style="border-bottom:1px solid #333;">
+        <td style="padding:8px;"><code>openloom chat</code></td>
+        <td style="padding:8px;color:#f90;">Phase 1 新增</td>
+        <td style="padding:8px;">交互式对话 (TUI)</td>
+      </tr>
+      <tr style="border-bottom:1px solid #333;">
+        <td style="padding:8px;"><code>openloom run "..."</code></td>
+        <td style="padding:8px;color:#f90;">Phase 1 新增</td>
+        <td style="padding:8px;">单次任务执行</td>
+      </tr>
+      <tr style="border-bottom:1px solid #333;">
+        <td style="padding:8px;"><code>openloom skill list</code></td>
+        <td style="padding:8px;color:#f90;">Phase 1 新增</td>
+        <td style="padding:8px;">列出已安装 Skill</td>
+      </tr>
+      <tr>
+        <td style="padding:8px;"><code>openloom doctor</code></td>
+        <td style="padding:8px;color:#f90;">Phase 1 新增</td>
+        <td style="padding:8px;">系统诊断 (GPU/模型/DB)</td>
+      </tr>
+    </table>
+  </div>
+</div>

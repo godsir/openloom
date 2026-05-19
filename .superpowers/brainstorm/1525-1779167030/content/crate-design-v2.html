@@ -1,0 +1,251 @@
+<h2>Phase 1 Crate 设计 v2 — 修正版</h2>
+<p class="subtitle">6 个阻塞项 + 7 个警告项已修正，全部通过审查</p>
+
+<div class="section">
+<h3>修正汇总</h3>
+<div class="mockup">
+  <div class="mockup-header">v1 → v2 变更</div>
+  <div class="mockup-body" style="padding:16px; font-size:13px;">
+    <table style="width:100%; border-collapse:collapse; font-size:13px;">
+      <tr style="background:#2a2a4a;"><th style="padding:6px;text-align:left;">#</th><th style="padding:6px;text-align:left;">类型</th><th style="padding:6px;text-align:left;">变更</th></tr>
+      <tr style="border-bottom:1px solid #333;"><td style="padding:6px;color:#f66;">B1</td><td style="padding:6px;">阻塞</td><td style="padding:6px;"><code>classify()</code> / <code>handle_message()</code> → <code>async fn</code></td></tr>
+      <tr style="border-bottom:1px solid #333;"><td style="padding:6px;color:#f66;">B2</td><td style="padding:6px;">阻塞</td><td style="padding:6px;"><code>ClassifyOutput</code> 新增 <code>cache_hit: bool</code></td></tr>
+      <tr style="border-bottom:1px solid #333;"><td style="padding:6px;color:#f66;">B3</td><td style="padding:6px;">阻塞</td><td style="padding:6px;"><code>EngineEvent</code> 统一定义在 models，engine 重导出</td></tr>
+      <tr style="border-bottom:1px solid #333;"><td style="padding:6px;color:#f66;">B4</td><td style="padding:6px;">阻塞</td><td style="padding:6px;">新增 <code>ChatResponse</code> + <code>TokenUsage</code> 类型到 models</td></tr>
+      <tr style="border-bottom:1px solid #333;"><td style="padding:6px;color:#f66;">B5</td><td style="padding:6px;">阻塞</td><td style="padding:6px;"><code>ModelConfig</code> 扩展 <code>backend</code> + <code>n_gpu_layers</code> + <code>api_key_env</code></td></tr>
+      <tr style="border-bottom:1px solid #333;"><td style="padding:6px;color:#f66;">B6</td><td style="padding:6px;">阻塞</td><td style="padding:6px;"><code>handle_message</code> 内部异步流 + <code>spawn_blocking</code> 包装 memory</td></tr>
+      <tr style="border-bottom:1px solid #333;"><td style="padding:6px;color:#f90;">W7</td><td style="padding:6px;">警告</td><td style="padding:6px;">Router 新增 <code>classify_event()</code></td></tr>
+      <tr style="border-bottom:1px solid #333;"><td style="padding:6px;color:#f90;">W8</td><td style="padding:6px;">警告</td><td style="padding:6px;">Engine 新增 <code>health_check()</code></td></tr>
+      <tr style="border-bottom:1px solid #333;"><td style="padding:6px;color:#f90;">W9</td><td style="padding:6px;">警告</td><td style="padding:6px;"><code>context_md()</code> → <code>&self</code> 实例方法</td></tr>
+      <tr style="border-bottom:1px solid #333;"><td style="padding:6px;color:#f90;">W10</td><td style="padding:6px;">警告</td><td style="padding:6px;"><code>SkillManifest</code> 补齐权限字段 (spec 13.2)</td></tr>
+      <tr style="border-bottom:1px solid #333;"><td style="padding:6px;color:#f90;">W11</td><td style="padding:6px;">警告</td><td style="padding:6px;">Engine 新增 <code>create_session()</code> / <code>list_sessions()</code></td></tr>
+      <tr style="border-bottom:1px solid #333;"><td style="padding:6px;color:#f90;">W12</td><td style="padding:6px;">警告</td><td style="padding:6px;"><code>token_count()</code> → <code>&self</code> 实例方法</td></tr>
+      <tr><td style="padding:6px;color:#f90;">W13</td><td style="padding:6px;">警告</td><td style="padding:6px;">Server 显式依赖 <code>openloom-models</code></td></tr>
+    </table>
+  </div>
+</div>
+</div>
+
+<div class="section">
+<h3>修正后的完整 API</h3>
+
+<h3 style="margin-top:16px;">crates/models/ — 共享类型 (扩展)</h3>
+<div class="mockup">
+  <div class="mockup-header">Phase 0 现有 + Phase 1 新增</div>
+  <div class="mockup-body" style="padding:16px; font-family:monospace; font-size:12px;">
+<pre style="background:#1a1a2e;color:#e0e0e0;padding:12px;border-radius:8px;">
+// === Phase 0 保留 ===
+enum ModelType { Router, Summarizer, Reasoning }
+
+// === Phase 0 扩展 ===
+struct ModelConfig {
+    name: String, model_type: ModelType,
+    backend: ModelBackend,                    // NEW
+    path: Option<String>, context_size: usize,
+    n_gpu_layers: usize,                      // NEW
+    api_key_env: Option<String>,              // NEW
+}
+enum ModelBackend { LlamaCpp, Anthropic, OpenAI, DeepSeek }  // NEW
+
+// === JSON-RPC 类型 (NEW) ===
+struct JsonRpcRequest { jsonrpc: String, method: String, params: Value, id: u64 }
+struct JsonRpcResponse { jsonrpc: String, result: Option<Value>, error: Option<JsonRpcError>, id: u64 }
+struct JsonRpcError { code: ErrorCode, message: String, data: Option<Value> }
+enum ErrorCode { ParseError=-32700, InvalidRequest=-32600, MethodNotFound=-32601,
+    InternalError=-32603, ModelUnavailable=-32000, SkillFailed=-32001,
+    PermissionDenied=-32002, Timeout=-32003 }
+
+// === 引擎类型 (NEW) ===
+struct ChatResponse { response: String, session_id: String, token_usage: TokenUsage }
+struct TokenUsage { prompt_tokens: usize, completion_tokens: usize }
+struct SessionInfo { id: String, created_at: DateTime<Utc>, message_count: usize }
+struct HealthStatus { status: String, uptime: u64, gpu_info: GpuInfo }
+struct SystemEvent { event_type: String, payload: Value }
+
+enum EngineEvent {
+    CognitionUpdated { trait_name, old_value, new_value, confidence },
+    AgentStateChanged { old_state, new_state },
+    TokenUsage { session_id, model, prompt_tokens, completion_tokens },
+    Error { code: ErrorCode, message, subsystem },
+}
+</pre>
+  </div>
+</div>
+
+<h3 style="margin-top:16px;">crates/inference/ — 模型推理</h3>
+<div class="mockup">
+  <div class="mockup-header">封装 llama-cpp-2</div>
+  <div class="mockup-body" style="padding:16px; font-family:monospace; font-size:12px;">
+<pre style="background:#1a1a2e;color:#e0e0e0;padding:12px;border-radius:8px;">
+struct InferenceEngine { ... }
+struct GpuInfo { vendor: String, vram_mb: u64, supported: bool }
+
+impl InferenceEngine {
+    async fn load(model_path: &Path, n_gpu_layers: usize) -> Result<Self>
+    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse>
+    async fn complete_stream(&self, req: CompletionRequest, tx: mpsc::Sender) -> Result<()>
+    fn detect_gpu() -> GpuInfo
+    fn token_count(&self, text: &str) -> usize               // W12: 实例方法
+}
+</pre>
+依赖: llama-cpp-2, tokio, openloom-models | Feature: cuda, metal, vulkan
+  </div>
+</div>
+
+<h3 style="margin-top:16px;">crates/router/ — 智能路由</h3>
+<div class="mockup">
+  <div class="mockup-header">意图分类 + 复杂度 + 技能匹配</div>
+  <div class="mockup-body" style="padding:16px; font-family:monospace; font-size:12px;">
+<pre style="background:#1a1a2e;color:#e0e0e0;padding:12px;border-radius:8px;">
+struct ClassifyOutput {
+    intent: Intent, complexity: f32, skill_match: Option&lt;String&gt;,
+    confidence: f32, cache_hit: bool,          // B2: +cache_hit
+    target_model: TargetModel,
+}
+enum Intent { Chat, FileOperation, WebSearch, CodeAssist, Schedule, Question, Other }
+enum TargetModel { Local, Cloud, None }
+
+impl SmartRouter {
+    async fn classify(&self, text: &str) -> ClassifyOutput        // B1: async
+    async fn classify_event(&self, event: &SystemEvent) -> ClassifyOutput  // W7
+    fn register_skill_triggers(&mut self, name: &str, triggers: Vec&lt;String&gt;)
+}
+</pre>
+内部流: 关键词匹配(零token) → 命中→直接返回 → 未命中→调 Qwen3-1.7B → 置信度 < 0.7 → 降级标记<br>
+依赖: openloom-inference, regex, openloom-models
+  </div>
+</div>
+
+<h3 style="margin-top:16px;">crates/skills/ — 技能引擎</h3>
+<div class="mockup">
+  <div class="mockup-header">Skill trait + Registry + CLI Bridge</div>
+  <div class="mockup-body" style="padding:16px; font-family:monospace; font-size:12px;">
+<pre style="background:#1a1a2e;color:#e0e0e0;padding:12px;border-radius:8px;">
+trait Skill: Send + Sync {
+    fn name(&self) -> &str
+    fn manifest(&self) -> &SkillManifest
+    async fn invoke(&self, params: Value) -> Result&lt;Value&gt;
+    fn context_md(&self) -> &str                        // W9: 实例方法
+}
+
+struct SkillPermissions {                               // W10: 完整权限模型
+    fs_read: Vec&lt;String&gt;, fs_write: Vec&lt;String&gt;,
+    network: Vec&lt;String&gt;, shell: bool, subprocess: bool,
+    max_memory_mb: u32, max_runtime_sec: u32,
+}
+struct SkillManifest {
+    name: String, description: String, triggers: Vec&lt;String&gt;,
+    permissions: SkillPermissions, min_engine_version: String,
+}
+
+impl SkillRegistry {
+    fn register(&mut self, skill: Box&lt;dyn Skill&gt;)
+    fn find_by_trigger(&self, text: &str) -> Option&lt;&dyn Skill&gt;
+    fn list_all(&self) -> Vec&lt;SkillInfo&gt;
+    async fn invoke(&self, name: &str, params: Value) -> Result&lt;Value&gt;
+}
+impl CliBridge {
+    fn discover_path_tools() -> Vec&lt;CliTool&gt;
+    fn parse_help(binary: &str) -> CliTool
+}
+</pre>
+5 个内置 Skill: FileManager, InfoRetriever, ScheduleReminder, CodeAssistant, WebBrowser<br>
+依赖: wasmtime (Phase 2), serde_json, openloom-models
+  </div>
+</div>
+
+<h3 style="margin-top:16px;">crates/engine/ — 编排引擎</h3>
+<div class="mockup">
+  <div class="mockup-header">EventBus + 请求派发 + 生命周期</div>
+  <div class="mockup-body" style="padding:16px; font-family:monospace; font-size:12px;">
+<pre style="background:#1a1a2e;color:#e0e0e0;padding:12px;border-radius:8px;">
+struct Engine { ... }
+
+impl Engine {
+    async fn new(config: EngineConfig) -> Result&lt;Self&gt;
+    async fn start(&self) -> Result&lt;()&gt;                   // 启动 EventBus + 后台任务
+    async fn handle_message(&self, msg: ChatMessage, session_id: &str) -> Result&lt;ChatResponse&gt;  // B1
+    async fn health_check(&self) -> HealthStatus           // W8
+    async fn create_session(&self) -> Result&lt;SessionInfo&gt;  // W11
+    async fn list_sessions(&self) -> Result&lt;Vec&lt;SessionInfo&gt;&gt;
+    async fn shutdown(&self) -> Result&lt;()&gt;
+    fn subscribe(&self) -> broadcast::Receiver&lt;EngineEvent&gt;
+}
+// EngineEvent 从 models 重导出 (B3): pub use openloom_models::EngineEvent;
+</pre>
+<strong>handle_message 内部流:</strong><br>
+<pre style="background:#1a1a2e;color:#e0e0e0;padding:12px;border-radius:8px;">
+async fn handle_message(&self, msg, sid) -> Result&lt;ChatResponse&gt; {
+    let out = self.router.classify(&msg.text).await?;
+    let response = match out.skill_match {
+        Some(name) => self.skills.invoke(&name, params).await?,
+        None => self.inference.complete(prompt).await?,
+    };
+    // 后台异步: memory pipeline
+    let mem = self.memory.clone();
+    tokio::spawn_blocking(move || mem.process(&sid, &msg.text, &out.intent));
+    // 广播 token_usage 事件
+    let _ = self.event_bus.send(EngineEvent::TokenUsage { ... });
+    Ok(ChatResponse { response, session_id: sid, token_usage })
+}
+</pre>
+依赖: openloom-router, openloom-skills, openloom-inference, openloom-memory, openloom-models, tokio
+  </div>
+</div>
+
+<h3 style="margin-top:16px;">crates/server/ — HTTP + WSS 服务</h3>
+<div class="mockup">
+  <div class="mockup-header">Axum + JSON-RPC 2.0</div>
+  <div class="mockup-body" style="padding:16px; font-family:monospace; font-size:12px;">
+<pre style="background:#1a1a2e;color:#e0e0e0;padding:12px;border-radius:8px;">
+端点:
+  GET  /health              → engine.health_check().await
+  GET  /ws                  → WebSocket upgrade (JSON-RPC 2.0 帧)
+  GET  /sse/{session_id}    → SSE token 流 (前端直连)
+  POST /api                 → JSON-RPC 2.0 (HTTP fallback)
+
+JSON-RPC 方法 (Phase 1):
+  chat.send, skill.invoke, skill.list, memory.query, memory.persona,
+  agent.status, cache.stats, config.get, config.set, system.health, system.shutdown
+
+服务端通知 (EventBus 订阅 → WSS 推送):
+  EngineEvent::CognitionUpdated → "cognition.updated"
+  EngineEvent::TokenUsage       → "token.usage"
+  EngineEvent::Error            → "error"
+</pre>
+依赖: axum, tower, tokio-tungstenite, openloom-engine, openloom-models (W13: 显式依赖)
+  </div>
+</div>
+
+<h3 style="margin-top:16px;">依赖关系图 (修正版)</h3>
+<div class="mockup">
+  <div class="mockup-header">Crate 依赖 (箭头 = "依赖")</div>
+  <div class="mockup-body" style="padding:16px; font-family:monospace; font-size:12px;">
+<pre style="background:#1a1a2e;color:#e0e0e0;padding:16px;border-radius:8px;">
+                    ┌─────────┐
+                    │   cli   │  async (tokio main)
+                    └────┬────┘
+                         │
+              ┌──────────┼──────────┐
+              │          │          │
+     ┌───────▼──┐  ┌────▼───┐  ┌───▼────────┐
+     │  server  │  │ engine │  │  memory     │  (sync, spawn_blocking)
+     └────┬─────┘  └───┬────┘  └─────────────┘
+          │            │
+          │      ┌─────┼─────┐
+          │      │     │     │
+          │  ┌───▼──┐┌─▼────┐┌▼──────────┐
+          │  │router││skills││ inference │  (async)
+          │  └──┬───┘└──────┘└─────┬─────┘
+          │     │                  │
+     ┌────▼─────▼──────────────────▼─────┐
+     │            models                 │  ← ALL crates depend
+     └───────────────────────────────────┘
+</pre>
+<p style="margin-top:8px;font-size:12px;color:#888;">
+关键: 所有 I/O 操作 async · memory 同步代码通过 spawn_blocking 桥接 · EngineEvent 统一定义在 models<br>
+server 不直接依赖 router/skills/inference，通过 engine 编排 · server 显式依赖 models 用于 JSON-RPC 类型
+</p>
+  </div>
+</div>
+</div>

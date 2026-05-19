@@ -91,8 +91,7 @@ impl SmartRouter {
 
     /// Register skill trigger words for matching
     pub fn register_skill_triggers(&mut self, name: &str, triggers: Vec<String>) {
-        self.skill_triggers
-            .push((name.to_string(), triggers));
+        self.skill_triggers.push((name.to_string(), triggers));
     }
 }
 

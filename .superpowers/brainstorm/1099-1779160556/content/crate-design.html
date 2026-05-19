@@ -1,0 +1,215 @@
+<h2>Phase 1 新增 Crate 设计</h2>
+<p class="subtitle">6 个新 crate 的职责、公开 API、依赖关系</p>
+
+<div class="section">
+<h3>1. crates/inference/ — 模型推理</h3>
+<div class="mockup">
+  <div class="mockup-header">职责 & API</div>
+  <div class="mockup-body" style="padding:16px; font-family:monospace; font-size:13px;">
+<strong>职责:</strong> 封装 llama-cpp-2，加载 GGUF 模型，提供文本补全<br><br>
+<strong>公开类型:</strong><br>
+<pre style="background:#1a1a2e;color:#e0e0e0;padding:8px;">
+struct InferenceEngine { ... }
+struct CompletionRequest { prompt, max_tokens, temperature, stream }
+struct CompletionResponse { text, prompt_tokens, completion_tokens }
+struct GpuInfo { vendor, vram_mb, supported }
+
+impl InferenceEngine {
+    fn load(model_path, n_gpu_layers) -> Result<Self>
+    fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse>
+    fn complete_stream(&self, req, tx: mpsc::Sender) -> Result<()>  // token 流
+    fn detect_gpu() -> GpuInfo
+    fn token_count(text: &str) -> usize  // GGUF tokenizer
+}
+</pre>
+<strong>依赖:</strong> llama-cpp-2, tokio, openloom-models<br>
+<strong>Feature flags:</strong> cuda, metal, vulkan (workspace 级透传)
+  </div>
+</div>
+</div>
+
+<div class="section">
+<h3>2. crates/router/ — 智能路由</h3>
+<div class="mockup">
+  <div class="mockup-header">职责 & API</div>
+  <div class="mockup-body" style="padding:16px; font-family:monospace; font-size:13px;">
+<strong>职责:</strong> 意图分类 + 复杂度评分 + 技能匹配<br><br>
+<strong>公开类型:</strong><br>
+<pre style="background:#1a1a2e;color:#e0e0e0;padding:8px;">
+struct RouterConfig { model_path, keyword_rules, fallback_threshold }
+struct ClassifyOutput {
+    intent: Intent,          // 意图标签
+    complexity: f32,         // 0.0 ~ 1.0
+    skill_match: Option<String>,  // 匹配到的 skill 名
+    confidence: f32,         // 分类置信度
+    target_model: TargetModel,
+}
+enum Intent { Chat, FileOperation, WebSearch, CodeAssist, Schedule, ... }
+enum TargetModel { Local, Cloud, None }  // None = skill 直接处理
+
+impl SmartRouter {
+    fn new(config: RouterConfig, engine: Arc<InferenceEngine>) -> Self
+    fn classify(&self, text: &str) -> ClassifyOutput
+    fn register_skill_triggers(&mut self, skill_name, triggers: Vec<String>)
+}
+</pre>
+<strong>内部流程:</strong> 关键词匹配(零token) → 命中→高置信度直接返回 → 未命中→调 Qwen3-1.7B 分类 → 置信度 < 0.7 → 降级标记<br>
+<strong>依赖:</strong> openloom-inference, regex, openloom-models
+  </div>
+</div>
+</div>
+
+<div class="section">
+<h3>3. crates/skills/ — 技能引擎</h3>
+<div class="mockup">
+  <div class="mockup-header">职责 & API</div>
+  <div class="mockup-body" style="padding:16px; font-family:monospace; font-size:13px;">
+<strong>职责:</strong> Skill 注册/发现/执行 + CLI Bridge 工具发现<br><br>
+<strong>公开类型:</strong><br>
+<pre style="background:#1a1a2e;color:#e0e0e0;padding:8px;">
+trait Skill: Send + Sync {
+    fn name() -> &'static str
+    fn manifest() -> SkillManifest      // triggers, permissions, context
+    fn invoke(&self, params: Value) -> Result<Value>
+    fn context_md() -> &'static str     // <= 200 tokens
+}
+
+struct SkillManifest { triggers: Vec<String>, permissions: Permissions, ... }
+struct SkillRegistry { ... }
+struct CliBridge { ... }
+
+impl SkillRegistry {
+    fn register(&mut self, skill: Box<dyn Skill>)
+    fn find_by_trigger(&self, text: &str) -> Option<&dyn Skill>
+    fn list_all() -> Vec<SkillInfo>
+    fn invoke(name, params) -> Result<Value>
+}
+
+impl CliBridge {
+    fn discover_path_tools() -> Vec<CliTool>  // 扫描 PATH 可执行文件
+    fn parse_help(binary: &str) -> CliTool    // --help 输出解析
+}
+</pre>
+<strong>5 个内置 Skill:</strong> FileManager, InfoRetriever, ScheduleReminder, CodeAssistant, WebBrowser<br>
+<strong>依赖:</strong> wasmtime (Phase 2), serde_json, which/where, openloom-models
+  </div>
+</div>
+</div>
+
+<div class="section">
+<h3>4. crates/engine/ — 编排引擎 (轻量)</h3>
+<div class="mockup">
+  <div class="mockup-header">职责 & API</div>
+  <div class="mockup-body" style="padding:16px; font-family:monospace; font-size:13px;">
+<strong>职责:</strong> EventBus + 请求派发 + 生命周期管理<br><br>
+<strong>公开类型:</strong><br>
+<pre style="background:#1a1a2e;color:#e0e0e0;padding:8px;">
+struct Engine {
+    router: SmartRouter,
+    skills: SkillRegistry,
+    inference: Arc<InferenceEngine>,
+    memory: MemoryPipeline,
+    event_bus: broadcast::Sender<EngineEvent>,
+}
+
+enum EngineEvent { CognitionUpdated(...), TokenUsed(...), StateChanged(...), Error(...) }
+
+impl Engine {
+    fn new(config: EngineConfig) -> Result<Self>
+    fn start() -> Result<JoinHandle<()>>  // 启动后台任务
+    fn handle_message(&self, msg: ChatMessage, session_id) -> Result<ChatResponse>
+    fn shutdown() -> Result<()>
+}
+</pre>
+<strong>请求流程:</strong> handle_message → router.classify → skill.invoke 或 inference.complete → 返回 → 后台 memory.process<br>
+<strong>依赖:</strong> openloom-router, openloom-skills, openloom-inference, openloom-memory, tokio
+  </div>
+</div>
+</div>
+
+<div class="section">
+<h3>5. crates/server/ — HTTP + WSS 服务</h3>
+<div class="mockup">
+  <div class="mockup-header">职责 & API</div>
+  <div class="mockup-body" style="padding:16px; font-family:monospace; font-size:13px;">
+<strong>职责:</strong> Axum HTTP + WebSocket + SSE + JSON-RPC 2.0<br><br>
+<strong>端点:</strong><br>
+<pre style="background:#1a1a2e;color:#e0e0e0;padding:8px;">
+GET  /health              → { status, uptime, gpu_info }
+GET  /ws                  → WebSocket upgrade (JSON-RPC 2.0 帧)
+GET  /sse/{session_id}    → SSE token 流 (前端直连)
+POST /api                 → JSON-RPC 2.0 (备选 HTTP fallback)
+</pre>
+<strong>JSON-RPC 方法 (Phase 1 实现):</strong>
+chat.send, skill.invoke, skill.list, memory.query, memory.persona,
+agent.status, cache.stats, config.get, config.set, system.health, system.shutdown<br><br>
+<strong>服务端通知:</strong> cognition.updated, token.usage, error<br>
+<strong>依赖:</strong> axum, tower, tokio-tungstenite, serde_json, openloom-engine
+  </div>
+</div>
+</div>
+
+<div class="section">
+<h3>6. crates/models/ — 扩展共享类型</h3>
+<div class="mockup">
+  <div class="mockup-header">新增类型</div>
+  <div class="mockup-body" style="padding:16px; font-family:monospace; font-size:13px;">
+<strong>现有 (Phase 0):</strong> ModelType, ModelConfig<br>
+<strong>Phase 1 新增:</strong><br>
+<pre style="background:#1a1a2e;color:#e0e0e0;padding:8px;">
+// 模型配置扩展 (Section 16.3)
+struct ModelProfile { name, path, model_type: ModelBackend, n_gpu_layers, context_size }
+enum ModelBackend { LlamaCpp, Anthropic, OpenAI, DeepSeek }
+
+// JSON-RPC 类型
+struct JsonRpcRequest { jsonrpc, method, params, id }
+struct JsonRpcResponse { jsonrpc, result?, error?, id }
+struct JsonRpcError { code: ErrorCode, message, data? }
+enum ErrorCode { ParseError=-32700, InvalidRequest=-32600, MethodNotFound=-32601,
+                 InternalError=-32603, ModelUnavailable=-32000, SkillFailed=-32001,
+                 PermissionDenied=-32002, Timeout=-32003 }
+
+// 引擎事件
+enum EngineEvent { CognitionUpdated { trait, old_value, new_value, confidence }, ... }
+
+// 配置 (Section 11.5)
+struct AppConfig { models: Vec<ModelProfile>, router: RouterPrefs, server: ServerPrefs, ... }
+</pre>
+  </div>
+</div>
+</div>
+
+<div class="section">
+<h3>依赖关系图</h3>
+<div class="mockup">
+  <div class="mockup-header">Crate 依赖 (箭头 = "依赖")</div>
+  <div class="mockup-body" style="padding:16px; font-family:monospace; font-size:12px; line-height:1.8;">
+<pre style="background:#1a1a2e;color:#e0e0e0;padding:16px;border-radius:8px;">
+                    ┌─────────┐
+                    │   cli   │  ← 用户入口 (analyze/chat/serve/run)
+                    └────┬────┘
+                         │
+              ┌──────────┼──────────┐
+              │          │          │
+     ┌───────▼──┐  ┌────▼───┐  ┌───▼────────┐
+     │  server  │  │ engine │  │  memory     │  ← Phase 0
+     └──────┬───┘  └───┬────┘  └─────────────┘
+            │          │
+            │    ┌─────┼─────┐
+            │    │     │     │
+            │  ┌─▼──┐┌▼───┐┌▼──────────┐
+            │  │router│skills│ inference │
+            │  └─────┘└─────┘└───────────┘
+            │
+     ┌──────▼──────┐
+     │   models    │  ← 所有 crate 都依赖
+     └─────────────┘
+</pre>
+<p style="margin-top:8px;font-size:12px;color:#888;">
+关键: cli 直接依赖 engine + server（serve 模式启动 server，chat 模式直接用 engine）<br>
+server 依赖 engine（轻量编排），不直接依赖 router/skills/inference<br>
+memory 作为独立管线，被 engine 异步调用
+</p>
+  </div>
+</div>
+</div>

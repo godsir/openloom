@@ -122,11 +122,7 @@ mod tests {
 
     #[test]
     fn test_token_count_estimation() {
-        let engine = InferenceEngine::load_blocking(
-            std::path::Path::new("dummy.gguf"),
-            0,
-        )
-        .unwrap();
+        let engine = InferenceEngine::load_blocking(std::path::Path::new("dummy.gguf"), 0).unwrap();
         let count = engine.token_count("hello world this is a test");
         assert!(count > 0);
     }
