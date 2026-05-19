@@ -1338,6 +1338,7 @@ name = "openloom-memory"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "openloom-models",
  "refinery",
@@ -1346,6 +1347,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
  "tracing",
 ]
 
@@ -1374,6 +1376,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "chrono",
  "futures",
  "openloom-engine",
  "openloom-models",
@@ -1402,6 +1405,7 @@ name = "openloom-weaver"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "openloom-cache",
  "openloom-models",
 ]

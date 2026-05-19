@@ -458,10 +458,8 @@ impl<'a> MessageStore<'a> {
         session_id: &str,
         messages: &[openloom_models::ChatMessage],
     ) -> anyhow::Result<()> {
-        let mut seq = self.max_seq(session_id)? + 1;
-        for msg in messages {
+        for (seq, msg) in (self.max_seq(session_id)? + 1..).zip(messages.iter()) {
             self.insert(session_id, seq, &msg.role, &msg.content)?;
-            seq += 1;
         }
         Ok(())
     }
@@ -699,8 +697,16 @@ mod message_store_tests {
         let store = MessageStore::new(&conn);
 
         let msgs = vec![
-            openloom_models::ChatMessage { role: "user".into(), content: "a".into(), timestamp: Utc::now() },
-            openloom_models::ChatMessage { role: "assistant".into(), content: "b".into(), timestamp: Utc::now() },
+            openloom_models::ChatMessage {
+                role: "user".into(),
+                content: "a".into(),
+                timestamp: Utc::now(),
+            },
+            openloom_models::ChatMessage {
+                role: "assistant".into(),
+                content: "b".into(),
+                timestamp: Utc::now(),
+            },
         ];
         store.insert_batch("s1", &msgs).unwrap();
         assert_eq!(store.max_seq("s1").unwrap(), 2);
