@@ -1,0 +1,12 @@
+[package]
+name = "openloom-router"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+openloom-models = { path = "../models" }
+openloom-inference = { path = "../inference" }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+anyhow = "1"
+tracing = "0.1"
