@@ -104,6 +104,9 @@ impl Engine {
                 };
                 self.inference.complete(req).await?.text
             }
+            TargetModel::Cloud => {
+                return Err(anyhow::anyhow!("Cloud model routing not yet implemented"));
+            }
         };
 
         // 3. Background: memory pipeline (fire-and-forget via channel)

@@ -95,6 +95,10 @@ impl SkillRegistry {
             .map(|s| s.as_ref())
     }
 
+    pub fn find_by_name(&self, name: &str) -> Option<&dyn Skill> {
+        self.skills.iter().find(|s| s.name() == name).map(|s| s.as_ref())
+    }
+
     pub fn list_all(&self) -> Vec<SkillInfo> {
         self.skills
             .iter()

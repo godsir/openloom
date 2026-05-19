@@ -1168,6 +1168,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "openloom-cache"
+version = "0.1.0"
+
+[[package]]
 name = "openloom-engine"
 version = "0.1.0"
 dependencies = [
@@ -1217,6 +1221,8 @@ dependencies = [
 name = "openloom-models"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "chrono",
  "serde",
  "serde_json",

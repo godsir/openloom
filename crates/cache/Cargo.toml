@@ -1,0 +1,6 @@
+[package]
+name = "openloom-cache"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

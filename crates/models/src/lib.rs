@@ -27,6 +27,8 @@ pub enum ModelBackend {
 pub struct ModelConfig {
     pub name: String,
     #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
     pub model_type: ModelType,
     #[serde(default)]
     pub backend: ModelBackend,
@@ -46,6 +48,7 @@ impl Default for ModelConfig {
     fn default() -> Self {
         Self {
             name: String::new(),
+            model: None,
             model_type: ModelType::Router,
             backend: ModelBackend::default(),
             path: None,
@@ -53,6 +56,22 @@ impl Default for ModelConfig {
             n_gpu_layers: 0,
             api_key_env: None,
         }
+    }
+}
+
+// === Persona provider ===
+
+#[async_trait::async_trait]
+pub trait PersonaProvider: Send + Sync {
+    async fn summarize(&self) -> anyhow::Result<String>;
+}
+
+pub struct NoopPersonaProvider;
+
+#[async_trait::async_trait]
+impl PersonaProvider for NoopPersonaProvider {
+    async fn summarize(&self) -> anyhow::Result<String> {
+        Ok(String::new())
     }
 }
 
@@ -87,6 +106,7 @@ impl std::fmt::Display for Intent {
 pub enum TargetModel {
     Local,
     None,
+    Cloud,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
