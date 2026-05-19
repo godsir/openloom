@@ -238,7 +238,11 @@ impl<'a> CognitionStore<'a> {
         Ok(self.conn.last_insert_rowid())
     }
 
-    pub fn query_by_subject(&self, subject: &str, limit: usize) -> anyhow::Result<Vec<CognitionRow>> {
+    pub fn query_by_subject(
+        &self,
+        subject: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<CognitionRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, subject, trait, value, confidence, evidence_count, first_seen, last_updated, version
              FROM cognitions WHERE subject = ?1 ORDER BY last_updated DESC LIMIT ?2",
@@ -389,6 +393,80 @@ impl<'a> TokenStore<'a> {
     }
 }
 
+// === MessageStore ===
+
+pub struct MessageStore<'a> {
+    conn: &'a Connection,
+}
+
+impl<'a> MessageStore<'a> {
+    pub fn new(conn: &'a Connection) -> Self {
+        Self { conn }
+    }
+
+    pub fn insert(
+        &self,
+        session_id: &str,
+        seq: usize,
+        role: &str,
+        content: &str,
+    ) -> anyhow::Result<i64> {
+        self.conn.execute(
+            "INSERT INTO message_history (session_id, seq, role, content, timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![session_id, seq, role, content, Utc::now().to_rfc3339()],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn recent(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<openloom_models::ChatMessage>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT role, content, timestamp FROM message_history
+             WHERE session_id = ?1 ORDER BY seq DESC LIMIT ?2",
+        )?;
+        let mut rows: Vec<openloom_models::ChatMessage> = stmt
+            .query_map(rusqlite::params![session_id, limit as i64], |row| {
+                let ts_str: String = row.get(2)?;
+                Ok(openloom_models::ChatMessage {
+                    role: row.get(0)?,
+                    content: row.get(1)?,
+                    timestamp: DateTime::parse_from_rfc3339(&ts_str)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.reverse(); // DESC -> chronological order
+        Ok(rows)
+    }
+
+    pub fn max_seq(&self, session_id: &str) -> anyhow::Result<usize> {
+        let seq: Option<i64> = self.conn.query_row(
+            "SELECT MAX(seq) FROM message_history WHERE session_id = ?1",
+            rusqlite::params![session_id],
+            |row| row.get(0),
+        )?;
+        Ok(seq.unwrap_or(0) as usize)
+    }
+
+    pub fn insert_batch(
+        &self,
+        session_id: &str,
+        messages: &[openloom_models::ChatMessage],
+    ) -> anyhow::Result<()> {
+        let mut seq = self.max_seq(session_id)? + 1;
+        for msg in messages {
+            self.insert(session_id, seq, &msg.role, &msg.content)?;
+            seq += 1;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,7 +596,9 @@ mod store_v2_tests {
         let conn = Connection::open(dir.path().join("test.db")).unwrap();
         setup_v2_tables(&conn);
         let store = CognitionStore::new(&conn);
-        store.insert("USER", "risk_tendency", "gambler_chase", 0.91, 5).unwrap();
+        store
+            .insert("USER", "risk_tendency", "gambler_chase", 0.91, 5)
+            .unwrap();
         let rows = store.query_by_subject("USER", 10).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].trait_name, "risk_tendency");
@@ -549,5 +629,82 @@ mod store_v2_tests {
         let (prompt, completion) = store.total_usage().unwrap();
         assert_eq!(prompt, 300);
         assert_eq!(completion, 150);
+    }
+}
+
+#[cfg(test)]
+mod message_store_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn setup_message_table(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS message_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp TEXT NOT NULL
+            );",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_message_insert_and_recent() {
+        let dir = tempdir().unwrap();
+        let conn = Connection::open(dir.path().join("test.db")).unwrap();
+        setup_message_table(&conn);
+        let store = MessageStore::new(&conn);
+
+        store.insert("s1", 1, "user", "hello").unwrap();
+        store.insert("s1", 2, "assistant", "hi there").unwrap();
+        store.insert("s1", 3, "user", "how are you").unwrap();
+
+        let recent = store.recent("s1", 2).unwrap();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].content, "hi there");
+        assert_eq!(recent[1].content, "how are you");
+    }
+
+    #[test]
+    fn test_message_max_seq() {
+        let dir = tempdir().unwrap();
+        let conn = Connection::open(dir.path().join("test.db")).unwrap();
+        setup_message_table(&conn);
+        let store = MessageStore::new(&conn);
+
+        assert_eq!(store.max_seq("s1").unwrap(), 0);
+        store.insert("s1", 1, "user", "a").unwrap();
+        store.insert("s1", 2, "assistant", "b").unwrap();
+        assert_eq!(store.max_seq("s1").unwrap(), 2);
+    }
+
+    #[test]
+    fn test_message_empty_session() {
+        let dir = tempdir().unwrap();
+        let conn = Connection::open(dir.path().join("test.db")).unwrap();
+        setup_message_table(&conn);
+        let store = MessageStore::new(&conn);
+        let recent = store.recent("nonexistent", 20).unwrap();
+        assert!(recent.is_empty());
+    }
+
+    #[test]
+    fn test_message_insert_batch() {
+        let dir = tempdir().unwrap();
+        let conn = Connection::open(dir.path().join("test.db")).unwrap();
+        setup_message_table(&conn);
+        let store = MessageStore::new(&conn);
+
+        let msgs = vec![
+            openloom_models::ChatMessage { role: "user".into(), content: "a".into(), timestamp: Utc::now() },
+            openloom_models::ChatMessage { role: "assistant".into(), content: "b".into(), timestamp: Utc::now() },
+        ];
+        store.insert_batch("s1", &msgs).unwrap();
+        assert_eq!(store.max_seq("s1").unwrap(), 2);
+        let recent = store.recent("s1", 10).unwrap();
+        assert_eq!(recent.len(), 2);
     }
 }
