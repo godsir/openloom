@@ -1303,11 +1303,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "openloom-cache",
  "openloom-inference",
  "openloom-memory",
  "openloom-models",
  "openloom-router",
  "openloom-skills",
+ "openloom-weaver",
+ "rusqlite",
  "serde_json",
  "tempfile",
  "tokio",
@@ -1392,6 +1395,15 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "openloom-weaver"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "openloom-cache",
+ "openloom-models",
 ]
 
 [[package]]

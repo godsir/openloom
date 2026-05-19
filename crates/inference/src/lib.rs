@@ -59,10 +59,11 @@ impl InferenceEngine {
     /// Complete text completion (returns full text at once)
     pub async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse> {
         let prompt_chars = req.prompt.chars().count();
+        let preview: String = req.prompt.chars().take(100).collect();
         let response = format!(
             "[openLoom] Local model (Qwen3-1.7B) is not yet loaded. Install the GGUF model file to enable inference.\n\nYour message ({} chars): {}...",
             prompt_chars,
-            &req.prompt[..req.prompt.len().min(100)]
+            preview
         );
         let response_tokens = response.chars().count() / 4;
         Ok(CompletionResponse {

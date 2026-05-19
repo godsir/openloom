@@ -9,6 +9,9 @@ openloom-router = { path = "../router" }
 openloom-skills = { path = "../skills" }
 openloom-inference = { path = "../inference" }
 openloom-memory = { path = "../memory" }
+openloom-weaver = { path = "../weaver" }
+openloom-cache = { path = "../cache" }
+rusqlite = { version = "0.32", features = ["bundled"] }
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }
 anyhow = "1"
 tracing = "0.1"

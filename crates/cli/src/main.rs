@@ -147,6 +147,7 @@ async fn main() -> anyhow::Result<()> {
             let engine = Engine::new(EngineConfig {
                 data_dir,
                 threshold: 3,
+                cloud_config: None,
             })?;
 
             let server = Server::new(engine);
@@ -161,6 +162,7 @@ async fn main() -> anyhow::Result<()> {
             let engine = Engine::new(EngineConfig {
                 data_dir,
                 threshold: 3,
+                cloud_config: None,
             })?;
 
             let sid = engine.create_session().await?.id;
@@ -194,6 +196,7 @@ async fn main() -> anyhow::Result<()> {
             let engine = Engine::new(EngineConfig {
                 data_dir,
                 threshold: 3,
+                cloud_config: None,
             })?;
 
             let sid = engine.create_session().await?.id;

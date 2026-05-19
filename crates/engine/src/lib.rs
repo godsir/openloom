@@ -1,14 +1,17 @@
 pub mod memory_thread;
 
 use anyhow::Result;
-use openloom_inference::{CompletionRequest, InferenceEngine};
+use openloom_cache::{NoopCache};
+use openloom_inference::{CloudClient, CompletionRequest, InferenceEngine};
 use openloom_models::*;
+use openloom_models::NoopPersonaProvider;
 use openloom_router::SmartRouter;
 use openloom_skills::{SkillRegistry, builtins};
-use std::collections::HashMap;
+use openloom_weaver::ContextWeaver;
+use openloom_memory::store::SessionStore;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
-use tokio::sync::broadcast;
+use std::sync::{Arc, mpsc};
+use tokio::sync::{broadcast, oneshot};
 
 // Re-export EngineEvent from models
 pub use openloom_models::EngineEvent;
@@ -17,14 +20,58 @@ pub struct Engine {
     router: SmartRouter,
     skills: SkillRegistry,
     inference: Arc<InferenceEngine>,
-    memory_tx: std::sync::mpsc::Sender<memory_thread::ProcessRequest>,
-    sessions: Arc<RwLock<HashMap<String, SessionInfo>>>,
+    cloud: Option<Arc<dyn CloudClient>>,
+    weaver: ContextWeaver,
+    memory_tx: mpsc::Sender<memory_thread::ProcessRequest>,
+    session_tx: mpsc::Sender<SessionCommand>,
     event_bus: broadcast::Sender<EngineEvent>,
+}
+
+#[allow(dead_code)]
+enum SessionCommand {
+    Create { reply: oneshot::Sender<SessionInfo> },
+    List { reply: oneshot::Sender<Vec<SessionInfo>> },
+    UpdateCount { id: String, count: usize },
 }
 
 pub struct EngineConfig {
     pub data_dir: PathBuf,
     pub threshold: usize,
+    pub cloud_config: Option<openloom_models::ModelConfig>,
+}
+
+fn spawn_session_thread(db_path: PathBuf) -> mpsc::Sender<SessionCommand> {
+    let (tx, rx) = mpsc::channel::<SessionCommand>();
+    std::thread::spawn(move || {
+        let conn = rusqlite::Connection::open(&db_path).expect("session db open");
+        conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                message_count INTEGER DEFAULT 0
+            );"
+        ).unwrap();
+        let store = SessionStore::new(&conn);
+        for cmd in rx {
+            match cmd {
+                SessionCommand::Create { reply } => {
+                    let id = uuid::Uuid::new_v4().to_string();
+                    let info = SessionInfo { id: id.clone(), created_at: chrono::Utc::now(), message_count: 0 };
+                    let _ = store.insert(&info.id, info.created_at);
+                    let _ = reply.send(info);
+                }
+                SessionCommand::List { reply } => {
+                    let sessions = store.list_all(100).unwrap_or_default();
+                    let _ = reply.send(sessions);
+                }
+                SessionCommand::UpdateCount { id, count } => {
+                    let _ = store.update_message_count(&id, count);
+                }
+            }
+        }
+    });
+    tx
 }
 
 impl Engine {
@@ -33,6 +80,7 @@ impl Engine {
         Self::new(EngineConfig {
             data_dir: db_path.parent().unwrap().to_path_buf(),
             threshold: 3,
+            cloud_config: None,
         })
     }
 
@@ -61,23 +109,35 @@ impl Engine {
             router.register_skill_triggers(skill.name(), manifest.triggers.clone());
         }
 
-        // 4. Memory pipeline in dedicated thread
+        // 4. Cloud client
+        let cloud: Option<Arc<dyn CloudClient>> = config.cloud_config.as_ref().and_then(|cfg| {
+            openloom_inference::create_cloud_client(cfg).ok().map(Arc::from)
+        });
+        router.set_cloud_available(cloud.is_some());
+
+        // 5. Weaver with stubs
+        let weaver = ContextWeaver::new(Arc::new(NoopCache), Arc::new(NoopPersonaProvider));
+
+        // 6. EventBus
+        let (event_tx, _) = broadcast::channel(256);
+
+        // 7. Memory pipeline in dedicated thread
         let db_path = config.data_dir.join("data").join("db.sqlite");
         let _ = std::fs::create_dir_all(db_path.parent().unwrap());
 
-        // 5. EventBus
-        let (event_tx, _) = broadcast::channel(256);
+        let memory_tx = memory_thread::spawn_memory_thread(db_path.clone(), config.threshold, event_tx.clone());
 
-        let memory_tx = memory_thread::spawn_memory_thread(db_path, config.threshold, event_tx.clone());
-
-        // 6. Wire skill triggers into router (router is mut after step 2)
+        // 8. Session persistence thread
+        let session_tx = spawn_session_thread(db_path);
 
         Ok(Self {
             router,
             skills,
             inference,
+            cloud,
+            weaver,
             memory_tx,
-            sessions: Arc::new(RwLock::new(HashMap::new())),
+            session_tx,
             event_bus: event_tx,
         })
     }
@@ -87,40 +147,42 @@ impl Engine {
         // 1. Classify intent
         let out = self.router.classify_sync(&msg.content);
 
-        // 2. Execute based on target model
+        // 2. Gather context for prompt assembly
+        let skill_ctx = out.skill_match.as_ref().and_then(|name| {
+            self.skills.find_by_name(name).map(|s| s.context_md().to_string())
+        });
+        let working_memory = self.get_working_memory(session_id)?;
+        let assembled = self.weaver.assemble(&msg.content, skill_ctx.as_deref(), &working_memory);
+
+        // 3. Execute based on target model
         let response = match out.target_model {
             TargetModel::None => {
-                let skill_name = out.skill_match.as_ref().ok_or_else(|| {
-                    anyhow::anyhow!("skill_match is None but target_model is None")
-                })?;
-                let params =
-                    serde_json::json!({"text": msg.content, "intent": out.intent.to_string()});
-                self.skills.invoke(skill_name, params).await?.to_string()
+                let name = out.skill_match.as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("skill_match is None but target_model is None"))?;
+                self.skills.invoke(name, serde_json::json!({"text": msg.content})).await?.to_string()
             }
             TargetModel::Local => {
-                let req = CompletionRequest {
-                    prompt: msg.content.clone(),
-                    ..Default::default()
-                };
-                self.inference.complete(req).await?.text
+                self.inference.complete(CompletionRequest { prompt: assembled.prompt.clone(), ..Default::default() }).await?.text
             }
             TargetModel::Cloud => {
-                // Forward-compatible: Router will produce Cloud once cloud_available is set in Task 5
-                return Err(anyhow::anyhow!("Cloud model routing not yet implemented"));
+                if let Some(ref cloud) = self.cloud {
+                    cloud.complete(CompletionRequest { prompt: assembled.prompt.clone(), ..Default::default() }).await?.text
+                } else {
+                    self.inference.complete(CompletionRequest { prompt: assembled.prompt.clone(), ..Default::default() }).await?.text
+                }
             }
         };
 
-        // 3. Background: memory pipeline (fire-and-forget via channel)
+        // 4. Background: memory pipeline (fire-and-forget via channel)
         let _ = self.memory_tx.send(memory_thread::ProcessRequest {
             session_id: session_id.to_string(),
             text: msg.content.clone(),
             context: out.intent.to_string(),
         });
 
-        let prompt_tokens = self.inference.token_count(&msg.content);
+        // 5. Broadcast token usage event
+        let prompt_tokens = self.inference.token_count(&assembled.prompt);
         let completion_tokens = self.inference.token_count(&response);
-
-        // 4. Broadcast token usage event
         let _ = self.event_bus.send(EngineEvent::TokenUsage {
             session_id: session_id.to_string(),
             model: "qwen3-1.7b".into(),
@@ -138,6 +200,10 @@ impl Engine {
         })
     }
 
+    fn get_working_memory(&self, _session_id: &str) -> Result<Vec<ChatMessage>> {
+        Ok(Vec::new())
+    }
+
     pub async fn health_check(&self) -> HealthStatus {
         let gpu = InferenceEngine::detect_gpu();
         HealthStatus {
@@ -148,18 +214,15 @@ impl Engine {
     }
 
     pub async fn create_session(&self) -> Result<SessionInfo> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let info = SessionInfo {
-            id: id.clone(),
-            created_at: chrono::Utc::now(),
-            message_count: 0,
-        };
-        self.sessions.write().unwrap().insert(id, info.clone());
-        Ok(info)
+        let (tx, rx) = oneshot::channel();
+        self.session_tx.send(SessionCommand::Create { reply: tx }).map_err(|e| anyhow::anyhow!("{}", e))?;
+        rx.await.map_err(|e| anyhow::anyhow!("{}", e))
     }
 
     pub async fn list_sessions(&self) -> Result<Vec<SessionInfo>> {
-        Ok(self.sessions.read().unwrap().values().cloned().collect())
+        let (tx, rx) = oneshot::channel();
+        self.session_tx.send(SessionCommand::List { reply: tx }).map_err(|e| anyhow::anyhow!("{}", e))?;
+        rx.await.map_err(|e| anyhow::anyhow!("{}", e))
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<EngineEvent> {

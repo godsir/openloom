@@ -1,7 +1,7 @@
 use openloom_memory::aggregator::PatternAggregator;
 use openloom_memory::extractor::RuleBasedExtractor;
 use openloom_memory::pipeline::MemoryPipeline;
-use openloom_memory::store::SqliteEventStore;
+use openloom_memory::store::{CognitionStore, SqliteEventStore};
 use openloom_models::EngineEvent;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -51,6 +51,14 @@ pub fn spawn_memory_thread(
                             new_value: cog.summary.clone(),
                             confidence: cog.confidence,
                         });
+                        let cognition_store = CognitionStore::new(pipeline.store().conn());
+                        let _ = cognition_store.insert(
+                            "USER",
+                            &cog.trait_name,
+                            &cog.summary,
+                            cog.confidence,
+                            cog.evidence_count,
+                        );
                     }
                 }
                 Err(e) => {

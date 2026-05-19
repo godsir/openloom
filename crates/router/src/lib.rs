@@ -13,6 +13,7 @@ pub struct RouterConfig {
 pub struct SmartRouter {
     config: RouterConfig,
     skill_triggers: Vec<(String, Vec<String>)>,
+    cloud_available: bool,
 }
 
 impl SmartRouter {
@@ -26,6 +27,7 @@ impl SmartRouter {
                 fallback_threshold: 0.7,
             },
             skill_triggers: Vec::new(),
+            cloud_available: false,
         }
     }
 
@@ -75,6 +77,8 @@ impl SmartRouter {
             (model, 0.3)
         } else if best_confidence >= self.config.fallback_threshold {
             (TargetModel::Local, 0.6)
+        } else if self.cloud_available {
+            (TargetModel::Cloud, 0.8)
         } else {
             (TargetModel::Local, 0.8)
         };
@@ -92,6 +96,11 @@ impl SmartRouter {
     /// Register skill trigger words for matching
     pub fn register_skill_triggers(&mut self, name: &str, triggers: Vec<String>) {
         self.skill_triggers.push((name.to_string(), triggers));
+    }
+
+    /// Set whether a cloud model is available for routing
+    pub fn set_cloud_available(&mut self, available: bool) {
+        self.cloud_available = available;
     }
 }
 
