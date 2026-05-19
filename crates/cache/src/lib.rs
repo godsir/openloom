@@ -1,3 +1,4 @@
+#[derive(Debug, Clone)]
 pub struct CachedPrefix {
     pub blocks: Vec<u8>,
     pub token_count: usize,

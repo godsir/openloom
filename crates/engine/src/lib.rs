@@ -105,6 +105,7 @@ impl Engine {
                 self.inference.complete(req).await?.text
             }
             TargetModel::Cloud => {
+                // Forward-compatible: Router will produce Cloud once cloud_available is set in Task 5
                 return Err(anyhow::anyhow!("Cloud model routing not yet implemented"));
             }
         };
