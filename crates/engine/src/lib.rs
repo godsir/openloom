@@ -1,18 +1,21 @@
 pub mod memory_thread;
 
 use anyhow::Result;
+use chrono::Utc;
 use openloom_cache::NoopCache;
 use openloom_inference::{CloudClient, CompletionRequest, InferenceEngine};
-use openloom_models::*;
 use openloom_memory::persona::CognitionsPersonaProvider;
 use openloom_memory::store::{MessageStore, SessionStore};
+use openloom_models::*;
 use openloom_router::SmartRouter;
 use openloom_skills::{SkillRegistry, builtins};
 use openloom_weaver::ContextWeaver;
 use std::path::PathBuf;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use tokio::sync::{broadcast, oneshot, RwLock};
-use chrono::Utc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use tokio::sync::{RwLock, broadcast, oneshot};
 
 pub use openloom_models::EngineEvent;
 
@@ -38,9 +41,16 @@ pub struct Engine {
 }
 
 enum SessionCommand {
-    Create { reply: oneshot::Sender<SessionInfo> },
-    List { reply: oneshot::Sender<Vec<SessionInfo>> },
-    UpdateCount { id: String, count: usize },
+    Create {
+        reply: oneshot::Sender<SessionInfo>,
+    },
+    List {
+        reply: oneshot::Sender<Vec<SessionInfo>>,
+    },
+    UpdateCount {
+        id: String,
+        count: usize,
+    },
 }
 
 pub struct EngineConfig {
@@ -57,14 +67,19 @@ fn spawn_session_thread(db_path: PathBuf) -> std::sync::mpsc::Sender<SessionComm
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY, created_at TEXT NOT NULL, message_count INTEGER DEFAULT 0
-            );"
-        ).unwrap();
+            );",
+        )
+        .unwrap();
         let store = SessionStore::new(&conn);
         for cmd in rx {
             match cmd {
                 SessionCommand::Create { reply } => {
                     let id = uuid::Uuid::new_v4().to_string();
-                    let info = SessionInfo { id: id.clone(), created_at: Utc::now(), message_count: 0 };
+                    let info = SessionInfo {
+                        id: id.clone(),
+                        created_at: Utc::now(),
+                        message_count: 0,
+                    };
                     let _ = store.insert(&info.id, info.created_at);
                     let _ = reply.send(info);
                 }
@@ -92,10 +107,15 @@ impl Engine {
 
     pub fn new(config: EngineConfig) -> Result<Self> {
         let inference = Arc::new(InferenceEngine::load_blocking(
-            &config.data_dir.join("models").join("qwen3-1.7b-q4_k_m.gguf"), 0,
+            &config
+                .data_dir
+                .join("models")
+                .join("qwen3-1.7b-q4_k_m.gguf"),
+            0,
         )?);
 
-        let mut router = SmartRouter::new_keywords_only(openloom_router::keywords::default_keyword_rules());
+        let mut router =
+            SmartRouter::new_keywords_only(openloom_router::keywords::default_keyword_rules());
         let mut skills = SkillRegistry::new();
         builtins::register_all(&mut skills);
         for skill in skills.all_skills() {
@@ -103,22 +123,34 @@ impl Engine {
             router.register_skill_triggers(skill.name(), manifest.triggers.clone());
         }
 
-        let cloud: Option<Arc<dyn CloudClient>> = config.cloud_config.as_ref()
-            .and_then(|cfg| openloom_inference::create_cloud_client(cfg).ok().map(Arc::from));
+        let cloud: Option<Arc<dyn CloudClient>> = config.cloud_config.as_ref().and_then(|cfg| {
+            openloom_inference::create_cloud_client(cfg)
+                .ok()
+                .map(Arc::from)
+        });
         router.set_cloud_available(cloud.is_some());
 
         let db_path = config.data_dir.join("data").join("db.sqlite");
         let _ = std::fs::create_dir_all(db_path.parent().unwrap());
 
-        let persona: Arc<dyn PersonaProvider> = Arc::new(CognitionsPersonaProvider::new(db_path.clone()));
+        let persona: Arc<dyn PersonaProvider> =
+            Arc::new(CognitionsPersonaProvider::new(db_path.clone()));
         let weaver = ContextWeaver::new(Arc::new(NoopCache));
 
         let (event_tx, _) = broadcast::channel(256);
-        let memory_tx = memory_thread::spawn_memory_thread(db_path.clone(), config.threshold, event_tx.clone());
+        let memory_tx =
+            memory_thread::spawn_memory_thread(db_path.clone(), config.threshold, event_tx.clone());
         let session_tx = spawn_session_thread(db_path.clone());
 
         let engine = Self {
-            router, skills, inference, cloud, weaver, persona, memory_tx, session_tx,
+            router,
+            skills,
+            inference,
+            cloud,
+            weaver,
+            persona,
+            memory_tx,
+            session_tx,
             event_bus: event_tx,
             agent_state: Arc::new(RwLock::new(AgentState::Idle)),
             interruptible: AtomicBool::new(false),
@@ -145,7 +177,11 @@ impl Engine {
 
     pub async fn handle_message(&self, msg: ChatMessage, session_id: &str) -> Result<ChatResponse> {
         // Atomic mid-turn check: compare_exchange ensures only one caller enters
-        if self.interruptible.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        if self
+            .interruptible
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
             return Err(anyhow::anyhow!("Agent is busy, please wait"));
         }
         // C1 fix: do NOT release the gate here — only at the end of each path
@@ -165,29 +201,59 @@ impl Engine {
         }
 
         // Simple path: direct dispatch based on router's target_model
-        let skill_ctx = out.skill_match.as_ref()
-            .and_then(|name| self.skills.find_by_name(name).map(|s| s.context_md().to_string()));
+        let skill_ctx = out.skill_match.as_ref().and_then(|name| {
+            self.skills
+                .find_by_name(name)
+                .map(|s| s.context_md().to_string())
+        });
         let working_memory = self.get_working_memory(session_id).unwrap_or_default();
         // Persona failure → empty string fallback
         let persona_summary = self.persona.summarize().await.unwrap_or_default();
         let assembled = self.weaver.assemble(
-            SYSTEM_INSTRUCTION, &msg.content, &persona_summary, skill_ctx.as_deref(), &working_memory,
+            SYSTEM_INSTRUCTION,
+            &msg.content,
+            &persona_summary,
+            skill_ctx.as_deref(),
+            &working_memory,
         );
 
         let response = match out.target_model {
             TargetModel::None => {
-                let name = out.skill_match.as_ref()
+                let name = out
+                    .skill_match
+                    .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("skill_match is None"))?;
-                self.skills.invoke(name, serde_json::json!({"text": msg.content})).await?.to_string()
+                self.skills
+                    .invoke(name, serde_json::json!({"text": msg.content}))
+                    .await?
+                    .to_string()
             }
             TargetModel::Local => {
-                self.inference.complete(CompletionRequest { prompt: assembled.prompt.clone(), ..Default::default() }).await?.text
+                self.inference
+                    .complete(CompletionRequest {
+                        prompt: assembled.prompt.clone(),
+                        ..Default::default()
+                    })
+                    .await?
+                    .text
             }
             TargetModel::Cloud => {
                 if let Some(ref cloud) = self.cloud {
-                    cloud.complete(CompletionRequest { prompt: assembled.prompt.clone(), ..Default::default() }).await?.text
+                    cloud
+                        .complete(CompletionRequest {
+                            prompt: assembled.prompt.clone(),
+                            ..Default::default()
+                        })
+                        .await?
+                        .text
                 } else {
-                    self.inference.complete(CompletionRequest { prompt: assembled.prompt.clone(), ..Default::default() }).await?.text
+                    self.inference
+                        .complete(CompletionRequest {
+                            prompt: assembled.prompt.clone(),
+                            ..Default::default()
+                        })
+                        .await?
+                        .text
                 }
             }
         };
@@ -207,11 +273,14 @@ impl Engine {
         // C1 fix: reset interruptible flag only at end of simple path
         self.interruptible.store(false, Ordering::SeqCst);
 
-        return Ok(ChatResponse {
+        Ok(ChatResponse {
             response,
             session_id: session_id.to_string(),
-            token_usage: TokenUsage { prompt_tokens, completion_tokens },
-        });
+            token_usage: TokenUsage {
+                prompt_tokens,
+                completion_tokens,
+            },
+        })
     }
 
     // === Agent Loop ===
@@ -229,45 +298,59 @@ impl Engine {
         let mut all_tool_messages: Vec<ChatMessage> = Vec::new();
         let mut last_response = String::new();
 
-        let outcome = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            async {
-                for _iteration in 0..3 {
-                    let persona_summary = self.persona.summarize().await.unwrap_or_default();
-                    let system_with_tools = SYSTEM_INSTRUCTION.replace("[tools]", &skill_list);
-                    let assembled = self.weaver.assemble(
-                        &system_with_tools, "", &persona_summary, None, &history,
-                    );
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(120), async {
+            for _iteration in 0..3 {
+                let persona_summary = self.persona.summarize().await.unwrap_or_default();
+                let system_with_tools = SYSTEM_INSTRUCTION.replace("[tools]", &skill_list);
+                let assembled =
+                    self.weaver
+                        .assemble(&system_with_tools, "", &persona_summary, None, &history);
 
-                    let response = self.invoke_model_raw(&assembled.prompt).await?;
+                let response = self.invoke_model_raw(&assembled.prompt).await?;
 
-                    if let Some(tool_call) = self.parse_tool_call(&response) {
-                        *self.agent_state.write().await = AgentState::Acting;
-                        let result = match self.execute_tool(&tool_call).await {
-                            Ok(output) => output,
-                            Err(e) => format!("Tool error: {}", e),
-                        };
-                        let ts = Utc::now();
-                        history.push(ChatMessage { role: "assistant".into(), content: response.clone(), timestamp: ts });
-                        history.push(ChatMessage { role: "tool".into(), content: result.clone(), timestamp: ts });
-                        all_tool_messages.push(ChatMessage { role: "assistant".into(), content: response, timestamp: ts });
-                        all_tool_messages.push(ChatMessage { role: "tool".into(), content: result, timestamp: ts });
-                    } else {
-                        last_response = response;
-                        break;
-                    }
+                if let Some(tool_call) = self.parse_tool_call(&response) {
+                    *self.agent_state.write().await = AgentState::Acting;
+                    let result = match self.execute_tool(&tool_call).await {
+                        Ok(output) => output,
+                        Err(e) => format!("Tool error: {}", e),
+                    };
+                    let ts = Utc::now();
+                    history.push(ChatMessage {
+                        role: "assistant".into(),
+                        content: response.clone(),
+                        timestamp: ts,
+                    });
+                    history.push(ChatMessage {
+                        role: "tool".into(),
+                        content: result.clone(),
+                        timestamp: ts,
+                    });
+                    all_tool_messages.push(ChatMessage {
+                        role: "assistant".into(),
+                        content: response,
+                        timestamp: ts,
+                    });
+                    all_tool_messages.push(ChatMessage {
+                        role: "tool".into(),
+                        content: result,
+                        timestamp: ts,
+                    });
+                } else {
+                    last_response = response;
+                    break;
                 }
-                Ok::<_, anyhow::Error>(last_response)
-            },
-        ).await;
+            }
+            Ok::<_, anyhow::Error>(last_response)
+        })
+        .await;
 
         *self.agent_state.write().await = AgentState::Idle;
         self.interruptible.store(false, Ordering::SeqCst);
 
         match outcome {
-            Ok(Ok(ref response)) if response.is_empty() => {
-                Err(anyhow::anyhow!("Agent loop produced no response after 3 iterations"))
-            }
+            Ok(Ok(ref response)) if response.is_empty() => Err(anyhow::anyhow!(
+                "Agent loop produced no response after 3 iterations"
+            )),
             Ok(Ok(response)) => {
                 let _ = self.save_all_messages(session_id, msg, &all_tool_messages, &response);
 
@@ -282,7 +365,10 @@ impl Engine {
                 Ok(ChatResponse {
                     response,
                     session_id: session_id.to_string(),
-                    token_usage: TokenUsage { prompt_tokens, completion_tokens },
+                    token_usage: TokenUsage {
+                        prompt_tokens,
+                        completion_tokens,
+                    },
                 })
             }
             Ok(Err(e)) => Err(e),
@@ -295,7 +381,8 @@ impl Engine {
         if skills.is_empty() {
             return "None".into();
         }
-        skills.iter()
+        skills
+            .iter()
             .map(|s| format!("{}: {}", s.name, s.description))
             .collect::<Vec<_>>()
             .join(", ")
@@ -303,12 +390,22 @@ impl Engine {
 
     async fn invoke_model_raw(&self, prompt: &str) -> Result<String> {
         if let Some(ref cloud) = self.cloud {
-            match cloud.complete(CompletionRequest { prompt: prompt.to_string(), ..Default::default() }).await {
+            match cloud
+                .complete(CompletionRequest {
+                    prompt: prompt.to_string(),
+                    ..Default::default()
+                })
+                .await
+            {
                 Ok(r) => return Ok(r.text),
                 Err(e) => tracing::warn!("Cloud failed, falling back to local: {}", e),
             }
         }
-        self.inference.complete(CompletionRequest { prompt: prompt.to_string(), ..Default::default() })
+        self.inference
+            .complete(CompletionRequest {
+                prompt: prompt.to_string(),
+                ..Default::default()
+            })
             .await
             .map(|r| r.text)
     }
@@ -347,15 +444,26 @@ impl Engine {
     }
 
     async fn execute_tool(&self, call: &ToolCall) -> Result<String> {
-        self.skills.invoke(&call.tool, call.params.clone()).await.map(|v| v.to_string())
+        self.skills
+            .invoke(&call.tool, call.params.clone())
+            .await
+            .map(|v| v.to_string())
     }
 
     // === Message persistence (non-fatal) ===
 
-    fn save_messages(&self, session_id: &str, user_msg: &ChatMessage, assistant_response: &str) -> Result<()> {
+    fn save_messages(
+        &self,
+        session_id: &str,
+        user_msg: &ChatMessage,
+        assistant_response: &str,
+    ) -> Result<()> {
         let conn = match rusqlite::Connection::open(&self.db_path) {
             Ok(c) => c,
-            Err(e) => { tracing::error!("save_messages: {}", e); return Ok(()); }
+            Err(e) => {
+                tracing::error!("save_messages: {}", e);
+                return Ok(());
+            }
         };
         let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
         let store = MessageStore::new(&conn);
@@ -369,10 +477,19 @@ impl Engine {
         Ok(())
     }
 
-    fn save_all_messages(&self, session_id: &str, user_msg: &ChatMessage, tool_msgs: &[ChatMessage], final_response: &str) -> Result<()> {
+    fn save_all_messages(
+        &self,
+        session_id: &str,
+        user_msg: &ChatMessage,
+        tool_msgs: &[ChatMessage],
+        final_response: &str,
+    ) -> Result<()> {
         let conn = match rusqlite::Connection::open(&self.db_path) {
             Ok(c) => c,
-            Err(e) => { tracing::error!("save_all_messages: {}", e); return Ok(()); }
+            Err(e) => {
+                tracing::error!("save_all_messages: {}", e);
+                return Ok(());
+            }
         };
         let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
         let store = MessageStore::new(&conn);
@@ -408,22 +525,34 @@ impl Engine {
 
     pub async fn health_check(&self) -> HealthStatus {
         let gpu = InferenceEngine::detect_gpu();
-        HealthStatus { status: "ok".into(), uptime: 0, gpu_info: gpu }
+        HealthStatus {
+            status: "ok".into(),
+            uptime: 0,
+            gpu_info: gpu,
+        }
     }
 
     pub async fn create_session(&self) -> Result<SessionInfo> {
         let (tx, rx) = oneshot::channel();
-        self.session_tx.send(SessionCommand::Create { reply: tx }).map_err(|e| anyhow::anyhow!("{}", e))?;
+        self.session_tx
+            .send(SessionCommand::Create { reply: tx })
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         rx.await.map_err(|e| anyhow::anyhow!("{}", e))
     }
 
     pub async fn list_sessions(&self) -> Result<Vec<SessionInfo>> {
         let (tx, rx) = oneshot::channel();
-        self.session_tx.send(SessionCommand::List { reply: tx }).map_err(|e| anyhow::anyhow!("{}", e))?;
+        self.session_tx
+            .send(SessionCommand::List { reply: tx })
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         rx.await.map_err(|e| anyhow::anyhow!("{}", e))
     }
 
-    pub async fn list_cognitions(&self, subject: &str, limit: usize) -> Result<Vec<openloom_memory::store::CognitionRow>> {
+    pub async fn list_cognitions(
+        &self,
+        subject: &str,
+        limit: usize,
+    ) -> Result<Vec<openloom_memory::store::CognitionRow>> {
         let conn = rusqlite::Connection::open(&self.db_path)?;
         let store = openloom_memory::store::CognitionStore::new(&conn);
         store.query_by_subject(subject, limit)
@@ -441,7 +570,11 @@ impl Engine {
         self.skills.list_all()
     }
 
-    pub async fn invoke_skill(&self, name: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+    pub async fn invoke_skill(
+        &self,
+        name: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
         self.skills.invoke(name, params).await
     }
 
@@ -483,7 +616,11 @@ mod tests {
     #[tokio::test]
     async fn test_handle_message_llm_path() {
         let (engine, _dir) = setup_test_engine().await;
-        let msg = ChatMessage { role: "user".into(), content: "hello".into(), timestamp: Utc::now() };
+        let msg = ChatMessage {
+            role: "user".into(),
+            content: "hello".into(),
+            timestamp: Utc::now(),
+        };
         let sid = engine.create_session().await.unwrap().id;
         let resp = engine.handle_message(msg, &sid).await.unwrap();
         assert_eq!(resp.session_id, sid);
@@ -500,7 +637,11 @@ mod tests {
     async fn test_event_bus_subscribe() {
         let (engine, _dir) = setup_test_engine().await;
         let mut rx = engine.subscribe();
-        let msg = ChatMessage { role: "user".into(), content: "hello".into(), timestamp: Utc::now() };
+        let msg = ChatMessage {
+            role: "user".into(),
+            content: "hello".into(),
+            timestamp: Utc::now(),
+        };
         let sid = engine.create_session().await.unwrap().id;
         engine.handle_message(msg, &sid).await.unwrap();
         let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await;
@@ -510,7 +651,11 @@ mod tests {
     #[tokio::test]
     async fn test_handle_message_skill_path() {
         let (engine, _dir) = setup_test_engine().await;
-        let msg = ChatMessage { role: "user".into(), content: "帮我管理文件".into(), timestamp: Utc::now() };
+        let msg = ChatMessage {
+            role: "user".into(),
+            content: "帮我管理文件".into(),
+            timestamp: Utc::now(),
+        };
         let sid = engine.create_session().await.unwrap().id;
         let resp = engine.handle_message(msg, &sid).await.unwrap();
         assert!(!resp.session_id.is_empty());
@@ -564,7 +709,9 @@ mod tests {
     #[test]
     fn test_agent_state_defaults_to_idle() {
         let (engine, _dir) = sync_setup();
-        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
         let state = rt.block_on(engine.agent_state());
         assert_eq!(state, AgentState::Idle);
     }

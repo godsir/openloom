@@ -56,7 +56,10 @@ impl ContextWeaver {
         );
         let prompt = format!("{}\n{}", static_prefix, dynamic_section);
 
-        AssembledPrompt { prompt, static_prefix_len }
+        AssembledPrompt {
+            prompt,
+            static_prefix_len,
+        }
     }
 }
 
@@ -102,8 +105,11 @@ mod tests {
     fn test_assemble_with_skill_context() {
         let weaver = make_weaver();
         let result = weaver.assemble(
-            SYSTEM_INSTRUCTION, "open file", "",
-            Some("file-manager: list/read/write files"), &[],
+            SYSTEM_INSTRUCTION,
+            "open file",
+            "",
+            Some("file-manager: list/read/write files"),
+            &[],
         );
         assert!(result.prompt.contains("[Skill Context]"));
         assert!(result.prompt.contains("file-manager"));
@@ -123,8 +129,11 @@ mod tests {
     fn test_static_prefix_before_dynamic() {
         let weaver = make_weaver();
         let result = weaver.assemble(
-            SYSTEM_INSTRUCTION, "test message", "用户画像：测试。",
-            Some("skill context"), &[],
+            SYSTEM_INSTRUCTION,
+            "test message",
+            "用户画像：测试。",
+            Some("skill context"),
+            &[],
         );
         let static_part = &result.prompt[..result.static_prefix_len];
         let dynamic_part = &result.prompt[result.static_prefix_len..];

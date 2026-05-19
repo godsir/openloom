@@ -62,8 +62,7 @@ impl InferenceEngine {
         let preview: String = req.prompt.chars().take(100).collect();
         let response = format!(
             "[openLoom] Local model (Qwen3-1.7B) is not yet loaded. Install the GGUF model file to enable inference.\n\nYour message ({} chars): {}...",
-            prompt_chars,
-            preview
+            prompt_chars, preview
         );
         let response_tokens = response.chars().count() / 4;
         Ok(CompletionResponse {
@@ -93,7 +92,10 @@ impl InferenceEngine {
             let info = String::from_utf8_lossy(&output.stdout);
             if let Some(line) = info.lines().next() {
                 let parts: Vec<&str> = line.split(',').collect();
-                let vendor = parts.first().map(|s| s.trim().to_string()).unwrap_or_default();
+                let vendor = parts
+                    .first()
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
                 let vram_mb = parts
                     .get(1)
                     .and_then(|s| s.trim().strip_suffix(" MiB"))
@@ -299,8 +301,7 @@ impl OpenAIClient {
             .unwrap_or("")
             .to_string();
         let prompt_tokens = json["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as usize;
-        let completion_tokens =
-            json["usage"]["completion_tokens"].as_u64().unwrap_or(0) as usize;
+        let completion_tokens = json["usage"]["completion_tokens"].as_u64().unwrap_or(0) as usize;
 
         Ok(CompletionResponse {
             text,

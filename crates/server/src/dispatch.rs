@@ -86,7 +86,8 @@ pub async fn dispatch_method(
             Ok(serde_json::to_value(session).unwrap_or_default())
         }
         "session.switch" => {
-            let session_id = params.as_ref()
+            let session_id = params
+                .as_ref()
                 .and_then(|p| p.get("session_id"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("default")
@@ -151,7 +152,9 @@ pub async fn dispatch_method(
         ),
         "agent.status" => {
             let state = engine.agent_state().await;
-            Ok(serde_json::json!({"state": state, "active_session": null, "model_info": {"router": "qwen3-1.7b"}}))
+            Ok(
+                serde_json::json!({"state": state, "active_session": null, "model_info": {"router": "qwen3-1.7b"}}),
+            )
         }
         "cache.stats" => {
             Ok(serde_json::json!({"hit_rate": 0.0, "block_count": 0, "total_size_mb": 0}))

@@ -12,7 +12,9 @@ pub trait KvCache: Send + Sync {
 pub struct NoopCache;
 
 impl KvCache for NoopCache {
-    fn lookup(&self, _hash: u64) -> Option<CachedPrefix> { None }
+    fn lookup(&self, _hash: u64) -> Option<CachedPrefix> {
+        None
+    }
     fn store(&self, _hash: u64, _blocks: CachedPrefix) {}
 }
 
@@ -29,7 +31,10 @@ mod tests {
     #[test]
     fn test_noop_cache_store_is_noop() {
         let cache = NoopCache;
-        let blocks = CachedPrefix { blocks: vec![1, 2, 3], token_count: 10 };
+        let blocks = CachedPrefix {
+            blocks: vec![1, 2, 3],
+            token_count: 10,
+        };
         cache.store(42, blocks);
         assert!(cache.lookup(42).is_none());
     }
