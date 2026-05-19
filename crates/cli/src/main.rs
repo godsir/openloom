@@ -238,7 +238,20 @@ async fn main() -> anyhow::Result<()> {
         },
         Commands::Memory { action } => match action {
             MemoryAction::Persona => {
-                println!("Persona: Phase 2 will display cognition summary");
+                let data_dir = dirs::data_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join("openLoom");
+                let engine = Engine::new(EngineConfig {
+                    data_dir,
+                    threshold: 3,
+                    cloud_config: None,
+                })?;
+                let summary = engine.persona_summary().await;
+                if summary.is_empty() {
+                    println!("No persona data yet. Interact more to build a cognition profile.");
+                } else {
+                    println!("{}", summary);
+                }
             }
             MemoryAction::Events { limit } => {
                 println!("Showing last {} events (Phase 2 storage query)", limit);

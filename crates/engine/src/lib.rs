@@ -133,6 +133,13 @@ impl Engine {
         let db_path = config.data_dir.join("data").join("db.sqlite");
         let _ = std::fs::create_dir_all(db_path.parent().unwrap());
 
+        // Ensure all migrations are applied before any subsystem opens the DB
+        {
+            let mut conn = rusqlite::Connection::open(&db_path)?;
+            conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+            openloom_memory::store::SqliteEventStore::run_migrations(&mut conn)?;
+        }
+
         let persona: Arc<dyn PersonaProvider> =
             Arc::new(CognitionsPersonaProvider::new(db_path.clone()));
         let weaver = ContextWeaver::new(Arc::new(NoopCache));
