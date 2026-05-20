@@ -69,32 +69,30 @@ pub fn load_blocking(model_path: &Path, n_gpu_layers: usize) -> Result<Self> {
         anyhow::bail!("Model file not found: {}", model_path.display());
     }
     
-    LlamaBackend::init()?;
+    let backend = LlamaBackend::init()?; // init once
     let model = LlamaModel::load_from_file(
-        &LlamaBackend::init()?,
-        model_path,
+        &backend, model_path,
         &LlamaModelParams::default().with_n_gpu_layers(n_gpu_layers as u32),
     )?;
     let ctx = model.new_context(
-        &LlamaBackend::init()?,
-        LlamaContextParams::default().with_n_ctx(NonZeroU32::new(4096).unwrap()),
+        &backend, LlamaContextParams::default().with_n_ctx(NonZeroU32::new(4096).unwrap()),
     )?;
     
     let (tx, rx) = mpsc::channel::<EngineCommand>();
     
     std::thread::spawn(move || {
-        let sampler = LlamaSampler::chain_simple([
-            LlamaSampler::temp(0.7),
-            LlamaSampler::top_p(0.95),
-            LlamaSampler::greedy(),
-        ]);
-        for cmd in rx {
-            match cmd { /* handle each command */ }
-        }
+        let sampler = LlamaSampler::chain_simple([/* temp, top_p, greedy */]);
+        for cmd in rx { /* handle each command */ }
     });
     
     Ok(Self { sender: Some(tx) })
 }
+```
+
+**`inference/Cargo.toml` 需确保 reqwest 开启 `stream` feature：**
+```toml
+reqwest = { version = "0.12", features = ["json", "stream"] }
+```
 
 #[cfg(not(feature = "llama"))]  // stub fallback
 pub fn load_blocking(model_path: &Path, _n_gpu_layers: usize) -> Result<Self> {
@@ -104,7 +102,34 @@ pub fn load_blocking(model_path: &Path, _n_gpu_layers: usize) -> Result<Self> {
 
 **`complete()`：** 若 `sender.is_some()`，send command → await oneshot reply。否则返回当前 stub 文本。
 
-**`complete_stream()`：** 同上，但用 `EngineCommand::CompleteStream`，worker thread 逐 token push。
+**`complete_stream()`：** 若 sender.is_some()，send `EngineCommand::CompleteStream`。Worker thread 通过 **std::mpsc** 逐 token push（因为 worker 是 `std::thread`）。SSE handler（tokio context）创建的 `tokio::mpsc::channel` 通过一个中间 `std::thread::spawn` 桥接到 worker 的 `std::mpsc::Sender`：
+
+```
+SSE handler (tokio)                inference worker (std::thread)
+  tokio::mpsc::Sender ──bridge──▶ std::mpsc::Sender
+         │                              │
+    Sse::new(stream)              LlamaModel::complete_stream()
+```
+
+```rust
+// inference/src/lib.rs — bridge pattern for streaming
+pub async fn complete_stream(&self, req: CompletionRequest, token_tx: tokio::sync::mpsc::Sender<String>) -> Result<()> {
+    #[cfg(feature = "llama")]
+    if let Some(ref sender) = self.sender {
+        let (std_tx, std_rx) = std::sync::mpsc::channel::<String>();
+        sender.send(EngineCommand::CompleteStream { prompt: req.prompt, max_tokens: req.max_tokens, token_tx: std_tx })?;
+        // Bridge: std::mpsc::Receiver → tokio::mpsc::Sender
+        std::thread::spawn(move || {
+            for token in std_rx {
+                if token_tx.blocking_send(token).is_err() { break; }
+            }
+        });
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    Ok(())
+}
+```
 
 **`token_count()`：** 若 sender.is_some()，send `TokenCount` command，worker 调 `model.str_to_token().len()`。否则保持 `chars/4`。
 
@@ -198,7 +223,7 @@ async function sendMessage() {
 
 **架构：** `MemoryPipeline` 加 `CognitionExtractor` enum。`memory_thread` 启动时尝试加载 Qwen3-8B，成功则 `LlmBased`，失败回退 `RuleBased`。
 
-**CognitionExtractor：**
+**CognitionExtractor（保留现有 `MemoryPipeline::new()` 向后兼容，新增 `new_with_extractor()`）：**
 ```rust
 // memory/src/pipeline.rs
 pub enum CognitionExtractor {
@@ -207,12 +232,39 @@ pub enum CognitionExtractor {
 }
 
 impl MemoryPipeline {
+    // 现有 3 参数构造函数不变
+    pub fn new(extractor: RuleBasedExtractor, aggregator: PatternAggregator, store: SqliteEventStore) -> Self { /* unchanged */ }
+    
+    // 新增 4 参数构造函数
     pub fn new_with_extractor(
         extractor: RuleBasedExtractor,
         aggregator: PatternAggregator,
         store: SqliteEventStore,
         cognition: Option<CognitionExtractor>,
-    ) -> Self { /* ... */ }
+    ) -> Self { /* new fields */ }
+}
+```
+
+**!Send 安全说明：** `LlamaModel`/`LlamaContext`/`LlamaSampler` 是 `!Send`。它们必须在 `memory_thread` 的 `std::thread::spawn` 闭包内创建，然后传入 `MemoryPipeline::new_with_extractor()`——MemoryPipeline 在同一线程中使用，不跨线程移动，安全。
+
+**memory_thread.rs 修改（先加载 8B 再创建 pipeline）：**
+```rust
+pub fn spawn_memory_thread(
+    db_path: PathBuf, threshold: usize,
+    event_tx: broadcast::Sender<EngineEvent>,
+    summarizer_path: Option<PathBuf>,  // NEW
+) -> mpsc::Sender<ProcessRequest> {
+    std::thread::spawn(move || {
+        let cognition = summarizer_path.and_then(|p| {
+            // Try load 8B; return None on failure → fallback to RuleBased
+            LlamaBackend::init().ok()?;
+            let model = LlamaModel::load_from_file(/* ... */).ok()?;
+            // ...
+            Some(CognitionExtractor::LlmBased { model, ctx, sampler })
+        });
+        let mut pipeline = MemoryPipeline::new_with_extractor(/* ... */, cognition);
+        // rest of loop unchanged
+    })
 }
 ```
 
@@ -312,10 +364,26 @@ HeartbeatTick {
 },
 ```
 
-**配置参数（EngineConfig 新增）：**
+**EngineConfig 新增字段：**
 ```rust
-pub heartbeat_interval_secs: u64,     // default 1800 (30 min)
-pub heartbeat_idle_threshold_min: u64, // default 120 (2 hours)
+pub struct EngineConfig {
+    pub data_dir: PathBuf,
+    pub threshold: usize,
+    pub cloud_config: Option<openloom_models::ModelConfig>,
+    pub rate_limit_ms: u64,
+    // NEW Phase 3A
+    pub heartbeat_interval_secs: u64,     // default 1800 (30 min)
+    pub heartbeat_idle_threshold_min: u64, // default 120 (2 hours)
+}
+```
+
+**Engine 新增 `last_user_message` 字段（handle_message 中每次收到用户消息时更新）：**
+```rust
+pub struct Engine {
+    // ... existing fields ...
+    // NEW Phase 3A
+    last_user_message: Instant,
+}
 ```
 
 ### 3.5 云端 Streaming

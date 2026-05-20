@@ -3,7 +3,7 @@
 **版本:** 1.0
 **日期:** 2026-05-20
 **状态:** 设计完成
-**前置:** Phase 3A (AI Activation)
+**前置:** Phase 3A (AI Activation) — llama-cpp-2 真实推理后端必须在 Phase 3A 完成后才可用。`SafetensorsCache` 依赖 `LlamaContext::state_get_data()` / `state_set_data()` API。
 
 ---
 
@@ -50,7 +50,13 @@
     meta.json                 ← token 范围, 创建时间, 命中次数
 ```
 
-**实现路径：**
+**实现路径（依赖 Phase 3A 的 llama-cpp-2 集成）：**
+
+**`cache/Cargo.toml` 新增依赖：**
+```toml
+safetensors = "0.4"
+sha2 = "0.10"
+```
 
 ```rust
 // crates/cache/src/lib.rs
@@ -74,13 +80,30 @@ impl KvCache for SafetensorsCache {
 }
 ```
 
-**Engine 集成：** `ContextWeaver::assemble()` 返回 `static_prefix_len` 后，Engine 在推理完成时将 KV cache 块写入 `SafetensorsCache`。`SafetensorsCache::lookup()` 在下次相同 prefix 时返回缓存块，推理引擎跳过 prefill。
-
-**注意：** llama-cpp-2 的 KV cache save/restore API 需要通过 `LlamaContext::state_get_size()` / `state_get_data()` / `state_set_data()` 实现——这是标准 API，v0.1.146 支持。
+**Weaver 集成修复（Phase 3B 需要）：**
+- `prefix_hash = 0u64` → 改为 `sha2::Sha256::digest(static_prefix.as_bytes())` 的前 8 字节转 u64
+- `static_prefix_len` 当前是字符数 → 需要 tokenizer 转为 token 数（调用 InferenceEngine::token_count），先标记为 `// FIXME: use token count, not char count`，Phase 3A 提供真实 tokenizer 后修复
 
 ### 3.2 安全沙箱
 
-**当前状态：** `SkillPermissions` 定义在 `models` 中，但权限检查完全跳过。所有 5 个内置 Skill 有完整系统访问权限。
+**当前状态：** `SkillPermissions` 定义在 `crates/skills/src/lib.rs`（非 models），权限检查在 `SkillRegistry::invoke()` 中完全跳过。
+
+**集成点 —— `SkillRegistry::invoke()` 调用前插入权限检查：**
+```rust
+// skills/src/lib.rs — invoke() 方法
+pub async fn invoke(&self, name: &str, params: Value) -> Result<Value> {
+    let skill = self.find_by_name(name)
+        .ok_or_else(|| anyhow::anyhow!("skill not found: {}", name))?;
+    
+    // NEW: permission check
+    let permissions = skill.manifest().permissions;
+    sandbox::check_permissions(&permissions, name, &params)?;
+    
+    skill.invoke(params).await
+}
+```
+
+`sandbox::check_permissions()` 从 `crates/sandbox/src/lib.rs` 导出，对 `SkillPermissions` 的每个字段进行白名单/黑名单校验。
 
 **设计：** 新建 `sandbox` crate。
 
@@ -142,10 +165,49 @@ crates/engine/src/
 // 4. 手动创建/编辑 cognition（调用新的 memory.cognition_upsert）
 ```
 
-**新增 JSON-RPC 方法：**
+**新增 JSON-RPC 方法 + Engine 转发：**
 ```rust
-"memory.cognition_snapshots" → engine.snapshots_for(id)
-"memory.cognition_rollback" → engine.rollback_cognition(id, version)
+// server/dispatch.rs
+"memory.cognition_snapshots" => {
+    let id = params["cognition_id"].as_i64().unwrap_or(0);
+    let snapshots = engine.cognition_snapshots(id).await?;
+    Ok(serde_json::json!({"snapshots": snapshots}))
+}
+"memory.cognition_rollback" => {
+    let id = params["cognition_id"].as_i64().unwrap_or(0);
+    let version = params["version"].as_i64().unwrap_or(1);
+    engine.rollback_cognition(id, version).await?;
+    Ok(serde_json::json!({"ok": true}))
+}
+```
+
+**Engine 新增转发方法：**
+```rust
+// engine/src/lib.rs
+pub async fn cognition_snapshots(&self, cognition_id: i64) -> Result<Vec<CognitionSnapshot>> {
+    let conn = rusqlite::Connection::open(&self.db_path)?;
+    let store = CognitionStore::new(&conn);
+    store.snapshots_for(cognition_id)
+}
+
+pub async fn rollback_cognition(&self, cognition_id: i64, version: i64) -> Result<()> {
+    let conn = rusqlite::Connection::open(&self.db_path)?;
+    let store = CognitionStore::new(&conn);
+    // 1. Get snapshot at target version
+    let snapshots = store.snapshots_for(cognition_id)?;
+    let target = snapshots.iter().find(|s| s.version == version)
+        .ok_or_else(|| anyhow::anyhow!("version {} not found", version))?;
+    // 2. Restore: update cognitions row with snapshot values (creates new version)
+    store.insert("USER", &target.trait_name, &target.value, target.confidence, target.evidence_count)?;
+    // 3. Emit event
+    let _ = self.event_bus.send(EngineEvent::CognitionUpdated {
+        trait_name: target.trait_name.clone(),
+        old_value: String::new(),
+        new_value: target.value.clone(),
+        confidence: target.confidence,
+    });
+    Ok(())
+}
 ```
 
 ### 3.5 跨平台打包
@@ -174,6 +236,30 @@ electron/
     "linux": { "target": "AppImage" }
 }
 ```
+
+### 3.6 跨切面修复（Phase 3B 依赖 Phase 3A 完成后才能改的部分）
+
+**Weaver prefix_hash 修复：**
+- 当前 `weaver/src/lib.rs:32` 硬编码 `prefix_hash = 0u64`
+- 改为 `let prefix_hash = u64::from_le_bytes(Sha256::digest(static_prefix.as_bytes())[..8].try_into().unwrap());`
+- `cache/Cargo.toml` 需加 `sha2 = "0.10"`（同上，已在 3.1 添加）
+
+**static_prefix_len 修复：**
+- 当前是 `static_prefix.len()`（字符数）→ 需要 token 数
+- Phase 3A 完成后 `InferenceEngine::token_count()` 返回真实 token 数
+- Phase 3B 改为调用 `weaver.cache.token_count(static_prefix)` → 暂标记 `// FIXME: use token count`
+
+**Engine cache_stats() 接入 SafetensorsCache：**
+- 当前 `engine/src/lib.rs` 返回硬编码 `CacheStats { hit_rate: 0.0, ... }`
+- Phase 3B 改为 `self.weaver.cache().stats()`（通过 weaver 暴露的 `Arc<dyn KvCache>` → 自动路由到 SafetensorsCache）
+
+**electron-builder 依赖：**
+```bash
+cd electron && npm install --save-dev electron-builder
+```
+`electron/package.json` 加 build 配置（见 Section 3.5）。
+
+**Engine lib.rs 行数修正：** 当前实测 985 行（非 spec 原估 730 行）。
 
 ---
 
