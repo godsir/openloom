@@ -133,6 +133,7 @@ pub async fn dispatch_method(
                 .iter()
                 .map(|c| {
                     serde_json::json!({
+                        "id": c.id,
                         "trait": c.trait_name,
                         "value": c.value,
                         "confidence": c.confidence,
@@ -158,11 +159,14 @@ pub async fn dispatch_method(
                 .and_then(|p| p.get("limit"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(20) as usize;
-            let events = engine.search_events(query, limit).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            let events = engine
+                .search_events(query, limit)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"events": events, "cognitions": []}))
         }
         "agent.status" => {
@@ -173,7 +177,9 @@ pub async fn dispatch_method(
         }
         "cache.stats" => {
             let stats = engine.cache_stats();
-            Ok(serde_json::json!({"hit_rate": stats.hit_rate, "block_count": stats.block_count, "total_size_mb": stats.total_size_mb}))
+            Ok(
+                serde_json::json!({"hit_rate": stats.hit_rate, "block_count": stats.block_count, "total_size_mb": stats.total_size_mb}),
+            )
         }
         "system.shutdown" => {
             engine.shutdown().await.map_err(|e| JsonRpcError {
@@ -184,7 +190,10 @@ pub async fn dispatch_method(
             Ok(serde_json::json!({"ok": true}))
         }
         "config.get" => {
-            let key = params.as_ref().and_then(|p| p.get("key")).and_then(|v| v.as_str());
+            let key = params
+                .as_ref()
+                .and_then(|p| p.get("key"))
+                .and_then(|v| v.as_str());
             let config = engine.get_config(key).await;
             Ok(serde_json::json!({"config": config}))
         }
@@ -199,11 +208,51 @@ pub async fn dispatch_method(
                 .and_then(|p| p.get("value"))
                 .map(|v| v.to_string())
                 .unwrap_or_default();
-            engine.set_config(key, &value).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            engine
+                .set_config(key, &value)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
+            Ok(serde_json::json!({"ok": true}))
+        }
+        "memory.cognition_snapshots" => {
+            let id = params
+                .as_ref()
+                .and_then(|p| p.get("cognition_id"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as i64;
+            let snapshots = engine
+                .cognition_snapshots(id)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
+            Ok(serde_json::json!({"snapshots": snapshots}))
+        }
+        "memory.cognition_rollback" => {
+            let id = params
+                .as_ref()
+                .and_then(|p| p.get("cognition_id"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as i64;
+            let version = params
+                .as_ref()
+                .and_then(|p| p.get("version"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1) as i64;
+            engine
+                .rollback_cognition(id, version)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": true}))
         }
         _ => Err(JsonRpcError {

@@ -3,7 +3,7 @@ import Sidebar from './components/Sidebar';
 import ChatArea from './components/ChatArea';
 import SettingsPanel from './components/SettingsPanel';
 import TokenDashboard from './components/TokenDashboard';
-import PersonaPanel from './components/PersonaPanel';
+import CognitionAuditPanel from './components/CognitionAuditPanel';
 
 type View = 'chat' | 'settings' | 'dashboard' | 'persona';
 
@@ -75,7 +75,7 @@ export default function App() {
                 {activeView === 'chat' && <ChatArea sessionId={activeSession} />}
                 {activeView === 'settings' && <SettingsPanel />}
                 {activeView === 'dashboard' && <TokenDashboard />}
-                {activeView === 'persona' && <PersonaPanel />}
+                {activeView === 'persona' && <CognitionAuditPanel />}
             </main>
         </div>
     );

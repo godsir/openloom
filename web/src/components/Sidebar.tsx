@@ -28,7 +28,7 @@ export default function Sidebar({
     const navItems: { view: View; label: string; icon: string }[] = [
         { view: 'chat', label: 'Chat', icon: '💬' },
         { view: 'dashboard', label: 'Dashboard', icon: '📊' },
-        { view: 'persona', label: 'Persona', icon: '🧠' },
+        { view: 'persona', label: 'Audit', icon: '🧠' },
         { view: 'settings', label: 'Settings', icon: '⚙️' },
     ];
 

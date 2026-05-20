@@ -187,6 +187,7 @@ pub struct CognitionRow {
 }
 
 /// A historical snapshot of a cognition entry, saved before each update.
+#[derive(Debug, Clone, Serialize)]
 pub struct CognitionSnapshot {
     pub id: i64,
     pub cognition_id: i64,
