@@ -4,6 +4,10 @@ use openloom_engine::EngineConfig;
 use openloom_models::{AppConfig, ChatMessage};
 use openloom_server::Server;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+mod chat_tui;
+mod download;
 
 #[derive(Parser)]
 #[command(name = "openloom", about = "Local-first private AI assistant", version)]
@@ -67,6 +71,24 @@ enum Commands {
     },
     /// System diagnostic
     Doctor,
+    /// Download a GGUF model from ModelScope
+    DownloadModel {
+        /// ModelScope repo ID (default: Qwen/Qwen3-1.7B-GGUF)
+        #[arg(long, default_value = "Qwen/Qwen3-1.7B-GGUF")]
+        repo: String,
+        /// File to download (default: Qwen3-1.7B-Q4_K_M.gguf)
+        #[arg(long, default_value = "Qwen3-1.7B-Q4_K_M.gguf")]
+        file: String,
+        /// Output directory (default: platform data dir /models/)
+        #[arg(long)]
+        output: Option<String>,
+        /// List available files in the repo instead of downloading
+        #[arg(long)]
+        list: bool,
+        /// Overwrite existing file
+        #[arg(long)]
+        force: bool,
+    },
     /// Version info
     Version,
 }
@@ -137,9 +159,13 @@ fn load_config(custom_path: Option<&str>) -> AppConfig {
 
 fn build_engine(config: Option<&str>, rate_limit_ms: u64) -> anyhow::Result<Engine> {
     let app_config = load_config(config);
-    let data_dir = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("openLoom");
+    let data_dir = if app_config.storage.data_dir.as_os_str().is_empty() {
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("openLoom")
+    } else {
+        app_config.storage.data_dir.clone()
+    };
     let cloud_config = app_config
         .models
         .iter()
@@ -195,30 +221,8 @@ async fn main() -> anyhow::Result<()> {
             server.serve(port).await?;
         }
         Commands::Chat { config } => {
-            let engine = build_engine(config.as_deref(), 100)?;
-
-            let sid = engine.create_session().await?.id;
-            println!("openLoom chat (type /exit to quit)");
-            loop {
-                let mut line = String::new();
-                std::io::stdin().read_line(&mut line)?;
-                let line = line.trim().to_string();
-                if line == "/exit" {
-                    break;
-                }
-                if line.is_empty() {
-                    continue;
-                }
-                let msg = ChatMessage {
-                    role: "user".into(),
-                    content: line,
-                    timestamp: chrono::Utc::now(),
-                };
-                match engine.handle_message(msg, &sid).await {
-                    Ok(resp) => println!("{}", resp.response),
-                    Err(e) => eprintln!("Error: {}", e),
-                }
-            }
+            let engine = Arc::new(build_engine(config.as_deref(), 100)?);
+            chat_tui::run(engine).await?;
         }
         Commands::Run { task, config } => {
             let engine = build_engine(config.as_deref(), 100)?;
@@ -357,6 +361,30 @@ async fn main() -> anyhow::Result<()> {
                 .join("openLoom");
             println!("Data dir: {}", data_dir.display());
             println!("Config: {}", config_path(None).display());
+            // MSVC toolchain detection for Windows users
+            #[cfg(target_os = "windows")]
+            {
+                println!();
+                println!("MSVC Toolchain Detection:");
+                println!("------------------------");
+                detect_msvc_toolchain(&data_dir);
+            }
+        }
+        Commands::DownloadModel {
+            repo,
+            file,
+            output,
+            list,
+            force,
+        } => {
+            download::run(download::DownloadOpts {
+                repo,
+                file,
+                output: output.map(PathBuf::from),
+                list,
+                force,
+            })
+            .await?;
         }
         Commands::Version => {
             println!("openLoom {}", env!("CARGO_PKG_VERSION"));
@@ -458,6 +486,141 @@ fn run_analyze(
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn detect_msvc_toolchain(data_dir: &std::path::Path) {
+    // Find VS BuildTools installation
+    let vs_base = std::path::Path::new("C:/Program Files (x86)/Microsoft Visual Studio/2022");
+    let editions = ["BuildTools", "Community", "Professional", "Enterprise"];
+
+    let mut found_msvc = None;
+    let mut found_sdk = None;
+
+    for edition in &editions {
+        let vc_dir = vs_base.join(edition).join("VC/Tools/MSVC");
+        if let Ok(entries) = std::fs::read_dir(&vc_dir) {
+            for entry in entries.flatten() {
+                let ver_dir = entry.path();
+                let include = ver_dir.join("include");
+                if include.exists() {
+                    let ver = ver_dir.file_name().unwrap().to_string_lossy().to_string();
+                    found_msvc = Some((vc_dir.join(&ver), ver));
+                    break;
+                }
+            }
+        }
+        if found_msvc.is_some() {
+            break;
+        }
+    }
+
+    // Find Windows SDK
+    let kits_base = std::path::Path::new("C:/Program Files (x86)/Windows Kits/10");
+    let sdk_include = kits_base.join("include");
+    if let Ok(entries) = std::fs::read_dir(&sdk_include) {
+        for entry in entries.flatten() {
+            let ver_dir = entry.path();
+            let ucrt = ver_dir.join("ucrt");
+            if ucrt.exists() {
+                found_sdk = Some(ver_dir.file_name().unwrap().to_string_lossy().to_string());
+                break;
+            }
+        }
+    }
+
+    // Find LLVM / libclang
+    let llvm_candidates = [
+        "C:/Program Files/LLVM/bin",
+        "C:/Program Files (x86)/LLVM/bin",
+    ];
+    let llvm_path = llvm_candidates
+        .iter()
+        .find(|p| std::path::Path::new(p).join("clang.exe").exists());
+
+    // Print results
+    match (&found_msvc, &found_sdk) {
+        (Some((msvc_path, _ver)), Some(sdk_ver)) => {
+            println!("Found MSVC: {}", msvc_path.display());
+            println!("Found Windows SDK: {}", sdk_ver);
+        }
+        _ => {
+            println!("WARNING: Could not auto-detect MSVC/Windows SDK.");
+            println!("Install Visual Studio 2022 BuildTools from:");
+            println!(
+                "  https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022"
+            );
+            return;
+        }
+    }
+
+    if let Some(llvm) = llvm_path {
+        println!("Found LLVM/clang: {}", llvm);
+    } else {
+        println!(
+            "WARNING: LLVM/clang not found. Install from: https://github.com/llvm/llvm-project/releases"
+        );
+    }
+
+    // Suggest .cargo/config.toml content
+    let msvc = found_msvc.as_ref().unwrap();
+    let sdk = found_sdk.as_ref().unwrap();
+
+    let include_dirs = [
+        msvc.0.join("include"),
+        kits_base.join("include").join(sdk).join("ucrt"),
+        kits_base.join("include").join(sdk).join("shared"),
+        kits_base.join("include").join(sdk).join("um"),
+        kits_base.join("include").join(sdk).join("winrt"),
+        kits_base.join("include").join(sdk).join("cppwinrt"),
+    ];
+    let lib_dirs = [
+        msvc.0.join("lib/x64"),
+        kits_base.join("lib").join(sdk).join("ucrt/x64"),
+        kits_base.join("lib").join(sdk).join("um/x64"),
+    ];
+
+    println!();
+    println!("Suggested .cargo/config.toml:");
+    println!("[env]");
+    println!(
+        "INCLUDE = \"{}\"",
+        include_dirs
+            .iter()
+            .map(|p| p.display().to_string().replace('\\', "\\\\"))
+            .collect::<Vec<_>>()
+            .join(";")
+    );
+    println!(
+        "LIB = \"{}\"",
+        lib_dirs
+            .iter()
+            .map(|p| p.display().to_string().replace('\\', "\\\\"))
+            .collect::<Vec<_>>()
+            .join(";")
+    );
+    if let Some(llvm) = llvm_path {
+        println!("LIBCLANG_PATH = \"{}\"", llvm.replace('\\', "\\\\"));
+    }
+
+    // Model status
+    let model_path = data_dir.join("models").join("Qwen3-1.7B-Q4_K_M.gguf");
+    println!();
+    if model_path.exists() {
+        let meta = std::fs::metadata(&model_path).unwrap();
+        println!(
+            "Model: {} ({:.1} MiB)",
+            model_path.display(),
+            meta.len() as f64 / 1_048_576.0
+        );
+    } else {
+        println!("Model not found. Run: cargo run -- download-model");
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn detect_msvc_toolchain(_data_dir: &std::path::Path) {
+    // No-op on non-Windows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,6 +653,18 @@ mod tests {
     #[test]
     fn test_cli_doctor() {
         let args = Cli::try_parse_from(["openloom", "doctor"]);
+        assert!(args.is_ok());
+    }
+
+    #[test]
+    fn test_cli_download_model_default() {
+        let args = Cli::try_parse_from(["openloom", "download-model"]);
+        assert!(args.is_ok());
+    }
+
+    #[test]
+    fn test_cli_download_model_list() {
+        let args = Cli::try_parse_from(["openloom", "download-model", "--list"]);
         assert!(args.is_ok());
     }
 }

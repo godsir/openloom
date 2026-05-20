@@ -25,6 +25,17 @@ pub enum ModelBackend {
     DeepSeek,
 }
 
+impl ModelBackend {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ModelBackend::LlamaCpp => "LlamaCpp",
+            ModelBackend::Anthropic => "Anthropic",
+            ModelBackend::OpenAI => "OpenAI",
+            ModelBackend::DeepSeek => "DeepSeek",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
     pub name: String,
@@ -40,6 +51,8 @@ pub struct ModelConfig {
     #[serde(default)]
     pub n_gpu_layers: usize,
     pub api_key_env: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
 }
 
 fn default_context_size() -> usize {
@@ -57,6 +70,7 @@ impl Default for ModelConfig {
             context_size: default_context_size(),
             n_gpu_layers: 0,
             api_key_env: None,
+            base_url: None,
         }
     }
 }

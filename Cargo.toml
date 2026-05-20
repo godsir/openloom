@@ -6,3 +6,9 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
+
+# Override llama-cpp-sys-2 with local patch that adds /utf-8 MSVC flags
+# Required for Chinese Windows (CP936) where MSVC emits C4819 without /utf-8
+# See patches/llama-cpp-sys-2/README.md for details
+[patch.crates-io]
+llama-cpp-sys-2 = { path = "patches/llama-cpp-sys-2" }

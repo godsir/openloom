@@ -5,30 +5,6 @@ use openloom_models::ModelBackend;
 use reqwest::Client as HttpClient;
 use std::path::Path;
 
-#[cfg(feature = "llama")]
-use std::sync::mpsc;
-#[cfg(feature = "llama")]
-use tokio::sync::oneshot;
-
-#[cfg(feature = "llama")]
-enum EngineCommand {
-    Complete {
-        prompt: String,
-        max_tokens: usize,
-        temperature: f32,
-        reply: oneshot::Sender<CompletionResponse>,
-    },
-    CompleteStream {
-        prompt: String,
-        max_tokens: usize,
-        token_tx: mpsc::Sender<String>,
-    },
-    TokenCount {
-        text: String,
-        reply: oneshot::Sender<usize>,
-    },
-}
-
 #[derive(Debug, Clone)]
 pub struct CompletionRequest {
     pub prompt: String,
@@ -61,11 +37,32 @@ pub struct CompletionResponse {
 }
 
 #[cfg(feature = "llama")]
-#[derive(Debug)]
-pub struct InferenceEngine {
-    sender: Option<mpsc::Sender<EngineCommand>>,
+struct LlamaRuntime {
+    model: llama_cpp_2::model::LlamaModel,
+    ctx: std::cell::RefCell<llama_cpp_2::context::LlamaContext<'static>>,
+    sampler: std::cell::RefCell<llama_cpp_2::sampling::LlamaSampler>,
 }
 
+// SAFETY: llama.cpp types are internally thread-safe. LlamaRuntime is the
+// exclusive owner and inference is serialized via RefCell borrow checking.
+#[cfg(feature = "llama")]
+unsafe impl Send for LlamaRuntime {}
+#[cfg(feature = "llama")]
+unsafe impl Sync for LlamaRuntime {}
+
+#[cfg(feature = "llama")]
+pub struct InferenceEngine {
+    runtime: Option<std::sync::Arc<LlamaRuntime>>,
+}
+
+#[cfg(feature = "llama")]
+impl std::fmt::Debug for InferenceEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InferenceEngine")
+            .field("runtime", &self.runtime.is_some())
+            .finish()
+    }
+}
 #[cfg(not(feature = "llama"))]
 #[derive(Debug)]
 pub struct InferenceEngine {
@@ -76,26 +73,79 @@ pub struct InferenceEngine {
 // === llama feature implementation ===
 
 #[cfg(feature = "llama")]
+fn generate(
+    model: &llama_cpp_2::model::LlamaModel,
+    ctx: &mut llama_cpp_2::context::LlamaContext,
+    sampler: &mut llama_cpp_2::sampling::LlamaSampler,
+    prompt: &str,
+    max_tokens: usize,
+) -> String {
+    use llama_cpp_2::llama_batch::LlamaBatch;
+    use llama_cpp_2::model::AddBos;
+    use llama_cpp_2::token::LlamaToken;
+
+    let tokens = match model.str_to_token(prompt, AddBos::Always) {
+        Ok(t) => t,
+        Err(_) => return String::new(),
+    };
+
+    // Clear KV cache from previous conversation turns so positions start fresh
+    ctx.clear_kv_cache();
+
+    let mut batch = LlamaBatch::new(tokens.len() + max_tokens, 1);
+    for (i, &token) in tokens.iter().enumerate() {
+        let _ = batch.add(token, i as i32, &[0], i == tokens.len() - 1);
+    }
+
+    let mut result = String::with_capacity(max_tokens * 4);
+    let eos = model.token_eos();
+    let mut sample_idx = (tokens.len() - 1) as i32;
+    for (n_generated, _) in (0_i32..).zip(0..max_tokens) {
+        if ctx.decode(&mut batch).is_err() {
+            break;
+        }
+        batch = LlamaBatch::new(1, 1);
+
+        let token = sampler.sample(ctx, sample_idx);
+        sample_idx = 0; // subsequent batches have 1 token
+        if token == eos || token == LlamaToken(0) {
+            break;
+        }
+
+        if let Ok(bytes) = model.token_to_piece_bytes(token, 32, false, None)
+            && let Ok(piece) = String::from_utf8(bytes)
+        {
+            result.push_str(&piece);
+        }
+        let _ = batch.add(token, tokens.len() as i32 + n_generated, &[0], true);
+    }
+
+    result
+}
+
+#[cfg(feature = "llama")]
 impl InferenceEngine {
-    /// Load GGUF model asynchronously (delegates to load_blocking).
     pub async fn load(model_path: &Path, n_gpu_layers: usize) -> Result<Self> {
         Self::load_blocking(model_path, n_gpu_layers)
     }
 
-    /// Synchronous load: initializes llama backend, loads model, spawns worker thread.
     pub fn load_blocking(model_path: &Path, n_gpu_layers: usize) -> Result<Self> {
-        use llama_cpp_2::*;
+        use llama_cpp_2::context::params::LlamaContextParams;
+        use llama_cpp_2::llama_backend::LlamaBackend;
+        use llama_cpp_2::model::params::LlamaModelParams;
+        use llama_cpp_2::sampling::LlamaSampler;
+        use std::cell::RefCell;
         use std::num::NonZeroU32;
 
         if !model_path.exists() {
             tracing::warn!(path = %model_path.display(), "model file not found, inference unavailable");
-            return Ok(Self { sender: None });
+            return Ok(Self { runtime: None });
         }
 
         let backend =
             LlamaBackend::init().map_err(|e| anyhow::anyhow!("llama backend init: {}", e))?;
 
-        let model = LlamaModel::load_from_file(
+        let model = llama_cpp_2::model::LlamaModel::load_from_file(
             &backend,
             model_path,
             &LlamaModelParams::default().with_n_gpu_layers(n_gpu_layers as u32),
@@ -105,139 +155,98 @@ impl InferenceEngine {
         let ctx = model
             .new_context(
                 &backend,
-                LlamaContextParams::default().with_n_ctx(NonZeroU32::new(4096).unwrap()),
+                LlamaContextParams::default().with_n_ctx(NonZeroU32::new(4096)),
             )
             .map_err(|e| anyhow::anyhow!("context create: {}", e))?;
 
-        let (tx, rx) = mpsc::channel::<EngineCommand>();
+        let sampler = LlamaSampler::chain_simple([
+            LlamaSampler::temp(0.7),
+            LlamaSampler::top_p(0.95, 1),
+            LlamaSampler::greedy(),
+        ]);
 
-        std::thread::Builder::new()
-            .name("llama-worker".into())
-            .spawn(move || {
-                // Phase 3B: LlamaSampler reserved for incremental decode with ctx.decode()
-                // Currently create_completion() handles sampling internally.
-                let _sampler = LlamaSampler::chain_simple([
-                    LlamaSampler::temp(0.7),
-                    LlamaSampler::top_p(0.95),
-                    LlamaSampler::greedy(),
-                ]);
-                for cmd in rx {
-                    match cmd {
-                        EngineCommand::Complete {
-                            prompt,
-                            max_tokens,
-                            temperature: _,
-                            reply,
-                        } => {
-                            let prompt_tokens = model
-                                .str_to_token(&prompt, AddBos::Always)
-                                .map(|t| t.len())
-                                .unwrap_or(prompt.chars().count() / 4);
-                            let result = model.create_completion(&prompt, max_tokens as u32);
-                            let text = result.unwrap_or_default();
-                            let completion_tokens = text.chars().count() / 4;
-                            let _ = reply.send(CompletionResponse {
-                                text,
-                                prompt_tokens,
-                                completion_tokens,
-                                latency_ms: 0,
-                            });
-                        }
-                        EngineCommand::CompleteStream {
-                            prompt,
-                            max_tokens,
-                            token_tx,
-                        } => {
-                            let result = model.create_completion(&prompt, max_tokens as u32);
-                            let _ = token_tx.send(result.unwrap_or_default());
-                        }
-                        EngineCommand::TokenCount { text, reply } => {
-                            let count = model
-                                .str_to_token(&text, AddBos::Never)
-                                .map(|t| t.len())
-                                .unwrap_or(text.chars().count() / 4);
-                            let _ = reply.send(count);
-                        }
-                    }
-                }
-            })?;
+        // Coerce to 'static: safe because both model and context live together in Rc
+        let ctx: llama_cpp_2::context::LlamaContext<'static> = unsafe { std::mem::transmute(ctx) };
+
+        let runtime = std::sync::Arc::new(LlamaRuntime {
+            model,
+            ctx: RefCell::new(ctx),
+            sampler: RefCell::new(sampler),
+        });
 
         tracing::info!(path = %model_path.display(), n_gpu_layers, "llama model loaded");
-        Ok(Self { sender: Some(tx) })
+        Ok(Self {
+            runtime: Some(runtime),
+        })
     }
 
-    /// Complete text completion via worker thread. Falls back to stub if no model is loaded.
     pub async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse> {
-        let Some(sender) = &self.sender else {
+        let Some(runtime) = &self.runtime else {
             return Ok(stub_complete(&req));
         };
-
-        let (reply_tx, reply_rx) = oneshot::channel();
-        sender
-            .send(EngineCommand::Complete {
-                prompt: req.prompt,
-                max_tokens: req.max_tokens,
-                temperature: req.temperature,
-                reply: reply_tx,
+        let runtime = runtime.clone();
+        tokio::task::spawn_blocking(move || {
+            use llama_cpp_2::model::AddBos;
+            let prompt_tokens = runtime
+                .model
+                .str_to_token(&req.prompt, AddBos::Always)
+                .map(|t| t.len())
+                .unwrap_or(req.prompt.chars().count() / 4);
+            let text = generate(
+                &runtime.model,
+                &mut runtime.ctx.borrow_mut(),
+                &mut runtime.sampler.borrow_mut(),
+                &req.prompt,
+                req.max_tokens,
+            );
+            let completion_tokens = text.chars().count() / 4;
+            Ok(CompletionResponse {
+                text,
+                prompt_tokens,
+                completion_tokens,
+                latency_ms: 0,
             })
-            .map_err(|e| anyhow::anyhow!("engine channel closed: {}", e))?;
-
-        reply_rx
-            .await
-            .map_err(|e| anyhow::anyhow!("worker thread dropped: {}", e))
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("join error: {}", e))?
     }
 
-    /// Streaming completion via worker thread. Falls back to whole response if no model loaded.
     pub async fn complete_stream(
         &self,
         req: CompletionRequest,
         token_tx: tokio::sync::mpsc::Sender<String>,
     ) -> Result<()> {
-        let Some(sender) = &self.sender else {
+        let Some(runtime) = &self.runtime else {
             let resp = self.complete(req).await?;
             let _ = token_tx.send(resp.text).await;
             return Ok(());
         };
-
-        let (std_tx, std_rx) = mpsc::channel();
-        sender
-            .send(EngineCommand::CompleteStream {
-                prompt: req.prompt,
-                max_tokens: req.max_tokens,
-                token_tx: std_tx,
-            })
-            .map_err(|e| anyhow::anyhow!("engine channel closed: {}", e))?;
-
+        let runtime = runtime.clone();
         let text = tokio::task::spawn_blocking(move || {
-            std_rx
-                .recv()
-                .map_err(|e| anyhow::anyhow!("worker recv error: {}", e))
+            generate(
+                &runtime.model,
+                &mut runtime.ctx.borrow_mut(),
+                &mut runtime.sampler.borrow_mut(),
+                &req.prompt,
+                req.max_tokens,
+            )
         })
         .await
-        .map_err(|e| anyhow::anyhow!("spawn_blocking join error: {}", e))??;
-
+        .map_err(|e| anyhow::anyhow!("join error: {}", e))?;
         let _ = token_tx.send(text).await;
         Ok(())
     }
 
-    /// Count tokens using the loaded model's tokenizer, or fallback estimation.
     pub fn token_count(&self, text: &str) -> usize {
-        let Some(sender) = &self.sender else {
+        let Some(runtime) = &self.runtime else {
             return text.chars().count() / 4;
         };
-
-        let (reply_tx, reply_rx) = oneshot::channel();
-        if sender
-            .send(EngineCommand::TokenCount {
-                text: text.to_string(),
-                reply: reply_tx,
-            })
-            .is_err()
-        {
-            return text.chars().count() / 4;
-        }
-
-        reply_rx.blocking_recv().unwrap_or(text.chars().count() / 4)
+        use llama_cpp_2::model::AddBos;
+        runtime
+            .model
+            .str_to_token(text, AddBos::Never)
+            .map(|t| t.len())
+            .unwrap_or(text.chars().count() / 4)
     }
 }
 
@@ -245,7 +254,6 @@ impl InferenceEngine {
 
 #[cfg(not(feature = "llama"))]
 impl InferenceEngine {
-    /// Load GGUF model. Falls back to CPU if GPU unavailable.
     pub async fn load(model_path: &Path, n_gpu_layers: usize) -> Result<Self> {
         tracing::info!(path = %model_path.display(), n_gpu_layers, "loading model");
         Ok(Self {
@@ -254,7 +262,6 @@ impl InferenceEngine {
         })
     }
 
-    /// Synchronous load for Phase 1 initialization
     pub fn load_blocking(model_path: &Path, n_gpu_layers: usize) -> Result<Self> {
         tracing::info!(path = %model_path.display(), n_gpu_layers, "loading model (sync)");
         Ok(Self {
@@ -263,12 +270,10 @@ impl InferenceEngine {
         })
     }
 
-    /// Complete text completion (returns full text at once)
     pub async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse> {
         Ok(stub_complete(&req))
     }
 
-    /// Streaming completion: calls complete() and sends the result text.
     pub async fn complete_stream(
         &self,
         req: CompletionRequest,
@@ -279,7 +284,6 @@ impl InferenceEngine {
         Ok(())
     }
 
-    /// Count tokens in text using a simple estimation (~4 chars per token).
     pub fn token_count(&self, text: &str) -> usize {
         text.chars().count() / 4
     }
@@ -287,7 +291,6 @@ impl InferenceEngine {
 
 // === shared helpers and functions ===
 
-/// Stub response used when no model is available (both cfg variants).
 fn stub_complete(req: &CompletionRequest) -> CompletionResponse {
     let prompt_chars = req.prompt.chars().count();
     let preview: String = req.prompt.chars().take(100).collect();
@@ -305,10 +308,7 @@ fn stub_complete(req: &CompletionRequest) -> CompletionResponse {
 }
 
 impl InferenceEngine {
-    /// Detect GPU info (vendor, VRAM, support status).
-    /// Uses nvidia-smi on Windows/Linux. Returns "none" fallback if no GPU found.
     pub fn detect_gpu() -> GpuInfo {
-        // Try nvidia-smi on Windows/Linux
         if let Ok(output) = std::process::Command::new("nvidia-smi")
             .args(["--query-gpu=name,memory.total", "--format=csv,noheader"])
             .output()
@@ -333,7 +333,6 @@ impl InferenceEngine {
                 };
             }
         }
-        // Fallback: no GPU detected
         GpuInfo {
             vendor: "none".into(),
             vram_mb: 0,
@@ -359,14 +358,16 @@ pub trait CloudClient: Send + Sync {
 pub struct AnthropicClient {
     api_key: String,
     model: String,
+    base_url: String,
     http: HttpClient,
 }
 
 impl AnthropicClient {
-    pub fn new(api_key: String, model: String) -> Self {
+    pub fn new(api_key: String, model: String, base_url: String) -> Self {
         Self {
             api_key,
             model,
+            base_url,
             http: HttpClient::new(),
         }
     }
@@ -402,7 +403,7 @@ impl AnthropicClient {
 
         let resp = self
             .http
-            .post("https://api.anthropic.com/v1/messages")
+            .post(format!("{}/v1/messages", self.base_url))
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .json(&body)
@@ -415,7 +416,11 @@ impl AnthropicClient {
             anyhow::bail!("Anthropic API error {}: {}", status, text);
         }
 
-        let json: serde_json::Value = resp.json().await?;
+        let body_text = resp.text().await?;
+        let json: serde_json::Value = serde_json::from_str(&body_text).map_err(|e| {
+            let preview = &body_text[..body_text.len().min(500)];
+            anyhow::anyhow!("Anthropic response parse error: {}, body: {}", e, preview)
+        })?;
         let text = json["content"][0]["text"]
             .as_str()
             .unwrap_or("")
@@ -452,7 +457,7 @@ impl CloudClient for AnthropicClient {
 
         let resp = self
             .http
-            .post("https://api.anthropic.com/v1/messages")
+            .post(format!("{}/v1/messages", self.base_url))
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .json(&body)
@@ -483,7 +488,7 @@ impl CloudClient for AnthropicClient {
                         && let Some(text) = val["delta"]["text"].as_str()
                         && tx.send(text.to_string()).await.is_err()
                     {
-                        return Ok(()); // client disconnected
+                        return Ok(());
                     }
                 }
             }
@@ -560,7 +565,11 @@ impl OpenAIClient {
             anyhow::bail!("API error {}: {}", status, text);
         }
 
-        let json: serde_json::Value = resp.json().await?;
+        let body_text = resp.text().await?;
+        let json: serde_json::Value = serde_json::from_str(&body_text).map_err(|e| {
+            let preview = &body_text[..body_text.len().min(500)];
+            anyhow::anyhow!("API response parse error: {}, body: {}", e, preview)
+        })?;
         let text = json["choices"][0]["message"]["content"]
             .as_str()
             .unwrap_or("")
@@ -630,7 +639,7 @@ impl CloudClient for OpenAIClient {
                             && let Some(text) = val["choices"][0]["delta"]["content"].as_str()
                             && tx.send(text.to_string()).await.is_err()
                         {
-                            return Ok(()); // client disconnected
+                            return Ok(());
                         }
                     }
                 }
@@ -657,18 +666,18 @@ pub fn create_cloud_client(
     if model.is_empty() {
         anyhow::bail!("model name not configured");
     }
+    let base_url = match config.base_url.clone() {
+        Some(url) => url,
+        None => match config.backend {
+            ModelBackend::Anthropic => "https://api.anthropic.com".into(),
+            ModelBackend::DeepSeek => "https://api.deepseek.com".into(),
+            _ => "https://api.openai.com".into(),
+        },
+    };
     match config.backend {
-        ModelBackend::Anthropic => Ok(Box::new(AnthropicClient::new(api_key, model))),
-        ModelBackend::OpenAI => Ok(Box::new(OpenAIClient::new(
-            api_key,
-            model,
-            "https://api.openai.com/v1".into(),
-        ))),
-        ModelBackend::DeepSeek => Ok(Box::new(OpenAIClient::new(
-            api_key,
-            model,
-            "https://api.deepseek.com/v1".into(),
-        ))),
+        ModelBackend::Anthropic => Ok(Box::new(AnthropicClient::new(api_key, model, base_url))),
+        ModelBackend::OpenAI => Ok(Box::new(OpenAIClient::new(api_key, model, base_url))),
+        ModelBackend::DeepSeek => Ok(Box::new(OpenAIClient::new(api_key, model, base_url))),
         ModelBackend::LlamaCpp => anyhow::bail!("LlamaCpp is not a cloud backend"),
     }
 }
@@ -699,8 +708,11 @@ mod cloud_tests {
 
     #[test]
     fn test_cloud_client_trait_object() {
-        let client: Box<dyn CloudClient> =
-            Box::new(AnthropicClient::new("key".into(), "claude".into()));
+        let client: Box<dyn CloudClient> = Box::new(AnthropicClient::new(
+            "key".into(),
+            "claude".into(),
+            "https://api.anthropic.com".into(),
+        ));
         assert_eq!(client.provider(), ModelBackend::Anthropic);
         assert_eq!(client.model_name(), "claude");
     }
@@ -713,7 +725,6 @@ mod tests {
     #[test]
     fn test_detect_gpu_does_not_panic() {
         let info = InferenceEngine::detect_gpu();
-        // Should return a valid struct even on CPU-only machines
         assert!(!info.vendor.is_empty() || !info.supported);
     }
 
@@ -747,6 +758,6 @@ mod tests {
     #[test]
     fn test_load_blocking_does_not_crash() {
         let result = InferenceEngine::load_blocking(std::path::Path::new("nonexistent.gguf"), 0);
-        assert!(result.is_ok()); // Phase 1 placeholder doesn't actually load
+        assert!(result.is_ok());
     }
 }

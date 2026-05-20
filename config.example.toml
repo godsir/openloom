@@ -19,11 +19,27 @@ backend = "LlamaCpp"
 context_size = 8192
 n_gpu_layers = 32
 
+# --- Cloud API 配置 (取消注释并填入你的 API Key) ---
 # [[models]]
 # name = "cloud-primary"
-# backend = "Anthropic"
+# backend = "Anthropic"          # Anthropic / OpenAI / DeepSeek
 # model = "claude-sonnet-4-6"
 # api_key_env = "ANTHROPIC_API_KEY"
+# base_url = "https://api.anthropic.com"  # 可选，自定义 API 地址（代理/中转）
+
+# [[models]]
+# name = "cloud-openai"
+# backend = "OpenAI"
+# model = "gpt-4o"
+# api_key_env = "OPENAI_API_KEY"
+# base_url = "https://api.openai.com"    # 可选，支持 OpenAI 兼容接口
+
+# [[models]]
+# name = "cloud-deepseek"
+# backend = "DeepSeek"
+# model = "deepseek-chat"
+# api_key_env = "DEEPSEEK_API_KEY"
+# base_url = "https://api.deepseek.com"  # 可选
 
 [router]
 keyword_threshold = 0.85
@@ -33,7 +49,11 @@ fallback_threshold = 0.7
 host = "127.0.0.1"
 
 [storage]
-# data_dir = "/custom/path/to/data"
+# 自定义数据目录（模型、数据库等），不设置则使用系统默认
+# Windows: %APPDATA%/openLoom
+# macOS:   ~/Library/Application Support/openLoom
+# Linux:   ~/.local/share/openLoom
+# data_dir = "D:/openLoomData"
 
 [logging]
 level = "INFO"

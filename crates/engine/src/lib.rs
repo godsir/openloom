@@ -201,6 +201,17 @@ impl Engine {
 
     // === Core handler ===
 
+    /// Template response when no cloud API key is configured and the router
+    /// would otherwise send chat requests to the local 1.7B model.
+    const NO_CLOUD_RESPONSE: &str = "\
+我是 openLoom，一个本地优先的 AI 助理。\n\
+\n\
+我注意到你还没有配置云端 API key。目前本地小模型（Qwen3-1.7B）的定位是意图分类和关键词路由，不适合生成对话回复。\n\
+\n\
+请设置环境变量 OPENAI_API_KEY 或 ANTHROPIC_API_KEY 后重启，我就能正常对话了。\n\
+\n\
+当前支持的命令：文件管理、代码协助、网页搜索、日程提醒。";
+
     pub async fn handle_message(&self, msg: ChatMessage, session_id: &str) -> Result<ChatResponse> {
         // Rate limiting
         {
@@ -264,13 +275,20 @@ impl Engine {
                 )
             }
             TargetModel::Local => {
-                self.inference
-                    .complete(CompletionRequest {
-                        prompt: assembled.prompt.clone(),
-                        ..Default::default()
-                    })
-                    .await?
-                    .text
+                if self.cloud.is_some() {
+                    // Cloud is available but router chose Local (high-confidence keyword match):
+                    // use local model for structured/simple response
+                    self.inference
+                        .complete(CompletionRequest {
+                            prompt: assembled.prompt.clone(),
+                            ..Default::default()
+                        })
+                        .await?
+                        .text
+                } else {
+                    // No cloud configured: local 1.7B is for classification/routing, not chat.
+                    Self::NO_CLOUD_RESPONSE.to_string()
+                }
             }
             TargetModel::Cloud => {
                 if let Some(ref cloud) = self.cloud {
@@ -282,13 +300,8 @@ impl Engine {
                         .await?
                         .text
                 } else {
-                    self.inference
-                        .complete(CompletionRequest {
-                            prompt: assembled.prompt.clone(),
-                            ..Default::default()
-                        })
-                        .await?
-                        .text
+                    // Router chose Cloud but none is configured — template fallback
+                    Self::NO_CLOUD_RESPONSE.to_string()
                 }
             }
         };
@@ -514,6 +527,13 @@ impl Engine {
 
     pub fn cache_stats(&self) -> openloom_cache::CacheStats {
         self.weaver.cache().stats()
+    }
+
+    pub fn model_display_name(&self) -> String {
+        if let Some(ref cloud) = self.cloud {
+            return format!("{} ({})", cloud.model_name(), cloud.provider().name());
+        }
+        "Qwen3-1.7B (local)".into()
     }
 }
 

@@ -45,7 +45,7 @@ CLI 和 Electron 桌面壳共享同一个 Rust Engine，走 JSON-RPC 2.0 / WebSo
 | **Phase 3A** | AI Activation: llama-cpp-2, SSE streaming, 8B cognition, Hub heartbeat, cloud streaming | ✅ 完成 |
 | **Phase 3B** | Productionization: Engine split, sandbox, audit panel, KV Cache prep, packaging | ✅ 完成 |
 
-**质量：** 129 tests pass, clippy 0 warnings, fmt clean
+**质量：** 131 tests pass, clippy 0 warnings, fmt clean
 
 ## 快速开始
 
@@ -54,12 +54,29 @@ CLI 和 Electron 桌面壳共享同一个 Rust Engine，走 JSON-RPC 2.0 / WebSo
 - Rust 1.85+
 - 6GB+ VRAM 推荐（本地模型推理，最低 4GB GPU / CPU-only 降级可用）
 - CMake + C++ 工具链（llama-cpp-2 编译需要）
+- **Windows 用户：** 安装 [Visual Studio 2022 BuildTools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022) 和 [LLVM/clang](https://github.com/llvm/llvm-project/releases)，然后运行 `cargo run -- doctor` 检测工具链
 
-### 构建
+### 三步启动
 
 ```bash
 git clone https://github.com/godsir/openloom.git
 cd openloom
+
+# 1. 下载本地模型（从魔搭自动拉取 Qwen3-1.7B GGUF，约 1.28GB）
+cargo run -- download-model
+
+# 2. 启动 TUI 交互式聊天
+cargo run -- chat
+
+# 或者启动 HTTP 服务器（Electron 桌面壳 / API 调用）
+cargo run -- serve
+```
+
+> **Windows 中文系统注意：** 项目包含 `llama-cpp-sys-2` 本地补丁（`patches/` 目录），为 MSVC 编译添加了 `/utf-8` 标志，解决 CP936 代码页下的 C4819 编译错误。无需手动设置环境变量。
+
+### 构建
+
+```bash
 cargo build --release
 ```
 
@@ -83,6 +100,12 @@ cargo build --release
 
 # 系统诊断
 ./target/release/openloom doctor
+
+# 下载模型（从魔搭拉取 GGUF）
+./target/release/openloom download-model
+
+# 列出可用的量化版本
+./target/release/openloom download-model --list
 ```
 
 ### 启动 Electron 桌面应用
@@ -97,7 +120,7 @@ npm start       # 启动 Electron
 ### 测试
 
 ```bash
-cargo test  # 129 个测试
+cargo test  # 131 个测试
 ```
 
 ## 技术栈
@@ -130,7 +153,8 @@ openLoom/
 │   ├── weaver/       ← 上下文组装 (system prompt + persona + skill + history)
 │   ├── cache/        ← KV Cache trait (NoopCache + SafetensorsCache)
 │   ├── sandbox/      ← 安全沙箱 (声明式权限检查)
-│   └── cli/          ← CLI 入口 (serve/chat/run/skill/memory/config/doctor)
+│   └── cli/          ← CLI 入口 (serve/chat/run/download-model/skill/memory/config/doctor)
+├── patches/           ← 上游 crate 本地补丁 (llama-cpp-sys-2 /utf-8 MSVC)
 ├── electron/         ← Electron 壳 (sidecar 生命周期 + contextBridge + 打包)
 ├── web/              ← React 19 前端 (ChatArea + Sidebar + Settings + Dashboard + Audit)
 ├── migrations/       ← refinery SQL 迁移 (V1~V3)
@@ -145,6 +169,7 @@ openLoom/
 | llama-cpp-2 功能未验证 | P0 | 需要 CMake + C++ 工具链编译 |
 | SSE 流式发全文非逐 token | HIGH | 同上，增量 decode 不可用 |
 | 8B 模型加载 + LlmBased 认知提取 | HIGH | 同上 |
+| MSVC /utf-8 编译 (中文 Windows) | ~~P0~~ 已修复 | patches/llama-cpp-sys-2 本地补丁 |
 | EventSource unmount 时未关闭 | MEDIUM | — |
 | skills invoke() 错误链丢失 | LOW | — |
 | KV Cache 仅架构预留 (NoopCache) | LOW | 等 llama-cpp state API |
