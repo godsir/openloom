@@ -300,9 +300,6 @@ impl Engine {
         }
         // C1 fix: do NOT release the gate here — only at the end of each path
 
-        self.in_flight.fetch_add(1, Ordering::SeqCst);
-        let start = Instant::now();
-
         let out = self.router.classify_sync(&msg.content);
 
         // C2 fix: feed cognition extraction pipeline (non-blocking)
@@ -317,7 +314,9 @@ impl Engine {
             return self.agent_loop(&msg, session_id).await;
         }
 
-        // Simple path: direct dispatch based on router's target_model
+        // Simple path: track in_flight here (agent_loop tracks its own)
+        self.in_flight.fetch_add(1, Ordering::SeqCst);
+        let start = Instant::now();
         let skill_ctx = out.skill_match.as_ref().and_then(|name| {
             self.skills
                 .find_by_name(name)
@@ -416,6 +415,10 @@ impl Engine {
         self.in_flight.fetch_add(1, Ordering::SeqCst);
         let loop_start = Instant::now();
         *self.agent_state.write().await = AgentState::Thinking;
+        let _ = self.event_bus.send(EngineEvent::AgentStateChanged {
+            old_state: AgentState::Idle,
+            new_state: AgentState::Thinking,
+        });
         self.interruptible.store(true, Ordering::SeqCst);
 
         let mut history: Vec<ChatMessage> = self.get_working_memory(session_id).unwrap_or_default();
@@ -439,6 +442,10 @@ impl Engine {
 
                 if let Some(tool_call) = self.parse_tool_call(&response) {
                     *self.agent_state.write().await = AgentState::Acting;
+                    let _ = self.event_bus.send(EngineEvent::AgentStateChanged {
+                        old_state: AgentState::Thinking,
+                        new_state: AgentState::Acting,
+                    });
                     let result = match self.execute_tool(&tool_call).await {
                         Ok(output) => output,
                         Err(e) => format!("Tool error: {}", e),
@@ -478,6 +485,10 @@ impl Engine {
         .await;
 
         *self.agent_state.write().await = AgentState::Idle;
+        let _ = self.event_bus.send(EngineEvent::AgentStateChanged {
+            old_state: AgentState::Thinking,
+            new_state: AgentState::Idle,
+        });
         self.interruptible.store(false, Ordering::SeqCst);
         self.in_flight.fetch_sub(1, Ordering::SeqCst);
 
