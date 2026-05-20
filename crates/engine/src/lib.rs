@@ -83,7 +83,7 @@ pub struct Engine {
     rate_limiter: Mutex<RateLimiter>,
     token_store_tx: std::sync::mpsc::Sender<TokenUsageRecord>,
     model_available: bool,
-    last_user_message: Mutex<Instant>,
+    last_user_message: Arc<Mutex<Instant>>,
 }
 
 enum SessionCommand {
@@ -252,6 +252,10 @@ impl Engine {
         }
         let token_store_tx = spawn_token_store_thread(db_path.clone());
 
+        // Extract heartbeat config before config is partially moved into Self
+        let hb_interval = config.heartbeat_interval_secs;
+        let hb_idle_threshold = config.heartbeat_idle_threshold_min;
+
         let engine = Self {
             router,
             skills,
@@ -272,10 +276,68 @@ impl Engine {
             rate_limiter: Mutex::new(RateLimiter::new(config.rate_limit_ms)),
             token_store_tx,
             model_available,
-            last_user_message: Mutex::new(Instant::now()),
+            last_user_message: Arc::new(Mutex::new(Instant::now())),
         };
 
         engine.spawn_persona_watcher();
+
+        // Spawn hub heartbeat (Phase 3A)
+        {
+            let hb_inference = engine.inference.clone();
+            let hb_agent_state = engine.agent_state.clone();
+            let hb_event_bus = engine.event_bus.clone();
+            let hb_last_user = engine.last_user_message.clone();
+
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(
+                    std::time::Duration::from_secs(hb_interval)
+                );
+                // Skip first immediate tick
+                interval.tick().await;
+
+                loop {
+                    interval.tick().await;
+
+                    // Skip if agent is busy
+                    if *hb_agent_state.read().await != AgentState::Idle {
+                        continue;
+                    }
+
+                    // Check idle time
+                    let idle_minutes = {
+                        let last = hb_last_user.lock().unwrap();
+                        last.elapsed().as_secs() / 60
+                    };
+                    if idle_minutes < hb_idle_threshold {
+                        continue;
+                    }
+
+                    // Single-token inference check
+                    let prompt = format!(
+                        "User idle {} min. Should agent take action? Reply ONLY yes or no.",
+                        idle_minutes
+                    );
+                    match hb_inference.complete(CompletionRequest {
+                        prompt,
+                        max_tokens: 1,
+                        temperature: 0.0,
+                        top_p: 1.0,
+                        stop: vec!["\n".into()],
+                        stream: false,
+                    }).await {
+                        Ok(resp) if resp.text.trim().to_lowercase().contains("yes") => {
+                            let _ = hb_event_bus.send(EngineEvent::HeartbeatTick {
+                                idle_minutes,
+                                event_count: 0,
+                                suggested_action: None,
+                            });
+                        }
+                        _ => {} // model unavailable or answered "no" — skip
+                    }
+                }
+            });
+        }
+
         Ok(engine)
     }
 
