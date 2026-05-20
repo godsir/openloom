@@ -229,8 +229,17 @@ impl Engine {
         let weaver = ContextWeaver::new(Arc::new(NoopCache));
 
         let (event_tx, _) = broadcast::channel(256);
-        let memory_tx =
-            memory_thread::spawn_memory_thread(db_path.clone(), config.threshold, event_tx.clone());
+        let summarizer_path = config.data_dir.join("models").join("qwen3-8b-q4_k_m.gguf");
+        let memory_tx = memory_thread::spawn_memory_thread(
+            db_path.clone(),
+            config.threshold,
+            event_tx.clone(),
+            if summarizer_path.exists() {
+                Some(summarizer_path)
+            } else {
+                None
+            },
+        );
         let session_tx = spawn_session_thread(db_path.clone());
 
         let model_path = config

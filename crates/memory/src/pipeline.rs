@@ -4,6 +4,19 @@ use crate::extractor::RuleBasedExtractor;
 use crate::store::SqliteEventStore;
 use anyhow::Result;
 
+/// The cognition extraction strategy.
+///
+/// `RuleBased` uses pattern-count threshold triggers defined in `PatternAggregator`
+/// and `action_to_trait` mappings. This is the default and currently the only variant.
+///
+/// `LlmBased` (future) will use a local 8B model via llama-cpp-2 for deeper
+/// behavioral inference once GGUF loading is stable on all platforms.
+pub enum CognitionExtractor {
+    RuleBased,
+    // Note: LlmBased variant requires llama-cpp-2 which is feature-gated in inference crate.
+    // We keep only RuleBased here. The LlmBased branch will be added when 8B model loading works.
+}
+
 /// A cognitive insight derived from accumulated behavior patterns.
 #[derive(Debug, Clone)]
 pub struct CognitionUpdate {
@@ -28,6 +41,9 @@ pub struct MemoryPipeline {
     extractor: RuleBasedExtractor,
     aggregator: PatternAggregator,
     store: SqliteEventStore,
+    /// Cognition extraction strategy (defaults to RuleBased when None)
+    #[allow(dead_code)]
+    cognition: Option<CognitionExtractor>,
 }
 
 impl MemoryPipeline {
@@ -40,6 +56,22 @@ impl MemoryPipeline {
             extractor,
             aggregator,
             store,
+            cognition: None,
+        }
+    }
+
+    /// Create a pipeline with an explicit cognition extraction strategy.
+    pub fn new_with_extractor(
+        extractor: RuleBasedExtractor,
+        aggregator: PatternAggregator,
+        store: SqliteEventStore,
+        cognition: Option<CognitionExtractor>,
+    ) -> Self {
+        Self {
+            extractor,
+            aggregator,
+            store,
+            cognition,
         }
     }
 
@@ -74,6 +106,8 @@ impl MemoryPipeline {
             self.aggregator.observe(event);
             if self.aggregator.should_trigger(&event.action) {
                 let (count, avg_conf) = self.aggregator.drain(&event.action).unwrap_or_default();
+                let _events = self.aggregator.drain_events(&event.action); // collected for future LLM batch
+
                 cognition = Some(CognitionUpdate {
                     action: event.action.clone(),
                     trait_name: self.action_to_trait(&event.action),
@@ -293,8 +327,7 @@ mod tests {
                     total_events += result.events.len();
                     if let Some(cog) = result.cognition_triggered {
                         cognition_count += 1;
-                        triggered_traits
-                            .push(format!("{}={}", cog.trait_name, cog.action));
+                        triggered_traits.push(format!("{}={}", cog.trait_name, cog.action));
                     }
                 }
                 Err(e) => panic!("Pipeline error on line '{}': {}", line, e),

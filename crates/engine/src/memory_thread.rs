@@ -20,6 +20,7 @@ pub fn spawn_memory_thread(
     db_path: PathBuf,
     threshold: usize,
     event_tx: broadcast::Sender<EngineEvent>,
+    _summarizer_path: Option<PathBuf>,
 ) -> mpsc::Sender<ProcessRequest> {
     let (tx, rx) = mpsc::channel::<ProcessRequest>();
 
@@ -29,7 +30,10 @@ pub fn spawn_memory_thread(
         let store = SqliteEventStore::open_with_migrations(&db_path)
             .expect("failed to open database with migrations");
 
-        let mut pipeline = MemoryPipeline::new(extractor, aggregator, store);
+        let mut pipeline = MemoryPipeline::new_with_extractor(
+            extractor, aggregator, store,
+            None, // cognition: RuleBased for now, LlmBased when 8B loads
+        );
 
         for req in rx {
             tracing::debug!(

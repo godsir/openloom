@@ -3,6 +3,14 @@ use chrono::Utc;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
+pub struct EventDatum {
+    pub action: String,
+    pub context: String,
+    pub source_text: String,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone)]
 struct PatternCount {
     count: usize,
     confidence_sum: f64,
@@ -21,6 +29,8 @@ pub struct PatternAggregator {
     observations: HashMap<String, Vec<i64>>,
     /// Window duration in seconds (default: 86400 = 24 hours)
     window_secs: u64,
+    /// Event data buffer for LLM-based cognition extraction (future)
+    event_buffer: HashMap<String, Vec<EventDatum>>,
 }
 
 impl PatternAggregator {
@@ -30,6 +40,7 @@ impl PatternAggregator {
             counts: HashMap::new(),
             observations: HashMap::new(),
             window_secs: 86400, // 24-hour default window
+            event_buffer: HashMap::new(),
         }
     }
 
@@ -43,13 +54,10 @@ impl PatternAggregator {
     /// the timestamp for sliding-window decay.
     pub fn observe(&mut self, event: &Event) {
         let action = event.action.clone();
-        let entry = self
-            .counts
-            .entry(action.clone())
-            .or_insert(PatternCount {
-                count: 0,
-                confidence_sum: 0.0,
-            });
+        let entry = self.counts.entry(action.clone()).or_insert(PatternCount {
+            count: 0,
+            confidence_sum: 0.0,
+        });
         entry.count += 1;
         entry.confidence_sum += event.confidence;
 
@@ -61,6 +69,18 @@ impl PatternAggregator {
         // Prune old observations outside window
         let cutoff = now - self.window_secs as i64;
         timestamps.retain(|&t| t >= cutoff);
+
+        // Buffer event data for future LLM-based cognition extraction
+        let datum = EventDatum {
+            action: event.action.clone(),
+            context: event.context.clone(),
+            source_text: event.source_text.clone(),
+            confidence: event.confidence,
+        };
+        self.event_buffer
+            .entry(event.action.clone())
+            .or_default()
+            .push(datum);
     }
 
     pub fn count(&self, action: &str) -> usize {
@@ -138,6 +158,12 @@ impl PatternAggregator {
             .filter(|(_, p)| p.count >= self.threshold)
             .map(|(k, _)| k.clone())
             .collect()
+    }
+
+    /// Drain all buffered event data for a given action.
+    /// Returns the collected events and clears the buffer for that action.
+    pub fn drain_events(&mut self, action: &str) -> Vec<EventDatum> {
+        self.event_buffer.remove(action).unwrap_or_default()
     }
 }
 
