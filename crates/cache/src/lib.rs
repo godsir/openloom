@@ -1,12 +1,22 @@
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone)]
 pub struct CachedPrefix {
     pub blocks: Vec<u8>,
     pub token_count: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheStats {
+    pub hit_rate: f64,
+    pub block_count: usize,
+    pub total_size_mb: f64,
+}
+
 pub trait KvCache: Send + Sync {
     fn lookup(&self, prefix_hash: u64) -> Option<CachedPrefix>;
     fn store(&self, prefix_hash: u64, blocks: CachedPrefix);
+    fn stats(&self) -> CacheStats;
 }
 
 pub struct NoopCache;
@@ -16,6 +26,14 @@ impl KvCache for NoopCache {
         None
     }
     fn store(&self, _hash: u64, _blocks: CachedPrefix) {}
+
+    fn stats(&self) -> CacheStats {
+        CacheStats {
+            hit_rate: 0.0,
+            block_count: 0,
+            total_size_mb: 0.0,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -37,5 +55,27 @@ mod tests {
         };
         cache.store(42, blocks);
         assert!(cache.lookup(42).is_none());
+    }
+
+    #[test]
+    fn test_noop_cache_stats() {
+        let cache = NoopCache;
+        let stats = cache.stats();
+        assert_eq!(stats.hit_rate, 0.0);
+        assert_eq!(stats.block_count, 0);
+        assert_eq!(stats.total_size_mb, 0.0);
+    }
+
+    #[test]
+    fn test_cache_stats_serialization() {
+        let stats = CacheStats {
+            hit_rate: 0.85,
+            block_count: 12,
+            total_size_mb: 600.0,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        assert!(json.contains("hit_rate"));
+        let decoded: CacheStats = serde_json::from_str(&json).unwrap();
+        assert!((decoded.hit_rate - 0.85).abs() < 0.01);
     }
 }
