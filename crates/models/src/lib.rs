@@ -79,6 +79,22 @@ impl PersonaProvider for NoopPersonaProvider {
     fn invalidate(&self) {}
 }
 
+// === Skill Permissions (shared by skills + sandbox crates) ===
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SkillPermissions {
+    #[serde(default)]
+    pub fs_read: Option<Vec<String>>,
+    #[serde(default)]
+    pub fs_write: Option<Vec<String>>,
+    #[serde(default)]
+    pub network: Option<Vec<String>>,
+    #[serde(default)]
+    pub shell: bool,
+    #[serde(default)]
+    pub subprocess: bool,
+}
+
 // === Router types ===
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

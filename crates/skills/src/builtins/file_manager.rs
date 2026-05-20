@@ -24,8 +24,8 @@ impl Skill for FileManager {
                 "文件夹".into(),
             ],
             permissions: SkillPermissions {
-                fs_read: vec!["~".into()],
-                fs_write: vec!["~".into()],
+                fs_read: Some(vec!["~".into()]),
+                fs_write: Some(vec!["~".into()]),
                 ..Default::default()
             },
             min_engine_version: "0.1.0".into(),

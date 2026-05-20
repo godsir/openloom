@@ -26,7 +26,7 @@ impl Skill for WebBrowser {
                 "Google".into(),
             ],
             permissions: SkillPermissions {
-                network: vec!["*".into()],
+                network: Some(vec!["*".into()]),
                 ..Default::default()
             },
             min_engine_version: "0.1.0".into(),

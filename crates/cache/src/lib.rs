@@ -36,6 +36,39 @@ impl KvCache for NoopCache {
     }
 }
 
+/// Q4 KV Cache using safetensors block pool.
+/// Requires llama-cpp-2 state_get_data/set_data (C++ toolchain).
+/// Currently returns cache miss; full implementation in Phase 3B+.
+pub struct SafetensorsCache {
+    _cache_dir: std::path::PathBuf,
+    _max_blocks: usize,
+    _total_budget_mb: usize,
+}
+
+impl SafetensorsCache {
+    pub fn new(cache_dir: std::path::PathBuf, max_blocks: usize, total_budget_mb: usize) -> Self {
+        Self {
+            _cache_dir: cache_dir,
+            _max_blocks: max_blocks,
+            _total_budget_mb: total_budget_mb,
+        }
+    }
+}
+
+impl KvCache for SafetensorsCache {
+    fn lookup(&self, _prefix_hash: u64) -> Option<CachedPrefix> {
+        None
+    }
+    fn store(&self, _prefix_hash: u64, _blocks: CachedPrefix) {}
+    fn stats(&self) -> CacheStats {
+        CacheStats {
+            hit_rate: 0.0,
+            block_count: 0,
+            total_size_mb: 0.0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

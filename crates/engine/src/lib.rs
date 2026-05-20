@@ -799,6 +799,50 @@ impl Engine {
         store.query_by_subject(subject, limit)
     }
 
+    pub async fn cognition_snapshots(
+        &self,
+        cognition_id: i64,
+    ) -> Result<Vec<openloom_memory::store::CognitionSnapshot>> {
+        let conn = rusqlite::Connection::open(&self.db_path)?;
+        let store = openloom_memory::store::CognitionStore::new(&conn);
+        store.snapshots_for(cognition_id)
+    }
+
+    pub async fn rollback_cognition(&self, cognition_id: i64, version: i64) -> Result<()> {
+        let conn = rusqlite::Connection::open(&self.db_path)?;
+        let store = openloom_memory::store::CognitionStore::new(&conn);
+        let snapshots = store.snapshots_for(cognition_id)?;
+        let target = snapshots
+            .iter()
+            .find(|s| s.version == version)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "version {} not found for cognition {}",
+                    version,
+                    cognition_id
+                )
+            })?;
+        let subject: String = conn.query_row(
+            "SELECT subject FROM cognitions WHERE id = ?1",
+            rusqlite::params![cognition_id],
+            |row| row.get(0),
+        )?;
+        store.insert(
+            &subject,
+            &target.trait_name,
+            &target.value,
+            target.confidence,
+            target.evidence_count,
+        )?;
+        let _ = self.event_bus.send(EngineEvent::CognitionUpdated {
+            trait_name: target.trait_name.clone(),
+            old_value: String::new(),
+            new_value: target.value.clone(),
+            confidence: target.confidence,
+        });
+        Ok(())
+    }
+
     pub async fn persona_summary(&self) -> String {
         self.persona.summarize().await.unwrap_or_default()
     }
@@ -880,11 +924,7 @@ impl Engine {
     }
 
     pub fn cache_stats(&self) -> openloom_cache::CacheStats {
-        openloom_cache::CacheStats {
-            hit_rate: 0.0,
-            block_count: 0,
-            total_size_mb: 0.0,
-        }
+        self.weaver.cache().stats()
     }
 
     pub async fn shutdown(&self) -> Result<()> {

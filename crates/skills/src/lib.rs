@@ -13,45 +13,8 @@ pub trait Skill: Send + Sync {
     fn context_md(&self) -> &str;
 }
 
-/// Permission model — data model complete; enforcement in Phase 2/3
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillPermissions {
-    #[serde(default)]
-    pub fs_read: Vec<String>,
-    #[serde(default)]
-    pub fs_write: Vec<String>,
-    #[serde(default)]
-    pub network: Vec<String>,
-    #[serde(default)]
-    pub shell: bool,
-    #[serde(default)]
-    pub subprocess: bool,
-    #[serde(default = "default_max_memory")]
-    pub max_memory_mb: u32,
-    #[serde(default = "default_max_runtime")]
-    pub max_runtime_sec: u32,
-}
-
-fn default_max_memory() -> u32 {
-    128
-}
-fn default_max_runtime() -> u32 {
-    30
-}
-
-impl Default for SkillPermissions {
-    fn default() -> Self {
-        Self {
-            fs_read: Vec::new(),
-            fs_write: Vec::new(),
-            network: Vec::new(),
-            shell: false,
-            subprocess: false,
-            max_memory_mb: default_max_memory(),
-            max_runtime_sec: default_max_runtime(),
-        }
-    }
-}
+/// Permission model — now defined in openloom-models for shared use with sandbox crate
+pub use openloom_models::SkillPermissions;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillManifest {
@@ -122,6 +85,9 @@ impl SkillRegistry {
             .iter()
             .find(|s| s.name() == name)
             .ok_or_else(|| anyhow::anyhow!("skill '{}' not found", name))?;
+        let permissions = skill.manifest().permissions.clone();
+        openloom_sandbox::check_permissions(&permissions, name, &params)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         skill.invoke(params).await
     }
 
@@ -263,8 +229,9 @@ mod tests {
         let perms = SkillPermissions::default();
         assert!(!perms.shell);
         assert!(!perms.subprocess);
-        assert_eq!(perms.max_memory_mb, 128);
-        assert_eq!(perms.max_runtime_sec, 30);
+        assert!(perms.fs_read.is_none());
+        assert!(perms.fs_write.is_none());
+        assert!(perms.network.is_none());
     }
 
     #[test]

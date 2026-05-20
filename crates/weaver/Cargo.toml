@@ -8,3 +8,4 @@ openloom-models = { path = "../models" }
 openloom-cache = { path = "../cache" }
 chrono = "0.4"
 anyhow = "1"
+sha2 = "0.10"

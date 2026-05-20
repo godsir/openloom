@@ -1,5 +1,6 @@
 use openloom_cache::KvCache;
 use openloom_models::ChatMessage;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 pub struct AssembledPrompt {
@@ -28,15 +29,15 @@ impl ContextWeaver {
         skill_context: Option<&str>,
         working_memory: &[ChatMessage],
     ) -> AssembledPrompt {
-        let prefix_hash = 0u64;
-        let _ = self.cache.lookup(prefix_hash);
-
         let static_prefix = if persona_summary.is_empty() {
             system_instruction.to_string()
         } else {
             format!("{}\n{}", system_instruction, persona_summary)
         };
-        let static_prefix_len = static_prefix.len();
+        let hash = Sha256::digest(static_prefix.as_bytes());
+        let prefix_hash = u64::from_le_bytes(hash[..8].try_into().unwrap());
+        let _ = self.cache.lookup(prefix_hash);
+        let static_prefix_len = static_prefix.len(); // FIXME: use token count (InferenceEngine::token_count) after Phase 3A C++ toolchain
 
         let skill_section = match skill_context {
             Some(ctx) if !ctx.is_empty() => format!("\n[Skill Context]\n{}\n", ctx),
