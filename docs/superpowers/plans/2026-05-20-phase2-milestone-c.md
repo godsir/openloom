@@ -4,7 +4,7 @@
 
 **Goal:** 补齐 Phase 2 全部 22 个后端缺口：类型完整性、JSON-RPC 全方法、CLI 全命令实装、WebSocket 推送、信号处理/优雅关闭、配置系统读写
 
-**Architecture:** 类型层 → 存储层 → 引擎层 → 服务层 → CLI 层。先修复 models/inference/cache/memory/router 的基础类型，再重构 Engine 集成所有新能力，最后补齐 server dispatch/ws push/CLI/signal handling
+**Architecture:** 类型层 → 存储层 → 引擎层 → 服务层 → CLI 层。Task 1 (models) 为所有后续 task 提供类型基础，必须最先完成。Task 5 (router) 依赖 Task 1 的 ClassifyOutput。Task 2-4 与 Task 1 可并行（不依赖 models 变更）。Task 6 依赖 1-5。Tasks 7-10 依赖 Task 6。
 
 **Tech Stack:** Rust 2024, tokio, rusqlite, serde, chrono, std::sync::atomic
 
@@ -42,7 +42,7 @@ F:/openLoom/
 
 在 `F:/openLoom/crates/models/src/lib.rs` 中：
 
-1.1 修改 `TokenUsage`（约第148行）：加 `cached_tokens` 和 `latency_ms` 字段，`#[serde(default)]` 保持向后兼容：
+1.1 修改 `TokenUsage`（约第148行）：加 `cached_tokens` 和 `latency_ms` 字段：
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -50,22 +50,32 @@ pub struct TokenUsage {
     pub prompt_tokens: usize,
     pub completion_tokens: usize,
     #[serde(default)]
-    pub cached_tokens: usize,
+    pub cached_tokens: usize,   // NEW — serde backward compat
     #[serde(default)]
-    pub latency_ms: u64,
+    pub latency_ms: u64,        // NEW — serde backward compat
 }
 ```
 
-1.2 修改 `EngineEvent::AgentStateChanged`（约第201行）：将 `String` 改为 `AgentState` 枚举：
+**重要：** `#[serde(default)]` 仅解决 JSON 反序列化向后兼容，不解决 Rust 字面量构造。`F:/openLoom/crates/engine/src/lib.rs` 中所有 `TokenUsage { prompt_tokens, completion_tokens }` 字面量构造点（当前约 2 处：simple path 返回 + agent_loop 返回）必须在 Task 6 中改为 `TokenUsage { prompt_tokens, completion_tokens, ..Default::default() }`。**Task 6 必须处理这些构造点。**
+
+1.2 修改 `EngineEvent::AgentStateChanged`（约第201行）：将 `String` 改为 `AgentState` 枚举。同时给 `EngineEvent::TokenUsage`（约第205行）加 `cached_tokens` 和 `latency_ms` 字段：
 
 ```rust
 AgentStateChanged {
     old_state: AgentState,
     new_state: AgentState,
 },
+TokenUsage {
+    session_id: String,
+    model: String,
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    cached_tokens: usize,   // NEW
+    latency_ms: u64,        // NEW
+},
 ```
 
-1.3 修改 `ClassifyOutput`（约第114行）：加 `route_reason` 字段：
+1.3 修改 `ClassifyOutput`（约第114行）：加 `route_reason` 字段，带 `#[serde(default)]` 确保 Task 1 完成时现有构造点不编译失败：
 
 ```rust
 pub struct ClassifyOutput {
@@ -79,6 +89,8 @@ pub struct ClassifyOutput {
     pub route_reason: String,
 }
 ```
+
+`#[serde(default)]` 让 Task 1 单独 cargo check 通过（现有无 `route_reason` 的构造点用默认空字符串）。Task 5 在各分支填入实际值。
 
 1.4 修改 `StoragePrefs`（约第324行）；`data_dir` 改为 `PathBuf`：
 
@@ -218,6 +230,7 @@ impl AppConfig {
             "agent" => { match parts[1] { "max_iterations" => { if let serde_json::Value::Number(n) = &json_value { self.agent.max_iterations = n.as_u64().unwrap_or(3) as usize; } } "timeout_secs" => { if let serde_json::Value::Number(n) = &json_value { self.agent.timeout_secs = n.as_u64().unwrap_or(120); } } _ => {} } }
             "persona" => { match parts[1] { "top_n" => { if let serde_json::Value::Number(n) = &json_value { self.persona.top_n = n.as_u64().unwrap_or(5) as usize; } } "recency_decay_days" => { if let serde_json::Value::Number(n) = &json_value { self.persona.recency_decay_days = n.as_u64().unwrap_or(30) as u32; } } _ => {} } }
             "rate_limit" => { if parts[1] == "min_interval_ms" { if let serde_json::Value::Number(n) = &json_value { self.rate_limit.min_interval_ms = n.as_u64().unwrap_or(100); } } }
+            "cache" => { match parts[1] { "block_size" => { if let serde_json::Value::Number(n) = &json_value { self.cache.block_size = n.as_u64().unwrap_or(1024) as usize; } } "max_blocks" => { if let serde_json::Value::Number(n) = &json_value { self.cache.max_blocks = n.as_u64().unwrap_or(32) as usize; } } "total_budget_mb" => { if let serde_json::Value::Number(n) = &json_value { self.cache.total_budget_mb = n.as_u64().unwrap_or(5120) as usize; } } _ => {} } }
             "logging" => { if parts[1] == "level" { if let serde_json::Value::String(s) = json_value { self.logging.level = s; } } }
             _ => {}
         }
@@ -335,9 +348,9 @@ git commit -m "feat(models): add cached_tokens/latency_ms to TokenUsage, AgentSt
 **Files:**
 - Modify: `F:/openLoom/crates/inference/src/lib.rs`
 
-- [ ] **Step 1: 在 CompletionRequest 加 top_p 和 stop 字段**
+- [ ] **Step 1: 在 CompletionRequest 加 top_p 和 stop 字段，CompletionResponse 加 latency_ms**
 
-`F:/openLoom/crates/inference/src/lib.rs` 中修改 `CompletionRequest`（约第8行）：
+`F:/openLoom/crates/inference/src/lib.rs` 中修改 `CompletionRequest`（约第8行）和 `CompletionResponse`（约第27行）：
 
 ```rust
 #[derive(Debug, Clone)]
@@ -362,7 +375,17 @@ impl Default for CompletionRequest {
         }
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct CompletionResponse {
+    pub text: String,
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub latency_ms: u64,       // NEW
+}
 ```
+
+两个 CloudClient impl（AnthropicClient、OpenAIClient）的 `try_complete()` 中 `CompletionResponse` 构造点需加 `latency_ms: 0`（云端延迟由 Engine 的 `Instant::now()` 在调用前后测量）。`InferenceEngine::complete()` 的构造点也加 `latency_ms: 0`。
 
 - [ ] **Step 2: 编译检查**
 
@@ -764,7 +787,14 @@ fn spawn_token_store_thread(
 }
 ```
 
-- [ ] **Step 4: 修改 Engine::new() 和 Engine::new_test()**
+- [ ] **Step 4: 修改 Engine::new() 和 Engine::new_test() + 添加依赖**
+
+**先添加 Engine Cargo.toml 依赖：** `F:/openLoom/crates/engine/Cargo.toml` 在 `[dependencies]` 中加：
+
+```toml
+dirs = "5"
+toml = "0.8"
+```
 
 在 `Engine::new()` 中（约第90-115行），初始化新增字段。修改 `EngineConfig` 加 `rate_limit_ms` 字段：
 
@@ -842,11 +872,10 @@ pub async fn handle_message(&self, msg: ChatMessage, session_id: &str) -> Result
         return Err(anyhow::anyhow!("Server is shutting down"));
     }
 
-    // Mid-turn protection
+    // Mid-turn protection (KEEP existing logic — do NOT release gate here, only at end of each path)
     if self.interruptible.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
         return Err(anyhow::anyhow!("Agent is busy, please wait"));
     }
-    self.interruptible.store(false, Ordering::SeqCst);
 
     self.in_flight.fetch_add(1, Ordering::SeqCst);
 
@@ -857,7 +886,7 @@ pub async fn handle_message(&self, msg: ChatMessage, session_id: &str) -> Result
     let latency_ms = start.elapsed().as_millis() as u64;
     self.in_flight.fetch_sub(1, Ordering::SeqCst);
 
-    // ... existing TokenUsage event (update to include cached_tokens + latency_ms) ...
+    // ... existing TokenUsage event (UPDATE to include cached_tokens + latency_ms) ...
     let _ = self.event_bus.send(EngineEvent::TokenUsage {
         session_id: session_id.to_string(),
         model: "qwen3-1.7b".into(),
@@ -876,6 +905,23 @@ pub async fn handle_message(&self, msg: ChatMessage, session_id: &str) -> Result
         cached_tokens: 0,
         latency_ms,
     });
+
+    // Reset interruptible flag only at end of simple path (C1 fix from Milestone B)
+    self.interruptible.store(false, Ordering::SeqCst);
+
+    Ok(ChatResponse {
+        response,
+        session_id: session_id.to_string(),
+        token_usage: TokenUsage { prompt_tokens, completion_tokens, cached_tokens: 0, latency_ms },
+    })
+}
+```
+
+Agent loop 路径中也同样：
+- 在 `agent_loop()` 入口处（已有 `self.interruptible.store(true, ...)`），加以 `in_flight` 计数
+- 在 `agent_loop()` 的每个返回路径末尾（已有 `self.interruptible.store(false, ...)`），加上 `in_flight` 减计数
+- 所有 `TokenUsage { prompt_tokens, completion_tokens }` 改为 `TokenUsage { prompt_tokens, completion_tokens, cached_tokens: 0, latency_ms }`
+- 所有 `EngineEvent::TokenUsage { session_id, model, prompt_tokens, completion_tokens }` 改为 `EngineEvent::TokenUsage { session_id, model, prompt_tokens, completion_tokens, cached_tokens: 0, latency_ms }`
 
     Ok(ChatResponse {
         response,
@@ -1197,6 +1243,7 @@ use axum::response::IntoResponse;
 use openloom_engine::Engine;
 use openloom_models::*;
 use std::sync::Arc;
+use tokio::sync::broadcast;
 
 use crate::dispatch;
 
@@ -1248,10 +1295,18 @@ async fn handle_ws(mut socket: WebSocket, engine: Arc<Engine>) {
                 }
             }
             // EventBus push notifications
-            Ok(event) = event_rx.recv() => {
-                let notification = event_to_notification(&event);
-                if let Ok(json) = serde_json::to_string(&notification) {
-                    let _ = socket.send(Message::Text(json.into())).await;
+            result = event_rx.recv() => {
+                match result {
+                    Ok(event) => {
+                        let notification = event_to_notification(&event);
+                        if let Ok(json) = serde_json::to_string(&notification) {
+                            let _ = socket.send(Message::Text(json.into())).await;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(skipped = n, "WebSocket event_rx lagging, skipped events");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
         }
