@@ -309,3 +309,18 @@ Engine 拆分 (3.3) — 独立，纯代码重构
 | 权限拒绝 | 返回 ErrorCode::PermissionDenied + 详细的被拒绝操作描述 |
 | Engine 模块编译错误 | `pub use engine::*;` 保持向后兼容，consumer 不需要改 import |
 | electron-builder 失败 | 各平台独立打包脚本，一个失败不影响其他 |
+
+---
+
+## 7. Round 2 Audit Errata（已内化到上述设计）
+
+1. **HIGH-FIXED: SafetensorsCache ↔ llama-cpp 集成点。** `KvCache::store()` 的调用方是 Engine 的推理后 hook：`complete()` 返回后 → 调用 `LlamaContext::state_get_data()` 获取 KV → Q4 quantize → 调用 `cache.store(prefix_hash, blocks)`。此逻辑在 Engine 的 `handle_message()` 返回路径中（Phase 3A 完成后），不在 cache crate 内部。
+
+2. **HIGH-FIXED: rollback_cognition subject 查询。** 修正为两步：(1) `SELECT subject FROM cognitions WHERE id = ?1` 获取实际 subject，(2) 再用 `store.insert(subject, ...)` 而非硬编码 `"USER"`。
+```rust
+let subject: String = conn.query_row(
+    "SELECT subject FROM cognitions WHERE id = ?1",
+    rusqlite::params![cognition_id], |row| row.get(0)
+)?;
+store.insert(&subject, &target.trait_name, &target.value, target.confidence, target.evidence_count)?;
+```

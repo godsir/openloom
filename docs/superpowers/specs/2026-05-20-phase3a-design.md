@@ -456,3 +456,29 @@ llama-cpp-2 加载 (3.1)
 | SSE 客户端断开 | `tx.send()` 返回 Err → 推理循环 break |
 | 心跳推理失败 | 静默跳过本次 tick，不影响主流程 |
 | 两个模型同时加载 OOM | 降级：只加载 1.7B，8B 走 RuleBased |
+
+---
+
+## 7. Round 2 Audit Errata（已内化到上述设计，此处仅注明）
+
+1. **CRITICAL-FIXED:** `#[cfg(not(feature = "llama"))]` fallback struct 需包含 `_n_gpu_layers: usize` 字段，已修正。
+2. **HIGH-FIXED:** Engine heartbeat spawn 通过字段级 clone（`inference.clone()`, `agent_state.clone()` 等）避免需要 `Arc<Engine>`；不对整体 Engine 做 clone。
+3. **HIGH-FIXED:** Anthropic SSE 流格式：逐行解析 `event:` / `data:` 帧，匹配 `content_block_delta` → `JSON.parse(data).delta.text` 提取 delta。
+```rust
+// AnthropicClient::complete_stream() streaming parser sketch
+let mut buffer = String::new();
+while let Some(chunk) = stream.next().await {
+    buffer.push_str(&String::from_utf8_lossy(&chunk?));
+    for line in buffer.lines() {
+        if line.starts_with("data: ") {
+            let data = &line[6..];
+            if let Ok(json) = serde_json::from_str::<Value>(data) {
+                if let Some(text) = json["delta"]["text"].as_str() {
+                    if tx.send(text.to_string()).await.is_err() { return Ok(()); }
+                }
+            }
+        }
+    }
+    buffer.clear();
+}
+```
