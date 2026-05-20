@@ -17,9 +17,7 @@ pub(crate) enum SessionCommand {
     },
 }
 
-pub(crate) fn spawn_session_thread(
-    db_path: PathBuf,
-) -> std::sync::mpsc::Sender<SessionCommand> {
+pub(crate) fn spawn_session_thread(db_path: PathBuf) -> std::sync::mpsc::Sender<SessionCommand> {
     let (tx, rx) = std::sync::mpsc::channel::<SessionCommand>();
     std::thread::spawn(move || {
         let conn = rusqlite::Connection::open(&db_path).expect("session db open");

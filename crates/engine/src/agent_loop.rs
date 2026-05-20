@@ -21,8 +21,7 @@ impl Engine {
         });
         self.interruptible.store(true, Ordering::SeqCst);
 
-        let mut history: Vec<ChatMessage> =
-            self.get_working_memory(session_id).unwrap_or_default();
+        let mut history: Vec<ChatMessage> = self.get_working_memory(session_id).unwrap_or_default();
         history.push(msg.clone());
 
         // Build skill list string for system prompt injection

@@ -69,7 +69,8 @@ impl SmartRouter {
             }
         }
 
-        let (target_model, complexity, reason) = if best_confidence >= self.config.keyword_threshold {
+        let (target_model, complexity, reason) = if best_confidence >= self.config.keyword_threshold
+        {
             if skill_match.is_some() {
                 (TargetModel::None, 0.3, "skill_trigger")
             } else {
@@ -134,7 +135,9 @@ mod tests {
         let output = router.classify_sync("你好啊，很高兴见到你");
         assert_eq!(output.intent, Intent::Chat);
         assert_eq!(output.target_model, TargetModel::Local);
-        assert!(output.route_reason == "keyword_fallback" || output.route_reason == "default_local");
+        assert!(
+            output.route_reason == "keyword_fallback" || output.route_reason == "default_local"
+        );
     }
 
     #[test]

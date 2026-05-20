@@ -92,8 +92,8 @@ impl InferenceEngine {
             return Ok(Self { sender: None });
         }
 
-        let backend = LlamaBackend::init()
-            .map_err(|e| anyhow::anyhow!("llama backend init: {}", e))?;
+        let backend =
+            LlamaBackend::init().map_err(|e| anyhow::anyhow!("llama backend init: {}", e))?;
 
         let model = LlamaModel::load_from_file(
             &backend,
@@ -131,8 +131,7 @@ impl InferenceEngine {
                                 .str_to_token(&prompt, AddBos::Always)
                                 .map(|t| t.len())
                                 .unwrap_or(prompt.chars().count() / 4);
-                            let result =
-                                model.create_completion(&prompt, max_tokens as u32);
+                            let result = model.create_completion(&prompt, max_tokens as u32);
                             let text = result.unwrap_or_default();
                             let completion_tokens = text.chars().count() / 4;
                             let _ = reply.send(CompletionResponse {
@@ -147,8 +146,7 @@ impl InferenceEngine {
                             max_tokens,
                             token_tx,
                         } => {
-                            let result =
-                                model.create_completion(&prompt, max_tokens as u32);
+                            let result = model.create_completion(&prompt, max_tokens as u32);
                             let _ = token_tx.send(result.unwrap_or_default());
                         }
                         EngineCommand::TokenCount { text, reply } => {
@@ -163,9 +161,7 @@ impl InferenceEngine {
             })?;
 
         tracing::info!(path = %model_path.display(), n_gpu_layers, "llama model loaded");
-        Ok(Self {
-            sender: Some(tx),
-        })
+        Ok(Self { sender: Some(tx) })
     }
 
     /// Complete text completion via worker thread. Falls back to stub if no model is loaded.

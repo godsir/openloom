@@ -1,14 +1,14 @@
-pub mod memory_thread;
-pub mod rate_limiter;
 pub mod agent_loop;
-pub mod session;
-pub mod token_store;
-pub mod heartbeat;
-pub mod persona_watcher;
 pub mod config;
+pub mod events;
+pub mod heartbeat;
+pub mod memory_thread;
+pub mod persona_watcher;
+pub mod rate_limiter;
+pub mod session;
 pub mod shutdown;
 pub mod stream;
-pub mod events;
+pub mod token_store;
 
 use crate::heartbeat::spawn_hub_heartbeat;
 use crate::rate_limiter::RateLimiter;
@@ -35,7 +35,8 @@ use tokio::sync::{RwLock, broadcast, oneshot};
 
 pub use openloom_models::EngineEvent;
 
-pub(crate) const SYSTEM_INSTRUCTION: &str = "You are openLoom, a private AI assistant running locally.
+pub(crate) const SYSTEM_INSTRUCTION: &str =
+    "You are openLoom, a private AI assistant running locally.
 When you need to use a tool, respond with ONLY a JSON block on a single line:
 {\"tool\": \"<skill_name>\", \"params\": {\"key\": \"value\"}}
 Available tools: [tools]
