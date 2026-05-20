@@ -1,17 +1,45 @@
-use axum::extract::Path;
+use axum::extract::{Path, Query, State};
 use axum::response::sse::{Event, Sse};
-use futures::stream;
+use futures::stream::{self, Stream};
+use openloom_engine::Engine;
+use openloom_inference::CompletionRequest;
+use serde::Deserialize;
 use std::convert::Infallible;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+
+#[derive(Deserialize)]
+pub struct SseParams {
+    prompt: String,
+    max_tokens: Option<usize>,
+}
 
 pub async fn sse_handler(
     Path(session_id): Path<String>,
-) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
-    tracing::debug!(%session_id, "SSE connection opened");
+    Query(params): Query<SseParams>,
+    State(engine): State<Arc<Engine>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    tracing::debug!(%session_id, prompt_len = params.prompt.len(), "SSE streaming started");
 
-    let stream = stream::once(async move {
-        Ok(Event::default()
-            .data(format!("SSE stream ready for session {}", session_id))
-            .event("ready"))
+    let (tx, rx) = mpsc::channel::<String>(64);
+
+    let engine = engine.clone();
+    tokio::spawn(async move {
+        let req = CompletionRequest {
+            prompt: params.prompt,
+            max_tokens: params.max_tokens.unwrap_or(2048),
+            ..Default::default()
+        };
+        if let Err(e) = engine.stream_complete(req, tx).await {
+            tracing::warn!(%session_id, error = %e, "SSE stream_complete failed");
+        }
+    });
+
+    let stream = stream::unfold(rx, |mut rx| async move {
+        match rx.recv().await {
+            Some(token) => Some((Ok(Event::default().data(token)), rx)),
+            None => None,
+        }
     });
 
     Sse::new(stream)

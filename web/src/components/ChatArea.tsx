@@ -33,22 +33,26 @@ export default function ChatArea({ sessionId }: { sessionId: string }) {
         setInput('');
         setLoading(true);
 
-        try {
-            const result = await window.openloom?.send('chat.send', {
-                messages: [{ role: 'user', content: input }],
-                session_id: sessionId,
-                stream: false,
-            });
-            const content = (result?.response as string) || 'No response';
-            setMessages((prev) => [...prev, { role: 'assistant', content }]);
-        } catch (err) {
-            setMessages((prev) => [
-                ...prev,
-                { role: 'assistant', content: `Error: ${err}` },
-            ]);
-        } finally {
-            setLoading(false);
-        }
+        const baseUrl = window.openloom?.sseUrl(sessionId) || `http://127.0.0.1:0/sse/${sessionId}`;
+        const url = `${baseUrl}?prompt=${encodeURIComponent(input)}&max_tokens=2048`;
+
+        const es = new EventSource(url);
+
+        es.onmessage = (e) => {
+            if (e.data) {
+                setMessages(prev => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === 'assistant') {
+                        updated[updated.length - 1] = { ...last, content: last.content + e.data };
+                    }
+                    return updated;
+                });
+            }
+        };
+
+        es.addEventListener('done', () => { es.close(); setLoading(false); });
+        es.onerror = () => { es.close(); setLoading(false); }
     }
 
     return (

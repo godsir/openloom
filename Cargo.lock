@@ -1386,6 +1386,7 @@ dependencies = [
  "dirs",
  "futures",
  "openloom-engine",
+ "openloom-inference",
  "openloom-models",
  "serde",
  "serde_json",

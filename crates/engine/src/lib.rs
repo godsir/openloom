@@ -736,6 +736,18 @@ impl Engine {
         self.event_bus.subscribe()
     }
 
+    pub async fn stream_complete(
+        &self,
+        req: CompletionRequest,
+        tx: tokio::sync::mpsc::Sender<String>,
+    ) -> anyhow::Result<()> {
+        if let Some(ref cloud) = self.cloud {
+            cloud.complete_stream(req, tx).await
+        } else {
+            self.inference.complete_stream(req, tx).await
+        }
+    }
+
     pub fn list_skills(&self) -> Vec<openloom_skills::SkillInfo> {
         self.skills.list_all()
     }
