@@ -135,6 +135,20 @@ fn load_config(custom_path: Option<&str>) -> AppConfig {
     }
 }
 
+fn build_engine(config: Option<&str>, rate_limit_ms: u64) -> anyhow::Result<Engine> {
+    let app_config = load_config(config);
+    let data_dir = dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("openLoom");
+    let cloud_config = app_config.models.iter()
+        .find(|m| matches!(m.backend, openloom_models::ModelBackend::Anthropic | openloom_models::ModelBackend::OpenAI | openloom_models::ModelBackend::DeepSeek))
+        .cloned();
+    Engine::new(EngineConfig {
+        data_dir,
+        threshold: app_config.agent.max_iterations,
+        cloud_config,
+        rate_limit_ms,
+    })
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -153,31 +167,22 @@ async fn main() -> anyhow::Result<()> {
             run_analyze(&input, &output, &db, threshold)?;
         }
         Commands::Serve { port, config } => {
-            let _app_config = load_config(config.as_deref());
-            let data_dir = dirs::data_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("openLoom");
-
-            let engine = Engine::new(EngineConfig {
-                data_dir,
-                threshold: 3,
-                cloud_config: None,
-            })?;
-
-            let server = Server::new(engine);
+            let app_config = load_config(config.as_deref());
+            let rate_limit_ms = app_config.rate_limit.min_interval_ms;
+            let engine = build_engine(config.as_deref(), rate_limit_ms)?;
+            engine.load_config_into_engine(app_config);
+            let server = Server::new(engine, config.as_ref().map(PathBuf::from));
+            let shutdown_engine = server.engine().clone();
+            tokio::spawn(async move {
+                tokio::signal::ctrl_c().await.ok();
+                tracing::info!("SIGINT received, shutting down...");
+                shutdown_engine.shutdown().await.ok();
+                std::process::exit(0);
+            });
             server.serve(port).await?;
         }
         Commands::Chat { config } => {
-            let _app_config = load_config(config.as_deref());
-            let data_dir = dirs::data_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("openLoom");
-
-            let engine = Engine::new(EngineConfig {
-                data_dir,
-                threshold: 3,
-                cloud_config: None,
-            })?;
+            let engine = build_engine(config.as_deref(), 100)?;
 
             let sid = engine.create_session().await?.id;
             println!("openLoom chat (type /exit to quit)");
@@ -203,16 +208,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Run { task, config } => {
-            let _app_config = load_config(config.as_deref());
-            let data_dir = dirs::data_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("openLoom");
-
-            let engine = Engine::new(EngineConfig {
-                data_dir,
-                threshold: 3,
-                cloud_config: None,
-            })?;
+            let engine = build_engine(config.as_deref(), 100)?;
 
             let sid = engine.create_session().await?.id;
             let msg = ChatMessage {
@@ -225,9 +221,15 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Skill { action } => match action {
             SkillAction::List => {
-                println!(
-                    "Skills: file-manager, info-retriever, schedule-reminder, code-assistant, web-browser"
-                );
+                let engine = build_engine(None, 100)?;
+                let skills = engine.list_skills();
+                if skills.is_empty() {
+                    println!("No skills registered.");
+                } else {
+                    for s in &skills {
+                        println!("{} - {} (triggers: {:?})", s.name, s.description, s.triggers);
+                    }
+                }
             }
             SkillAction::Install { path } => {
                 println!("Install skill from: {} (Phase 2 WASM)", path);
@@ -238,14 +240,7 @@ async fn main() -> anyhow::Result<()> {
         },
         Commands::Memory { action } => match action {
             MemoryAction::Persona => {
-                let data_dir = dirs::data_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join("openLoom");
-                let engine = Engine::new(EngineConfig {
-                    data_dir,
-                    threshold: 3,
-                    cloud_config: None,
-                })?;
+                let engine = build_engine(None, 100)?;
                 let summary = engine.persona_summary().await;
                 if summary.is_empty() {
                     println!("No persona data yet. Interact more to build a cognition profile.");
@@ -254,17 +249,21 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             MemoryAction::Events { limit } => {
-                println!("Showing last {} events (Phase 2 storage query)", limit);
+                let engine = build_engine(None, 100)?;
+                let events = engine.list_events(limit).await?;
+                if events.is_empty() {
+                    println!("No events recorded yet.");
+                } else {
+                    for e in &events {
+                        println!("[{}] {}: {} (conf: {:.0}%, session: {})",
+                            e.timestamp, e.event_type, e.action,
+                            e.confidence * 100.0,
+                            e.source_session.as_deref().unwrap_or("-"));
+                    }
+                }
             }
             MemoryAction::Cognitions { subject } => {
-                let data_dir = dirs::data_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join("openLoom");
-                let engine = Engine::new(EngineConfig {
-                    data_dir,
-                    threshold: 3,
-                    cloud_config: None,
-                })?;
+                let engine = build_engine(None, 100)?;
                 let cognitions = engine.list_cognitions(&subject, 20).await?;
                 if cognitions.is_empty() {
                     println!("No cognitions for subject '{}'.", subject);
@@ -284,14 +283,39 @@ async fn main() -> anyhow::Result<()> {
         },
         Commands::Config { action } => match action {
             ConfigAction::Get { key } => {
-                let path = config_path(None);
-                println!("Config file: {}", path.display());
-                if let Some(k) = key {
-                    println!("Get: {}", k);
+                match key {
+                    Some(k) => {
+                        let config = load_config(None);
+                        match config.get_nested(&k) {
+                            Some(v) => println!("{} = {}", k, v),
+                            None => println!("Key '{}' not found", k),
+                        }
+                    }
+                    None => {
+                        let config = load_config(None);
+                        match toml::to_string_pretty(&config) {
+                            Ok(s) => println!("{}", s),
+                            Err(e) => eprintln!("Error: {}", e),
+                        }
+                    }
                 }
             }
             ConfigAction::Set { key, value } => {
-                println!("Set {} = {}", key, value);
+                let path = config_path(None);
+                let mut config = if path.exists() { load_config(None) } else { AppConfig::default() };
+                if let Err(e) = config.set_nested(&key, &value) {
+                    eprintln!("Error: {}", e);
+                } else {
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let content = toml::to_string(&config).unwrap_or_default();
+                    if let Err(e) = std::fs::write(&path, content) {
+                        eprintln!("Error writing config: {}", e);
+                    } else {
+                        println!("{} = {}", key, value);
+                    }
+                }
             }
             ConfigAction::Path => {
                 let path = config_path(None);
@@ -316,14 +340,7 @@ async fn main() -> anyhow::Result<()> {
             println!("openLoom {}", env!("CARGO_PKG_VERSION"));
         }
         Commands::Session { action } => {
-            let data_dir = dirs::data_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("openLoom");
-            let engine = Engine::new(EngineConfig {
-                data_dir,
-                threshold: 3,
-                cloud_config: None,
-            })?;
+            let engine = build_engine(None, 100)?;
             match action {
                 SessionAction::List => {
                     let sessions = engine.list_sessions().await?;
