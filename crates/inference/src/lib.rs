@@ -114,7 +114,9 @@ impl InferenceEngine {
         std::thread::Builder::new()
             .name("llama-worker".into())
             .spawn(move || {
-                let sampler = LlamaSampler::chain_simple([
+                // Phase 3B: LlamaSampler reserved for incremental decode with ctx.decode()
+                // Currently create_completion() handles sampling internally.
+                let _sampler = LlamaSampler::chain_simple([
                     LlamaSampler::temp(0.7),
                     LlamaSampler::top_p(0.95),
                     LlamaSampler::greedy(),

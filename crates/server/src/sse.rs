@@ -1,6 +1,6 @@
 use axum::extract::{Path, Query, State};
 use axum::response::sse::{Event, Sse};
-use futures::stream::{self, Stream};
+use futures::stream::{self, Stream, StreamExt};
 use openloom_engine::Engine;
 use openloom_inference::CompletionRequest;
 use serde::Deserialize;
@@ -35,11 +35,14 @@ pub async fn sse_handler(
         }
     });
 
-    let stream = stream::unfold(rx, |mut rx| async move {
+    let data_stream = stream::unfold(rx, |mut rx| async move {
         rx.recv()
             .await
             .map(|token| (Ok(Event::default().data(token)), rx))
     });
+    // Emit 'done' event so frontend can distinguish normal completion from errors
+    let done_event = stream::once(async { Ok(Event::default().event("done").data("{}")) });
+    let stream = data_stream.chain(done_event);
 
     Sse::new(stream)
 }
