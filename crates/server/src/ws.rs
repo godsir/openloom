@@ -4,6 +4,7 @@ use axum::response::IntoResponse;
 use openloom_engine::Engine;
 use openloom_models::*;
 use std::sync::Arc;
+use tokio::sync::broadcast;
 
 use crate::dispatch;
 
@@ -15,56 +16,97 @@ pub async fn ws_handler(
 }
 
 async fn handle_ws(mut socket: WebSocket, engine: Arc<Engine>) {
-    while let Some(Ok(msg)) = socket.recv().await {
-        match msg {
-            Message::Text(text) => {
-                if let Ok(req) = serde_json::from_str::<JsonRpcRequest>(&text) {
-                    let result = dispatch_ws(&engine, &req).await;
-                    let resp = match result {
-                        Ok(value) => JsonRpcResponse {
-                            jsonrpc: "2.0".into(),
-                            result: Some(value),
-                            error: None,
-                            id: req.id,
-                        },
-                        Err(err) => JsonRpcResponse {
-                            jsonrpc: "2.0".into(),
-                            result: None,
-                            error: Some(err),
-                            id: req.id,
-                        },
-                    };
-                    if let Ok(json) = serde_json::to_string(&resp) {
-                        let _ = socket.send(Message::Text(json)).await;
+    let mut event_rx = engine.subscribe();
+
+    loop {
+        tokio::select! {
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        if let Ok(req) = serde_json::from_str::<JsonRpcRequest>(&text) {
+                            let result = dispatch::dispatch_method(&engine, &req.method, req.params.clone()).await;
+                            let resp = match result {
+                                Ok(value) => JsonRpcResponse {
+                                    jsonrpc: "2.0".into(), result: Some(value), error: None, id: req.id,
+                                },
+                                Err(err) => JsonRpcResponse {
+                                    jsonrpc: "2.0".into(), result: None, error: Some(err), id: req.id,
+                                },
+                            };
+                            if let Ok(json) = serde_json::to_string(&resp) {
+                                let _ = socket.send(Message::Text(json)).await;
+                            }
+                        } else {
+                            let err = JsonRpcResponse {
+                                jsonrpc: "2.0".into(), result: None,
+                                error: Some(JsonRpcError {
+                                    code: ErrorCode::ParseError, message: "invalid JSON-RPC".into(), data: None,
+                                }),
+                                id: 0,
+                            };
+                            if let Ok(json) = serde_json::to_string(&err) {
+                                let _ = socket.send(Message::Text(json)).await;
+                            }
+                        }
                     }
-                } else {
-                    let err = JsonRpcResponse {
-                        jsonrpc: "2.0".into(),
-                        result: None,
-                        error: Some(JsonRpcError {
-                            code: ErrorCode::ParseError,
-                            message: "invalid JSON-RPC".into(),
-                            data: None,
-                        }),
-                        id: 0,
-                    };
-                    if let Ok(json) = serde_json::to_string(&err) {
-                        let _ = socket.send(Message::Text(json)).await;
+                    Some(Ok(Message::Ping(_))) => {
+                        let _ = socket.send(Message::Pong(vec![])).await;
                     }
+                    Some(Ok(Message::Close(_))) | None => break,
+                    _ => {}
                 }
             }
-            Message::Ping(_) => {
-                let _ = socket.send(Message::Pong(vec![])).await;
+            result = event_rx.recv() => {
+                match result {
+                    Ok(event) => {
+                        let notification = event_to_notification(&event);
+                        if let Ok(json) = serde_json::to_string(&notification) {
+                            let _ = socket.send(Message::Text(json)).await;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(skipped = n, "WebSocket event_rx lagging, skipped events");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
             }
-            Message::Close(_) => break,
-            _ => {}
         }
     }
 }
 
-async fn dispatch_ws(
-    engine: &Engine,
-    req: &JsonRpcRequest,
-) -> Result<serde_json::Value, JsonRpcError> {
-    dispatch::dispatch_method(engine, &req.method, req.params.clone()).await
+fn event_to_notification(event: &EngineEvent) -> serde_json::Value {
+    match event {
+        EngineEvent::CognitionUpdated { trait_name, new_value, confidence, .. } => {
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "cognition.updated",
+                "params": { "trait": trait_name, "new_value": new_value, "confidence": confidence }
+            })
+        }
+        EngineEvent::AgentStateChanged { old_state, new_state } => {
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "agent.state_changed",
+                "params": { "old_state": old_state, "new_state": new_state }
+            })
+        }
+        EngineEvent::TokenUsage { session_id, model, prompt_tokens, completion_tokens, cached_tokens, latency_ms } => {
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "token.usage",
+                "params": {
+                    "session_id": session_id, "model": model,
+                    "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+                    "cached_tokens": cached_tokens, "latency_ms": latency_ms
+                }
+            })
+        }
+        EngineEvent::Error { code, message, subsystem } => {
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "error",
+                "params": { "code": code, "message": message, "subsystem": subsystem }
+            })
+        }
+    }
 }
