@@ -6,16 +6,6 @@ interface Message {
     content: string;
 }
 
-declare global {
-    interface Window {
-        openloom?: {
-            send: (method: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>;
-            sseUrl: (sessionId: string) => string;
-            subscribe: (event: string, cb: (data: Record<string, unknown>) => void) => void;
-        };
-    }
-}
-
 export default function ChatArea({ sessionId }: { sessionId: string }) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
