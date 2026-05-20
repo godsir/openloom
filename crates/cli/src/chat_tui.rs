@@ -1,5 +1,5 @@
 use crossterm::ExecutableCommand;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -49,6 +49,7 @@ pub async fn run(engine: Arc<Engine>) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     stdout.execute(EnterAlternateScreen)?;
+    stdout.execute(crossterm::event::EnableMouseCapture)?;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(stdout))?;
 
     let cwd = std::env::current_dir()
@@ -63,6 +64,8 @@ pub async fn run(engine: Arc<Engine>) -> anyhow::Result<()> {
         model_name,
         messages: Vec::new(),
         input: build_textarea(),
+        history: Vec::new(),
+        history_idx: None,
         loading: false,
         scroll: 0,
         show_commands: false,
@@ -73,6 +76,9 @@ pub async fn run(engine: Arc<Engine>) -> anyhow::Result<()> {
 
     disable_raw_mode()?;
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
+    terminal
+        .backend_mut()
+        .execute(crossterm::event::DisableMouseCapture)?;
     res
 }
 
@@ -99,6 +105,8 @@ struct ChatApp {
     model_name: String,
     messages: Vec<Message>,
     input: TextArea<'static>,
+    history: Vec<String>,
+    history_idx: Option<usize>,
     loading: bool,
     scroll: usize,
     show_commands: bool,
@@ -112,111 +120,129 @@ impl ChatApp {
             self.show_commands = cur.trim_start().starts_with('/');
             terminal.draw(|f| self.draw(f))?;
 
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Release {
-                    continue;
-                }
-                if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match event::read()? {
+                Event::Key(key) => {
+                    if key.kind == KeyEventKind::Release {
+                        continue;
+                    }
+                    if key.modifiers.contains(KeyModifiers::CONTROL) {
+                        match key.code {
+                            KeyCode::Char('c') => break,
+                            KeyCode::Char('d') => break,
+                            _ => {}
+                        }
+                        continue;
+                    }
                     match key.code {
-                        KeyCode::Char('c') => break,
-                        KeyCode::Char('d') => break,
-                        _ => {}
-                    }
-                    continue;
-                }
-                match key.code {
-                    KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                        self.input.insert_newline();
-                    }
-                    KeyCode::Tab => {
-                        if self.show_commands {
-                            let suggestions = self.filter_commands();
-                            if let Some((cmd, _)) = suggestions.get(self.selected_command) {
-                                self.input = build_textarea();
-                                self.input.insert_str(cmd);
-                                self.input.insert_str(" ");
-                                self.selected_command = 0;
+                        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            self.input.insert_newline();
+                        }
+                        KeyCode::Tab => {
+                            if self.show_commands {
+                                let suggestions = self.filter_commands();
+                                if let Some((cmd, _)) = suggestions.get(self.selected_command) {
+                                    self.input = build_textarea();
+                                    self.input.insert_str(cmd);
+                                    self.input.insert_str(" ");
+                                    self.selected_command = 0;
+                                }
                             }
                         }
-                    }
-                    KeyCode::Up => {
-                        if self.show_commands {
-                            let suggestions = self.filter_commands();
-                            if !suggestions.is_empty() {
-                                self.selected_command = self
-                                    .selected_command
-                                    .checked_sub(1)
-                                    .unwrap_or(suggestions.len() - 1);
+                        KeyCode::Up => {
+                            if self.show_commands {
+                                let suggestions = self.filter_commands();
+                                if !suggestions.is_empty() {
+                                    self.selected_command = self
+                                        .selected_command
+                                        .checked_sub(1)
+                                        .unwrap_or(suggestions.len() - 1);
+                                }
+                            } else {
+                                self.navigate_history(-1);
                             }
-                        } else {
-                            self.scroll = self.scroll.saturating_sub(1);
                         }
-                    }
-                    KeyCode::Down => {
-                        if self.show_commands {
-                            let suggestions = self.filter_commands();
-                            let max = suggestions.len().saturating_sub(1);
-                            self.selected_command = (self.selected_command + 1).min(max);
-                        } else {
-                            self.scroll = self.scroll.saturating_add(1);
+                        KeyCode::Down => {
+                            if self.show_commands {
+                                let suggestions = self.filter_commands();
+                                let max = suggestions.len().saturating_sub(1);
+                                self.selected_command = (self.selected_command + 1).min(max);
+                            } else {
+                                self.navigate_history(1);
+                            }
                         }
-                    }
-                    KeyCode::Enter => {
-                        let text = self.input.lines().join("\n").trim().to_string();
-                        self.input = build_textarea();
-                        if text.is_empty() {
-                            continue;
-                        }
-                        if self.handle_command(&text).await {
-                            continue;
-                        }
-                        // Not a command — send as chat message
-                        self.messages.push(Message {
-                            role: "user".into(),
-                            content: text.clone(),
-                        });
-                        self.loading = true;
-                        self.scroll = 0;
-                        terminal.draw(|f| self.draw(f))?;
+                        KeyCode::Enter => {
+                            self.history_idx = None;
+                            let text = self.input.lines().join("\n").trim().to_string();
+                            self.input = build_textarea();
+                            if text.is_empty() {
+                                continue;
+                            }
+                            if self.handle_command(&text).await {
+                                continue;
+                            }
+                            // Not a command — send as chat message
+                            if self.history.last() != Some(&text) {
+                                self.history.push(text.clone());
+                            }
+                            self.history_idx = None;
+                            self.messages.push(Message {
+                                role: "user".into(),
+                                content: text.clone(),
+                            });
+                            self.loading = true;
+                            self.scroll = 0;
+                            terminal.draw(|f| self.draw(f))?;
 
-                        let msg = openloom_models::ChatMessage {
-                            role: "user".into(),
-                            content: text,
-                            timestamp: chrono::Utc::now(),
-                        };
-                        match self.engine.handle_message(msg, &self.session_id).await {
-                            Ok(resp) => {
-                                self.messages.push(Message {
-                                    role: "assistant".into(),
-                                    content: resp.response,
-                                });
-                                let usage = format!(
-                                    "{} prompt + {} completion tokens · {}ms",
-                                    resp.token_usage.prompt_tokens,
-                                    resp.token_usage.completion_tokens,
-                                    resp.token_usage.latency_ms,
-                                );
-                                self.messages.push(Message {
-                                    role: "usage".into(),
-                                    content: usage,
-                                });
+                            let msg = openloom_models::ChatMessage {
+                                role: "user".into(),
+                                content: text,
+                                timestamp: chrono::Utc::now(),
+                            };
+                            match self.engine.handle_message(msg, &self.session_id).await {
+                                Ok(resp) => {
+                                    self.messages.push(Message {
+                                        role: "assistant".into(),
+                                        content: resp.response,
+                                    });
+                                    let usage = format!(
+                                        "{} prompt + {} completion tokens · {}ms",
+                                        resp.token_usage.prompt_tokens,
+                                        resp.token_usage.completion_tokens,
+                                        resp.token_usage.latency_ms,
+                                    );
+                                    self.messages.push(Message {
+                                        role: "usage".into(),
+                                        content: usage,
+                                    });
+                                }
+                                Err(e) => {
+                                    self.messages.push(Message {
+                                        role: "error".into(),
+                                        content: format!("Error: {}", e),
+                                    });
+                                }
                             }
-                            Err(e) => {
-                                self.messages.push(Message {
-                                    role: "error".into(),
-                                    content: format!("Error: {}", e),
-                                });
-                            }
+                            self.loading = false;
+                            self.scroll = 0;
                         }
-                        self.loading = false;
-                        self.scroll = 0;
-                    }
-                    KeyCode::Esc => break,
-                    _ => {
-                        self.selected_command = 0;
-                        self.input.input(key);
+                        KeyCode::Esc => break,
+                        _ => {
+                            self.history_idx = None;
+                            self.selected_command = 0;
+                            self.input.input(key);
+                        }
                     }
                 }
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollUp => {
+                        self.scroll = self.scroll.saturating_add(1);
+                    }
+                    MouseEventKind::ScrollDown => {
+                        self.scroll = self.scroll.saturating_sub(1);
+                    }
+                    _ => {}
+                },
+                _ => {}
             }
         }
         Ok(())
@@ -486,6 +512,28 @@ impl ChatApp {
         self.input.lines().get(row).cloned().unwrap_or_default()
     }
 
+    /// Navigate input history: -1 = older, +1 = newer.
+    fn navigate_history(&mut self, delta: isize) {
+        if self.history.is_empty() {
+            return;
+        }
+        let len = self.history.len();
+        let new = match self.history_idx {
+            None if delta < 0 => len.saturating_sub(1), // first Up: go to last
+            None => return,                               // first Down: stay
+            Some(i) => {
+                let next = i as isize + delta;
+                if next < 0 || next as usize >= len {
+                    return;
+                }
+                next as usize
+            }
+        };
+        self.history_idx = Some(new);
+        self.input = build_textarea();
+        self.input.insert_str(&self.history[new]);
+    }
+
     fn draw(&self, f: &mut Frame) {
         let area = f.area();
 
@@ -558,11 +606,21 @@ impl ChatApp {
                         .collect();
                     // Show scroll indicator when there are more items above/below
                     let header_text = if total > visible_rows {
-                        format!(" \u{2191}\u{2193} choose ({}/{}) Tab to complete", selected + 1, total)
+                        format!(
+                            " \u{2191}\u{2193} choose ({}/{}) Tab to complete",
+                            selected + 1,
+                            total
+                        )
                     } else {
                         " \u{2191}\u{2193} choose, Tab to complete".to_string()
                     };
-                    cmd_lines.insert(0, Line::from(Span::styled(header_text, Style::default().fg(Color::DarkGray))));
+                    cmd_lines.insert(
+                        0,
+                        Line::from(Span::styled(
+                            header_text,
+                            Style::default().fg(Color::DarkGray),
+                        )),
+                    );
                     let cmd_text = Text::from(cmd_lines);
                     let popup = Paragraph::new(cmd_text)
                         .block(
@@ -763,15 +821,42 @@ fn loom_rows() -> [Line<'static>; 9] {
         .add_modifier(Modifier::BOLD);
     // Each row: 8-space pad + L(7) + "  " + O(7) + "  " + O(7) + "  " + M(7)
     [
-        Line::from(Span::styled("        \u{2588}       \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}     \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}    \u{2588}     \u{2588}", s)),
-        Line::from(Span::styled("        \u{2588}      \u{2588}     \u{2588}  \u{2588}     \u{2588}  \u{2588}\u{2588}   \u{2588}\u{2588}", s)),
-        Line::from(Span::styled("        \u{2588}      \u{2588}     \u{2588}  \u{2588}     \u{2588}  \u{2588} \u{2588} \u{2588} \u{2588}", s)),
-        Line::from(Span::styled("        \u{2588}      \u{2588}     \u{2588}  \u{2588}     \u{2588}  \u{2588}  \u{2588}  \u{2588}", s)),
-        Line::from(Span::styled("        \u{2588}      \u{2588}     \u{2588}  \u{2588}     \u{2588}  \u{2588}     \u{2588}", s)),
-        Line::from(Span::styled("        \u{2588}      \u{2588}     \u{2588}  \u{2588}     \u{2588}  \u{2588}     \u{2588}", s)),
-        Line::from(Span::styled("        \u{2588}      \u{2588}     \u{2588}  \u{2588}     \u{2588}  \u{2588}     \u{2588}", s)),
-        Line::from(Span::styled("        \u{2588}      \u{2588}     \u{2588}  \u{2588}     \u{2588}  \u{2588}     \u{2588}", s)),
-        Line::from(Span::styled("        \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}     \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}    \u{2588}     \u{2588}", s)),
+        Line::from(Span::styled(
+            "        \u{2588}       \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}     \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}    \u{2588}     \u{2588}",
+            s,
+        )),
+        Line::from(Span::styled(
+            "        \u{2588}      \u{2588}     \u{2588}  \u{2588}     \u{2588}  \u{2588}\u{2588}   \u{2588}\u{2588}",
+            s,
+        )),
+        Line::from(Span::styled(
+            "        \u{2588}      \u{2588}     \u{2588}  \u{2588}     \u{2588}  \u{2588} \u{2588} \u{2588} \u{2588}",
+            s,
+        )),
+        Line::from(Span::styled(
+            "        \u{2588}      \u{2588}     \u{2588}  \u{2588}     \u{2588}  \u{2588}  \u{2588}  \u{2588}",
+            s,
+        )),
+        Line::from(Span::styled(
+            "        \u{2588}      \u{2588}     \u{2588}  \u{2588}     \u{2588}  \u{2588}     \u{2588}",
+            s,
+        )),
+        Line::from(Span::styled(
+            "        \u{2588}      \u{2588}     \u{2588}  \u{2588}     \u{2588}  \u{2588}     \u{2588}",
+            s,
+        )),
+        Line::from(Span::styled(
+            "        \u{2588}      \u{2588}     \u{2588}  \u{2588}     \u{2588}  \u{2588}     \u{2588}",
+            s,
+        )),
+        Line::from(Span::styled(
+            "        \u{2588}      \u{2588}     \u{2588}  \u{2588}     \u{2588}  \u{2588}     \u{2588}",
+            s,
+        )),
+        Line::from(Span::styled(
+            "        \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}     \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}    \u{2588}     \u{2588}",
+            s,
+        )),
     ]
 }
 
