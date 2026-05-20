@@ -6,7 +6,7 @@ interface Session {
     messageCount: number;
 }
 
-type View = 'chat' | 'settings' | 'dashboard';
+type View = 'chat' | 'settings' | 'dashboard' | 'persona';
 
 interface Props {
     sessions: Session[];
@@ -28,6 +28,7 @@ export default function Sidebar({
     const navItems: { view: View; label: string; icon: string }[] = [
         { view: 'chat', label: 'Chat', icon: '💬' },
         { view: 'dashboard', label: 'Dashboard', icon: '📊' },
+        { view: 'persona', label: 'Persona', icon: '🧠' },
         { view: 'settings', label: 'Settings', icon: '⚙️' },
     ];
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 
 interface Message {
@@ -10,6 +10,21 @@ export default function ChatArea({ sessionId }: { sessionId: string }) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
+    const [agentState, setAgentState] = useState('idle');
+    const [lastUsage, setLastUsage] = useState<{prompt_tokens?: number; completion_tokens?: number} | null>(null);
+
+    useEffect(() => {
+        const unsub1 = window.openloom?.subscribe('agent.state_changed', (data: any) => {
+            setAgentState(data.new_state || 'idle');
+        });
+        const unsub2 = window.openloom?.subscribe('token.usage', (data: any) => {
+            setLastUsage(data);
+        });
+        return () => {
+            try { unsub1?.(); } catch {}
+            try { unsub2?.(); } catch {}
+        };
+    }, []);
 
     async function sendMessage() {
         if (!input.trim() || loading) return;
@@ -54,6 +69,18 @@ export default function ChatArea({ sessionId }: { sessionId: string }) {
                     </div>
                 ))}
                 {loading && <div className="text-gray-400">Thinking...</div>}
+            </div>
+            <div className="flex items-center gap-2 px-4 py-1 text-xs text-gray-400 border-t border-gray-700">
+                <span className={`w-2 h-2 rounded-full ${
+                    agentState === 'thinking' ? 'bg-yellow-400 animate-pulse' :
+                    agentState === 'acting' ? 'bg-blue-400' : 'bg-gray-500'
+                }`} />
+                Agent: {agentState}
+                {lastUsage && (
+                    <span className="ml-auto">
+                        ↑{lastUsage.prompt_tokens} ↓{lastUsage.completion_tokens} tokens
+                    </span>
+                )}
             </div>
             <div className="p-4 border-t border-gray-700">
                 <div className="flex gap-2">
