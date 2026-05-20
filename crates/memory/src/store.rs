@@ -2,6 +2,7 @@ use crate::event::Event;
 use anyhow::Result;
 use refinery::embed_migrations;
 use rusqlite::{Connection, params};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 embed_migrations!("../../migrations");
@@ -196,6 +197,20 @@ pub struct TokenUsageRow {
     pub latency_ms: u64,
 }
 
+// === EventRow (public row type for Engine/CLI queries) ===
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventRow {
+    pub id: i64,
+    pub timestamp: String,
+    pub event_type: String,
+    pub action: String,
+    pub context: String,
+    pub confidence: f64,
+    pub source_session: Option<String>,
+    pub source_text: String,
+}
+
 // === SqliteEventStore additions ===
 
 impl SqliteEventStore {
@@ -207,6 +222,57 @@ impl SqliteEventStore {
     /// Expose the underlying connection for use by other stores in the same thread
     pub fn conn(&self) -> &Connection {
         &self.conn
+    }
+
+    /// Return the most recent events (chronological, newest first)
+    pub fn query_recent(&self, limit: usize) -> anyhow::Result<Vec<EventRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, timestamp, type, action, context, confidence, source_session, source_text
+             FROM events ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![limit as i64], |row| {
+                Ok(EventRow {
+                    id: row.get(0)?,
+                    timestamp: row.get(1)?,
+                    event_type: row.get(2)?,
+                    action: row.get(3)?,
+                    context: row.get(4)?,
+                    confidence: row.get(5)?,
+                    source_session: row.get(6)?,
+                    source_text: row.get(7)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// FTS5 search across events, returning EventRow
+    pub fn search_fts(&self, query: &str, limit: usize) -> anyhow::Result<Vec<EventRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT e.id, e.timestamp, e.type, e.action, e.context, e.confidence,
+                    e.source_session, e.source_text
+             FROM events e
+             INNER JOIN events_fts fts ON e.id = fts.rowid
+             WHERE events_fts MATCH ?1
+             ORDER BY rank
+             LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![query, limit as i64], |row| {
+                Ok(EventRow {
+                    id: row.get(0)?,
+                    timestamp: row.get(1)?,
+                    event_type: row.get(2)?,
+                    action: row.get(3)?,
+                    context: row.get(4)?,
+                    confidence: row.get(5)?,
+                    source_session: row.get(6)?,
+                    source_text: row.get(7)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 }
 
@@ -548,6 +614,33 @@ mod tests {
         let payload = retrieved.payload.as_ref().unwrap();
         assert_eq!(payload["key"], "value");
         assert_eq!(payload["num"], 42);
+    }
+
+    #[test]
+    fn test_query_recent_events() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let mut store = SqliteEventStore::open(&db_path).unwrap();
+        let e1 = make_event("loss_chase", 0.87);
+        let e2 = make_event("prefers_tech", 0.80);
+        store.insert(&e1).unwrap();
+        store.insert(&e2).unwrap();
+        let rows = store.query_recent(10).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].action, "prefers_tech"); // newest first by id
+    }
+
+    #[test]
+    fn test_search_fts_returns_event_row() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let mut store = SqliteEventStore::open(&db_path).unwrap();
+        let e = make_event("loss_chase", 0.87);
+        store.insert(&e).unwrap();
+        let rows = store.search_fts("loss", 10).unwrap();
+        assert!(!rows.is_empty());
+        assert_eq!(rows[0].action, "loss_chase");
+        assert!(!rows[0].timestamp.is_empty());
     }
 }
 
