@@ -5,6 +5,30 @@ use openloom_models::ModelBackend;
 use reqwest::Client as HttpClient;
 use std::path::Path;
 
+#[cfg(feature = "llama")]
+use std::sync::mpsc;
+#[cfg(feature = "llama")]
+use tokio::sync::oneshot;
+
+#[cfg(feature = "llama")]
+enum EngineCommand {
+    Complete {
+        prompt: String,
+        max_tokens: usize,
+        temperature: f32,
+        reply: oneshot::Sender<CompletionResponse>,
+    },
+    CompleteStream {
+        prompt: String,
+        max_tokens: usize,
+        token_tx: mpsc::Sender<String>,
+    },
+    TokenCount {
+        text: String,
+        reply: oneshot::Sender<usize>,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub struct CompletionRequest {
     pub prompt: String,
@@ -36,12 +60,192 @@ pub struct CompletionResponse {
     pub latency_ms: u64,
 }
 
+#[cfg(feature = "llama")]
+#[derive(Debug)]
+pub struct InferenceEngine {
+    sender: Option<mpsc::Sender<EngineCommand>>,
+}
+
+#[cfg(not(feature = "llama"))]
 #[derive(Debug)]
 pub struct InferenceEngine {
     _model_path: std::path::PathBuf,
     _n_gpu_layers: usize,
 }
 
+// === llama feature implementation ===
+
+#[cfg(feature = "llama")]
+impl InferenceEngine {
+    /// Load GGUF model asynchronously (delegates to load_blocking).
+    pub async fn load(model_path: &Path, n_gpu_layers: usize) -> Result<Self> {
+        Self::load_blocking(model_path, n_gpu_layers)
+    }
+
+    /// Synchronous load: initializes llama backend, loads model, spawns worker thread.
+    pub fn load_blocking(model_path: &Path, n_gpu_layers: usize) -> Result<Self> {
+        use llama_cpp_2::*;
+        use std::num::NonZeroU32;
+
+        if !model_path.exists() {
+            tracing::warn!(path = %model_path.display(), "model file not found, inference unavailable");
+            return Ok(Self { sender: None });
+        }
+
+        let backend = LlamaBackend::init()
+            .map_err(|e| anyhow::anyhow!("llama backend init: {}", e))?;
+
+        let model = LlamaModel::load_from_file(
+            &backend,
+            model_path,
+            &LlamaModelParams::default().with_n_gpu_layers(n_gpu_layers as u32),
+        )
+        .map_err(|e| anyhow::anyhow!("model load: {}", e))?;
+
+        let ctx = model
+            .new_context(
+                &backend,
+                LlamaContextParams::default().with_n_ctx(NonZeroU32::new(4096).unwrap()),
+            )
+            .map_err(|e| anyhow::anyhow!("context create: {}", e))?;
+
+        let (tx, rx) = mpsc::channel::<EngineCommand>();
+
+        std::thread::Builder::new()
+            .name("llama-worker".into())
+            .spawn(move || {
+                let sampler = LlamaSampler::chain_simple([
+                    LlamaSampler::temp(0.7),
+                    LlamaSampler::top_p(0.95),
+                    LlamaSampler::greedy(),
+                ]);
+                for cmd in rx {
+                    match cmd {
+                        EngineCommand::Complete {
+                            prompt,
+                            max_tokens,
+                            temperature: _,
+                            reply,
+                        } => {
+                            let prompt_tokens = model
+                                .str_to_token(&prompt, AddBos::Always)
+                                .map(|t| t.len())
+                                .unwrap_or(prompt.chars().count() / 4);
+                            let result =
+                                model.create_completion(&prompt, max_tokens as u32);
+                            let text = result.unwrap_or_default();
+                            let completion_tokens = text.chars().count() / 4;
+                            let _ = reply.send(CompletionResponse {
+                                text,
+                                prompt_tokens,
+                                completion_tokens,
+                                latency_ms: 0,
+                            });
+                        }
+                        EngineCommand::CompleteStream {
+                            prompt,
+                            max_tokens,
+                            token_tx,
+                        } => {
+                            let result =
+                                model.create_completion(&prompt, max_tokens as u32);
+                            let _ = token_tx.send(result.unwrap_or_default());
+                        }
+                        EngineCommand::TokenCount { text, reply } => {
+                            let count = model
+                                .str_to_token(&text, AddBos::Never)
+                                .map(|t| t.len())
+                                .unwrap_or(text.chars().count() / 4);
+                            let _ = reply.send(count);
+                        }
+                    }
+                }
+            })?;
+
+        tracing::info!(path = %model_path.display(), n_gpu_layers, "llama model loaded");
+        Ok(Self {
+            sender: Some(tx),
+        })
+    }
+
+    /// Complete text completion via worker thread. Falls back to stub if no model is loaded.
+    pub async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse> {
+        let Some(sender) = &self.sender else {
+            return Ok(stub_complete(&req));
+        };
+
+        let (reply_tx, reply_rx) = oneshot::channel();
+        sender
+            .send(EngineCommand::Complete {
+                prompt: req.prompt,
+                max_tokens: req.max_tokens,
+                temperature: req.temperature,
+                reply: reply_tx,
+            })
+            .map_err(|e| anyhow::anyhow!("engine channel closed: {}", e))?;
+
+        reply_rx
+            .await
+            .map_err(|e| anyhow::anyhow!("worker thread dropped: {}", e))
+    }
+
+    /// Streaming completion via worker thread. Falls back to whole response if no model loaded.
+    pub async fn complete_stream(
+        &self,
+        req: CompletionRequest,
+        token_tx: tokio::sync::mpsc::Sender<String>,
+    ) -> Result<()> {
+        let Some(sender) = &self.sender else {
+            let resp = self.complete(req).await?;
+            let _ = token_tx.send(resp.text).await;
+            return Ok(());
+        };
+
+        let (std_tx, std_rx) = mpsc::channel();
+        sender
+            .send(EngineCommand::CompleteStream {
+                prompt: req.prompt,
+                max_tokens: req.max_tokens,
+                token_tx: std_tx,
+            })
+            .map_err(|e| anyhow::anyhow!("engine channel closed: {}", e))?;
+
+        let text = tokio::task::spawn_blocking(move || {
+            std_rx
+                .recv()
+                .map_err(|e| anyhow::anyhow!("worker recv error: {}", e))
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn_blocking join error: {}", e))??;
+
+        let _ = token_tx.send(text).await;
+        Ok(())
+    }
+
+    /// Count tokens using the loaded model's tokenizer, or fallback estimation.
+    pub fn token_count(&self, text: &str) -> usize {
+        let Some(sender) = &self.sender else {
+            return text.chars().count() / 4;
+        };
+
+        let (reply_tx, reply_rx) = oneshot::channel();
+        if sender
+            .send(EngineCommand::TokenCount {
+                text: text.to_string(),
+                reply: reply_tx,
+            })
+            .is_err()
+        {
+            return text.chars().count() / 4;
+        }
+
+        reply_rx.blocking_recv().unwrap_or(text.chars().count() / 4)
+    }
+}
+
+// === stub (non-llama) implementation ===
+
+#[cfg(not(feature = "llama"))]
 impl InferenceEngine {
     /// Load GGUF model. Falls back to CPU if GPU unavailable.
     pub async fn load(model_path: &Path, n_gpu_layers: usize) -> Result<Self> {
@@ -63,31 +267,48 @@ impl InferenceEngine {
 
     /// Complete text completion (returns full text at once)
     pub async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse> {
-        let prompt_chars = req.prompt.chars().count();
-        let preview: String = req.prompt.chars().take(100).collect();
-        let response = format!(
-            "[openLoom] Local model (Qwen3-1.7B) is not yet loaded. Install the GGUF model file to enable inference.\n\nYour message ({} chars): {}...",
-            prompt_chars, preview
-        );
-        let response_tokens = response.chars().count() / 4;
-        Ok(CompletionResponse {
-            text: response,
-            prompt_tokens: prompt_chars / 4,
-            completion_tokens: response_tokens,
-            latency_ms: 0,
-        })
+        Ok(stub_complete(&req))
     }
 
-    /// Streaming completion (token-by-token via mpsc::Sender)
+    /// Streaming completion: calls complete() and sends the result text.
     pub async fn complete_stream(
         &self,
-        _req: CompletionRequest,
-        _tx: tokio::sync::mpsc::Sender<String>,
+        req: CompletionRequest,
+        token_tx: tokio::sync::mpsc::Sender<String>,
     ) -> Result<()> {
+        let resp = self.complete(req).await?;
+        let _ = token_tx.send(resp.text).await;
         Ok(())
     }
 
-    /// Detect GPU info (vendor, VRAM, support status)
+    /// Count tokens in text using a simple estimation (~4 chars per token).
+    pub fn token_count(&self, text: &str) -> usize {
+        text.chars().count() / 4
+    }
+}
+
+// === shared helpers and functions ===
+
+/// Stub response used when no model is available (both cfg variants).
+fn stub_complete(req: &CompletionRequest) -> CompletionResponse {
+    let prompt_chars = req.prompt.chars().count();
+    let preview: String = req.prompt.chars().take(100).collect();
+    let response = format!(
+        "[openLoom] Local model (Qwen3-1.7B) is not yet loaded. Install the GGUF model file to enable inference.\n\nYour message ({} chars): {}...",
+        prompt_chars, preview
+    );
+    let response_tokens = response.chars().count() / 4;
+    CompletionResponse {
+        text: response,
+        prompt_tokens: prompt_chars / 4,
+        completion_tokens: response_tokens,
+        latency_ms: 0,
+    }
+}
+
+impl InferenceEngine {
+    /// Detect GPU info (vendor, VRAM, support status).
+    /// Uses nvidia-smi on Windows/Linux. Returns "none" fallback if no GPU found.
     pub fn detect_gpu() -> GpuInfo {
         // Try nvidia-smi on Windows/Linux
         if let Ok(output) = std::process::Command::new("nvidia-smi")
@@ -120,12 +341,6 @@ impl InferenceEngine {
             vram_mb: 0,
             supported: false,
         }
-    }
-
-    /// Count tokens in text using the loaded model's tokenizer
-    pub fn token_count(&self, text: &str) -> usize {
-        // Simplified estimation: ~4 chars per token
-        text.chars().count() / 4
     }
 }
 
