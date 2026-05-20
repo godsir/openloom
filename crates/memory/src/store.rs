@@ -186,6 +186,18 @@ pub struct CognitionRow {
     pub version: i64,
 }
 
+/// A historical snapshot of a cognition entry, saved before each update.
+pub struct CognitionSnapshot {
+    pub id: i64,
+    pub cognition_id: i64,
+    pub version: i64,
+    pub trait_name: String,
+    pub value: String,
+    pub confidence: f64,
+    pub evidence_count: usize,
+    pub snapshot_at: i64,
+}
+
 pub struct TokenUsageRow {
     pub id: i64,
     pub timestamp: String,
@@ -284,9 +296,26 @@ pub struct CognitionStore<'a> {
 
 impl<'a> CognitionStore<'a> {
     pub fn new(conn: &'a Connection) -> Self {
-        Self { conn }
+        let store = Self { conn };
+        let _ = store.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS cognition_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cognition_id INTEGER NOT NULL,
+                version INTEGER NOT NULL,
+                trait TEXT NOT NULL,
+                value TEXT NOT NULL,
+                confidence REAL,
+                evidence_count INTEGER,
+                snapshot_at INTEGER NOT NULL,
+                FOREIGN KEY (cognition_id) REFERENCES cognitions(id)
+            );",
+        );
+        store
     }
 
+    /// Insert or update a cognition trait for a subject.
+    /// If the (subject, trait) pair already exists, snapshots the current
+    /// version and increments the version counter. Returns the cognition ID.
     pub fn insert(
         &self,
         subject: &str,
@@ -296,12 +325,58 @@ impl<'a> CognitionStore<'a> {
         evidence_count: usize,
     ) -> anyhow::Result<i64> {
         let now = Utc::now().timestamp();
-        self.conn.execute(
-            "INSERT INTO cognitions (subject, trait, value, confidence, evidence_count, first_seen, last_updated, version)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
-            rusqlite::params![subject, trait_name, value, confidence, evidence_count, now, now],
-        )?;
-        Ok(self.conn.last_insert_rowid())
+
+        // Check if this trait already exists for this subject
+        let existing: Option<(i64, i64)> = self
+            .conn
+            .query_row(
+                "SELECT id, version FROM cognitions WHERE subject = ?1 AND trait = ?2",
+                rusqlite::params![subject, trait_name],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
+
+        if let Some((existing_id, existing_version)) = existing {
+            let new_version = existing_version + 1;
+
+            // Save snapshot of current version before updating
+            let old_value: String = self.conn.query_row(
+                "SELECT value FROM cognitions WHERE id = ?1",
+                rusqlite::params![existing_id],
+                |row| row.get(0),
+            )?;
+
+            self.conn.execute(
+                "INSERT INTO cognition_snapshots (cognition_id, version, trait, value, confidence, evidence_count, snapshot_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    existing_id,
+                    existing_version,
+                    trait_name,
+                    old_value,
+                    confidence,
+                    evidence_count,
+                    now,
+                ],
+            )?;
+
+            // Update existing
+            self.conn.execute(
+                "UPDATE cognitions SET value = ?1, confidence = ?2, evidence_count = ?3, last_updated = ?4, version = ?5
+                 WHERE id = ?6",
+                rusqlite::params![value, confidence, evidence_count, now, new_version, existing_id],
+            )?;
+
+            Ok(existing_id)
+        } else {
+            // Insert new
+            self.conn.execute(
+                "INSERT INTO cognitions (subject, trait, value, confidence, evidence_count, first_seen, last_updated, version)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
+                rusqlite::params![subject, trait_name, value, confidence, evidence_count, now, now],
+            )?;
+            Ok(self.conn.last_insert_rowid())
+        }
     }
 
     pub fn query_by_subject(
@@ -339,6 +414,29 @@ impl<'a> CognitionStore<'a> {
                 |row| row.get(0),
             )
             .ok()
+    }
+
+    /// Return all snapshots for a cognition entry, newest version first.
+    pub fn snapshots_for(&self, cognition_id: i64) -> anyhow::Result<Vec<CognitionSnapshot>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, cognition_id, version, trait, value, confidence, evidence_count, snapshot_at
+             FROM cognition_snapshots WHERE cognition_id = ?1 ORDER BY version DESC",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![cognition_id], |row| {
+                Ok(CognitionSnapshot {
+                    id: row.get(0)?,
+                    cognition_id: row.get(1)?,
+                    version: row.get(2)?,
+                    trait_name: row.get(3)?,
+                    value: row.get(4)?,
+                    confidence: row.get(5)?,
+                    evidence_count: row.get(6)?,
+                    snapshot_at: row.get(7)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 }
 
@@ -662,6 +760,16 @@ mod store_v2_tests {
                 last_updated INTEGER,
                 version INTEGER DEFAULT 1
             );
+            CREATE TABLE IF NOT EXISTS cognition_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cognition_id INTEGER NOT NULL,
+                version INTEGER NOT NULL,
+                trait TEXT NOT NULL,
+                value TEXT NOT NULL,
+                confidence REAL,
+                evidence_count INTEGER,
+                snapshot_at INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
                 created_at TEXT NOT NULL,
@@ -695,6 +803,41 @@ mod store_v2_tests {
         assert_eq!(rows[0].trait_name, "risk_tendency");
         assert_eq!(rows[0].value, "gambler_chase");
         assert!(rows[0].first_seen > 0);
+    }
+
+    #[test]
+    fn test_cognition_upsert_increments_version() {
+        let dir = tempdir().unwrap();
+        let conn = Connection::open(dir.path().join("test.db")).unwrap();
+        setup_v2_tables(&conn);
+
+        let store = CognitionStore::new(&conn);
+
+        // First insert
+        let id1 = store
+            .insert("USER", "risk_tendency", "gambler_v1", 0.8, 3)
+            .unwrap();
+        let rows = store.query_by_subject("USER", 10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].version, 1);
+        assert_eq!(rows[0].value, "gambler_v1");
+
+        // Second insert with same subject+trait should update
+        let id2 = store
+            .insert("USER", "risk_tendency", "gambler_v2", 0.9, 5)
+            .unwrap();
+        assert_eq!(id1, id2, "Same row, updated");
+        let rows = store.query_by_subject("USER", 10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].version, 2);
+        assert_eq!(rows[0].value, "gambler_v2");
+        assert_eq!(rows[0].evidence_count, 5);
+
+        // Check snapshot was created
+        let snapshots = store.snapshots_for(id1).unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].version, 1);
+        assert_eq!(snapshots[0].value, "gambler_v1");
     }
 
     #[test]
