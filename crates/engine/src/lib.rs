@@ -1,11 +1,25 @@
 pub mod memory_thread;
+pub mod rate_limiter;
+pub mod agent_loop;
+pub mod session;
+pub mod token_store;
+pub mod heartbeat;
+pub mod persona_watcher;
+pub mod config;
+pub mod shutdown;
+pub mod stream;
+pub mod events;
+
+use crate::heartbeat::spawn_hub_heartbeat;
+use crate::rate_limiter::RateLimiter;
+use crate::session::{SessionCommand, spawn_session_thread};
+use crate::token_store::{TokenUsageRecord, spawn_token_store_thread};
 
 use anyhow::Result;
-use chrono::Utc;
 use openloom_cache::NoopCache;
 use openloom_inference::{CloudClient, CompletionRequest, InferenceEngine};
 use openloom_memory::persona::CognitionsPersonaProvider;
-use openloom_memory::store::{MessageStore, SessionStore};
+use openloom_memory::store::MessageStore;
 use openloom_models::*;
 use openloom_router::SmartRouter;
 use openloom_skills::{SkillRegistry, builtins};
@@ -21,43 +35,7 @@ use tokio::sync::{RwLock, broadcast, oneshot};
 
 pub use openloom_models::EngineEvent;
 
-struct RateLimiter {
-    last_request: Instant,
-    min_interval_ms: u64,
-}
-
-impl RateLimiter {
-    fn new(min_interval_ms: u64) -> Self {
-        Self {
-            last_request: Instant::now() - std::time::Duration::from_millis(min_interval_ms),
-            min_interval_ms,
-        }
-    }
-    fn check(&mut self) -> Result<()> {
-        let elapsed = self.last_request.elapsed();
-        let min_dur = std::time::Duration::from_millis(self.min_interval_ms);
-        if elapsed < min_dur {
-            anyhow::bail!(
-                "rate limit exceeded, retry in {}ms",
-                (min_dur - elapsed).as_millis()
-            );
-        }
-        self.last_request = Instant::now();
-        Ok(())
-    }
-}
-
-struct TokenUsageRecord {
-    session_id: String,
-    model: String,
-    prompt_tokens: usize,
-    completion_tokens: usize,
-    #[allow(dead_code)]
-    cached_tokens: usize,
-    latency_ms: u64,
-}
-
-const SYSTEM_INSTRUCTION: &str = "You are openLoom, a private AI assistant running locally.
+pub(crate) const SYSTEM_INSTRUCTION: &str = "You are openLoom, a private AI assistant running locally.
 When you need to use a tool, respond with ONLY a JSON block on a single line:
 {\"tool\": \"<skill_name>\", \"params\": {\"key\": \"value\"}}
 Available tools: [tools]
@@ -86,19 +64,6 @@ pub struct Engine {
     last_user_message: Arc<Mutex<Instant>>,
 }
 
-enum SessionCommand {
-    Create {
-        reply: oneshot::Sender<SessionInfo>,
-    },
-    List {
-        reply: oneshot::Sender<Vec<SessionInfo>>,
-    },
-    UpdateCount {
-        id: String,
-        count: usize,
-    },
-}
-
 pub struct EngineConfig {
     pub data_dir: PathBuf,
     pub threshold: usize,
@@ -106,68 +71,6 @@ pub struct EngineConfig {
     pub rate_limit_ms: u64,
     pub heartbeat_interval_secs: u64,
     pub heartbeat_idle_threshold_min: u64,
-}
-
-fn spawn_session_thread(db_path: PathBuf) -> std::sync::mpsc::Sender<SessionCommand> {
-    let (tx, rx) = std::sync::mpsc::channel::<SessionCommand>();
-    std::thread::spawn(move || {
-        let conn = rusqlite::Connection::open(&db_path).expect("session db open");
-        conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS sessions (
-                id TEXT PRIMARY KEY, created_at TEXT NOT NULL, message_count INTEGER DEFAULT 0
-            );",
-        )
-        .unwrap();
-        let store = SessionStore::new(&conn);
-        for cmd in rx {
-            match cmd {
-                SessionCommand::Create { reply } => {
-                    let id = uuid::Uuid::new_v4().to_string();
-                    let info = SessionInfo {
-                        id: id.clone(),
-                        created_at: Utc::now(),
-                        message_count: 0,
-                    };
-                    let _ = store.insert(&info.id, info.created_at);
-                    let _ = reply.send(info);
-                }
-                SessionCommand::List { reply } => {
-                    let sessions = store.list_all(100).unwrap_or_default();
-                    let _ = reply.send(sessions);
-                }
-                SessionCommand::UpdateCount { id, count } => {
-                    let _ = store.update_message_count(&id, count);
-                }
-            }
-        }
-    });
-    tx
-}
-
-fn spawn_token_store_thread(db_path: PathBuf) -> std::sync::mpsc::Sender<TokenUsageRecord> {
-    let (tx, rx) = std::sync::mpsc::channel::<TokenUsageRecord>();
-    std::thread::spawn(move || {
-        let conn = match rusqlite::Connection::open(&db_path) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::error!("token_store thread: cannot open db: {}", e);
-                return;
-            }
-        };
-        let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
-        let store = openloom_memory::store::TokenStore::new(&conn);
-        for record in rx {
-            let _ = store.insert(
-                &record.session_id,
-                &record.model,
-                record.prompt_tokens,
-                record.completion_tokens,
-                record.latency_ms,
-            );
-        }
-    });
-    tx
 }
 
 impl Engine {
@@ -279,80 +182,20 @@ impl Engine {
             last_user_message: Arc::new(Mutex::new(Instant::now())),
         };
 
-        engine.spawn_persona_watcher();
+        // Spawn persona watcher (from persona_watcher module)
+        persona_watcher::spawn(engine.persona.clone(), engine.event_bus.clone());
 
         // Spawn hub heartbeat (Phase 3A)
-        {
-            let hb_inference = engine.inference.clone();
-            let hb_agent_state = engine.agent_state.clone();
-            let hb_event_bus = engine.event_bus.clone();
-            let hb_last_user = engine.last_user_message.clone();
-
-            tokio::spawn(async move {
-                let mut interval = tokio::time::interval(
-                    std::time::Duration::from_secs(hb_interval)
-                );
-                // Skip first immediate tick
-                interval.tick().await;
-
-                loop {
-                    interval.tick().await;
-
-                    // Skip if agent is busy
-                    if *hb_agent_state.read().await != AgentState::Idle {
-                        continue;
-                    }
-
-                    // Check idle time
-                    let idle_minutes = {
-                        let last = hb_last_user.lock().unwrap();
-                        last.elapsed().as_secs() / 60
-                    };
-                    if idle_minutes < hb_idle_threshold {
-                        continue;
-                    }
-
-                    // Single-token inference check
-                    let prompt = format!(
-                        "User idle {} min. Should agent take action? Reply ONLY yes or no.",
-                        idle_minutes
-                    );
-                    match hb_inference.complete(CompletionRequest {
-                        prompt,
-                        max_tokens: 1,
-                        temperature: 0.0,
-                        top_p: 1.0,
-                        stop: vec!["\n".into()],
-                        stream: false,
-                    }).await {
-                        Ok(resp) if resp.text.trim().to_lowercase().contains("yes") => {
-                            let _ = hb_event_bus.send(EngineEvent::HeartbeatTick {
-                                idle_minutes,
-                                event_count: 0,
-                                suggested_action: None,
-                            });
-                        }
-                        _ => {} // model unavailable or answered "no" — skip
-                    }
-                }
-            });
-        }
+        spawn_hub_heartbeat(
+            engine.inference.clone(),
+            engine.agent_state.clone(),
+            engine.event_bus.clone(),
+            engine.last_user_message.clone(),
+            hb_interval,
+            hb_idle_threshold,
+        );
 
         Ok(engine)
-    }
-
-    // === Persona watcher ===
-
-    fn spawn_persona_watcher(&self) {
-        let persona = self.persona.clone();
-        let mut rx = self.event_bus.subscribe();
-        tokio::spawn(async move {
-            while let Ok(event) = rx.recv().await {
-                if matches!(event, EngineEvent::CognitionUpdated { .. }) {
-                    persona.invalidate();
-                }
-            }
-        });
     }
 
     // === Core handler ===
@@ -377,7 +220,7 @@ impl Engine {
         {
             return Err(anyhow::anyhow!("Agent is busy, please wait"));
         }
-        // C1 fix: do NOT release the gate here — only at the end of each path
+        // C1 fix: do NOT release the gate here -- only at the end of each path
 
         let out = self.router.classify_sync(&msg.content);
 
@@ -402,7 +245,7 @@ impl Engine {
                 .map(|s| s.context_md().to_string())
         });
         let working_memory = self.get_working_memory(session_id).unwrap_or_default();
-        // Persona failure → empty string fallback
+        // Persona failure -> empty string fallback
         let persona_summary = self.persona.summarize().await.unwrap_or_default();
         let assembled = self.weaver.assemble(
             SYSTEM_INSTRUCTION,
@@ -416,7 +259,7 @@ impl Engine {
             TargetModel::None => {
                 // skill_match.is_some() routes to agent_loop above; this branch is unreachable
                 unreachable!(
-                    "TargetModel::None with no skill_match — should have gone to agent_loop"
+                    "TargetModel::None with no skill_match -- should have gone to agent_loop"
                 )
             }
             TargetModel::Local => {
@@ -486,205 +329,6 @@ impl Engine {
                 latency_ms,
             },
         })
-    }
-
-    // === Agent Loop ===
-
-    async fn agent_loop(&self, msg: &ChatMessage, session_id: &str) -> Result<ChatResponse> {
-        self.in_flight.fetch_add(1, Ordering::SeqCst);
-        let loop_start = Instant::now();
-        *self.agent_state.write().await = AgentState::Thinking;
-        let _ = self.event_bus.send(EngineEvent::AgentStateChanged {
-            old_state: AgentState::Idle,
-            new_state: AgentState::Thinking,
-        });
-        self.interruptible.store(true, Ordering::SeqCst);
-
-        let mut history: Vec<ChatMessage> = self.get_working_memory(session_id).unwrap_or_default();
-        history.push(msg.clone());
-
-        // Build skill list string for system prompt injection
-        let skill_list = self.build_skill_list_string();
-
-        let mut all_tool_messages: Vec<ChatMessage> = Vec::new();
-        let mut last_response = String::new();
-
-        let outcome = tokio::time::timeout(std::time::Duration::from_secs(120), async {
-            for _iteration in 0..3 {
-                let persona_summary = self.persona.summarize().await.unwrap_or_default();
-                let system_with_tools = SYSTEM_INSTRUCTION.replace("[tools]", &skill_list);
-                let assembled =
-                    self.weaver
-                        .assemble(&system_with_tools, "", &persona_summary, None, &history);
-
-                let response = self.invoke_model_raw(&assembled.prompt).await?;
-
-                if let Some(tool_call) = self.parse_tool_call(&response) {
-                    *self.agent_state.write().await = AgentState::Acting;
-                    let _ = self.event_bus.send(EngineEvent::AgentStateChanged {
-                        old_state: AgentState::Thinking,
-                        new_state: AgentState::Acting,
-                    });
-                    let result = match self.execute_tool(&tool_call).await {
-                        Ok(output) => output,
-                        Err(e) => format!("Tool error: {}", e),
-                    };
-                    let ts = Utc::now();
-                    history.push(ChatMessage {
-                        role: "assistant".into(),
-                        content: response.clone(),
-                        timestamp: ts,
-                    });
-                    history.push(ChatMessage {
-                        role: "tool".into(),
-                        content: result.clone(),
-                        timestamp: ts,
-                    });
-                    all_tool_messages.push(ChatMessage {
-                        role: "assistant".into(),
-                        content: response,
-                        timestamp: ts,
-                    });
-                    all_tool_messages.push(ChatMessage {
-                        role: "tool".into(),
-                        content: result.clone(),
-                        timestamp: ts,
-                    });
-                    // On the last iteration, use the tool result as the response
-                    if _iteration == 2 {
-                        last_response = result;
-                    }
-                } else {
-                    last_response = response;
-                    break;
-                }
-            }
-            Ok::<_, anyhow::Error>(last_response)
-        })
-        .await;
-
-        *self.agent_state.write().await = AgentState::Idle;
-        let _ = self.event_bus.send(EngineEvent::AgentStateChanged {
-            old_state: AgentState::Thinking,
-            new_state: AgentState::Idle,
-        });
-        self.interruptible.store(false, Ordering::SeqCst);
-        self.in_flight.fetch_sub(1, Ordering::SeqCst);
-
-        match outcome {
-            Ok(Ok(ref response)) if response.is_empty() => Err(anyhow::anyhow!(
-                "Agent loop produced no response after 3 iterations"
-            )),
-            Ok(Ok(response)) => {
-                let _ = self.save_all_messages(session_id, msg, &all_tool_messages, &response);
-
-                let prompt_tokens = self.inference.token_count(&msg.content);
-                let completion_tokens = self.inference.token_count(&response);
-                let latency_ms = loop_start.elapsed().as_millis() as u64;
-                let _ = self.event_bus.send(EngineEvent::TokenUsage {
-                    session_id: session_id.to_string(),
-                    model: "agent-loop".into(),
-                    prompt_tokens,
-                    completion_tokens,
-                    cached_tokens: 0,
-                    latency_ms,
-                });
-                let _ = self.token_store_tx.send(TokenUsageRecord {
-                    session_id: session_id.to_string(),
-                    model: "agent-loop".into(),
-                    prompt_tokens,
-                    completion_tokens,
-                    cached_tokens: 0,
-                    latency_ms,
-                });
-                Ok(ChatResponse {
-                    response,
-                    session_id: session_id.to_string(),
-                    token_usage: TokenUsage {
-                        prompt_tokens,
-                        completion_tokens,
-                        cached_tokens: 0,
-                        latency_ms,
-                    },
-                })
-            }
-            Ok(Err(e)) => Err(e),
-            Err(_elapsed) => Err(anyhow::anyhow!("Agent loop timed out after 120s")),
-        }
-    }
-
-    fn build_skill_list_string(&self) -> String {
-        let skills = self.skills.list_all();
-        if skills.is_empty() {
-            return "None".into();
-        }
-        skills
-            .iter()
-            .map(|s| format!("{}: {}", s.name, s.description))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-
-    async fn invoke_model_raw(&self, prompt: &str) -> Result<String> {
-        if let Some(ref cloud) = self.cloud {
-            match cloud
-                .complete(CompletionRequest {
-                    prompt: prompt.to_string(),
-                    ..Default::default()
-                })
-                .await
-            {
-                Ok(r) => return Ok(r.text),
-                Err(e) => tracing::warn!("Cloud failed, falling back to local: {}", e),
-            }
-        }
-        self.inference
-            .complete(CompletionRequest {
-                prompt: prompt.to_string(),
-                ..Default::default()
-            })
-            .await
-            .map(|r| r.text)
-    }
-
-    fn parse_tool_call(&self, response: &str) -> Option<ToolCall> {
-        let trimmed = response.trim();
-        if let Some(start) = trimmed.find("{\"tool\"") {
-            let slice = &trimmed[start..];
-            let mut depth = 0;
-            let mut end = 0;
-            for (i, ch) in slice.char_indices() {
-                match ch {
-                    '{' => depth += 1,
-                    '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            end = i;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if end > 0 {
-                let json_str = &slice[..=end];
-                match serde_json::from_str::<ToolCall>(json_str) {
-                    Ok(call) => return Some(call),
-                    Err(e) => {
-                        tracing::warn!("Failed to parse tool call JSON: {} — raw: {}", e, json_str);
-                        return None;
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    async fn execute_tool(&self, call: &ToolCall) -> Result<String> {
-        self.skills
-            .invoke(&call.tool, call.params.clone())
-            .await
-            .map(|v| v.to_string())
     }
 
     // === Message persistence (non-fatal) ===
@@ -851,18 +495,6 @@ impl Engine {
         self.event_bus.subscribe()
     }
 
-    pub async fn stream_complete(
-        &self,
-        req: CompletionRequest,
-        tx: tokio::sync::mpsc::Sender<String>,
-    ) -> anyhow::Result<()> {
-        if let Some(ref cloud) = self.cloud {
-            cloud.complete_stream(req, tx).await
-        } else {
-            self.inference.complete_stream(req, tx).await
-        }
-    }
-
     pub fn list_skills(&self) -> Vec<openloom_skills::SkillInfo> {
         self.skills.list_all()
     }
@@ -879,73 +511,8 @@ impl Engine {
         self.agent_state.read().await.clone()
     }
 
-    pub async fn search_events(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<openloom_memory::store::EventRow>> {
-        let conn = rusqlite::Connection::open(&self.db_path)?;
-        let store = openloom_memory::store::SqliteEventStore::from_connection(conn);
-        store.search_fts(query, limit)
-    }
-
-    pub async fn list_events(&self, limit: usize) -> Result<Vec<openloom_memory::store::EventRow>> {
-        let conn = rusqlite::Connection::open(&self.db_path)?;
-        let store = openloom_memory::store::SqliteEventStore::from_connection(conn);
-        store.query_recent(limit)
-    }
-
-    pub async fn get_config(&self, key: Option<&str>) -> serde_json::Value {
-        let config = self.config.read().await;
-        match key {
-            Some(k) => config.get_nested(k).unwrap_or(serde_json::Value::Null),
-            None => serde_json::to_value(&*config).unwrap_or_default(),
-        }
-    }
-
-    pub async fn set_config(&self, key: &str, value: &str) -> Result<()> {
-        let mut config = self.config.write().await;
-        config.set_nested(key, value)?;
-        let path = dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("openLoom")
-            .join("config.toml");
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let content = toml::to_string_pretty(&*config)?;
-        std::fs::write(&path, content)?;
-        tracing::info!(key, value, "config updated");
-        Ok(())
-    }
-
-    pub async fn load_config_into_engine(&self, config: AppConfig) {
-        *self.config.write().await = config;
-    }
-
     pub fn cache_stats(&self) -> openloom_cache::CacheStats {
         self.weaver.cache().stats()
-    }
-
-    pub async fn shutdown(&self) -> Result<()> {
-        tracing::info!("engine shutting down");
-        self.draining.store(true, Ordering::SeqCst);
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-        while self.in_flight.load(Ordering::SeqCst) > 0 {
-            if tokio::time::Instant::now() > deadline {
-                tracing::warn!(
-                    "shutdown timeout, {} requests still in-flight",
-                    self.in_flight.load(Ordering::SeqCst)
-                );
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-        if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
-            let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-        }
-        tracing::info!("engine shutdown complete");
-        Ok(())
     }
 }
 
@@ -954,6 +521,7 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
     use tempfile::tempdir;
 
     async fn setup_test_engine() -> (Engine, tempfile::TempDir) {
