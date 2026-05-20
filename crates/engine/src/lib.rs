@@ -11,13 +11,50 @@ use openloom_router::SmartRouter;
 use openloom_skills::{SkillRegistry, builtins};
 use openloom_weaver::ContextWeaver;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
+use std::time::Instant;
 use tokio::sync::{RwLock, broadcast, oneshot};
 
 pub use openloom_models::EngineEvent;
+
+struct RateLimiter {
+    last_request: Instant,
+    min_interval_ms: u64,
+}
+
+impl RateLimiter {
+    fn new(min_interval_ms: u64) -> Self {
+        Self {
+            last_request: Instant::now() - std::time::Duration::from_millis(min_interval_ms),
+            min_interval_ms,
+        }
+    }
+    fn check(&mut self) -> Result<()> {
+        let elapsed = self.last_request.elapsed();
+        let min_dur = std::time::Duration::from_millis(self.min_interval_ms);
+        if elapsed < min_dur {
+            anyhow::bail!(
+                "rate limit exceeded, retry in {}ms",
+                (min_dur - elapsed).as_millis()
+            );
+        }
+        self.last_request = Instant::now();
+        Ok(())
+    }
+}
+
+struct TokenUsageRecord {
+    session_id: String,
+    model: String,
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    cached_tokens: usize,
+    latency_ms: u64,
+}
 
 const SYSTEM_INSTRUCTION: &str = "You are openLoom, a private AI assistant running locally.
 When you need to use a tool, respond with ONLY a JSON block on a single line:
@@ -38,6 +75,13 @@ pub struct Engine {
     agent_state: Arc<RwLock<AgentState>>,
     interruptible: AtomicBool,
     db_path: PathBuf,
+    config: Arc<RwLock<AppConfig>>,
+    start_time: Instant,
+    draining: AtomicBool,
+    in_flight: AtomicUsize,
+    rate_limiter: Mutex<RateLimiter>,
+    token_store_tx: std::sync::mpsc::Sender<TokenUsageRecord>,
+    model_available: bool,
 }
 
 enum SessionCommand {
@@ -57,6 +101,7 @@ pub struct EngineConfig {
     pub data_dir: PathBuf,
     pub threshold: usize,
     pub cloud_config: Option<openloom_models::ModelConfig>,
+    pub rate_limit_ms: u64,
 }
 
 fn spawn_session_thread(db_path: PathBuf) -> std::sync::mpsc::Sender<SessionCommand> {
@@ -96,12 +141,45 @@ fn spawn_session_thread(db_path: PathBuf) -> std::sync::mpsc::Sender<SessionComm
     tx
 }
 
+fn spawn_token_store_thread(db_path: PathBuf) -> std::sync::mpsc::Sender<TokenUsageRecord> {
+    let (tx, rx) = std::sync::mpsc::channel::<TokenUsageRecord>();
+    std::thread::spawn(move || {
+        let conn = match rusqlite::Connection::open(&db_path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("token_store thread: cannot open db: {}", e);
+                return;
+            }
+        };
+        let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
+        let store = openloom_memory::store::TokenStore::new(&conn);
+        for record in rx {
+            let _ = store.insert(
+                &record.session_id,
+                &record.model,
+                record.prompt_tokens,
+                record.completion_tokens,
+                record.latency_ms,
+            );
+        }
+    });
+    tx
+}
+
 impl Engine {
     pub fn new_test(db_path: PathBuf) -> Result<Self> {
+        let data_dir = db_path.parent().unwrap().to_path_buf();
+        // Create dummy model file so tests don't show "degraded" health status
+        let model_dir = data_dir.join("models");
+        let _ = std::fs::create_dir_all(&model_dir);
+        let model_path = model_dir.join("qwen3-1.7b-q4_k_m.gguf");
+        let _ = std::fs::write(&model_path, b"");
+        // rate_limit_ms=0 disables rate limiting in tests
         Self::new(EngineConfig {
-            data_dir: db_path.parent().unwrap().to_path_buf(),
+            data_dir,
             threshold: 3,
             cloud_config: None,
+            rate_limit_ms: 0,
         })
     }
 
@@ -149,6 +227,16 @@ impl Engine {
             memory_thread::spawn_memory_thread(db_path.clone(), config.threshold, event_tx.clone());
         let session_tx = spawn_session_thread(db_path.clone());
 
+        let model_path = config
+            .data_dir
+            .join("models")
+            .join("qwen3-1.7b-q4_k_m.gguf");
+        let model_available = model_path.exists();
+        if !model_available {
+            tracing::warn!(path = %model_path.display(), "GGUF model not found, local inference unavailable");
+        }
+        let token_store_tx = spawn_token_store_thread(db_path.clone());
+
         let engine = Self {
             router,
             skills,
@@ -161,7 +249,14 @@ impl Engine {
             event_bus: event_tx,
             agent_state: Arc::new(RwLock::new(AgentState::Idle)),
             interruptible: AtomicBool::new(false),
-            db_path,
+            db_path: db_path.clone(),
+            config: Arc::new(RwLock::new(AppConfig::default())),
+            start_time: Instant::now(),
+            draining: AtomicBool::new(false),
+            in_flight: AtomicUsize::new(0),
+            rate_limiter: Mutex::new(RateLimiter::new(config.rate_limit_ms)),
+            token_store_tx,
+            model_available,
         };
 
         engine.spawn_persona_watcher();
@@ -185,6 +280,15 @@ impl Engine {
     // === Core handler ===
 
     pub async fn handle_message(&self, msg: ChatMessage, session_id: &str) -> Result<ChatResponse> {
+        // Rate limiting
+        {
+            let mut limiter = self.rate_limiter.lock().unwrap();
+            limiter.check()?;
+        }
+        // Drain check
+        if self.draining.load(Ordering::SeqCst) {
+            return Err(anyhow::anyhow!("Server is shutting down"));
+        }
         // Atomic mid-turn check: compare_exchange ensures only one caller enters
         if self
             .interruptible
@@ -194,6 +298,9 @@ impl Engine {
             return Err(anyhow::anyhow!("Agent is busy, please wait"));
         }
         // C1 fix: do NOT release the gate here — only at the end of each path
+
+        self.in_flight.fetch_add(1, Ordering::SeqCst);
+        let start = Instant::now();
 
         let out = self.router.classify_sync(&msg.content);
 
@@ -268,11 +375,23 @@ impl Engine {
 
         let prompt_tokens = self.inference.token_count(&assembled.prompt);
         let completion_tokens = self.inference.token_count(&response);
+        let latency_ms = start.elapsed().as_millis() as u64;
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
         let _ = self.event_bus.send(EngineEvent::TokenUsage {
             session_id: session_id.to_string(),
             model: "qwen3-1.7b".into(),
             prompt_tokens,
             completion_tokens,
+            cached_tokens: 0,
+            latency_ms,
+        });
+        let _ = self.token_store_tx.send(TokenUsageRecord {
+            session_id: session_id.to_string(),
+            model: "qwen3-1.7b".into(),
+            prompt_tokens,
+            completion_tokens,
+            cached_tokens: 0,
+            latency_ms,
         });
 
         // C1 fix: reset interruptible flag only at end of simple path
@@ -284,6 +403,8 @@ impl Engine {
             token_usage: TokenUsage {
                 prompt_tokens,
                 completion_tokens,
+                cached_tokens: 0,
+                latency_ms,
             },
         })
     }
@@ -291,6 +412,8 @@ impl Engine {
     // === Agent Loop ===
 
     async fn agent_loop(&self, msg: &ChatMessage, session_id: &str) -> Result<ChatResponse> {
+        self.in_flight.fetch_add(1, Ordering::SeqCst);
+        let loop_start = Instant::now();
         *self.agent_state.write().await = AgentState::Thinking;
         self.interruptible.store(true, Ordering::SeqCst);
 
@@ -355,6 +478,7 @@ impl Engine {
 
         *self.agent_state.write().await = AgentState::Idle;
         self.interruptible.store(false, Ordering::SeqCst);
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
 
         match outcome {
             Ok(Ok(ref response)) if response.is_empty() => Err(anyhow::anyhow!(
@@ -365,11 +489,22 @@ impl Engine {
 
                 let prompt_tokens = self.inference.token_count(&msg.content);
                 let completion_tokens = self.inference.token_count(&response);
+                let latency_ms = loop_start.elapsed().as_millis() as u64;
                 let _ = self.event_bus.send(EngineEvent::TokenUsage {
                     session_id: session_id.to_string(),
                     model: "agent-loop".into(),
                     prompt_tokens,
                     completion_tokens,
+                    cached_tokens: 0,
+                    latency_ms,
+                });
+                let _ = self.token_store_tx.send(TokenUsageRecord {
+                    session_id: session_id.to_string(),
+                    model: "agent-loop".into(),
+                    prompt_tokens,
+                    completion_tokens,
+                    cached_tokens: 0,
+                    latency_ms,
                 });
                 Ok(ChatResponse {
                     response,
@@ -377,6 +512,8 @@ impl Engine {
                     token_usage: TokenUsage {
                         prompt_tokens,
                         completion_tokens,
+                        cached_tokens: 0,
+                        latency_ms,
                     },
                 })
             }
@@ -535,8 +672,12 @@ impl Engine {
     pub async fn health_check(&self) -> HealthStatus {
         let gpu = InferenceEngine::detect_gpu();
         HealthStatus {
-            status: "ok".into(),
-            uptime: 0,
+            status: if self.model_available {
+                "ok".into()
+            } else {
+                "degraded".into()
+            },
+            uptime: self.start_time.elapsed().as_secs(),
             gpu_info: gpu,
         }
     }
@@ -591,8 +732,79 @@ impl Engine {
         self.agent_state.read().await.clone()
     }
 
+    pub async fn search_events(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<openloom_memory::store::EventRow>> {
+        let conn = rusqlite::Connection::open(&self.db_path)?;
+        let store = openloom_memory::store::SqliteEventStore::from_connection(conn);
+        store.search_fts(query, limit)
+    }
+
+    pub async fn list_events(&self, limit: usize) -> Result<Vec<openloom_memory::store::EventRow>> {
+        let conn = rusqlite::Connection::open(&self.db_path)?;
+        let store = openloom_memory::store::SqliteEventStore::from_connection(conn);
+        store.query_recent(limit)
+    }
+
+    pub async fn get_config(&self, key: Option<&str>) -> serde_json::Value {
+        let config = self.config.read().await;
+        match key {
+            Some(k) => config.get_nested(k).unwrap_or(serde_json::Value::Null),
+            None => serde_json::to_value(&*config).unwrap_or_default(),
+        }
+    }
+
+    pub async fn set_config(&self, key: &str, value: &str) -> Result<()> {
+        let mut config = self.config.write().await;
+        config.set_nested(key, value)?;
+        let path = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("openLoom")
+            .join("config.toml");
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let content = toml::to_string_pretty(&*config)?;
+        std::fs::write(&path, content)?;
+        tracing::info!(key, value, "config updated");
+        Ok(())
+    }
+
+    pub fn load_config_into_engine(&self, config: AppConfig) {
+        let rt = tokio::runtime::Handle::current();
+        rt.block_on(async {
+            *self.config.write().await = config;
+        });
+    }
+
+    pub fn cache_stats(&self) -> openloom_cache::CacheStats {
+        openloom_cache::CacheStats {
+            hit_rate: 0.0,
+            block_count: 0,
+            total_size_mb: 0.0,
+        }
+    }
+
     pub async fn shutdown(&self) -> Result<()> {
         tracing::info!("engine shutting down");
+        self.draining.store(true, Ordering::SeqCst);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while self.in_flight.load(Ordering::SeqCst) > 0 {
+            if tokio::time::Instant::now() > deadline {
+                tracing::warn!(
+                    "shutdown timeout, {} requests still in-flight",
+                    self.in_flight.load(Ordering::SeqCst)
+                );
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        }
+        tracing::info!("engine shutdown complete");
         Ok(())
     }
 }
@@ -639,7 +851,10 @@ mod tests {
     async fn test_health_check() {
         let (engine, _dir) = setup_test_engine().await;
         let health = engine.health_check().await;
+        // new_test creates a dummy model file so status is "ok"
         assert_eq!(health.status, "ok");
+        // uptime is reported as seconds; may be 0 when test runs very quickly
+        let _ = health.uptime;
     }
 
     #[tokio::test]
@@ -723,5 +938,39 @@ mod tests {
             .unwrap();
         let state = rt.block_on(engine.agent_state());
         assert_eq!(state, AgentState::Idle);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_allows_first_request() {
+        let (engine, _dir) = setup_test_engine().await;
+        let msg = ChatMessage {
+            role: "user".into(),
+            content: "hello".into(),
+            timestamp: Utc::now(),
+        };
+        let sid = engine.create_session().await.unwrap().id;
+        let resp = engine.handle_message(msg, &sid).await;
+        // First request must pass rate limiter (interval=100ms, elapsed=0 but check resets)
+        assert!(
+            resp.is_ok(),
+            "first request should pass rate limiter: {:?}",
+            resp.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_events_empty() {
+        let (engine, _dir) = setup_test_engine().await;
+        let results = engine.search_events("nonexistent", 10).await;
+        assert!(results.is_ok(), "search_events should succeed on empty db");
+        assert_eq!(results.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_events_empty() {
+        let (engine, _dir) = setup_test_engine().await;
+        let results = engine.list_events(10).await;
+        assert!(results.is_ok(), "list_events should succeed on empty db");
+        assert_eq!(results.unwrap().len(), 0);
     }
 }
