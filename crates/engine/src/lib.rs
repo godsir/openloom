@@ -52,6 +52,7 @@ struct TokenUsageRecord {
     model: String,
     prompt_tokens: usize,
     completion_tokens: usize,
+    #[allow(dead_code)]
     cached_tokens: usize,
     latency_ms: u64,
 }

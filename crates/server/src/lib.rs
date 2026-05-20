@@ -13,6 +13,7 @@ use std::sync::Arc;
 pub struct Server {
     engine: Arc<Engine>,
     port: u16,
+    #[allow(dead_code)]
     config_path: Option<PathBuf>,
 }
 

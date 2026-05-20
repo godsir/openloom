@@ -285,13 +285,23 @@ pub struct CachePrefs {
     pub total_budget_mb: usize,
 }
 
-fn default_block_size() -> usize { 1024 }
-fn default_max_blocks() -> usize { 32 }
-fn default_cache_budget_mb() -> usize { 5120 }
+fn default_block_size() -> usize {
+    1024
+}
+fn default_max_blocks() -> usize {
+    32
+}
+fn default_cache_budget_mb() -> usize {
+    5120
+}
 
 impl Default for CachePrefs {
     fn default() -> Self {
-        Self { block_size: default_block_size(), max_blocks: default_max_blocks(), total_budget_mb: default_cache_budget_mb() }
+        Self {
+            block_size: default_block_size(),
+            max_blocks: default_max_blocks(),
+            total_budget_mb: default_cache_budget_mb(),
+        }
     }
 }
 
@@ -303,12 +313,19 @@ pub struct AgentPrefs {
     pub timeout_secs: u64,
 }
 
-fn default_max_iterations() -> usize { 3 }
-fn default_timeout_secs() -> u64 { 120 }
+fn default_max_iterations() -> usize {
+    3
+}
+fn default_timeout_secs() -> u64 {
+    120
+}
 
 impl Default for AgentPrefs {
     fn default() -> Self {
-        Self { max_iterations: default_max_iterations(), timeout_secs: default_timeout_secs() }
+        Self {
+            max_iterations: default_max_iterations(),
+            timeout_secs: default_timeout_secs(),
+        }
     }
 }
 
@@ -320,12 +337,19 @@ pub struct PersonaPrefs {
     pub recency_decay_days: u32,
 }
 
-fn default_top_n() -> usize { 5 }
-fn default_recency_days() -> u32 { 30 }
+fn default_top_n() -> usize {
+    5
+}
+fn default_recency_days() -> u32 {
+    30
+}
 
 impl Default for PersonaPrefs {
     fn default() -> Self {
-        Self { top_n: default_top_n(), recency_decay_days: default_recency_days() }
+        Self {
+            top_n: default_top_n(),
+            recency_decay_days: default_recency_days(),
+        }
     }
 }
 
@@ -335,11 +359,15 @@ pub struct RateLimitConfig {
     pub min_interval_ms: u64,
 }
 
-fn default_rate_limit_ms() -> u64 { 100 }
+fn default_rate_limit_ms() -> u64 {
+    100
+}
 
 impl Default for RateLimitConfig {
     fn default() -> Self {
-        Self { min_interval_ms: default_rate_limit_ms() }
+        Self {
+            min_interval_ms: default_rate_limit_ms(),
+        }
     }
 }
 
@@ -448,6 +476,7 @@ impl AppConfig {
         Some(current.clone())
     }
 
+    #[allow(clippy::collapsible_if, clippy::collapsible_match)]
     pub fn set_nested(&mut self, key: &str, value: &str) -> anyhow::Result<()> {
         let parts: Vec<&str> = key.split('.').collect();
         if parts.len() != 2 {
@@ -456,13 +485,84 @@ impl AppConfig {
         let json_value: serde_json::Value = serde_json::from_str(value)
             .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
         match parts[0] {
-            "server" => { if parts[1] == "host" { if let serde_json::Value::String(s) = json_value { self.server.host = s; } } }
-            "router" => { match parts[1] { "keyword_threshold" => { if let serde_json::Value::Number(n) = &json_value { self.router.keyword_threshold = n.as_f64().unwrap_or(0.85) as f32; } } "fallback_threshold" => { if let serde_json::Value::Number(n) = &json_value { self.router.fallback_threshold = n.as_f64().unwrap_or(0.7) as f32; } } _ => {} } }
-            "agent" => { match parts[1] { "max_iterations" => { if let serde_json::Value::Number(n) = &json_value { self.agent.max_iterations = n.as_u64().unwrap_or(3) as usize; } } "timeout_secs" => { if let serde_json::Value::Number(n) = &json_value { self.agent.timeout_secs = n.as_u64().unwrap_or(120); } } _ => {} } }
-            "persona" => { match parts[1] { "top_n" => { if let serde_json::Value::Number(n) = &json_value { self.persona.top_n = n.as_u64().unwrap_or(5) as usize; } } "recency_decay_days" => { if let serde_json::Value::Number(n) = &json_value { self.persona.recency_decay_days = n.as_u64().unwrap_or(30) as u32; } } _ => {} } }
-            "rate_limit" => { if parts[1] == "min_interval_ms" { if let serde_json::Value::Number(n) = &json_value { self.rate_limit.min_interval_ms = n.as_u64().unwrap_or(100); } } }
-            "cache" => { match parts[1] { "block_size" => { if let serde_json::Value::Number(n) = &json_value { self.cache.block_size = n.as_u64().unwrap_or(1024) as usize; } } "max_blocks" => { if let serde_json::Value::Number(n) = &json_value { self.cache.max_blocks = n.as_u64().unwrap_or(32) as usize; } } "total_budget_mb" => { if let serde_json::Value::Number(n) = &json_value { self.cache.total_budget_mb = n.as_u64().unwrap_or(5120) as usize; } } _ => {} } }
-            "logging" => { if parts[1] == "level" { if let serde_json::Value::String(s) = json_value { self.logging.level = s; } } }
+            "server" => {
+                if parts[1] == "host" {
+                    if let serde_json::Value::String(s) = json_value {
+                        self.server.host = s;
+                    }
+                }
+            }
+            "router" => match parts[1] {
+                "keyword_threshold" => {
+                    if let serde_json::Value::Number(n) = &json_value {
+                        self.router.keyword_threshold = n.as_f64().unwrap_or(0.85) as f32;
+                    }
+                }
+                "fallback_threshold" => {
+                    if let serde_json::Value::Number(n) = &json_value {
+                        self.router.fallback_threshold = n.as_f64().unwrap_or(0.7) as f32;
+                    }
+                }
+                _ => {}
+            },
+            "agent" => match parts[1] {
+                "max_iterations" => {
+                    if let serde_json::Value::Number(n) = &json_value {
+                        self.agent.max_iterations = n.as_u64().unwrap_or(3) as usize;
+                    }
+                }
+                "timeout_secs" => {
+                    if let serde_json::Value::Number(n) = &json_value {
+                        self.agent.timeout_secs = n.as_u64().unwrap_or(120);
+                    }
+                }
+                _ => {}
+            },
+            "persona" => match parts[1] {
+                "top_n" => {
+                    if let serde_json::Value::Number(n) = &json_value {
+                        self.persona.top_n = n.as_u64().unwrap_or(5) as usize;
+                    }
+                }
+                "recency_decay_days" => {
+                    if let serde_json::Value::Number(n) = &json_value {
+                        self.persona.recency_decay_days = n.as_u64().unwrap_or(30) as u32;
+                    }
+                }
+                _ => {}
+            },
+            "rate_limit" => {
+                if parts[1] == "min_interval_ms" {
+                    if let serde_json::Value::Number(n) = &json_value {
+                        self.rate_limit.min_interval_ms = n.as_u64().unwrap_or(100);
+                    }
+                }
+            }
+            "cache" => match parts[1] {
+                "block_size" => {
+                    if let serde_json::Value::Number(n) = &json_value {
+                        self.cache.block_size = n.as_u64().unwrap_or(1024) as usize;
+                    }
+                }
+                "max_blocks" => {
+                    if let serde_json::Value::Number(n) = &json_value {
+                        self.cache.max_blocks = n.as_u64().unwrap_or(32) as usize;
+                    }
+                }
+                "total_budget_mb" => {
+                    if let serde_json::Value::Number(n) = &json_value {
+                        self.cache.total_budget_mb = n.as_u64().unwrap_or(5120) as usize;
+                    }
+                }
+                _ => {}
+            },
+            "logging" => {
+                if parts[1] == "level" {
+                    if let serde_json::Value::String(s) = json_value {
+                        self.logging.level = s;
+                    }
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -554,8 +654,12 @@ mod tests {
     #[test]
     fn test_classify_output_route_reason_default() {
         let co = ClassifyOutput {
-            intent: Intent::Chat, complexity: 0.3, skill_match: None,
-            confidence: 0.9, cache_hit: false, target_model: TargetModel::Local,
+            intent: Intent::Chat,
+            complexity: 0.3,
+            skill_match: None,
+            confidence: 0.9,
+            cache_hit: false,
+            target_model: TargetModel::Local,
             route_reason: "keyword_match".into(),
         };
         let json = serde_json::to_string(&co).unwrap();
@@ -574,7 +678,10 @@ mod tests {
         assert!(json.contains("thinking"));
         let decoded: EngineEvent = serde_json::from_str(&json).unwrap();
         match decoded {
-            EngineEvent::AgentStateChanged { old_state, new_state } => {
+            EngineEvent::AgentStateChanged {
+                old_state,
+                new_state,
+            } => {
                 assert_eq!(old_state, AgentState::Idle);
                 assert_eq!(new_state, AgentState::Thinking);
             }
@@ -585,9 +692,12 @@ mod tests {
     #[test]
     fn test_token_usage_event_has_new_fields() {
         let event = EngineEvent::TokenUsage {
-            session_id: "s1".into(), model: "test".into(),
-            prompt_tokens: 10, completion_tokens: 5,
-            cached_tokens: 2, latency_ms: 150,
+            session_id: "s1".into(),
+            model: "test".into(),
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            cached_tokens: 2,
+            latency_ms: 150,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("cached_tokens"));
