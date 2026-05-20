@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, Tray, Menu, session, nativeImage } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 
@@ -10,6 +10,9 @@ let retryCount = 0;
 const MAX_RETRIES = 5;
 const RETRY_DELAYS = [1000, 2000, 4000, 8000, 30000];
 const READY_TIMEOUT_MS = 10000;
+
+let tray = null;
+let appIsQuitting = false;
 
 function startEngine() {
     const isDev = process.argv.includes('--dev');
@@ -83,6 +86,7 @@ function createWindow() {
             contextIsolation: true,
             nodeIntegration: false,
             sandbox: true,
+            webviewTag: false,
         },
     });
 
@@ -101,11 +105,83 @@ function createWindow() {
             `data:text/html,<h1>openLoom</h1><p>Engine port: ${enginePort || 'starting...'}</p><p>Run "cd web && npm run build" for full UI</p>`
         );
     });
+
+    mainWindow.on('close', (event) => {
+        if (!appIsQuitting) {
+            event.preventDefault();
+            mainWindow.hide();
+        }
+    });
+}
+
+function updateTrayMenu(statusLabel) {
+    if (!tray) return;
+    const contextMenu = Menu.buildFromTemplate([
+        { label: '显示 openLoom', click: () => mainWindow?.show() },
+        { type: 'separator' },
+        { label: statusLabel, enabled: false },
+        { type: 'separator' },
+        { label: '退出', click: () => { appIsQuitting = true; app.quit(); }}
+    ]);
+    tray.setContextMenu(contextMenu);
+}
+
+function createTray() {
+    const icon = nativeImage.createEmpty();
+    tray = new Tray(icon);
+    tray.setToolTip('openLoom');
+    updateTrayMenu('Agent: Idle');
+    tray.on('click', () => mainWindow?.show());
 }
 
 app.whenReady().then(() => {
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+        callback({
+            responseHeaders: {
+                ...details.responseHeaders,
+                'Content-Security-Policy': [
+                    "default-src 'self'; connect-src ws://127.0.0.1:* http://127.0.0.1:*; script-src 'self'"
+                ]
+            }
+        });
+    });
+
     startEngine();
     setTimeout(createWindow, 2000);
+    setTimeout(createTray, 3000);
+
+    setTimeout(() => {
+        setInterval(async () => {
+            if (!enginePort) return;
+            try {
+                const http = require('http');
+                const resp = await new Promise((resolve, reject) => {
+                    http.get(`http://127.0.0.1:${enginePort}/health`, (res) => {
+                        let data = '';
+                        res.on('data', chunk => data += chunk);
+                        res.on('end', () => resolve(JSON.parse(data)));
+                    }).on('error', reject);
+                });
+                if (resp.status === 'degraded') {
+                    updateTrayMenu('Agent: Degraded');
+                    if (mainWindow) {
+                        mainWindow.webContents.executeJavaScript(
+                            `window.__engineStatus__ = 'degraded';`
+                        ).catch(() => {});
+                    }
+                } else {
+                    updateTrayMenu('Agent: Idle');
+                }
+            } catch {
+                updateTrayMenu('Agent: Offline');
+            }
+        }, 30000);
+    }, 5000);
+
+    app.setLoginItemSettings({
+        openAtLogin: false,
+        path: app.getPath('exe'),
+    });
 });
 
 app.on('before-quit', async () => {
