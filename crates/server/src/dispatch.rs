@@ -147,9 +147,24 @@ pub async fn dispatch_method(
             let summary = engine.persona_summary().await;
             Ok(serde_json::json!({"summary": summary, "traits": []}))
         }
-        "memory.query" => Ok(
-            serde_json::json!({"events": [], "cognitions": [], "note": "FTS5 search in Phase 2"}),
-        ),
+        "memory.query" => {
+            let query = params
+                .as_ref()
+                .and_then(|p| p.get("query"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let limit = params
+                .as_ref()
+                .and_then(|p| p.get("limit"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(20) as usize;
+            let events = engine.search_events(query, limit).await.map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            Ok(serde_json::json!({"events": events, "cognitions": []}))
+        }
         "agent.status" => {
             let state = engine.agent_state().await;
             Ok(
@@ -157,11 +172,40 @@ pub async fn dispatch_method(
             )
         }
         "cache.stats" => {
-            Ok(serde_json::json!({"hit_rate": 0.0, "block_count": 0, "total_size_mb": 0}))
+            let stats = engine.cache_stats();
+            Ok(serde_json::json!({"hit_rate": stats.hit_rate, "block_count": stats.block_count, "total_size_mb": stats.total_size_mb}))
         }
-        "system.shutdown" => Ok(serde_json::json!({"ok": true})),
-        "config.get" => Ok(serde_json::json!({"config": {}})),
-        "config.set" => Ok(serde_json::json!({"ok": true})),
+        "system.shutdown" => {
+            engine.shutdown().await.map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            Ok(serde_json::json!({"ok": true}))
+        }
+        "config.get" => {
+            let key = params.as_ref().and_then(|p| p.get("key")).and_then(|v| v.as_str());
+            let config = engine.get_config(key).await;
+            Ok(serde_json::json!({"config": config}))
+        }
+        "config.set" => {
+            let key = params
+                .as_ref()
+                .and_then(|p| p.get("key"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let value = params
+                .as_ref()
+                .and_then(|p| p.get("value"))
+                .map(|v| v.to_string())
+                .unwrap_or_default();
+            engine.set_config(key, &value).await.map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            Ok(serde_json::json!({"ok": true}))
+        }
         _ => Err(JsonRpcError {
             code: ErrorCode::MethodNotFound,
             message: format!("method '{}' not found", method),

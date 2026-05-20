@@ -16,6 +16,10 @@ impl ContextWeaver {
         Self { cache }
     }
 
+    pub fn cache(&self) -> &Arc<dyn KvCache> {
+        &self.cache
+    }
+
     pub fn assemble(
         &self,
         system_instruction: &str,
