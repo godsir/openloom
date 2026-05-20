@@ -480,14 +480,12 @@ impl CloudClient for AnthropicClient {
                 buffer = buffer[pos + 2..].to_string();
 
                 for line in frame.lines() {
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
-                            if let Some(text) = val["delta"]["text"].as_str() {
-                                if tx.send(text.to_string()).await.is_err() {
-                                    return Ok(()); // client disconnected
-                                }
-                            }
-                        }
+                    if let Some(data) = line.strip_prefix("data: ")
+                        && let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
+                        && let Some(text) = val["delta"]["text"].as_str()
+                        && tx.send(text.to_string()).await.is_err()
+                    {
+                        return Ok(()); // client disconnected
                     }
                 }
             }
@@ -630,12 +628,11 @@ impl CloudClient for OpenAIClient {
                         if data == "[DONE]" {
                             return Ok(());
                         }
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
-                            if let Some(text) = val["choices"][0]["delta"]["content"].as_str() {
-                                if tx.send(text.to_string()).await.is_err() {
-                                    return Ok(()); // client disconnected
-                                }
-                            }
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
+                            && let Some(text) = val["choices"][0]["delta"]["content"].as_str()
+                            && tx.send(text.to_string()).await.is_err()
+                        {
+                            return Ok(()); // client disconnected
                         }
                     }
                 }

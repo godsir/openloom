@@ -36,10 +36,7 @@ pub async fn sse_handler(
     });
 
     let stream = stream::unfold(rx, |mut rx| async move {
-        match rx.recv().await {
-            Some(token) => Some((Ok(Event::default().data(token)), rx)),
-            None => None,
-        }
+        rx.recv().await.map(|token| (Ok(Event::default().data(token)), rx))
     });
 
     Sse::new(stream)
