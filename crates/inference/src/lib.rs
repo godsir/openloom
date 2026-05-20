@@ -10,6 +10,8 @@ pub struct CompletionRequest {
     pub prompt: String,
     pub max_tokens: usize,
     pub temperature: f32,
+    pub top_p: f32,
+    pub stop: Vec<String>,
     pub stream: bool,
 }
 
@@ -19,6 +21,8 @@ impl Default for CompletionRequest {
             prompt: String::new(),
             max_tokens: 2048,
             temperature: 0.7,
+            top_p: 1.0,
+            stop: Vec::new(),
             stream: false,
         }
     }
@@ -29,6 +33,7 @@ pub struct CompletionResponse {
     pub text: String,
     pub prompt_tokens: usize,
     pub completion_tokens: usize,
+    pub latency_ms: u64,
 }
 
 #[derive(Debug)]
@@ -69,6 +74,7 @@ impl InferenceEngine {
             text: response,
             prompt_tokens: prompt_chars / 4,
             completion_tokens: response_tokens,
+            latency_ms: 0,
         })
     }
 
@@ -208,6 +214,7 @@ impl AnthropicClient {
             text,
             prompt_tokens,
             completion_tokens,
+            latency_ms: 0,
         })
     }
 }
@@ -307,6 +314,7 @@ impl OpenAIClient {
             text,
             prompt_tokens,
             completion_tokens,
+            latency_ms: 0,
         })
     }
 }
