@@ -442,10 +442,57 @@ impl CloudClient for AnthropicClient {
 
     async fn complete_stream(
         &self,
-        _req: CompletionRequest,
-        _tx: tokio::sync::mpsc::Sender<String>,
+        req: CompletionRequest,
+        tx: tokio::sync::mpsc::Sender<String>,
     ) -> anyhow::Result<()> {
-        anyhow::bail!("Anthropic streaming not yet implemented");
+        let body = serde_json::json!({
+            "model": self.model,
+            "max_tokens": req.max_tokens,
+            "messages": [{"role": "user", "content": req.prompt}],
+            "stream": true,
+        });
+
+        let resp = self
+            .http
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Anthropic API error {}: {}", status, text);
+        }
+
+        use futures::StreamExt;
+        let mut stream = resp.bytes_stream();
+        let mut buffer = String::new();
+
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = chunk_result?;
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+            while let Some(pos) = buffer.find("\n\n") {
+                let frame = buffer[..pos].to_string();
+                buffer = buffer[pos + 2..].to_string();
+
+                for line in frame.lines() {
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                            if let Some(text) = val["delta"]["text"].as_str() {
+                                if tx.send(text.to_string()).await.is_err() {
+                                    return Ok(()); // client disconnected
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn provider(&self) -> ModelBackend {
@@ -542,10 +589,59 @@ impl CloudClient for OpenAIClient {
 
     async fn complete_stream(
         &self,
-        _req: CompletionRequest,
-        _tx: tokio::sync::mpsc::Sender<String>,
+        req: CompletionRequest,
+        tx: tokio::sync::mpsc::Sender<String>,
     ) -> anyhow::Result<()> {
-        anyhow::bail!("OpenAI streaming not yet implemented");
+        let body = serde_json::json!({
+            "model": self.model,
+            "max_tokens": req.max_tokens,
+            "messages": [{"role": "user", "content": req.prompt}],
+            "stream": true,
+        });
+
+        let resp = self
+            .http
+            .post(format!("{}/chat/completions", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("API error {}: {}", status, text);
+        }
+
+        use futures::StreamExt;
+        let mut stream = resp.bytes_stream();
+        let mut buffer = String::new();
+
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = chunk_result?;
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+            while let Some(pos) = buffer.find("\n\n") {
+                let frame = buffer[..pos].to_string();
+                buffer = buffer[pos + 2..].to_string();
+
+                for line in frame.lines() {
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if data == "[DONE]" {
+                            return Ok(());
+                        }
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                            if let Some(text) = val["choices"][0]["delta"]["content"].as_str() {
+                                if tx.send(text.to_string()).await.is_err() {
+                                    return Ok(()); // client disconnected
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn provider(&self) -> ModelBackend {
