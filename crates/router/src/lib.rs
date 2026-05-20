@@ -41,6 +41,7 @@ impl SmartRouter {
                 confidence: 1.0,
                 cache_hit: false,
                 target_model: TargetModel::Local,
+                route_reason: "empty_input".to_string(),
             };
         }
 
@@ -68,19 +69,18 @@ impl SmartRouter {
             }
         }
 
-        let (target_model, complexity) = if best_confidence >= self.config.keyword_threshold {
-            let model = if skill_match.is_some() {
-                TargetModel::None
+        let (target_model, complexity, reason) = if best_confidence >= self.config.keyword_threshold {
+            if skill_match.is_some() {
+                (TargetModel::None, 0.3, "skill_trigger")
             } else {
-                TargetModel::Local
-            };
-            (model, 0.3)
+                (TargetModel::Local, 0.3, "keyword_match")
+            }
         } else if best_confidence >= self.config.fallback_threshold {
-            (TargetModel::Local, 0.6)
+            (TargetModel::Local, 0.6, "keyword_fallback")
         } else if self.cloud_available {
-            (TargetModel::Cloud, 0.8)
+            (TargetModel::Cloud, 0.8, "cloud_fallback")
         } else {
-            (TargetModel::Local, 0.8)
+            (TargetModel::Local, 0.8, "default_local")
         };
 
         ClassifyOutput {
@@ -90,6 +90,7 @@ impl SmartRouter {
             confidence: best_confidence.max(0.3),
             cache_hit: false,
             target_model,
+            route_reason: reason.to_string(),
         }
     }
 
@@ -116,6 +117,7 @@ mod tests {
         assert_eq!(output.intent, Intent::FileOperation);
         assert!(output.confidence >= 0.85);
         assert_eq!(output.target_model, TargetModel::Local);
+        assert_eq!(output.route_reason, "keyword_match");
     }
 
     #[test]
@@ -132,6 +134,14 @@ mod tests {
         let output = router.classify_sync("你好啊，很高兴见到你");
         assert_eq!(output.intent, Intent::Chat);
         assert_eq!(output.target_model, TargetModel::Local);
+        assert!(output.route_reason == "keyword_fallback" || output.route_reason == "default_local");
+    }
+
+    #[test]
+    fn test_route_reason_on_empty_input() {
+        let router = SmartRouter::new_keywords_only(keywords::default_keyword_rules());
+        let output = router.classify_sync("");
+        assert_eq!(output.route_reason, "empty_input");
     }
 
     #[test]
