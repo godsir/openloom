@@ -70,16 +70,14 @@ impl Server {
 
         // Clean stale port/pid from previous crashed instance
         let pid_path = data_dir.join("engine.pid");
-        if pid_path.exists() {
-            if let Ok(pid_str) = fs::read_to_string(&pid_path) {
-                if let Ok(old_pid) = pid_str.trim().parse::<u32>() {
-                    if old_pid != std::process::id() {
-                        let _ = fs::remove_file(&pid_path);
-                        let _ = fs::remove_file(data_dir.join("engine.port"));
-                        tracing::info!("cleaned up stale port/pid files from pid {}", old_pid);
-                    }
-                }
-            }
+        if pid_path.exists()
+            && let Ok(pid_str) = fs::read_to_string(&pid_path)
+            && let Ok(old_pid) = pid_str.trim().parse::<u32>()
+            && old_pid != std::process::id()
+        {
+            let _ = fs::remove_file(&pid_path);
+            let _ = fs::remove_file(data_dir.join("engine.port"));
+            tracing::info!("cleaned up stale port/pid files from pid {}", old_pid);
         }
 
         // Write current port and pid
