@@ -1,0 +1,56 @@
+# openLoom configuration file
+# Location: ~/.local/share/openLoom/config.toml (Linux)
+#           ~/Library/Application Support/openLoom/config.toml (macOS)
+#           %APPDATA%/openLoom/config.toml (Windows)
+
+[[models]]
+name = "router"
+path = "qwen3-1.7b-q4_k_m.gguf"
+model_type = "Router"
+backend = "LlamaCpp"
+context_size = 4096
+n_gpu_layers = 32
+
+[[models]]
+name = "summarizer"
+path = "qwen3-8b-q4_k_m.gguf"
+model_type = "Summarizer"
+backend = "LlamaCpp"
+context_size = 8192
+n_gpu_layers = 32
+
+# [[models]]
+# name = "cloud-primary"
+# backend = "Anthropic"
+# model = "claude-sonnet-4-6"
+# api_key_env = "ANTHROPIC_API_KEY"
+
+[router]
+keyword_threshold = 0.85
+fallback_threshold = 0.7
+
+[server]
+host = "127.0.0.1"
+
+[storage]
+# data_dir = "/custom/path/to/data"
+
+[logging]
+level = "INFO"
+log_content = false
+
+[cache]
+block_size = 1024
+max_blocks = 32
+total_budget_mb = 5120
+
+[agent]
+max_iterations = 3
+timeout_secs = 120
+
+[persona]
+top_n = 5
+recency_decay_days = 30
+
+[rate_limit]
+min_interval_ms = 100
