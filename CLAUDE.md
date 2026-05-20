@@ -64,9 +64,23 @@ F:/openLoom/
 - [设计文档索引](docs/superpowers/README.md) (specs / plans / retrospectives)
 
 ### 当前进度
-- **Phase 0** — 完成 (Memory Kernel MVP, 36 测试)
-- **Phase 1** — 完成 (Smart Router + Skill Engine, 113 测试, clippy clean)
-- **Phase 2** — Milestone A/B 完成, Milestone C 待实现
+- **Phase 0** — 完成 (Memory Kernel MVP)
+- **Phase 1** — 完成 (Smart Router + Skill Engine)
+- **Phase 2** — Milestones A/B/C/D 全部完成 (Agent Loop, Persona, Backend, Electron GUI)
+- **Phase 3A** — 完成 (AI Activation: llama-cpp-2, SSE streaming, 8B cognition, Hub heartbeat, cloud streaming)
+- **Phase 3B** — 完成 (Productionization: Engine split→11 modules, sandbox, audit panel, KV Cache prep, packaging)
+- **测试:** 129 pass, 0 fail | **Clippy:** 0 warnings | **fmt:** clean
+
+### 已知技术债 (Phase 3 复盘)
+
+| 债项 | 位置 | 严重度 | 阻塞 |
+|------|------|--------|------|
+| llama-cpp-2 无 C++ 工具链，功能未验证 | inference/ | P0 | 环境 |
+| SSE 流式发全文非逐 token | inference/lib.rs:208 | HIGH | C++ 工具链 |
+| 8B 模型加载 + LlmBased 变体 | memory_thread, pipeline | HIGH | C++ 工具链 |
+| EventSource 组件 unmount 时未关闭 | ChatArea.tsx | MEDIUM | — |
+| skills invoke() 错误包装丢失来源链 | skills/lib.rs:90 | LOW | — |
+| SafetensorsCache 未替换 NoopCache | cache/, engine/ | LOW | C++ 工具链 |
 
 ---
 
