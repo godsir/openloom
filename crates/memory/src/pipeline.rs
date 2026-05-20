@@ -263,4 +263,45 @@ mod tests {
             "should detect negative emotion"
         );
     }
+
+    #[test]
+    fn test_ten_scenario_fixtures() {
+        let (mut pipeline, _dir) = setup_pipeline(3);
+
+        let fixtures = include_str!("../../../tests/fixtures/trading_scenarios.txt");
+        let mut total_events = 0;
+        let mut cognition_count = 0;
+        let mut triggered_traits: Vec<String> = Vec::new();
+
+        for line in fixtures.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            let parts: Vec<&str> = line.splitn(3, '|').collect();
+            if parts.len() < 3 {
+                continue;
+            }
+
+            let (sid, ctx, text) = (parts[0], parts[1], parts[2]);
+
+            match pipeline.process(sid, text, ctx) {
+                Ok(result) => {
+                    total_events += result.events.len();
+                    if let Some(cog) = result.cognition_triggered {
+                        cognition_count += 1;
+                        triggered_traits
+                            .push(format!("{}={}", cog.trait_name, cog.action));
+                    }
+                }
+                Err(e) => panic!("Pipeline error on line '{}': {}", line, e),
+            }
+        }
+
+        assert!(total_events > 0, "Should extract events from scenarios");
+        assert!(cognition_count > 0, "Should trigger at least one cognition");
+        eprintln!("Events: {}, Cognitions: {}", total_events, cognition_count);
+        eprintln!("Triggered traits: {:?}", triggered_traits);
+    }
 }
