@@ -6,6 +6,7 @@ pub mod ws;
 use anyhow::Result;
 use axum::{Router, extract::State, routing::get};
 use openloom_engine::Engine;
+use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -61,7 +62,40 @@ impl Server {
         });
         println!("{}", ready);
 
+        // Write port/pid files for Electron sidecar lifecycle management
+        let data_dir = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("openLoom");
+        let _ = fs::create_dir_all(&data_dir);
+
+        // Clean stale port/pid from previous crashed instance
+        let pid_path = data_dir.join("engine.pid");
+        if pid_path.exists() {
+            if let Ok(pid_str) = fs::read_to_string(&pid_path) {
+                if let Ok(old_pid) = pid_str.trim().parse::<u32>() {
+                    if old_pid != std::process::id() {
+                        let _ = fs::remove_file(&pid_path);
+                        let _ = fs::remove_file(data_dir.join("engine.port"));
+                        tracing::info!("cleaned up stale port/pid files from pid {}", old_pid);
+                    }
+                }
+            }
+        }
+
+        // Write current port and pid
+        let _ = fs::write(data_dir.join("engine.port"), bound_addr.port().to_string());
+        let _ = fs::write(&pid_path, std::process::id().to_string());
+        tracing::info!(port = bound_addr.port(), "port/pid files written");
+
         axum::serve(listener, app).await?;
+
+        // Cleanup port/pid files on graceful shutdown
+        let data_dir = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("openLoom");
+        let _ = fs::remove_file(data_dir.join("engine.port"));
+        let _ = fs::remove_file(data_dir.join("engine.pid"));
+        tracing::info!("port/pid files removed");
         Ok(())
     }
 }
