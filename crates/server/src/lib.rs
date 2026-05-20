@@ -7,19 +7,26 @@ use anyhow::Result;
 use axum::{Router, extract::State, routing::get};
 use openloom_engine::Engine;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct Server {
     engine: Arc<Engine>,
     port: u16,
+    config_path: Option<PathBuf>,
 }
 
 impl Server {
-    pub fn new(engine: Engine) -> Self {
+    pub fn new(engine: Engine, config_path: Option<PathBuf>) -> Self {
         Self {
             engine: Arc::new(engine),
             port: 0,
+            config_path,
         }
+    }
+
+    pub fn engine(&self) -> &Arc<Engine> {
+        &self.engine
     }
 
     pub async fn serve(mut self, port: u16) -> Result<()> {
