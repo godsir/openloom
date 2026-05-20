@@ -223,6 +223,11 @@ pub enum EngineEvent {
         message: String,
         subsystem: String,
     },
+    HeartbeatTick {
+        idle_minutes: u64,
+        event_count: usize,
+        suggested_action: Option<String>,
+    },
 }
 
 // === JSON-RPC types ===

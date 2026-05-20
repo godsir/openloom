@@ -83,6 +83,7 @@ pub struct Engine {
     rate_limiter: Mutex<RateLimiter>,
     token_store_tx: std::sync::mpsc::Sender<TokenUsageRecord>,
     model_available: bool,
+    last_user_message: Mutex<Instant>,
 }
 
 enum SessionCommand {
@@ -103,6 +104,8 @@ pub struct EngineConfig {
     pub threshold: usize,
     pub cloud_config: Option<openloom_models::ModelConfig>,
     pub rate_limit_ms: u64,
+    pub heartbeat_interval_secs: u64,
+    pub heartbeat_idle_threshold_min: u64,
 }
 
 fn spawn_session_thread(db_path: PathBuf) -> std::sync::mpsc::Sender<SessionCommand> {
@@ -181,6 +184,8 @@ impl Engine {
             threshold: 3,
             cloud_config: None,
             rate_limit_ms: 0,
+            heartbeat_interval_secs: 1800,
+            heartbeat_idle_threshold_min: 120,
         })
     }
 
@@ -258,6 +263,7 @@ impl Engine {
             rate_limiter: Mutex::new(RateLimiter::new(config.rate_limit_ms)),
             token_store_tx,
             model_available,
+            last_user_message: Mutex::new(Instant::now()),
         };
 
         engine.spawn_persona_watcher();
@@ -286,6 +292,8 @@ impl Engine {
             let mut limiter = self.rate_limiter.lock().unwrap();
             limiter.check()?;
         }
+        // Track last user message time for heartbeat idle detection
+        *self.last_user_message.lock().unwrap() = Instant::now();
         // Drain check
         if self.draining.load(Ordering::SeqCst) {
             return Err(anyhow::anyhow!("Server is shutting down"));
@@ -784,11 +792,8 @@ impl Engine {
         Ok(())
     }
 
-    pub fn load_config_into_engine(&self, config: AppConfig) {
-        let rt = tokio::runtime::Handle::current();
-        rt.block_on(async {
-            *self.config.write().await = config;
-        });
+    pub async fn load_config_into_engine(&self, config: AppConfig) {
+        *self.config.write().await = config;
     }
 
     pub fn cache_stats(&self) -> openloom_cache::CacheStats {

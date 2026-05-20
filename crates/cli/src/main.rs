@@ -137,15 +137,28 @@ fn load_config(custom_path: Option<&str>) -> AppConfig {
 
 fn build_engine(config: Option<&str>, rate_limit_ms: u64) -> anyhow::Result<Engine> {
     let app_config = load_config(config);
-    let data_dir = dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("openLoom");
-    let cloud_config = app_config.models.iter()
-        .find(|m| matches!(m.backend, openloom_models::ModelBackend::Anthropic | openloom_models::ModelBackend::OpenAI | openloom_models::ModelBackend::DeepSeek))
+    let data_dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("openLoom");
+    let cloud_config = app_config
+        .models
+        .iter()
+        .find(|m| {
+            matches!(
+                m.backend,
+                openloom_models::ModelBackend::Anthropic
+                    | openloom_models::ModelBackend::OpenAI
+                    | openloom_models::ModelBackend::DeepSeek
+            )
+        })
         .cloned();
     Engine::new(EngineConfig {
         data_dir,
         threshold: app_config.agent.max_iterations,
         cloud_config,
         rate_limit_ms,
+        heartbeat_interval_secs: 1800,
+        heartbeat_idle_threshold_min: 120,
     })
 }
 
@@ -170,7 +183,7 @@ async fn main() -> anyhow::Result<()> {
             let app_config = load_config(config.as_deref());
             let rate_limit_ms = app_config.rate_limit.min_interval_ms;
             let engine = build_engine(config.as_deref(), rate_limit_ms)?;
-            engine.load_config_into_engine(app_config);
+            engine.load_config_into_engine(app_config).await;
             let server = Server::new(engine, config.as_ref().map(PathBuf::from));
             let shutdown_engine = server.engine().clone();
             tokio::spawn(async move {
@@ -227,7 +240,10 @@ async fn main() -> anyhow::Result<()> {
                     println!("No skills registered.");
                 } else {
                     for s in &skills {
-                        println!("{} - {} (triggers: {:?})", s.name, s.description, s.triggers);
+                        println!(
+                            "{} - {} (triggers: {:?})",
+                            s.name, s.description, s.triggers
+                        );
                     }
                 }
             }
@@ -255,10 +271,14 @@ async fn main() -> anyhow::Result<()> {
                     println!("No events recorded yet.");
                 } else {
                     for e in &events {
-                        println!("[{}] {}: {} (conf: {:.0}%, session: {})",
-                            e.timestamp, e.event_type, e.action,
+                        println!(
+                            "[{}] {}: {} (conf: {:.0}%, session: {})",
+                            e.timestamp,
+                            e.event_type,
+                            e.action,
                             e.confidence * 100.0,
-                            e.source_session.as_deref().unwrap_or("-"));
+                            e.source_session.as_deref().unwrap_or("-")
+                        );
                     }
                 }
             }
@@ -282,27 +302,29 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         Commands::Config { action } => match action {
-            ConfigAction::Get { key } => {
-                match key {
-                    Some(k) => {
-                        let config = load_config(None);
-                        match config.get_nested(&k) {
-                            Some(v) => println!("{} = {}", k, v),
-                            None => println!("Key '{}' not found", k),
-                        }
-                    }
-                    None => {
-                        let config = load_config(None);
-                        match toml::to_string_pretty(&config) {
-                            Ok(s) => println!("{}", s),
-                            Err(e) => eprintln!("Error: {}", e),
-                        }
+            ConfigAction::Get { key } => match key {
+                Some(k) => {
+                    let config = load_config(None);
+                    match config.get_nested(&k) {
+                        Some(v) => println!("{} = {}", k, v),
+                        None => println!("Key '{}' not found", k),
                     }
                 }
-            }
+                None => {
+                    let config = load_config(None);
+                    match toml::to_string_pretty(&config) {
+                        Ok(s) => println!("{}", s),
+                        Err(e) => eprintln!("Error: {}", e),
+                    }
+                }
+            },
             ConfigAction::Set { key, value } => {
                 let path = config_path(None);
-                let mut config = if path.exists() { load_config(None) } else { AppConfig::default() };
+                let mut config = if path.exists() {
+                    load_config(None)
+                } else {
+                    AppConfig::default()
+                };
                 if let Err(e) = config.set_nested(&key, &value) {
                     eprintln!("Error: {}", e);
                 } else {

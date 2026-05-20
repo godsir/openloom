@@ -76,21 +76,36 @@ async fn handle_ws(mut socket: WebSocket, engine: Arc<Engine>) {
 
 fn event_to_notification(event: &EngineEvent) -> serde_json::Value {
     match event {
-        EngineEvent::CognitionUpdated { trait_name, new_value, confidence, .. } => {
+        EngineEvent::CognitionUpdated {
+            trait_name,
+            new_value,
+            confidence,
+            ..
+        } => {
             serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "cognition.updated",
                 "params": { "trait": trait_name, "new_value": new_value, "confidence": confidence }
             })
         }
-        EngineEvent::AgentStateChanged { old_state, new_state } => {
+        EngineEvent::AgentStateChanged {
+            old_state,
+            new_state,
+        } => {
             serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "agent.state_changed",
                 "params": { "old_state": old_state, "new_state": new_state }
             })
         }
-        EngineEvent::TokenUsage { session_id, model, prompt_tokens, completion_tokens, cached_tokens, latency_ms } => {
+        EngineEvent::TokenUsage {
+            session_id,
+            model,
+            prompt_tokens,
+            completion_tokens,
+            cached_tokens,
+            latency_ms,
+        } => {
             serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "token.usage",
@@ -101,11 +116,30 @@ fn event_to_notification(event: &EngineEvent) -> serde_json::Value {
                 }
             })
         }
-        EngineEvent::Error { code, message, subsystem } => {
+        EngineEvent::Error {
+            code,
+            message,
+            subsystem,
+        } => {
             serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "error",
                 "params": { "code": code, "message": message, "subsystem": subsystem }
+            })
+        }
+        EngineEvent::HeartbeatTick {
+            idle_minutes,
+            event_count,
+            suggested_action,
+        } => {
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "heartbeat.tick",
+                "params": {
+                    "idle_minutes": idle_minutes,
+                    "event_count": event_count,
+                    "suggested_action": suggested_action
+                }
             })
         }
     }

@@ -12,6 +12,7 @@ pub struct CognitionUpdate {
     pub evidence_count: usize,
     pub confidence: f64,
     pub summary: String,
+    pub reasoning: Option<String>,
 }
 
 /// The result of processing a single conversation turn through the memory pipeline.
@@ -79,6 +80,7 @@ impl MemoryPipeline {
                     evidence_count: count,
                     confidence: avg_conf,
                     summary: self.generate_summary(&event.action, count, avg_conf),
+                    reasoning: None,
                 });
             }
         }
