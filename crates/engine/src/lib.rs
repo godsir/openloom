@@ -15,16 +15,47 @@ use crate::rate_limiter::RateLimiter;
 use crate::session::{SessionCommand, spawn_session_thread};
 use crate::token_store::{TokenUsageRecord, spawn_token_store_thread};
 
+use std::path::{Path, PathBuf};
+
 use anyhow::Result;
 use openloom_cache::NoopCache;
 use openloom_inference::{CloudClient, CompletionRequest, InferenceEngine};
+
+/// Scan a directory for .gguf model files, sorted by size (smallest first).
+/// Excludes vision projection files (mmproj- prefix) and files < 100 MiB.
+fn find_gguf_models(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<(PathBuf, u64)> = match std::fs::read_dir(dir) {
+        Ok(entries) => entries
+            .filter_map(|e| {
+                let e = e.ok()?;
+                let p = e.path();
+                let name = p.file_name()?.to_str()?;
+                if !p.extension().map(|x| x == "gguf").unwrap_or(false) {
+                    return None;
+                }
+                // Skip vision projection files (mmproj- prefix)
+                if name.starts_with("mmproj-") {
+                    return None;
+                }
+                let meta = std::fs::metadata(&p).ok()?;
+                // Skip files smaller than 100 MiB (likely not usable models)
+                if meta.len() < 100 * 1024 * 1024 {
+                    return None;
+                }
+                Some((p, meta.len()))
+            })
+            .collect(),
+        Err(_) => return vec![],
+    };
+    files.sort_by_key(|(_, size)| *size);
+    files.into_iter().map(|(p, _)| p).collect()
+}
 use openloom_memory::persona::CognitionsPersonaProvider;
 use openloom_memory::store::MessageStore;
 use openloom_models::*;
 use openloom_router::SmartRouter;
 use openloom_skills::{SkillRegistry, builtins};
 use openloom_weaver::ContextWeaver;
-use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::{
     Arc,
@@ -72,6 +103,8 @@ pub struct EngineConfig {
     pub rate_limit_ms: u64,
     pub heartbeat_interval_secs: u64,
     pub heartbeat_idle_threshold_min: u64,
+    /// Optional model path override; when set, use this instead of auto-detection.
+    pub model_override: Option<PathBuf>,
 }
 
 impl Engine {
@@ -80,8 +113,8 @@ impl Engine {
         // Create dummy model file so tests don't show "degraded" health status
         let model_dir = data_dir.join("models");
         let _ = std::fs::create_dir_all(&model_dir);
-        let model_path = model_dir.join("qwen3-1.7b-q4_k_m.gguf");
-        let _ = std::fs::write(&model_path, b"");
+        let model_path = model_dir.join("dummy.gguf");
+        let _ = std::fs::write(&model_path, b"test");
         // rate_limit_ms=0 disables rate limiting in tests
         Self::new(EngineConfig {
             data_dir,
@@ -90,17 +123,38 @@ impl Engine {
             rate_limit_ms: 0,
             heartbeat_interval_secs: 1800,
             heartbeat_idle_threshold_min: 120,
+            model_override: Some(model_path),
         })
     }
 
     pub fn new(config: EngineConfig) -> Result<Self> {
-        let inference = Arc::new(InferenceEngine::load_blocking(
-            &config
-                .data_dir
-                .join("models")
-                .join("qwen3-1.7b-q4_k_m.gguf"),
-            0,
-        )?);
+        let model_dir = config.data_dir.join("models");
+        let model_path = config.model_override.clone().unwrap_or_else(|| {
+            find_gguf_models(&model_dir)
+                .first()
+                .cloned()
+                .unwrap_or_else(|| model_dir.join("model.gguf"))
+        });
+
+        // For summarizer, use the second model if auto-detected, or the same
+        // override when explicitly given.
+        let summarizer_path: Option<PathBuf> = if config.model_override.is_some() {
+            None // when model is overridden, don't guess a summarizer
+        } else {
+            find_gguf_models(&model_dir).get(1).cloned()
+        };
+
+        let model_available =
+            model_path.exists() && model_path.metadata().map(|m| m.len() > 0).unwrap_or(false);
+        if !model_available {
+            tracing::warn!(dir = %model_dir.display(), "No .gguf model found, local inference unavailable");
+        }
+
+        if model_available {
+            tracing::info!(path = %model_path.display(), "Using local model");
+        }
+
+        let inference = Arc::new(InferenceEngine::load_blocking(&model_path, 0)?);
 
         let mut router =
             SmartRouter::new_keywords_only(openloom_router::keywords::default_keyword_rules());
@@ -133,27 +187,13 @@ impl Engine {
         let weaver = ContextWeaver::new(Arc::new(NoopCache));
 
         let (event_tx, _) = broadcast::channel(256);
-        let summarizer_path = config.data_dir.join("models").join("qwen3-8b-q4_k_m.gguf");
         let memory_tx = memory_thread::spawn_memory_thread(
             db_path.clone(),
             config.threshold,
             event_tx.clone(),
-            if summarizer_path.exists() {
-                Some(summarizer_path)
-            } else {
-                None
-            },
+            summarizer_path,
         );
         let session_tx = spawn_session_thread(db_path.clone());
-
-        let model_path = config
-            .data_dir
-            .join("models")
-            .join("qwen3-1.7b-q4_k_m.gguf");
-        let model_available = model_path.exists();
-        if !model_available {
-            tracing::warn!(path = %model_path.display(), "GGUF model not found, local inference unavailable");
-        }
         let token_store_tx = spawn_token_store_thread(db_path.clone());
 
         // Extract heartbeat config before config is partially moved into Self
@@ -403,7 +443,7 @@ impl Engine {
         Ok(())
     }
 
-    fn get_working_memory(&self, session_id: &str) -> Result<Vec<ChatMessage>> {
+    pub fn get_working_memory(&self, session_id: &str) -> Result<Vec<ChatMessage>> {
         match rusqlite::Connection::open(&self.db_path) {
             Ok(conn) => {
                 let store = MessageStore::new(&conn);
@@ -534,6 +574,26 @@ impl Engine {
             return format!("{} ({})", cloud.model_name(), cloud.provider().name());
         }
         "Qwen3-1.7B (local)".into()
+    }
+
+    pub async fn model_context_size(&self) -> usize {
+        // Cloud models: well-known context window sizes
+        if let Some(ref cloud) = self.cloud {
+            return match cloud.provider() {
+                openloom_models::ModelBackend::Anthropic => 200_000,
+                openloom_models::ModelBackend::OpenAI => 128_000,
+                openloom_models::ModelBackend::DeepSeek => 64_000,
+                _ => 128_000,
+            };
+        }
+        // Local model: read from stored config
+        let config = self.config.read().await;
+        config
+            .models
+            .iter()
+            .find(|m| m.backend == openloom_models::ModelBackend::LlamaCpp)
+            .map(|m| m.context_size)
+            .unwrap_or(4096)
     }
 }
 

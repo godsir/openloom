@@ -24,11 +24,17 @@ pub struct Message {
 
 impl Message {
     pub fn user(content: String) -> Self {
-        Self { role: "user".into(), content }
+        Self {
+            role: "user".into(),
+            content,
+        }
     }
 
     pub fn assistant(content: String) -> Self {
-        Self { role: "assistant".into(), content }
+        Self {
+            role: "assistant".into(),
+            content,
+        }
     }
 }
 
@@ -111,11 +117,8 @@ impl App {
         // Token stats come from handle_message() return value to avoid double-counting
         // (handle_message broadcasts TokenUsage AND returns it in ChatResponse).
         while let Ok(event) = self.event_rx.try_recv() {
-            match event {
-                EngineEvent::AgentStateChanged { new_state, .. } => {
-                    self.status.agent_state = new_state;
-                }
-                _ => {}
+            if let EngineEvent::AgentStateChanged { new_state, .. } = event {
+                self.status.agent_state = new_state;
             }
         }
     }

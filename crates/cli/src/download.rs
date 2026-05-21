@@ -11,6 +11,7 @@ pub async fn list_files(repo: &str) -> anyhow::Result<Vec<FileEntry>> {
     let client = reqwest::Client::new();
     let resp = client
         .get(&url)
+        .header("User-Agent", "openLoom/0.1.0")
         .send()
         .await
         .context("Failed to fetch file list from ModelScope")?;
@@ -73,6 +74,7 @@ pub async fn download_file(repo: &str, file: &str, dest: &Path, force: bool) -> 
     let client = reqwest::Client::new();
     let resp = client
         .get(&url)
+        .header("User-Agent", "openLoom/0.1.0")
         .send()
         .await
         .context("Failed to start download")?;

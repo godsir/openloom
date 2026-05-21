@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span, Text},
     widgets::{Block, Borders, Gauge, Paragraph, Wrap},
-    Frame,
 };
 
 use crate::tui::app::{App, AppState};
@@ -31,14 +31,12 @@ fn draw_messages(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
 
     if app.messages.is_empty() {
         lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled(
-                "  Welcome to openLoom.",
-                Style::new()
-                    .fg(p.accent)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            "  Welcome to openLoom.",
+            Style::new()
+                .fg(p.accent)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        )]));
         lines.push(Line::from(vec![Span::styled(
             "  Type a message and press Enter to start.",
             Style::new().fg(p.text_dim),
@@ -137,10 +135,7 @@ fn draw_input(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
         AppState::Waiting => Block::default()
             .borders(Borders::TOP)
             .border_style(Style::new().fg(p.warning))
-            .title_top(Span::styled(
-                " Thinking... ",
-                Style::new().fg(p.warning),
-            )),
+            .title_top(Span::styled(" Thinking... ", Style::new().fg(p.warning))),
         AppState::Streaming => Block::default()
             .borders(Borders::TOP)
             .border_style(Style::new().fg(p.accent)),
@@ -165,6 +160,6 @@ fn format_tokens(n: usize) -> String {
 }
 
 fn input_height(app: &App) -> u16 {
-    let lines = app.input.lines().len().max(1).min(8) as u16;
+    let lines = app.input.lines().len().clamp(1, 8) as u16;
     lines + 2 // +2 for borders
 }

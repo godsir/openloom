@@ -5,7 +5,7 @@
 
 [[models]]
 name = "router"
-path = "qwen3-1.7b-q4_k_m.gguf"
+path = "qwen3-1.7b-q8_0.gguf"
 model_type = "Router"
 backend = "LlamaCpp"
 context_size = 4096

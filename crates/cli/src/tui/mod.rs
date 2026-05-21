@@ -30,7 +30,14 @@ pub async fn run(engine: Arc<Engine>) -> anyhow::Result<()> {
     let git_branch = detect_git_branch();
     let context_size = engine.model_context_size().await;
 
-    let mut app = App::new(engine, session_id, cwd, model_name, git_branch, context_size);
+    let mut app = App::new(
+        engine,
+        session_id,
+        cwd,
+        model_name,
+        git_branch,
+        context_size,
+    );
 
     let res = app_run(&mut terminal, &mut app).await;
 

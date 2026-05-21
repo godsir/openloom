@@ -662,7 +662,16 @@ pub fn create_cloud_client(
 ) -> anyhow::Result<Box<dyn CloudClient>> {
     let api_key = std::env::var(config.api_key_env.as_deref().unwrap_or(""))
         .map_err(|_| anyhow::anyhow!("API key env var not set"))?;
-    let model = config.model.clone().unwrap_or_default();
+    // Strip [1m] etc. suffix — it's a client-side context-size hint, not an API model name
+    let model = config
+        .model
+        .clone()
+        .unwrap_or_default()
+        .split('[')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     if model.is_empty() {
         anyhow::bail!("model name not configured");
     }
