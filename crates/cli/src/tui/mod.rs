@@ -149,15 +149,20 @@ async fn app_run(
                 }
                 input::handle_key(app, key);
             }
-            event::Event::Mouse(mouse) => match mouse.kind {
-                event::MouseEventKind::ScrollUp => {
-                    app.viewport.scroll_up(3);
+            event::Event::Mouse(mouse) => {
+                match mouse.kind {
+                    event::MouseEventKind::ScrollUp => {
+                        app.viewport.scroll_up(3);
+                    }
+                    event::MouseEventKind::ScrollDown => {
+                        app.viewport.scroll_down(3);
+                    }
+                    _ => {
+                        // Forward to textarea for text selection
+                        input::handle_mouse(app, mouse);
+                    }
                 }
-                event::MouseEventKind::ScrollDown => {
-                    app.viewport.scroll_down(3);
-                }
-                _ => {}
-            },
+            }
             event::Event::Resize(_, _) => {}
             _ => {}
         }

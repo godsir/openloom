@@ -12,6 +12,13 @@ use crate::tui::streaming::StreamState;
 use crate::tui::theme::Theme;
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum CtrlCAction {
+    Quit,
+    CancelStream,
+    ShowHint,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
 pub enum AppState {
     Idle,
@@ -115,6 +122,7 @@ pub struct App {
     pub pending_command: Option<String>,
     pub keymap: ResolvedKeymap,
     pub command_palette_selected: usize,
+    pub last_ctrl_c: Option<std::time::Instant>,
 }
 
 pub fn build_textarea() -> TextArea<'static> {
@@ -164,6 +172,7 @@ impl App {
             pending_command: None,
             keymap: ResolvedKeymap::default(),
             command_palette_selected: 0,
+            last_ctrl_c: None,
         }
     }
 
@@ -239,5 +248,22 @@ impl App {
         });
 
         self.stream.abort_handle = Some(handle);
+    }
+
+    /// Two-press Ctrl+C pattern: first press cancels streaming or shows hint,
+    /// second press within 2 seconds quits. Matches Claude Code behavior.
+    pub fn handle_ctrl_c(&mut self) -> CtrlCAction {
+        if self.state == AppState::Streaming {
+            return CtrlCAction::CancelStream;
+        }
+
+        let now = std::time::Instant::now();
+        if let Some(last) = self.last_ctrl_c
+            && now.duration_since(last) < std::time::Duration::from_secs(2)
+        {
+            return CtrlCAction::Quit;
+        }
+        self.last_ctrl_c = Some(now);
+        CtrlCAction::ShowHint
     }
 }
