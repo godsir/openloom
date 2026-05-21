@@ -151,11 +151,10 @@ async fn app_run(
             }
             event::Event::Mouse(mouse) => match mouse.kind {
                 event::MouseEventKind::ScrollUp => {
-                    app.auto_scroll = false;
-                    app.scroll = app.scroll.saturating_sub(3);
+                    app.viewport.scroll_up(3);
                 }
                 event::MouseEventKind::ScrollDown => {
-                    app.scroll = app.scroll.saturating_add(3);
+                    app.viewport.scroll_down(3);
                 }
                 _ => {}
             },

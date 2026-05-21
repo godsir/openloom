@@ -57,8 +57,7 @@ pub async fn execute_command(app: &mut App, cmd: SlashCommand) -> String {
         }
         SlashCommand::Clear => {
             app.messages.clear();
-            app.scroll = 0;
-            app.auto_scroll = true;
+            app.viewport.jump_to_bottom();
             "Screen cleared.".into()
         }
         SlashCommand::Theme(args) => match args.as_str() {

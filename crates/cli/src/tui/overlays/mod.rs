@@ -12,6 +12,7 @@ pub enum OverlayResult {
 }
 
 /// Trait for modal overlay UI elements.
+#[allow(dead_code)]
 pub trait Overlay {
     /// Draw the overlay within the given area.
     fn draw(&self, f: &mut Frame, area: Rect);

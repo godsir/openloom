@@ -42,6 +42,56 @@ impl Message {
     }
 }
 
+/// Scroll viewport for message list. Tracks how many lines the user
+/// has scrolled back from the bottom. 0 = at bottom (auto-scroll).
+#[derive(Debug, Clone)]
+pub struct Viewport {
+    /// Lines scrolled above the visible area. 0 means showing the bottom.
+    pub scroll_offset: usize,
+    /// True when following new content automatically.
+    pub auto_scroll: bool,
+    /// Count of new messages that arrived while user was scrolled up.
+    pub unseen_count: usize,
+}
+
+impl Viewport {
+    pub fn new() -> Self {
+        Self {
+            scroll_offset: 0,
+            auto_scroll: true,
+            unseen_count: 0,
+        }
+    }
+
+    /// Call when user manually scrolls up.
+    pub fn scroll_up(&mut self, lines: usize) {
+        self.auto_scroll = false;
+        self.scroll_offset = self.scroll_offset.saturating_add(lines);
+    }
+
+    /// Call when user manually scrolls down.
+    pub fn scroll_down(&mut self, lines: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(lines);
+        if self.scroll_offset == 0 {
+            self.auto_scroll = true;
+            self.unseen_count = 0;
+        }
+    }
+
+    /// Call when new content is added (message sent, streaming token).
+    pub fn content_added(&mut self) {
+        if !self.auto_scroll {
+            self.unseen_count = self.unseen_count.saturating_add(1);
+        }
+    }
+
+    pub fn jump_to_bottom(&mut self) {
+        self.scroll_offset = 0;
+        self.auto_scroll = true;
+        self.unseen_count = 0;
+    }
+}
+
 pub struct App {
     pub engine: Arc<Engine>,
     pub session_id: String,
@@ -50,8 +100,7 @@ pub struct App {
     pub history: Vec<String>,
     pub history_idx: Option<usize>,
     pub state: AppState,
-    pub scroll: u16,
-    pub auto_scroll: bool,
+    pub viewport: Viewport,
     pub status: StatusLine,
     pub theme: Theme,
     pub event_rx: broadcast::Receiver<EngineEvent>,
@@ -92,8 +141,7 @@ impl App {
             history: Vec::new(),
             history_idx: None,
             state: AppState::Idle,
-            scroll: 0,
-            auto_scroll: true,
+            viewport: Viewport::new(),
             status: StatusLine {
                 model: model_name,
                 agent_state: AgentState::Idle,
@@ -123,12 +171,10 @@ impl App {
 
     pub fn add_assistant_message(&mut self, content: String) {
         self.messages.push(Message::assistant(content));
+        self.viewport.content_added();
     }
 
     pub fn poll_engine_events(&mut self) {
-        // Milestone A: only track agent state from broadcast events.
-        // Token stats come from handle_message() return value to avoid double-counting
-        // (handle_message broadcasts TokenUsage AND returns it in ChatResponse).
         while let Ok(event) = self.event_rx.try_recv() {
             if let EngineEvent::AgentStateChanged { new_state, .. } = event {
                 self.status.agent_state = new_state;
@@ -151,6 +197,7 @@ impl App {
                         {
                             last.content = self.stream.buffer.clone();
                         }
+                        self.viewport.content_added();
                     }
                     Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
                     Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
@@ -182,7 +229,6 @@ impl App {
         self.stream.token_rx = Some(rx);
         self.stream.buffer.clear();
 
-        // Add empty assistant placeholder
         self.add_assistant_message(String::new());
 
         let engine = self.engine.clone();

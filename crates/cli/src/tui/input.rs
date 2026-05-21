@@ -52,7 +52,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
                     .push(crate::tui::app::Message::user(text.clone()));
                 app.pending_command = Some(text);
                 app.state = AppState::Waiting;
-                app.auto_scroll = true;
+                app.viewport.jump_to_bottom();
                 return false;
             }
             // Regular message
@@ -63,7 +63,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.input = crate::tui::app::build_textarea();
             app.messages.push(crate::tui::app::Message::user(text));
             app.state = AppState::Waiting;
-            app.auto_scroll = true;
+            app.viewport.jump_to_bottom();
             false
         }
         Action::HistoryUp => {
@@ -75,12 +75,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             false
         }
         Action::ScrollUp => {
-            app.auto_scroll = false;
-            app.scroll = app.scroll.saturating_sub(10);
+            app.viewport.scroll_up(10);
             false
         }
         Action::ScrollDown => {
-            app.scroll = app.scroll.saturating_add(10);
+            app.viewport.scroll_down(10);
             false
         }
         Action::Redraw => false,

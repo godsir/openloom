@@ -10,6 +10,7 @@ use ratatui::{
 use super::{Overlay, OverlayResult};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 pub enum ApprovalChoice {
     Approve,
     Deny,
@@ -17,6 +18,7 @@ pub enum ApprovalChoice {
     Cancel,
 }
 
+#[allow(dead_code)]
 pub struct ApprovalOverlay {
     pub title: String,
     pub message: String,
@@ -25,6 +27,7 @@ pub struct ApprovalOverlay {
     confirmed: Option<ApprovalChoice>,
 }
 
+#[allow(dead_code)]
 impl ApprovalOverlay {
     pub fn new(title: String, message: String) -> Self {
         Self {

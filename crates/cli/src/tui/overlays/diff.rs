@@ -9,12 +9,14 @@ use ratatui::{
 
 use super::{Overlay, OverlayResult};
 
+#[allow(dead_code)]
 pub struct DiffViewer {
     pub filename: String,
     lines: Vec<DiffLine>,
     scroll: u16,
 }
 
+#[allow(dead_code)]
 enum DiffLine {
     Header(String),
     Add(String),
@@ -23,6 +25,7 @@ enum DiffLine {
     Hunk(String),
 }
 
+#[allow(dead_code)]
 impl DiffViewer {
     pub fn new(filename: String, diff_text: &str) -> Self {
         let lines = Self::parse_diff(diff_text);
