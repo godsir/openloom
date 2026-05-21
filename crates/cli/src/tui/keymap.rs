@@ -110,6 +110,12 @@ fn default_bindings() -> Vec<KeyBinding> {
             context: KeyContext::Input,
         },
         KeyBinding {
+            key: KeyCode::Enter,
+            modifiers: KeyModifiers::SHIFT,
+            action: Action::Newline,
+            context: KeyContext::Input,
+        },
+        KeyBinding {
             key: KeyCode::Char('j'),
             modifiers: KeyModifiers::CONTROL,
             action: Action::Newline,
@@ -258,5 +264,12 @@ mod tests {
         let km = ResolvedKeymap::default();
         let ev = key(KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(km.resolve(&ev, KeyContext::Overlay), Action::ConfirmOverlay);
+    }
+
+    #[test]
+    fn test_shift_enter_is_newline() {
+        let km = ResolvedKeymap::default();
+        let ev = key(KeyCode::Enter, KeyModifiers::SHIFT);
+        assert_eq!(km.resolve(&ev, KeyContext::Input), Action::Newline);
     }
 }

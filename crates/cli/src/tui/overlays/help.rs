@@ -103,8 +103,9 @@ impl Overlay for HelpOverlay {
         f.render_widget(block, area);
 
         let content = self.content();
-        let visible_start = self.scroll as usize;
         let visible_count = inner.height.saturating_sub(1) as usize;
+        let max_scroll = content.len().saturating_sub(visible_count).max(0) as u16;
+        let visible_start = (self.scroll.min(max_scroll)) as usize;
         let visible_end = (visible_start + visible_count).min(content.len());
         let visible: Vec<Line> = content[visible_start..visible_end].to_vec();
 

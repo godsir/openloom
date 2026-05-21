@@ -71,8 +71,9 @@ impl Overlay for DiffViewer {
         let inner = block.inner(area);
         f.render_widget(block, area);
 
-        let visible_start = self.scroll as usize;
         let visible_count = inner.height.saturating_sub(2) as usize;
+        let max_scroll = self.lines.len().saturating_sub(visible_count).max(0) as u16;
+        let visible_start = (self.scroll.min(max_scroll)) as usize;
         let visible_end = (visible_start + visible_count).min(self.lines.len());
 
         let visible_lines: Vec<Line> = self.lines[visible_start..visible_end]
@@ -137,7 +138,7 @@ impl Overlay for DiffViewer {
                 OverlayResult::Consumed
             }
             KeyCode::End => {
-                self.scroll = self.lines.len().saturating_sub(1) as u16;
+                self.scroll = u16::MAX; // clamped in draw
                 OverlayResult::Consumed
             }
             _ => OverlayResult::Consumed,

@@ -91,6 +91,17 @@ async fn app_run(
 
         // Check if streaming has completed (rx closed, task finished)
         if app.state == AppState::Streaming && !app.stream.is_active() {
+            // Estimate token usage from prompt + response lengths (chars / 4 ≈ tokens)
+            if let Some(user_msg) = app.messages.iter().rev().find(|m| m.role == "user") {
+                app.total_prompt_tokens += user_msg.content.len() / 4;
+            }
+            let response_len = app.stream.buffer.len();
+            app.total_completion_tokens += response_len / 4;
+            app.status.turn_tokens = response_len / 4;
+            // Rough cost estimate: $3/M input, $15/M output (Claude Sonnet pricing)
+            app.total_cost += (app.total_prompt_tokens as f64) * 3.0 / 1_000_000.0
+                + (app.total_completion_tokens as f64) * 15.0 / 1_000_000.0;
+
             if app.stream.buffer.is_empty()
                 && let Some(last) = app.messages.last()
                 && last.content.is_empty()
