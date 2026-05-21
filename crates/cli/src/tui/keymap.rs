@@ -179,3 +179,84 @@ fn default_bindings() -> Vec<KeyBinding> {
         },
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyEvent;
+
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
+    }
+
+    #[test]
+    fn test_input_enter_is_send() {
+        let km = ResolvedKeymap::default();
+        let ev = key(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(km.resolve(&ev, KeyContext::Input), Action::Send);
+    }
+
+    #[test]
+    fn test_global_ctrl_c_is_quit() {
+        let km = ResolvedKeymap::default();
+        let ev = key(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(km.resolve(&ev, KeyContext::Input), Action::Quit);
+    }
+
+    #[test]
+    fn test_streaming_ctrl_c_is_cancel() {
+        let km = ResolvedKeymap::default();
+        let ev = key(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        // Streaming context has its own Ctrl+C -> CancelStream
+        assert_eq!(km.resolve(&ev, KeyContext::Streaming), Action::CancelStream);
+    }
+
+    #[test]
+    fn test_streaming_esc_is_cancel() {
+        let km = ResolvedKeymap::default();
+        let ev = key(KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(km.resolve(&ev, KeyContext::Streaming), Action::CancelStream);
+    }
+
+    #[test]
+    fn test_unknown_key_is_noop() {
+        let km = ResolvedKeymap::default();
+        let ev = key(KeyCode::Char('x'), KeyModifiers::NONE);
+        assert_eq!(km.resolve(&ev, KeyContext::Input), Action::Noop);
+    }
+
+    #[test]
+    fn test_up_is_history_up() {
+        let km = ResolvedKeymap::default();
+        let ev = key(KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(km.resolve(&ev, KeyContext::Input), Action::HistoryUp);
+    }
+
+    #[test]
+    fn test_down_is_history_down() {
+        let km = ResolvedKeymap::default();
+        let ev = key(KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(km.resolve(&ev, KeyContext::Input), Action::HistoryDown);
+    }
+
+    #[test]
+    fn test_pageup_is_scroll_up() {
+        let km = ResolvedKeymap::default();
+        let ev = key(KeyCode::PageUp, KeyModifiers::NONE);
+        assert_eq!(km.resolve(&ev, KeyContext::Global), Action::ScrollUp);
+    }
+
+    #[test]
+    fn test_overlay_esc_is_dismiss() {
+        let km = ResolvedKeymap::default();
+        let ev = key(KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(km.resolve(&ev, KeyContext::Overlay), Action::DismissOverlay);
+    }
+
+    #[test]
+    fn test_overlay_enter_is_confirm() {
+        let km = ResolvedKeymap::default();
+        let ev = key(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(km.resolve(&ev, KeyContext::Overlay), Action::ConfirmOverlay);
+    }
+}

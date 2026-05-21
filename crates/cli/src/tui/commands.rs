@@ -257,3 +257,126 @@ fn help_text() -> String {
   //message       Send literal /message (not a command)"#
         .into()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_help() {
+        assert!(matches!(parse_slash_command("/help"), Some(SlashCommand::Help)));
+        assert!(matches!(parse_slash_command("/h"), Some(SlashCommand::Help)));
+    }
+
+    #[test]
+    fn test_parse_model() {
+        assert!(matches!(parse_slash_command("/model"), Some(SlashCommand::Model)));
+        assert!(matches!(parse_slash_command("/m"), Some(SlashCommand::Model)));
+    }
+
+    #[test]
+    fn test_parse_cost() {
+        assert!(matches!(parse_slash_command("/cost"), Some(SlashCommand::Cost)));
+    }
+
+    #[test]
+    fn test_parse_clear() {
+        assert!(matches!(parse_slash_command("/clear"), Some(SlashCommand::Clear)));
+        assert!(matches!(parse_slash_command("/cls"), Some(SlashCommand::Clear)));
+    }
+
+    #[test]
+    fn test_parse_theme() {
+        match parse_slash_command("/theme dark") {
+            Some(SlashCommand::Theme(a)) => assert_eq!(a, "dark"),
+            other => panic!("expected Theme(\"dark\"), got {:?}", other),
+        }
+        match parse_slash_command("/theme light") {
+            Some(SlashCommand::Theme(a)) => assert_eq!(a, "light"),
+            other => panic!("expected Theme(\"light\"), got {:?}", other),
+        }
+        match parse_slash_command("/theme") {
+            Some(SlashCommand::Theme(a)) => assert!(a.is_empty()),
+            other => panic!("expected Theme(\"\"), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_session() {
+        match parse_slash_command("/session new") {
+            Some(SlashCommand::Session(a)) => assert_eq!(a, "new"),
+            other => panic!("expected Session(\"new\"), got {:?}", other),
+        }
+        match parse_slash_command("/session list") {
+            Some(SlashCommand::Session(a)) => assert_eq!(a, "list"),
+            other => panic!("expected Session(\"list\"), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_memory() {
+        match parse_slash_command("/memory persona") {
+            Some(SlashCommand::Memory(a)) => assert_eq!(a, "persona"),
+            other => panic!("expected Memory(\"persona\"), got {:?}", other),
+        }
+        match parse_slash_command("/memory events 10") {
+            Some(SlashCommand::Memory(a)) => assert_eq!(a, "events 10"),
+            other => panic!("expected Memory(\"events 10\"), got {:?}", other),
+        }
+        match parse_slash_command("/memory search hello world") {
+            Some(SlashCommand::Memory(a)) => assert_eq!(a, "search hello world"),
+            other => panic!("expected Memory(\"search hello world\"), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_skills() {
+        assert!(matches!(parse_slash_command("/skills"), Some(SlashCommand::Skills(_))));
+        assert!(matches!(parse_slash_command("/skill list"), Some(SlashCommand::Skills(_))));
+    }
+
+    #[test]
+    fn test_parse_config() {
+        match parse_slash_command("/config get foo") {
+            Some(SlashCommand::Config(a)) => assert_eq!(a, "get foo"),
+            other => panic!("expected Config(\"get foo\"), got {:?}", other),
+        }
+        match parse_slash_command("/config set foo bar") {
+            Some(SlashCommand::Config(a)) => assert_eq!(a, "set foo bar"),
+            other => panic!("expected Config(\"set foo bar\"), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_unknown() {
+        assert!(parse_slash_command("/foobar").is_none());
+        assert!(parse_slash_command("/").is_none());
+    }
+
+    #[test]
+    fn test_literal_slash() {
+        assert!(parse_slash_command("//help").is_none());
+        assert!(parse_slash_command("//anything").is_none());
+    }
+
+    #[test]
+    fn test_no_slash() {
+        assert!(parse_slash_command("hello").is_none());
+        assert!(parse_slash_command("").is_none());
+    }
+
+    #[test]
+    fn test_help_text_contains_all_commands() {
+        let text = help_text();
+        assert!(text.contains("/help"));
+        assert!(text.contains("/model"));
+        assert!(text.contains("/cost"));
+        assert!(text.contains("/clear"));
+        assert!(text.contains("/theme"));
+        assert!(text.contains("/session"));
+        assert!(text.contains("/memory"));
+        assert!(text.contains("/skills"));
+        assert!(text.contains("/config"));
+        assert!(text.contains("//"));
+    }
+}
