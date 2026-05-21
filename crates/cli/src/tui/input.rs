@@ -87,10 +87,13 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         }
         Action::Redraw => false,
         Action::Newline => {
-            app.input.input(Event::Key(KeyEvent::new(
-                KeyCode::Enter,
-                KeyModifiers::NONE,
-            )));
+            use crossterm::event::{KeyEventKind, KeyEventState};
+            app.input.input(Event::Key(KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            }));
             false
         }
         Action::Noop => {
@@ -98,8 +101,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.input.input(Event::Key(key));
             false
         }
-        // Unused in Milestone B, handle gracefully
-        Action::HistorySearch | Action::ExternalEditor => {
+        Action::ExternalEditor => {
+            launch_editor(app);
+            false
+        }
+        Action::HistorySearch => {
             app.input.input(Event::Key(key));
             false
         }
@@ -110,6 +116,38 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             false // Overlay handles these itself
         }
     }
+}
+
+fn launch_editor(app: &mut App) {
+    let current_text = app.input.lines().join("\n");
+    let temp_dir = std::env::temp_dir();
+    let temp_file = temp_dir.join("openloom_edit.txt");
+    let _ = std::fs::write(&temp_file, &current_text);
+
+    let _ = crossterm::terminal::disable_raw_mode();
+
+    let editor = std::env::var("EDITOR")
+        .or_else(|_| std::env::var("VISUAL"))
+        .unwrap_or_else(|_| {
+            if cfg!(target_os = "windows") {
+                "notepad".into()
+            } else {
+                "vi".into()
+            }
+        });
+
+    let _ = std::process::Command::new(&editor).arg(&temp_file).status();
+
+    if let Ok(content) = std::fs::read_to_string(&temp_file) {
+        let trimmed = content.trim();
+        if !trimmed.is_empty() && trimmed != current_text {
+            app.input = crate::tui::app::build_textarea();
+            app.input.insert_str(trimmed);
+        }
+    }
+
+    let _ = std::fs::remove_file(&temp_file);
+    let _ = crossterm::terminal::enable_raw_mode();
 }
 
 enum Direction {

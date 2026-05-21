@@ -40,7 +40,10 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
 /// Execute a slash command. Returns the response string.
 pub async fn execute_command(app: &mut App, cmd: SlashCommand) -> String {
     match cmd {
-        SlashCommand::Help => help_text(),
+        SlashCommand::Help => {
+            app.overlay = Some(Box::new(crate::tui::overlays::help::HelpOverlay::new()));
+            String::new() // overlay handles display
+        }
         SlashCommand::Model => {
             format!("Current model: {}", app.status.model)
         }
@@ -243,6 +246,7 @@ pub async fn execute_command(app: &mut App, cmd: SlashCommand) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn help_text() -> String {
     r#"Slash Commands:
   /help           Show this help
