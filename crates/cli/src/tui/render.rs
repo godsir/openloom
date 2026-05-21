@@ -265,9 +265,112 @@ fn draw_input(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
     let inner = block.inner(area);
     f.render_widget(block, area);
     f.render_widget(&app.input, inner);
+
+    // Command palette popup when typing /
+    draw_command_palette(f, app, area, p);
 }
 
 fn input_height(app: &App) -> u16 {
     let lines = app.input.lines().len().clamp(1, 8) as u16;
     lines + 2
 }
+
+// ── command palette ──────────────────────────────────────────────
+
+const SLASH_COMMANDS: &[(&str, &str)] = &[
+    ("/help", "Show help and keybindings"),
+    ("/model", "Show current model"),
+    ("/cost", "Show token usage and cost"),
+    ("/clear", "Clear all messages"),
+    ("/theme dark", "Switch to dark theme"),
+    ("/theme light", "Switch to light theme"),
+    ("/session new", "Create a new session"),
+    ("/session list", "List all sessions"),
+    ("/memory persona", "Show persona summary"),
+    ("/memory events", "List recent events"),
+    ("/memory cognitions", "List cognitions for USER"),
+    ("/memory search", "Search events with FTS5"),
+    ("/skills list", "List registered skills"),
+    ("/config get", "Get config values"),
+    ("/config set", "Set config values"),
+];
+
+pub fn draw_command_palette(f: &mut Frame, app: &App, input_area: Rect, p: &Palette) {
+    let current_input = app.input.lines().first().map(|s| s.as_str()).unwrap_or("");
+    if !current_input.starts_with('/') || current_input.starts_with("//") {
+        return;
+    }
+
+    let prefix = &current_input[1..]; // strip the '/'
+    let matches: Vec<&(&str, &str)> = SLASH_COMMANDS
+        .iter()
+        .filter(|(cmd, _)| {
+            let cmd_name = cmd[1..].split(' ').next().unwrap_or("");
+            cmd_name.starts_with(prefix) || prefix.is_empty()
+        })
+        .collect();
+
+    if matches.is_empty() && !prefix.is_empty() {
+        return; // no matches, don't show palette
+    }
+
+    let max_height = (matches.len() as u16).min(8);
+    if max_height == 0 {
+        return;
+    }
+
+    // Palette just above the input area
+    let palette_width = 40u16;
+    let x = 2u16;
+    let y = input_area.y.saturating_sub(max_height + 2);
+
+    if y < 2 {
+        return; // not enough space
+    }
+
+    let palette_area = Rect::new(x, y, palette_width, max_height + 2);
+
+    // Background
+    f.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::new().fg(p.accent))
+            .style(Style::new().bg(p.surface)),
+        palette_area,
+    );
+
+    let inner = Rect::new(
+        palette_area.x + 1,
+        palette_area.y + 1,
+        palette_area.width - 2,
+        palette_area.height - 2,
+    );
+
+    let lines: Vec<Line> = matches
+        .iter()
+        .enumerate()
+        .map(|(i, (cmd, desc))| {
+            let is_selected = i == app.command_palette_selected.min(matches.len().saturating_sub(1));
+            let style = if is_selected {
+                Style::new().fg(p.bg).bg(p.accent).bold()
+            } else {
+                Style::new().fg(p.text)
+            };
+            Line::from(vec![
+                Span::styled(format!(" {} ", cmd), style),
+                Span::styled(
+                    format!(" {}", desc),
+                    if is_selected {
+                        Style::new().fg(p.bg).bg(p.accent)
+                    } else {
+                        Style::new().fg(p.text_dim)
+                    },
+                ),
+            ])
+        })
+        .collect();
+
+    let para = Paragraph::new(Text::from(lines));
+    f.render_widget(para, inner);
+}
+

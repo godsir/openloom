@@ -114,6 +114,7 @@ pub struct App {
     pub overlay: Option<Box<dyn Overlay>>,
     pub pending_command: Option<String>,
     pub keymap: ResolvedKeymap,
+    pub command_palette_selected: usize,
 }
 
 pub fn build_textarea() -> TextArea<'static> {
@@ -162,6 +163,7 @@ impl App {
             overlay: None,
             pending_command: None,
             keymap: ResolvedKeymap::default(),
+            command_palette_selected: 0,
         }
     }
 

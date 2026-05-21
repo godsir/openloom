@@ -14,6 +14,7 @@ pub enum Action {
     CancelStream,
     HistorySearch,
     ExternalEditor,
+    Autocomplete,
     DismissOverlay,
     ConfirmOverlay,
     NavigateLeft,
@@ -113,6 +114,12 @@ fn default_bindings() -> Vec<KeyBinding> {
             key: KeyCode::Enter,
             modifiers: KeyModifiers::SHIFT,
             action: Action::Newline,
+            context: KeyContext::Input,
+        },
+        KeyBinding {
+            key: KeyCode::Tab,
+            modifiers: KeyModifiers::NONE,
+            action: Action::Autocomplete,
             context: KeyContext::Input,
         },
         KeyBinding {

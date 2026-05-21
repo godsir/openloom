@@ -106,6 +106,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.input.input(Event::Key(key));
             false
         }
+        Action::Autocomplete => {
+            handle_autocomplete(app);
+            false
+        }
         Action::DismissOverlay
         | Action::ConfirmOverlay
         | Action::NavigateLeft
@@ -178,3 +182,37 @@ fn navigate_history(app: &mut App, dir: Direction) {
     app.input = crate::tui::app::build_textarea();
     app.input.insert_str(&text);
 }
+
+fn handle_autocomplete(app: &mut App) {
+    let current = app.current_line();
+    if !current.starts_with('/') || current.starts_with("//") {
+        return;
+    }
+
+    let prefix = &current[1..];
+
+    let commands = [
+        "/help", "/model", "/cost", "/clear",
+        "/theme dark", "/theme light",
+        "/session new", "/session list",
+        "/memory persona", "/memory events", "/memory cognitions", "/memory search",
+        "/skills list", "/config get", "/config set",
+    ];
+
+    let matches: Vec<&str> = commands
+        .iter()
+        .filter(|cmd| cmd[1..].starts_with(prefix))
+        .copied()
+        .collect();
+
+    if matches.is_empty() {
+        return;
+    }
+
+    let idx = app.command_palette_selected.min(matches.len().saturating_sub(1));
+    let selected = matches[idx];
+    app.input = crate::tui::app::build_textarea();
+    app.input.insert_str(format!("{} ", selected));
+    app.command_palette_selected = (idx + 1) % matches.len();
+}
+
