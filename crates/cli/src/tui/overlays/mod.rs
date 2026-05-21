@@ -1,3 +1,5 @@
+pub mod approval;
+
 use crossterm::event::KeyCode;
 use ratatui::{layout::Rect, Frame};
 
