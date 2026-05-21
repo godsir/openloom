@@ -14,7 +14,6 @@ use std::time::Duration;
 
 use crossterm::event;
 use openloom_engine::Engine;
-use openloom_models::ChatMessage;
 
 use crate::tui::app::{App, AppState};
 
@@ -57,9 +56,24 @@ async fn app_run(
         }
 
         app.poll_engine_events();
+        app.poll_stream_tokens();
         app.frame_count = app.frame_count.wrapping_add(1);
 
-        // Process pending user message (Waiting state means Enter was pressed)
+        // Process pending slash command
+        if let Some(cmd_text) = app.pending_command.take() {
+            if let Some(cmd) = crate::tui::commands::parse_slash_command(&cmd_text) {
+                let response = crate::tui::commands::execute_command(app, cmd).await;
+                app.add_assistant_message(response);
+            } else {
+                app.add_assistant_message(format!(
+                    "Unknown command: {}. Type /help for available commands.",
+                    cmd_text
+                ));
+            }
+            app.state = AppState::Idle;
+        }
+
+        // Process pending user message via streaming
         if app.state == AppState::Waiting {
             let pending_content = app
                 .messages
@@ -68,29 +82,25 @@ async fn app_run(
                 .map(|m| m.content.clone());
 
             if let Some(content) = pending_content {
-                let sid = app.session_id.clone();
-                let engine = app.engine.clone();
-
-                let msg = ChatMessage {
-                    role: "user".into(),
-                    content,
-                    timestamp: chrono::Utc::now(),
-                };
-                match engine.handle_message(msg, &sid).await {
-                    Ok(resp) => {
-                        app.add_assistant_message(resp.response);
-                        app.total_prompt_tokens += resp.token_usage.prompt_tokens;
-                        app.total_completion_tokens += resp.token_usage.completion_tokens;
-                        app.status.turn_tokens = resp.token_usage.completion_tokens;
-                    }
-                    Err(e) => {
-                        app.add_assistant_message(format!("Error: {}", e));
-                    }
-                }
-                app.state = AppState::Idle;
+                app.start_streaming(content);
+                app.state = AppState::Streaming;
             } else {
                 app.state = AppState::Idle;
             }
+        }
+
+        // Check if streaming has completed (rx closed, task finished)
+        if app.state == AppState::Streaming && !app.stream.is_active() {
+            if app.stream.buffer.is_empty() {
+                if let Some(last) = app.messages.last() {
+                    if last.content.is_empty() {
+                        app.messages.pop();
+                        app.add_assistant_message("(no response)".into());
+                    }
+                }
+            }
+            app.stream.buffer.clear();
+            app.state = AppState::Idle;
         }
 
         terminal.draw(|f| render::draw(f, app))?;

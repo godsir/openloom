@@ -20,6 +20,21 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             if text.is_empty() {
                 return false;
             }
+
+            // Slash command interception (not // which is literal)
+            if text.starts_with('/') && !text.starts_with("//") {
+                if app.history.last() != Some(&text) {
+                    app.history.push(text.clone());
+                }
+                app.history_idx = None;
+                app.input = crate::tui::app::build_textarea();
+                app.messages.push(crate::tui::app::Message::user(text.clone()));
+                app.pending_command = Some(text);
+                app.state = AppState::Waiting;
+                app.auto_scroll = true;
+                return false;
+            }
+
             if app.history.last() != Some(&text) {
                 app.history.push(text.clone());
             }

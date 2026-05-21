@@ -6,9 +6,11 @@ use tokio::sync::broadcast;
 use tui_textarea::TextArea;
 
 use crate::tui::status::StatusLine;
+use crate::tui::streaming::StreamState;
 use crate::tui::theme::Theme;
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum AppState {
     Idle,
     Waiting,
@@ -54,8 +56,11 @@ pub struct App {
     pub should_exit: bool,
     pub total_prompt_tokens: usize,
     pub total_completion_tokens: usize,
+    #[allow(dead_code)]
     pub total_cost: f64,
     pub frame_count: u64,
+    pub stream: StreamState,
+    pub pending_command: Option<String>,
 }
 
 pub fn build_textarea() -> TextArea<'static> {
@@ -101,6 +106,8 @@ impl App {
             total_completion_tokens: 0,
             total_cost: 0.0,
             frame_count: 0,
+            stream: StreamState::new(),
+            pending_command: None,
         }
     }
 
@@ -121,5 +128,62 @@ impl App {
                 self.status.agent_state = new_state;
             }
         }
+    }
+
+    pub fn poll_stream_tokens(&mut self) {
+        let mut done = false;
+        if let Some(ref mut rx) = self.stream.token_rx {
+            loop {
+                match rx.try_recv() {
+                    Ok(token) => {
+                        if self.state != AppState::Streaming {
+                            self.state = AppState::Streaming;
+                        }
+                        self.stream.buffer.push_str(&token);
+                        if let Some(last) = self.messages.last_mut() {
+                            if last.role == "assistant" {
+                                last.content = self.stream.buffer.clone();
+                            }
+                        }
+                    }
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        done = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if done {
+            self.stream.token_rx = None;
+            self.stream.abort_handle = None;
+        }
+    }
+
+    pub fn start_streaming(&mut self, user_message: String) {
+        use openloom_inference::CompletionRequest;
+
+        let req = CompletionRequest {
+            prompt: user_message,
+            max_tokens: 2048,
+            temperature: 0.7,
+            top_p: 1.0,
+            stop: Vec::new(),
+            stream: true,
+        };
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<String>(64);
+        self.stream.token_rx = Some(rx);
+        self.stream.buffer.clear();
+
+        // Add empty assistant placeholder
+        self.add_assistant_message(String::new());
+
+        let engine = self.engine.clone();
+        let handle = tokio::spawn(async move {
+            let _ = engine.stream_complete(req, tx).await;
+        });
+
+        self.stream.abort_handle = Some(handle);
     }
 }
