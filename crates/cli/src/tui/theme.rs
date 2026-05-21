@@ -1,6 +1,7 @@
 use ratatui::style::Color;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Palette {
     pub bg: Color,
     pub surface: Color,
@@ -18,6 +19,7 @@ pub struct Palette {
 #[derive(Debug, Clone)]
 pub struct Theme {
     pub palette: Palette,
+    #[allow(dead_code)]
     pub name: String,
 }
 
@@ -41,6 +43,7 @@ impl Theme {
         }
     }
 
+    #[allow(dead_code)]
     pub fn light() -> Self {
         Self {
             name: "light".into(),

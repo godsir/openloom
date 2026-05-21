@@ -20,10 +20,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         Action::CancelStream => {
             app.stream.cancel();
             // Remove the empty assistant placeholder if present
-            if let Some(last) = app.messages.last() {
-                if last.role == "assistant" && last.content.is_empty() {
-                    app.messages.pop();
-                }
+            if let Some(last) = app.messages.last()
+                && last.role == "assistant"
+                && last.content.is_empty()
+            {
+                app.messages.pop();
             }
             // If we received partial content, mark it as cancelled
             if !app.stream.buffer.is_empty() {
@@ -49,7 +50,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
                 }
                 app.history_idx = None;
                 app.input = crate::tui::app::build_textarea();
-                app.messages.push(crate::tui::app::Message::user(text.clone()));
+                app.messages
+                    .push(crate::tui::app::Message::user(text.clone()));
                 app.pending_command = Some(text);
                 app.state = AppState::Waiting;
                 app.auto_scroll = true;
@@ -85,7 +87,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         }
         Action::Redraw => false,
         Action::Newline => {
-            app.input.input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+            app.input.input(Event::Key(KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE,
+            )));
             false
         }
         Action::Noop => {
@@ -98,8 +103,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.input.input(Event::Key(key));
             false
         }
-        Action::DismissOverlay | Action::ConfirmOverlay
-        | Action::NavigateLeft | Action::NavigateRight => {
+        Action::DismissOverlay
+        | Action::ConfirmOverlay
+        | Action::NavigateLeft
+        | Action::NavigateRight => {
             false // Overlay handles these itself
         }
     }

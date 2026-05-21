@@ -143,10 +143,10 @@ impl App {
                             self.state = AppState::Streaming;
                         }
                         self.stream.buffer.push_str(&token);
-                        if let Some(last) = self.messages.last_mut() {
-                            if last.role == "assistant" {
-                                last.content = self.stream.buffer.clone();
-                            }
+                        if let Some(last) = self.messages.last_mut()
+                            && last.role == "assistant"
+                        {
+                            last.content = self.stream.buffer.clone();
                         }
                     }
                     Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,

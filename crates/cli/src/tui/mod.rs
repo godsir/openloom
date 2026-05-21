@@ -91,13 +91,12 @@ async fn app_run(
 
         // Check if streaming has completed (rx closed, task finished)
         if app.state == AppState::Streaming && !app.stream.is_active() {
-            if app.stream.buffer.is_empty() {
-                if let Some(last) = app.messages.last() {
-                    if last.content.is_empty() {
-                        app.messages.pop();
-                        app.add_assistant_message("[no response]".into());
-                    }
-                }
+            if app.stream.buffer.is_empty()
+                && let Some(last) = app.messages.last()
+                && last.content.is_empty()
+            {
+                app.messages.pop();
+                app.add_assistant_message("[no response]".into());
             }
             app.stream.buffer.clear();
             app.state = AppState::Idle;

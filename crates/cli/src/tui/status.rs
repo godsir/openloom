@@ -1,6 +1,7 @@
 use openloom_models::AgentState;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct StatusLine {
     pub model: String,
     pub agent_state: AgentState,

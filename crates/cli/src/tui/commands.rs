@@ -58,55 +58,54 @@ pub async fn execute_command(app: &mut App, cmd: SlashCommand) -> String {
             app.auto_scroll = true;
             "Screen cleared.".into()
         }
-        SlashCommand::Theme(args) => {
-            match args.as_str() {
-                "light" => {
-                    app.theme = crate::tui::theme::Theme::light();
-                    "Theme switched to light.".into()
-                }
-                "dark" | "" => {
-                    app.theme = crate::tui::theme::Theme::dark();
-                    "Theme switched to dark.".into()
-                }
-                _ => format!("Unknown theme: {}. Use /theme dark or /theme light.", args),
+        SlashCommand::Theme(args) => match args.as_str() {
+            "light" => {
+                app.theme = crate::tui::theme::Theme::light();
+                "Theme switched to light.".into()
             }
-        }
-        SlashCommand::Session(args) => {
-            match args.as_str() {
-                "new" => {
-                    match app.engine.create_session().await {
-                        Ok(s) => {
-                            app.session_id = s.id.clone();
-                            app.messages.clear();
-                            format!("Created session: {}", s.id)
-                        }
-                        Err(e) => format!("Failed to create session: {}", e),
-                    }
+            "dark" | "" => {
+                app.theme = crate::tui::theme::Theme::dark();
+                "Theme switched to dark.".into()
+            }
+            _ => format!("Unknown theme: {}. Use /theme dark or /theme light.", args),
+        },
+        SlashCommand::Session(args) => match args.as_str() {
+            "new" => match app.engine.create_session().await {
+                Ok(s) => {
+                    app.session_id = s.id.clone();
+                    app.messages.clear();
+                    format!("Created session: {}", s.id)
                 }
-                "list" => {
-                    match app.engine.list_sessions().await {
-                        Ok(sessions) => {
-                            if sessions.is_empty() {
-                                "No sessions.".into()
+                Err(e) => format!("Failed to create session: {}", e),
+            },
+            "list" => match app.engine.list_sessions().await {
+                Ok(sessions) => {
+                    if sessions.is_empty() {
+                        "No sessions.".into()
+                    } else {
+                        let mut lines = vec!["Sessions:".into()];
+                        for s in &sessions {
+                            let current = if s.id == app.session_id {
+                                " (current)"
                             } else {
-                                let mut lines = vec!["Sessions:".into()];
-                                for s in &sessions {
-                                    let current = if s.id == app.session_id { " (current)" } else { "" };
-                                    lines.push(format!("  {} {} ({} msgs){}", s.id, s.created_at, s.message_count, current));
-                                }
-                                lines.join("\n")
-                            }
+                                ""
+                            };
+                            lines.push(format!(
+                                "  {} {} ({} msgs){}",
+                                s.id, s.created_at, s.message_count, current
+                            ));
                         }
-                        Err(e) => format!("Error: {}", e),
+                        lines.join("\n")
                     }
                 }
-                _ => "Usage: /session [new|list]".into(),
-            }
-        }
+                Err(e) => format!("Error: {}", e),
+            },
+            _ => "Usage: /session [new|list]".into(),
+        },
         SlashCommand::Memory(args) => {
             let parts: Vec<&str> = args.splitn(2, ' ').collect();
-            let sub = parts.first().map(|s| *s).unwrap_or("");
-            let sub_args = parts.get(1).map(|s| *s).unwrap_or("");
+            let sub = parts.first().copied().unwrap_or("");
+            let sub_args = parts.get(1).copied().unwrap_or("");
             match sub {
                 "persona" => app.engine.persona_summary().await,
                 "events" => {
@@ -116,10 +115,18 @@ pub async fn execute_command(app: &mut App, cmd: SlashCommand) -> String {
                             if events.is_empty() {
                                 "No events recorded.".into()
                             } else {
-                                let lines: Vec<String> = events.iter().map(|e| {
-                                    format!("[{}] {}: {} (conf: {:.0}%)",
-                                        e.timestamp, e.event_type, e.action, e.confidence * 100.0)
-                                }).collect();
+                                let lines: Vec<String> = events
+                                    .iter()
+                                    .map(|e| {
+                                        format!(
+                                            "[{}] {}: {} (conf: {:.0}%)",
+                                            e.timestamp,
+                                            e.event_type,
+                                            e.action,
+                                            e.confidence * 100.0
+                                        )
+                                    })
+                                    .collect();
                                 format!("Events ({}):\n{}", events.len(), lines.join("\n"))
                             }
                         }
@@ -127,16 +134,29 @@ pub async fn execute_command(app: &mut App, cmd: SlashCommand) -> String {
                     }
                 }
                 "cognitions" => {
-                    let subject = if sub_args.is_empty() { "USER" } else { sub_args };
+                    let subject = if sub_args.is_empty() {
+                        "USER"
+                    } else {
+                        sub_args
+                    };
                     match app.engine.list_cognitions(subject, 20).await {
                         Ok(cognitions) => {
                             if cognitions.is_empty() {
                                 format!("No cognitions for '{}'.", subject)
                             } else {
-                                let lines: Vec<String> = cognitions.iter().map(|c| {
-                                    format!("[{}] {} (confidence: {:.0}%, evidence: {}, v{})",
-                                        c.trait_name, c.value, c.confidence * 100.0, c.evidence_count, c.version)
-                                }).collect();
+                                let lines: Vec<String> = cognitions
+                                    .iter()
+                                    .map(|c| {
+                                        format!(
+                                            "[{}] {} (confidence: {:.0}%, evidence: {}, v{})",
+                                            c.trait_name,
+                                            c.value,
+                                            c.confidence * 100.0,
+                                            c.evidence_count,
+                                            c.version
+                                        )
+                                    })
+                                    .collect();
                                 lines.join("\n")
                             }
                         }
@@ -152,41 +172,56 @@ pub async fn execute_command(app: &mut App, cmd: SlashCommand) -> String {
                                 if events.is_empty() {
                                     format!("No results for '{}'.", sub_args)
                                 } else {
-                                    let lines: Vec<String> = events.iter().map(|e| {
-                                        format!("[{}] {}: {}",
-                                            e.timestamp, e.event_type, e.action)
-                                    }).collect();
-                                    format!("Search results ({}):\n{}", events.len(), lines.join("\n"))
+                                    let lines: Vec<String> = events
+                                        .iter()
+                                        .map(|e| {
+                                            format!(
+                                                "[{}] {}: {}",
+                                                e.timestamp, e.event_type, e.action
+                                            )
+                                        })
+                                        .collect();
+                                    format!(
+                                        "Search results ({}):\n{}",
+                                        events.len(),
+                                        lines.join("\n")
+                                    )
                                 }
                             }
                             Err(e) => format!("Error: {}", e),
                         }
                     }
                 }
-                _ => "Usage: /memory [persona|events [N]|cognitions [subject]|search <query>]".into(),
-            }
-        }
-        SlashCommand::Skills(args) => {
-            match args.as_str() {
-                "list" | "" => {
-                    let skills = app.engine.list_skills();
-                    if skills.is_empty() {
-                        "No skills registered.".into()
-                    } else {
-                        let lines: Vec<String> = skills.iter().map(|s| {
-                            format!("  {} — {} (triggers: {:?})", s.name, s.description, s.triggers)
-                        }).collect();
-                        format!("Skills:\n{}", lines.join("\n"))
-                    }
+                _ => {
+                    "Usage: /memory [persona|events [N]|cognitions [subject]|search <query>]".into()
                 }
-                _ => "Usage: /skills [list]".into(),
             }
         }
+        SlashCommand::Skills(args) => match args.as_str() {
+            "list" | "" => {
+                let skills = app.engine.list_skills();
+                if skills.is_empty() {
+                    "No skills registered.".into()
+                } else {
+                    let lines: Vec<String> = skills
+                        .iter()
+                        .map(|s| {
+                            format!(
+                                "  {} — {} (triggers: {:?})",
+                                s.name, s.description, s.triggers
+                            )
+                        })
+                        .collect();
+                    format!("Skills:\n{}", lines.join("\n"))
+                }
+            }
+            _ => "Usage: /skills [list]".into(),
+        },
         SlashCommand::Config(args) => {
             let parts: Vec<&str> = args.splitn(2, ' ').collect();
-            match parts.first().map(|s| *s) {
+            match parts.first().copied() {
                 Some("get") | Some("") => {
-                    let key = parts.get(1).map(|s| *s);
+                    let key = parts.get(1).copied();
                     let v = app.engine.get_config(key).await;
                     format!("{}", v)
                 }
