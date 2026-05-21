@@ -6,6 +6,7 @@ use tokio::sync::broadcast;
 use tui_textarea::TextArea;
 
 use crate::tui::keymap::ResolvedKeymap;
+use crate::tui::overlays::Overlay;
 use crate::tui::status::StatusLine;
 use crate::tui::streaming::StreamState;
 use crate::tui::theme::Theme;
@@ -61,6 +62,7 @@ pub struct App {
     pub total_cost: f64,
     pub frame_count: u64,
     pub stream: StreamState,
+    pub overlay: Option<Box<dyn Overlay>>,
     pub pending_command: Option<String>,
     pub keymap: ResolvedKeymap,
 }
@@ -109,6 +111,7 @@ impl App {
             total_cost: 0.0,
             frame_count: 0,
             stream: StreamState::new(),
+            overlay: None,
             pending_command: None,
             keymap: ResolvedKeymap::default(),
         }

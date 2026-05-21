@@ -7,7 +7,7 @@ pub mod status;
 pub mod streaming;
 pub mod theme;
 
-mod overlays;
+pub mod overlays;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -102,7 +102,13 @@ async fn app_run(
             app.state = AppState::Idle;
         }
 
-        terminal.draw(|f| render::draw(f, app))?;
+        terminal.draw(|f| {
+            render::draw(f, app);
+            if let Some(ref overlay) = app.overlay {
+                let area = centered_rect(60, 70, f.area());
+                overlay.draw(f, area);
+            }
+        })?;
 
         let poll_timeout = match app.state {
             AppState::Waiting | AppState::Streaming => Duration::from_millis(50),
@@ -116,6 +122,17 @@ async fn app_run(
         match event::read()? {
             event::Event::Key(key) => {
                 if key.kind == event::KeyEventKind::Release {
+                    continue;
+                }
+                // Active overlay intercepts keys
+                if let Some(ref mut overlay) = app.overlay {
+                    match overlay.handle_key(key.code) {
+                        crate::tui::overlays::OverlayResult::Dismiss => {
+                            app.overlay = None;
+                            app.state = AppState::Idle;
+                        }
+                        crate::tui::overlays::OverlayResult::Consumed => {}
+                    }
                     continue;
                 }
                 input::handle_key(app, key);
@@ -151,4 +168,24 @@ fn detect_git_branch() -> String {
             }
         })
         .unwrap_or_default()
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -> ratatui::layout::Rect {
+    let popup_layout = ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([
+            ratatui::layout::Constraint::Percentage((100 - percent_y) / 2),
+            ratatui::layout::Constraint::Percentage(percent_y),
+            ratatui::layout::Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Horizontal)
+        .constraints([
+            ratatui::layout::Constraint::Percentage((100 - percent_x) / 2),
+            ratatui::layout::Constraint::Percentage(percent_x),
+            ratatui::layout::Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }
