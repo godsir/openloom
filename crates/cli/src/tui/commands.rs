@@ -268,25 +268,46 @@ mod tests {
 
     #[test]
     fn test_parse_help() {
-        assert!(matches!(parse_slash_command("/help"), Some(SlashCommand::Help)));
-        assert!(matches!(parse_slash_command("/h"), Some(SlashCommand::Help)));
+        assert!(matches!(
+            parse_slash_command("/help"),
+            Some(SlashCommand::Help)
+        ));
+        assert!(matches!(
+            parse_slash_command("/h"),
+            Some(SlashCommand::Help)
+        ));
     }
 
     #[test]
     fn test_parse_model() {
-        assert!(matches!(parse_slash_command("/model"), Some(SlashCommand::Model)));
-        assert!(matches!(parse_slash_command("/m"), Some(SlashCommand::Model)));
+        assert!(matches!(
+            parse_slash_command("/model"),
+            Some(SlashCommand::Model)
+        ));
+        assert!(matches!(
+            parse_slash_command("/m"),
+            Some(SlashCommand::Model)
+        ));
     }
 
     #[test]
     fn test_parse_cost() {
-        assert!(matches!(parse_slash_command("/cost"), Some(SlashCommand::Cost)));
+        assert!(matches!(
+            parse_slash_command("/cost"),
+            Some(SlashCommand::Cost)
+        ));
     }
 
     #[test]
     fn test_parse_clear() {
-        assert!(matches!(parse_slash_command("/clear"), Some(SlashCommand::Clear)));
-        assert!(matches!(parse_slash_command("/cls"), Some(SlashCommand::Clear)));
+        assert!(matches!(
+            parse_slash_command("/clear"),
+            Some(SlashCommand::Clear)
+        ));
+        assert!(matches!(
+            parse_slash_command("/cls"),
+            Some(SlashCommand::Clear)
+        ));
     }
 
     #[test]
@@ -335,8 +356,14 @@ mod tests {
 
     #[test]
     fn test_parse_skills() {
-        assert!(matches!(parse_slash_command("/skills"), Some(SlashCommand::Skills(_))));
-        assert!(matches!(parse_slash_command("/skill list"), Some(SlashCommand::Skills(_))));
+        assert!(matches!(
+            parse_slash_command("/skills"),
+            Some(SlashCommand::Skills(_))
+        ));
+        assert!(matches!(
+            parse_slash_command("/skill list"),
+            Some(SlashCommand::Skills(_))
+        ));
     }
 
     #[test]

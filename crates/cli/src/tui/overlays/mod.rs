@@ -3,7 +3,7 @@ pub mod diff;
 pub mod help;
 
 use crossterm::event::KeyCode;
-use ratatui::{layout::Rect, Frame};
+use ratatui::{Frame, layout::Rect};
 
 /// Result of an overlay handling a key event.
 pub enum OverlayResult {

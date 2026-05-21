@@ -1,10 +1,10 @@
 use crossterm::event::KeyCode;
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Style, Stylize},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, Paragraph},
-    Frame,
 };
 
 use super::{Overlay, OverlayResult};
@@ -61,7 +61,9 @@ impl Overlay for DiffViewer {
             .border_style(Style::new().fg(ratatui::style::Color::Rgb(99, 150, 240)))
             .title_top(Span::styled(
                 format!(" Diff: {} ", self.filename),
-                Style::new().fg(ratatui::style::Color::Rgb(99, 150, 240)).bold(),
+                Style::new()
+                    .fg(ratatui::style::Color::Rgb(99, 150, 240))
+                    .bold(),
             ))
             .title_bottom(Span::styled(
                 " up/down scroll  Esc close ",
@@ -72,7 +74,7 @@ impl Overlay for DiffViewer {
         f.render_widget(block, area);
 
         let visible_count = inner.height.saturating_sub(2) as usize;
-        let max_scroll = self.lines.len().saturating_sub(visible_count).max(0) as u16;
+        let max_scroll = self.lines.len().saturating_sub(visible_count) as u16;
         let visible_start = (self.scroll.min(max_scroll)) as usize;
         let visible_end = (visible_start + visible_count).min(self.lines.len());
 
@@ -88,23 +90,44 @@ impl Overlay for DiffViewer {
                 match dl {
                     DiffLine::Header(text) => Line::from(vec![
                         num,
-                        Span::styled(text.clone(), Style::new().fg(ratatui::style::Color::Rgb(200, 200, 100)).bold()),
+                        Span::styled(
+                            text.clone(),
+                            Style::new()
+                                .fg(ratatui::style::Color::Rgb(200, 200, 100))
+                                .bold(),
+                        ),
                     ]),
                     DiffLine::Hunk(text) => Line::from(vec![
                         num,
-                        Span::styled(text.clone(), Style::new().fg(ratatui::style::Color::Rgb(120, 180, 220))),
+                        Span::styled(
+                            text.clone(),
+                            Style::new().fg(ratatui::style::Color::Rgb(120, 180, 220)),
+                        ),
                     ]),
                     DiffLine::Add(text) => Line::from(vec![
                         num,
-                        Span::styled(text.clone(), Style::new().fg(ratatui::style::Color::Rgb(80, 200, 120)).bg(ratatui::style::Color::Rgb(20, 50, 25))),
+                        Span::styled(
+                            text.clone(),
+                            Style::new()
+                                .fg(ratatui::style::Color::Rgb(80, 200, 120))
+                                .bg(ratatui::style::Color::Rgb(20, 50, 25)),
+                        ),
                     ]),
                     DiffLine::Del(text) => Line::from(vec![
                         num,
-                        Span::styled(text.clone(), Style::new().fg(ratatui::style::Color::Rgb(220, 80, 80)).bg(ratatui::style::Color::Rgb(50, 20, 20))),
+                        Span::styled(
+                            text.clone(),
+                            Style::new()
+                                .fg(ratatui::style::Color::Rgb(220, 80, 80))
+                                .bg(ratatui::style::Color::Rgb(50, 20, 20)),
+                        ),
                     ]),
                     DiffLine::Context(text) => Line::from(vec![
                         num,
-                        Span::styled(text.clone(), Style::new().fg(ratatui::style::Color::Rgb(200, 200, 210))),
+                        Span::styled(
+                            text.clone(),
+                            Style::new().fg(ratatui::style::Color::Rgb(200, 200, 210)),
+                        ),
                     ]),
                 }
             })

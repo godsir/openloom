@@ -1,10 +1,10 @@
 use crossterm::event::KeyCode;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Style, Stylize},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
-    Frame,
 };
 
 use super::{Overlay, OverlayResult};
@@ -56,7 +56,9 @@ impl Overlay for ApprovalOverlay {
             .border_style(Style::new().fg(ratatui::style::Color::Rgb(220, 180, 60)))
             .title_top(Span::styled(
                 format!(" ⚠ {} ", self.title),
-                Style::new().fg(ratatui::style::Color::Rgb(220, 180, 60)).bold(),
+                Style::new()
+                    .fg(ratatui::style::Color::Rgb(220, 180, 60))
+                    .bold(),
             ));
 
         let inner = block.inner(area);
@@ -71,8 +73,7 @@ impl Overlay for ApprovalOverlay {
             .split(inner);
 
         // Message
-        let msg = Paragraph::new(Text::from(self.message.as_str()))
-            .wrap(Wrap { trim: true });
+        let msg = Paragraph::new(Text::from(self.message.as_str())).wrap(Wrap { trim: true });
         f.render_widget(msg, chunks[0]);
 
         // Options
@@ -83,13 +84,16 @@ impl Overlay for ApprovalOverlay {
             .map(|(i, (key, label, _))| {
                 let prefix = if i == self.selected { "▶ " } else { "  " };
                 let style = if i == self.selected {
-                    Style::new().fg(ratatui::style::Color::Rgb(99, 150, 240)).bold()
+                    Style::new()
+                        .fg(ratatui::style::Color::Rgb(99, 150, 240))
+                        .bold()
                 } else {
                     Style::new().fg(ratatui::style::Color::Rgb(180, 180, 190))
                 };
-                Line::from(vec![
-                    Span::styled(format!("{}[{}] {}", prefix, key, label), style),
-                ])
+                Line::from(vec![Span::styled(
+                    format!("{}[{}] {}", prefix, key, label),
+                    style,
+                )])
             })
             .collect();
 
