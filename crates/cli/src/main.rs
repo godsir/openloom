@@ -4,6 +4,7 @@ use openloom_engine::EngineConfig;
 use openloom_models::{AppConfig, ChatMessage};
 use openloom_server::Server;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 mod download;
 mod tui;
@@ -243,8 +244,9 @@ async fn main() -> anyhow::Result<()> {
             });
             server.serve(port).await?;
         }
-        Commands::Chat { .. } => {
-            eprintln!("TUI has been removed and will be rebuilt. Stay tuned.");
+        Commands::Chat { config } => {
+            let engine = Arc::new(build_engine(config.as_deref(), 100, None)?);
+            tui::run(engine).await?;
         }
         Commands::Run { task, config } => {
             let engine = build_engine(config.as_deref(), 100, None)?;
