@@ -5,6 +5,7 @@ use openloom_models::{AgentState, EngineEvent};
 use tokio::sync::broadcast;
 use tui_textarea::TextArea;
 
+use crate::tui::keymap::ResolvedKeymap;
 use crate::tui::status::StatusLine;
 use crate::tui::streaming::StreamState;
 use crate::tui::theme::Theme;
@@ -61,6 +62,7 @@ pub struct App {
     pub frame_count: u64,
     pub stream: StreamState,
     pub pending_command: Option<String>,
+    pub keymap: ResolvedKeymap,
 }
 
 pub fn build_textarea() -> TextArea<'static> {
@@ -108,6 +110,7 @@ impl App {
             frame_count: 0,
             stream: StreamState::new(),
             pending_command: None,
+            keymap: ResolvedKeymap::default(),
         }
     }
 

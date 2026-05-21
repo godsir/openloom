@@ -1,26 +1,32 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::tui::app::{App, AppState};
+use crate::tui::keymap::{Action, KeyContext};
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
-    // Ctrl+C: quit
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-        app.should_exit = true;
-        return true;
-    }
+    let context = match app.state {
+        AppState::Streaming => KeyContext::Streaming,
+        AppState::Overlay => KeyContext::Overlay,
+        _ => KeyContext::Input,
+    };
 
-    // Ctrl+L: terminal clear (redraw)
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('l') {
-        return false;
-    }
+    let action = app.keymap.resolve(&key, context);
 
-    match key.code {
-        KeyCode::Enter => {
+    match action {
+        Action::Quit => {
+            app.should_exit = true;
+            true
+        }
+        Action::CancelStream => {
+            app.stream.cancel();
+            app.state = AppState::Idle;
+            false
+        }
+        Action::Send => {
             let text = app.current_line().trim().to_string();
             if text.is_empty() {
                 return false;
             }
-
             // Slash command interception (not // which is literal)
             if text.starts_with('/') && !text.starts_with("//") {
                 if app.history.last() != Some(&text) {
@@ -34,7 +40,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
                 app.auto_scroll = true;
                 return false;
             }
-
+            // Regular message
             if app.history.last() != Some(&text) {
                 app.history.push(text.clone());
             }
@@ -45,26 +51,41 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.auto_scroll = true;
             false
         }
-        KeyCode::Up => {
+        Action::HistoryUp => {
             navigate_history(app, Direction::Prev);
             false
         }
-        KeyCode::Down => {
+        Action::HistoryDown => {
             navigate_history(app, Direction::Next);
             false
         }
-        KeyCode::PageUp => {
+        Action::ScrollUp => {
             app.auto_scroll = false;
             app.scroll = app.scroll.saturating_sub(10);
             false
         }
-        KeyCode::PageDown => {
+        Action::ScrollDown => {
             app.scroll = app.scroll.saturating_add(10);
             false
         }
-        _ => {
+        Action::Redraw => false,
+        Action::Newline => {
+            app.input.input(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+            false
+        }
+        Action::Noop => {
+            // Delegate to textarea for typing
             app.input.input(Event::Key(key));
             false
+        }
+        // Unused in Milestone B, handle gracefully
+        Action::HistorySearch | Action::ExternalEditor => {
+            app.input.input(Event::Key(key));
+            false
+        }
+        Action::DismissOverlay | Action::ConfirmOverlay
+        | Action::NavigateLeft | Action::NavigateRight => {
+            false // Overlay handles these itself
         }
     }
 }
