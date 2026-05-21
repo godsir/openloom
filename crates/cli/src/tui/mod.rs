@@ -9,19 +9,37 @@ pub mod theme;
 
 pub mod overlays;
 
+use std::io::stdout;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event;
+use crossterm::terminal::{self, ClearType};
+use crossterm::{cursor, execute};
 use openloom_engine::Engine;
+use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 
 use crate::tui::app::{App, AppState};
 
-pub async fn run(engine: Arc<Engine>) -> anyhow::Result<()> {
-    let mut terminal = ratatui::init();
-    crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)?;
+pub async fn run(engine: Arc<Engine>, resume_session: Option<String>) -> anyhow::Result<()> {
+    terminal::enable_raw_mode()?;
+    execute!(
+        stdout(),
+        terminal::Clear(ClearType::All),
+        cursor::MoveTo(0, 0),
+        cursor::Hide,
+    )?;
 
-    let session_id = engine.create_session().await?.id;
+    let backend = CrosstermBackend::new(stdout());
+    let mut terminal = Terminal::new(backend)?;
+
+    let session_id = if let Some(sid) = resume_session {
+        sid
+    } else {
+        engine.create_session().await?.id
+    };
+
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "?".into());
@@ -31,18 +49,37 @@ pub async fn run(engine: Arc<Engine>) -> anyhow::Result<()> {
 
     let mut app = App::new(
         engine,
-        session_id,
+        session_id.clone(),
         cwd,
         model_name,
         git_branch,
         context_size,
     );
 
+    // Load previous messages if resuming a session
+    if let Ok(history) = app.engine.get_working_memory(&session_id)
+        && !history.is_empty()
+    {
+        for msg in &history {
+            app.messages.push(crate::tui::app::Message {
+                role: msg.role.clone(),
+                content: msg.content.clone(),
+                collapsed: msg.role == "thinking",
+            });
+        }
+        app.viewport.jump_to_bottom();
+    }
+
     let res = app_run(&mut terminal, &mut app).await;
 
     let _ = app.engine.shutdown().await;
-    crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture)?;
-    ratatui::restore();
+    execute!(
+        stdout(),
+        cursor::Show,
+        terminal::Clear(ClearType::All),
+        cursor::MoveTo(0, 0),
+    )?;
+    terminal::disable_raw_mode()?;
     res
 }
 
@@ -91,18 +128,6 @@ async fn app_run(
 
         // Check if streaming has completed (rx closed, task finished)
         if app.state == AppState::Streaming && !app.stream.is_active() {
-            // Estimate token usage from prompt + response lengths (chars / 4 ≈ tokens)
-            if let Some(user_msg) = app.messages.iter().rev().find(|m| m.role == "user") {
-                app.total_prompt_tokens += user_msg.content.len() / 4;
-            }
-            let response_len = app.stream.buffer.len();
-            app.total_completion_tokens += response_len / 4;
-            app.status.turn_tokens = response_len / 4;
-            // Rough cost estimate: $3/M input, $15/M output (Claude Sonnet pricing)
-            // Use = not += since the formula uses cumulative token counts
-            app.total_cost = (app.total_prompt_tokens as f64) * 3.0 / 1_000_000.0
-                + (app.total_completion_tokens as f64) * 15.0 / 1_000_000.0;
-
             if app.stream.buffer.is_empty()
                 && let Some(last) = app.messages.last()
                 && last.content.is_empty()
@@ -111,6 +136,7 @@ async fn app_run(
                 app.add_assistant_message("[no response]".into());
             }
             app.stream.buffer.clear();
+            app.stream_start = None;
             app.state = AppState::Idle;
         }
 
@@ -148,20 +174,6 @@ async fn app_run(
                     continue;
                 }
                 input::handle_key(app, key);
-            }
-            event::Event::Mouse(mouse) => {
-                match mouse.kind {
-                    event::MouseEventKind::ScrollUp => {
-                        app.viewport.scroll_up(3);
-                    }
-                    event::MouseEventKind::ScrollDown => {
-                        app.viewport.scroll_down(3);
-                    }
-                    _ => {
-                        // Forward to textarea for text selection
-                        input::handle_mouse(app, mouse);
-                    }
-                }
             }
             event::Event::Resize(_, _) => {}
             _ => {}

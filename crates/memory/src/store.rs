@@ -184,6 +184,7 @@ pub struct CognitionRow {
     pub first_seen: i64,
     pub last_updated: i64,
     pub version: i64,
+    pub scope: String,
 }
 
 /// A historical snapshot of a cognition entry, saved before each update.
@@ -314,8 +315,8 @@ impl<'a> CognitionStore<'a> {
         store
     }
 
-    /// Insert or update a cognition trait for a subject.
-    /// If the (subject, trait) pair already exists, snapshots the current
+    /// Insert or update a cognition trait for a subject within a scope.
+    /// If the (subject, trait, scope) triple already exists, snapshots the current
     /// version and increments the version counter. Returns the cognition ID.
     pub fn insert(
         &self,
@@ -324,15 +325,16 @@ impl<'a> CognitionStore<'a> {
         value: &str,
         confidence: f64,
         evidence_count: usize,
+        scope: &str,
     ) -> anyhow::Result<i64> {
         let now = Utc::now().timestamp();
 
-        // Check if this trait already exists for this subject
+        // Check if this trait already exists for this subject+scope
         let existing: Option<(i64, i64)> = self
             .conn
             .query_row(
-                "SELECT id, version FROM cognitions WHERE subject = ?1 AND trait = ?2",
-                rusqlite::params![subject, trait_name],
+                "SELECT id, version FROM cognitions WHERE subject = ?1 AND trait = ?2 AND scope = ?3",
+                rusqlite::params![subject, trait_name, scope],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .ok();
@@ -372,9 +374,9 @@ impl<'a> CognitionStore<'a> {
         } else {
             // Insert new
             self.conn.execute(
-                "INSERT INTO cognitions (subject, trait, value, confidence, evidence_count, first_seen, last_updated, version)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
-                rusqlite::params![subject, trait_name, value, confidence, evidence_count, now, now],
+                "INSERT INTO cognitions (subject, trait, value, confidence, evidence_count, first_seen, last_updated, version, scope)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8)",
+                rusqlite::params![subject, trait_name, value, confidence, evidence_count, now, now, scope],
             )?;
             Ok(self.conn.last_insert_rowid())
         }
@@ -386,7 +388,7 @@ impl<'a> CognitionStore<'a> {
         limit: usize,
     ) -> anyhow::Result<Vec<CognitionRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, subject, trait, value, confidence, evidence_count, first_seen, last_updated, version
+            "SELECT id, subject, trait, value, confidence, evidence_count, first_seen, last_updated, version, scope
              FROM cognitions WHERE subject = ?1 ORDER BY last_updated DESC LIMIT ?2",
         )?;
         let rows = stmt
@@ -401,6 +403,7 @@ impl<'a> CognitionStore<'a> {
                     first_seen: row.get(6)?,
                     last_updated: row.get(7)?,
                     version: row.get(8)?,
+                    scope: row.get(9)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -505,17 +508,19 @@ impl<'a> TokenStore<'a> {
         model: &str,
         prompt_tokens: usize,
         completion_tokens: usize,
+        cached_tokens: usize,
         latency_ms: u64,
     ) -> anyhow::Result<()> {
         self.conn.execute(
             "INSERT INTO token_usage (timestamp, session_id, model, prompt_tokens, completion_tokens, cached_tokens, latency_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
                 Utc::now().to_rfc3339(),
                 session_id,
                 model,
                 prompt_tokens,
                 completion_tokens,
+                cached_tokens,
                 latency_ms,
             ],
         )?;
@@ -556,6 +561,79 @@ impl<'a> TokenStore<'a> {
         )?;
         Ok((prompt as usize, completion as usize))
     }
+
+    pub fn summary_by_model(&self) -> anyhow::Result<Vec<ModelUsageSummary>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT model, COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0),
+                    COALESCE(SUM(cached_tokens), 0), COUNT(*)
+             FROM token_usage GROUP BY model ORDER BY SUM(prompt_tokens) + SUM(completion_tokens) DESC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ModelUsageSummary {
+                    model: row.get(0)?,
+                    prompt_tokens: row.get::<_, i64>(1)? as usize,
+                    completion_tokens: row.get::<_, i64>(2)? as usize,
+                    cached_tokens: row.get::<_, i64>(3)? as usize,
+                    request_count: row.get::<_, i64>(4)? as usize,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn usage_since(&self, since: &str) -> anyhow::Result<UsageAggregate> {
+        let (prompt, completion, cached, count): (i64, i64, i64, i64) = self.conn.query_row(
+            "SELECT COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0),
+                    COALESCE(SUM(cached_tokens), 0), COUNT(*)
+             FROM token_usage WHERE timestamp >= ?1",
+            rusqlite::params![since],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        Ok(UsageAggregate {
+            prompt_tokens: prompt as usize,
+            completion_tokens: completion as usize,
+            cached_tokens: cached as usize,
+            request_count: count as usize,
+        })
+    }
+
+    pub fn recent(&self, limit: usize) -> anyhow::Result<Vec<TokenUsageRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, timestamp, session_id, model, prompt_tokens, completion_tokens, cached_tokens, latency_ms
+             FROM token_usage ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![limit as i64], |row| {
+                Ok(TokenUsageRow {
+                    id: row.get(0)?,
+                    timestamp: row.get(1)?,
+                    session_id: row.get(2)?,
+                    model: row.get(3)?,
+                    prompt_tokens: row.get(4)?,
+                    completion_tokens: row.get(5)?,
+                    cached_tokens: row.get(6)?,
+                    latency_ms: row.get(7)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+}
+
+pub struct ModelUsageSummary {
+    pub model: String,
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub cached_tokens: usize,
+    pub request_count: usize,
+}
+
+pub struct UsageAggregate {
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub cached_tokens: usize,
+    pub request_count: usize,
 }
 
 // === MessageStore ===
@@ -759,7 +837,8 @@ mod store_v2_tests {
                 evidence_count INTEGER,
                 first_seen INTEGER,
                 last_updated INTEGER,
-                version INTEGER DEFAULT 1
+                version INTEGER DEFAULT 1,
+                scope TEXT NOT NULL DEFAULT 'global'
             );
             CREATE TABLE IF NOT EXISTS cognition_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -797,7 +876,7 @@ mod store_v2_tests {
         setup_v2_tables(&conn);
         let store = CognitionStore::new(&conn);
         store
-            .insert("USER", "risk_tendency", "gambler_chase", 0.91, 5)
+            .insert("USER", "risk_tendency", "gambler_chase", 0.91, 5, "global")
             .unwrap();
         let rows = store.query_by_subject("USER", 10).unwrap();
         assert_eq!(rows.len(), 1);
@@ -816,7 +895,7 @@ mod store_v2_tests {
 
         // First insert
         let id1 = store
-            .insert("USER", "risk_tendency", "gambler_v1", 0.8, 3)
+            .insert("USER", "risk_tendency", "gambler_v1", 0.8, 3, "global")
             .unwrap();
         let rows = store.query_by_subject("USER", 10).unwrap();
         assert_eq!(rows.len(), 1);
@@ -825,7 +904,7 @@ mod store_v2_tests {
 
         // Second insert with same subject+trait should update
         let id2 = store
-            .insert("USER", "risk_tendency", "gambler_v2", 0.9, 5)
+            .insert("USER", "risk_tendency", "gambler_v2", 0.9, 5, "global")
             .unwrap();
         assert_eq!(id1, id2, "Same row, updated");
         let rows = store.query_by_subject("USER", 10).unwrap();
@@ -839,6 +918,52 @@ mod store_v2_tests {
         assert_eq!(snapshots.len(), 1);
         assert_eq!(snapshots[0].version, 1);
         assert_eq!(snapshots[0].value, "gambler_v1");
+    }
+
+    #[test]
+    fn test_cognition_scope_isolation() {
+        let dir = tempdir().unwrap();
+        let conn = Connection::open(dir.path().join("test.db")).unwrap();
+        setup_v2_tables(&conn);
+        let store = CognitionStore::new(&conn);
+
+        // Same trait, different scopes — should NOT overwrite each other
+        store
+            .insert("USER", "tech_stack", "React前端", 0.8, 3, "project:A")
+            .unwrap();
+        store
+            .insert("USER", "tech_stack", "Rust后端", 0.9, 4, "project:B")
+            .unwrap();
+
+        let rows = store.query_by_subject("USER", 10).unwrap();
+        assert_eq!(rows.len(), 2);
+
+        let a_row = rows.iter().find(|r| r.scope == "project:A").unwrap();
+        assert_eq!(a_row.value, "React前端");
+
+        let b_row = rows.iter().find(|r| r.scope == "project:B").unwrap();
+        assert_eq!(b_row.value, "Rust后端");
+    }
+
+    #[test]
+    fn test_cognition_upsert_within_same_scope() {
+        let dir = tempdir().unwrap();
+        let conn = Connection::open(dir.path().join("test.db")).unwrap();
+        setup_v2_tables(&conn);
+        let store = CognitionStore::new(&conn);
+
+        store
+            .insert("USER", "tech_stack", "React v1", 0.7, 3, "project:A")
+            .unwrap();
+        store
+            .insert("USER", "tech_stack", "React v2 升级", 0.9, 5, "project:A")
+            .unwrap();
+
+        let rows = store.query_by_subject("USER", 10).unwrap();
+        // Should upsert (1 row), not create 2
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].value, "React v2 升级");
+        assert_eq!(rows[0].version, 2);
     }
 
     #[test]
@@ -859,8 +984,8 @@ mod store_v2_tests {
         let conn = Connection::open(dir.path().join("test.db")).unwrap();
         setup_v2_tables(&conn);
         let store = TokenStore::new(&conn);
-        store.insert("s1", "test-model", 100, 50, 200).unwrap();
-        store.insert("s1", "test-model", 200, 100, 300).unwrap();
+        store.insert("s1", "test-model", 100, 50, 0, 200).unwrap();
+        store.insert("s1", "test-model", 200, 100, 0, 300).unwrap();
         let (prompt, completion) = store.total_usage().unwrap();
         assert_eq!(prompt, 300);
         assert_eq!(completion, 150);

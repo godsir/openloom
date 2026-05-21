@@ -13,11 +13,12 @@ pub struct StatusLine {
 }
 
 impl StatusLine {
+    #[allow(dead_code)]
     pub fn state_icon(&self) -> &str {
         match self.agent_state {
-            AgentState::Idle => "○",
+            AgentState::Idle => "●",
             AgentState::Thinking => "●",
-            AgentState::Acting => "◆",
+            AgentState::Acting => "●",
         }
     }
 }

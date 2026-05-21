@@ -2,6 +2,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::tui::app::{App, AppState, CtrlCAction};
 use crate::tui::keymap::{Action, KeyContext};
+use crate::tui::render::palette_matches;
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     let context = match app.state {
@@ -30,11 +31,17 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
 
         // ── send message ──────────────────────────────────
         Action::Send => {
+            // If palette is visible, Enter selects the highlighted command
+            if palette_visible(app) {
+                select_palette_item(app);
+                return false;
+            }
+
             let text = app.current_line().trim().to_string();
             if text.is_empty() {
                 return false;
             }
-            app.last_ctrl_c = None; // reset exit timer on activity
+            app.last_ctrl_c = None;
 
             if text.starts_with('/') && !text.starts_with("//") {
                 if app.history.last() != Some(&text) {
@@ -42,10 +49,12 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
                 }
                 app.history_idx = None;
                 app.input = crate::tui::app::build_textarea();
-                app.messages.push(crate::tui::app::Message::user(text.clone()));
+                app.messages
+                    .push(crate::tui::app::Message::user(text.clone()));
                 app.pending_command = Some(text);
                 app.state = AppState::Waiting;
                 app.viewport.jump_to_bottom();
+                app.command_palette_selected = 0;
                 return false;
             }
             if app.history.last() != Some(&text) {
@@ -56,6 +65,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.messages.push(crate::tui::app::Message::user(text));
             app.state = AppState::Waiting;
             app.viewport.jump_to_bottom();
+            app.command_palette_selected = 0;
             false
         }
 
@@ -79,11 +89,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
 
         // ── scroll ────────────────────────────────────────
         Action::ScrollUp => {
-            app.viewport.scroll_up(10);
+            app.viewport.scroll_up(25);
             false
         }
         Action::ScrollDown => {
-            app.viewport.scroll_down(10);
+            app.viewport.scroll_down(25);
             false
         }
 
@@ -103,8 +113,14 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
 
         // ── typing ────────────────────────────────────────
         Action::Noop => {
+            // Esc dismisses the palette if visible
+            if key.code == KeyCode::Esc && palette_visible(app) {
+                app.command_palette_selected = 0;
+                app.input = crate::tui::app::build_textarea();
+                return false;
+            }
             app.input.input(Event::Key(key));
-            // Reset command palette selection when typing
+            // Reset palette selection when typing changes input
             if key.code != KeyCode::Up && key.code != KeyCode::Down {
                 app.command_palette_selected = 0;
             }
@@ -122,7 +138,20 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         }
 
         Action::Autocomplete => {
-            handle_autocomplete(app);
+            if palette_visible(app) {
+                // Tab cycles through palette items and fills input
+                palette_cycle(app, 1);
+                fill_from_palette(app);
+            }
+            false
+        }
+
+        Action::ToggleThinking => {
+            for msg in &mut app.messages {
+                if msg.role == "thinking" || msg.role == "tool_call" || msg.role == "tool_result" {
+                    msg.collapsed = !msg.collapsed;
+                }
+            }
             false
         }
 
@@ -137,19 +166,17 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
 
 fn palette_visible(app: &App) -> bool {
     let first = app.input.lines().first().map(|s| s.as_str()).unwrap_or("");
-    first.starts_with('/') && !first.starts_with("//")
+    !palette_matches(first).is_empty()
 }
 
 fn palette_cycle(app: &mut App, delta: i32) {
-    let current = app.current_line();
-    let prefix = &current[1..];
-    let commands = SLASH_COMMANDS;
-    let matches: Vec<&str> = commands
-        .iter()
-        .filter(|cmd| cmd[1..].starts_with(prefix))
-        .copied()
-        .collect();
-
+    let current = app
+        .input
+        .lines()
+        .first()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    let matches = palette_matches(&current);
     if matches.is_empty() {
         return;
     }
@@ -157,11 +184,50 @@ fn palette_cycle(app: &mut App, delta: i32) {
     let len = matches.len() as i32;
     let new_idx = ((app.command_palette_selected as i32 + delta) % len + len) % len;
     app.command_palette_selected = new_idx as usize;
+}
 
-    // Live-preview: fill input with highlighted command
-    let selected = matches[app.command_palette_selected];
+fn select_palette_item(app: &mut App) {
+    let current = app
+        .input
+        .lines()
+        .first()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    let matches = palette_matches(&current);
+    if matches.is_empty() {
+        return;
+    }
+
+    let idx = app
+        .command_palette_selected
+        .min(matches.len().saturating_sub(1));
+    let selected_cmd = matches[idx].0;
+
+    // Fill input with the selected command
     app.input = crate::tui::app::build_textarea();
-    app.input.insert_str(format!("{} ", selected));
+    app.input.insert_str(selected_cmd);
+    app.command_palette_selected = 0;
+}
+
+fn fill_from_palette(app: &mut App) {
+    let current = app
+        .input
+        .lines()
+        .first()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    let matches = palette_matches(&current);
+    if matches.is_empty() {
+        return;
+    }
+
+    let idx = app
+        .command_palette_selected
+        .min(matches.len().saturating_sub(1));
+    let selected_cmd = matches[idx].0;
+
+    app.input = crate::tui::app::build_textarea();
+    app.input.insert_str(selected_cmd);
 }
 
 fn cancel_stream(app: &mut App) {
@@ -192,7 +258,11 @@ fn launch_editor(app: &mut App) {
     let editor = std::env::var("EDITOR")
         .or_else(|_| std::env::var("VISUAL"))
         .unwrap_or_else(|_| {
-            if cfg!(target_os = "windows") { "notepad".into() } else { "vi".into() }
+            if cfg!(target_os = "windows") {
+                "notepad".into()
+            } else {
+                "vi".into()
+            }
         });
 
     let _ = std::process::Command::new(&editor).arg(&temp_file).status();
@@ -209,7 +279,10 @@ fn launch_editor(app: &mut App) {
     let _ = crossterm::terminal::enable_raw_mode();
 }
 
-enum Direction { Prev, Next }
+enum Direction {
+    Prev,
+    Next,
+}
 
 fn navigate_history(app: &mut App, dir: Direction) {
     if app.history.is_empty() {
@@ -234,38 +307,4 @@ fn navigate_history(app: &mut App, dir: Direction) {
     };
     app.input = crate::tui::app::build_textarea();
     app.input.insert_str(&text);
-}
-
-const SLASH_COMMANDS: [&str; 15] = [
-    "/help", "/model", "/cost", "/clear",
-    "/theme dark", "/theme light",
-    "/session new", "/session list",
-    "/memory persona", "/memory events", "/memory cognitions", "/memory search",
-    "/skills list", "/config get", "/config set",
-];
-
-fn handle_autocomplete(app: &mut App) {
-    let current = app.current_line();
-    if !current.starts_with('/') || current.starts_with("//") {
-        return;
-    }
-    let prefix = &current[1..];
-    let matches: Vec<&str> = SLASH_COMMANDS
-        .iter()
-        .filter(|cmd| cmd[1..].starts_with(prefix))
-        .copied()
-        .collect();
-    if matches.is_empty() {
-        return;
-    }
-    let idx = app.command_palette_selected.min(matches.len().saturating_sub(1));
-    let selected = matches[idx];
-    app.input = crate::tui::app::build_textarea();
-    app.input.insert_str(format!("{} ", selected));
-    app.command_palette_selected = (idx + 1) % matches.len();
-}
-
-/// Forward mouse events to the textarea for text selection.
-pub fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
-    app.input.input(Event::Mouse(mouse));
 }

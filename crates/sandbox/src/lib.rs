@@ -1,5 +1,9 @@
+pub mod risk;
+
 use anyhow::Result;
 use openloom_models::SkillPermissions;
+
+pub use risk::{classify_risk, risk_message, should_block};
 
 pub fn check_permissions(
     permissions: &SkillPermissions,

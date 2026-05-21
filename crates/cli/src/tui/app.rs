@@ -31,6 +31,8 @@ pub enum AppState {
 pub struct Message {
     pub role: String,
     pub content: String,
+    #[allow(dead_code)]
+    pub collapsed: bool,
 }
 
 impl Message {
@@ -38,6 +40,7 @@ impl Message {
         Self {
             role: "user".into(),
             content,
+            collapsed: false,
         }
     }
 
@@ -45,6 +48,7 @@ impl Message {
         Self {
             role: "assistant".into(),
             content,
+            collapsed: false,
         }
     }
 }
@@ -114,6 +118,7 @@ pub struct App {
     pub should_exit: bool,
     pub total_prompt_tokens: usize,
     pub total_completion_tokens: usize,
+    pub total_cached_tokens: usize,
     #[allow(dead_code)]
     pub total_cost: f64,
     pub frame_count: u64,
@@ -123,12 +128,17 @@ pub struct App {
     pub keymap: ResolvedKeymap,
     pub command_palette_selected: usize,
     pub last_ctrl_c: Option<std::time::Instant>,
+    pub stream_start: Option<std::time::Instant>,
+    pub stream_tokens_count: usize,
 }
 
 pub fn build_textarea() -> TextArea<'static> {
     let mut ta = TextArea::default();
     ta.set_cursor_line_style(ratatui::style::Style::default());
-    ta.set_placeholder_text("Type a message... (Enter to send, Ctrl+C to quit)");
+    ta.set_placeholder_text("> ");
+    ta.set_placeholder_style(
+        ratatui::style::Style::new().fg(ratatui::style::Color::Rgb(102, 102, 102)),
+    );
     ta
 }
 
@@ -165,6 +175,7 @@ impl App {
             should_exit: false,
             total_prompt_tokens: 0,
             total_completion_tokens: 0,
+            total_cached_tokens: 0,
             total_cost: 0.0,
             frame_count: 0,
             stream: StreamState::new(),
@@ -173,6 +184,8 @@ impl App {
             keymap: ResolvedKeymap::default(),
             command_palette_selected: 0,
             last_ctrl_c: None,
+            stream_start: None,
+            stream_tokens_count: 0,
         }
     }
 
@@ -187,8 +200,51 @@ impl App {
 
     pub fn poll_engine_events(&mut self) {
         while let Ok(event) = self.event_rx.try_recv() {
-            if let EngineEvent::AgentStateChanged { new_state, .. } = event {
-                self.status.agent_state = new_state;
+            match event {
+                EngineEvent::AgentStateChanged { new_state, .. } => {
+                    self.status.agent_state = new_state;
+                }
+                EngineEvent::TokenUsage {
+                    prompt_tokens,
+                    completion_tokens,
+                    cached_tokens,
+                    ..
+                } => {
+                    self.total_prompt_tokens += prompt_tokens;
+                    self.total_completion_tokens += completion_tokens;
+                    self.total_cached_tokens += cached_tokens;
+                    self.status.turn_tokens = completion_tokens;
+                    self.total_cost += (prompt_tokens as f64) * 3.0 / 1_000_000.0
+                        + (completion_tokens as f64) * 15.0 / 1_000_000.0;
+                }
+                EngineEvent::CognitionUpdated {
+                    trait_name,
+                    new_value,
+                    confidence,
+                    ..
+                } => {
+                    self.messages.push(Message {
+                        role: "thinking".into(),
+                        content: format!(
+                            "[cognition] {} = {} ({:.0}%)",
+                            trait_name,
+                            new_value,
+                            confidence * 100.0
+                        ),
+                        collapsed: true,
+                    });
+                    self.viewport.content_added();
+                }
+                EngineEvent::Error { message, .. } => {
+                    self.messages.push(Message {
+                        role: "error".into(),
+                        content: message,
+                        collapsed: false,
+                    });
+                    self.viewport.content_added();
+                }
+                EngineEvent::HeartbeatTick { .. } => {}
+                EngineEvent::PermissionRequired { .. } => {}
             }
         }
     }
@@ -201,7 +257,40 @@ impl App {
                     Ok(token) => {
                         if self.state != AppState::Streaming {
                             self.state = AppState::Streaming;
+                            self.stream_start = Some(std::time::Instant::now());
+                            self.stream_tokens_count = 0;
                         }
+
+                        // Parse structured markers from agent loop
+                        if let Some(content) = token.strip_prefix("\x01THINK\x02") {
+                            self.messages.push(Message {
+                                role: "thinking".into(),
+                                content: content.to_string(),
+                                collapsed: true,
+                            });
+                            self.viewport.content_added();
+                            continue;
+                        }
+                        if let Some(content) = token.strip_prefix("\x01CALL\x02") {
+                            self.messages.push(Message {
+                                role: "tool_call".into(),
+                                content: content.to_string(),
+                                collapsed: false,
+                            });
+                            self.viewport.content_added();
+                            continue;
+                        }
+                        if let Some(content) = token.strip_prefix("\x01RESULT\x02") {
+                            self.messages.push(Message {
+                                role: "tool_result".into(),
+                                content: content.to_string(),
+                                collapsed: false,
+                            });
+                            self.viewport.content_added();
+                            continue;
+                        }
+
+                        self.stream_tokens_count += 1;
                         self.stream.buffer.push_str(&token);
                         if let Some(last) = self.messages.last_mut()
                             && last.role == "assistant"
@@ -225,15 +314,12 @@ impl App {
     }
 
     pub fn start_streaming(&mut self, user_message: String) {
-        use openloom_inference::CompletionRequest;
+        use openloom_models::ChatMessage;
 
-        let req = CompletionRequest {
-            prompt: user_message,
-            max_tokens: 2048,
-            temperature: 0.7,
-            top_p: 1.0,
-            stop: Vec::new(),
-            stream: true,
+        let msg = ChatMessage {
+            role: "user".into(),
+            content: user_message,
+            timestamp: chrono::Utc::now(),
         };
 
         let (tx, rx) = tokio::sync::mpsc::channel::<String>(64);
@@ -243,8 +329,9 @@ impl App {
         self.add_assistant_message(String::new());
 
         let engine = self.engine.clone();
+        let session_id = self.session_id.clone();
         let handle = tokio::spawn(async move {
-            let _ = engine.stream_complete(req, tx).await;
+            let _ = engine.handle_message_streaming(msg, &session_id, tx).await;
         });
 
         self.stream.abort_handle = Some(handle);

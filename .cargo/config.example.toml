@@ -1,0 +1,12 @@
+# Cargo environment overrides for Windows MSVC builds
+#
+# Copy this file to config.toml and update the paths to match your system:
+#   cp .cargo/config.example.toml .cargo/config.toml
+#
+# Or run `cargo run -- doctor` — it will detect your MSVC toolchain and print
+# the correct config block to paste here.
+
+# [env]
+# INCLUDE = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\include;..."
+# LIB = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\lib\\x64;..."
+# LIBCLANG_PATH = "C:\\Program Files\\LLVM\\bin"

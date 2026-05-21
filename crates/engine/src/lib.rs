@@ -66,18 +66,93 @@ use tokio::sync::{RwLock, broadcast, oneshot};
 
 pub use openloom_models::EngineEvent;
 
-pub(crate) const SYSTEM_INSTRUCTION: &str =
-    "You are openLoom, a private AI assistant running locally.
-When you need to use a tool, respond with ONLY a JSON block on a single line:
-{\"tool\": \"<skill_name>\", \"params\": {\"key\": \"value\"}}
-Available tools: [tools]
-When you have the final answer, respond in natural language without JSON.";
+pub(crate) const SYSTEM_INSTRUCTION: &str = "You are openLoom, a coding assistant and AI agent running locally.
+
+## Environment
+- Working directory: [cwd]
+- Platform: [platform]
+
+## Tool Use
+When you need to use a tool, respond with ONLY a JSON block:
+{\"tool\": \"<name>\", \"params\": {\"key\": \"value\"}}
+
+One tool call per response. After getting the result, you may call another tool or give your final answer.
+
+## Available Tools
+
+[tools]
+
+## Workflow
+1. Read files before editing them.
+2. Make minimal, precise edits.
+3. Run tests/checks after changes to verify correctness.
+4. Search before making assumptions about code structure.
+
+## Rules
+- Final answers must be natural language (no JSON).
+- Answer in the same language as the user.
+- Be concise and direct.";
+
+pub(crate) fn system_instruction() -> String {
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "unknown".into());
+    let platform = if cfg!(target_os = "windows") {
+        "Windows"
+    } else if cfg!(target_os = "macos") {
+        "macOS"
+    } else {
+        "Linux"
+    };
+    let project_context = detect_project_context();
+    let mut prompt = SYSTEM_INSTRUCTION
+        .replace("[cwd]", &cwd)
+        .replace("[platform]", platform);
+    if !project_context.is_empty() {
+        prompt.push_str("\n\n## Project Context\n");
+        prompt.push_str(&project_context);
+    }
+    prompt
+}
+
+fn detect_project_context() -> String {
+    let cwd = match std::env::current_dir() {
+        Ok(p) => p,
+        Err(_) => return String::new(),
+    };
+
+    let mut context_parts: Vec<String> = Vec::new();
+
+    if cwd.join("Cargo.toml").exists() {
+        context_parts.push("- Rust project (Cargo.toml found)".into());
+    } else if cwd.join("package.json").exists() {
+        context_parts.push("- Node.js project (package.json found)".into());
+    } else if cwd.join("pyproject.toml").exists() || cwd.join("setup.py").exists() {
+        context_parts.push("- Python project".into());
+    } else if cwd.join("go.mod").exists() {
+        context_parts.push("- Go project (go.mod found)".into());
+    }
+
+    if cwd.join(".git").exists() {
+        context_parts.push("- Git repository".into());
+    }
+
+    if cwd.join("CLAUDE.md").exists()
+        && let Ok(content) = std::fs::read_to_string(cwd.join("CLAUDE.md"))
+    {
+        let preview: String = content.chars().take(500).collect();
+        context_parts.push(format!("- Project instructions (CLAUDE.md):\n{}", preview));
+    }
+
+    context_parts.join("\n")
+}
 
 pub struct Engine {
     router: SmartRouter,
     skills: SkillRegistry,
     inference: Arc<InferenceEngine>,
     cloud: Option<Arc<dyn CloudClient>>,
+    local_client: Option<Arc<dyn CloudClient>>,
     weaver: ContextWeaver,
     persona: Arc<dyn PersonaProvider>,
     memory_tx: std::sync::mpsc::Sender<memory_thread::ProcessRequest>,
@@ -94,17 +169,24 @@ pub struct Engine {
     token_store_tx: std::sync::mpsc::Sender<TokenUsageRecord>,
     model_available: bool,
     last_user_message: Arc<Mutex<Instant>>,
+    skip_permissions: bool,
+    max_output_tokens: usize,
 }
 
 pub struct EngineConfig {
     pub data_dir: PathBuf,
     pub threshold: usize,
     pub cloud_config: Option<openloom_models::ModelConfig>,
+    pub local_config: Option<openloom_models::ModelConfig>,
     pub rate_limit_ms: u64,
     pub heartbeat_interval_secs: u64,
     pub heartbeat_idle_threshold_min: u64,
     /// Optional model path override; when set, use this instead of auto-detection.
     pub model_override: Option<PathBuf>,
+    /// Project scope identifier derived from working directory (e.g. "project:F:/myApp")
+    pub project_scope: String,
+    /// When true, skip permission confirmations (--dangerously-skip-permissions)
+    pub skip_permissions: bool,
 }
 
 impl Engine {
@@ -120,10 +202,13 @@ impl Engine {
             data_dir,
             threshold: 3,
             cloud_config: None,
+            local_config: None,
             rate_limit_ms: 0,
             heartbeat_interval_secs: 1800,
             heartbeat_idle_threshold_min: 120,
             model_override: Some(model_path),
+            project_scope: "global".into(),
+            skip_permissions: true,
         })
     }
 
@@ -170,7 +255,15 @@ impl Engine {
                 .ok()
                 .map(Arc::from)
         });
-        router.set_cloud_available(cloud.is_some());
+
+        let local_client: Option<Arc<dyn CloudClient>> =
+            config.local_config.as_ref().and_then(|cfg| {
+                openloom_inference::create_cloud_client(cfg)
+                    .ok()
+                    .map(Arc::from)
+            });
+
+        router.set_cloud_available(cloud.is_some() || local_client.is_some());
 
         let db_path = config.data_dir.join("data").join("db.sqlite");
         let _ = std::fs::create_dir_all(db_path.parent().unwrap());
@@ -182,8 +275,10 @@ impl Engine {
             openloom_memory::store::SqliteEventStore::run_migrations(&mut conn)?;
         }
 
-        let persona: Arc<dyn PersonaProvider> =
-            Arc::new(CognitionsPersonaProvider::new(db_path.clone()));
+        let persona: Arc<dyn PersonaProvider> = Arc::new(CognitionsPersonaProvider::new(
+            db_path.clone(),
+            config.project_scope.clone(),
+        ));
         let weaver = ContextWeaver::new(Arc::new(NoopCache));
 
         let (event_tx, _) = broadcast::channel(256);
@@ -192,6 +287,7 @@ impl Engine {
             config.threshold,
             event_tx.clone(),
             summarizer_path,
+            config.project_scope.clone(),
         );
         let session_tx = spawn_session_thread(db_path.clone());
         let token_store_tx = spawn_token_store_thread(db_path.clone());
@@ -205,6 +301,7 @@ impl Engine {
             skills,
             inference,
             cloud,
+            local_client,
             weaver,
             persona,
             memory_tx,
@@ -221,6 +318,13 @@ impl Engine {
             token_store_tx,
             model_available,
             last_user_message: Arc::new(Mutex::new(Instant::now())),
+            skip_permissions: config.skip_permissions,
+            max_output_tokens: config
+                .cloud_config
+                .as_ref()
+                .or(config.local_config.as_ref())
+                .map(|c| c.effective_max_output())
+                .unwrap_or(4096),
         };
 
         // Spawn persona watcher (from persona_watcher module)
@@ -300,7 +404,7 @@ impl Engine {
         // Persona failure -> empty string fallback
         let persona_summary = self.persona.summarize().await.unwrap_or_default();
         let assembled = self.weaver.assemble(
-            SYSTEM_INSTRUCTION,
+            &system_instruction(),
             &msg.content,
             &persona_summary,
             skill_ctx.as_deref(),
@@ -315,9 +419,15 @@ impl Engine {
                 )
             }
             TargetModel::Local => {
-                if self.cloud.is_some() {
-                    // Cloud is available but router chose Local (high-confidence keyword match):
-                    // use local model for structured/simple response
+                if let Some(ref local) = self.local_client {
+                    local
+                        .complete(CompletionRequest {
+                            prompt: assembled.prompt.clone(),
+                            ..Default::default()
+                        })
+                        .await?
+                        .text
+                } else if self.cloud.is_some() {
                     self.inference
                         .complete(CompletionRequest {
                             prompt: assembled.prompt.clone(),
@@ -326,7 +436,6 @@ impl Engine {
                         .await?
                         .text
                 } else {
-                    // No cloud configured: local 1.7B is for classification/routing, not chat.
                     Self::NO_CLOUD_RESPONSE.to_string()
                 }
             }
@@ -339,8 +448,15 @@ impl Engine {
                         })
                         .await?
                         .text
+                } else if let Some(ref local) = self.local_client {
+                    local
+                        .complete(CompletionRequest {
+                            prompt: assembled.prompt.clone(),
+                            ..Default::default()
+                        })
+                        .await?
+                        .text
                 } else {
-                    // Router chose Cloud but none is configured — template fallback
                     Self::NO_CLOUD_RESPONSE.to_string()
                 }
             }
@@ -520,10 +636,10 @@ impl Engine {
                     cognition_id
                 )
             })?;
-        let subject: String = conn.query_row(
-            "SELECT subject FROM cognitions WHERE id = ?1",
+        let (subject, scope): (String, String) = conn.query_row(
+            "SELECT subject, scope FROM cognitions WHERE id = ?1",
             rusqlite::params![cognition_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
         store.insert(
             &subject,
@@ -531,6 +647,7 @@ impl Engine {
             &target.value,
             target.confidence,
             target.evidence_count,
+            &scope,
         )?;
         let _ = self.event_bus.send(EngineEvent::CognitionUpdated {
             trait_name: target.trait_name.clone(),
@@ -573,27 +690,136 @@ impl Engine {
         if let Some(ref cloud) = self.cloud {
             return format!("{} ({})", cloud.model_name(), cloud.provider().name());
         }
-        "Qwen3-1.7B (local)".into()
+        if let Some(ref local) = self.local_client {
+            return format!("{} ({})", local.model_name(), local.provider().name());
+        }
+        "no model configured".into()
     }
 
     pub async fn model_context_size(&self) -> usize {
-        // Cloud models: well-known context window sizes
-        if let Some(ref cloud) = self.cloud {
-            return match cloud.provider() {
+        let config = self.config.read().await;
+        // Find first cloud-capable model with context_size set
+        if let Some(cfg) = config.models.iter().find(|m| m.backend.is_cloud_capable()) {
+            if cfg.context_size > 4096 {
+                return cfg.context_size;
+            }
+            if let Some(ref model_name) = cfg.model
+                && let Some(size) = parse_context_hint(model_name)
+            {
+                return size;
+            }
+            return match cfg.backend {
                 openloom_models::ModelBackend::Anthropic => 200_000,
                 openloom_models::ModelBackend::OpenAI => 128_000,
                 openloom_models::ModelBackend::DeepSeek => 64_000,
+                openloom_models::ModelBackend::LmStudio => 32_000,
+                openloom_models::ModelBackend::Ollama => 32_000,
                 _ => 128_000,
             };
         }
-        // Local model: read from stored config
-        let config = self.config.read().await;
         config
             .models
             .iter()
             .find(|m| m.backend == openloom_models::ModelBackend::LlamaCpp)
             .map(|m| m.context_size)
             .unwrap_or(4096)
+    }
+
+    pub fn token_summary_by_model(&self) -> Result<Vec<openloom_memory::store::ModelUsageSummary>> {
+        let conn = rusqlite::Connection::open(&self.db_path)?;
+        let store = openloom_memory::store::TokenStore::new(&conn);
+        store.summary_by_model()
+    }
+
+    pub fn token_usage_today(&self) -> Result<openloom_memory::store::UsageAggregate> {
+        let conn = rusqlite::Connection::open(&self.db_path)?;
+        let store = openloom_memory::store::TokenStore::new(&conn);
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        store.usage_since(&today)
+    }
+
+    pub fn token_usage_session(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<openloom_memory::store::TokenUsageRow>> {
+        let conn = rusqlite::Connection::open(&self.db_path)?;
+        let store = openloom_memory::store::TokenStore::new(&conn);
+        store.query_by_session(session_id, limit)
+    }
+
+    pub fn token_recent(&self, limit: usize) -> Result<Vec<openloom_memory::store::TokenUsageRow>> {
+        let conn = rusqlite::Connection::open(&self.db_path)?;
+        let store = openloom_memory::store::TokenStore::new(&conn);
+        store.recent(limit)
+    }
+
+    pub async fn model_info(&self) -> ModelInfoResult {
+        let (model_id, backend, base_url, api_key_env) = {
+            let config = self.config.read().await;
+            let cloud = config.models.iter().find(|m| m.backend.is_cloud_capable());
+            let local = config
+                .models
+                .iter()
+                .find(|m| m.backend.is_local_inference());
+            let active = cloud.or(local);
+            (
+                active.and_then(|c| c.model.clone()).unwrap_or_default(),
+                active
+                    .map(|c| c.backend.name().to_string())
+                    .unwrap_or_else(|| "none".into()),
+                active.and_then(|c| c.base_url.clone()).unwrap_or_default(),
+                active
+                    .and_then(|c| c.api_key_env.clone())
+                    .unwrap_or_default(),
+            )
+        };
+        let ctx_size = self.model_context_size().await;
+        let api_key_set = if api_key_env.is_empty() {
+            false
+        } else {
+            std::env::var(&api_key_env).is_ok()
+        };
+
+        ModelInfoResult {
+            display_name: self.model_display_name(),
+            model_id,
+            backend,
+            base_url,
+            api_key_env,
+            api_key_set,
+            context_size: ctx_size,
+        }
+    }
+}
+
+pub struct ModelInfoResult {
+    pub display_name: String,
+    pub model_id: String,
+    pub backend: String,
+    pub base_url: String,
+    pub api_key_env: String,
+    pub api_key_set: bool,
+    pub context_size: usize,
+}
+
+fn parse_context_hint(model_name: &str) -> Option<usize> {
+    let start = model_name.find('[')?;
+    let end = model_name.find(']')?;
+    if end <= start + 1 {
+        return None;
+    }
+    let hint = &model_name[start + 1..end];
+    let hint_lower = hint.to_lowercase();
+    if let Some(num_str) = hint_lower.strip_suffix('m') {
+        num_str
+            .parse::<f64>()
+            .ok()
+            .map(|n| (n * 1_000_000.0) as usize)
+    } else if let Some(num_str) = hint_lower.strip_suffix('k') {
+        num_str.parse::<f64>().ok().map(|n| (n * 1_000.0) as usize)
+    } else {
+        hint.parse::<usize>().ok()
     }
 }
 

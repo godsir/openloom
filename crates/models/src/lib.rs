@@ -23,6 +23,8 @@ pub enum ModelBackend {
     Anthropic,
     OpenAI,
     DeepSeek,
+    LmStudio,
+    Ollama,
 }
 
 impl ModelBackend {
@@ -32,7 +34,17 @@ impl ModelBackend {
             ModelBackend::Anthropic => "Anthropic",
             ModelBackend::OpenAI => "OpenAI",
             ModelBackend::DeepSeek => "DeepSeek",
+            ModelBackend::LmStudio => "LmStudio",
+            ModelBackend::Ollama => "Ollama",
         }
+    }
+
+    pub fn is_cloud_capable(&self) -> bool {
+        !matches!(self, ModelBackend::LlamaCpp)
+    }
+
+    pub fn is_local_inference(&self) -> bool {
+        matches!(self, ModelBackend::LmStudio | ModelBackend::Ollama)
     }
 }
 
@@ -49,6 +61,8 @@ pub struct ModelConfig {
     #[serde(default = "default_context_size")]
     pub context_size: usize,
     #[serde(default)]
+    pub max_output_tokens: Option<usize>,
+    #[serde(default)]
     pub n_gpu_layers: usize,
     pub api_key_env: Option<String>,
     #[serde(default)]
@@ -57,6 +71,12 @@ pub struct ModelConfig {
 
 fn default_context_size() -> usize {
     4096
+}
+
+impl ModelConfig {
+    pub fn effective_max_output(&self) -> usize {
+        self.max_output_tokens.unwrap_or(self.context_size / 2)
+    }
 }
 
 impl Default for ModelConfig {
@@ -68,6 +88,7 @@ impl Default for ModelConfig {
             backend: ModelBackend::default(),
             path: None,
             context_size: default_context_size(),
+            max_output_tokens: None,
             n_gpu_layers: 0,
             api_key_env: None,
             base_url: None,
@@ -258,6 +279,19 @@ pub enum EngineEvent {
         event_count: usize,
         suggested_action: Option<String>,
     },
+    PermissionRequired {
+        tool: String,
+        params: serde_json::Value,
+        risk_level: RiskLevel,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum RiskLevel {
+    Low,
+    Medium,
+    High,
+    Forbidden,
 }
 
 // === JSON-RPC types ===

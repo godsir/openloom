@@ -1,16 +1,35 @@
-use super::{Engine, SYSTEM_INSTRUCTION};
+use super::Engine;
 use crate::token_store::TokenUsageRecord;
 use anyhow::Result;
 use chrono::Utc;
 use openloom_inference::CompletionRequest;
 use openloom_models::*;
 use std::sync::atomic::Ordering;
+use tokio::sync::mpsc;
 
 impl Engine {
     pub(crate) async fn agent_loop(
         &self,
         msg: &ChatMessage,
         session_id: &str,
+    ) -> Result<ChatResponse> {
+        self.agent_loop_inner(msg, session_id, None).await
+    }
+
+    pub(crate) async fn agent_loop_streaming(
+        &self,
+        msg: &ChatMessage,
+        session_id: &str,
+        tx: mpsc::Sender<String>,
+    ) -> Result<ChatResponse> {
+        self.agent_loop_inner(msg, session_id, Some(tx)).await
+    }
+
+    async fn agent_loop_inner(
+        &self,
+        msg: &ChatMessage,
+        session_id: &str,
+        tx: Option<mpsc::Sender<String>>,
     ) -> Result<ChatResponse> {
         self.in_flight.fetch_add(1, Ordering::SeqCst);
         let loop_start = std::time::Instant::now();
@@ -24,32 +43,66 @@ impl Engine {
         let mut history: Vec<ChatMessage> = self.get_working_memory(session_id).unwrap_or_default();
         history.push(msg.clone());
 
-        // Build skill list string for system prompt injection
         let skill_list = self.build_skill_list_string();
 
         let mut all_tool_messages: Vec<ChatMessage> = Vec::new();
         let mut last_response = String::new();
+        let mut total_prompt_tokens = 0usize;
+        let mut total_completion_tokens = 0usize;
 
-        let outcome = tokio::time::timeout(std::time::Duration::from_secs(120), async {
-            for _iteration in 0..3 {
+        let (max_iterations, timeout_secs) = {
+            let cfg = self.config.read().await;
+            (
+                cfg.agent.max_iterations.max(3),
+                cfg.agent.timeout_secs.max(60),
+            )
+        };
+
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
+            for _iteration in 0..max_iterations {
                 let persona_summary = self.persona.summarize().await.unwrap_or_default();
-                let system_with_tools = SYSTEM_INSTRUCTION.replace("[tools]", &skill_list);
+                let system_with_tools = crate::system_instruction().replace("[tools]", &skill_list);
                 let assembled =
                     self.weaver
                         .assemble(&system_with_tools, "", &persona_summary, None, &history);
 
                 let response = self.invoke_model_raw(&assembled.prompt).await?;
+                total_prompt_tokens += self.inference.token_count(&assembled.prompt);
+                total_completion_tokens += self.inference.token_count(&response);
 
                 if let Some(tool_call) = self.parse_tool_call(&response) {
+                    // Send thinking marker — extract text before the JSON/fence block
+                    if let Some(ref tx) = tx {
+                        let thinking_text = if let Some(fence) = response.find("```") {
+                            response[..fence].trim()
+                        } else if let Some(brace) = response.find('{') {
+                            response[..brace].trim()
+                        } else {
+                            ""
+                        };
+                        if !thinking_text.is_empty() {
+                            let _ = tx.send(format!("\x01THINK\x02{}", thinking_text)).await;
+                        }
+                        let call_json = serde_json::to_string(&tool_call).unwrap_or_default();
+                        let _ = tx.send(format!("\x01CALL\x02{}", call_json)).await;
+                    }
+
                     *self.agent_state.write().await = AgentState::Acting;
                     let _ = self.event_bus.send(EngineEvent::AgentStateChanged {
                         old_state: AgentState::Thinking,
                         new_state: AgentState::Acting,
                     });
+
                     let result = match self.execute_tool(&tool_call).await {
-                        Ok(output) => output,
+                        Ok(output) => truncate_tool_result(&output),
                         Err(e) => format!("Tool error: {}", e),
                     };
+
+                    // Send result marker
+                    if let Some(ref tx) = tx {
+                        let _ = tx.send(format!("\x01RESULT\x02{}", result)).await;
+                    }
+
                     let ts = Utc::now();
                     history.push(ChatMessage {
                         role: "assistant".into(),
@@ -68,18 +121,27 @@ impl Engine {
                     });
                     all_tool_messages.push(ChatMessage {
                         role: "tool".into(),
-                        content: result.clone(),
+                        content: result,
                         timestamp: ts,
                     });
-                    // On the last iteration, use the tool result as the response
-                    if _iteration == 2 {
-                        last_response = result;
-                    }
+                    *self.agent_state.write().await = AgentState::Thinking;
                 } else {
                     last_response = response;
                     break;
                 }
             }
+
+            if last_response.is_empty() && !all_tool_messages.is_empty() {
+                let persona_summary = self.persona.summarize().await.unwrap_or_default();
+                let system_with_tools = crate::system_instruction().replace("[tools]", &skill_list);
+                let assembled =
+                    self.weaver
+                        .assemble(&system_with_tools, "", &persona_summary, None, &history);
+                last_response = self.invoke_model_raw(&assembled.prompt).await?;
+                total_prompt_tokens += self.inference.token_count(&assembled.prompt);
+                total_completion_tokens += self.inference.token_count(&last_response);
+            }
+
             Ok::<_, anyhow::Error>(last_response)
         })
         .await;
@@ -94,13 +156,14 @@ impl Engine {
 
         match outcome {
             Ok(Ok(ref response)) if response.is_empty() => Err(anyhow::anyhow!(
-                "Agent loop produced no response after 3 iterations"
+                "Agent loop produced no response after {} iterations",
+                max_iterations
             )),
             Ok(Ok(response)) => {
                 let _ = self.save_all_messages(session_id, msg, &all_tool_messages, &response);
 
-                let prompt_tokens = self.inference.token_count(&msg.content);
-                let completion_tokens = self.inference.token_count(&response);
+                let prompt_tokens = total_prompt_tokens;
+                let completion_tokens = total_completion_tokens;
                 let latency_ms = loop_start.elapsed().as_millis() as u64;
                 let _ = self.event_bus.send(EngineEvent::TokenUsage {
                     session_id: session_id.to_string(),
@@ -130,38 +193,57 @@ impl Engine {
                 })
             }
             Ok(Err(e)) => Err(e),
-            Err(_elapsed) => Err(anyhow::anyhow!("Agent loop timed out after 120s")),
+            Err(_elapsed) => Err(anyhow::anyhow!(
+                "Agent loop timed out after {}s",
+                timeout_secs
+            )),
         }
     }
 
     pub(crate) fn build_skill_list_string(&self) -> String {
-        let skills = self.skills.list_all();
+        let skills = self.skills.all_skills();
         if skills.is_empty() {
             return "None".into();
         }
         skills
             .iter()
-            .map(|s| format!("{}: {}", s.name, s.description))
+            .map(|s| format!("### {}\n{}", s.name(), s.context_md()))
             .collect::<Vec<_>>()
-            .join(", ")
+            .join("\n\n")
     }
 
     pub(crate) async fn invoke_model_raw(&self, prompt: &str) -> Result<String> {
+        let max_tokens = self.max_output_tokens;
         if let Some(ref cloud) = self.cloud {
             match cloud
                 .complete(CompletionRequest {
                     prompt: prompt.to_string(),
+                    max_tokens,
                     ..Default::default()
                 })
                 .await
             {
                 Ok(r) => return Ok(r.text),
-                Err(e) => tracing::warn!("Cloud failed, falling back to local: {}", e),
+                Err(e) => tracing::warn!("Cloud failed, trying local: {}", e),
+            }
+        }
+        if let Some(ref local) = self.local_client {
+            match local
+                .complete(CompletionRequest {
+                    prompt: prompt.to_string(),
+                    max_tokens,
+                    ..Default::default()
+                })
+                .await
+            {
+                Ok(r) => return Ok(r.text),
+                Err(e) => tracing::warn!("Local client failed, trying inference engine: {}", e),
             }
         }
         self.inference
             .complete(CompletionRequest {
                 prompt: prompt.to_string(),
+                max_tokens,
                 ..Default::default()
             })
             .await
@@ -170,8 +252,27 @@ impl Engine {
 
     pub(crate) fn parse_tool_call(&self, response: &str) -> Option<ToolCall> {
         let trimmed = response.trim();
-        if let Some(start) = trimmed.find("{\"tool\"") {
-            let slice = &trimmed[start..];
+
+        // Strip markdown code fences if present
+        let content = if let Some(fence_start) = trimmed.find("```") {
+            let after_fence = &trimmed[fence_start + 3..];
+            let body_start = after_fence.find('\n').map(|i| i + 1).unwrap_or(0);
+            let body = &after_fence[body_start..];
+            if let Some(fence_end) = body.find("```") {
+                body[..fence_end].trim()
+            } else {
+                body.trim()
+            }
+        } else {
+            trimmed
+        };
+
+        // Try each '{' as potential start of a tool call JSON object
+        let mut search_from = 0;
+        while let Some(brace_pos) = content[search_from..].find('{') {
+            let abs_pos = search_from + brace_pos;
+            let slice = &content[abs_pos..];
+
             let mut depth = 0;
             let mut end = 0;
             for (i, ch) in slice.char_indices() {
@@ -189,26 +290,37 @@ impl Engine {
             }
             if end > 0 {
                 let json_str = &slice[..=end];
-                match serde_json::from_str::<ToolCall>(json_str) {
-                    Ok(call) => return Some(call),
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to parse tool call JSON: {} -- raw: {}",
-                            e,
-                            json_str
-                        );
-                        return None;
-                    }
+                if let Ok(call) = serde_json::from_str::<ToolCall>(json_str) {
+                    return Some(call);
                 }
             }
+            search_from = abs_pos + 1;
         }
+
         None
     }
 
     pub(crate) async fn execute_tool(&self, call: &ToolCall) -> Result<String> {
+        let risk = openloom_sandbox::classify_risk(&call.tool, &call.params);
+        if openloom_sandbox::should_block(&risk, self.skip_permissions) {
+            let msg = openloom_sandbox::risk_message(&call.tool, &call.params, &risk);
+            return Ok(msg);
+        }
         self.skills
             .invoke(&call.tool, call.params.clone())
             .await
             .map(|v| v.to_string())
     }
+}
+
+fn truncate_tool_result(s: &str) -> String {
+    const MAX: usize = 64000;
+    if s.len() <= MAX {
+        return s.to_string();
+    }
+    format!(
+        "{}\n\n[... {} chars truncated ...]",
+        &s[..MAX],
+        s.len() - MAX
+    )
 }

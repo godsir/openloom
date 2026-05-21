@@ -45,6 +45,18 @@ enum Commands {
     Chat {
         #[arg(long)]
         config: Option<String>,
+        /// Override model (e.g. "anthropic:claude-sonnet-4-20250514")
+        #[arg(long, short = 'm')]
+        model: Option<String>,
+        /// Execute a single prompt and exit (non-interactive)
+        #[arg(short = 'c')]
+        command: Option<String>,
+        /// Continue the most recent session, or provide a session ID
+        #[arg(long = "continue", short = 'r')]
+        resume: Option<Option<String>>,
+        /// Skip all confirmation prompts (dangerous)
+        #[arg(long)]
+        dangerously_skip_permissions: bool,
     },
     /// Single task execution
     Run {
@@ -164,6 +176,7 @@ fn build_engine(
     config: Option<&str>,
     rate_limit_ms: u64,
     model_override: Option<PathBuf>,
+    skip_permissions: bool,
 ) -> anyhow::Result<Engine> {
     let app_config = load_config(config);
     let data_dir = if app_config.storage.data_dir.as_os_str().is_empty() {
@@ -186,6 +199,13 @@ fn build_engine(
         })
         .cloned();
 
+    // Local inference via LM Studio / Ollama (separate from cloud)
+    let local_config = app_config
+        .models
+        .iter()
+        .find(|m| m.backend.is_local_inference())
+        .cloned();
+
     // model_override from CLI takes priority; fall back to config.toml
     let model_override = model_override.or_else(|| {
         app_config
@@ -196,14 +216,21 @@ fn build_engine(
             .map(|p| data_dir.join("models").join(p))
     });
 
+    let project_scope = std::env::current_dir()
+        .map(|p| format!("project:{}", p.display()))
+        .unwrap_or_else(|_| "global".into());
+
     Engine::new(EngineConfig {
         data_dir,
         threshold: app_config.agent.max_iterations,
         cloud_config,
+        local_config,
         rate_limit_ms,
         heartbeat_interval_secs: 1800,
         heartbeat_idle_threshold_min: 120,
         model_override,
+        project_scope,
+        skip_permissions,
     })
 }
 
@@ -232,7 +259,7 @@ async fn main() -> anyhow::Result<()> {
             let model_override = model.map(PathBuf::from);
             let app_config = load_config(config.as_deref());
             let rate_limit_ms = app_config.rate_limit.min_interval_ms;
-            let engine = build_engine(config.as_deref(), rate_limit_ms, model_override)?;
+            let engine = build_engine(config.as_deref(), rate_limit_ms, model_override, false)?;
             engine.load_config_into_engine(app_config).await;
             let server = Server::new(engine, config.as_ref().map(PathBuf::from));
             let shutdown_engine = server.engine().clone();
@@ -244,12 +271,49 @@ async fn main() -> anyhow::Result<()> {
             });
             server.serve(port).await?;
         }
-        Commands::Chat { config } => {
-            let engine = Arc::new(build_engine(config.as_deref(), 100, None)?);
-            tui::run(engine).await?;
+        Commands::Chat {
+            config,
+            model,
+            command,
+            resume,
+            dangerously_skip_permissions,
+        } => {
+            let model_override = model.as_ref().map(PathBuf::from);
+            let engine = Arc::new(build_engine(
+                config.as_deref(),
+                100,
+                model_override,
+                dangerously_skip_permissions,
+            )?);
+
+            if let Some(prompt) = command {
+                let sid = engine.create_session().await?.id;
+                let msg = ChatMessage {
+                    role: "user".into(),
+                    content: prompt,
+                    timestamp: chrono::Utc::now(),
+                };
+                let resp = engine.handle_message(msg, &sid).await?;
+                println!("{}", resp.response);
+            } else {
+                // Resolve session: --resume (latest) / --resume=<id> / new session
+                let session_id = match resume {
+                    Some(Some(id)) => Some(id),
+                    Some(None) => {
+                        // --resume without value: pick the most recent session
+                        engine
+                            .list_sessions()
+                            .await
+                            .ok()
+                            .and_then(|s| s.into_iter().last().map(|s| s.id))
+                    }
+                    None => None,
+                };
+                tui::run(engine, session_id).await?;
+            }
         }
         Commands::Run { task, config } => {
-            let engine = build_engine(config.as_deref(), 100, None)?;
+            let engine = build_engine(config.as_deref(), 100, None, false)?;
 
             let sid = engine.create_session().await?.id;
             let msg = ChatMessage {
@@ -262,7 +326,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Skill { action } => match action {
             SkillAction::List => {
-                let engine = build_engine(None, 100, None)?;
+                let engine = build_engine(None, 100, None, false)?;
                 let skills = engine.list_skills();
                 if skills.is_empty() {
                     println!("No skills registered.");
@@ -284,7 +348,7 @@ async fn main() -> anyhow::Result<()> {
         },
         Commands::Memory { action } => match action {
             MemoryAction::Persona => {
-                let engine = build_engine(None, 100, None)?;
+                let engine = build_engine(None, 100, None, false)?;
                 let summary = engine.persona_summary().await;
                 if summary.is_empty() {
                     println!("No persona data yet. Interact more to build a cognition profile.");
@@ -293,7 +357,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             MemoryAction::Events { limit } => {
-                let engine = build_engine(None, 100, None)?;
+                let engine = build_engine(None, 100, None, false)?;
                 let events = engine.list_events(limit).await?;
                 if events.is_empty() {
                     println!("No events recorded yet.");
@@ -311,7 +375,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             MemoryAction::Cognitions { subject } => {
-                let engine = build_engine(None, 100, None)?;
+                let engine = build_engine(None, 100, None, false)?;
                 let cognitions = engine.list_cognitions(&subject, 20).await?;
                 if cognitions.is_empty() {
                     println!("No cognitions for subject '{}'.", subject);
@@ -414,7 +478,7 @@ async fn main() -> anyhow::Result<()> {
             println!("openLoom {}", env!("CARGO_PKG_VERSION"));
         }
         Commands::Session { action } => {
-            let engine = build_engine(None, 100, None)?;
+            let engine = build_engine(None, 100, None, false)?;
             match action {
                 SessionAction::List => {
                     let sessions = engine.list_sessions().await?;
@@ -476,7 +540,7 @@ fn run_analyze(
 
         let (session_id, context, text) = (parts[0], parts[1], parts[2]);
 
-        match pipeline.process(session_id, text, context) {
+        match pipeline.process(session_id, text, context, "global") {
             Ok(result) => {
                 total_events += result.events.len();
                 if let Some(cog) = result.cognition_triggered {

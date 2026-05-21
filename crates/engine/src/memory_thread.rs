@@ -21,6 +21,7 @@ pub fn spawn_memory_thread(
     threshold: usize,
     event_tx: broadcast::Sender<EngineEvent>,
     _summarizer_path: Option<PathBuf>,
+    project_scope: String,
 ) -> mpsc::Sender<ProcessRequest> {
     let (tx, rx) = mpsc::channel::<ProcessRequest>();
 
@@ -41,12 +42,13 @@ pub fn spawn_memory_thread(
                 text_len = req.text.len(),
                 "memory pipeline processing"
             );
-            match pipeline.process(&req.session_id, &req.text, &req.context) {
+            match pipeline.process(&req.session_id, &req.text, &req.context, &project_scope) {
                 Ok(result) => {
                     if let Some(cog) = result.cognition_triggered {
                         tracing::info!(
                             trait_name = %cog.trait_name,
                             confidence = cog.confidence,
+                            scope = %cog.scope,
                             "cognition triggered"
                         );
                         let _ = event_tx.send(EngineEvent::CognitionUpdated {
@@ -62,6 +64,7 @@ pub fn spawn_memory_thread(
                             &cog.summary,
                             cog.confidence,
                             cog.evidence_count,
+                            &cog.scope,
                         );
                     }
                 }

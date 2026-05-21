@@ -1,76 +1,109 @@
-# openLoom configuration file
-# Location: ~/.local/share/openLoom/config.toml (Linux)
-#           ~/Library/Application Support/openLoom/config.toml (macOS)
-#           %APPDATA%/openLoom/config.toml (Windows)
+# openLoom 配置文件
+# 位置: %APPDATA%/openLoom/config.toml (Windows)
+#       ~/Library/Application Support/openLoom/config.toml (macOS)
+#       ~/.local/share/openLoom/config.toml (Linux)
+
+# ═══════════════════════════════════════════════════════════
+# 模型配置 (可配多个，系统按优先级自动选择)
+# ═══════════════════════════════════════════════════════════
+
+# ── 本地推理 (LM Studio / Ollama) ──────────────────────────
+# 用于: 意图分类、简单问答、离线对话
+# 优先级: 当 Router 判定为简单请求时使用本地模型
 
 [[models]]
-name = "router"
-path = "qwen3-1.7b-q8_0.gguf"
-model_type = "Router"
-backend = "LlamaCpp"
-context_size = 4096
-n_gpu_layers = 32
+name = "lmstudio"
+backend = "LmStudio"
+model = "qwen2.5-7b-instruct"
+context_size = 32000
+# base_url = "http://localhost:1234/v1"   # LM Studio 默认端口
 
-[[models]]
-name = "summarizer"
-path = "qwen3-8b-q4_k_m.gguf"
-model_type = "Summarizer"
-backend = "LlamaCpp"
-context_size = 8192
-n_gpu_layers = 32
-
-# --- Cloud API 配置 (取消注释并填入你的 API Key) ---
 # [[models]]
-# name = "cloud-primary"
-# backend = "Anthropic"          # Anthropic / OpenAI / DeepSeek
-# model = "claude-sonnet-4-6"
+# name = "ollama"
+# backend = "Ollama"
+# model = "qwen2.5:7b"
+# context_size = 32000
+# base_url = "http://localhost:11434/v1"  # Ollama 默认端口
+
+# ── 云端模型 ──────────────────────────────────────────────
+# 用于: 复杂对话、Agent Loop 推理、工具调用
+# 优先级: 当 Router 判定为复杂请求或需要工具时使用云端
+
+# [[models]]
+# name = "claude"
+# backend = "Anthropic"
+# model = "claude-sonnet-4-20250514"
 # api_key_env = "ANTHROPIC_API_KEY"
-# base_url = "https://api.anthropic.com"  # 可选，自定义 API 地址（代理/中转）
+# context_size = 200000
+# max_output_tokens = 16384       # 不设则取 context_size / 2
+# base_url = "https://api.anthropic.com"  # 可选,支持代理/中转
 
 # [[models]]
-# name = "cloud-openai"
+# name = "gpt4o"
 # backend = "OpenAI"
 # model = "gpt-4o"
 # api_key_env = "OPENAI_API_KEY"
-# base_url = "https://api.openai.com"    # 可选，支持 OpenAI 兼容接口
+# context_size = 128000
 
 # [[models]]
-# name = "cloud-deepseek"
+# name = "deepseek"
 # backend = "DeepSeek"
 # model = "deepseek-chat"
 # api_key_env = "DEEPSEEK_API_KEY"
-# base_url = "https://api.deepseek.com"  # 可选
+# context_size = 64000
+
+# ── 本地 GGUF (需 C++ 工具链) ──────────────────────────────
+# [[models]]
+# name = "local-qwen"
+# backend = "LlamaCpp"
+# path = "Qwen3-1.7B-Q8_0.gguf"
+# model_type = "Router"
+# context_size = 4096
+# n_gpu_layers = 32
+
+# ═══════════════════════════════════════════════════════════
+# 路由配置
+# ═══════════════════════════════════════════════════════════
 
 [router]
-keyword_threshold = 0.85
-fallback_threshold = 0.7
+keyword_threshold = 0.85    # 关键词匹配置信度阈值
+fallback_threshold = 0.7    # 降级到云端的阈值
+
+# ═══════════════════════════════════════════════════════════
+# Agent 配置
+# ═══════════════════════════════════════════════════════════
+
+[agent]
+max_iterations = 3          # Agent Loop 最大工具调用轮次
+timeout_secs = 120          # 单次 Agent Loop 超时
+
+# ═══════════════════════════════════════════════════════════
+# 存储
+# ═══════════════════════════════════════════════════════════
+
+[storage]
+# 自定义数据目录,不设置则使用系统默认
+# data_dir = "D:/openLoomData"
+
+# ═══════════════════════════════════════════════════════════
+# 其他
+# ═══════════════════════════════════════════════════════════
+
+[rate_limit]
+min_interval_ms = 100       # 请求最小间隔 (毫秒)
+
+[persona]
+top_n = 5                   # Persona 最多取前 N 个认知
+recency_decay_days = 30     # 认知时间衰减天数
 
 [server]
 host = "127.0.0.1"
 
-[storage]
-# 自定义数据目录（模型、数据库等），不设置则使用系统默认
-# Windows: %APPDATA%/openLoom
-# macOS:   ~/Library/Application Support/openLoom
-# Linux:   ~/.local/share/openLoom
-# data_dir = "D:/openLoomData"
-
 [logging]
 level = "INFO"
-log_content = false
+log_content = false         # 不记录用户对话内容
 
 [cache]
 block_size = 1024
 max_blocks = 32
 total_budget_mb = 5120
-
-[agent]
-max_iterations = 3
-timeout_secs = 120
-
-[persona]
-top_n = 5
-recency_decay_days = 30
-
-[rate_limit]
-min_interval_ms = 100

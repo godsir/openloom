@@ -5,13 +5,15 @@ use std::sync::Mutex;
 
 pub struct CognitionsPersonaProvider {
     db_path: PathBuf,
+    project_scope: String,
     cache: Mutex<Option<String>>,
 }
 
 impl CognitionsPersonaProvider {
-    pub fn new(db_path: PathBuf) -> Self {
+    pub fn new(db_path: PathBuf, project_scope: String) -> Self {
         Self {
             db_path,
+            project_scope,
             cache: Mutex::new(None),
         }
     }
@@ -20,19 +22,17 @@ impl CognitionsPersonaProvider {
 #[async_trait::async_trait]
 impl PersonaProvider for CognitionsPersonaProvider {
     async fn summarize(&self) -> anyhow::Result<String> {
-        // Hold lock for entire read-and-cache to avoid TOCTOU race
         let mut cache = self.cache.lock().unwrap();
         if let Some(ref cached) = *cache {
             return Ok(cached.clone());
         }
 
-        // Open read-only connection
         let conn = Connection::open(&self.db_path)?;
 
         let now = chrono::Utc::now().timestamp();
         let mut stmt = conn.prepare(
-            "SELECT trait, value, confidence, evidence_count, last_updated, source
-             FROM cognitions WHERE subject = 'USER'",
+            "SELECT trait, value, confidence, evidence_count, last_updated, source, scope
+             FROM cognitions WHERE subject = 'USER' AND (scope = 'global' OR scope = ?1)",
         )?;
 
         struct ScoredRow {
@@ -41,13 +41,14 @@ impl PersonaProvider for CognitionsPersonaProvider {
         }
 
         let mut rows: Vec<ScoredRow> = Vec::new();
-        let query_rows = stmt.query_map([], |row| {
+        let query_rows = stmt.query_map(rusqlite::params![&self.project_scope], |row| {
             let trait_name: String = row.get(0)?;
             let value: String = row.get(1)?;
             let confidence: f64 = row.get(2)?;
             let evidence_count: i64 = row.get(3)?;
             let last_updated: i64 = row.get(4)?;
             let source: String = row.get(5)?;
+            let scope: String = row.get(6)?;
             Ok((
                 trait_name,
                 value,
@@ -55,17 +56,23 @@ impl PersonaProvider for CognitionsPersonaProvider {
                 evidence_count,
                 last_updated,
                 source,
+                scope,
             ))
         })?;
 
         for row in query_rows {
-            let (trait_name, value, confidence, evidence_count, last_updated, source) = row?;
+            let (trait_name, value, confidence, evidence_count, last_updated, source, scope) = row?;
             let days_since = ((now - last_updated) as f64 / 86400.0).max(0.0);
             let recency_decay = (-days_since / 30.0).exp();
             let base_score = confidence * (1.0 + (evidence_count.max(0) as f64).ln());
             let weighted_score = base_score * recency_decay;
             let source_priority = if source == "observed" { 1.0 } else { 0.0 };
-            let final_score = weighted_score + source_priority * 5.0;
+            let scope_bonus = if scope == self.project_scope {
+                3.0
+            } else {
+                0.0
+            };
+            let final_score = weighted_score + source_priority * 5.0 + scope_bonus;
 
             rows.push(ScoredRow {
                 value: format!("{}：{}", trait_name, value),
@@ -113,7 +120,8 @@ mod tests {
                 first_seen INTEGER,
                 last_updated INTEGER,
                 version INTEGER DEFAULT 1,
-                source TEXT NOT NULL DEFAULT 'observed'
+                source TEXT NOT NULL DEFAULT 'observed',
+                scope TEXT NOT NULL DEFAULT 'global'
             );",
         )
         .unwrap();
@@ -126,7 +134,7 @@ mod tests {
         let conn = Connection::open(&db_path).unwrap();
         setup_cognitions_table(&conn);
 
-        let provider = CognitionsPersonaProvider::new(db_path.clone());
+        let provider = CognitionsPersonaProvider::new(db_path.clone(), "global".into());
         let rt = tokio::runtime::Runtime::new().unwrap();
         let summary = rt.block_on(provider.summarize()).unwrap();
         assert!(summary.is_empty());
@@ -151,7 +159,7 @@ mod tests {
             rusqlite::params![now],
         ).unwrap();
 
-        let provider = CognitionsPersonaProvider::new(db_path.clone());
+        let provider = CognitionsPersonaProvider::new(db_path.clone(), "global".into());
         let rt = tokio::runtime::Runtime::new().unwrap();
         let summary = rt.block_on(provider.summarize()).unwrap();
         assert!(summary.contains("risk_tendency"));
@@ -172,7 +180,7 @@ mod tests {
             rusqlite::params![now],
         ).unwrap();
 
-        let provider = CognitionsPersonaProvider::new(db_path.clone());
+        let provider = CognitionsPersonaProvider::new(db_path.clone(), "global".into());
         let rt = tokio::runtime::Runtime::new().unwrap();
         let s1 = rt.block_on(provider.summarize()).unwrap();
         let s2 = rt.block_on(provider.summarize()).unwrap();
@@ -192,7 +200,7 @@ mod tests {
             rusqlite::params![now],
         ).unwrap();
 
-        let provider = CognitionsPersonaProvider::new(db_path.clone());
+        let provider = CognitionsPersonaProvider::new(db_path.clone(), "global".into());
         let rt = tokio::runtime::Runtime::new().unwrap();
         let s1 = rt.block_on(provider.summarize()).unwrap();
         provider.invalidate();
@@ -220,7 +228,7 @@ mod tests {
             rusqlite::params![now],
         ).unwrap();
 
-        let provider = CognitionsPersonaProvider::new(db_path.clone());
+        let provider = CognitionsPersonaProvider::new(db_path.clone(), "global".into());
         let rt = tokio::runtime::Runtime::new().unwrap();
         let summary = rt.block_on(provider.summarize()).unwrap();
         // Both should appear (both in top 5), observed should come first
@@ -230,5 +238,98 @@ mod tests {
             obs_pos < inf_pos,
             "observed trait should appear before inferred"
         );
+    }
+
+    #[test]
+    fn test_persona_scope_isolation() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = Connection::open(&db_path).unwrap();
+        setup_cognitions_table(&conn);
+        let now = chrono::Utc::now().timestamp();
+
+        // Global cognition — visible to all projects
+        conn.execute(
+            "INSERT INTO cognitions (subject, trait, value, confidence, evidence_count, first_seen, last_updated, source, scope)
+             VALUES ('USER', 'profession', '后端工程师', 0.9, 5, ?1, ?1, 'observed', 'global')",
+            rusqlite::params![now],
+        ).unwrap();
+        // Project A cognition
+        conn.execute(
+            "INSERT INTO cognitions (subject, trait, value, confidence, evidence_count, first_seen, last_updated, source, scope)
+             VALUES ('USER', 'tech_stack', '用React+TypeScript', 0.85, 3, ?1, ?1, 'observed', 'project:F:/projectA')",
+            rusqlite::params![now],
+        ).unwrap();
+        // Project B cognition
+        conn.execute(
+            "INSERT INTO cognitions (subject, trait, value, confidence, evidence_count, first_seen, last_updated, source, scope)
+             VALUES ('USER', 'tech_stack', '用Rust+Axum', 0.85, 3, ?1, ?1, 'observed', 'project:F:/projectB')",
+            rusqlite::params![now],
+        ).unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        // Provider for project A should see global + A, not B
+        let provider_a =
+            CognitionsPersonaProvider::new(db_path.clone(), "project:F:/projectA".into());
+        let summary_a = rt.block_on(provider_a.summarize()).unwrap();
+        assert!(
+            summary_a.contains("profession"),
+            "global cognition should be visible"
+        );
+        assert!(
+            summary_a.contains("React"),
+            "project A cognition should be visible"
+        );
+        assert!(
+            !summary_a.contains("Axum"),
+            "project B cognition should NOT be visible"
+        );
+
+        // Provider for project B should see global + B, not A
+        let provider_b =
+            CognitionsPersonaProvider::new(db_path.clone(), "project:F:/projectB".into());
+        let summary_b = rt.block_on(provider_b.summarize()).unwrap();
+        assert!(
+            summary_b.contains("profession"),
+            "global cognition should be visible"
+        );
+        assert!(
+            summary_b.contains("Axum"),
+            "project B cognition should be visible"
+        );
+        assert!(
+            !summary_b.contains("React"),
+            "project A cognition should NOT be visible"
+        );
+    }
+
+    #[test]
+    fn test_persona_project_scope_bonus() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = Connection::open(&db_path).unwrap();
+        setup_cognitions_table(&conn);
+        let now = chrono::Utc::now().timestamp();
+
+        // Global cognition with high confidence
+        conn.execute(
+            "INSERT INTO cognitions (subject, trait, value, confidence, evidence_count, first_seen, last_updated, source, scope)
+             VALUES ('USER', 'knowledge', '了解AI', 0.95, 10, ?1, ?1, 'observed', 'global')",
+            rusqlite::params![now],
+        ).unwrap();
+        // Project cognition with lower confidence
+        conn.execute(
+            "INSERT INTO cognitions (subject, trait, value, confidence, evidence_count, first_seen, last_updated, source, scope)
+             VALUES ('USER', 'tech_stack', '用Vue3', 0.7, 3, ?1, ?1, 'observed', 'project:F:/myApp')",
+            rusqlite::params![now],
+        ).unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let provider = CognitionsPersonaProvider::new(db_path.clone(), "project:F:/myApp".into());
+        let summary = rt.block_on(provider.summarize()).unwrap();
+        // Both should appear — project scope gets bonus so it ranks well
+        assert!(summary.contains("Vue3"));
+        assert!(summary.contains("AI"));
     }
 }

@@ -142,5 +142,20 @@ fn event_to_notification(event: &EngineEvent) -> serde_json::Value {
                 }
             })
         }
+        EngineEvent::PermissionRequired {
+            tool,
+            params,
+            risk_level,
+        } => {
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "permission.required",
+                "params": {
+                    "tool": tool,
+                    "params": params,
+                    "risk_level": risk_level
+                }
+            })
+        }
     }
 }

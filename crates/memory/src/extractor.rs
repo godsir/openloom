@@ -1,8 +1,6 @@
 use crate::event::{Event, EventType};
 use regex::Regex;
 
-/// A single extraction rule that matches text against a regex pattern
-/// and produces an event with a specified type, action, and confidence threshold.
 pub struct ExtractionRule {
     pub pattern: Regex,
     pub event_type: EventType,
@@ -10,94 +8,127 @@ pub struct ExtractionRule {
     pub min_confidence: f64,
 }
 
-/// A rule-based event extractor that runs text through a collection of
-/// [`ExtractionRule`]s and returns all matching events.
 pub struct RuleBasedExtractor {
     rules: Vec<ExtractionRule>,
 }
 
 impl RuleBasedExtractor {
-    /// Creates a new `RuleBasedExtractor` with the given rules.
     pub fn new(rules: Vec<ExtractionRule>) -> Self {
         Self { rules }
     }
 
-    /// Creates a `RuleBasedExtractor` pre-configured with default extraction
-    /// rules covering behavior patterns, preferences, and emotional states.
     pub fn with_default_rules() -> Self {
         let rules = vec![
-            // 行为模式
+            // ── 兴趣爱好 ──
             ExtractionRule {
-                pattern: Regex::new(r"(亏|跌|赔).*(加仓|补仓|买入|抄底)").unwrap(),
-                event_type: EventType::BehaviorPattern,
-                action: "loss_chase".into(),
-                min_confidence: 0.75,
-            },
-            ExtractionRule {
-                pattern: Regex::new(r"(追高|追涨|涨停.*买)").unwrap(),
-                event_type: EventType::BehaviorPattern,
-                action: "chase_high".into(),
-                min_confidence: 0.75,
-            },
-            ExtractionRule {
-                pattern: Regex::new(r"(不止损|舍不得割|扛着|死扛)").unwrap(),
-                event_type: EventType::BehaviorPattern,
-                action: "avoid_stop_loss".into(),
-                min_confidence: 0.70,
-            },
-            // 偏好
-            ExtractionRule {
-                pattern: Regex::new(r"(喜欢|偏好|更爱|倾向).*(短线|快进快出|日内)").unwrap(),
+                pattern: Regex::new(r"(喜欢|爱好|感兴趣|热爱|着迷|痴迷).{0,10}(编程|音乐|游戏|运动|读书|旅行|摄影|画画|烹饪|电影|动漫|写作|健身|钓鱼|园艺)").unwrap(),
                 event_type: EventType::Preference,
-                action: "prefers_short_term".into(),
+                action: "interest_hobby".into(),
                 min_confidence: 0.80,
             },
+            // ── 职业身份 ──
             ExtractionRule {
-                pattern: Regex::new(r"(喜欢|偏好|更爱|倾向).*(长线|价值投资|长期持有)").unwrap(),
-                event_type: EventType::Preference,
-                action: "prefers_long_term".into(),
+                pattern: Regex::new(r"(我是|我做|我在).{0,6}(工程师|开发|设计师|产品经理|学生|老师|医生|律师|会计|销售|运营|管理|创业|研究|分析师|自由职业)").unwrap(),
+                event_type: EventType::BehaviorPattern,
+                action: "profession_identity".into(),
+                min_confidence: 0.85,
+            },
+            // ── 技能水平 ──
+            ExtractionRule {
+                pattern: Regex::new(r"(擅长|精通|熟悉|会用|学过|在学|新手|刚入门|不太懂|不太会).{0,10}(Python|Rust|Java|JavaScript|前端|后端|算法|机器学习|数据分析|PS|设计|英语|日语)").unwrap(),
+                event_type: EventType::BehaviorPattern,
+                action: "skill_level".into(),
                 min_confidence: 0.80,
             },
+            // ── 通用偏好 ──
             ExtractionRule {
-                pattern: Regex::new(r"(喜欢|偏好|更爱|倾向).*(科技股|成长股|AI|芯片|新能源)")
-                    .unwrap(),
-                event_type: EventType::Preference,
-                action: "prefers_tech_stocks".into(),
-                min_confidence: 0.80,
-            },
-            // 通用偏好
-            ExtractionRule {
-                pattern: Regex::new(r"还是更?(喜欢|习惯|倾向)(用|做|看)").unwrap(),
+                pattern: Regex::new(r"(喜欢|偏好|更爱|倾向|习惯)(用|做|看|吃|玩|听|写|选)").unwrap(),
                 event_type: EventType::Preference,
                 action: "general_preference".into(),
-                min_confidence: 0.65,
-            },
-            // 情绪
-            ExtractionRule {
-                pattern: Regex::new(r"(沮丧|失落|难过|伤心|绝望|崩溃)").unwrap(),
-                event_type: EventType::EmotionalState,
-                action: "negative_emotional".into(),
                 min_confidence: 0.70,
             },
             ExtractionRule {
-                pattern: Regex::new(r"(开心|兴奋|激动|高兴|爽)").unwrap(),
+                pattern: Regex::new(r"(讨厌|不喜欢|烦|受不了|反感).{0,8}").unwrap(),
+                event_type: EventType::Preference,
+                action: "dislike".into(),
+                min_confidence: 0.70,
+            },
+            // ── 情绪状态 ──
+            ExtractionRule {
+                pattern: Regex::new(r"(开心|高兴|兴奋|激动|爽|满足|愉快|欣慰)").unwrap(),
                 event_type: EventType::EmotionalState,
-                action: "positive_emotional".into(),
+                action: "positive_mood".into(),
                 min_confidence: 0.70,
             },
             ExtractionRule {
-                pattern: Regex::new(r"(焦虑|担心|害怕|紧张|不安)").unwrap(),
+                pattern: Regex::new(r"(沮丧|失落|难过|伤心|绝望|崩溃|抑郁|郁闷|烦躁)").unwrap(),
                 event_type: EventType::EmotionalState,
-                action: "anxious".into(),
+                action: "negative_mood".into(),
                 min_confidence: 0.70,
+            },
+            ExtractionRule {
+                pattern: Regex::new(r"(焦虑|担心|害怕|紧张|不安|压力大|累|疲惫)").unwrap(),
+                event_type: EventType::EmotionalState,
+                action: "stressed".into(),
+                min_confidence: 0.70,
+            },
+            // ── 需求目标 ──
+            ExtractionRule {
+                pattern: Regex::new(r"(希望|想要|需要|打算|计划|准备|目标是).{0,15}(学|做|买|换|去|找|完成|实现)").unwrap(),
+                event_type: EventType::BehaviorPattern,
+                action: "goal_expressed".into(),
+                min_confidence: 0.75,
+            },
+            // ── 工作方式 ──
+            ExtractionRule {
+                pattern: Regex::new(r"(习惯|通常|一般|总是|经常).{0,8}(早上|晚上|深夜|周末|远程|在家|在公司)").unwrap(),
+                event_type: EventType::BehaviorPattern,
+                action: "work_habit".into(),
+                min_confidence: 0.70,
+            },
+            // ── 知识领域 ──
+            ExtractionRule {
+                pattern: Regex::new(r"(了解|知道|研究|关注|涉猎|专注).{0,6}(AI|人工智能|区块链|金融|量化|嵌入式|云计算|安全|前端|后端|运维|设计)").unwrap(),
+                event_type: EventType::BehaviorPattern,
+                action: "knowledge_domain".into(),
+                min_confidence: 0.75,
+            },
+            // ── 沟通偏好 ──
+            ExtractionRule {
+                pattern: Regex::new(r"(请|麻烦|帮我).{0,4}(简洁|详细|用中文|用英文|举个例子|不要太长|一步一步)").unwrap(),
+                event_type: EventType::Preference,
+                action: "communication_style".into(),
+                min_confidence: 0.75,
+            },
+            // ── Coding 偏好 ──
+            ExtractionRule {
+                pattern: Regex::new(r"(用|写|改成|换成|迁移到).{0,6}(React|Vue|Angular|Svelte|Next|Nuxt|Express|FastAPI|Django|Spring|Rust|Go|TypeScript|Python|Java|C\+\+|Swift)").unwrap(),
+                event_type: EventType::Preference,
+                action: "tech_stack_preference".into(),
+                min_confidence: 0.80,
+            },
+            ExtractionRule {
+                pattern: Regex::new(r"(不要|别|不用).{0,4}(注释|comment|文档|docstring|type hint|any|console\.log)").unwrap(),
+                event_type: EventType::Preference,
+                action: "code_style_dislike".into(),
+                min_confidence: 0.80,
+            },
+            ExtractionRule {
+                pattern: Regex::new(r"(用|加上|要有|保持).{0,4}(TDD|测试|unit test|type safe|严格模式|eslint|prettier|fmt|clippy)").unwrap(),
+                event_type: EventType::Preference,
+                action: "code_quality_preference".into(),
+                min_confidence: 0.75,
+            },
+            ExtractionRule {
+                pattern: Regex::new(r"(这个|我的|当前).{0,4}(项目|工程|仓库|repo).{0,6}(是|用的|基于)").unwrap(),
+                event_type: EventType::BehaviorPattern,
+                action: "project_context".into(),
+                min_confidence: 0.80,
             },
         ];
         Self::new(rules)
     }
 
-    /// Runs all extraction rules against the given text and returns a
-    /// `Vec<Event>` containing every match. `context` is attached to each
-    /// produced event for downstream categorization.
     pub fn extract(&self, text: &str, context: &str) -> Vec<Event> {
         let mut events = Vec::new();
         for rule in &self.rules {
@@ -125,20 +156,34 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_loss_chase_pattern() {
+    fn test_extract_interest() {
         let extractor = make_extractor();
-        let text = "虽然已经亏了30%，但是我觉得还能涨回来，我又加仓了";
-        let events = extractor.extract(text, "trading");
+        let text = "我很喜欢编程，尤其是Rust语言";
+        let events = extractor.extract(text, "chat");
         assert!(!events.is_empty());
-        let loss_chase = events.iter().find(|e| e.action == "loss_chase");
-        assert!(loss_chase.is_some());
-        assert!(loss_chase.unwrap().confidence >= 0.7);
+        assert!(events.iter().any(|e| e.action == "interest_hobby"));
+    }
+
+    #[test]
+    fn test_extract_profession() {
+        let extractor = make_extractor();
+        let text = "我是一名后端开发工程师，写了5年代码了";
+        let events = extractor.extract(text, "chat");
+        assert!(events.iter().any(|e| e.action == "profession_identity"));
+    }
+
+    #[test]
+    fn test_extract_skill() {
+        let extractor = make_extractor();
+        let text = "我擅长Python和数据分析，但Rust我还是新手";
+        let events = extractor.extract(text, "chat");
+        assert!(events.iter().any(|e| e.action == "skill_level"));
     }
 
     #[test]
     fn test_extract_preference() {
         let extractor = make_extractor();
-        let text = "我还是更喜欢用Python写代码，Java太啰嗦了";
+        let text = "我还是更喜欢用Vim写代码";
         let events = extractor.extract(text, "coding");
         let pref = events
             .iter()
@@ -147,75 +192,34 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_mood() {
+        let extractor = make_extractor();
+        let text = "今天工作特别累，压力大到失眠";
+        let events = extractor.extract(text, "mood");
+        assert!(events.iter().any(|e| e.action == "stressed"));
+    }
+
+    #[test]
     fn test_no_false_positive() {
         let extractor = make_extractor();
         let text = "今天天气不错，我去公园散了会步";
         let events = extractor.extract(text, "casual");
-        assert!(
-            events.is_empty(),
-            "casual chat should not produce any events, got: {:?}",
-            events
-        );
+        assert!(events.is_empty());
     }
 
     #[test]
-    fn test_emotional_state_detection() {
+    fn test_extract_goal() {
         let extractor = make_extractor();
-        let text = "我今天真的很沮丧，工作上一堆破事，感觉什么都做不好";
-        let events = extractor.extract(text, "mood");
-        let emotion = events
-            .iter()
-            .find(|e| e.event_type == EventType::EmotionalState);
-        assert!(emotion.is_some());
+        let text = "我计划下个月去学习机器学习";
+        let events = extractor.extract(text, "chat");
+        assert!(events.iter().any(|e| e.action == "goal_expressed"));
     }
 
     #[test]
-    fn test_extract_chase_high() {
+    fn test_extract_communication_style() {
         let extractor = make_extractor();
-        let text = "今天这行情太疯狂了，大家都在追高，我忍不住也追涨了一把";
-        let events = extractor.extract(text, "trading");
-        let chase_high = events.iter().find(|e| e.action == "chase_high");
-        assert!(chase_high.is_some());
-        assert!(chase_high.unwrap().confidence >= 0.7);
-    }
-
-    #[test]
-    fn test_extract_avoid_stop_loss() {
-        let extractor = make_extractor();
-        let text = "明明已经亏了20%，但是我就是舍不得割，总觉得还能扛着回本";
-        let events = extractor.extract(text, "trading");
-        let avoid = events.iter().find(|e| e.action == "avoid_stop_loss");
-        assert!(avoid.is_some());
-        assert!(avoid.unwrap().confidence >= 0.65);
-    }
-
-    #[test]
-    fn test_extract_positive_emotional() {
-        let extractor = make_extractor();
-        let text = "今天涨停了，好开心！这波赚大了，太爽了";
-        let events = extractor.extract(text, "trading");
-        let positive = events.iter().find(|e| e.action == "positive_emotional");
-        assert!(positive.is_some());
-        assert!(positive.unwrap().confidence >= 0.65);
-    }
-
-    #[test]
-    fn test_extract_anxious() {
-        let extractor = make_extractor();
-        let text = "我最近总是焦虑不安，担心明天大盘要崩了，好害怕";
-        let events = extractor.extract(text, "mood");
-        let anxious = events.iter().find(|e| e.action == "anxious");
-        assert!(anxious.is_some());
-        assert!(anxious.unwrap().confidence >= 0.65);
-    }
-
-    #[test]
-    fn test_extract_prefers_tech_stocks() {
-        let extractor = make_extractor();
-        let text = "我更喜欢科技股，尤其是AI和芯片板块的成长股";
-        let events = extractor.extract(text, "preference");
-        let tech = events.iter().find(|e| e.action == "prefers_tech_stocks");
-        assert!(tech.is_some());
-        assert!(tech.unwrap().confidence >= 0.75);
+        let text = "请帮我用中文解释一下这个概念";
+        let events = extractor.extract(text, "chat");
+        assert!(events.iter().any(|e| e.action == "communication_style"));
     }
 }

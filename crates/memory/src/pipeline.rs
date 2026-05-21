@@ -26,6 +26,7 @@ pub struct CognitionUpdate {
     pub confidence: f64,
     pub summary: String,
     pub reasoning: Option<String>,
+    pub scope: String,
 }
 
 /// The result of processing a single conversation turn through the memory pipeline.
@@ -81,6 +82,7 @@ impl MemoryPipeline {
         session_id: &str,
         text: &str,
         context: &str,
+        project_scope: &str,
     ) -> Result<PipelineResult> {
         // Stage 1: Extract events from text
         let mut events = self.extractor.extract(text, context);
@@ -115,6 +117,9 @@ impl MemoryPipeline {
                     confidence: avg_conf,
                     summary: self.generate_summary(&event.action, count, avg_conf),
                     reasoning: None,
+                    scope: self
+                        .action_to_scope(&event.action, project_scope)
+                        .to_string(),
                 });
             }
         }
@@ -132,63 +137,111 @@ impl MemoryPipeline {
 
     fn action_to_trait(&self, action: &str) -> String {
         match action {
-            "loss_chase" => "risk_tendency".into(),
-            "chase_high" => "entry_timing".into(),
-            "avoid_stop_loss" => "risk_management".into(),
-            "prefers_short_term" => "trading_style".into(),
-            "prefers_long_term" => "trading_style".into(),
-            "prefers_tech_stocks" => "sector_preference".into(),
-            "negative_emotional" => "emotional_state".into(),
-            "positive_emotional" => "emotional_state".into(),
-            "anxious" => "emotional_state".into(),
+            "interest_hobby" => "interests".into(),
+            "profession_identity" => "profession".into(),
+            "skill_level" => "skills".into(),
+            "general_preference" | "dislike" | "communication_style" => "preferences".into(),
+            "positive_mood" | "negative_mood" | "stressed" => "emotional_state".into(),
+            "goal_expressed" => "goals".into(),
+            "work_habit" => "work_style".into(),
+            "knowledge_domain" => "knowledge".into(),
+            "tech_stack_preference" => "tech_stack".into(),
+            "code_style_dislike" | "code_quality_preference" => "coding_style".into(),
+            "project_context" => "project".into(),
             _ => "general_behavior".into(),
+        }
+    }
+
+    fn action_to_scope<'a>(&self, action: &str, project_scope: &'a str) -> &'a str {
+        match action {
+            "tech_stack_preference"
+            | "code_style_dislike"
+            | "code_quality_preference"
+            | "project_context"
+            | "goal_expressed" => project_scope,
+            _ => "global",
         }
     }
 
     fn generate_summary(&self, action: &str, count: usize, confidence: f64) -> String {
         match action {
-            "loss_chase" => format!(
-                "用户存在赌徒补仓倾向：在亏损状态下多次加仓（{}次观察，置信度{:.0}%）",
+            "interest_hobby" => format!(
+                "用户对某些爱好/兴趣表现出持续热情（{}次提及，置信度{:.0}%）",
                 count,
                 confidence * 100.0
             ),
-            "chase_high" => format!(
-                "用户有追高行为模式：在股价上涨时追买（{}次观察，置信度{:.0}%）",
+            "profession_identity" => format!(
+                "用户透露了职业身份信息（{}次提及，置信度{:.0}%）",
                 count,
                 confidence * 100.0
             ),
-            "avoid_stop_loss" => format!(
-                "用户倾向于不止损：面对亏损选择扛单（{}次观察，置信度{:.0}%）",
+            "skill_level" => format!(
+                "用户描述了技能水平（{}次提及，置信度{:.0}%）",
                 count,
                 confidence * 100.0
             ),
-            "prefers_short_term" => format!(
-                "用户偏好短线交易风格（{}次表达，置信度{:.0}%）",
+            "general_preference" => format!(
+                "用户表达了偏好倾向（{}次表达，置信度{:.0}%）",
                 count,
                 confidence * 100.0
             ),
-            "prefers_long_term" => format!(
-                "用户偏好长线价值投资（{}次表达，置信度{:.0}%）",
+            "dislike" => format!(
+                "用户表达了不喜欢/反感的事物（{}次表达，置信度{:.0}%）",
                 count,
                 confidence * 100.0
             ),
-            "prefers_tech_stocks" => format!(
-                "用户偏好科技/成长股投资（{}次表达，置信度{:.0}%）",
+            "positive_mood" => format!(
+                "用户表现出积极情绪（{}次观察，置信度{:.0}%）",
                 count,
                 confidence * 100.0
             ),
-            "negative_emotional" => format!(
-                "用户在交易中出现负面情绪（{}次观察，置信度{:.0}%）",
+            "negative_mood" => format!(
+                "用户表现出消极情绪（{}次观察，置信度{:.0}%）",
                 count,
                 confidence * 100.0
             ),
-            "positive_emotional" => format!(
-                "用户在交易中表现出正面情绪（{}次观察，置信度{:.0}%）",
+            "stressed" => format!(
+                "用户表现出焦虑/压力状态（{}次观察，置信度{:.0}%）",
                 count,
                 confidence * 100.0
             ),
-            "anxious" => format!(
-                "用户对市场波动表现出焦虑情绪（{}次观察，置信度{:.0}%）",
+            "goal_expressed" => format!(
+                "用户表达了目标或计划（{}次提及，置信度{:.0}%）",
+                count,
+                confidence * 100.0
+            ),
+            "work_habit" => format!(
+                "检测到用户工作习惯模式（{}次观察，置信度{:.0}%）",
+                count,
+                confidence * 100.0
+            ),
+            "knowledge_domain" => format!(
+                "用户关注特定知识领域（{}次提及，置信度{:.0}%）",
+                count,
+                confidence * 100.0
+            ),
+            "communication_style" => format!(
+                "用户有特定的沟通偏好（{}次表达，置信度{:.0}%）",
+                count,
+                confidence * 100.0
+            ),
+            "tech_stack_preference" => format!(
+                "用户有技术栈偏好（{}次提及，置信度{:.0}%）",
+                count,
+                confidence * 100.0
+            ),
+            "code_style_dislike" => format!(
+                "用户有代码风格禁忌（{}次提及，置信度{:.0}%）",
+                count,
+                confidence * 100.0
+            ),
+            "code_quality_preference" => format!(
+                "用户关注代码质量实践（{}次提及，置信度{:.0}%）",
+                count,
+                confidence * 100.0
+            ),
+            "project_context" => format!(
+                "用户提供了项目上下文信息（{}次提及，置信度{:.0}%）",
                 count,
                 confidence * 100.0
             ),
@@ -224,14 +277,14 @@ mod tests {
         let (mut pipeline, _dir) = setup_pipeline(3);
 
         let sessions = vec![
-            ("session_1", "亏了20%我还加仓了，我觉得会涨回来"),
-            ("session_2", "又跌了，但我还是补仓了"),
-            ("session_3", "这次真亏麻了，但我不甘心又加仓了"),
+            ("session_1", "我是一名后端开发，主要写服务端"),
+            ("session_2", "我做了5年后端开发了"),
+            ("session_3", "我是做后端工程师的"),
         ];
 
         let mut triggered_count = 0;
         for (sid, text) in &sessions {
-            let result = pipeline.process(sid, text, "trading").unwrap();
+            let result = pipeline.process(sid, text, "chat", "global").unwrap();
             if result.cognition_triggered.is_some() {
                 triggered_count += 1;
             }
@@ -251,7 +304,7 @@ mod tests {
         let (mut pipeline, _dir) = setup_pipeline(5);
 
         let result = pipeline
-            .process("s1", "亏了10%我又加仓了", "trading")
+            .process("s1", "我喜欢用Python做数据分析", "chat", "global")
             .unwrap();
         assert!(result.cognition_triggered.is_none());
         assert!(!result.events.is_empty());
@@ -262,14 +315,11 @@ mod tests {
         let (mut pipeline, _dir) = setup_pipeline(1);
 
         let result = pipeline
-            .process("s1", "亏了30%我又加仓了", "trading")
+            .process("s1", "我是做后端开发的工程师", "chat", "global")
             .unwrap();
         let cog = result.cognition_triggered.as_ref().unwrap();
-        assert!(
-            cog.summary.contains("赌徒补仓"),
-            "Summary should explain pattern in Chinese"
-        );
-        assert_eq!(cog.trait_name, "risk_tendency");
+        assert!(cog.summary.contains("职业"));
+        assert_eq!(cog.trait_name, "profession");
         assert!(cog.confidence > 0.0);
     }
 
@@ -280,63 +330,18 @@ mod tests {
         let result = pipeline
             .process(
                 "s1",
-                "我很喜欢科技股，这次AI芯片又追高了，亏了很多很难过",
-                "trading",
+                "我是一名后端开发，擅长Python和数据分析，今天工作特别累压力大",
+                "chat",
+                "global",
             )
             .unwrap();
 
         let actions: Vec<&str> = result.events.iter().map(|e| e.action.as_str()).collect();
         assert!(
-            actions.contains(&"prefers_tech_stocks"),
-            "should detect tech stock preference"
+            actions.contains(&"profession_identity"),
+            "should detect profession"
         );
-        assert!(
-            actions.contains(&"chase_high"),
-            "should detect chase-high behavior"
-        );
-        assert!(
-            actions.contains(&"negative_emotional"),
-            "should detect negative emotion"
-        );
-    }
-
-    #[test]
-    fn test_ten_scenario_fixtures() {
-        let (mut pipeline, _dir) = setup_pipeline(3);
-
-        let fixtures = include_str!("../../../tests/fixtures/trading_scenarios.txt");
-        let mut total_events = 0;
-        let mut cognition_count = 0;
-        let mut triggered_traits: Vec<String> = Vec::new();
-
-        for line in fixtures.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-
-            let parts: Vec<&str> = line.splitn(3, '|').collect();
-            if parts.len() < 3 {
-                continue;
-            }
-
-            let (sid, ctx, text) = (parts[0], parts[1], parts[2]);
-
-            match pipeline.process(sid, text, ctx) {
-                Ok(result) => {
-                    total_events += result.events.len();
-                    if let Some(cog) = result.cognition_triggered {
-                        cognition_count += 1;
-                        triggered_traits.push(format!("{}={}", cog.trait_name, cog.action));
-                    }
-                }
-                Err(e) => panic!("Pipeline error on line '{}': {}", line, e),
-            }
-        }
-
-        assert!(total_events > 0, "Should extract events from scenarios");
-        assert!(cognition_count > 0, "Should trigger at least one cognition");
-        eprintln!("Events: {}, Cognitions: {}", total_events, cognition_count);
-        eprintln!("Triggered traits: {:?}", triggered_traits);
+        assert!(actions.contains(&"skill_level"), "should detect skill");
+        assert!(actions.contains(&"stressed"), "should detect stress");
     }
 }

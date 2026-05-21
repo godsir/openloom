@@ -19,6 +19,7 @@ pub enum Action {
     ConfirmOverlay,
     NavigateLeft,
     NavigateRight,
+    ToggleThinking,
     Noop,
 }
 
@@ -151,6 +152,12 @@ fn default_bindings() -> Vec<KeyBinding> {
             modifiers: KeyModifiers::CONTROL,
             action: Action::ExternalEditor,
             context: KeyContext::Input,
+        },
+        KeyBinding {
+            key: KeyCode::Char('o'),
+            modifiers: KeyModifiers::CONTROL,
+            action: Action::ToggleThinking,
+            context: KeyContext::Global,
         },
         // Streaming
         KeyBinding {

@@ -5,7 +5,6 @@ pub(crate) struct TokenUsageRecord {
     pub(crate) model: String,
     pub(crate) prompt_tokens: usize,
     pub(crate) completion_tokens: usize,
-    #[allow(dead_code)]
     pub(crate) cached_tokens: usize,
     pub(crate) latency_ms: u64,
 }
@@ -30,6 +29,7 @@ pub(crate) fn spawn_token_store_thread(
                 &record.model,
                 record.prompt_tokens,
                 record.completion_tokens,
+                record.cached_tokens,
                 record.latency_ms,
             );
         }

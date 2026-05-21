@@ -19,7 +19,7 @@ impl Default for CompletionRequest {
     fn default() -> Self {
         Self {
             prompt: String::new(),
-            max_tokens: 2048,
+            max_tokens: 4096,
             temperature: 0.7,
             top_p: 1.0,
             stop: Vec::new(),
@@ -33,6 +33,7 @@ pub struct CompletionResponse {
     pub text: String,
     pub prompt_tokens: usize,
     pub completion_tokens: usize,
+    pub cached_tokens: usize,
     pub latency_ms: u64,
 }
 
@@ -204,6 +205,7 @@ impl InferenceEngine {
                 text,
                 prompt_tokens,
                 completion_tokens,
+                cached_tokens: 0,
                 latency_ms: 0,
             })
         })
@@ -293,16 +295,13 @@ impl InferenceEngine {
 
 fn stub_complete(req: &CompletionRequest) -> CompletionResponse {
     let prompt_chars = req.prompt.chars().count();
-    let preview: String = req.prompt.chars().take(100).collect();
-    let response = format!(
-        "[openLoom] Local model (Qwen3-1.7B) is not yet loaded. Install the GGUF model file to enable inference.\n\nYour message ({} chars): {}...",
-        prompt_chars, preview
-    );
+    let response = "[openLoom] No inference backend available.\n\nConfigure a model in config.toml:\n  - backend = \"LmStudio\" (http://localhost:1234)\n  - backend = \"Ollama\" (http://localhost:11434)\n  - backend = \"Anthropic\" / \"OpenAI\" / \"DeepSeek\" (cloud API)\n\nRun `openloom doctor` for setup help.".to_string();
     let response_tokens = response.chars().count() / 4;
     CompletionResponse {
         text: response,
         prompt_tokens: prompt_chars / 4,
         completion_tokens: response_tokens,
+        cached_tokens: 0,
         latency_ms: 0,
     }
 }
@@ -427,11 +426,15 @@ impl AnthropicClient {
             .to_string();
         let prompt_tokens = json["usage"]["input_tokens"].as_u64().unwrap_or(0) as usize;
         let completion_tokens = json["usage"]["output_tokens"].as_u64().unwrap_or(0) as usize;
+        let cached_tokens = json["usage"]["cache_read_input_tokens"]
+            .as_u64()
+            .unwrap_or(0) as usize;
 
         Ok(CompletionResponse {
             text,
             prompt_tokens,
             completion_tokens,
+            cached_tokens,
             latency_ms: 0,
         })
     }
@@ -473,6 +476,9 @@ impl CloudClient for AnthropicClient {
         use futures::StreamExt;
         let mut stream = resp.bytes_stream();
         let mut buffer = String::new();
+        let mut prompt_tokens: u64 = 0;
+        let mut completion_tokens: u64 = 0;
+        let mut cached_tokens: u64 = 0;
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result?;
@@ -485,13 +491,35 @@ impl CloudClient for AnthropicClient {
                 for line in frame.lines() {
                     if let Some(data) = line.strip_prefix("data: ")
                         && let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
-                        && let Some(text) = val["delta"]["text"].as_str()
-                        && tx.send(text.to_string()).await.is_err()
                     {
-                        return Ok(());
+                        // Stream text tokens
+                        if let Some(text) = val["delta"]["text"].as_str()
+                            && tx.send(text.to_string()).await.is_err()
+                        {
+                            return Ok(());
+                        }
+                        // message_start event has input token usage
+                        if let Some(usage) = val.get("message").and_then(|m| m.get("usage")) {
+                            prompt_tokens = usage["input_tokens"].as_u64().unwrap_or(0);
+                            cached_tokens = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                        }
+                        // message_delta event has output token usage
+                        if let Some(usage) = val.get("usage") {
+                            completion_tokens =
+                                usage["output_tokens"].as_u64().unwrap_or(completion_tokens);
+                        }
                     }
                 }
             }
+        }
+
+        // Emit usage signal
+        if prompt_tokens > 0 || completion_tokens > 0 {
+            let usage_msg = format!(
+                "\x00USAGE:{}:{}:{}",
+                prompt_tokens, completion_tokens, cached_tokens
+            );
+            let _ = tx.send(usage_msg).await;
         }
         Ok(())
     }
@@ -576,11 +604,15 @@ impl OpenAIClient {
             .to_string();
         let prompt_tokens = json["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as usize;
         let completion_tokens = json["usage"]["completion_tokens"].as_u64().unwrap_or(0) as usize;
+        let cached_tokens = json["usage"]["prompt_tokens_details"]["cached_tokens"]
+            .as_u64()
+            .unwrap_or(0) as usize;
 
         Ok(CompletionResponse {
             text,
             prompt_tokens,
             completion_tokens,
+            cached_tokens,
             latency_ms: 0,
         })
     }
@@ -602,6 +634,7 @@ impl CloudClient for OpenAIClient {
             "max_tokens": req.max_tokens,
             "messages": [{"role": "user", "content": req.prompt}],
             "stream": true,
+            "stream_options": {"include_usage": true},
         });
 
         let resp = self
@@ -635,11 +668,29 @@ impl CloudClient for OpenAIClient {
                         if data == "[DONE]" {
                             return Ok(());
                         }
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
-                            && let Some(text) = val["choices"][0]["delta"]["content"].as_str()
-                            && tx.send(text.to_string()).await.is_err()
-                        {
-                            return Ok(());
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                            // Stream text tokens
+                            if let Some(text) = val["choices"][0]["delta"]["content"].as_str()
+                                && tx.send(text.to_string()).await.is_err()
+                            {
+                                return Ok(());
+                            }
+                            // Parse usage from final chunk (stream_options: include_usage)
+                            if let Some(usage) = val.get("usage")
+                                && usage.is_object()
+                            {
+                                let prompt_tokens = usage["prompt_tokens"].as_u64().unwrap_or(0);
+                                let completion_tokens =
+                                    usage["completion_tokens"].as_u64().unwrap_or(0);
+                                let cached_tokens = usage["prompt_tokens_details"]["cached_tokens"]
+                                    .as_u64()
+                                    .unwrap_or(0);
+                                let usage_msg = format!(
+                                    "\x00USAGE:{}:{}:{}",
+                                    prompt_tokens, completion_tokens, cached_tokens
+                                );
+                                let _ = tx.send(usage_msg).await;
+                            }
                         }
                     }
                 }
@@ -660,8 +711,33 @@ impl CloudClient for OpenAIClient {
 pub fn create_cloud_client(
     config: &openloom_models::ModelConfig,
 ) -> anyhow::Result<Box<dyn CloudClient>> {
-    let api_key = std::env::var(config.api_key_env.as_deref().unwrap_or(""))
-        .map_err(|_| anyhow::anyhow!("API key env var not set"))?;
+    // API key: try env var, fall back to empty string (LM Studio/Ollama don't need one)
+    let api_key = config
+        .api_key_env
+        .as_deref()
+        .and_then(|env_name| {
+            if env_name.is_empty() {
+                None
+            } else {
+                std::env::var(env_name).ok()
+            }
+        })
+        .unwrap_or_default();
+
+    // For cloud backends that require a key, error if empty
+    if api_key.is_empty()
+        && matches!(
+            config.backend,
+            ModelBackend::Anthropic | ModelBackend::OpenAI | ModelBackend::DeepSeek
+        )
+    {
+        anyhow::bail!(
+            "API key not set for {} (env: {:?})",
+            config.backend.name(),
+            config.api_key_env
+        );
+    }
+
     // Strip [1m] etc. suffix — it's a client-side context-size hint, not an API model name
     let model = config
         .model
@@ -676,10 +752,12 @@ pub fn create_cloud_client(
         anyhow::bail!("model name not configured");
     }
     let base_url = match config.base_url.clone() {
-        Some(url) => url,
+        Some(url) => url.trim().trim_end_matches('/').to_string(),
         None => match config.backend {
             ModelBackend::Anthropic => "https://api.anthropic.com".into(),
             ModelBackend::DeepSeek => "https://api.deepseek.com".into(),
+            ModelBackend::LmStudio => "http://localhost:1234/v1".into(),
+            ModelBackend::Ollama => "http://localhost:11434/v1".into(),
             _ => "https://api.openai.com".into(),
         },
     };
@@ -687,6 +765,8 @@ pub fn create_cloud_client(
         ModelBackend::Anthropic => Ok(Box::new(AnthropicClient::new(api_key, model, base_url))),
         ModelBackend::OpenAI => Ok(Box::new(OpenAIClient::new(api_key, model, base_url))),
         ModelBackend::DeepSeek => Ok(Box::new(OpenAIClient::new(api_key, model, base_url))),
+        ModelBackend::LmStudio => Ok(Box::new(OpenAIClient::new(api_key, model, base_url))),
+        ModelBackend::Ollama => Ok(Box::new(OpenAIClient::new(api_key, model, base_url))),
         ModelBackend::LlamaCpp => anyhow::bail!("LlamaCpp is not a cloud backend"),
     }
 }
