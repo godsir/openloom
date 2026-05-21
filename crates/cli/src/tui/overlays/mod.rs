@@ -1,4 +1,5 @@
 pub mod approval;
+pub mod diff;
 
 use crossterm::event::KeyCode;
 use ratatui::{layout::Rect, Frame};
