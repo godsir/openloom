@@ -99,7 +99,8 @@ async fn app_run(
             app.total_completion_tokens += response_len / 4;
             app.status.turn_tokens = response_len / 4;
             // Rough cost estimate: $3/M input, $15/M output (Claude Sonnet pricing)
-            app.total_cost += (app.total_prompt_tokens as f64) * 3.0 / 1_000_000.0
+            // Use = not += since the formula uses cumulative token counts
+            app.total_cost = (app.total_prompt_tokens as f64) * 3.0 / 1_000_000.0
                 + (app.total_completion_tokens as f64) * 15.0 / 1_000_000.0;
 
             if app.stream.buffer.is_empty()

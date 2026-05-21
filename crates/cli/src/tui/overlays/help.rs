@@ -49,8 +49,8 @@ impl HelpOverlay {
             key_line("Shift+Enter", "Insert newline", accent, dim),
             key_line("Ctrl+J", "Insert newline (alternative)", accent, dim),
             key_line("Up/Down", "Navigate input history", accent, dim),
-            key_line("Ctrl+R", "Search input history (soon)", accent, dim),
-            key_line("Ctrl+G", "Open $EDITOR for long input (soon)", accent, dim),
+            key_line("Ctrl+R", "Search input history", accent, dim),
+            key_line("Ctrl+G", "Open $EDITOR for long input", accent, dim),
             Line::from(""),
             Line::from(Span::styled(" Streaming Keys", Style::new().fg(green).bold())),
             Line::from(""),
@@ -130,6 +130,14 @@ impl Overlay for HelpOverlay {
             }
             KeyCode::PageDown => {
                 self.scroll = self.scroll.saturating_add(15);
+                OverlayResult::Consumed
+            }
+            KeyCode::Home => {
+                self.scroll = 0;
+                OverlayResult::Consumed
+            }
+            KeyCode::End => {
+                self.scroll = u16::MAX; // clamped in draw
                 OverlayResult::Consumed
             }
             _ => OverlayResult::Consumed,
