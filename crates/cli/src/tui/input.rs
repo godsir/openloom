@@ -19,6 +19,21 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         }
         Action::CancelStream => {
             app.stream.cancel();
+            // Remove the empty assistant placeholder if present
+            if let Some(last) = app.messages.last() {
+                if last.role == "assistant" && last.content.is_empty() {
+                    app.messages.pop();
+                }
+            }
+            // If we received partial content, mark it as cancelled
+            if !app.stream.buffer.is_empty() {
+                let partial = std::mem::take(&mut app.stream.buffer);
+                app.add_assistant_message(format!("{} [cancelled]", partial));
+            } else if app.messages.last().map(|m| m.role.as_str()) != Some("assistant") {
+                // No assistant message at all — add a cancelled note
+                app.add_assistant_message("[cancelled]".into());
+            }
+            app.stream.buffer.clear();
             app.state = AppState::Idle;
             false
         }

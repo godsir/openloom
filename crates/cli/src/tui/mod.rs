@@ -95,7 +95,7 @@ async fn app_run(
                 if let Some(last) = app.messages.last() {
                     if last.content.is_empty() {
                         app.messages.pop();
-                        app.add_assistant_message("(no response)".into());
+                        app.add_assistant_message("[no response]".into());
                     }
                 }
             }
