@@ -4,10 +4,9 @@ use openloom_engine::EngineConfig;
 use openloom_models::{AppConfig, ChatMessage};
 use openloom_server::Server;
 use std::path::PathBuf;
-use std::sync::Arc;
 
-mod chat_tui;
 mod download;
+mod tui;
 
 #[derive(Parser)]
 #[command(name = "openloom", about = "Local-first private AI assistant", version)]
@@ -37,6 +36,9 @@ enum Commands {
         port: u16,
         #[arg(long)]
         config: Option<String>,
+        /// Override the local GGUF model path
+        #[arg(long)]
+        model: Option<String>,
     },
     /// Interactive chat (TUI)
     Chat {
@@ -73,11 +75,11 @@ enum Commands {
     Doctor,
     /// Download a GGUF model from ModelScope
     DownloadModel {
-        /// ModelScope repo ID (default: Qwen/Qwen3-1.7B-GGUF)
-        #[arg(long, default_value = "Qwen/Qwen3-1.7B-GGUF")]
+        /// ModelScope repo ID (default: qwen/Qwen3-1.7B-GGUF)
+        #[arg(long, default_value = "qwen/Qwen3-1.7B-GGUF")]
         repo: String,
-        /// File to download (default: Qwen3-1.7B-Q4_K_M.gguf)
-        #[arg(long, default_value = "Qwen3-1.7B-Q4_K_M.gguf")]
+        /// File to download (default: Qwen3-1.7B-Q8_0.gguf)
+        #[arg(long, default_value = "Qwen3-1.7B-Q8_0.gguf")]
         file: String,
         /// Output directory (default: platform data dir /models/)
         #[arg(long)]
@@ -157,7 +159,11 @@ fn load_config(custom_path: Option<&str>) -> AppConfig {
     }
 }
 
-fn build_engine(config: Option<&str>, rate_limit_ms: u64) -> anyhow::Result<Engine> {
+fn build_engine(
+    config: Option<&str>,
+    rate_limit_ms: u64,
+    model_override: Option<PathBuf>,
+) -> anyhow::Result<Engine> {
     let app_config = load_config(config);
     let data_dir = if app_config.storage.data_dir.as_os_str().is_empty() {
         dirs::data_dir()
@@ -178,6 +184,17 @@ fn build_engine(config: Option<&str>, rate_limit_ms: u64) -> anyhow::Result<Engi
             )
         })
         .cloned();
+
+    // model_override from CLI takes priority; fall back to config.toml
+    let model_override = model_override.or_else(|| {
+        app_config
+            .models
+            .iter()
+            .find(|m| m.backend == openloom_models::ModelBackend::LlamaCpp)
+            .and_then(|m| m.path.as_ref())
+            .map(|p| data_dir.join("models").join(p))
+    });
+
     Engine::new(EngineConfig {
         data_dir,
         threshold: app_config.agent.max_iterations,
@@ -185,6 +202,7 @@ fn build_engine(config: Option<&str>, rate_limit_ms: u64) -> anyhow::Result<Engi
         rate_limit_ms,
         heartbeat_interval_secs: 1800,
         heartbeat_idle_threshold_min: 120,
+        model_override,
     })
 }
 
@@ -205,10 +223,15 @@ async fn main() -> anyhow::Result<()> {
         } => {
             run_analyze(&input, &output, &db, threshold)?;
         }
-        Commands::Serve { port, config } => {
+        Commands::Serve {
+            port,
+            config,
+            model,
+        } => {
+            let model_override = model.map(PathBuf::from);
             let app_config = load_config(config.as_deref());
             let rate_limit_ms = app_config.rate_limit.min_interval_ms;
-            let engine = build_engine(config.as_deref(), rate_limit_ms)?;
+            let engine = build_engine(config.as_deref(), rate_limit_ms, model_override)?;
             engine.load_config_into_engine(app_config).await;
             let server = Server::new(engine, config.as_ref().map(PathBuf::from));
             let shutdown_engine = server.engine().clone();
@@ -220,12 +243,11 @@ async fn main() -> anyhow::Result<()> {
             });
             server.serve(port).await?;
         }
-        Commands::Chat { config } => {
-            let engine = Arc::new(build_engine(config.as_deref(), 100)?);
-            chat_tui::run(engine).await?;
+        Commands::Chat { .. } => {
+            eprintln!("TUI has been removed and will be rebuilt. Stay tuned.");
         }
         Commands::Run { task, config } => {
-            let engine = build_engine(config.as_deref(), 100)?;
+            let engine = build_engine(config.as_deref(), 100, None)?;
 
             let sid = engine.create_session().await?.id;
             let msg = ChatMessage {
@@ -238,7 +260,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Skill { action } => match action {
             SkillAction::List => {
-                let engine = build_engine(None, 100)?;
+                let engine = build_engine(None, 100, None)?;
                 let skills = engine.list_skills();
                 if skills.is_empty() {
                     println!("No skills registered.");
@@ -260,7 +282,7 @@ async fn main() -> anyhow::Result<()> {
         },
         Commands::Memory { action } => match action {
             MemoryAction::Persona => {
-                let engine = build_engine(None, 100)?;
+                let engine = build_engine(None, 100, None)?;
                 let summary = engine.persona_summary().await;
                 if summary.is_empty() {
                     println!("No persona data yet. Interact more to build a cognition profile.");
@@ -269,7 +291,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             MemoryAction::Events { limit } => {
-                let engine = build_engine(None, 100)?;
+                let engine = build_engine(None, 100, None)?;
                 let events = engine.list_events(limit).await?;
                 if events.is_empty() {
                     println!("No events recorded yet.");
@@ -287,7 +309,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             MemoryAction::Cognitions { subject } => {
-                let engine = build_engine(None, 100)?;
+                let engine = build_engine(None, 100, None)?;
                 let cognitions = engine.list_cognitions(&subject, 20).await?;
                 if cognitions.is_empty() {
                     println!("No cognitions for subject '{}'.", subject);
@@ -390,7 +412,7 @@ async fn main() -> anyhow::Result<()> {
             println!("openLoom {}", env!("CARGO_PKG_VERSION"));
         }
         Commands::Session { action } => {
-            let engine = build_engine(None, 100)?;
+            let engine = build_engine(None, 100, None)?;
             match action {
                 SessionAction::List => {
                     let sessions = engine.list_sessions().await?;
@@ -601,18 +623,49 @@ fn detect_msvc_toolchain(data_dir: &std::path::Path) {
         println!("LIBCLANG_PATH = \"{}\"", llvm.replace('\\', "\\\\"));
     }
 
-    // Model status
-    let model_path = data_dir.join("models").join("Qwen3-1.7B-Q4_K_M.gguf");
+    // Model status — scan for any .gguf files
+    let model_dir = data_dir.join("models");
     println!();
-    if model_path.exists() {
-        let meta = std::fs::metadata(&model_path).unwrap();
-        println!(
-            "Model: {} ({:.1} MiB)",
-            model_path.display(),
-            meta.len() as f64 / 1_048_576.0
-        );
-    } else {
-        println!("Model not found. Run: cargo run -- download-model");
+    match std::fs::read_dir(&model_dir) {
+        Ok(entries) => {
+            let models: Vec<_> = entries
+                .filter_map(|e| {
+                    let e = e.ok()?;
+                    let p = e.path();
+                    if p.extension().map(|x| x == "gguf").unwrap_or(false) {
+                        let meta = std::fs::metadata(&p).ok()?;
+                        let name = p.file_name()?.to_str()?;
+                        Some((name.to_string(), meta.len()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if models.is_empty() {
+                println!(
+                    "Model not found in {}. Run: cargo run -- download-model",
+                    model_dir.display()
+                );
+            } else {
+                println!("Models found in {}:", model_dir.display());
+                for (name, size) in &models {
+                    let size_str = if *size >= 1_073_741_824 {
+                        format!("{:.2} GB", *size as f64 / 1_073_741_824.0)
+                    } else {
+                        format!("{:.1} MB", *size as f64 / 1_048_576.0)
+                    };
+                    let tag = if name.starts_with("mmproj-") {
+                        " [vision proj]"
+                    } else {
+                        ""
+                    };
+                    println!("  {}  {}{}", size_str, name, tag);
+                }
+            }
+        }
+        Err(_) => {
+            println!("Model directory not found. Run: cargo run -- download-model");
+        }
     }
 }
 
