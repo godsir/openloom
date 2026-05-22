@@ -28,6 +28,9 @@ pub mod config {
     }
 }
 
+// Re-export grant_read_root_non_elevated at legacy_core level
+pub use windows_sandbox::grant_read_root_non_elevated;
+
 // ─── connectors ───
 pub mod connectors {
     pub use loom_tui_stubs::connectors::*;
@@ -95,18 +98,35 @@ pub mod personality_migration {
 pub mod windows_sandbox {
     use std::path::Path;
 
-    #[derive(Debug, Clone)]
-    pub struct WindowsSandboxLevelExt;
+    pub trait WindowsSandboxLevelExt {
+        fn from_config(config: &loom_tui_stubs::config::Config) -> loom_protocol::config_types::WindowsSandboxLevel;
+    }
+
+    impl WindowsSandboxLevelExt for loom_protocol::config_types::WindowsSandboxLevel {
+        fn from_config(_config: &loom_tui_stubs::config::Config) -> loom_protocol::config_types::WindowsSandboxLevel {
+            loom_protocol::config_types::WindowsSandboxLevel::Disabled
+        }
+    }
 
     pub const ELEVATED_SANDBOX_NUX_ENABLED: bool = false;
 
     pub fn apply_world_writable_scan_and_denies() {}
-    pub fn elevated_setup_failure_details() -> String { String::new() }
-    pub fn elevated_setup_failure_metric_name() -> &'static str { "elevated_setup_failure" }
-    pub fn run_elevated_setup() {}
+    pub fn elevated_setup_failure_details(_err: &anyhow::Error) -> String { String::new() }
+    pub fn elevated_setup_failure_metric_name(_err: &anyhow::Error) -> &'static str { "elevated_setup_failure" }
+    pub fn grant_read_root_non_elevated(_reason: &str) {}
+
+    pub async fn run_elevated_setup(
+        _policy: &loom_protocol::protocol::SandboxPolicy,
+        _policy_cwd: &Path,
+        _command_cwd: &Path,
+        _env: &std::collections::HashMap<String, String>,
+        _codex_home: &Path,
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+
     pub fn run_legacy_setup_preflight(_codex_home: &Path) -> Result<(), anyhow::Error> { Ok(()) }
     pub fn sandbox_setup_is_complete(_codex_home: &Path) -> bool { true }
-    pub fn grant_read_root_non_elevated() {}
 }
 
 // ─── util ───

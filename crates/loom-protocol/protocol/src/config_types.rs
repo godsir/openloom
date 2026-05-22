@@ -273,6 +273,12 @@ pub enum WindowsSandboxLevel {
     Elevated,
 }
 
+impl WindowsSandboxLevel {
+    pub fn from_config<T>(_config: &T) -> Self {
+        WindowsSandboxLevel::Disabled
+    }
+}
+
 #[derive(
     Debug,
     Serialize,
