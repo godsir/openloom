@@ -2,18 +2,70 @@
 resolver = "2"
 members = [
     "crates/*",
-    "crates/loom-utils/*",
-    "crates/loom-protocol/*",
+    "crates/loom-utils/absolute-path",
+    "crates/loom-utils/ansi-escape",
+    "crates/loom-utils/approval-presets",
+    "crates/loom-utils/arg0",
+    "crates/loom-utils/async-utils",
+    "crates/loom-utils/elapsed",
+    "crates/loom-utils/fuzzy-match",
+    "crates/loom-utils/home-dir",
+    "crates/loom-utils/install-context",
+    "crates/loom-utils/path",
+    "crates/loom-utils/rustls-provider",
+    "crates/loom-utils/sandbox-summary",
+    "crates/loom-utils/string",
+    "crates/loom-utils/terminal-detection",
+    "crates/loom-utils/uds",
 ]
 exclude = [
     "crates/loom-utils",
-    "crates/loom-protocol",
 ]
 
 [workspace.package]
 version = "0.2.0"
 edition = "2024"
 license = "Apache-2.0"
+
+[workspace.lints]
+rust = {}
+
+[workspace.lints.clippy]
+await_holding_invalid_type = "deny"
+await_holding_lock = "deny"
+expect_used = "deny"
+identity_op = "deny"
+manual_clamp = "deny"
+manual_filter = "deny"
+manual_find = "deny"
+manual_flatten = "deny"
+manual_map = "deny"
+manual_memcpy = "deny"
+manual_non_exhaustive = "deny"
+manual_ok_or = "deny"
+manual_range_contains = "deny"
+manual_retain = "deny"
+manual_strip = "deny"
+manual_try_fold = "deny"
+manual_unwrap_or = "deny"
+needless_borrow = "deny"
+needless_borrowed_reference = "deny"
+needless_collect = "deny"
+needless_late_init = "deny"
+needless_option_as_deref = "deny"
+needless_question_mark = "deny"
+needless_update = "deny"
+redundant_clone = "deny"
+redundant_closure = "deny"
+redundant_closure_for_method_calls = "deny"
+redundant_static_lifetimes = "deny"
+trivially_copy_pass_by_ref = "deny"
+uninlined_format_args = "deny"
+unnecessary_filter_map = "deny"
+unnecessary_lazy_evaluations = "deny"
+unnecessary_sort_by = "deny"
+unnecessary_to_owned = "deny"
+unwrap_used = "deny"
 
 [workspace.dependencies]
 # External dependencies needed by ported Codex crates.
@@ -66,6 +118,20 @@ url = "2"
 urlencoding = "2.1"
 futures = { version = "0.3", default-features = false }
 syntect = "5"
+
+# Additional external deps needed by Level 0 utility crates
+ansi-to-tui = "7.0.0"
+async-io = "2.6.0"
+dotenvy = "0.15.7"
+pretty_assertions = "1.4.1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-native-certs = "0.8.3"
+rustls-pki-types = "1.14.0"
+uds_windows = "1.1.0"
+
+# Level 0 utility crate path entries (for workspace = true references)
+loom-absolute-path = { path = "crates/loom-utils/absolute-path" }
+loom-home-dir = { path = "crates/loom-utils/home-dir" }
 
 # Commonly used deps (already used by openLoom, centralized here)
 anyhow = "1"
