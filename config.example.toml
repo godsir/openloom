@@ -52,15 +52,6 @@ context_size = 32000
 # api_key_env = "DEEPSEEK_API_KEY"
 # context_size = 64000
 
-# ── 本地 GGUF (需 C++ 工具链) ──────────────────────────────
-# [[models]]
-# name = "local-qwen"
-# backend = "LlamaCpp"
-# path = "Qwen3-1.7B-Q8_0.gguf"
-# model_type = "Router"
-# context_size = 4096
-# n_gpu_layers = 32
-
 # ═══════════════════════════════════════════════════════════
 # 路由配置
 # ═══════════════════════════════════════════════════════════

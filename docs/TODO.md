@@ -56,11 +56,9 @@
 
 | 债项 | 位置 | 严重度 | 说明 |
 |------|------|--------|------|
-| llama-cpp-2 无 C++ 工具链 | `inference/` | P0 | 本地 GGUF 推理未验证，LM Studio/Ollama 已作为替代方案接入 |
-| SSE 流式发全文非逐 token | `inference/lib.rs` non-llama path | LOW | 当使用 LM Studio/Ollama 时走 cloud client 的真实 SSE 流式，此问题仅影响 llama stub |
-| SafetensorsCache 未替换 NoopCache | `cache/`, `engine/` | LOW | 需要 llama-cpp-2 的 `state_get_data`/`state_set_data` API |
+| SSE 流式发全文非逐 token | `inference/lib.rs` | LOW | LM Studio/Ollama 走 cloud client 的真实 SSE 流式，此问题仅影响 stub path |
 | EventSource 未关闭 | `web/ChatArea.tsx` | MEDIUM | React 组件 unmount 时未 close |
-| Heartbeat 依赖本地模型 | `engine/heartbeat.rs` | LOW | 无 llama 时心跳永不触发，可改为调 local_client |
+| Heartbeat 依赖本地模型 | `engine/heartbeat.rs` | LOW | 无本地模型时心跳永不触发，可改为调 local_client |
 | DiffViewer overlay 是 dead code | `tui/overlays/diff.rs` | LOW | 完整实现但从未实例化，可在 file_edit 后自动弹出 |
 
 ---

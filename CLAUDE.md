@@ -11,7 +11,7 @@ openLoom 是一个本地优先的私人 AI 助理内核。核心差异化：
 
 - **核心引擎:** Rust 2024 edition, Tokio async runtime
 - **数据库:** SQLite + FTS5 (rusqlite bundled), refinery 迁移
-- **推理:** llama-cpp-2 (本地), reqwest (云端 Anthropic/OpenAI/DeepSeek)
+- **推理:** LM Studio / Ollama (本地), reqwest (云端 Anthropic/OpenAI/DeepSeek)
 - **服务:** Axum 0.7 + WebSocket + SSE + JSON-RPC 2.0
 - **桌面壳:** Electron 38
 - **前端:** React 19 + Tailwind CSS 4 + Vite 6
@@ -25,7 +25,7 @@ F:/openLoom/
 ├── crates/
 │   ├── memory/       ← Memory Kernel (事件提取+聚合+存储+管线+人格)
 │   ├── models/       ← 共享类型定义 (Intent, JSON-RPC, Config, EngineEvent)
-│   ├── inference/    ← 推理封装 (llama-cpp-2 本地 + Anthropic/OpenAI 云端)
+│   ├── inference/    ← 推理封装 (LM Studio/Ollama 本地 + Anthropic/OpenAI/DeepSeek 云端)
 │   ├── router/       ← 智能路由 (关键词意图分类 + 技能匹配)
 │   ├── skills/       ← Skill trait + Registry + CliBridge + 5 内置技能
 │   ├── engine/       ← 编排引擎 (EventBus + 请求派发 + Agent Loop)
@@ -67,7 +67,7 @@ F:/openLoom/
 - **Phase 0** — 完成 (Memory Kernel MVP)
 - **Phase 1** — 完成 (Smart Router + Skill Engine)
 - **Phase 2** — Milestones A/B/C/D 全部完成 (Agent Loop, Persona, Backend, Electron GUI)
-- **Phase 3A** — 完成 (AI Activation: llama-cpp-2, SSE streaming, 8B cognition, Hub heartbeat, cloud streaming)
+- **Phase 3A** — 完成 (AI Activation: LM Studio, SSE streaming, 8B cognition, Hub heartbeat, cloud streaming)
 - **Phase 3B** — 完成 (Productionization: Engine split→11 modules, sandbox, audit panel, KV Cache prep, packaging)
 - **测试:** 180+ pass | **Clippy:** 0 warnings | **fmt:** clean
 
@@ -75,12 +75,9 @@ F:/openLoom/
 
 | 债项 | 位置 | 严重度 | 阻塞 |
 |------|------|--------|------|
-| llama-cpp-2 无 C++ 工具链，功能未验证 | inference/ | P0 | 环境 |
-| SSE 流式发全文非逐 token | inference/lib.rs:208 | HIGH | C++ 工具链 |
-| 8B 模型加载 + LlmBased 变体 | memory_thread, pipeline | HIGH | C++ 工具链 |
+| SSE 流式发全文非逐 token | inference/lib.rs | HIGH | 待 LM Studio 逐 token 流式适配 |
 | EventSource 组件 unmount 时未关闭 | ChatArea.tsx | MEDIUM | — |
 | skills invoke() 错误包装丢失来源链 | skills/lib.rs:90 | LOW | — |
-| SafetensorsCache 未替换 NoopCache | cache/, engine/ | LOW | C++ 工具链 |
 
 ---
 

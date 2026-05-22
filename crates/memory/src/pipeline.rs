@@ -9,12 +9,10 @@ use anyhow::Result;
 /// `RuleBased` uses pattern-count threshold triggers defined in `PatternAggregator`
 /// and `action_to_trait` mappings. This is the default and currently the only variant.
 ///
-/// `LlmBased` (future) will use a local 8B model via llama-cpp-2 for deeper
-/// behavioral inference once GGUF loading is stable on all platforms.
+/// `LlmBased` (future) will use a local model via LM Studio for deeper
+/// behavioral inference.
 pub enum CognitionExtractor {
     RuleBased,
-    // Note: LlmBased variant requires llama-cpp-2 which is feature-gated in inference crate.
-    // We keep only RuleBased here. The LlmBased branch will be added when 8B model loading works.
 }
 
 /// A cognitive insight derived from accumulated behavior patterns.

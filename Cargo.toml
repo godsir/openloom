@@ -1,14 +1,90 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = [
+    "crates/*",
+]
+exclude = [
+    "crates/loom-utils",
+    "crates/loom-protocol",
+]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 license = "Apache-2.0"
 
-# Override llama-cpp-sys-2 with local patch that adds /utf-8 MSVC flags
-# Required for Chinese Windows (CP936) where MSVC emits C4819 without /utf-8
-# See patches/llama-cpp-sys-2/README.md for details
+[workspace.dependencies]
+# External dependencies needed by ported Codex crates.
+# Versions sourced from F:/codex/codex-rs/Cargo.toml [workspace.dependencies].
+
+chardetng = "0.1.17"
+encoding_rs = "0.8.35"
+globset = "0.4"
+wildmatch = "2.6.1"
+rmcp = { version = "0.15.0", default-features = false }
+schemars = "0.8.22"
+ts-rs = "11"
+strum = "0.27.2"
+strum_macros = "0.28.0"
+diffy = "0.4.2"
+pulldown-cmark = "0.10"
+ratatui = "0.29.0"
+ratatui-macros = "0.6.0"
+arboard = { version = "3", features = ["wayland-data-control"] }
+crossterm = "0.28.1"
+owo-colors = "4.3.0"
+supports-color = "3.0.2"
+dirs = "6"
+dunce = "1.0.4"
+pathdiff = "0.2"
+itertools = "0.14.0"
+lazy_static = "1"
+derive_more = "2"
+shlex = "1.3.0"
+textwrap = "0.16.2"
+unicode-segmentation = "1.12.0"
+unicode-width = "0.2"
+color-eyre = "0.6.3"
+base64 = "0.22.1"
+chrono = "0.4.43"
+sha2 = "0.10"
+rand = "0.9"
+image = { version = "^0.25.9", default-features = false }
+indexmap = "2.12.0"
+multimap = "0.10.0"
+serde_ignored = "0.1.14"
+serde_path_to_error = "0.1.20"
+gethostname = "1.1.0"
+include_dir = "0.7.4"
+regex-lite = "0.1.8"
+tokio-stream = "0.1.18"
+tokio-util = "0.7.18"
+webbrowser = "1.0"
+url = "2"
+urlencoding = "2.1"
+futures = { version = "0.3", default-features = false }
+syntect = "5"
+
+# Commonly used deps (already used by openLoom, centralized here)
+anyhow = "1"
+async-trait = "0.1.89"
+clap = "4"
+once_cell = "1.20.2"
+regex = "1.12.3"
+reqwest = { version = "0.12", features = ["cookies"] }
+serde = "1"
+serde_json = "1"
+tempfile = "3.23.0"
+thiserror = "2.0.17"
+tokio = "1"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.22"
+
 [patch.crates-io]
-llama-cpp-sys-2 = { path = "patches/llama-cpp-sys-2" }
+crossterm = { git = "https://github.com/nornagon/crossterm", rev = "87db8bfa6dc99427fd3b071681b07fc31c6ce995" }
+ratatui = { git = "https://github.com/nornagon/ratatui", rev = "9b2ad1298408c45918ee9f8241a6f95498cdbed2" }
+tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "132f5b39c862e3a970f731d709608b3e6276d5f6" }
+tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "9200079d3b54a1ff51072e24d81fd354f085156f" }
+
+[patch."ssh://git@github.com/openai-oss-forks/tungstenite-rs.git"]
+tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "9200079d3b54a1ff51072e24d81fd354f085156f" }

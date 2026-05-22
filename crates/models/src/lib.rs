@@ -19,28 +19,26 @@ pub enum ModelType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum ModelBackend {
     #[default]
-    LlamaCpp,
+    LmStudio,
     Anthropic,
     OpenAI,
     DeepSeek,
-    LmStudio,
     Ollama,
 }
 
 impl ModelBackend {
     pub fn name(&self) -> &'static str {
         match self {
-            ModelBackend::LlamaCpp => "LlamaCpp",
+            ModelBackend::LmStudio => "LmStudio",
             ModelBackend::Anthropic => "Anthropic",
             ModelBackend::OpenAI => "OpenAI",
             ModelBackend::DeepSeek => "DeepSeek",
-            ModelBackend::LmStudio => "LmStudio",
             ModelBackend::Ollama => "Ollama",
         }
     }
 
     pub fn is_cloud_capable(&self) -> bool {
-        !matches!(self, ModelBackend::LlamaCpp)
+        !self.is_local_inference()
     }
 
     pub fn is_local_inference(&self) -> bool {
@@ -299,7 +297,10 @@ impl Message {
         if msg.role == "tool" {
             // Tool content is "tc_id|result" format; extract id and result
             let (tc_id, result) = if let Some(pos) = msg.content.find('|') {
-                (msg.content[..pos].to_string(), msg.content[pos + 1..].to_string())
+                (
+                    msg.content[..pos].to_string(),
+                    msg.content[pos + 1..].to_string(),
+                )
             } else {
                 ("tool_legacy".into(), msg.content.clone())
             };
@@ -316,8 +317,14 @@ impl Message {
         // Assistant messages starting with "ToolCall|" have structured tool call info
         if msg.role == "assistant" && msg.content.starts_with("ToolCall|") {
             let parts: Vec<&str> = msg.content.splitn(4, '|').collect();
-            let tc_id = parts.get(1).map(|s| s.to_string()).unwrap_or_else(|| "tool_legacy".into());
-            let tc_name = parts.get(2).map(|s| s.to_string()).unwrap_or_else(|| "unknown".into());
+            let tc_id = parts
+                .get(1)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "tool_legacy".into());
+            let tc_name = parts
+                .get(2)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "unknown".into());
             return Self {
                 role: Role::Assistant,
                 content: vec![ContentPart::ToolCall {
@@ -1053,7 +1060,7 @@ mod tests {
     fn test_model_config_default() {
         let config = ModelConfig::default();
         assert_eq!(config.n_gpu_layers, 0);
-        assert_eq!(config.backend, ModelBackend::LlamaCpp);
+        assert_eq!(config.backend, ModelBackend::LmStudio);
         assert!(config.api_key_env.is_none());
     }
 

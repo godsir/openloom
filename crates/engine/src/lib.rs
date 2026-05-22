@@ -152,7 +152,13 @@ fn detect_project_context() -> String {
 /// Sanitize a skill name for API tool name requirements: ^[a-zA-Z0-9_-]+$
 pub(crate) fn sanitize_tool_name(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -246,7 +252,10 @@ pub(crate) fn build_tool_definitions(skills: &[SkillInfo]) -> Vec<ToolDefinition
                 return None;
             }
             let schema = input_schema_for_skill(&s.name);
-            let schema = if schema.get("properties").map_or(true, |p| p.as_object().map_or(true, |o| o.is_empty())) {
+            let schema = if schema
+                .get("properties")
+                .is_none_or(|p| p.as_object().is_none_or(|o| o.is_empty()))
+            {
                 input_schema_for_skill(&safe_name)
             } else {
                 schema
@@ -915,7 +924,6 @@ impl Engine {
                 openloom_models::ModelBackend::DeepSeek => 64_000,
                 openloom_models::ModelBackend::LmStudio => 32_000,
                 openloom_models::ModelBackend::Ollama => 32_000,
-                _ => 128_000,
             };
         }
         // Fallback: infer from live cloud/local client
@@ -928,7 +936,7 @@ impl Engine {
         config
             .models
             .iter()
-            .find(|m| m.backend == openloom_models::ModelBackend::LlamaCpp)
+            .find(|m| m.backend.is_local_inference())
             .map(|m| m.context_size)
             .unwrap_or(4096)
     }

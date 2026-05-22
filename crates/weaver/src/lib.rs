@@ -57,10 +57,7 @@ impl ContextWeaver {
             let budget = max_context_chars.saturating_sub(overhead);
             compact_memory_messages(working_memory, budget)
         } else {
-            working_memory
-                .iter()
-                .map(Message::from_legacy)
-                .collect()
+            working_memory.iter().map(Message::from_legacy).collect()
         };
         messages.extend(history_msgs);
 

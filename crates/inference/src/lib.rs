@@ -70,225 +70,12 @@ pub struct CompletionResponse {
     pub latency_ms: u64,
 }
 
-#[cfg(feature = "llama")]
-struct LlamaRuntime {
-    model: llama_cpp_2::model::LlamaModel,
-    ctx: std::cell::RefCell<llama_cpp_2::context::LlamaContext<'static>>,
-    sampler: std::cell::RefCell<llama_cpp_2::sampling::LlamaSampler>,
-}
-
-// SAFETY: llama.cpp types are internally thread-safe. LlamaRuntime is the
-// exclusive owner and inference is serialized via RefCell borrow checking.
-#[cfg(feature = "llama")]
-unsafe impl Send for LlamaRuntime {}
-#[cfg(feature = "llama")]
-unsafe impl Sync for LlamaRuntime {}
-
-#[cfg(feature = "llama")]
-pub struct InferenceEngine {
-    runtime: Option<std::sync::Arc<LlamaRuntime>>,
-}
-
-#[cfg(feature = "llama")]
-impl std::fmt::Debug for InferenceEngine {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InferenceEngine")
-            .field("runtime", &self.runtime.is_some())
-            .finish()
-    }
-}
-#[cfg(not(feature = "llama"))]
 #[derive(Debug)]
 pub struct InferenceEngine {
     _model_path: std::path::PathBuf,
     _n_gpu_layers: usize,
 }
 
-// === llama feature implementation ===
-
-#[cfg(feature = "llama")]
-fn generate(
-    model: &llama_cpp_2::model::LlamaModel,
-    ctx: &mut llama_cpp_2::context::LlamaContext,
-    sampler: &mut llama_cpp_2::sampling::LlamaSampler,
-    prompt: &str,
-    max_tokens: usize,
-) -> String {
-    use llama_cpp_2::llama_batch::LlamaBatch;
-    use llama_cpp_2::model::AddBos;
-    use llama_cpp_2::token::LlamaToken;
-
-    let tokens = match model.str_to_token(prompt, AddBos::Always) {
-        Ok(t) => t,
-        Err(_) => return String::new(),
-    };
-
-    // Clear KV cache from previous conversation turns so positions start fresh
-    ctx.clear_kv_cache();
-
-    let mut batch = LlamaBatch::new(tokens.len() + max_tokens, 1);
-    for (i, &token) in tokens.iter().enumerate() {
-        let _ = batch.add(token, i as i32, &[0], i == tokens.len() - 1);
-    }
-
-    let mut result = String::with_capacity(max_tokens * 4);
-    let eos = model.token_eos();
-    let mut sample_idx = (tokens.len() - 1) as i32;
-    for (n_generated, _) in (0_i32..).zip(0..max_tokens) {
-        if ctx.decode(&mut batch).is_err() {
-            break;
-        }
-        batch = LlamaBatch::new(1, 1);
-
-        let token = sampler.sample(ctx, sample_idx);
-        sample_idx = 0; // subsequent batches have 1 token
-        if token == eos || token == LlamaToken(0) {
-            break;
-        }
-
-        if let Ok(bytes) = model.token_to_piece_bytes(token, 32, false, None)
-            && let Ok(piece) = String::from_utf8(bytes)
-        {
-            result.push_str(&piece);
-        }
-        let _ = batch.add(token, tokens.len() as i32 + n_generated, &[0], true);
-    }
-
-    result
-}
-
-#[cfg(feature = "llama")]
-impl InferenceEngine {
-    pub async fn load(model_path: &Path, n_gpu_layers: usize) -> Result<Self> {
-        Self::load_blocking(model_path, n_gpu_layers)
-    }
-
-    pub fn load_blocking(model_path: &Path, n_gpu_layers: usize) -> Result<Self> {
-        use llama_cpp_2::context::params::LlamaContextParams;
-        use llama_cpp_2::llama_backend::LlamaBackend;
-        use llama_cpp_2::model::params::LlamaModelParams;
-        use llama_cpp_2::sampling::LlamaSampler;
-        use std::cell::RefCell;
-        use std::num::NonZeroU32;
-
-        if !model_path.exists() {
-            tracing::warn!(path = %model_path.display(), "model file not found, inference unavailable");
-            return Ok(Self { runtime: None });
-        }
-
-        let backend =
-            LlamaBackend::init().map_err(|e| anyhow::anyhow!("llama backend init: {}", e))?;
-
-        let model = llama_cpp_2::model::LlamaModel::load_from_file(
-            &backend,
-            model_path,
-            &LlamaModelParams::default().with_n_gpu_layers(n_gpu_layers as u32),
-        )
-        .map_err(|e| anyhow::anyhow!("model load: {}", e))?;
-
-        let ctx = model
-            .new_context(
-                &backend,
-                LlamaContextParams::default().with_n_ctx(NonZeroU32::new(4096)),
-            )
-            .map_err(|e| anyhow::anyhow!("context create: {}", e))?;
-
-        let sampler = LlamaSampler::chain_simple([
-            LlamaSampler::temp(0.7),
-            LlamaSampler::top_p(0.95, 1),
-            LlamaSampler::greedy(),
-        ]);
-
-        // Coerce to 'static: safe because both model and context live together in Rc
-        let ctx: llama_cpp_2::context::LlamaContext<'static> = unsafe { std::mem::transmute(ctx) };
-
-        let runtime = std::sync::Arc::new(LlamaRuntime {
-            model,
-            ctx: RefCell::new(ctx),
-            sampler: RefCell::new(sampler),
-        });
-
-        tracing::info!(path = %model_path.display(), n_gpu_layers, "llama model loaded");
-        Ok(Self {
-            runtime: Some(runtime),
-        })
-    }
-
-    pub async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse> {
-        let Some(runtime) = &self.runtime else {
-            return Ok(stub_complete(&req));
-        };
-        let runtime = runtime.clone();
-        tokio::task::spawn_blocking(move || {
-            use llama_cpp_2::model::AddBos;
-            let prompt_tokens = runtime
-                .model
-                .str_to_token(&req.prompt, AddBos::Always)
-                .map(|t| t.len())
-                .unwrap_or(req.prompt.chars().count() / 4);
-            let text = generate(
-                &runtime.model,
-                &mut runtime.ctx.borrow_mut(),
-                &mut runtime.sampler.borrow_mut(),
-                &req.prompt,
-                req.max_tokens,
-            );
-            let completion_tokens = text.chars().count() / 4;
-            Ok(CompletionResponse {
-                text,
-                prompt_tokens,
-                completion_tokens,
-                cached_tokens: 0,
-                latency_ms: 0,
-                tool_calls: Vec::new(),
-            })
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("join error: {}", e))?
-    }
-
-    pub async fn complete_stream(
-        &self,
-        req: CompletionRequest,
-        token_tx: tokio::sync::mpsc::Sender<String>,
-    ) -> Result<()> {
-        let Some(runtime) = &self.runtime else {
-            let resp = self.complete(req).await?;
-            let _ = token_tx.send(resp.text).await;
-            return Ok(());
-        };
-        let runtime = runtime.clone();
-        let text = tokio::task::spawn_blocking(move || {
-            generate(
-                &runtime.model,
-                &mut runtime.ctx.borrow_mut(),
-                &mut runtime.sampler.borrow_mut(),
-                &req.prompt,
-                req.max_tokens,
-            )
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("join error: {}", e))?;
-        let _ = token_tx.send(text).await;
-        Ok(())
-    }
-
-    pub fn token_count(&self, text: &str) -> usize {
-        let Some(runtime) = &self.runtime else {
-            return text.chars().count() / 4;
-        };
-        use llama_cpp_2::model::AddBos;
-        runtime
-            .model
-            .str_to_token(text, AddBos::Never)
-            .map(|t| t.len())
-            .unwrap_or(text.chars().count() / 4)
-    }
-}
-
-// === stub (non-llama) implementation ===
-
-#[cfg(not(feature = "llama"))]
 impl InferenceEngine {
     pub async fn load(model_path: &Path, n_gpu_layers: usize) -> Result<Self> {
         tracing::info!(path = %model_path.display(), n_gpu_layers, "loading model");
@@ -885,7 +672,8 @@ impl OpenAIClient {
 
                 obj
             })
-            .collect()
+            .collect();
+        result
     }
 }
 
@@ -1038,26 +826,22 @@ pub fn create_cloud_client(
         ModelBackend::DeepSeek => Ok(Box::new(OpenAIClient::new(api_key, model, base_url))),
         ModelBackend::LmStudio => Ok(Box::new(OpenAIClient::new(api_key, model, base_url))),
         ModelBackend::Ollama => Ok(Box::new(OpenAIClient::new(api_key, model, base_url))),
-        ModelBackend::LlamaCpp => anyhow::bail!("LlamaCpp is not a cloud backend"),
     }
 }
 
 /// Call LM Studio's load model API to ensure a model is loaded before inference.
-pub async fn ensure_lm_studio_model(base_url: &str, model: &str, context_size: usize) -> Result<()> {
-    let load_url = format!(
-        "{}/api/v1/models/load",
-        base_url.trim_end_matches("/v1")
-    );
+pub async fn ensure_lm_studio_model(
+    base_url: &str,
+    model: &str,
+    context_size: usize,
+) -> Result<()> {
+    let load_url = format!("{}/api/v1/models/load", base_url.trim_end_matches("/v1"));
     let client = HttpClient::new();
     let body = serde_json::json!({
         "model": model,
         "context_length": context_size,
     });
-    let resp = client
-        .post(&load_url)
-        .json(&body)
-        .send()
-        .await?;
+    let resp = client.post(&load_url).json(&body).send().await?;
     if resp.status().is_success() {
         tracing::info!(%model, "LM Studio model loaded successfully");
     } else {
@@ -1072,15 +856,6 @@ pub async fn ensure_lm_studio_model(base_url: &str, model: &str, context_size: u
 #[cfg(test)]
 mod cloud_tests {
     use super::*;
-
-    #[test]
-    fn test_create_cloud_client_llama_errors() {
-        let config = openloom_models::ModelConfig {
-            backend: ModelBackend::LlamaCpp,
-            ..Default::default()
-        };
-        assert!(create_cloud_client(&config).is_err());
-    }
 
     #[test]
     fn test_create_cloud_client_missing_api_key() {

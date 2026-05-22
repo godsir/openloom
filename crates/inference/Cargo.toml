@@ -5,7 +5,6 @@ edition.workspace = true
 
 [dependencies]
 openloom-models = { path = "../models" }
-llama-cpp-2 = { version = "=0.1.146", optional = true }
 tokio = { version = "1", features = ["rt", "sync", "macros"] }
 anyhow = "1"
 tracing = "0.1"
@@ -14,10 +13,3 @@ serde_json = "1"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 async-trait = "0.1"
 futures = "0.3"
-
-[features]
-default = []
-llama = ["llama-cpp-2"]
-cuda = ["llama-cpp-2/cuda"]
-metal = ["llama-cpp-2/metal"]
-vulkan = ["llama-cpp-2/vulkan"]

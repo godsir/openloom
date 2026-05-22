@@ -14,7 +14,8 @@ impl Engine {
         session_id: &str,
         mode: openloom_models::Mode,
     ) -> Result<ChatResponse> {
-        self.agent_loop_inner(msg, session_id, None, mode).await
+        self.agent_loop_inner(msg, session_id, None, mode, openloom_models::ModelPreference::Auto)
+            .await
     }
 
     pub(crate) async fn agent_loop_streaming(
@@ -23,8 +24,10 @@ impl Engine {
         session_id: &str,
         tx: mpsc::Sender<String>,
         mode: openloom_models::Mode,
+        model_pref: openloom_models::ModelPreference,
     ) -> Result<ChatResponse> {
-        self.agent_loop_inner(msg, session_id, Some(tx), mode).await
+        self.agent_loop_inner(msg, session_id, Some(tx), mode, model_pref)
+            .await
     }
 
     async fn agent_loop_inner(
@@ -33,6 +36,7 @@ impl Engine {
         session_id: &str,
         tx: Option<mpsc::Sender<String>>,
         mode: openloom_models::Mode,
+        model_pref: openloom_models::ModelPreference,
     ) -> Result<ChatResponse> {
         self.in_flight.fetch_add(1, Ordering::SeqCst);
         let loop_start = std::time::Instant::now();
@@ -91,7 +95,7 @@ impl Engine {
                     ..Default::default()
                 };
 
-                let response = self.invoke_model_native(&completion_req).await?;
+                let response = self.invoke_model_native(&completion_req, model_pref).await?;
                 total_prompt_tokens += response.prompt_tokens;
                 total_completion_tokens += response.completion_tokens;
 
@@ -175,7 +179,7 @@ impl Engine {
                     temperature: 0.0,
                     ..Default::default()
                 };
-                let response = self.invoke_model_native(&completion_req).await?;
+                let response = self.invoke_model_native(&completion_req, model_pref).await?;
                 total_prompt_tokens += response.prompt_tokens;
                 total_completion_tokens += response.completion_tokens;
                 last_response = response.text;
@@ -242,23 +246,44 @@ impl Engine {
     pub(crate) async fn invoke_model_native(
         &self,
         req: &CompletionRequest,
+        model_pref: openloom_models::ModelPreference,
     ) -> Result<CompletionResponse> {
-        if let Some(ref cloud) = self.cloud {
-            // Pre-flight: ensure LM Studio has a model loaded
-            if cloud.provider() == ModelBackend::LmStudio {
+        // Respect user's model preference for ordering
+        let (first, second) = match model_pref {
+            openloom_models::ModelPreference::Local => (&self.local_client, &self.cloud),
+            openloom_models::ModelPreference::Cloud | openloom_models::ModelPreference::Auto => {
+                (&self.cloud, &self.local_client)
+            }
+        };
+
+        // Try the preferred backend first
+        if let Some(preferred) = first {
+            if preferred.provider() == ModelBackend::LmStudio {
                 let _ = openloom_inference::ensure_lm_studio_model(
                     "http://localhost:1234/v1",
-                    cloud.model_name(),
+                    preferred.model_name(),
                     32000,
                 )
                 .await;
             }
-            match cloud.complete(req.clone()).await {
+            match preferred.complete(req.clone()).await {
                 Ok(r) => return Ok(r),
-                Err(e) => tracing::warn!("Cloud failed, trying local: {}", e),
+                Err(e) => tracing::warn!(
+                    "Preferred model failed (pref={:?}), trying fallback: {}",
+                    model_pref, e
+                ),
             }
         }
-        // Fallback: construct text-only request from messages
+
+        // Try the fallback backend
+        if let Some(fallback) = second {
+            match fallback.complete(req.clone()).await {
+                Ok(r) => return Ok(r),
+                Err(e) => tracing::warn!("Fallback model failed, trying native inference: {}", e),
+            }
+        }
+
+        // Final fallback: native GGUF inference (stub)
         let prompt = req
             .effective_messages()
             .iter()
@@ -271,12 +296,6 @@ impl Engine {
             temperature: req.temperature,
             ..Default::default()
         };
-        if let Some(ref local) = self.local_client {
-            match local.complete(fallback_req.clone()).await {
-                Ok(r) => return Ok(r),
-                Err(e) => tracing::warn!("Local client failed, trying inference engine: {}", e),
-            }
-        }
         self.inference.complete(fallback_req).await
     }
 

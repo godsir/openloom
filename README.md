@@ -42,7 +42,7 @@ CLI 和 Electron 桌面壳共享同一个 Rust Engine，走 JSON-RPC 2.0 / WebSo
 | **Phase 0** | Memory Kernel MVP | ✅ 完成 |
 | **Phase 1** | Smart Router + Skill Engine + Electron 骨架 | ✅ 完成 |
 | **Phase 2** | Agent Loop + Persona + Backend + Electron GUI (4 milestones) | ✅ 完成 |
-| **Phase 3A** | AI Activation: llama-cpp-2, SSE streaming, 8B cognition, Hub heartbeat, cloud streaming | ✅ 完成 |
+| **Phase 3A** | AI Activation: LM Studio, SSE streaming, 8B cognition, Hub heartbeat, cloud streaming | ✅ 完成 |
 | **Phase 3B** | Productionization: Engine split, sandbox, audit panel, KV Cache prep, packaging | ✅ 完成 |
 | **Phase 4** | CLI-first UX: Inline viewport, loom.md, skills, plugins, Mode system, thinking, model switching, permission system, auto-compaction, Markdown rendering | ✅ 进行中 |
 
@@ -54,8 +54,7 @@ CLI 和 Electron 桌面壳共享同一个 Rust Engine，走 JSON-RPC 2.0 / WebSo
 
 - Rust 1.85+
 - 6GB+ VRAM 推荐（本地模型推理，最低 4GB GPU / CPU-only 降级可用）
-- CMake + C++ 工具链（llama-cpp-2 编译需要）
-- **Windows 用户：** 安装 [Visual Studio 2022 BuildTools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022) 和 [LLVM/clang](https://github.com/llvm/llvm-project/releases)，然后运行 `cargo run -- doctor` 检测工具链
+- 安装 [LM Studio](https://lmstudio.ai/) 并启动本地推理服务（localhost:1234）
 
 ### 三步启动
 
@@ -73,7 +72,7 @@ cargo run -- chat
 cargo run -- serve
 ```
 
-> **Windows 中文系统注意：** 项目包含 `llama-cpp-sys-2` 本地补丁（`patches/` 目录），为 MSVC 编译添加了 `/utf-8` 标志，解决 CP936 代码页下的 C4819 编译错误。无需手动设置环境变量。
+> **本地推理：** 默认使用 LM Studio (http://localhost:1234)。也可以使用 Ollama (http://localhost:11434)。
 
 ### 构建
 
@@ -134,7 +133,7 @@ cargo test  # 180+ 个测试
 |----|------|
 | 核心引擎 | Rust 2024 + Tokio |
 | 数据库 | SQLite + FTS5 + refinery 迁移 |
-| 本地推理 | llama-cpp-2 (GGUF, feature-gated) |
+| 本地推理 | LM Studio / Ollama (HTTP OpenAI-compatible API) |
 | 云端推理 | Anthropic / OpenAI / DeepSeek (reqwest) |
 | HTTP/WS | Axum 0.7 + WebSocket + SSE + JSON-RPC 2.0 |
 | 桌面壳 | Electron 38 |
@@ -150,7 +149,7 @@ openLoom/
 ├── crates/
 │   ├── memory/       ← Memory Kernel (事件提取+聚合+存储+管线+人格)
 │   ├── models/       ← 共享类型定义 (Intent, JSON-RPC, Config, EngineEvent)
-│   ├── inference/    ← 推理封装 (llama-cpp-2 本地 + Anthropic/OpenAI 云端)
+│   ├── inference/    ← 推理封装 (LM Studio/Ollama 本地 + Anthropic/OpenAI/DeepSeek 云端)
 │   ├── router/       ← 智能路由 (关键词意图分类 + 技能匹配)
 │   ├── skills/       ← Skill trait + Registry + ExternalSkill + PluginLoader + LoomContext
 │   ├── engine/       ← 编排引擎 (EventBus + 请求派发 + Agent Loop)→11 模块
@@ -159,7 +158,6 @@ openLoom/
 │   ├── cache/        ← KV Cache trait (NoopCache + SafetensorsCache)
 │   ├── sandbox/      ← 安全沙箱 (声明式权限检查)
 │   └── cli/          ← CLI 入口 (serve/chat/run/download-model/skill/memory/config/doctor)
-├── patches/           ← 上游 crate 本地补丁 (llama-cpp-sys-2 /utf-8 MSVC)
 ├── electron/         ← Electron 壳 (sidecar 生命周期 + contextBridge + 打包)
 ├── web/              ← React 19 前端 (ChatArea + Sidebar + Settings + Dashboard + Audit)
 ├── migrations/       ← refinery SQL 迁移 (V1~V3)
@@ -255,13 +253,9 @@ Code 模式下 Medium/High 风险工具调用弹出确认对话框（A 批准 / 
 
 | 债项 | 严重度 | 阻塞原因 |
 |------|--------|---------|
-| llama-cpp-2 功能未验证 | P0 | 需要 CMake + C++ 工具链编译 |
-| SSE 流式发全文非逐 token | HIGH | 同上，增量 decode 不可用 |
-| 8B 模型加载 + LlmBased 认知提取 | HIGH | 同上 |
-| MSVC /utf-8 编译 (中文 Windows) | ~~P0~~ 已修复 | patches/llama-cpp-sys-2 本地补丁 |
+| SSE 流式发全文非逐 token | HIGH | 待 LM Studio 逐 token 流式适配 |
 | EventSource unmount 时未关闭 | MEDIUM | — |
 | skills invoke() 错误链丢失 | LOW | — |
-| KV Cache 仅架构预留 (NoopCache) | LOW | 等 llama-cpp state API |
 
 ## 许可证
 

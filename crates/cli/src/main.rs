@@ -206,16 +206,6 @@ fn build_engine(
         .find(|m| m.backend.is_local_inference())
         .cloned();
 
-    // model_override from CLI takes priority; fall back to config.toml
-    let model_override = model_override.or_else(|| {
-        app_config
-            .models
-            .iter()
-            .find(|m| m.backend == openloom_models::ModelBackend::LlamaCpp)
-            .and_then(|m| m.path.as_ref())
-            .map(|p| data_dir.join("models").join(p))
-    });
-
     let project_scope = std::env::current_dir()
         .map(|p| format!("project:{}", p.display()))
         .unwrap_or_else(|_| "global".into());

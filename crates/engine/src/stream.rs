@@ -62,7 +62,7 @@ impl Engine {
         {
             let tx_clone = tx.clone();
             match self
-                .agent_loop_streaming(&msg, session_id, tx_clone, mode)
+                .agent_loop_streaming(&msg, session_id, tx_clone, mode, model_pref)
                 .await
             {
                 Ok(resp) => {
