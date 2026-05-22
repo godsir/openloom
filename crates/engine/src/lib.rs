@@ -814,6 +814,13 @@ impl Engine {
                 _ => 128_000,
             };
         }
+        // Fallback: infer from live cloud/local client
+        if self.cloud.is_some() {
+            return 128_000;
+        }
+        if self.local_client.is_some() {
+            return 32_000;
+        }
         config
             .models
             .iter()

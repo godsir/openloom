@@ -20,8 +20,6 @@ use openloom_engine::Engine;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::buffer::Buffer;
-use ratatui::text::Text;
-use ratatui::widgets::{Paragraph, Widget};
 use ratatui::Viewport;
 
 use crate::tui::app::{App, AppState};
@@ -326,11 +324,7 @@ fn flush_messages_to_scrollback(
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
     app: &mut App,
 ) -> anyhow::Result<()> {
-    // Determine how many messages are "complete" and can be flushed.
-    // During streaming, the last assistant message is still being built — don't flush it.
     let flush_end = if app.state == AppState::Streaming {
-        // Find the last assistant message that's being streamed and don't flush it
-        // or anything after it
         app.messages
             .iter()
             .rposition(|m| m.role == "assistant")
@@ -346,22 +340,54 @@ fn flush_messages_to_scrollback(
     let p = &app.theme.palette;
     let width = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
 
-    // Build lines for the messages we need to flush
     let messages_to_flush = &app.messages[app.flushed_up_to..flush_end];
     let lines = render::build_lines_for_messages(messages_to_flush, p, width, app.flushed_up_to > 0);
 
     if !lines.is_empty() {
-        let height = lines.len() as u16;
-        let styled_lines = lines;
+        // Convert Lines to ANSI strings and print directly to avoid
+        // ratatui Buffer rendering issues with CJK full-width characters
+        let ansi_lines: Vec<String> = lines.iter().map(line_to_ansi).collect();
+        let height = ansi_lines.len() as u16;
         terminal.insert_before(height, |buf: &mut Buffer| {
-            let area = buf.area;
-            let para = Paragraph::new(Text::from(styled_lines));
-            para.render(area, buf);
+            // Leave buffer empty — we print ANSI directly below
+            let _ = buf;
         })?;
+        // Move cursor up to the inserted area and print ANSI lines
+        execute!(
+            stdout(),
+            cursor::MoveUp(height + INLINE_HEIGHT),
+        )?;
+        for ansi in &ansi_lines {
+            execute!(
+                stdout(),
+                crossterm::style::Print(ansi),
+                crossterm::style::Print("\r\n"),
+            )?;
+        }
     }
 
     app.flushed_up_to = flush_end;
     Ok(())
+}
+
+fn line_to_ansi(line: &ratatui::text::Line) -> String {
+    let mut out = String::new();
+    for span in &line.spans {
+        let mut has_style = false;
+        if let Some(ratatui::style::Color::Rgb(r, g, b)) = span.style.fg {
+            out.push_str(&format!("\x1b[38;2;{};{};{}m", r, g, b));
+            has_style = true;
+        }
+        if span.style.add_modifier.contains(ratatui::style::Modifier::BOLD) {
+            out.push_str("\x1b[1m");
+            has_style = true;
+        }
+        out.push_str(&span.content);
+        if has_style {
+            out.push_str("\x1b[0m");
+        }
+    }
+    out
 }
 
 fn detect_git_branch() -> String {
