@@ -1,0 +1,25 @@
+
+[package]
+edition.workspace = true
+license.workspace = true
+name = "loom-plugins"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "loom_plugins"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+loom-exec-server = { workspace = true }
+codex-login = { workspace = true }
+loom-absolute-path = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

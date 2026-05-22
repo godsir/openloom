@@ -1,0 +1,37 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "loom-tools"
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+codex-app-server-protocol = { workspace = true }
+codex-code-mode = { workspace = true }
+codex-features = { workspace = true }
+codex-protocol = { workspace = true }
+loom-absolute-path = { workspace = true }
+codex-utils-output-truncation = { workspace = true }
+codex-utils-pty = { workspace = true }
+loom-string = { workspace = true }
+jsonptr = { workspace = true }
+rmcp = { workspace = true, default-features = false, features = [
+    "base64",
+    "macros",
+    "schemars",
+    "server",
+] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+urlencoding = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+
+[lib]
+doctest = false

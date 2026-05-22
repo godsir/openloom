@@ -14,6 +14,11 @@ members = [
     "crates/loom-utils/string",
     "crates/loom-utils/terminal-detection",
     "crates/loom-utils/uds",
+    "crates/loom-protocol/execpolicy",
+    "crates/loom-protocol/network-proxy",
+    "crates/loom-protocol/skills",
+    "crates/loom-utils/file-search",
+    "crates/loom-utils/sleep-inhibitor",
 ]
 exclude = [
     "crates/loom-utils",
@@ -70,6 +75,7 @@ unwrap_used = "deny"
 # Versions sourced from F:/codex/codex-rs/Cargo.toml [workspace.dependencies].
 
 chardetng = "0.1.17"
+allocative = "=0.3.4"
 encoding_rs = "0.8.35"
 globset = "0.4"
 wildmatch = "2.6.1"
@@ -116,6 +122,38 @@ url = "2"
 urlencoding = "2.1"
 futures = { version = "0.3", default-features = false }
 syntect = "5"
+starlark = "0.13.0"
+tree-sitter = "0.25.10"
+tree-sitter-bash = "0.25"
+arc-swap = "1.9.0"
+bytes = "1.10.1"
+prost = "0.14.3"
+uuid = { version = "1", features = ["v4"] }
+libc = "0.2.182"
+which = "8"
+flate2 = "1.1.8"
+semver = "1.0"
+tar = { version = "=0.4.45", default-features = false }
+zip = "2.4.2"
+serde_yaml = "0.9"
+jsonptr = { version = "0.7.1", default-features = false }
+crossbeam-channel = "0.5.15"
+ignore = "0.4.23"
+nucleo = { git = "https://github.com/helix-editor/nucleo.git", rev = "4253de9faabb4e5c6d81d946a5e35a90f87347ee" }
+gix = { version = "0.81.0", default-features = false, features = ["sha1"] }
+similar = "2.7.0"
+walkdir = "2.5.0"
+time = "0.3.47"
+toml = "0.9.5"
+mime_guess = "2.0.5"
+tokio-tungstenite = { version = "0.28.0", features = ["proxy", "rustls-tls-native-roots"] }
+rama-core = "=0.3.0-alpha.4"
+rama-http = "=0.3.0-alpha.4"
+rama-http-backend = { version = "=0.3.0-alpha.4", features = ["tls"] }
+rama-net = { version = "=0.3.0-alpha.4", features = ["http", "tls"] }
+rama-socks5 = "=0.3.0-alpha.4"
+rama-tcp = { version = "=0.3.0-alpha.4", features = ["http"] }
+rama-tls-rustls = { version = "=0.3.0-alpha.4", features = ["http"] }
 
 # Additional external deps needed by Level 0 utility crates
 ansi-to-tui = "7.0.0"
@@ -130,6 +168,39 @@ uds_windows = "1.1.0"
 # Level 0 utility crate path entries (for workspace = true references)
 loom-absolute-path = { path = "crates/loom-utils/absolute-path" }
 loom-home-dir = { path = "crates/loom-utils/home-dir" }
+
+# Level 1-2 crate path entries (for workspace = true references)
+loom-execpolicy = { path = "crates/loom-protocol/execpolicy" }
+loom-network-proxy = { path = "crates/loom-protocol/network-proxy" }
+loom-shell-command = { path = "crates/loom-protocol/shell-command" }
+loom-sandboxing = { path = "crates/loom-protocol/sandboxing" }
+loom-exec-server = { path = "crates/loom-protocol/exec-server" }
+loom-skills = { path = "crates/loom-protocol/skills" }
+loom-core-plugins = { path = "crates/loom-protocol/core-plugins" }
+loom-core-skills = { path = "crates/loom-protocol/core-skills" }
+loom-tools = { path = "crates/loom-protocol/tools" }
+loom-hooks = { path = "crates/loom-protocol/hooks" }
+loom-external-agent-sessions = { path = "crates/loom-protocol/external-agent-sessions" }
+loom-external-agent-migration = { path = "crates/loom-protocol/external-agent-migration" }
+loom-file-system = { path = "crates/loom-utils/file-system" }
+loom-file-search = { path = "crates/loom-utils/file-search" }
+loom-git-utils = { path = "crates/loom-utils/git-utils" }
+loom-sleep-inhibitor = { path = "crates/loom-utils/sleep-inhibitor" }
+loom-oss = { path = "crates/loom-utils/oss" }
+loom-plugins = { path = "crates/loom-utils/plugins" }
+loom-cli-utils = { path = "crates/loom-utils/cli" }
+loom-image = { path = "crates/loom-utils/image" }
+
+# Level 0 deps that need explicit path entries (others use crate name convention)
+loom-ansi-escape = { path = "crates/loom-utils/ansi-escape" }
+loom-async-utils = { path = "crates/loom-utils/async-utils" }
+loom-elapsed = { path = "crates/loom-utils/elapsed" }
+loom-fuzzy-match = { path = "crates/loom-utils/fuzzy-match" }
+loom-rustls-provider = { path = "crates/loom-utils/rustls-provider" }
+loom-string = { path = "crates/loom-utils/string" }
+loom-terminal-detection = { path = "crates/loom-utils/terminal-detection" }
+loom-uds = { path = "crates/loom-utils/uds" }
+loom-path-utils = { path = "crates/loom-utils/path" }
 
 # Commonly used deps (already used by openLoom, centralized here)
 anyhow = "1"
