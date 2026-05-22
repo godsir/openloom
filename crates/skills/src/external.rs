@@ -1,8 +1,8 @@
 use std::sync::OnceLock;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::{Skill, SkillManifest, SkillPermissions};
 

@@ -20,6 +20,7 @@ pub enum Action {
     NavigateLeft,
     NavigateRight,
     ToggleThinking,
+    CycleMode,
     Noop,
 }
 
@@ -159,6 +160,12 @@ fn default_bindings() -> Vec<KeyBinding> {
             action: Action::ToggleThinking,
             context: KeyContext::Global,
         },
+        KeyBinding {
+            key: KeyCode::Char('m'),
+            modifiers: KeyModifiers::CONTROL,
+            action: Action::CycleMode,
+            context: KeyContext::Input,
+        },
         // Streaming
         KeyBinding {
             key: KeyCode::Char('c'),
@@ -285,5 +292,12 @@ mod tests {
         let km = ResolvedKeymap::default();
         let ev = key(KeyCode::Enter, KeyModifiers::SHIFT);
         assert_eq!(km.resolve(&ev, KeyContext::Input), Action::Newline);
+    }
+
+    #[test]
+    fn test_ctrl_m_is_cycle_mode() {
+        let km = ResolvedKeymap::default();
+        let ev = key(KeyCode::Char('m'), KeyModifiers::CONTROL);
+        assert_eq!(km.resolve(&ev, KeyContext::Input), Action::CycleMode);
     }
 }

@@ -13,6 +13,7 @@ pub struct CompletionRequest {
     pub top_p: f32,
     pub stop: Vec<String>,
     pub stream: bool,
+    pub thinking_budget: Option<usize>,
 }
 
 impl Default for CompletionRequest {
@@ -24,6 +25,7 @@ impl Default for CompletionRequest {
             top_p: 1.0,
             stop: Vec::new(),
             stream: false,
+            thinking_budget: None,
         }
     }
 }
@@ -394,11 +396,17 @@ impl AnthropicClient {
     }
 
     async fn try_complete(&self, req: &CompletionRequest) -> anyhow::Result<CompletionResponse> {
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.model,
             "max_tokens": req.max_tokens,
             "messages": [{"role": "user", "content": &req.prompt}],
         });
+        if let Some(budget) = req.thinking_budget {
+            body["thinking"] = serde_json::json!({
+                "type": "enabled",
+                "budget_tokens": budget,
+            });
+        }
 
         let resp = self
             .http
@@ -451,12 +459,18 @@ impl CloudClient for AnthropicClient {
         req: CompletionRequest,
         tx: tokio::sync::mpsc::Sender<String>,
     ) -> anyhow::Result<()> {
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.model,
             "max_tokens": req.max_tokens,
             "messages": [{"role": "user", "content": req.prompt}],
             "stream": true,
         });
+        if let Some(budget) = req.thinking_budget {
+            body["thinking"] = serde_json::json!({
+                "type": "enabled",
+                "budget_tokens": budget,
+            });
+        }
 
         let resp = self
             .http
@@ -820,9 +834,10 @@ mod tests {
     #[test]
     fn test_completion_request_default() {
         let req = CompletionRequest::default();
-        assert_eq!(req.max_tokens, 2048);
+        assert_eq!(req.max_tokens, 4096);
         assert!((req.temperature - 0.7).abs() < 0.01);
         assert!(!req.stream);
+        assert!(req.thinking_budget.is_none());
     }
 
     #[test]

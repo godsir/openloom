@@ -31,8 +31,9 @@ pub enum AppState {
 pub struct Message {
     pub role: String,
     pub content: String,
-    #[allow(dead_code)]
     pub collapsed: bool,
+    /// Elapsed time in milliseconds for this response (assistant messages only).
+    pub elapsed_ms: Option<u64>,
 }
 
 impl Message {
@@ -41,6 +42,7 @@ impl Message {
             role: "user".into(),
             content,
             collapsed: false,
+            elapsed_ms: None,
         }
     }
 
@@ -49,6 +51,7 @@ impl Message {
             role: "assistant".into(),
             content,
             collapsed: false,
+            elapsed_ms: None,
         }
     }
 }
@@ -130,6 +133,21 @@ pub struct App {
     pub last_ctrl_c: Option<std::time::Instant>,
     pub stream_start: Option<std::time::Instant>,
     pub stream_tokens_count: usize,
+    /// Index of the next message to flush into terminal scrollback.
+    /// Messages before this index have already been written via insert_before.
+    pub flushed_up_to: usize,
+    /// External skill commands for the command palette (e.g. from plugins).
+    pub external_commands: Vec<(String, String)>,
+    /// Active skill context injected into the next LLM call (like Claude Code).
+    pub active_skill_context: Option<String>,
+    pub mode: openloom_models::Mode,
+    pub model_pref: openloom_models::ModelPreference,
+    pub thinking: openloom_models::ThinkingLevel,
+    /// Receiver for permission requests from the engine's agent loop.
+    pub perm_rx: Option<tokio::sync::mpsc::Receiver<openloom_engine::PermissionChannelItem>>,
+    /// Pending oneshot sender to respond to a permission request after the approval overlay closes.
+    pub pending_perm_response: Option<tokio::sync::oneshot::Sender<bool>>,
+    pub history_search_active: bool,
 }
 
 pub fn build_textarea() -> TextArea<'static> {
@@ -152,6 +170,7 @@ impl App {
         context_max: usize,
     ) -> Self {
         let event_rx = engine.subscribe();
+        let perm_rx = engine.take_permission_rx();
         Self {
             engine,
             session_id,
@@ -169,6 +188,7 @@ impl App {
                 git_branch,
                 cwd,
                 context_max,
+                last_model: None,
             },
             theme: Theme::dark(),
             event_rx,
@@ -186,6 +206,15 @@ impl App {
             last_ctrl_c: None,
             stream_start: None,
             stream_tokens_count: 0,
+            flushed_up_to: 0,
+            external_commands: Vec::new(),
+            active_skill_context: None,
+            mode: openloom_models::Mode::default(),
+            model_pref: openloom_models::ModelPreference::default(),
+            thinking: openloom_models::ThinkingLevel::default(),
+            perm_rx,
+            pending_perm_response: None,
+            history_search_active: false,
         }
     }
 
@@ -208,12 +237,14 @@ impl App {
                     prompt_tokens,
                     completion_tokens,
                     cached_tokens,
+                    model,
                     ..
                 } => {
                     self.total_prompt_tokens += prompt_tokens;
                     self.total_completion_tokens += completion_tokens;
                     self.total_cached_tokens += cached_tokens;
                     self.status.turn_tokens = completion_tokens;
+                    self.status.last_model = Some(model);
                     self.total_cost += (prompt_tokens as f64) * 3.0 / 1_000_000.0
                         + (completion_tokens as f64) * 15.0 / 1_000_000.0;
                 }
@@ -232,6 +263,7 @@ impl App {
                             confidence * 100.0
                         ),
                         collapsed: true,
+                        elapsed_ms: None,
                     });
                     self.viewport.content_added();
                 }
@@ -240,6 +272,7 @@ impl App {
                         role: "error".into(),
                         content: message,
                         collapsed: false,
+                        elapsed_ms: None,
                     });
                     self.viewport.content_added();
                 }
@@ -267,6 +300,7 @@ impl App {
                                 role: "thinking".into(),
                                 content: content.to_string(),
                                 collapsed: true,
+                                elapsed_ms: None,
                             });
                             self.viewport.content_added();
                             continue;
@@ -275,7 +309,8 @@ impl App {
                             self.messages.push(Message {
                                 role: "tool_call".into(),
                                 content: content.to_string(),
-                                collapsed: false,
+                                collapsed: true,
+                                elapsed_ms: None,
                             });
                             self.viewport.content_added();
                             continue;
@@ -284,18 +319,25 @@ impl App {
                             self.messages.push(Message {
                                 role: "tool_result".into(),
                                 content: content.to_string(),
-                                collapsed: false,
+                                collapsed: true,
+                                elapsed_ms: None,
                             });
                             self.viewport.content_added();
                             continue;
                         }
 
-                        self.stream_tokens_count += 1;
                         self.stream.buffer.push_str(&token);
-                        if let Some(last) = self.messages.last_mut()
-                            && last.role == "assistant"
+                        self.stream_tokens_count = self.stream.buffer.len().div_ceil(4);
+
+                        // Update the most recent assistant message — it may not be
+                        // the last message if tool_call/tool_result were inserted after it.
+                        if let Some(assistant_msg) = self
+                            .messages
+                            .iter_mut()
+                            .rev()
+                            .find(|m| m.role == "assistant")
                         {
-                            last.content = self.stream.buffer.clone();
+                            assistant_msg.content = self.stream.buffer.clone();
                         }
                         self.viewport.content_added();
                     }
@@ -316,9 +358,19 @@ impl App {
     pub fn start_streaming(&mut self, user_message: String) {
         use openloom_models::ChatMessage;
 
+        // Inject active skill context into the user message so the LLM follows it
+        let content = if let Some(ref ctx) = self.active_skill_context {
+            format!(
+                "[Active Skill Instructions]\n{}\n\n[User Message]\n{}",
+                ctx, user_message
+            )
+        } else {
+            user_message
+        };
+
         let msg = ChatMessage {
             role: "user".into(),
-            content: user_message,
+            content,
             timestamp: chrono::Utc::now(),
         };
 
@@ -330,8 +382,11 @@ impl App {
 
         let engine = self.engine.clone();
         let session_id = self.session_id.clone();
+        let mode = self.mode;
+        let model_pref = self.model_pref;
+        let thinking = self.thinking;
         let handle = tokio::spawn(async move {
-            let _ = engine.handle_message_streaming(msg, &session_id, tx).await;
+            let _ = engine.handle_message_streaming(msg, &session_id, tx, mode, model_pref, thinking).await;
         });
 
         self.stream.abort_handle = Some(handle);

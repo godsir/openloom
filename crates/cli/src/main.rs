@@ -293,7 +293,7 @@ async fn main() -> anyhow::Result<()> {
                     content: prompt,
                     timestamp: chrono::Utc::now(),
                 };
-                let resp = engine.handle_message(msg, &sid).await?;
+                let resp = engine.handle_message(msg, &sid, openloom_models::Mode::Code).await?;
                 println!("{}", resp.response);
             } else {
                 // Resolve session: --resume (latest) / --resume=<id> / new session
@@ -321,7 +321,7 @@ async fn main() -> anyhow::Result<()> {
                 content: task,
                 timestamp: chrono::Utc::now(),
             };
-            let resp = engine.handle_message(msg, &sid).await?;
+            let resp = engine.handle_message(msg, &sid, openloom_models::Mode::Code).await?;
             println!("{}", resp.response);
         }
         Commands::Skill { action } => match action {

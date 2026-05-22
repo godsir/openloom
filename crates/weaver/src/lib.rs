@@ -29,6 +29,18 @@ impl ContextWeaver {
         skill_context: Option<&str>,
         working_memory: &[ChatMessage],
     ) -> AssembledPrompt {
+        self.assemble_with_limit(system_instruction, user_message, persona_summary, skill_context, working_memory, 0)
+    }
+
+    pub fn assemble_with_limit(
+        &self,
+        system_instruction: &str,
+        user_message: &str,
+        persona_summary: &str,
+        skill_context: Option<&str>,
+        working_memory: &[ChatMessage],
+        max_context_chars: usize,
+    ) -> AssembledPrompt {
         let static_prefix = if persona_summary.is_empty() {
             system_instruction.to_string()
         } else {
@@ -37,17 +49,26 @@ impl ContextWeaver {
         let hash = Sha256::digest(static_prefix.as_bytes());
         let prefix_hash = u64::from_le_bytes(hash[..8].try_into().unwrap());
         let _ = self.cache.lookup(prefix_hash);
-        let static_prefix_len = static_prefix.len(); // FIXME: use token count (InferenceEngine::token_count) after Phase 3A C++ toolchain
+        let static_prefix_len = static_prefix.len();
 
         let skill_section = match skill_context {
             Some(ctx) if !ctx.is_empty() => format!("\n[Skill Context]\n{}\n", ctx),
             _ => String::new(),
         };
 
-        let memory_section = if working_memory.is_empty() {
+        // Compact working memory if it would exceed context limit
+        let memory_messages = if max_context_chars > 0 && !working_memory.is_empty() {
+            let overhead = static_prefix_len + skill_section.len() + user_message.len() + 200;
+            let budget = max_context_chars.saturating_sub(overhead);
+            compact_memory(working_memory, budget)
+        } else {
+            working_memory.to_vec()
+        };
+
+        let memory_section = if memory_messages.is_empty() {
             String::new()
         } else {
-            let memory_text: String = working_memory
+            let memory_text: String = memory_messages
                 .iter()
                 .map(|m| format!("{}: {}", m.role, m.content))
                 .collect::<Vec<_>>()
@@ -65,6 +86,42 @@ impl ContextWeaver {
             prompt,
             static_prefix_len,
         }
+    }
+}
+
+fn compact_memory(messages: &[ChatMessage], budget_chars: usize) -> Vec<ChatMessage> {
+    let total_chars: usize = messages.iter().map(|m| m.role.len() + m.content.len() + 3).sum();
+    if total_chars <= budget_chars {
+        return messages.to_vec();
+    }
+
+    // Keep recent messages, drop oldest until within budget
+    let mut kept: Vec<ChatMessage> = Vec::new();
+    let mut used = 0usize;
+    let compacted_note = ChatMessage {
+        role: "system".into(),
+        content: "[Earlier messages were compacted to fit context window]".into(),
+        timestamp: chrono::Utc::now(),
+    };
+    let note_size = compacted_note.role.len() + compacted_note.content.len() + 3;
+
+    for msg in messages.iter().rev() {
+        let msg_size = msg.role.len() + msg.content.len() + 3;
+        if used + msg_size + note_size > budget_chars && !kept.is_empty() {
+            break;
+        }
+        used += msg_size;
+        kept.push(msg.clone());
+    }
+
+    kept.reverse();
+
+    if kept.len() < messages.len() {
+        let mut result = vec![compacted_note];
+        result.extend(kept);
+        result
+    } else {
+        kept
     }
 }
 

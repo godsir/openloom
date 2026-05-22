@@ -32,7 +32,7 @@ pub async fn dispatch_method(
                 timestamp: chrono::Utc::now(),
             };
             engine
-                .handle_message(msg, &session_id)
+                .handle_message(msg, &session_id, openloom_models::Mode::Code)
                 .await
                 .map(|r| serde_json::to_value(r).unwrap_or_default())
                 .map_err(|e| JsonRpcError {

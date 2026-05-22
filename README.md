@@ -44,8 +44,9 @@ CLI 和 Electron 桌面壳共享同一个 Rust Engine，走 JSON-RPC 2.0 / WebSo
 | **Phase 2** | Agent Loop + Persona + Backend + Electron GUI (4 milestones) | ✅ 完成 |
 | **Phase 3A** | AI Activation: llama-cpp-2, SSE streaming, 8B cognition, Hub heartbeat, cloud streaming | ✅ 完成 |
 | **Phase 3B** | Productionization: Engine split, sandbox, audit panel, KV Cache prep, packaging | ✅ 完成 |
+| **Phase 4** | CLI-first UX: Inline viewport, loom.md, skills, plugins, Mode system, thinking, model switching, permission system, auto-compaction, Markdown rendering | ✅ 进行中 |
 
-**质量：** 131 tests pass, clippy 0 warnings, fmt clean
+**质量：** 180+ tests pass, clippy 0 warnings, fmt clean
 
 ## 快速开始
 
@@ -77,7 +78,11 @@ cargo run -- serve
 ### 构建
 
 ```bash
+# 构建 release 二进制
 cargo build --release
+
+# 安装到 ~/.cargo/bin/（全局可用 openloom 命令）
+cargo install --path crates/cli
 ```
 
 ### 使用
@@ -120,7 +125,7 @@ npm start       # 启动 Electron
 ### 测试
 
 ```bash
-cargo test  # 131 个测试
+cargo test  # 180+ 个测试
 ```
 
 ## 技术栈
@@ -147,7 +152,7 @@ openLoom/
 │   ├── models/       ← 共享类型定义 (Intent, JSON-RPC, Config, EngineEvent)
 │   ├── inference/    ← 推理封装 (llama-cpp-2 本地 + Anthropic/OpenAI 云端)
 │   ├── router/       ← 智能路由 (关键词意图分类 + 技能匹配)
-│   ├── skills/       ← Skill trait + Registry + CliBridge + 5 内置技能
+│   ├── skills/       ← Skill trait + Registry + ExternalSkill + PluginLoader + LoomContext
 │   ├── engine/       ← 编排引擎 (EventBus + 请求派发 + Agent Loop)→11 模块
 │   ├── server/       ← Axum HTTP + WebSocket + SSE + JSON-RPC 2.0
 │   ├── weaver/       ← 上下文组装 (system prompt + persona + skill + history)
@@ -160,6 +165,90 @@ openLoom/
 ├── migrations/       ← refinery SQL 迁移 (V1~V3)
 ├── tests/            ← 集成测试
 └── docs/             ← 设计文档 (specs / plans / retrospectives)
+```
+
+## 项目指令与技能系统
+
+### loom.md（类似 CLAUDE.md）
+
+在项目根目录放置 `loom.md`，内容自动注入 LLM 系统提示。支持全局（`<data_dir>/loom.md`）和项目级两层。
+
+### 外部技能 (SKILL.md)
+
+技能文件使用 YAML frontmatter：
+
+```markdown
+---
+name: my-skill
+description: "技能描述"
+---
+
+技能正文，调用时注入 LLM 上下文。
+```
+
+加载路径：
+- `<data_dir>/plugins/<plugin>/skills/*/SKILL.md` — 插件技能
+- `<cwd>/.loom/skills/*/SKILL.md` — 项目本地技能
+
+TUI 中输入 `/<skill-name>` 直接激活，技能上下文持续注入后续对话。
+
+### 插件系统
+
+兼容 Claude Code 插件格式（`.claude-plugin/plugin.json` 或 `.loom-plugin/plugin.json`）。引擎启动时递归扫描 `<data_dir>/plugins/`，支持 Claude Code 的嵌套缓存结构。
+
+### Mode 系统
+
+四种运行模式，`/mode` 或 `Ctrl+M` 切换：
+- **chat** — 纯对话 | **plan** — 只读探索 | **code** — 完整 agent（默认） | **assistant** — 通用助手
+
+### 扩展思考
+
+`/think none|low|mid|high|max` 控制 LLM 思考深度（1K~64K token 预算），类似 Claude Code。
+
+### 模型实时切换
+
+`/model use local|cloud|auto` 运行时切换本地/云端模型，无需重启。
+
+### 权限确认
+
+Code 模式下 Medium/High 风险工具调用弹出确认对话框（A 批准 / D 拒绝 / S 全批准）。`--dangerously-skip-permissions` 跳过。
+
+### 自动上下文压缩
+
+对话历史超出上下文窗口预算时自动截断旧消息，保留最近对话。状态栏显示使用百分比（如 `12% of 200k`）。
+
+### Markdown 渲染
+
+助手消息自动渲染：标题（accent 色）、**加粗**、`代码`、列表（bullet）、表格（dim 分隔符）、代码块（dim 色）。
+
+### 工具调用结构化显示
+
+类似 Claude Code 的展示风格：`Update(src/main.rs)` / `Read(file)` / `Bash(cmd)` + diff 统计（`+12 -3 lines`）。
+
+### 输入增强
+
+- `Ctrl+R` 历史搜索（实时过滤 + 弹窗选择）
+- `Tab` 文件路径补全（无命令弹窗时）
+- `Ctrl+O` 展开/折叠当前轮次的 thinking/tool 消息
+
+### 数据目录
+
+首次启动自动创建（欢迎横幅显示路径）：
+
+| 平台 | 路径 |
+|------|------|
+| Windows | `%APPDATA%/openLoom/` |
+| macOS | `~/Library/Application Support/openLoom/` |
+| Linux | `~/.local/share/openLoom/` |
+
+```
+<data_dir>/
+├── loom.md        ← 全局指令
+├── plugins/       ← 插件目录（递归扫描）
+├── skills/        ← 全局独立技能
+├── models/        ← GGUF 模型
+├── db/            ← SQLite
+└── config.toml    ← 配置
 ```
 
 ## 已知技术债

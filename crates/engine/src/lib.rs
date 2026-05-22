@@ -54,7 +54,7 @@ use openloom_memory::persona::CognitionsPersonaProvider;
 use openloom_memory::store::MessageStore;
 use openloom_models::*;
 use openloom_router::SmartRouter;
-use openloom_skills::{SkillRegistry, builtins};
+use openloom_skills::{Skill, SkillRegistry, builtins};
 use openloom_weaver::ContextWeaver;
 use std::sync::Mutex;
 use std::sync::{
@@ -65,6 +65,9 @@ use std::time::Instant;
 use tokio::sync::{RwLock, broadcast, oneshot};
 
 pub use openloom_models::EngineEvent;
+
+/// Channel payload: a permission request paired with a oneshot sender for the user's response.
+pub type PermissionChannelItem = (PermissionRequest, tokio::sync::oneshot::Sender<bool>);
 
 pub(crate) const SYSTEM_INSTRUCTION: &str = "You are openLoom, a coding assistant and AI agent running locally.
 
@@ -121,6 +124,10 @@ fn detect_project_context() -> String {
         Err(_) => return String::new(),
     };
 
+    let data_dir = dirs::data_dir()
+        .unwrap_or_default()
+        .join("openLoom");
+
     let mut context_parts: Vec<String> = Vec::new();
 
     if cwd.join("Cargo.toml").exists() {
@@ -144,11 +151,9 @@ fn detect_project_context() -> String {
         context_parts.push(format!("- Project instructions (CLAUDE.md):\n{}", preview));
     }
 
-    if cwd.join("loom.md").exists()
-        && let Ok(content) = std::fs::read_to_string(cwd.join("loom.md"))
-        && !content.trim().is_empty()
-    {
-        context_parts.push(format!("- Project instructions (loom.md):\n{}", content));
+    let loom_ctx = openloom_skills::loom_context::LoomContext::load(&data_dir, &cwd);
+    if !loom_ctx.is_empty() {
+        context_parts.push(format!("- Project instructions (loom.md):\n{}", loom_ctx));
     }
 
     context_parts.join("\n")
@@ -179,6 +184,9 @@ pub struct Engine {
     last_user_message: Arc<Mutex<Instant>>,
     skip_permissions: bool,
     max_output_tokens: usize,
+    context_max_chars: usize,
+    perm_request_tx: tokio::sync::mpsc::Sender<PermissionChannelItem>,
+    perm_request_rx: std::sync::Mutex<Option<tokio::sync::mpsc::Receiver<PermissionChannelItem>>>,
 }
 
 pub struct EngineConfig {
@@ -221,6 +229,21 @@ impl Engine {
     }
 
     pub fn new(config: EngineConfig) -> Result<Self> {
+        // Ensure data directory structure exists
+        let _ = std::fs::create_dir_all(config.data_dir.join("plugins"));
+        let _ = std::fs::create_dir_all(config.data_dir.join("skills"));
+        let _ = std::fs::create_dir_all(config.data_dir.join("models"));
+        let _ = std::fs::create_dir_all(config.data_dir.join("db"));
+
+        // Create default loom.md if it doesn't exist
+        let global_loom = config.data_dir.join("loom.md");
+        if !global_loom.exists() {
+            let _ = std::fs::write(
+                &global_loom,
+                "# openLoom Global Instructions\n\n<!-- Add your global instructions here. They will be injected into every conversation. -->\n",
+            );
+        }
+
         let model_dir = config.data_dir.join("models");
         let model_path = config.model_override.clone().unwrap_or_else(|| {
             find_gguf_models(&model_dir)
@@ -256,6 +279,22 @@ impl Engine {
         for skill in skills.all_skills() {
             let manifest = skill.manifest();
             router.register_skill_triggers(skill.name(), manifest.triggers.clone());
+        }
+
+        // Discover and register external skills (plugins + project-local)
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let external_skills = openloom_skills::plugin_loader::PluginLoader::discover(
+            &config.data_dir,
+            &cwd,
+        );
+        for ext_skill in external_skills {
+            tracing::info!(name = ext_skill.qualified_name(), "Loaded external skill");
+            let manifest = ext_skill.manifest().clone();
+            let name = ext_skill.qualified_name().to_string();
+            skills.register(Box::new(ext_skill));
+            if !manifest.triggers.is_empty() {
+                router.register_skill_triggers(&name, manifest.triggers);
+            }
         }
 
         let cloud: Option<Arc<dyn CloudClient>> = config.cloud_config.as_ref().and_then(|cfg| {
@@ -304,6 +343,8 @@ impl Engine {
         let hb_interval = config.heartbeat_interval_secs;
         let hb_idle_threshold = config.heartbeat_idle_threshold_min;
 
+        let (perm_request_tx, perm_request_rx) = tokio::sync::mpsc::channel(1);
+
         let engine = Self {
             router,
             skills,
@@ -334,6 +375,14 @@ impl Engine {
                 .or(config.local_config.as_ref())
                 .map(|c| c.effective_max_output())
                 .unwrap_or(4096),
+            context_max_chars: config
+                .cloud_config
+                .as_ref()
+                .or(config.local_config.as_ref())
+                .map(|c| c.context_size * 4)
+                .unwrap_or(0),
+            perm_request_tx,
+            perm_request_rx: std::sync::Mutex::new(Some(perm_request_rx)),
         };
 
         // Spawn persona watcher (from persona_watcher module)
@@ -365,7 +414,7 @@ impl Engine {
 \n\
 当前支持的命令：文件管理、代码协助、网页搜索、日程提醒。";
 
-    pub async fn handle_message(&self, msg: ChatMessage, session_id: &str) -> Result<ChatResponse> {
+    pub async fn handle_message(&self, msg: ChatMessage, session_id: &str, mode: openloom_models::Mode) -> Result<ChatResponse> {
         // Rate limiting
         {
             let mut limiter = self.rate_limiter.lock().unwrap();
@@ -397,8 +446,9 @@ impl Engine {
         });
 
         // C3 fix: complex intent or skill match -> agent loop
-        if out.complexity >= 0.8 || out.skill_match.is_some() {
-            return self.agent_loop(&msg, session_id).await;
+        let mode_cfg = mode.config();
+        if mode_cfg.agent_loop && (out.complexity >= 0.8 || out.skill_match.is_some()) {
+            return self.agent_loop(&msg, session_id, mode).await;
         }
 
         // Simple path: track in_flight here (agent_loop tracks its own)
@@ -412,12 +462,19 @@ impl Engine {
         let working_memory = self.get_working_memory(session_id).unwrap_or_default();
         // Persona failure -> empty string fallback
         let persona_summary = self.persona.summarize().await.unwrap_or_default();
-        let assembled = self.weaver.assemble(
-            &system_instruction(),
+        let system = system_instruction();
+        let system = if mode_cfg.system_suffix.is_empty() {
+            system
+        } else {
+            format!("{}\n\n{}", system, mode_cfg.system_suffix)
+        };
+        let assembled = self.weaver.assemble_with_limit(
+            &system,
             &msg.content,
             &persona_summary,
             skill_ctx.as_deref(),
             &working_memory,
+            self.context_max_chars,
         );
 
         let response = match out.target_model {
@@ -675,6 +732,13 @@ impl Engine {
         self.event_bus.subscribe()
     }
 
+    /// Take the permission request receiver. The TUI polls this to show
+    /// approval overlays when the agent loop needs user confirmation.
+    /// Returns `None` on subsequent calls (the receiver can only be taken once).
+    pub fn take_permission_rx(&self) -> Option<tokio::sync::mpsc::Receiver<PermissionChannelItem>> {
+        self.perm_request_rx.lock().unwrap().take()
+    }
+
     pub fn list_skills(&self) -> Vec<openloom_skills::SkillInfo> {
         self.skills.list_all()
     }
@@ -698,6 +762,25 @@ impl Engine {
     pub fn loom_context(&self) -> String {
         let cwd = std::env::current_dir().unwrap_or_default();
         openloom_skills::loom_context::LoomContext::load(&self.data_dir, &cwd)
+    }
+
+    pub fn data_dir(&self) -> &std::path::Path {
+        &self.data_dir
+    }
+
+    pub fn find_skill_by_name(&self, name: &str) -> Option<String> {
+        self.skills
+            .find_by_name(name)
+            .map(|s| s.context_md().to_string())
+    }
+
+    pub fn external_skill_names(&self) -> Vec<(String, String)> {
+        self.skills
+            .list_all()
+            .iter()
+            .filter(|s| s.name.contains(':'))
+            .map(|s| (s.name.clone(), s.description.clone()))
+            .collect()
     }
 
     pub fn model_display_name(&self) -> String {
@@ -872,7 +955,7 @@ mod tests {
             timestamp: Utc::now(),
         };
         let sid = engine.create_session().await.unwrap().id;
-        let resp = engine.handle_message(msg, &sid).await.unwrap();
+        let resp = engine.handle_message(msg, &sid, Mode::Code).await.unwrap();
         assert_eq!(resp.session_id, sid);
     }
 
@@ -896,7 +979,7 @@ mod tests {
             timestamp: Utc::now(),
         };
         let sid = engine.create_session().await.unwrap().id;
-        engine.handle_message(msg, &sid).await.unwrap();
+        engine.handle_message(msg, &sid, Mode::Code).await.unwrap();
         let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await;
         assert!(event.is_ok(), "should receive TokenUsage event");
     }
@@ -910,7 +993,7 @@ mod tests {
             timestamp: Utc::now(),
         };
         let sid = engine.create_session().await.unwrap().id;
-        let resp = engine.handle_message(msg, &sid).await.unwrap();
+        let resp = engine.handle_message(msg, &sid, Mode::Code).await.unwrap();
         assert!(!resp.session_id.is_empty());
     }
 
@@ -978,7 +1061,7 @@ mod tests {
             timestamp: Utc::now(),
         };
         let sid = engine.create_session().await.unwrap().id;
-        let resp = engine.handle_message(msg, &sid).await;
+        let resp = engine.handle_message(msg, &sid, Mode::Code).await;
         // First request must pass rate limiter (interval=100ms, elapsed=0 but check resets)
         assert!(
             resp.is_ok(),

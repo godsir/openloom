@@ -12,8 +12,9 @@ impl Engine {
         &self,
         msg: &ChatMessage,
         session_id: &str,
+        mode: openloom_models::Mode,
     ) -> Result<ChatResponse> {
-        self.agent_loop_inner(msg, session_id, None).await
+        self.agent_loop_inner(msg, session_id, None, mode).await
     }
 
     pub(crate) async fn agent_loop_streaming(
@@ -21,8 +22,9 @@ impl Engine {
         msg: &ChatMessage,
         session_id: &str,
         tx: mpsc::Sender<String>,
+        mode: openloom_models::Mode,
     ) -> Result<ChatResponse> {
-        self.agent_loop_inner(msg, session_id, Some(tx)).await
+        self.agent_loop_inner(msg, session_id, Some(tx), mode).await
     }
 
     async fn agent_loop_inner(
@@ -30,6 +32,7 @@ impl Engine {
         msg: &ChatMessage,
         session_id: &str,
         tx: Option<mpsc::Sender<String>>,
+        mode: openloom_models::Mode,
     ) -> Result<ChatResponse> {
         self.in_flight.fetch_add(1, Ordering::SeqCst);
         let loop_start = std::time::Instant::now();
@@ -58,13 +61,19 @@ impl Engine {
             )
         };
 
+        let mode_cfg = mode.config();
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
             for _iteration in 0..max_iterations {
                 let persona_summary = self.persona.summarize().await.unwrap_or_default();
                 let system_with_tools = crate::system_instruction().replace("[tools]", &skill_list);
+                let system_with_tools = if mode_cfg.system_suffix.is_empty() {
+                    system_with_tools
+                } else {
+                    format!("{}\n\n{}", system_with_tools, mode_cfg.system_suffix)
+                };
                 let assembled =
                     self.weaver
-                        .assemble(&system_with_tools, "", &persona_summary, None, &history);
+                        .assemble_with_limit(&system_with_tools, "", &persona_summary, None, &history, self.context_max_chars);
 
                 let response = self.invoke_model_raw(&assembled.prompt).await?;
                 total_prompt_tokens += self.inference.token_count(&assembled.prompt);
@@ -93,7 +102,7 @@ impl Engine {
                         new_state: AgentState::Acting,
                     });
 
-                    let result = match self.execute_tool(&tool_call).await {
+                    let result = match self.execute_tool(&tool_call, mode).await {
                         Ok(output) => truncate_tool_result(&output),
                         Err(e) => format!("Tool error: {}", e),
                     };
@@ -134,9 +143,14 @@ impl Engine {
             if last_response.is_empty() && !all_tool_messages.is_empty() {
                 let persona_summary = self.persona.summarize().await.unwrap_or_default();
                 let system_with_tools = crate::system_instruction().replace("[tools]", &skill_list);
+                let system_with_tools = if mode_cfg.system_suffix.is_empty() {
+                    system_with_tools
+                } else {
+                    format!("{}\n\n{}", system_with_tools, mode_cfg.system_suffix)
+                };
                 let assembled =
                     self.weaver
-                        .assemble(&system_with_tools, "", &persona_summary, None, &history);
+                        .assemble_with_limit(&system_with_tools, "", &persona_summary, None, &history, self.context_max_chars);
                 last_response = self.invoke_model_raw(&assembled.prompt).await?;
                 total_prompt_tokens += self.inference.token_count(&assembled.prompt);
                 total_completion_tokens += self.inference.token_count(&last_response);
@@ -300,12 +314,45 @@ impl Engine {
         None
     }
 
-    pub(crate) async fn execute_tool(&self, call: &ToolCall) -> Result<String> {
+    pub(crate) async fn execute_tool(&self, call: &ToolCall, mode: openloom_models::Mode) -> Result<String> {
+        let mode_cfg = mode.config();
+        if !mode_cfg.tool_scope.allows(&call.tool) {
+            return Ok(format!(
+                "Tool '{}' is not available in {} mode.",
+                call.tool, mode_cfg.status_label
+            ));
+        }
         let risk = openloom_sandbox::classify_risk(&call.tool, &call.params);
-        if openloom_sandbox::should_block(&risk, self.skip_permissions) {
+
+        // Permission confirmation for risky tools (skip if --dangerously-skip-permissions)
+        if !self.skip_permissions
+            && matches!(risk, openloom_models::RiskLevel::Medium | openloom_models::RiskLevel::High)
+        {
+            let risk_str = format!("{:?}", risk);
+            let desc = format!("{}({})", call.tool,
+                call.params.as_object()
+                    .map(|p| p.iter().take(2).map(|(k,v)| format!("{}={}", k, v)).collect::<Vec<_>>().join(", "))
+                    .unwrap_or_default());
+            let req = openloom_models::PermissionRequest {
+                tool_name: call.tool.clone(),
+                description: desc,
+                risk_level: risk_str,
+            };
+            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+            if self.perm_request_tx.send((req, resp_tx)).await.is_ok() {
+                match resp_rx.await {
+                    Ok(true) => {} // approved, continue
+                    _ => return Ok(format!("Tool '{}' denied by user.", call.tool)),
+                }
+            }
+        }
+
+        // Always block Forbidden-level risks regardless of permissions
+        if matches!(risk, openloom_models::RiskLevel::Forbidden) {
             let msg = openloom_sandbox::risk_message(&call.tool, &call.params, &risk);
             return Ok(msg);
         }
+
         self.skills
             .invoke(&call.tool, call.params.clone())
             .await

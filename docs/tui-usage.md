@@ -1,5 +1,17 @@
 # openLoom TUI 使用文档
 
+## 安装
+
+```bash
+# 从源码安装（推荐）
+cargo install --path crates/cli
+
+# 或者从 crates.io 安装（如果已发布）
+cargo install openloom
+```
+
+安装后 `openloom` 命令全局可用（安装到 `~/.cargo/bin/`，确保该路径在 PATH 中）。
+
 ## 启动
 
 ```bash
@@ -42,26 +54,41 @@ openloom config path        # 显示配置文件路径
 openloom download-model     # 下载 GGUF 模型
 ```
 
-## 界面布局
+## 界面架构
+
+openLoom 使用 **内联视口 (Inline Viewport)** 架构，类似 Claude Code：
+
+- 已完成的消息通过 `insert_before` 推入**终端原生滚动缓冲区**，可用鼠标滚轮、终端滚动条回看
+- 底部固定一个 ratatui 管理的**内联区域**（状态栏 + 分隔线 + 输入框）
+- 流式输出时，内联区域顶部显示实时预览；完成后推入滚动缓冲区
 
 ```
-┌─────────────────────────────────────────────────┐
-│                                                 │
-│  ❯ you                                         │
-│    你好                                         │
-│                                                 │
-│  ◆ openLoom                                    │
-│    你好！有什么我可以帮你的？                      │
-│    ▍                                            │
-│                                                 │  ← 消息区域（可滚动）
-│                                                 │
-│                                       ↓ 3 new  │  ← 新消息指示
-├─────────────────────────────────────────────────┤
-│ ⠹ claude-sonnet │ main │ 1M ctx    F:/openLoom │  ← 状态栏（带动画）
-├─ streaming ─────────────────────────────────────┤  ← 分隔线（显示状态）
-│ > _                                             │  ← 输入区域
-└─────────────────────────────────────────────────┘
+  ❯ you                                          ←─┐
+    你好                                            │
+                                                    │ 终端原生滚动缓冲区
+  ◆ openLoom (3.2s)                                 │ （鼠标滚轮 / 滚动条）
+    你好！有什么我可以帮你的？                         │
+  ● tool  Update(src/main.rs)                       │
+  └ result  +12 -3 lines                            │
+    ...                                           ←─┘
+┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+ ● model [code] think:mid │ 12% of 200k   1.2k / 3.4k  ← 状态栏
+─ streaming ──────────────────────────────────────────    ← 分隔线
+ > _                                                      ← 输入区域
 ```
+
+### 消息角色标记
+
+| 标记 | 角色 | 说明 |
+|------|------|------|
+| `❯ you` | 用户 | 用户输入 |
+| `◆ openLoom (3.2s)` | 助手 | 回复内容 + 耗时，Markdown 渲染（加粗/标题/代码/列表/表格） |
+| `✦ skill` | 技能 | 折叠显示，`/<skill>` 激活时注入 LLM 上下文 |
+| `✦ mode` | 模式 | 模式切换通知 |
+| `○ thinking` | 思考 | 折叠显示，`Ctrl+O` 展开当前轮次 |
+| `● tool` | 工具调用 | 折叠显示，结构化格式：`Read(file)` / `Update(file)` / `Bash(cmd)` |
+| `└ result` | 工具结果 | 折叠显示，diff 统计：`+12 -3 lines` |
+| `✖ error` | 错误 | 红色展开显示 |
 
 ## 快捷键
 
@@ -69,14 +96,16 @@ openloom download-model     # 下载 GGUF 模型
 
 | 按键 | 功能 |
 |------|------|
-| `Enter` | 发送消息 / 选择弹窗命令 |
+| `Enter` | 发送消息 / 选择弹窗命令 / 选择历史搜索 |
 | `Shift+Enter` | 插入换行 |
 | `Ctrl+J` | 插入换行（备选） |
-| `Tab` | 自动补全 / 循环弹窗选项 |
-| `↑` / `↓` | 浏览历史 / 导航弹窗 |
+| `Tab` | 斜杠命令补全 / 文件路径补全（无弹窗时） |
+| `↑` / `↓` | 浏览历史 / 导航弹窗 / 导航历史搜索 |
 | `Ctrl+G` | 打开外部编辑器（$EDITOR） |
-| `Ctrl+R` | 搜索历史 |
-| `Esc` | 关闭命令弹窗 |
+| `Ctrl+R` | 历史搜索（输入关键词过滤，Enter 选择，Esc 取消） |
+| `Ctrl+M` | 循环切换模式（chat → plan → code → assistant） |
+| `Ctrl+O` | 展开/折叠当前轮次的 thinking/tool 消息 |
+| `Esc` | 关闭命令弹窗 / 取消历史搜索 |
 
 ### 全局
 
@@ -84,7 +113,6 @@ openloom download-model     # 下载 GGUF 模型
 |------|------|
 | `Ctrl+C` | 取消流式输出（第一次）/ 退出（第二次，2秒内） |
 | `Ctrl+L` | 重绘屏幕 |
-| `PageUp` / `PageDown` | 滚动消息视口（25行/次） |
 
 ### 流式状态
 
@@ -93,14 +121,72 @@ openloom download-model     # 下载 GGUF 模型
 | `Ctrl+C` | 取消当前生成 |
 | `Esc` | 取消当前生成 |
 
-### Overlay 模式
+### Overlay 模式（帮助/权限确认）
 
 | 按键 | 功能 |
 |------|------|
 | `Esc` / `q` | 关闭 |
 | `j` / `k` / `↑` / `↓` | 上下滚动 |
-| `PageUp` / `PageDown` | 翻页 |
-| `Home` / `End` | 跳到顶/底 |
+| `A` / `D` / `S` / `C` | 批准 / 拒绝 / 本次全批准 / 取消（权限确认） |
+
+## 模式系统 (Modes)
+
+openLoom 支持四种运行模式，控制 Agent 行为和工具权限：
+
+| 模式 | 工具范围 | Agent Loop | 说明 |
+|------|---------|-----------|------|
+| `chat` | 无 | 否 | 纯对话，不触发工具调用 |
+| `plan` | 只读 | 是 | 可读代码、探索架构，不修改文件 |
+| `code` | 完整 | 是 | 完整 agent loop + 工具调用（默认） |
+| `assistant` | 选择性 | 是 | 可读、搜索、写记忆/技能，不改代码 |
+
+切换方式：
+- `/mode` — 查看当前模式
+- `/mode plan` — 切换到指定模式
+- `Ctrl+M` — 循环切换到下一个模式
+
+模式为会话级，`/session new` 重置为 Code 模式。状态栏显示当前模式标签（如 `[code]`）。
+
+## 扩展思考 (Thinking)
+
+控制 LLM 的思考深度，类似 Claude Code 的 thinking 模式：
+
+| 级别 | Token 预算 | 说明 |
+|------|-----------|------|
+| `none` | 禁用 | 不使用扩展思考 |
+| `low` | 1,024 | 简单推理 |
+| `mid` | 4,096 | 中等深度（默认） |
+| `high` | 16,384 | 深度推理 |
+| `max` | 65,536 | 最大思考预算 |
+
+切换方式：
+- `/think` — 查看当前级别
+- `/think high` — 切换到指定级别
+
+思考级别显示在状态栏（如 `think:high`）。设为 `none` 时不显示。
+
+## 模型切换
+
+运行时切换本地/云端模型，无需重启：
+
+- `/model use local` — 强制使用本地模型（LM Studio/Ollama）
+- `/model use cloud` — 强制使用云端 API
+- `/model use auto` — 引擎自动路由（默认）
+
+## 权限确认
+
+Code 模式下执行工具调用时，Medium/High 风险操作会弹出确认对话框：
+
+- **A** — 批准本次
+- **D** — 拒绝
+- **S** — 本次会话全部批准
+- **C** — 取消
+
+使用 `--dangerously-skip-permissions` 启动可跳过所有确认。
+
+## 自动上下文压缩
+
+当对话历史接近上下文窗口上限时，引擎自动截断最早的消息，保留最近的对话。截断后插入 `[Earlier messages were compacted]` 标记。状态栏显示当前使用百分比（如 `12% of 200k`）。
 
 ## 斜杠命令
 
@@ -111,47 +197,57 @@ openloom download-model     # 下载 GGUF 模型
 - **Esc** — 关闭弹窗
 - **继续输入** — 实时过滤匹配
 
+弹窗同时显示内置命令和已加载的外部技能。
+
 | 命令 | 说明 |
 |------|------|
 | `/help` | 显示帮助面板 |
-| `/model` | 显示模型详细信息（名称、后端、URL、context、API key 状态） |
+| `/model` | 显示模型详细信息 |
 | `/model set <backend> <model> [key_env]` | 配置云端模型 |
-| `/token` | 当前会话 token 累计用量 + 费用 |
+| `/model use local\|cloud\|auto` | 运行时切换模型 |
+| `/token` | 当前会话 token 用量 + 费用 |
 | `/token summary` | 全局按模型分组统计 |
 | `/token today` | 今日用量 |
-| `/token session [id]` | 指定会话的逐条明细 |
-| `/token history [N]` | 最近 N 条请求记录（默认 10） |
+| `/token session [id]` | 指定会话明细 |
+| `/token history [N]` | 最近 N 条请求 |
 | `/cost` | `/token` 的别名 |
 | `/health` | 引擎状态、GPU、缓存诊断 |
 | `/clear` | 清空所有消息 |
-| `/theme dark` | 切换暗色主题 |
-| `/theme light` | 切换亮色主题 |
-| `/session new` | 创建新会话 |
-| `/session list` | 列出所有会话 |
-| `/memory persona` | 显示人格摘要 |
-| `/memory events [N]` | 列出最近事件 |
-| `/memory cognitions [subject]` | 列出认知（带 [G]/[P] scope 标记） |
-| `/memory search <query>` | FTS5 全文搜索 |
+| `/theme dark\|light` | 切换主题 |
+| `/session new\|list\|<id>` | 会话管理 |
+| `/memory persona\|events\|cognitions\|search` | 记忆查询 |
 | `/skills list` | 列出已注册技能 |
-| `/skills invoke <name> [params]` | 直接调用技能 |
-| `/local status` | 本地模型状态 + LM Studio/Ollama 连通性 |
-| `/local test` | 发送测试消息验证推理可用性 |
-| `/config get [key]` | 查看配置 |
-| `/config set <key> <value>` | 修改配置 |
+| `/skills invoke <name> [params]` | 调用技能 |
+| `/<skill-name>` | 直接调用外部技能 |
+| `/mode` | 查看/切换 Agent 模式 |
+| `/mode chat\|plan\|code\|assistant` | 切换模式 |
+| `/think` | 查看/设置思考深度 |
+| `/think none\|low\|mid\|high\|max` | 设置扩展思考 |
+| `/local status\|set\|test\|url` | 本地模型管理 |
+| `/config get\|set` | 配置管理 |
 
 > 提示：以 `//` 开头的消息会作为普通文本发送，不触发命令。
+
+### 技能名称解析
+
+输入 `/<name>` 调用外部技能时，按以下顺序匹配：
+1. 精确匹配（如 `/project:my-skill`）
+2. 尝试 `project:<name>` 前缀（项目本地技能）
+3. 按短名称搜索所有已注册插件技能（如 `/greet` → `myplugin:greet`）
 
 ## 状态栏说明
 
 ```
- ● model │ branch │ 1M ctx              1.2k / 3.4k used  $0.0012
+ ● model [code] think:mid │ cwd │ 12% of 200k    1.2k / 3.4k  cache 85%  $0.0012
 ```
 
 - **状态指示器**：`●` 绿色=空闲，⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ 黄色=思考中，蓝色=流式输出
-- **model**：当前使用的模型名称
-- **branch**：当前 git 分支（如果在 git 仓库内）
-- **ctx**：模型上下文窗口大小
-- **右侧**：会话累计 prompt/completion token 数 + cache 命中率 + 估算费用；无 token 时显示当前目录
+- **model**：当前使用的模型名称 + 上次使用的模型来源（如 `← agent-loop`）
+- **[code]**：当前模式
+- **think:mid**：思考级别（none 时隐藏）
+- **cwd**：当前工作目录
+- **12% of 200k**：上下文使用百分比
+- **右侧**：token 数 + cache 命中率 + 费用
 
 ## 主题
 
@@ -162,27 +258,90 @@ openloom download-model     # 下载 GGUF 模型
 
 通过 `/theme dark` 或 `/theme light` 切换。
 
-## 消息角色标记
+## Markdown 渲染
 
-| 标记 | 角色 |
-|------|------|
-| `❯ you` | 用户输入 |
-| `◆ openLoom` | 助手回复 |
-| `○ thinking` | 思考过程 |
-| `▸ tool` | 工具调用 |
-| `◇ result` | 工具结果 |
-| `✖ error` | 错误信息 |
+助手消息自动渲染 Markdown：
+- **标题**（`#`/`##`/`###`）— accent 色加粗
+- **加粗**（`**text**`）— bold 样式
+- **行内代码**（`` `code` ``）— accent 色
+- **列表**（`-`/`*`/`1.`）— bullet 符号
+- **表格**（`| col |`）— 分隔符 dim 色
+- **代码块**（` ``` `）— dim 色，fence 行隐藏
 
 ## 滚动行为
 
-- **鼠标滚轮**：终端原生滚动，直接滚动终端窗口内容
-- **鼠标左键拖拽**：终端原生文本选择，可复制内容
-- **PageUp / PageDown**：应用内滚动消息视口（25行/次）
-- 新消息到达时自动滚动到底部
-- 手动 PageUp 后停止自动滚动
-- PageDown 回到底部时重新启用自动滚动
-- 右下角显示未读消息数量（`↓ N new`）
+- **鼠标滚轮**：终端原生滚动
+- **鼠标左键拖拽**：终端原生文本选择
+- 消息完成后自动推入终端滚动缓冲区
 
 ## 外部编辑器
 
-按 `Ctrl+G` 打开外部编辑器编写长文本。优先使用 `$EDITOR` 环境变量，其次 `$VISUAL`，Windows 默认 `notepad`，其他系统默认 `vi`。保存退出后内容自动填入输入框。
+按 `Ctrl+G` 打开外部编辑器编写长文本。优先使用 `$EDITOR`，其次 `$VISUAL`，Windows 默认 `notepad`，其他系统默认 `vi`。
+
+## 项目指令 (loom.md)
+
+在项目根目录放置 `loom.md` 文件，其内容自动注入系统提示。
+
+| 文件位置 | 作用 |
+|---------|------|
+| `<data_dir>/loom.md` | 全局指令，所有项目生效 |
+| `<cwd>/loom.md` | 项目级指令，仅当前目录生效 |
+
+两者同时存在时，全局指令在前，项目指令在后拼接。同时兼容 `CLAUDE.md`。
+
+## 外部技能 (Skills)
+
+SKILL.md 文件使用 YAML frontmatter 格式，调用时注入 LLM 上下文：
+
+```markdown
+---
+name: my-skill
+description: "技能描述"
+---
+
+技能正文。
+```
+
+### 技能加载路径
+
+| 路径 | 命名空间 | 说明 |
+|------|---------|------|
+| `<data_dir>/skills/*/SKILL.md` | `global:<skill>` | 全局独立技能 |
+| `<data_dir>/plugins/.../skills/*/SKILL.md` | `<plugin>:<skill>` | 插件技能（递归扫描） |
+| `<cwd>/.loom/skills/*/SKILL.md` | `project:<skill>` | 项目本地技能 |
+
+调用技能后，完整内容存为活跃技能上下文，后续每次消息自动注入 LLM。`/clear` 或 `/session new` 清除。
+
+## 插件系统 (Plugins)
+
+兼容 Claude Code 插件格式，递归扫描 `<data_dir>/plugins/`，支持嵌套 `cache/<marketplace>/<plugin>/<version>/` 结构。
+
+```
+<data_dir>/plugins/
+└── my-plugin/
+    ├── .loom-plugin/          # 或 .claude-plugin/
+    │   └── plugin.json
+    └── skills/
+        └── my-skill/
+            └── SKILL.md
+```
+
+## 数据目录
+
+首次启动自动创建（欢迎横幅显示路径）：
+
+```
+<data_dir>/
+├── loom.md        ← 全局指令（自动创建）
+├── plugins/       ← 插件目录（递归扫描）
+├── skills/        ← 全局独立技能
+├── models/        ← GGUF 模型
+├── db/            ← SQLite
+└── config.toml    ← 配置
+```
+
+| 平台 | data_dir |
+|------|---------|
+| Windows | `%APPDATA%/openLoom/` |
+| macOS | `~/Library/Application Support/openLoom/` |
+| Linux | `~/.local/share/openLoom/` |

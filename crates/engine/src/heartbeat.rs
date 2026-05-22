@@ -47,6 +47,7 @@ pub(crate) fn spawn_hub_heartbeat(
                     top_p: 1.0,
                     stop: vec!["\n".into()],
                     stream: false,
+                    thinking_budget: None,
                 })
                 .await
             {

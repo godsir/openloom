@@ -687,6 +687,29 @@ impl<'a> MessageStore<'a> {
         Ok(rows)
     }
 
+    pub fn all(
+        &self,
+        session_id: &str,
+    ) -> anyhow::Result<Vec<openloom_models::ChatMessage>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT role, content, timestamp FROM message_history
+             WHERE session_id = ?1 ORDER BY seq ASC",
+        )?;
+        let rows: Vec<openloom_models::ChatMessage> = stmt
+            .query_map(rusqlite::params![session_id], |row| {
+                let ts_str: String = row.get(2)?;
+                Ok(openloom_models::ChatMessage {
+                    role: row.get(0)?,
+                    content: row.get(1)?,
+                    timestamp: DateTime::parse_from_rfc3339(&ts_str)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now()),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     pub fn max_seq(&self, session_id: &str) -> anyhow::Result<usize> {
         let seq: Option<i64> = self.conn.query_row(
             "SELECT MAX(seq) FROM message_history WHERE session_id = ?1",

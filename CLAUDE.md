@@ -69,7 +69,7 @@ F:/openLoom/
 - **Phase 2** — Milestones A/B/C/D 全部完成 (Agent Loop, Persona, Backend, Electron GUI)
 - **Phase 3A** — 完成 (AI Activation: llama-cpp-2, SSE streaming, 8B cognition, Hub heartbeat, cloud streaming)
 - **Phase 3B** — 完成 (Productionization: Engine split→11 modules, sandbox, audit panel, KV Cache prep, packaging)
-- **测试:** 129 pass, 0 fail | **Clippy:** 0 warnings | **fmt:** clean
+- **测试:** 180+ pass | **Clippy:** 0 warnings | **fmt:** clean
 
 ### 已知技术债 (Phase 3 复盘)
 

@@ -14,6 +14,8 @@ pub enum SlashCommand {
     Config(String),
     Health,
     Local(String),
+    Mode(String),
+    Think(String),
 }
 
 pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
@@ -39,6 +41,8 @@ pub fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "config" => Some(SlashCommand::Config(args)),
         "health" | "status" => Some(SlashCommand::Health),
         "local" => Some(SlashCommand::Local(args)),
+        "mode" => Some(SlashCommand::Mode(args)),
+        "think" | "thinking" => Some(SlashCommand::Think(args)),
         _ => None,
     }
 }
@@ -250,13 +254,33 @@ pub async fn execute_command(app: &mut App, cmd: SlashCommand) -> String {
                         Err(e) => format!("Failed to write config: {}", e),
                     }
                 }
-                _ => "Usage: /model [set <backend> <model> [api_key_env]]".into(),
+                "use" => {
+                    let target = sub_args.trim().to_lowercase();
+                    match target.as_str() {
+                        "local" => {
+                            app.model_pref = openloom_models::ModelPreference::Local;
+                            "Switched to local model. Next request will use local inference.".into()
+                        }
+                        "cloud" => {
+                            app.model_pref = openloom_models::ModelPreference::Cloud;
+                            "Switched to cloud model. Next request will use cloud API.".into()
+                        }
+                        "auto" => {
+                            app.model_pref = openloom_models::ModelPreference::Auto;
+                            "Switched to auto routing. Engine decides local vs cloud.".into()
+                        }
+                        _ => "Usage: /model use <local|cloud|auto>".into(),
+                    }
+                }
+                _ => "Usage: /model [set <backend> <model> [api_key_env] | use <local|cloud|auto>]".into(),
             }
         }
         SlashCommand::Cost => token_command(app, "").await,
         SlashCommand::Token(ref args) => token_command(app, args).await,
         SlashCommand::Clear => {
             app.messages.clear();
+            app.flushed_up_to = 0;
+            app.active_skill_context = None;
             app.viewport.jump_to_bottom();
             "Screen cleared.".into()
         }
@@ -276,6 +300,9 @@ pub async fn execute_command(app: &mut App, cmd: SlashCommand) -> String {
                 Ok(s) => {
                     app.session_id = s.id.clone();
                     app.messages.clear();
+                    app.flushed_up_to = 0;
+                    app.active_skill_context = None;
+                    app.mode = openloom_models::Mode::default();
                     format!("Created session: {}", s.id)
                 }
                 Err(e) => format!("Failed to create session: {}", e),
@@ -311,11 +338,15 @@ pub async fn execute_command(app: &mut App, cmd: SlashCommand) -> String {
                         Ok(history) => {
                             app.session_id = target_id.clone();
                             app.messages.clear();
+                            app.flushed_up_to = 0;
                             for msg in &history {
                                 app.messages.push(crate::tui::app::Message {
                                     role: msg.role.clone(),
                                     content: msg.content.clone(),
-                                    collapsed: msg.role == "thinking",
+                                    collapsed: msg.role == "thinking"
+                                        || msg.role == "tool_call"
+                                        || msg.role == "tool_result",
+                                    elapsed_ms: None,
                                 });
                             }
                             app.viewport.jump_to_bottom();
@@ -605,7 +636,7 @@ pub async fn execute_command(app: &mut App, cmd: SlashCommand) -> String {
                             .into(),
                         timestamp: chrono::Utc::now(),
                     };
-                    match app.engine.handle_message(msg, &app.session_id).await {
+                    match app.engine.handle_message(msg, &app.session_id, openloom_models::Mode::Code).await {
                         Ok(resp) => format!("Test response: {}", resp.response),
                         Err(e) => format!("Test failed: {}", e),
                     }
@@ -613,6 +644,88 @@ pub async fn execute_command(app: &mut App, cmd: SlashCommand) -> String {
                 _ => {
                     "Usage: /local [status|set|test|url]\n\n  /local status          Check connectivity\n  /local set <be> <m>    Configure model\n  /local test            Send test prompt\n  /local url <endpoint>  Show/set endpoint".into()
                 }
+            }
+        }
+        SlashCommand::Mode(args) => {
+            let sub = args.trim();
+            if sub.is_empty() {
+                let current = app.mode.config();
+                let all_modes = [
+                    openloom_models::Mode::Chat,
+                    openloom_models::Mode::Plan,
+                    openloom_models::Mode::Code,
+                    openloom_models::Mode::Assistant,
+                ];
+                let mut lines = vec![format!(
+                    "Current mode: {} — {}",
+                    current.status_label,
+                    app.mode.description()
+                )];
+                lines.push(String::new());
+                for m in &all_modes {
+                    let marker = if *m == app.mode { "\u{25b8} " } else { "  " };
+                    lines.push(format!(
+                        "{}{:12} {}",
+                        marker,
+                        m.config().status_label,
+                        m.description()
+                    ));
+                }
+                lines.push(String::new());
+                lines.push("Usage: /mode <chat|plan|code|assistant>".into());
+                lines.join("\n")
+            } else if let Some(new_mode) = openloom_models::Mode::from_key(sub) {
+                if new_mode == app.mode {
+                    format!("Already in {} mode.", app.mode.config().status_label)
+                } else {
+                    let old_label = app.mode.config().status_label;
+                    app.mode = new_mode;
+                    let cfg = new_mode.config();
+                    app.messages.push(crate::tui::app::Message {
+                        role: "mode".into(),
+                        content: format!(
+                            "Switched from {} to {} mode ({})",
+                            old_label, cfg.status_label, new_mode.description()
+                        ),
+                        collapsed: false,
+                        elapsed_ms: None,
+                    });
+                    app.viewport.content_added();
+                    String::new()
+                }
+            } else {
+                format!(
+                    "Unknown mode: '{}'. Available: chat, plan, code, assistant",
+                    sub
+                )
+            }
+        }
+        SlashCommand::Think(args) => {
+            let sub = args.trim();
+            if sub.is_empty() {
+                let current = app.thinking.label();
+                let levels = ["none", "low", "mid", "high", "max"];
+                let mut lines = vec![format!("Thinking level: {}", current)];
+                lines.push(String::new());
+                for l in &levels {
+                    let marker = if *l == current { "\u{25b8} " } else { "  " };
+                    let budget = openloom_models::ThinkingLevel::from_key(l)
+                        .and_then(|t| t.budget_tokens())
+                        .map(|b| format!(" ({} tokens)", b))
+                        .unwrap_or_else(|| " (disabled)".into());
+                    lines.push(format!("{}{:8}{}", marker, l, budget));
+                }
+                lines.push(String::new());
+                lines.push("Usage: /think <none|low|mid|high|max>".into());
+                lines.join("\n")
+            } else if let Some(level) = openloom_models::ThinkingLevel::from_key(sub) {
+                app.thinking = level;
+                let budget_info = level.budget_tokens()
+                    .map(|b| format!(" (budget: {} tokens)", b))
+                    .unwrap_or_else(|| " (disabled)".into());
+                format!("Thinking set to {}{}", level.label(), budget_info)
+            } else {
+                format!("Unknown level: '{}'. Available: none, low, mid, high, max", sub)
             }
         }
     }
@@ -834,8 +947,21 @@ fn help_text() -> String {
   /session new|list  Session management
   /memory persona|events|search  Memory queries
   /skills list    List registered skills
+  /skills invoke  Invoke a skill by name
+  /<skill-name>   Invoke external skill directly
+  /mode           Show/switch agent mode
+  /think          Show/set thinking level (none/low/mid/high/max)
   /config get|set Config management
-  //message       Send literal /message (not a command)"#
+  //message       Send literal /message (not a command)
+
+Skills & Plugins:
+  Skills loaded from:
+    <data_dir>/plugins/*/skills/*/SKILL.md
+    <cwd>/.loom/skills/*/SKILL.md
+
+Project Instructions:
+  Place loom.md in project root for per-project context.
+  Global: <data_dir>/loom.md"#
         .into()
 }
 
@@ -974,6 +1100,18 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_mode() {
+        match parse_slash_command("/mode") {
+            Some(SlashCommand::Mode(a)) => assert!(a.is_empty()),
+            other => panic!("expected Mode(\"\"), got {:?}", other),
+        }
+        match parse_slash_command("/mode plan") {
+            Some(SlashCommand::Mode(a)) => assert_eq!(a, "plan"),
+            other => panic!("expected Mode(\"plan\"), got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_help_text_contains_all_commands() {
         let text = help_text();
         assert!(text.contains("/help"));
@@ -986,5 +1124,8 @@ mod tests {
         assert!(text.contains("/skills"));
         assert!(text.contains("/config"));
         assert!(text.contains("//"));
+        assert!(text.contains("loom.md"));
+        assert!(text.contains("SKILL.md"));
+        assert!(text.contains("/mode"));
     }
 }

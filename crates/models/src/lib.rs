@@ -199,6 +199,14 @@ pub struct ToolCall {
     pub params: serde_json::Value,
 }
 
+/// A permission request sent from the engine to the UI for user approval.
+#[derive(Debug, Clone)]
+pub struct PermissionRequest {
+    pub tool_name: String,
+    pub description: String,
+    pub risk_level: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TokenUsage {
     pub prompt_tokens: usize,
@@ -229,6 +237,176 @@ pub enum AgentState {
     Idle,
     Thinking,
     Acting,
+}
+
+// === Mode system ===
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Mode {
+    Chat,
+    Plan,
+    #[default]
+    Code,
+    Assistant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolScope {
+    None,
+    ReadOnly,
+    Selective,
+    Full,
+}
+
+pub struct ModeConfig {
+    pub agent_loop: bool,
+    pub tool_scope: ToolScope,
+    pub system_suffix: &'static str,
+    pub status_label: &'static str,
+}
+
+const READ_ONLY_TOOLS: &[&str] = &[
+    "file_read", "file_search", "content_search", "web_browser",
+];
+
+const SELECTIVE_TOOLS: &[&str] = &[
+    "file_read", "file_search", "content_search", "web_browser",
+    "schedule_reminder",
+];
+
+impl ToolScope {
+    pub fn allows(&self, tool_name: &str) -> bool {
+        match self {
+            ToolScope::None => false,
+            ToolScope::ReadOnly => READ_ONLY_TOOLS.contains(&tool_name),
+            ToolScope::Selective => {
+                SELECTIVE_TOOLS.contains(&tool_name)
+                    || tool_name.contains(':')
+            }
+            ToolScope::Full => true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModelPreference {
+    #[default]
+    Auto,
+    Local,
+    Cloud,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThinkingLevel {
+    None,
+    Low,
+    #[default]
+    Medium,
+    High,
+    Max,
+}
+
+impl ThinkingLevel {
+    pub fn budget_tokens(&self) -> Option<usize> {
+        match self {
+            ThinkingLevel::None => None,
+            ThinkingLevel::Low => Some(1024),
+            ThinkingLevel::Medium => Some(4096),
+            ThinkingLevel::High => Some(16384),
+            ThinkingLevel::Max => Some(65536),
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ThinkingLevel::None => "none",
+            ThinkingLevel::Low => "low",
+            ThinkingLevel::Medium => "mid",
+            ThinkingLevel::High => "high",
+            ThinkingLevel::Max => "max",
+        }
+    }
+
+    pub fn from_key(s: &str) -> Option<ThinkingLevel> {
+        match s.to_lowercase().as_str() {
+            "none" | "off" | "0" => Some(ThinkingLevel::None),
+            "low" | "lo" | "1" => Some(ThinkingLevel::Low),
+            "mid" | "medium" | "2" => Some(ThinkingLevel::Medium),
+            "high" | "hi" | "3" => Some(ThinkingLevel::High),
+            "max" | "full" | "4" => Some(ThinkingLevel::Max),
+            _ => None,
+        }
+    }
+
+    pub fn next(&self) -> ThinkingLevel {
+        match self {
+            ThinkingLevel::None => ThinkingLevel::Low,
+            ThinkingLevel::Low => ThinkingLevel::Medium,
+            ThinkingLevel::Medium => ThinkingLevel::High,
+            ThinkingLevel::High => ThinkingLevel::Max,
+            ThinkingLevel::Max => ThinkingLevel::None,
+        }
+    }
+}
+
+impl Mode {
+    pub fn config(&self) -> ModeConfig {
+        match self {
+            Mode::Chat => ModeConfig {
+                agent_loop: false,
+                tool_scope: ToolScope::None,
+                system_suffix: "Respond concisely. Do not invoke tools or generate code unless explicitly asked.",
+                status_label: "chat",
+            },
+            Mode::Plan => ModeConfig {
+                agent_loop: true,
+                tool_scope: ToolScope::ReadOnly,
+                system_suffix: "You are in Plan mode. Analyze code, explore architecture, propose solutions. Do NOT modify any files. Output plans, diagrams, and recommendations only.",
+                status_label: "plan",
+            },
+            Mode::Code => ModeConfig {
+                agent_loop: true,
+                tool_scope: ToolScope::Full,
+                system_suffix: "",
+                status_label: "code",
+            },
+            Mode::Assistant => ModeConfig {
+                agent_loop: true,
+                tool_scope: ToolScope::Selective,
+                system_suffix: "You are a general-purpose assistant. You can search, read files, write notes and memories, and invoke skills. Do NOT modify code files or execute shell commands.",
+                status_label: "asst",
+            },
+        }
+    }
+
+    pub fn from_key(s: &str) -> Option<Mode> {
+        match s.to_lowercase().as_str() {
+            "chat" => Some(Mode::Chat),
+            "plan" => Some(Mode::Plan),
+            "code" => Some(Mode::Code),
+            "assistant" | "asst" => Some(Mode::Assistant),
+            _ => None,
+        }
+    }
+
+    pub fn next(&self) -> Mode {
+        match self {
+            Mode::Chat => Mode::Plan,
+            Mode::Plan => Mode::Code,
+            Mode::Code => Mode::Assistant,
+            Mode::Assistant => Mode::Chat,
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            Mode::Chat => "Pure conversation, no tools",
+            Mode::Plan => "Read-only exploration, no file modifications",
+            Mode::Code => "Full agent loop with tool calling",
+            Mode::Assistant => "General assistant, read + memory + skills",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -788,5 +966,80 @@ mod tests {
         assert_eq!(config.server.host, "0.0.0.0");
         config.set_nested("agent.max_iterations", "5").unwrap();
         assert_eq!(config.agent.max_iterations, 5);
+    }
+}
+
+#[cfg(test)]
+mod mode_tests {
+    use super::*;
+
+    #[test]
+    fn test_chat_mode_config() {
+        let cfg = Mode::Chat.config();
+        assert!(!cfg.agent_loop);
+        assert_eq!(cfg.tool_scope, ToolScope::None);
+        assert_eq!(cfg.status_label, "chat");
+    }
+
+    #[test]
+    fn test_plan_mode_config() {
+        let cfg = Mode::Plan.config();
+        assert!(cfg.agent_loop);
+        assert_eq!(cfg.tool_scope, ToolScope::ReadOnly);
+        assert_eq!(cfg.status_label, "plan");
+    }
+
+    #[test]
+    fn test_code_mode_config() {
+        let cfg = Mode::Code.config();
+        assert!(cfg.agent_loop);
+        assert_eq!(cfg.tool_scope, ToolScope::Full);
+        assert_eq!(cfg.status_label, "code");
+    }
+
+    #[test]
+    fn test_assistant_mode_config() {
+        let cfg = Mode::Assistant.config();
+        assert!(cfg.agent_loop);
+        assert_eq!(cfg.tool_scope, ToolScope::Selective);
+        assert_eq!(cfg.status_label, "asst");
+    }
+
+    #[test]
+    fn test_default_mode_is_code() {
+        assert_eq!(Mode::default(), Mode::Code);
+    }
+
+    #[test]
+    fn test_mode_from_str() {
+        assert_eq!(Mode::from_key("chat"), Some(Mode::Chat));
+        assert_eq!(Mode::from_key("plan"), Some(Mode::Plan));
+        assert_eq!(Mode::from_key("code"), Some(Mode::Code));
+        assert_eq!(Mode::from_key("assistant"), Some(Mode::Assistant));
+        assert_eq!(Mode::from_key("asst"), Some(Mode::Assistant));
+        assert_eq!(Mode::from_key("unknown"), None);
+    }
+
+    #[test]
+    fn test_tool_scope_allows() {
+        assert!(!ToolScope::None.allows("file_read"));
+        assert!(ToolScope::ReadOnly.allows("file_read"));
+        assert!(ToolScope::ReadOnly.allows("content_search"));
+        assert!(!ToolScope::ReadOnly.allows("file_write"));
+        assert!(!ToolScope::ReadOnly.allows("shell"));
+        assert!(ToolScope::Selective.allows("file_read"));
+        assert!(ToolScope::Selective.allows("schedule_reminder"));
+        assert!(!ToolScope::Selective.allows("shell"));
+        assert!(!ToolScope::Selective.allows("file_write"));
+        assert!(ToolScope::Full.allows("shell"));
+        assert!(ToolScope::Full.allows("file_write"));
+    }
+
+    #[test]
+    fn test_mode_next() {
+        assert_eq!(Mode::Chat.next(), Mode::Plan);
+        assert_eq!(Mode::Plan.next(), Mode::Code);
+        assert_eq!(Mode::Code.next(), Mode::Assistant);
+        assert_eq!(Mode::Assistant.next(), Mode::Chat);
     }
 }

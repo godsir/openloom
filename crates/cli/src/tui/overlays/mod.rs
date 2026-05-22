@@ -20,4 +20,7 @@ pub trait Overlay {
     fn handle_key(&mut self, key: KeyCode) -> OverlayResult;
     /// Context string for keybinding resolution ("approval", "diff", "help").
     fn context(&self) -> &str;
+    /// For approval overlays, return the user's decision (true = approved).
+    /// Returns None for non-approval overlays or when no decision has been made.
+    fn approval_result(&self) -> Option<bool> { None }
 }

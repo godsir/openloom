@@ -29,6 +29,9 @@ impl Engine {
         msg: ChatMessage,
         session_id: &str,
         tx: tokio::sync::mpsc::Sender<String>,
+        mode: openloom_models::Mode,
+        model_pref: openloom_models::ModelPreference,
+        thinking: openloom_models::ThinkingLevel,
     ) -> anyhow::Result<()> {
         // Rate limiting
         {
@@ -54,9 +57,10 @@ impl Engine {
 
         // Complex intent, skill match, or cloud model available -> agent loop with streaming markers
         let has_cloud = self.cloud.is_some();
-        if out.complexity >= 0.5 || out.skill_match.is_some() || has_cloud {
+        let mode_cfg = mode.config();
+        if mode_cfg.agent_loop && (out.complexity >= 0.5 || out.skill_match.is_some() || has_cloud) {
             let tx_clone = tx.clone();
-            match self.agent_loop_streaming(&msg, session_id, tx_clone).await {
+            match self.agent_loop_streaming(&msg, session_id, tx_clone, mode).await {
                 Ok(resp) => {
                     let _ = tx.send(resp.response).await;
                 }
@@ -76,12 +80,18 @@ impl Engine {
         let working_memory = self.get_working_memory(session_id).unwrap_or_default();
         let persona_summary = self.persona.summarize().await.unwrap_or_default();
         let system = crate::system_instruction().replace("[tools]", "None");
-        let assembled = self.weaver.assemble(
+        let system = if mode_cfg.system_suffix.is_empty() {
+            system
+        } else {
+            format!("{}\n\n{}", system, mode_cfg.system_suffix)
+        };
+        let assembled = self.weaver.assemble_with_limit(
             &system,
             &msg.content,
             &persona_summary,
             skill_ctx.as_deref(),
             &working_memory,
+            self.context_max_chars,
         );
 
         let start = Instant::now();
@@ -120,14 +130,35 @@ impl Engine {
             top_p: 1.0,
             stop: Vec::new(),
             stream: true,
+            thinking_budget: thinking.budget_tokens(),
         };
 
-        let stream_result = if let Some(ref cloud) = self.cloud {
-            cloud.complete_stream(req, collector_tx).await
-        } else if let Some(ref local) = self.local_client {
-            local.complete_stream(req, collector_tx).await
-        } else {
-            self.inference.complete_stream(req, collector_tx).await
+        let stream_result = match model_pref {
+            openloom_models::ModelPreference::Cloud => {
+                if let Some(ref cloud) = self.cloud {
+                    cloud.complete_stream(req, collector_tx).await
+                } else if let Some(ref local) = self.local_client {
+                    local.complete_stream(req, collector_tx).await
+                } else {
+                    self.inference.complete_stream(req, collector_tx).await
+                }
+            }
+            openloom_models::ModelPreference::Local => {
+                if let Some(ref local) = self.local_client {
+                    local.complete_stream(req, collector_tx).await
+                } else {
+                    self.inference.complete_stream(req, collector_tx).await
+                }
+            }
+            openloom_models::ModelPreference::Auto => {
+                if let Some(ref cloud) = self.cloud {
+                    cloud.complete_stream(req, collector_tx).await
+                } else if let Some(ref local) = self.local_client {
+                    local.complete_stream(req, collector_tx).await
+                } else {
+                    self.inference.complete_stream(req, collector_tx).await
+                }
+            }
         };
 
         // Wait for collector to finish

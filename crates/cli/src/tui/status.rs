@@ -10,6 +10,7 @@ pub struct StatusLine {
     pub git_branch: String,
     pub cwd: String,
     pub context_max: usize,
+    pub last_model: Option<String>,
 }
 
 impl StatusLine {

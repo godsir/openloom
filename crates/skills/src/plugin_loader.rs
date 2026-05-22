@@ -19,46 +19,60 @@ impl PluginLoader {
     /// Discover external skills from plugin directories and project-local skills.
     ///
     /// Scans:
-    /// - `<data_dir>/plugins/*/` — each subdirectory with `.loom-plugin/plugin.json`
-    ///   or `.claude-plugin/plugin.json`
+    /// - `<data_dir>/plugins/` — recursively finds directories with `.loom-plugin/plugin.json`
+    ///   or `.claude-plugin/plugin.json` (supports Claude Code's nested cache structure)
+    /// - `<data_dir>/skills/*/SKILL.md` — global standalone skills (plugin_name = "global")
     /// - `<cwd>/.loom/skills/*/` — project-local flat skills (plugin_name = "project")
     pub fn discover(data_dir: &Path, cwd: &Path) -> Vec<ExternalSkill> {
         let mut skills = Vec::new();
 
-        // Scan data_dir/plugins/*/
+        // Recursively scan data_dir/plugins/ for plugin directories
         let plugins_dir = data_dir.join("plugins");
         if plugins_dir.is_dir() {
-            match std::fs::read_dir(&plugins_dir) {
-                Ok(entries) => {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.is_dir() {
-                            match Self::load_plugin(&path) {
-                                Ok((_manifest, plugin_skills)) => {
-                                    skills.extend(plugin_skills);
-                                }
-                                Err(e) => {
-                                    tracing::debug!(
-                                        "skipping plugin dir {}: {}",
-                                        path.display(),
-                                        e
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::debug!("cannot read plugins dir {}: {}", plugins_dir.display(), e);
-                }
-            }
+            Self::scan_plugins_recursive(&plugins_dir, &mut skills, 0);
         }
 
-        // Scan cwd/.loom/skills/*/
+        // Scan data_dir/skills/*/ (global standalone skills)
+        let global_skills_dir = data_dir.join("skills");
+        skills.extend(Self::load_flat_skills(&global_skills_dir, "global"));
+
+        // Scan cwd/.loom/skills/*/ (project-local, optional)
         let project_skills_dir = cwd.join(".loom").join("skills");
         skills.extend(Self::load_flat_skills(&project_skills_dir, "project"));
 
         skills
+    }
+
+    fn scan_plugins_recursive(dir: &Path, skills: &mut Vec<ExternalSkill>, depth: usize) {
+        if depth > 6 {
+            return;
+        }
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            // Skip hidden dirs except .loom-plugin/.claude-plugin
+            if name_str.starts_with('.') {
+                continue;
+            }
+            // Try loading as a plugin (has .loom-plugin/ or .claude-plugin/)
+            match Self::load_plugin(&path) {
+                Ok((_manifest, plugin_skills)) => {
+                    skills.extend(plugin_skills);
+                }
+                Err(_) => {
+                    // Not a plugin dir — recurse deeper
+                    Self::scan_plugins_recursive(&path, skills, depth + 1);
+                }
+            }
+        }
     }
 
     /// Load a plugin from a directory that contains `.loom-plugin/plugin.json`
@@ -102,11 +116,7 @@ impl PluginLoader {
         let entries = match std::fs::read_dir(skills_dir) {
             Ok(entries) => entries,
             Err(e) => {
-                tracing::debug!(
-                    "cannot read skills dir {}: {}",
-                    skills_dir.display(),
-                    e
-                );
+                tracing::debug!("cannot read skills dir {}: {}", skills_dir.display(), e);
                 return skills;
             }
         };
@@ -126,19 +136,11 @@ impl PluginLoader {
                         skills.push(skill);
                     }
                     Err(e) => {
-                        tracing::debug!(
-                            "skipping skill {}: {}",
-                            skill_md.display(),
-                            e
-                        );
+                        tracing::debug!("skipping skill {}: {}", skill_md.display(), e);
                     }
                 },
                 Err(e) => {
-                    tracing::debug!(
-                        "cannot read {}: {}",
-                        skill_md.display(),
-                        e
-                    );
+                    tracing::debug!("cannot read {}: {}", skill_md.display(), e);
                 }
             }
         }

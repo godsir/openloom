@@ -8,113 +8,137 @@ use ratatui::{
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::tui::app::{App, AppState};
+use crate::tui::app::{App, AppState, Message};
 use crate::tui::theme::Palette;
 
-pub fn draw(f: &mut Frame, app: &App) {
+/// Draw the inline viewport (bottom of terminal): streaming preview + status + input.
+pub fn draw_inline(f: &mut Frame, app: &App) {
     let p = &app.theme.palette;
 
     let bg_block = Block::default().style(Style::new().bg(p.bg));
     f.render_widget(bg_block, f.area());
 
-    let [main_area, status_area, input_area] = Layout::default()
+    let streaming_h = if app.state == AppState::Streaming {
+        streaming_preview_height(app, f.area().width as usize)
+    } else {
+        0
+    };
+
+    let [_spacer, stream_area, status_area, input_area] = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),
+            Constraint::Fill(1),
+            Constraint::Length(streaming_h),
             Constraint::Length(1),
             Constraint::Length(input_height(app)),
         ])
         .areas(f.area());
 
-    draw_messages(f, main_area, app, p);
+    if streaming_h > 0 {
+        draw_streaming_preview(f, stream_area, app, p);
+    }
     draw_status_line(f, status_area, app, p);
     draw_input(f, input_area, app, p);
 }
 
-// ── message area ─────────────────────────────────────────────────
-
-fn draw_messages(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
-    let visible_height = area.height as usize;
-
-    let all_lines = build_message_lines(app, p, area.width as usize);
-    let total_lines = all_lines.len();
-
-    let max_offset = total_lines.saturating_sub(visible_height);
-    // scroll_offset is "lines from bottom": 0 = at bottom, N = scrolled N lines up
-    let effective_offset = if app.viewport.auto_scroll {
-        max_offset
-    } else {
-        max_offset.saturating_sub(app.viewport.scroll_offset)
-    };
-
-    let end = (effective_offset + visible_height).min(total_lines);
-    let start = effective_offset.min(end);
-
-    let visible: Vec<Line> = if start < all_lines.len() {
-        all_lines[start..end].to_vec()
-    } else {
-        Vec::new()
-    };
-
-    let para = Paragraph::new(Text::from(visible)).style(Style::new().bg(p.bg));
-    f.render_widget(para, area);
-
-    if !app.viewport.auto_scroll && app.viewport.unseen_count > 0 {
-        let indicator = format!(" \u{2193} {} new ", app.viewport.unseen_count);
-        let width = indicator.len() as u16;
-        let x = area.x + area.width.saturating_sub(width + 1);
-        let y = area.y + area.height.saturating_sub(1);
-        if width < area.width {
-            let pill = Paragraph::new(Span::styled(indicator, Style::new().fg(p.bg).bg(p.accent)));
-            f.render_widget(pill, Rect::new(x, y, width.min(area.width), 1));
-        }
+/// How many rows the streaming preview needs in the inline viewport.
+fn streaming_preview_height(app: &App, _width: usize) -> u16 {
+    if app.state != AppState::Streaming {
+        return 0;
     }
+    // Show a compact 1-line streaming indicator
+    1
 }
 
-fn build_message_lines(app: &App, p: &Palette, area_width: usize) -> Vec<Line<'static>> {
+fn draw_streaming_preview(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
+    let tail: String = app
+        .stream
+        .buffer
+        .chars()
+        .rev()
+        .take(area.width as usize - 8)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+
+    let cursor_char = if app.frame_count % 20 < 10 {
+        "\u{258d}"
+    } else {
+        " "
+    };
+
+    let line = Line::from(vec![
+        Span::styled("    ", Style::new().bg(p.bg)),
+        Span::styled(tail, Style::new().fg(p.text).bg(p.bg)),
+        Span::styled(cursor_char, Style::new().fg(p.accent).bg(p.bg)),
+    ]);
+
+    let para = Paragraph::new(line);
+    f.render_widget(para, area);
+}
+
+// ── message rendering (for scrollback flush) ───────────────────
+
+/// Build styled lines for a slice of messages.
+/// Called from mod.rs to render into terminal scrollback via insert_before.
+pub fn build_lines_for_messages(
+    messages: &[Message],
+    p: &Palette,
+    area_width: usize,
+    add_leading_blank: bool,
+) -> Vec<Line<'static>> {
     let mut lines: Vec<Line> = Vec::new();
     let content_width = area_width.saturating_sub(6);
 
-    // Always render welcome banner at the top
-    lines.extend(welcome_lines(p));
-    lines.push(Line::from(""));
-
-    for (idx, msg) in app.messages.iter().enumerate() {
-        if idx > 0 {
+    for (idx, msg) in messages.iter().enumerate() {
+        if idx > 0 || add_leading_blank {
             lines.push(Line::from(""));
         }
 
         let (marker, label, color) = role_style(&msg.role, p);
 
-        // Collapsed messages show only header with expand hint
         if msg.collapsed {
-            let preview: String = msg.content.chars().take(40).collect();
+            let preview = collapsed_preview(&msg.role, &msg.content);
             lines.push(Line::from(vec![
                 Span::styled(format!("  {} ", marker), Style::new().fg(color)),
                 Span::styled(label.to_string(), Style::new().fg(color).bold()),
-                Span::styled(format!("  {} ...", preview), Style::new().fg(p.text_dim)),
-                Span::styled(" [Ctrl+O]", Style::new().fg(p.text_dim)),
+                Span::styled(format!("  {}", preview), Style::new().fg(p.text_dim)),
             ]));
             continue;
         }
 
-        lines.push(Line::from(vec![
+        // Header line with optional elapsed time
+        let mut header_spans = vec![
             Span::styled(format!("  {} ", marker), Style::new().fg(color)),
             Span::styled(label.to_string(), Style::new().fg(color).bold()),
-        ]));
+        ];
+        if let Some(ms) = msg.elapsed_ms {
+            header_spans.push(Span::styled(
+                format!(" ({})", format_elapsed(ms)),
+                Style::new().fg(p.text_dim),
+            ));
+        }
+        lines.push(Line::from(header_spans));
 
         if msg.content.is_empty() {
             continue;
         }
 
-        // Diff-aware rendering for tool_result messages
         let is_diff_content = msg.role == "tool_result"
             && (msg.content.contains("\n+") || msg.content.contains("\n-"))
             && msg.content.contains("---");
 
+        let use_markdown = msg.role == "assistant";
+        let mut in_code_block = false;
+
         for raw_line in msg.content.lines() {
             if raw_line.is_empty() {
-                lines.push(Line::from(""));
+                // In code blocks, preserve blank lines for readability
+                if in_code_block {
+                    lines.push(Line::from(""));
+                }
+                // Outside code blocks, skip blank lines entirely for compact output
                 continue;
             }
 
@@ -134,22 +158,31 @@ fn build_message_lines(app: &App, p: &Palette, area_width: usize) -> Vec<Line<'s
                     format!("    {}", raw_line),
                     Style::new().fg(line_color),
                 )));
+            } else if use_markdown {
+                // Code block fence toggle
+                if raw_line.trim_start().starts_with("```") {
+                    in_code_block = !in_code_block;
+                    // Don't render the fence line itself
+                    continue;
+                }
+
+                if in_code_block {
+                    lines.push(Line::from(vec![
+                        Span::styled("    ", Style::new()),
+                        Span::styled(
+                            raw_line.to_string(),
+                            Style::new().fg(p.text_dim),
+                        ),
+                    ]));
+                } else {
+                    for w in wrap_text(raw_line, content_width) {
+                        lines.push(render_markdown_line(&w, p));
+                    }
+                }
             } else {
                 for w in wrap_text(raw_line, content_width) {
                     lines.push(render_line_with_commands(&w, p));
                 }
-            }
-        }
-
-        let is_last = idx == app.messages.len() - 1;
-        if app.state == AppState::Streaming && msg.role == "assistant" && is_last {
-            if app.frame_count % 20 < 10 {
-                lines.push(Line::from(Span::styled(
-                    "    \u{258d}",
-                    Style::new().fg(p.accent),
-                )));
-            } else {
-                lines.push(Line::from(Span::styled("     ", Style::new().fg(p.accent))));
             }
         }
     }
@@ -162,13 +195,295 @@ fn role_style<'a>(role: &'a str, p: &Palette) -> (&'a str, &'a str, Color) {
         "user" => ("\u{276f}", "you", p.user_bubble),
         "assistant" => ("\u{25c6}", "openLoom", p.accent),
         "thinking" => ("\u{25cb}", "thinking", p.text_dim),
-        "tool_call" => ("\u{25b8}", "tool", p.warning),
-        "tool_result" => ("\u{25c7}", "result", p.success),
+        "tool_call" => ("\u{25cf}", "tool", p.warning),
+        "tool_result" => ("\u{2514}", "result", p.success),
+        "skill" => ("\u{2726}", "skill", p.accent),
+        "mode" => ("\u{2726}", "mode", p.accent),
         "error" => ("\u{2716}", "error", p.error),
         _ => ("\u{25cf}", role, p.text_dim),
     }
 }
 
+fn collapsed_preview(role: &str, content: &str) -> String {
+    match role {
+        "tool_call" => tool_call_summary(content),
+        "tool_result" => tool_result_summary(content),
+        "thinking" => {
+            let preview: String = content.chars().take(60).collect();
+            if content.len() > 60 {
+                format!("{} ...", preview)
+            } else {
+                preview
+            }
+        }
+        _ => {
+            let preview: String = content.chars().take(40).collect();
+            if content.len() > 40 {
+                format!("{} ...", preview)
+            } else {
+                preview
+            }
+        }
+    }
+}
+
+fn tool_call_summary(content: &str) -> String {
+    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(content) {
+        let tool_name = obj
+            .get("tool")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let params = obj.get("params").and_then(|v| v.as_object());
+
+        match tool_name {
+            "file_read" => {
+                let path = params
+                    .and_then(|p| p.get("path"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                let short = short_path(path);
+                format!("Read({})", short)
+            }
+            "file_write" => {
+                let path = params
+                    .and_then(|p| p.get("path"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                let short = short_path(path);
+                format!("Write({})", short)
+            }
+            "file_edit" => {
+                let path = params
+                    .and_then(|p| p.get("path"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                let short = short_path(path);
+                format!("Update({})", short)
+            }
+            "shell" => {
+                let cmd = params
+                    .and_then(|p| p.get("command"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                let truncated: String = cmd.chars().take(50).collect();
+                if cmd.len() > 50 {
+                    format!("Bash({}...)", truncated)
+                } else {
+                    format!("Bash({})", truncated)
+                }
+            }
+            "file_search" | "content_search" => {
+                let query = params
+                    .and_then(|p| p.get("query").or(p.get("pattern")))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                format!("Search({})", query)
+            }
+            _ => {
+                format!("{}()", tool_name)
+            }
+        }
+    } else {
+        let preview: String = content.chars().take(60).collect();
+        if content.len() > 60 {
+            format!("{} ...", preview)
+        } else {
+            preview
+        }
+    }
+}
+
+fn tool_result_summary(content: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let added = lines.iter().filter(|l| l.starts_with('+') && !l.starts_with("+++")).count();
+    let removed = lines.iter().filter(|l| l.starts_with('-') && !l.starts_with("---")).count();
+
+    if added > 0 || removed > 0 {
+        return format!("+{} -{} lines", added, removed);
+    }
+
+    if lines.len() == 1 {
+        let preview: String = content.chars().take(60).collect();
+        return preview;
+    }
+
+    format!("{} lines", lines.len())
+}
+
+fn short_path(path: &str) -> String {
+    let parts: Vec<&str> = path.split(['/', '\\']).collect();
+    if parts.len() <= 3 {
+        return path.to_string();
+    }
+    parts[parts.len() - 3..].join("/")
+}
+
+fn render_markdown_line(text: &str, p: &Palette) -> Line<'static> {
+    let mut spans: Vec<Span> = Vec::new();
+    spans.push(Span::styled("    ", Style::new()));
+
+    let trimmed = text.trim_start();
+
+    // Headings (check longest prefix first)
+    if let Some(rest) = trimmed.strip_prefix("### ") {
+        spans.push(Span::styled(
+            rest.to_string(),
+            Style::new().fg(p.accent).bold(),
+        ));
+        return Line::from(spans);
+    }
+    if let Some(rest) = trimmed.strip_prefix("## ") {
+        spans.push(Span::styled(
+            rest.to_string(),
+            Style::new().fg(p.accent).bold(),
+        ));
+        return Line::from(spans);
+    }
+    if let Some(rest) = trimmed.strip_prefix("# ") {
+        spans.push(Span::styled(
+            rest.to_string(),
+            Style::new().fg(p.accent).bold(),
+        ));
+        return Line::from(spans);
+    }
+
+    // Table lines
+    if trimmed.starts_with('|') && trimmed.ends_with('|') {
+        // Table separator line (|---|---|)
+        if trimmed
+            .chars()
+            .all(|c| c == '|' || c == '-' || c == ':' || c == ' ')
+        {
+            spans.push(Span::styled(
+                trimmed.to_string(),
+                Style::new().fg(p.text_dim),
+            ));
+            return Line::from(spans);
+        }
+        // Data row — color the pipes dim, content normal
+        for segment in trimmed.split('|') {
+            if segment.is_empty() {
+                spans.push(Span::styled("|", Style::new().fg(p.text_dim)));
+            } else {
+                spans.push(Span::styled("|", Style::new().fg(p.text_dim)));
+                parse_inline_markdown(segment, p, &mut spans);
+            }
+        }
+        return Line::from(spans);
+    }
+
+    // Bullet lists
+    if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
+        spans.push(Span::styled("\u{2022} ", Style::new().fg(p.accent)));
+        parse_inline_markdown(rest, p, &mut spans);
+        return Line::from(spans);
+    }
+
+    // Numbered lists (e.g. "1. ", "10. ", "123. ")
+    {
+        let bytes = trimmed.as_bytes();
+        let mut digit_end = 0;
+        while digit_end < bytes.len() && bytes[digit_end].is_ascii_digit() {
+            digit_end += 1;
+        }
+        if digit_end > 0 && trimmed[digit_end..].starts_with(". ") {
+            let prefix_end = digit_end + 2;
+            spans.push(Span::styled(
+                trimmed[..prefix_end].to_string(),
+                Style::new().fg(p.accent),
+            ));
+            parse_inline_markdown(&trimmed[prefix_end..], p, &mut spans);
+            return Line::from(spans);
+        }
+    }
+
+    // Regular line with inline markdown
+    parse_inline_markdown(text, p, &mut spans);
+    Line::from(spans)
+}
+
+fn parse_inline_markdown(text: &str, p: &Palette, spans: &mut Vec<Span<'static>>) {
+    let mut remaining = text;
+
+    while !remaining.is_empty() {
+        // Find the earliest marker
+        let bold_pos = remaining.find("**");
+        let code_pos = remaining.find('`');
+
+        // Determine which comes first
+        let next = match (bold_pos, code_pos) {
+            (Some(b), Some(c)) => {
+                if b <= c {
+                    Some(('B', b))
+                } else {
+                    Some(('C', c))
+                }
+            }
+            (Some(b), None) => Some(('B', b)),
+            (None, Some(c)) => Some(('C', c)),
+            (None, None) => None,
+        };
+
+        match next {
+            Some(('B', start)) => {
+                // Push text before the marker
+                if start > 0 {
+                    spans.push(Span::styled(
+                        remaining[..start].to_string(),
+                        Style::new().fg(p.text),
+                    ));
+                }
+                let after = &remaining[start + 2..];
+                if let Some(end) = after.find("**") {
+                    spans.push(Span::styled(
+                        after[..end].to_string(),
+                        Style::new().fg(p.text).bold(),
+                    ));
+                    remaining = &after[end + 2..];
+                } else {
+                    // Unclosed **, render as-is
+                    spans.push(Span::styled(
+                        remaining[start..].to_string(),
+                        Style::new().fg(p.text),
+                    ));
+                    return;
+                }
+            }
+            Some(('C', start)) => {
+                if start > 0 {
+                    spans.push(Span::styled(
+                        remaining[..start].to_string(),
+                        Style::new().fg(p.text),
+                    ));
+                }
+                let after = &remaining[start + 1..];
+                if let Some(end) = after.find('`') {
+                    spans.push(Span::styled(
+                        after[..end].to_string(),
+                        Style::new().fg(p.accent),
+                    ));
+                    remaining = &after[end + 1..];
+                } else {
+                    spans.push(Span::styled(
+                        remaining[start..].to_string(),
+                        Style::new().fg(p.text),
+                    ));
+                    return;
+                }
+            }
+            _ => {
+                // No more markers — push rest as plain text
+                spans.push(Span::styled(
+                    remaining.to_string(),
+                    Style::new().fg(p.text),
+                ));
+                break;
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
 fn render_line_with_commands(text: &str, p: &Palette) -> Line<'static> {
     let mut spans: Vec<Span> = Vec::new();
     spans.push(Span::styled("    ", Style::new()));
@@ -267,53 +582,6 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     lines
 }
 
-fn welcome_lines(p: &Palette) -> Vec<Line<'static>> {
-    let logo_lines = [
-        r"            __                  ",
-        r"  ___  ____/ /__  ___  ___  ___ ",
-        r" / _ \/ __/ / _ \/ _ \/ _ \/ _ \",
-        r"/ .__/ /_/_/\___/\___/\___/ .__/",
-        r"\_/  \__/  openLoom      /_/    ",
-    ];
-
-    let mut lines: Vec<Line> = Vec::new();
-    lines.push(Line::from(""));
-
-    for logo in &logo_lines {
-        lines.push(Line::from(Span::styled(
-            format!("  {}", logo),
-            Style::new().fg(p.accent),
-        )));
-    }
-
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "  Local-first AI assistant with cognitive memory.",
-        Style::new().fg(p.text_dim),
-    )));
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled("  Enter", Style::new().fg(p.text).bold()),
-        Span::styled(" send  ", Style::new().fg(p.text_dim)),
-        Span::styled("Shift+Enter", Style::new().fg(p.text).bold()),
-        Span::styled(" newline  ", Style::new().fg(p.text_dim)),
-        Span::styled("Ctrl+C \u{00d7}2", Style::new().fg(p.text).bold()),
-        Span::styled(" exit", Style::new().fg(p.text_dim)),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("  Ctrl+G", Style::new().fg(p.text).bold()),
-        Span::styled(" editor  ", Style::new().fg(p.text_dim)),
-        Span::styled("\u{2191}/\u{2193}", Style::new().fg(p.text).bold()),
-        Span::styled(" history  ", Style::new().fg(p.text_dim)),
-        Span::styled("Tab", Style::new().fg(p.text).bold()),
-        Span::styled(" autocomplete  ", Style::new().fg(p.text_dim)),
-        Span::styled("/help", Style::new().fg(p.accent).bold()),
-        Span::styled(" commands", Style::new().fg(p.text_dim)),
-    ]));
-
-    lines
-}
-
 // ── status bar ───────────────────────────────────────────────────
 
 fn draw_status_line(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
@@ -337,7 +605,6 @@ fn draw_status_line(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
 
     let mut left_parts: Vec<String> = Vec::new();
 
-    // During streaming/waiting, show activity status instead of model name
     match app.state {
         AppState::Waiting => {
             let elapsed = app.stream_start.map(|s| s.elapsed().as_secs()).unwrap_or(0);
@@ -350,23 +617,39 @@ fn draw_status_line(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
             } else {
                 format!("{}s", elapsed)
             };
-            let tokens = app.stream_tokens_count;
+            let tokens = app.stream.buffer.len().div_ceil(4);
             left_parts.push(format!(
-                "Streaming\u{2026} ({} \u{00b7} \u{2193} {} tokens)",
+                "Streaming\u{2026} ({} \u{00b7} \u{2193} ~{} tokens)",
                 elapsed_str, tokens
             ));
         }
         _ => {
-            left_parts.push(app.status.model.clone());
+            if let Some(ref last) = app.status.last_model {
+                left_parts.push(format!("{} \u{2190} {}", app.status.model, last));
+            } else {
+                left_parts.push(app.status.model.clone());
+            }
+            left_parts.push(format!("[{}]", app.mode.config().status_label));
+            if app.thinking != openloom_models::ThinkingLevel::None {
+                left_parts.push(format!("think:{}", app.thinking.label()));
+            }
         }
     }
 
     if matches!(app.state, AppState::Idle | AppState::Overlay) {
-        if !app.status.git_branch.is_empty() {
-            left_parts.push(app.status.git_branch.clone());
-        }
+        left_parts.push(short_cwd(&app.status.cwd));
         if app.status.context_max > 0 {
-            left_parts.push(format_context_size(app.status.context_max));
+            let total_tokens = app.total_prompt_tokens + app.total_completion_tokens;
+            if total_tokens > 0 {
+                let pct = (total_tokens as f64 / app.status.context_max as f64 * 100.0).min(100.0);
+                left_parts.push(format!(
+                    "{:.0}% of {}",
+                    pct,
+                    format_context_size(app.status.context_max)
+                ));
+            } else {
+                left_parts.push(format_context_size(app.status.context_max));
+            }
         }
     }
 
@@ -392,7 +675,7 @@ fn draw_status_line(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
     };
 
     let total_width = area.width as usize;
-    let dot_and_space = 3; // " X "
+    let dot_and_space = 3;
     let left_w = dot_and_space + UnicodeWidthStr::width(left_text.as_str());
     let right_w = UnicodeWidthStr::width(right.as_str());
     let padding = total_width.saturating_sub(left_w + right_w);
@@ -427,6 +710,18 @@ fn format_tokens(n: usize) -> String {
         format!("{}", n)
     } else {
         "0".into()
+    }
+}
+
+fn format_elapsed(ms: u64) -> String {
+    let secs = ms / 1000;
+    if secs >= 60 {
+        format!("{}m {}s", secs / 60, secs % 60)
+    } else if secs > 0 {
+        let frac = (ms % 1000) / 100;
+        format!("{}.{}s", secs, frac)
+    } else {
+        format!("{}ms", ms)
     }
 }
 
@@ -508,6 +803,9 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/help", "Show help and keybindings"),
     ("/model", "Show model info"),
     ("/model set", "Configure cloud model"),
+    ("/model use", "Switch local/cloud/auto"),
+    ("/think", "Show/set thinking level"),
+    ("/think none|low|mid|high|max", "Set extended thinking"),
     ("/token", "Session token usage and cost"),
     ("/token summary", "Usage by model"),
     ("/token today", "Today's usage"),
@@ -529,21 +827,24 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/memory search", "Search events"),
     ("/skills list", "List registered skills"),
     ("/skills invoke", "Invoke a skill by name"),
+    ("/mode", "Show/switch agent mode"),
+    ("/mode chat", "Chat mode — pure conversation"),
+    ("/mode plan", "Plan mode — read-only exploration"),
+    ("/mode code", "Code mode — full agent + tools"),
+    ("/mode assistant", "Assistant mode — general helper"),
     ("/config get", "Get config values"),
     ("/config set", "Set config values"),
 ];
 
-/// Returns the filtered list of matching commands for the current input.
-/// Used by both render and input for consistent palette behavior.
+#[allow(dead_code)]
 pub fn palette_matches(input: &str) -> Vec<(&'static str, &'static str)> {
     if !input.starts_with('/') || input.starts_with("//") {
         return Vec::new();
     }
 
-    let typed = &input[1..]; // strip leading /
+    let typed = &input[1..];
     let typed_lower = typed.to_lowercase();
 
-    // If typed exactly matches a command, don't show palette (user already selected)
     let has_exact = SLASH_COMMANDS
         .iter()
         .any(|(cmd, _)| cmd[1..].eq_ignore_ascii_case(typed_lower.trim()));
@@ -554,32 +855,110 @@ pub fn palette_matches(input: &str) -> Vec<(&'static str, &'static str)> {
     SLASH_COMMANDS
         .iter()
         .filter(|(cmd, _)| {
-            let full = &cmd[1..]; // e.g. "help", "theme dark"
+            let full = &cmd[1..];
             full.starts_with(&typed_lower) || typed_lower.is_empty()
         })
         .map(|(cmd, desc)| (*cmd, *desc))
         .collect()
 }
 
+/// Like `palette_matches` but also includes dynamic external commands (e.g. plugin skills).
+/// Returns owned strings so it can combine static built-in commands with runtime data.
+pub fn palette_matches_dynamic(
+    input: &str,
+    external_commands: &[(String, String)],
+) -> Vec<(String, String)> {
+    if !input.starts_with('/') || input.starts_with("//") {
+        return Vec::new();
+    }
+
+    let typed = &input[1..];
+    let typed_lower = typed.to_lowercase();
+
+    // Check for exact match in builtins
+    let has_exact_builtin = SLASH_COMMANDS
+        .iter()
+        .any(|(cmd, _)| cmd[1..].eq_ignore_ascii_case(typed_lower.trim()));
+    // Check for exact match in externals
+    let has_exact_external = external_commands
+        .iter()
+        .any(|(cmd, _)| cmd[1..].eq_ignore_ascii_case(typed_lower.trim()));
+
+    if (has_exact_builtin || has_exact_external) && !typed_lower.trim().is_empty() {
+        return Vec::new();
+    }
+
+    let mut results: Vec<(String, String)> = SLASH_COMMANDS
+        .iter()
+        .filter(|(cmd, _)| {
+            let full = &cmd[1..];
+            full.starts_with(&typed_lower) || typed_lower.is_empty()
+        })
+        .map(|(cmd, desc)| (cmd.to_string(), desc.to_string()))
+        .collect();
+
+    for (cmd, desc) in external_commands {
+        let full = &cmd[1..];
+        if full.to_lowercase().starts_with(&typed_lower) || typed_lower.is_empty() {
+            results.push((cmd.clone(), desc.clone()));
+        }
+    }
+
+    results
+}
+
 pub fn draw_command_palette(f: &mut Frame, app: &App, input_area: Rect, p: &Palette) {
     let current_input = app.input.lines().first().map(|s| s.as_str()).unwrap_or("");
-    let matches = palette_matches(current_input);
+
+    // History search mode: show matching history entries
+    if app.history_search_active {
+        let query = current_input.to_lowercase();
+        let history_matches: Vec<(String, String)> = app.history.iter().rev()
+            .filter(|h| query.is_empty() || h.to_lowercase().contains(&query))
+            .take(10)
+            .map(|h| {
+                let preview: String = h.chars().take(50).collect();
+                (preview, String::new())
+            })
+            .collect();
+
+        if history_matches.is_empty() {
+            return;
+        }
+
+        draw_palette_items(f, app, input_area, p, &history_matches, "search: ");
+        return;
+    }
+
+    let matches = palette_matches_dynamic(current_input, &app.external_commands);
 
     if matches.is_empty() {
         return;
     }
 
+    draw_palette_items(f, app, input_area, p, &matches, "");
+}
+
+fn draw_palette_items(
+    f: &mut Frame,
+    app: &App,
+    input_area: Rect,
+    p: &Palette,
+    matches: &[(String, String)],
+    _prefix: &str,
+) {
     let total_items = matches.len();
-    let visible_count = total_items.min(10);
+    let frame_area = f.area();
+    let available_above = input_area.y.saturating_sub(frame_area.y) as usize;
+    if available_above == 0 {
+        return;
+    }
+    let visible_count = total_items.min(10).min(available_above);
     let max_height = visible_count as u16;
 
     let palette_width = (input_area.width).min(52);
     let x = input_area.x + 1;
-    let y = input_area.y.saturating_sub(max_height);
-
-    if y < 1 {
-        return;
-    }
+    let y = input_area.y.saturating_sub(max_height).max(frame_area.y);
 
     let palette_area = Rect::new(x, y, palette_width, max_height);
 
@@ -591,7 +970,6 @@ pub fn draw_command_palette(f: &mut Frame, app: &App, input_area: Rect, p: &Pale
         palette_area,
     );
 
-    // Scroll the palette view so the selected item is always visible
     let selected = app
         .command_palette_selected
         .min(total_items.saturating_sub(1));
@@ -630,7 +1008,6 @@ pub fn draw_command_palette(f: &mut Frame, app: &App, input_area: Rect, p: &Pale
     let para = Paragraph::new(Text::from(lines));
     f.render_widget(para, palette_area);
 
-    // Show scroll indicator if there are more items than visible
     if total_items > visible_count {
         let indicator = format!(" {}/{} ", selected + 1, total_items);
         let ind_width = indicator.len() as u16;
