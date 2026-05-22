@@ -144,6 +144,13 @@ fn detect_project_context() -> String {
         context_parts.push(format!("- Project instructions (CLAUDE.md):\n{}", preview));
     }
 
+    if cwd.join("loom.md").exists()
+        && let Ok(content) = std::fs::read_to_string(cwd.join("loom.md"))
+        && !content.trim().is_empty()
+    {
+        context_parts.push(format!("- Project instructions (loom.md):\n{}", content));
+    }
+
     context_parts.join("\n")
 }
 
@@ -160,6 +167,7 @@ pub struct Engine {
     event_bus: broadcast::Sender<EngineEvent>,
     agent_state: Arc<RwLock<AgentState>>,
     interruptible: AtomicBool,
+    data_dir: PathBuf,
     db_path: PathBuf,
     config: Arc<RwLock<AppConfig>>,
     start_time: Instant,
@@ -309,6 +317,7 @@ impl Engine {
             event_bus: event_tx,
             agent_state: Arc::new(RwLock::new(AgentState::Idle)),
             interruptible: AtomicBool::new(false),
+            data_dir: config.data_dir.clone(),
             db_path: db_path.clone(),
             config: Arc::new(RwLock::new(AppConfig::default())),
             start_time: Instant::now(),
@@ -563,7 +572,7 @@ impl Engine {
         match rusqlite::Connection::open(&self.db_path) {
             Ok(conn) => {
                 let store = MessageStore::new(&conn);
-                store.recent(session_id, 20)
+                store.all(session_id)
             }
             Err(e) => {
                 tracing::warn!("get_working_memory: {}", e);
@@ -684,6 +693,11 @@ impl Engine {
 
     pub fn cache_stats(&self) -> openloom_cache::CacheStats {
         self.weaver.cache().stats()
+    }
+
+    pub fn loom_context(&self) -> String {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        openloom_skills::loom_context::LoomContext::load(&self.data_dir, &cwd)
     }
 
     pub fn model_display_name(&self) -> String {
