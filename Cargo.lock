@@ -4583,39 +4583,6 @@ name = "loom-elapsed"
 version = "0.2.0"
 
 [[package]]
-name = "loom-exec"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "clap",
- "loom-absolute-path",
- "loom-app-server-client",
- "loom-app-server-protocol",
- "loom-arg0",
- "loom-cli-utils",
- "loom-config",
- "loom-git-utils",
- "loom-oss",
- "loom-protocol",
- "loom-sandbox-summary",
- "loom-shim-stubs",
- "loom-tui-stubs",
- "owo-colors",
- "pretty_assertions",
- "serde",
- "serde_json",
- "supports-color",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "ts-rs",
- "uuid",
- "walkdir",
- "wiremock",
-]
-
-[[package]]
 name = "loom-exec-server"
 version = "0.2.0"
 dependencies = [
@@ -4834,33 +4801,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "loom-mcp-server"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "loom-absolute-path",
- "loom-arg0",
- "loom-cli-utils",
- "loom-config",
- "loom-exec-server",
- "loom-protocol",
- "loom-shell-command",
- "loom-shim-stubs",
- "loom-tui-stubs",
- "pretty_assertions",
- "rmcp",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "shlex",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "wiremock",
 ]
 
 [[package]]

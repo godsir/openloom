@@ -49,10 +49,8 @@ members = [
     "crates/loom-protocol/config",
     "crates/loom-protocol/app-server-client",
     "crates/loom-protocol/mcp",
-    "crates/loom-protocol/mcp-server",
     "crates/loom-protocol/rmcp-client",
     "crates/loom-protocol/chatgpt",
-    "crates/loom-protocol/exec",
     "crates/loom-protocol/tui",
 ]
 exclude = [
@@ -263,10 +261,8 @@ loom-uds = { path = "crates/loom-utils/uds" }
 loom-path-utils = { path = "crates/loom-utils/path" }
 loom-config = { path = "crates/loom-protocol/config" }
 loom-mcp = { path = "crates/loom-protocol/mcp" }
-loom-mcp-server = { path = "crates/loom-protocol/mcp-server" }
 loom-rmcp-client = { path = "crates/loom-protocol/rmcp-client" }
 loom-chatgpt = { path = "crates/loom-protocol/chatgpt" }
-loom-exec = { path = "crates/loom-protocol/exec" }
 loom-tui = { path = "crates/loom-protocol/tui" }
 loom-install-context = { path = "crates/loom-utils/install-context" }
 
