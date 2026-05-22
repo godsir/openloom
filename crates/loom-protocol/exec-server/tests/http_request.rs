@@ -6,11 +6,11 @@ use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::time::Duration;
 
-use codex_app_server_protocol::JSONRPCError;
-use codex_app_server_protocol::JSONRPCMessage;
-use codex_app_server_protocol::JSONRPCNotification;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::RequestId;
+use loom_app_server_protocol::JSONRPCError;
+use loom_app_server_protocol::JSONRPCMessage;
+use loom_app_server_protocol::JSONRPCNotification;
+use loom_app_server_protocol::JSONRPCResponse;
+use loom_app_server_protocol::RequestId;
 use loom_exec_server::HttpHeader;
 use loom_exec_server::HttpRequestBodyDeltaNotification;
 use loom_exec_server::HttpRequestParams;
@@ -392,7 +392,7 @@ where
 async fn wait_for_error_response(
     server: &mut ExecServerHarness,
     request_id: RequestId,
-) -> anyhow::Result<codex_app_server_protocol::JSONRPCErrorError> {
+) -> anyhow::Result<loom_app_server_protocol::JSONRPCErrorError> {
     let response = server
         .wait_for_event(|event| {
             matches!(

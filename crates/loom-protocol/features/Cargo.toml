@@ -1,0 +1,24 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "loom-features"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "loom_features"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+loom-otel-stub = { workspace = true }
+loom-protocol = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+toml = { workspace = true }
+tracing = { workspace = true, features = ["log"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

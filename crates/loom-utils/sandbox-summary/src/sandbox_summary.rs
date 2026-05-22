@@ -1,6 +1,6 @@
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::NetworkAccess;
-use codex_protocol::protocol::SandboxPolicy;
+use loom_protocol::models::PermissionProfile;
+use loom_protocol::protocol::NetworkAccess;
+use loom_protocol::protocol::SandboxPolicy;
 use loom_absolute_path::AbsolutePathBuf;
 
 pub fn summarize_sandbox_policy(sandbox_policy: &SandboxPolicy) -> String {
@@ -98,7 +98,7 @@ pub fn summarize_permission_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::permissions::NetworkSandboxPolicy;
+    use loom_protocol::permissions::NetworkSandboxPolicy;
     use loom_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
 

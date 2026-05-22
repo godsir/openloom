@@ -7,8 +7,8 @@
 
 use std::time::Duration;
 
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_client::build_reqwest_client_with_custom_ca;
+use loom_app_server_protocol::JSONRPCErrorError;
+use loom_shim_stubs::build_reqwest_client_with_custom_ca;
 use futures::FutureExt;
 use futures::StreamExt;
 use futures::future::BoxFuture;

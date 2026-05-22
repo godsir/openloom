@@ -1,6 +1,6 @@
 //! Shared formatting for user-facing `codex resume` command hints.
 
-use codex_protocol::ThreadId;
+use loom_protocol::ThreadId;
 use loom_shell_command::parse_command::shlex_join;
 
 pub fn resume_command(thread_name: Option<&str>, thread_id: Option<ThreadId>) -> Option<String> {

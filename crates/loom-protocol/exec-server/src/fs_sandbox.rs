@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::permissions::FileSystemAccessMode;
-use codex_protocol::permissions::FileSystemPath;
-use codex_protocol::permissions::FileSystemSandboxEntry;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_protocol::permissions::FileSystemSpecialPath;
-use codex_protocol::permissions::NetworkSandboxPolicy;
+use loom_app_server_protocol::JSONRPCErrorError;
+use loom_protocol::models::PermissionProfile;
+use loom_protocol::permissions::FileSystemAccessMode;
+use loom_protocol::permissions::FileSystemPath;
+use loom_protocol::permissions::FileSystemSandboxEntry;
+use loom_protocol::permissions::FileSystemSandboxPolicy;
+use loom_protocol::permissions::FileSystemSpecialPath;
+use loom_protocol::permissions::NetworkSandboxPolicy;
 use loom_sandboxing::SandboxCommand;
 use loom_sandboxing::SandboxExecRequest;
 use loom_sandboxing::SandboxManager;
@@ -316,13 +316,13 @@ mod tests {
     use std::collections::HashMap;
     use std::ffi::OsString;
 
-    use codex_protocol::models::PermissionProfile;
-    use codex_protocol::permissions::FileSystemAccessMode;
-    use codex_protocol::permissions::FileSystemPath;
-    use codex_protocol::permissions::FileSystemSandboxEntry;
-    use codex_protocol::permissions::FileSystemSandboxPolicy;
-    use codex_protocol::permissions::FileSystemSpecialPath;
-    use codex_protocol::permissions::NetworkSandboxPolicy;
+    use loom_protocol::models::PermissionProfile;
+    use loom_protocol::permissions::FileSystemAccessMode;
+    use loom_protocol::permissions::FileSystemPath;
+    use loom_protocol::permissions::FileSystemSandboxEntry;
+    use loom_protocol::permissions::FileSystemSandboxPolicy;
+    use loom_protocol::permissions::FileSystemSpecialPath;
+    use loom_protocol::permissions::NetworkSandboxPolicy;
     use loom_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
 

@@ -821,9 +821,9 @@ mod tests {
         )
         .expect("absolute current exe");
         let sandbox = crate::FileSystemSandboxContext::from_permission_profile(
-            codex_protocol::models::PermissionProfile::from_runtime_permissions(
-                &codex_protocol::permissions::FileSystemSandboxPolicy::restricted(Vec::new()),
-                codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
+            loom_protocol::models::PermissionProfile::from_runtime_permissions(
+                &loom_protocol::permissions::FileSystemSandboxPolicy::restricted(Vec::new()),
+                loom_protocol::permissions::NetworkSandboxPolicy::Restricted,
             ),
         );
 

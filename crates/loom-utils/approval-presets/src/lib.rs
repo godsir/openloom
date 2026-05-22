@@ -1,9 +1,9 @@
-use codex_protocol::models::ActivePermissionProfile;
-use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
-use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
-use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::AskForApproval;
+use loom_protocol::models::ActivePermissionProfile;
+use loom_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
+use loom_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
+use loom_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
+use loom_protocol::models::PermissionProfile;
+use loom_protocol::protocol::AskForApproval;
 
 /// A simple preset pairing an approval policy with a permission profile.
 #[derive(Debug, Clone)]

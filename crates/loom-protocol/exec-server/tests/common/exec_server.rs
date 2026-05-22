@@ -5,10 +5,10 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::anyhow;
-use codex_app_server_protocol::JSONRPCMessage;
-use codex_app_server_protocol::JSONRPCNotification;
-use codex_app_server_protocol::JSONRPCRequest;
-use codex_app_server_protocol::RequestId;
+use loom_app_server_protocol::JSONRPCMessage;
+use loom_app_server_protocol::JSONRPCNotification;
+use loom_app_server_protocol::JSONRPCRequest;
+use loom_app_server_protocol::RequestId;
 use futures::SinkExt;
 use futures::StreamExt;
 use tempfile::TempDir;

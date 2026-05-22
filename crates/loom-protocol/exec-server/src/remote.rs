@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use codex_api::SharedAuthProvider;
+use loom_shim_stubs::SharedAuthProvider;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use tokio::time::sleep;
@@ -243,7 +243,7 @@ fn preview_error_body(body: &str) -> Option<String> {
 mod tests {
     use std::sync::Arc;
 
-    use codex_api::AuthProvider;
+    use loom_shim_stubs::AuthProvider;
     use http::HeaderMap;
     use http::HeaderValue;
     use pretty_assertions::assert_eq;

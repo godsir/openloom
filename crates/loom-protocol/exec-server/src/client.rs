@@ -7,7 +7,7 @@ use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
-use codex_app_server_protocol::JSONRPCNotification;
+use loom_app_server_protocol::JSONRPCNotification;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use serde_json::Value;
@@ -909,9 +909,9 @@ async fn handle_server_notification(
 
 #[cfg(test)]
 mod tests {
-    use codex_app_server_protocol::JSONRPCMessage;
-    use codex_app_server_protocol::JSONRPCNotification;
-    use codex_app_server_protocol::JSONRPCResponse;
+    use loom_app_server_protocol::JSONRPCMessage;
+    use loom_app_server_protocol::JSONRPCNotification;
+    use loom_app_server_protocol::JSONRPCResponse;
     use futures::SinkExt;
     use futures::StreamExt;
     use pretty_assertions::assert_eq;

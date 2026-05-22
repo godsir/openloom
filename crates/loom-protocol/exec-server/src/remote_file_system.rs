@@ -216,13 +216,13 @@ fn map_remote_error(error: ExecServerError) -> io::Error {
 
 #[cfg(test)]
 mod tests {
-    use codex_protocol::models::PermissionProfile;
-    use codex_protocol::permissions::FileSystemAccessMode;
-    use codex_protocol::permissions::FileSystemPath;
-    use codex_protocol::permissions::FileSystemSandboxEntry;
-    use codex_protocol::permissions::FileSystemSandboxPolicy;
-    use codex_protocol::permissions::FileSystemSpecialPath;
-    use codex_protocol::permissions::NetworkSandboxPolicy;
+    use loom_protocol::models::PermissionProfile;
+    use loom_protocol::permissions::FileSystemAccessMode;
+    use loom_protocol::permissions::FileSystemPath;
+    use loom_protocol::permissions::FileSystemSandboxEntry;
+    use loom_protocol::permissions::FileSystemSandboxPolicy;
+    use loom_protocol::permissions::FileSystemSpecialPath;
+    use loom_protocol::permissions::NetworkSandboxPolicy;
     use pretty_assertions::assert_eq;
 
     use super::*;

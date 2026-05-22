@@ -16,14 +16,13 @@ async-trait = { workspace = true }
 axum = { workspace = true, features = ["http1", "tokio", "ws"] }
 base64 = { workspace = true }
 bytes = { workspace = true }
-codex-app-server-protocol = { workspace = true }
-codex-api = { workspace = true }
-codex-client = { workspace = true }
+loom-app-server-protocol = { workspace = true }
+loom-shim-stubs = { workspace = true }
+
 loom-file-system = { workspace = true }
-codex-protocol = { workspace = true }
+loom-protocol = { workspace = true }
 loom-sandboxing = { workspace = true }
 loom-absolute-path = { workspace = true }
-codex-utils-pty = { workspace = true }
 loom-rustls-provider = { workspace = true }
 futures = { workspace = true }
 reqwest = { workspace = true, features = ["json", "rustls-tls", "stream"] }

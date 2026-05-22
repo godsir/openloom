@@ -12,7 +12,7 @@ workspace = true
 anyhow = { workspace = true }
 chrono = { workspace = true }
 loom-file-system = { workspace = true }
-codex-protocol = { workspace = true }
+loom-protocol = { workspace = true }
 loom-absolute-path = { workspace = true }
 futures = { workspace = true, features = ["alloc"] }
 gix = { workspace = true }

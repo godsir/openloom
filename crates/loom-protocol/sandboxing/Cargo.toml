@@ -14,7 +14,7 @@ workspace = true
 
 [dependencies]
 loom-network-proxy = { workspace = true }
-codex-protocol = { workspace = true }
+loom-protocol = { workspace = true }
 loom-absolute-path = { workspace = true }
 dunce = { workspace = true }
 libc = { workspace = true }

@@ -20,11 +20,11 @@ pub use manager::SandboxablePreference;
 pub use manager::compatibility_sandbox_policy_for_permission_profile;
 pub use manager::get_platform_sandbox;
 
-use codex_protocol::error::CodexErr;
+use loom_protocol::error::CodexErr;
 
 #[cfg(not(target_os = "linux"))]
 pub fn system_bwrap_warning(
-    _permission_profile: &codex_protocol::models::PermissionProfile,
+    _permission_profile: &loom_protocol::models::PermissionProfile,
 ) -> Option<String> {
     None
 }

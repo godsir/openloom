@@ -2,8 +2,8 @@
 
 mod common;
 
-use codex_app_server_protocol::JSONRPCMessage;
-use codex_app_server_protocol::JSONRPCResponse;
+use loom_app_server_protocol::JSONRPCMessage;
+use loom_app_server_protocol::JSONRPCResponse;
 use loom_exec_server::InitializeParams;
 use loom_exec_server::InitializeResponse;
 use common::exec_server::exec_server;
