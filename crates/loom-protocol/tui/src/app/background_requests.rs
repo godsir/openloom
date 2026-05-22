@@ -549,7 +549,7 @@ impl App {
             }
         };
 
-        if config.mcp_servers.get().is_empty() && statuses.is_empty() {
+        if config.mcp_servers.is_empty() && statuses.is_empty() {
             self.chat_widget
                 .add_to_history(history_cell::empty_mcp_output());
             return;

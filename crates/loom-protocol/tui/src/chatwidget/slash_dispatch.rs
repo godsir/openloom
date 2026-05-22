@@ -281,13 +281,13 @@ impl ChatWidget {
                         return;
                     };
 
-                    if let Err(err) = self
+                    if !self
                         .config
                         .permissions
                         .approval_policy
                         .can_set(&preset.approval)
                     {
-                        self.add_error_message(err.to_string());
+                        self.add_error_message("Cannot set approval policy".to_string());
                         return;
                     }
 
@@ -623,7 +623,8 @@ impl ChatWidget {
                 }
                 self.session_telemetry
                     .counter("codex.thread.rename", /*inc*/ 1, &[]);
-                let Some(name) = crate::legacy_core::util::normalize_thread_name(&args) else {
+                let name = crate::legacy_core::util::normalize_thread_name(&args);
+                if name.is_empty() {
                     self.add_error_message("Thread name cannot be empty.".to_string());
                     return;
                 };

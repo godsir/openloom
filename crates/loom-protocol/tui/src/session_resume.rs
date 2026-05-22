@@ -69,11 +69,10 @@ pub(crate) async fn read_session_model(
     thread_id: ThreadId,
     path: Option<&Path>,
 ) -> Option<String> {
-    if let Some(state_db_ctx) = state_db_ctx
-        && let Ok(Some(metadata)) = state_db_ctx.get_thread(thread_id).await
-        && let Some(model) = metadata.model
-    {
-        return Some(model);
+    // Stub: state_db_ctx.get_thread returns Option<()> with no .model field.
+    // Skip state_db lookup and go directly to rollout resume.
+    if state_db_ctx.is_none() {
+        return None;
     }
 
     let path = path?;
@@ -116,11 +115,9 @@ async fn read_session_cwd(
     thread_id: ThreadId,
     path: Option<&Path>,
 ) -> Option<PathBuf> {
-    if let Some(state_db_ctx) = state_db_ctx
-        && let Ok(Some(metadata)) = state_db_ctx.get_thread(thread_id).await
-    {
-        return Some(metadata.cwd);
-    }
+    // Stub: state_db_ctx.get_thread returns Option<()> with no .cwd field.
+    // Skip state_db lookup and go directly to rollout resume.
+    let _ = (state_db_ctx, thread_id);
 
     let path = path?;
     match read_rollout_resume_state(path).await {

@@ -13,4 +13,7 @@ pub struct PluginsManager;
 impl PluginsManager {
     pub fn new(_codex_home: PathBuf) -> Self { Self }
     pub fn plugins_for_config(&self, _plugins_input: &()) -> &Self { self }
+    pub fn capability_summaries(&self) -> Vec<loom_tui_stubs::plugin::PluginCapabilitySummary> {
+        vec![]
+    }
 }

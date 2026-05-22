@@ -40,12 +40,13 @@ fn resize_reflow_max_rows_for(
     running_in_vscode_terminal: bool,
 ) -> Option<usize> {
     match config.max_rows {
-        TerminalResizeReflowMaxRows::Auto => Some(auto_resize_reflow_max_rows(
+        Some(TerminalResizeReflowMaxRows::Auto) => Some(auto_resize_reflow_max_rows(
             terminal.name,
             running_in_vscode_terminal,
         )),
-        TerminalResizeReflowMaxRows::Disabled => None,
-        TerminalResizeReflowMaxRows::Limit(max_rows) => Some(max_rows),
+        Some(TerminalResizeReflowMaxRows::Disabled) => None,
+        Some(TerminalResizeReflowMaxRows::Limit(max_rows)) => Some(max_rows),
+        None => None,
     }
 }
 

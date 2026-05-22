@@ -13,6 +13,8 @@ use loom_tui_stubs::realtime_webrtc::RealtimeWebrtcSessionHandle;
 #[cfg(not(target_os = "linux"))]
 use std::sync::atomic::AtomicU16;
 #[cfg(not(target_os = "linux"))]
+use std::sync::Arc;
+#[cfg(not(target_os = "linux"))]
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -92,15 +94,18 @@ impl ChatWidget {
         self.realtime_conversation.requested_close = false;
         self.realtime_conversation.realtime_session_id = None;
         self.set_footer_hint_override(Some(Self::realtime_footer_hint_items()));
-        match self.config.realtime.transport {
-            RealtimeTransport::Websocket => {
+        match self.config.realtime.as_ref().and_then(|r| r.transport.as_ref()) {
+            Some(RealtimeTransport::Websocket) => {
                 self.realtime_conversation.transport = RealtimeConversationUiTransport::Websocket;
                 self.submit_realtime_conversation_start(/*transport*/ None);
             }
-            RealtimeTransport::WebRtc => {
+            Some(RealtimeTransport::WebRtc) => {
                 self.realtime_conversation.transport =
                     RealtimeConversationUiTransport::Webrtc { handle: None };
                 start_realtime_webrtc_offer_task(self.app_event_tx.clone());
+            }
+            None => {
+                // No realtime transport configured; nothing to do.
             }
         }
         self.request_redraw();
@@ -114,7 +119,8 @@ impl ChatWidget {
             transport,
             self.config
                 .realtime
-                .voice
+                .as_ref()
+                .and_then(|r| r.voice.clone())
                 .and_then(|voice| serde_json::to_value(voice).ok()),
         ));
     }
@@ -246,9 +252,7 @@ impl ChatWidget {
             return;
         };
 
-        if let Err(err) = handle.apply_answer_sdp(sdp) {
-            self.fail_realtime_conversation(format!("Failed to connect realtime WebRTC: {err}"));
-        }
+        handle.apply_answer_sdp(&sdp);
     }
 
     pub(crate) fn on_realtime_webrtc_offer_created(
@@ -326,7 +330,7 @@ impl ChatWidget {
             };
             let peak = handle.local_audio_peak();
             if self.realtime_conversation.meter_placeholder_id.is_none() {
-                self.start_realtime_webrtc_meter(peak);
+                self.start_realtime_webrtc_meter(Arc::new(AtomicU16::new(peak)));
             }
         }
     }
@@ -493,29 +497,14 @@ impl ChatWidget {
 }
 
 fn start_realtime_webrtc_offer_task(app_event_tx: AppEventSender) {
+    // Stub: RealtimeWebrtcSession::start() returns the session directly, not a Result.
+    // The session has no fields (unit struct), so we skip the offer creation.
     std::thread::spawn(move || {
-        let result = match RealtimeWebrtcSession::start() {
-            Ok(started) => {
-                let event_tx = app_event_tx.clone();
-                let local_audio_peak = started.handle.local_audio_peak();
-                std::thread::spawn(move || {
-                    for event in started.events {
-                        if let RealtimeWebrtcEvent::LocalAudioLevel(peak) = event {
-                            local_audio_peak.store(peak, Ordering::Relaxed);
-                            event_tx.send(AppEvent::RealtimeWebrtcLocalAudioLevel(peak));
-                        } else {
-                            event_tx.send(AppEvent::RealtimeWebrtcEvent(event));
-                        }
-                    }
-                });
-                Ok(crate::app_event::RealtimeWebrtcOffer {
-                    offer_sdp: started.offer_sdp,
-                    handle: started.handle,
-                })
-            }
-            Err(err) => Err(err.to_string()),
-        };
-        app_event_tx.send(AppEvent::RealtimeWebrtcOfferCreated { result });
+        let _started = RealtimeWebrtcSession::start();
+        // RealtimeWebRTC is stubbed out; send an empty offer to avoid blocking UI.
+        app_event_tx.send(AppEvent::RealtimeWebrtcOfferCreated {
+            result: Err("Realtime WebRTC not available in stub build".to_string()),
+        });
     });
 }
 

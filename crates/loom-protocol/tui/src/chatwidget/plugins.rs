@@ -2023,26 +2023,19 @@ fn marketplace_display_name(marketplace: &PluginMarketplaceEntry) -> String {
 }
 
 fn marketplace_is_user_configured(config: &Config, marketplace_name: &str) -> bool {
-    let Some(user_config) = config.config_layer_stack.effective_user_config() else {
-        return false;
-    };
-    user_config
-        .get("marketplaces")
-        .and_then(toml::Value::as_table)
-        .is_some_and(|marketplaces| marketplaces.contains_key(marketplace_name))
+    let user_config = config.config_layer_stack.effective_user_config();
+    user_config.marketplaces.contains_key(marketplace_name)
 }
 
 fn marketplace_is_user_configured_git(config: &Config, marketplace_name: &str) -> bool {
-    config
-        .config_layer_stack
-        .get_active_user_layer()
-        .and_then(|user_layer| user_layer.config.get("marketplaces"))
-        .and_then(toml::Value::as_table)
-        .and_then(|marketplaces| marketplaces.get(marketplace_name))
-        .and_then(toml::Value::as_table)
-        .and_then(|marketplace| marketplace.get("source_type"))
-        .and_then(toml::Value::as_str)
-        .is_some_and(|source_type| source_type == "git")
+    // Stub: LayerStub has no 'config' field; effective_user_config marketplaces suffice.
+    let user_config = config.config_layer_stack.effective_user_config();
+    user_config
+        .marketplaces
+        .get(marketplace_name)
+        .and_then(|m| m.source_type)
+        .map(|s| s == loom_config::types::MarketplaceSourceType::Git)
+        .unwrap_or(false)
 }
 
 fn plugin_display_name(plugin: &PluginSummary) -> String {

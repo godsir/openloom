@@ -792,8 +792,7 @@ impl App {
             loom_tui_stubs::login::default_client::originator().value,
             config.otel.log_user_prompt,
             user_agent(),
-            serde_json::from_value(serde_json::json!("cli"))
-                .unwrap_or_else(|err| panic!("cli session source should deserialize: {err}")),
+            serde_json::json!("cli"),
         );
         if config
             .tui_status_line

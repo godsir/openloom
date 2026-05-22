@@ -57,14 +57,15 @@ impl ChatWidget {
             };
             let base_description =
                 Some(preset.description.replace(" (Identical to Agent mode)", ""));
-            let approval_disabled_reason = match self
+            let approval_disabled_reason = if self
                 .config
                 .permissions
                 .approval_policy
                 .can_set(&preset.approval)
             {
-                Ok(()) => None,
-                Err(err) => Some(err.to_string()),
+                None
+            } else {
+                Some("Approval policy cannot be set".to_string())
             };
             let default_disabled_reason = approval_disabled_reason
                 .clone()

@@ -522,7 +522,7 @@ impl ChatWidget {
         );
         let permission_snapshot = PermissionProfileSnapshot::from_session_snapshot(
             permission_profile,
-            settings.active_permission_profile.take().map(Into::into),
+            settings.active_permission_profile.take().map(|p| p.id),
         );
         if let Err(err) = self
             .config
@@ -530,16 +530,10 @@ impl ChatWidget {
             .set_permission_profile_from_session_snapshot(permission_snapshot.clone())
         {
             tracing::warn!(%err, "failed to sync permissions from ThreadSettingsUpdated");
-            if let Err(replace_err) = self
+            self
                 .config
                 .permissions
-                .replace_permission_profile_from_session_snapshot(permission_snapshot)
-            {
-                tracing::error!(
-                    %replace_err,
-                    "failed to replace permissions from ThreadSettingsUpdated after constraint fallback"
-                );
-            }
+                .replace_permission_profile_from_session_snapshot(&permission_snapshot);
         }
 
         settings.collaboration_mode.settings.model = settings.model;
@@ -574,7 +568,7 @@ impl ChatWidget {
         }
         self.config
             .permissions
-            .set_workspace_roots(self.config.workspace_roots.clone());
+            .set_workspace_roots(&self.config.workspace_roots.clone());
     }
 
     pub(super) fn set_effective_collaboration_mode(&mut self, mode: CollaborationMode) {

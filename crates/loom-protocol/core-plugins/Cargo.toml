@@ -16,6 +16,7 @@ workspace = true
 anyhow = { workspace = true }
 loom-shim-stubs = { workspace = true }
 loom-app-server-protocol = { workspace = true }
+loom-tui-stubs = { workspace = true }
 loom-core-skills = { workspace = true }
 loom-exec-server = { workspace = true }
 loom-git-utils = { workspace = true }

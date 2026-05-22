@@ -980,7 +980,7 @@ impl ChatWidget {
             self.current_rollout_path.clone(),
             self.thread_id
                 .map(|thread_id| format!("auto-review-rollout-{thread_id}.jsonl")),
-            snapshot.feedback_diagnostics(),
+            &snapshot.feedback_diagnostics(),
         );
         self.bottom_pane.show_selection_view(params);
         self.request_redraw();

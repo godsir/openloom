@@ -289,7 +289,8 @@ impl ChatWidget {
             /*initial_text*/ existing_name.unwrap_or_default().to_string(),
             /*context_label*/ None,
             Box::new(move |name: String| {
-                let Some(name) = crate::legacy_core::util::normalize_thread_name(&name) else {
+                let name = crate::legacy_core::util::normalize_thread_name(&name);
+                if name.is_empty() {
                     tx.send(AppEvent::InsertHistoryCell(Box::new(
                         history_cell::new_error_event("Thread name cannot be empty.".to_string()),
                     )));

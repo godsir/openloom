@@ -545,22 +545,20 @@ pub(crate) fn new_mcp_tools_output_from_statuses(
     }
 
     for server in server_names {
-        let cfg = config.mcp_servers.get().get(server.as_str());
+        let _server_in_config = config.mcp_servers.iter().any(|s| s.as_str() == server.as_str());
+        // Stub: mcp_servers is Vec<String> with no per-server config details.
         let status = statuses_by_name.get(server.as_str()).copied();
         let header: Vec<Span<'static>> = vec!["  • ".into(), server.clone().into()];
 
         lines.push(header.into());
         if matches!(detail, McpServerStatusDetail::Full) {
-            let enabled = cfg.map(|cfg| cfg.enabled).unwrap_or(true);
+            let enabled = true; // Stub: no per-server config available
             let status_text = if enabled {
                 "enabled".green()
             } else {
                 "disabled".red()
             };
             lines.push(vec!["    • Status: ".into(), status_text].into());
-            if let Some(reason) = cfg.and_then(|cfg| cfg.disabled_reason.as_ref()) {
-                lines.push(vec!["    • Reason: ".into(), reason.to_string().dim()].into());
-            }
         }
         let auth_status = status
             .map(|status| match status.auth_status {
@@ -578,67 +576,9 @@ pub(crate) fn new_mcp_tools_output_from_statuses(
             .into(),
         );
 
-        if let Some(cfg) = cfg {
-            match &cfg.transport {
-                McpServerTransportConfig::Stdio {
-                    command,
-                    args,
-                    env,
-                    env_vars,
-                    cwd,
-                } => {
-                    let args_suffix = if args.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" {}", args.join(" "))
-                    };
-                    let cmd_display = format!("{command}{args_suffix}");
-                    lines.push(vec!["    • Command: ".into(), cmd_display.into()].into());
-
-                    if let Some(cwd) = cwd.as_ref() {
-                        lines.push(
-                            vec!["    • Cwd: ".into(), cwd.display().to_string().into()].into(),
-                        );
-                    }
-
-                    let env_display = format_env_display(env.as_ref(), env_vars.as_slice());
-                    if env_display != "-" {
-                        lines.push(vec!["    • Env: ".into(), env_display.into()].into());
-                    }
-                }
-                McpServerTransportConfig::StreamableHttp {
-                    url,
-                    http_headers,
-                    env_http_headers,
-                    ..
-                } => {
-                    lines.push(vec!["    • URL: ".into(), url.clone().into()].into());
-                    if let Some(headers) = http_headers.as_ref()
-                        && !headers.is_empty()
-                    {
-                        let mut pairs: Vec<_> = headers.iter().collect();
-                        pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
-                        let display = pairs
-                            .into_iter()
-                            .map(|(name, _)| format!("{name}=*****"))
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        lines.push(vec!["    • HTTP headers: ".into(), display.into()].into());
-                    }
-                    if let Some(headers) = env_http_headers.as_ref()
-                        && !headers.is_empty()
-                    {
-                        let mut pairs: Vec<_> = headers.iter().collect();
-                        pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
-                        let display = pairs
-                            .into_iter()
-                            .map(|(name, var)| format!("{name}={var}"))
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        lines.push(vec!["    • Env HTTP headers: ".into(), display.into()].into());
-                    }
-                }
-            }
+        // Stub: per-server transport config not available with Vec<String> model.
+        if _server_in_config {
+            // Transport details skipped in stub build.
         }
 
         let mut names = status

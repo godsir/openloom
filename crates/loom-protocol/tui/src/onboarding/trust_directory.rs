@@ -167,11 +167,7 @@ impl StepStateProvider for TrustDirectoryWidget {
 impl TrustDirectoryWidget {
     fn handle_trust(&mut self) {
         let target = self.trust_target.clone();
-        if let Err(e) = set_project_trust_level(&self.codex_home, &target, TrustLevel::Trusted) {
-            tracing::error!("Failed to set project trusted: {e:?}");
-            self.error = Some(format!("Failed to set trust for {}: {e}", target.display()));
-        }
-
+        set_project_trust_level();
         self.selection = Some(TrustDirectorySelection::Trust);
     }
 

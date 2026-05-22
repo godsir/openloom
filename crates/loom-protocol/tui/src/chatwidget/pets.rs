@@ -84,8 +84,9 @@ impl ChatWidget {
         }
 
         let anchor_bottom_y = match self.config.tui_pet_anchor {
-            TuiPetAnchor::Composer => composer_bottom_y,
-            TuiPetAnchor::ScreenBottom => area.bottom(),
+            Some(TuiPetAnchor::Composer) => composer_bottom_y,
+            Some(TuiPetAnchor::ScreenBottom) => area.bottom(),
+            None => return None,
         };
         self.ambient_pet
             .as_ref()?

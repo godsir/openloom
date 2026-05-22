@@ -15,7 +15,7 @@ impl ChatWidget {
         }
         let cwd = self.config.cwd.clone();
         let env_map: std::collections::HashMap<String, String> = std::env::vars().collect();
-        let policy = self.config.legacy_sandbox_policy();
+        let policy = self.config.legacy_sandbox_policy(cwd.as_path());
         match loom_tui_stubs::windows_sandbox::apply_world_writable_scan_and_denies(
             self.config.codex_home.as_path(),
             cwd.as_path(),

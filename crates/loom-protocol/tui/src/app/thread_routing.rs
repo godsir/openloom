@@ -603,7 +603,7 @@ impl App {
                             *approval_policy,
                             approvals_reviewer,
                             permissions_override,
-                            config.permissions.user_visible_workspace_roots(),
+                            &config.permissions.user_visible_workspace_roots(),
                             model.to_string(),
                             *effort,
                             *summary,

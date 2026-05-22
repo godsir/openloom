@@ -74,7 +74,7 @@ pub struct InProcessClientStartArgs {
     pub strict_config: bool,
     pub cloud_requirements: loom_config::CloudRequirementsLoader,
     pub feedback: CodexFeedback,
-    pub log_db: Option<()>,
+    pub log_db: Option<loom_tui_stubs::state::log_db::LogDbLayer>,
     pub state_db: Option<StateDbHandle>,
     pub environment_manager: std::sync::Arc<loom_exec_server::EnvironmentManager>,
     pub config_warnings: Vec<loom_app_server_protocol::ConfigWarningNotification>,

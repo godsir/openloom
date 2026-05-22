@@ -20,10 +20,7 @@ impl App {
             .chat_widget
             .config_ref()
             .mcp_servers
-            .get()
-            .iter()
-            .filter_map(|(name, server)| server.enabled.then_some(name.clone()))
-            .collect();
+            .clone();
         self.chat_widget
             .set_mcp_startup_expected_servers(enabled_config_mcp_servers);
     }

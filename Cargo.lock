@@ -4535,6 +4535,7 @@ dependencies = [
  "loom-plugins",
  "loom-protocol",
  "loom-shim-stubs",
+ "loom-tui-stubs",
  "pretty_assertions",
  "reqwest",
  "semver",

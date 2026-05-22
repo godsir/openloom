@@ -39,7 +39,7 @@ impl ChatWidget {
         self.config.workspace_roots = runtime_workspace_roots.clone();
         self.config
             .permissions
-            .set_workspace_roots(runtime_workspace_roots);
+            .set_workspace_roots(&runtime_workspace_roots);
         self.effective_service_tier = session.service_tier.clone();
         if let Err(err) = self
             .config
@@ -61,16 +61,10 @@ impl ChatWidget {
             .set_permission_profile_from_session_snapshot(permission_snapshot.clone());
         if let Err(err) = permission_sync {
             tracing::warn!(%err, "failed to sync permissions from SessionConfigured");
-            if let Err(replace_err) = self
+            self
                 .config
                 .permissions
-                .replace_permission_profile_from_session_snapshot(permission_snapshot)
-            {
-                tracing::error!(
-                    %replace_err,
-                    "failed to replace permissions from SessionConfigured after constraint fallback"
-                );
-            }
+                .replace_permission_profile_from_session_snapshot(&permission_snapshot);
         }
         self.config.approvals_reviewer = session.approvals_reviewer;
         self.config.personality = session.personality;

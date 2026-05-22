@@ -57,7 +57,6 @@ async fn load_plugin_mention_capabilities(
     let plugins_input = config.plugins_config_input();
     PluginsManager::new(config.codex_home.to_path_buf())
         .plugins_for_config(&plugins_input)
-        .await
         .capability_summaries()
         .iter()
         .cloned()

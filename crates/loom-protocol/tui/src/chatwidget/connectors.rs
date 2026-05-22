@@ -307,7 +307,6 @@ impl ChatWidget {
                     snapshot.connectors = chatgpt_connectors::merge_connectors_with_accessible(
                         Vec::new(),
                         snapshot.connectors,
-                        /*all_connectors_loaded*/ false,
                     );
                 }
                 if let ConnectorsCacheState::Ready(existing_snapshot) = &self.connectors.cache {

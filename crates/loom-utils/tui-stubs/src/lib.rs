@@ -116,7 +116,7 @@ pub mod state {
 
     pub mod log_db {
         use super::*;
-        #[derive(Clone)]
+        #[derive(Clone, Debug)]
         pub struct LogDbLayer;
         pub fn start(_state_db: Arc<super::StateRuntime>) -> Option<LogDbLayer> {
             Some(LogDbLayer)
@@ -658,7 +658,7 @@ pub mod config {
     pub struct NotificationsStub {
         pub method: NotificationMethod,
         pub condition: NotificationCondition,
-        pub notifications: Vec<String>,
+        pub notifications: loom_config::types::Notifications,
     }
 
     #[derive(Debug, Clone, Default)]
