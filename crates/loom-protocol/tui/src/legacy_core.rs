@@ -2,6 +2,7 @@
 //! Originally `codex-app-server-client::legacy_core` which re-exported from `codex-core`.
 
 use std::path::Path;
+use std::path::PathBuf;
 use loom_tui_stubs::config::Config;
 use loom_tui_stubs::StateDbHandle;
 
@@ -97,6 +98,7 @@ pub mod personality_migration {
 // ─── windows_sandbox ───
 pub mod windows_sandbox {
     use std::path::Path;
+    use std::path::PathBuf;
 
     pub trait WindowsSandboxLevelExt {
         fn from_config(config: &loom_tui_stubs::config::Config) -> loom_protocol::config_types::WindowsSandboxLevel;
@@ -111,11 +113,20 @@ pub mod windows_sandbox {
     pub const ELEVATED_SANDBOX_NUX_ENABLED: bool = false;
 
     pub fn apply_world_writable_scan_and_denies() {}
-    pub fn elevated_setup_failure_details(_err: &anyhow::Error) -> String { String::new() }
+    pub fn elevated_setup_failure_details(_err: &anyhow::Error) -> Option<(String, String)> { None }
     pub fn elevated_setup_failure_metric_name(_err: &anyhow::Error) -> &'static str { "elevated_setup_failure" }
-    pub fn grant_read_root_non_elevated(_reason: &str) {}
+    pub fn grant_read_root_non_elevated(
+        _policy: &loom_protocol::protocol::SandboxPolicy,
+        _policy_cwd: &Path,
+        _command_cwd: &Path,
+        _env: &std::collections::HashMap<String, String>,
+        _codex_home: &Path,
+        _requested_path: &Path,
+    ) -> Result<PathBuf, anyhow::Error> {
+        Ok(PathBuf::new())
+    }
 
-    pub async fn run_elevated_setup(
+    pub fn run_elevated_setup(
         _policy: &loom_protocol::protocol::SandboxPolicy,
         _policy_cwd: &Path,
         _command_cwd: &Path,
@@ -125,7 +136,13 @@ pub mod windows_sandbox {
         Ok(())
     }
 
-    pub fn run_legacy_setup_preflight(_codex_home: &Path) -> Result<(), anyhow::Error> { Ok(()) }
+    pub fn run_legacy_setup_preflight(
+        _policy: &loom_protocol::protocol::SandboxPolicy,
+        _policy_cwd: &Path,
+        _command_cwd: &Path,
+        _env: &std::collections::HashMap<String, String>,
+        _codex_home: &Path,
+    ) -> Result<(), anyhow::Error> { Ok(()) }
     pub fn sandbox_setup_is_complete(_codex_home: &Path) -> bool { true }
 }
 

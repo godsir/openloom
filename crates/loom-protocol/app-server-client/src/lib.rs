@@ -50,6 +50,18 @@ impl InProcessAppServerClient {
     pub async fn shutdown(self) -> std::io::Result<()> {
         Ok(())
     }
+    pub fn request_handle(&self) -> AppServerRequestHandle {
+        AppServerRequestHandle::Loom(LoomAppServerRequestHandle::default())
+    }
+    pub async fn request(&self, _request: ClientRequest) -> std::io::Result<RequestResult> {
+        Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "InProcess stub not wired"))
+    }
+    pub async fn request_typed<T: DeserializeOwned>(
+        &self,
+        _request: ClientRequest,
+    ) -> Result<T, TypedRequestError> {
+        Err(TypedRequestError::MethodNotFound)
+    }
 }
 
 /// Stub InProcessClientStartArgs for TUI compatibility.
@@ -324,6 +336,12 @@ impl LoomAppServerClient {
 #[derive(Clone)]
 pub struct LoomAppServerRequestHandle;
 
+impl Default for LoomAppServerRequestHandle {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl LoomAppServerRequestHandle {
     /// Sends a typed client request via this handle.
     pub async fn request_typed<T: DeserializeOwned>(
@@ -339,6 +357,8 @@ impl LoomAppServerRequestHandle {
 pub enum AppServerRequestHandle {
     Loom(LoomAppServerRequestHandle),
     Remote(crate::remote::RemoteAppServerRequestHandle),
+    #[doc(hidden)]
+    InProcess(Box<AppServerRequestHandle>),
 }
 
 impl AppServerRequestHandle {
@@ -346,6 +366,7 @@ impl AppServerRequestHandle {
         match self {
             Self::Loom(handle) => handle.request(request).await,
             Self::Remote(handle) => handle.request(request).await,
+            Self::InProcess(_handle) => Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "InProcess stub: use Loom handle")),
         }
     }
 
@@ -356,6 +377,7 @@ impl AppServerRequestHandle {
         match self {
             Self::Loom(handle) => handle.request_typed(request).await,
             Self::Remote(handle) => handle.request_typed(request).await,
+            Self::InProcess(_handle) => Err(TypedRequestError::MethodNotFound),
         }
     }
 }
@@ -378,6 +400,8 @@ impl LoomAppServerRequestHandle {
 pub enum AppServerClient {
     Loom(Box<LoomAppServerClient>),
     Remote(RemoteAppServerClient),
+    #[doc(hidden)]
+    InProcess(InProcessAppServerClient),
 }
 
 impl AppServerClient {
@@ -385,6 +409,7 @@ impl AppServerClient {
         match self {
             Self::Loom(client) => client.request(request).await,
             Self::Remote(client) => client.request(request).await,
+            Self::InProcess(client) => client.request(request).await,
         }
     }
 
@@ -395,6 +420,7 @@ impl AppServerClient {
         match self {
             Self::Loom(client) => client.request_typed(request).await,
             Self::Remote(client) => client.request_typed(request).await,
+            Self::InProcess(client) => client.request_typed(request).await,
         }
     }
 
@@ -402,6 +428,7 @@ impl AppServerClient {
         match self {
             Self::Loom(client) => client.notify(notification).await,
             Self::Remote(client) => client.notify(notification).await,
+            Self::InProcess(_) => Ok(()),
         }
     }
 
@@ -413,6 +440,7 @@ impl AppServerClient {
         match self {
             Self::Loom(client) => client.resolve_server_request(request_id, result).await,
             Self::Remote(client) => client.resolve_server_request(request_id, result).await,
+            Self::InProcess(_) => Ok(()),
         }
     }
 
@@ -424,6 +452,7 @@ impl AppServerClient {
         match self {
             Self::Loom(client) => client.reject_server_request(request_id, error).await,
             Self::Remote(client) => client.reject_server_request(request_id, error).await,
+            Self::InProcess(_) => Ok(()),
         }
     }
 
@@ -431,6 +460,7 @@ impl AppServerClient {
         match self {
             Self::Loom(client) => client.next_event(),
             Self::Remote(client) => client.next_event().await,
+            Self::InProcess(_) => None,
         }
     }
 
@@ -438,6 +468,7 @@ impl AppServerClient {
         match self {
             Self::Loom(client) => client.shutdown().await,
             Self::Remote(client) => client.shutdown().await,
+            Self::InProcess(client) => client.shutdown().await,
         }
     }
 
@@ -445,6 +476,7 @@ impl AppServerClient {
         match self {
             Self::Loom(client) => AppServerRequestHandle::Loom(client.request_handle()),
             Self::Remote(client) => AppServerRequestHandle::Remote(client.request_handle()),
+            Self::InProcess(client) => AppServerRequestHandle::InProcess(Box::new(client.request_handle())),
         }
     }
 }

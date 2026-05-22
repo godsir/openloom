@@ -1,7 +1,21 @@
+use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+// Re-export types from loom_config so they're accessible as loom_tui_stubs::* types
+pub use loom_config::types::ModelAvailabilityNuxConfig;
+pub use loom_config::types::NotificationCondition;
+pub use loom_config::types::NotificationMethod;
+pub use loom_config::types::SessionPickerViewMode;
+pub use loom_config::types::TuiPetAnchor;
+pub use loom_config::types::WindowsSandboxModeToml;
+pub use loom_config::CloudRequirementsLoader as LoomCloudRequirementsLoader;
+pub use loom_config::ConfigLayerSource;
+pub use loom_config::ConfigLayerStackOrdering;
+pub use loom_protocol::config_types::ForcedLoginMethod;
 
 // ─── codex-feedback ───
 pub mod feedback {
@@ -69,7 +83,10 @@ pub mod feedback {
     pub const FEEDBACK_DIAGNOSTICS_ATTACHMENT_FILENAME: &str = "feedback-diagnostics.json";
 
     #[derive(Debug, Clone, Default)]
-    pub struct FeedbackDiagnostic;
+    pub struct FeedbackDiagnostic {
+        pub headline: String,
+        pub details: Vec<String>,
+    }
 }
 
 // ─── codex-state ───
@@ -101,8 +118,8 @@ pub mod state {
         use super::*;
         #[derive(Clone)]
         pub struct LogDbLayer;
-        pub async fn start(_state_db: Arc<super::StateRuntime>) -> LogDbLayer {
-            LogDbLayer
+        pub fn start(_state_db: Arc<super::StateRuntime>) -> Option<LogDbLayer> {
+            Some(LogDbLayer)
         }
     }
 }
@@ -149,7 +166,7 @@ pub mod message_history {
     }
 
     impl HistoryConfig {
-        pub fn new(codex_home: impl Into<PathBuf>, _: &()) -> Self {
+        pub fn new(codex_home: impl Into<PathBuf>, _persistence: impl std::fmt::Debug) -> Self {
             Self {
                 codex_home: codex_home.into(),
                 persistence: HistoryPersistence::SaveNever,
@@ -184,8 +201,11 @@ pub mod plugin {
         pub marketplace: String,
     }
     impl PluginId {
-        pub fn new(name: impl Into<String>, marketplace: impl Into<String>) -> Self {
-            Self { name: name.into(), marketplace: marketplace.into() }
+        pub fn new(name: impl Into<String>, marketplace: impl Into<String>) -> Result<Self, anyhow::Error> {
+            Ok(Self { name: name.into(), marketplace: marketplace.into() })
+        }
+        pub fn as_key(&self) -> String {
+            format!("{}::{}", self.name, self.marketplace)
         }
     }
 
@@ -303,23 +323,67 @@ pub mod connectors {
 
 // ─── codex-model-provider ───
 pub mod model_provider {
+    use super::model_provider_info::ModelProviderInfo;
+
+    /// Concrete stub with async runtime_base_url
+    #[derive(Clone)]
     pub struct ModelProvider;
 
     impl ModelProvider {
-        pub async fn new() -> Self {
-            Self
-        }
-        pub fn runtime_base_url(&self) -> Option<String> { None }
+        pub async fn runtime_base_url(&self) -> anyhow::Result<Option<String>> { Ok(None) }
     }
 
-    pub async fn create_model_provider() -> ModelProvider {
+    pub fn create_model_provider(
+        _provider_info: ModelProviderInfo,
+        _auth_manager: Option<()>,
+    ) -> ModelProvider {
         ModelProvider
     }
 }
 
 // ─── codex-model-provider-info (re-export from config bridge) ───
 pub mod model_provider_info {
+    pub use loom_config::model_info::ModelProviderInfo as RealModelProviderInfo;
     pub use loom_config::model_info::*;
+
+    /// Wrapper around the real ModelProviderInfo that provides is_openai().
+    #[derive(Debug, Clone, Default)]
+    pub struct ModelProviderInfo {
+        pub name: String,
+        pub base_url: Option<String>,
+        pub disabled_reason: Option<String>,
+        pub wire_api: WireApi,
+        pub requires_openai_auth: bool,
+        pub responses_api_overhead_ms: u64,
+        pub responses_api_engine_iapi_ttft_ms: u64,
+        pub responses_api_engine_iapi_tbt_ms: u64,
+        pub responses_api_engine_service_ttft_ms: u64,
+        pub responses_api_engine_service_tbt_ms: u64,
+        pub responses_api_inference_time_ms: u64,
+    }
+
+    impl ModelProviderInfo {
+        pub fn is_openai(&self) -> bool { self.name == "OpenAI" || self.requires_openai_auth }
+        pub fn is_amazon_bedrock(&self) -> bool { self.name == "Amazon Bedrock" }
+    }
+
+    impl From<RealModelProviderInfo> for ModelProviderInfo {
+        fn from(info: RealModelProviderInfo) -> Self {
+            Self {
+                name: info.name,
+                base_url: info.base_url,
+                disabled_reason: None,
+                wire_api: info.wire_api,
+                requires_openai_auth: info.requires_openai_auth,
+                responses_api_overhead_ms: 0,
+                responses_api_engine_iapi_ttft_ms: 0,
+                responses_api_engine_iapi_tbt_ms: 0,
+                responses_api_engine_service_ttft_ms: 0,
+                responses_api_engine_service_tbt_ms: 0,
+                responses_api_inference_time_ms: 0,
+            }
+        }
+    }
 }
 
 // ─── codex-models-manager ───
@@ -330,7 +394,7 @@ pub mod models_manager {
         pub const HIDE_GPT5_1_MIGRATION_PROMPT_CONFIG: &str = "hide_gpt5_1_migration_prompt";
     }
     pub mod collaboration_mode_presets {
-        pub fn builtin_collaboration_mode_presets() -> Vec<()> {
+        pub fn builtin_collaboration_mode_presets() -> Vec<loom_protocol::config_types::CollaborationModeMask> {
             vec![]
         }
     }
@@ -338,7 +402,16 @@ pub mod models_manager {
 
 // ─── codex-cloud-requirements ───
 pub mod cloud_requirements {
-    pub fn cloud_requirements_loader_for_storage() {}
+    use super::LoomCloudRequirementsLoader;
+    use std::path::PathBuf;
+    pub async fn cloud_requirements_loader_for_storage(
+        _codex_home: PathBuf,
+        _enable_codex_api_key_env: bool,
+        _cli_auth_credentials_store_mode: String,
+        _chatgpt_base_url: String,
+    ) -> LoomCloudRequirementsLoader {
+        Default::default()
+    }
 }
 
 // ─── codex-core ───
@@ -378,8 +451,8 @@ pub fn resolve_installation_id(_codex_home: &std::path::Path) -> String {
     String::new()
 }
 
-pub fn check_execpolicy_for_warnings(_config: &Config) -> Vec<String> {
-    vec![]
+pub async fn check_execpolicy_for_warnings(_config_layer_stack: &config::ConfigLayerStackStub) -> Result<Vec<String>, anyhow::Error> {
+    Ok(vec![])
 }
 
 pub fn format_exec_policy_error_with_source(_err: &anyhow::Error) -> String {
@@ -398,8 +471,19 @@ pub mod path_utils {
 }
 
 pub mod config {
-    use loom_absolute_path::AbsolutePathBuf;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
+    use loom_absolute_path::AbsolutePathBuf;
+    use super::ConfigLayerSource;
+    use super::ForcedLoginMethod;
+    use super::LoomCloudRequirementsLoader;
+    use super::ModelAvailabilityNuxConfig;
+    use super::model_provider_info::ModelProviderInfo;
+    use super::NotificationCondition;
+    use super::NotificationMethod;
+    use super::SessionPickerViewMode;
+    use super::TuiPetAnchor;
+    use super::WindowsSandboxModeToml;
 
     // ═══ Pre-declare stub types needed by Config fields ═══
 
@@ -432,7 +516,7 @@ pub mod config {
         fn default() -> Self { Self { id: String::new() } }
     }
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Copy)]
     pub struct TerminalResizeReflowConfig {
         pub enabled: bool,
         pub max_rows: Option<TerminalResizeReflowMaxRows>,
@@ -442,22 +526,38 @@ pub mod config {
     }
 
     #[derive(Debug, Clone, Copy)]
-    pub struct TerminalResizeReflowMaxRows(pub usize);
+    pub enum TerminalResizeReflowMaxRows {
+        Auto,
+        Disabled,
+        Limit(usize),
+    }
 
     #[derive(Debug, Clone, Copy, Default)]
     pub struct NetworkProxySpec;
+
+    #[derive(Debug, Clone)]
+    pub struct LayerStub {
+        pub name: ConfigLayerSource,
+        pub disabled_reason: Option<String>,
+    }
 
     #[derive(Debug, Clone, Default)]
     pub struct ConfigLayerStackStub;
 
     impl ConfigLayerStackStub {
-        pub fn effective_config(&self) -> toml_edit::ImDocument<String> {
-            toml_edit::ImDocument::parse(String::new()).unwrap()
+        pub fn effective_config(&self) -> loom_config::config_toml::ConfigToml {
+            Default::default()
         }
-        pub fn get_layers(&self) -> Vec<()> { vec![] }
-        pub fn get_active_user_layer(&self) -> Option<()> { None }
-        pub fn effective_user_config(&self) -> toml_edit::ImDocument<String> {
-            toml_edit::ImDocument::parse(String::new()).unwrap()
+        pub fn get_layers(
+            &self,
+            _ordering: loom_config::ConfigLayerStackOrdering,
+            _include_disabled: bool,
+        ) -> Vec<LayerStub> {
+            vec![]
+        }
+        pub fn get_active_user_layer(&self) -> Option<LayerStub> { None }
+        pub fn effective_user_config(&self) -> loom_config::config_toml::ConfigToml {
+            Default::default()
         }
     }
 
@@ -467,7 +567,7 @@ pub mod config {
     pub struct PermissionsStub {
         pub approval_policy: Constrained<loom_protocol::protocol::AskForApproval>,
         pub network: Option<NetworkProxySpec>,
-        pub windows_sandbox_mode: Option<String>,
+        pub windows_sandbox_mode: Option<WindowsSandboxModeToml>,
     }
 
     impl Default for PermissionsStub {
@@ -493,7 +593,12 @@ pub mod config {
         pub fn active_permission_profile(&self) -> Option<loom_protocol::models::ActivePermissionProfile> {
             None
         }
-        pub fn set_permission_profile_from_session_snapshot<P1, P2>(&mut self, _profile: P1, _active_profile: P2) -> ConstraintResult<()> { Ok(()) }
+        pub fn set_permission_profile_from_session_snapshot(
+            &mut self,
+            _snapshot: PermissionProfileSnapshot,
+        ) -> ConstraintResult<()> {
+            Ok(())
+        }
         pub fn set_workspace_roots(&mut self, _roots: &[loom_absolute_path::AbsolutePathBuf]) {}
         pub fn replace_permission_profile_from_session_snapshot(&mut self, _snapshot: &PermissionProfileSnapshot) {}
         pub fn user_visible_workspace_roots(&self) -> Vec<loom_absolute_path::AbsolutePathBuf> { vec![] }
@@ -551,8 +656,8 @@ pub mod config {
 
     #[derive(Debug, Clone, Default)]
     pub struct NotificationsStub {
-        pub method: Option<String>,
-        pub condition: Option<String>,
+        pub method: NotificationMethod,
+        pub condition: NotificationCondition,
         pub notifications: Vec<String>,
     }
 
@@ -571,7 +676,7 @@ pub mod config {
         pub hide_gpt5_1_migration_prompt: Option<bool>,
         pub hide_gpt_5_1_codex_max_migration_prompt: Option<bool>,
         pub hide_rate_limit_model_nudge: Option<bool>,
-        pub model_migrations: Vec<String>,
+        pub model_migrations: BTreeMap<String, String>,
         pub external_config_migration_prompts: ExternalConfigMigrationPromptsStub,
         pub fast_default_opt_out: Option<bool>,
     }
@@ -644,7 +749,7 @@ pub mod config {
 
         // Model
         pub model: Option<String>,
-        pub model_provider: ModelProviderInfoStub,
+        pub model_provider: ModelProviderInfo,
         pub model_provider_id: String,
         pub model_reasoning_effort: Option<loom_protocol::openai_models::ReasoningEffort>,
         pub model_reasoning_summary: Option<loom_protocol::config_types::ReasoningSummary>,
@@ -680,7 +785,7 @@ pub mod config {
         // Misc
         pub chatgpt_base_url: String,
         pub cli_auth_credentials_store_mode: String,
-        pub forced_login_method: Option<String>,
+        pub forced_login_method: Option<ForcedLoginMethod>,
         pub forced_chatgpt_workspace_id: Option<String>,
         pub disable_paste_burst: bool,
         pub ephemeral: bool,
@@ -696,12 +801,12 @@ pub mod config {
         // TUI-specific
         pub tui_theme: Option<String>,
         pub tui_pet: Option<String>,
-        pub tui_pet_anchor: Option<String>,
-        pub tui_status_line: Option<String>,
+        pub tui_pet_anchor: Option<TuiPetAnchor>,
+        pub tui_status_line: Option<Vec<String>>,
         pub tui_status_line_use_colors: bool,
-        pub tui_terminal_title: Option<String>,
-        pub tui_vim_mode_default: Option<String>,
-        pub tui_session_picker_view: Option<String>,
+        pub tui_terminal_title: Option<Vec<String>>,
+        pub tui_vim_mode_default: bool,
+        pub tui_session_picker_view: SessionPickerViewMode,
         pub tui_raw_output_mode: bool,
 
         // Workspace
@@ -713,8 +818,8 @@ pub mod config {
         pub realtime_audio: loom_config::config_toml::RealtimeAudioToml,
 
         // Other
-        pub plan_mode_reasoning_effort: Option<String>,
-        pub model_availability_nux: ModelAvailabilityNuxStub,
+        pub plan_mode_reasoning_effort: Option<loom_protocol::openai_models::ReasoningEffort>,
+        pub model_availability_nux: ModelAvailabilityNuxConfig,
         pub network: Option<NetworkProxySpec>,
         pub shell_environment_policy: ShellEnvironmentPolicyStub,
     }
@@ -740,7 +845,7 @@ pub mod config {
                 sqlite_home: PathBuf::from("."),
                 log_dir: PathBuf::from("."),
                 model: None,
-                model_provider: ModelProviderInfoStub::default(),
+                model_provider: Default::default(),
                 model_provider_id: String::new(),
                 model_reasoning_effort: None,
                 model_reasoning_summary: None,
@@ -786,15 +891,15 @@ pub mod config {
                 tui_status_line: None,
                 tui_status_line_use_colors: false,
                 tui_terminal_title: None,
-                tui_vim_mode_default: None,
-                tui_session_picker_view: None,
+                tui_vim_mode_default: false,
+                tui_session_picker_view: SessionPickerViewMode::default(),
                 tui_raw_output_mode: false,
                 workspace_roots: Vec::new(),
                 web_search_mode: Constrained(loom_protocol::config_types::WebSearchMode::Cached),
                 realtime: None,
                 realtime_audio: loom_config::config_toml::RealtimeAudioToml::default(),
                 plan_mode_reasoning_effort: None,
-                model_availability_nux: ModelAvailabilityNuxStub::default(),
+                model_availability_nux: ModelAvailabilityNuxConfig::default(),
                 network: None,
                 shell_environment_policy: ShellEnvironmentPolicyStub::default(),
             }
@@ -808,7 +913,7 @@ pub mod config {
         overrides: ConfigOverrides,
         loader_overrides: LoaderOverrides,
         strict: bool,
-        cloud_requirements: Option<CloudRequirementsLoader>,
+        cloud_requirements: Option<LoomCloudRequirementsLoader>,
         fallback_cwd: Option<PathBuf>,
     }
 
@@ -819,7 +924,7 @@ pub mod config {
         pub fn harness_overrides(mut self, overrides: ConfigOverrides) -> Self { self.overrides = overrides; self }
         pub fn loader_overrides(mut self, overrides: LoaderOverrides) -> Self { self.loader_overrides = overrides; self }
         pub fn strict_config(mut self, strict: bool) -> Self { self.strict = strict; self }
-        pub fn cloud_requirements(mut self, cr: CloudRequirementsLoader) -> Self { self.cloud_requirements = Some(cr); self }
+        pub fn cloud_requirements(mut self, cr: LoomCloudRequirementsLoader) -> Self { self.cloud_requirements = Some(cr); self }
         pub fn fallback_cwd(mut self, cwd: Option<PathBuf>) -> Self { self.fallback_cwd = cwd; self }
         pub async fn build(self) -> Result<Config, ConfigLoadError> { Ok(Config::default()) }
     }
@@ -837,7 +942,7 @@ pub mod config {
         pub main_execve_wrapper_exe: Option<PathBuf>,
         pub show_raw_agent_reasoning: Option<bool>,
         pub bypass_hook_trust: Option<bool>,
-        pub additional_writable_roots: Vec<String>,
+        pub additional_writable_roots: Vec<PathBuf>,
         pub permission_profile: Option<String>,
         pub default_permissions: Option<String>,
     }
@@ -855,20 +960,24 @@ pub mod config {
 
     // Config edit stubs
     pub mod edit {
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use super::SessionPickerViewMode;
+
         #[derive(Debug, Clone)]
         pub struct ConfigEditsBuilder;
         impl ConfigEditsBuilder {
-            pub fn new() -> Self { Self }
+            pub fn new(_codex_home: &std::path::Path) -> Self { Self }
             pub fn for_config(_config: &super::Config) -> Self { Self }
-            pub fn set_session_picker_view(self, _view: &str) -> Self { self }
-            pub fn set_realtime_speaker(self, _name: String) -> Self { self }
-            pub fn set_realtime_microphone(self, _name: String) -> Self { self }
-            pub fn set_model_availability_nux_count(self, _count: u32) -> Self { self }
-            pub fn set_hide_world_writable_warning(self) -> Self { self }
-            pub fn set_hide_rate_limit_model_nudge(self) -> Self { self }
-            pub fn set_hide_full_access_warning(self) -> Self { self }
-            pub fn record_model_migration_seen(self, _model: &str) -> Self { self }
+            pub fn set_session_picker_view(self, _view: SessionPickerViewMode) -> Self { self }
+            pub fn set_realtime_speaker(self, _name: Option<&str>) -> Self { self }
+            pub fn set_realtime_microphone(self, _name: Option<&str>) -> Self { self }
             pub fn set_realtime_audio_device(self, _kind: &str, _name: String) -> Self { self }
+            pub fn set_model_availability_nux_count(self, _count: &HashMap<String, u32>) -> Self { self }
+            pub fn set_hide_world_writable_warning(self, _acknowledged: bool) -> Self { self }
+            pub fn set_hide_rate_limit_model_nudge(self, _acknowledged: bool) -> Self { self }
+            pub fn set_hide_full_access_warning(self, _acknowledged: bool) -> Self { self }
+            pub fn record_model_migration_seen(self, _from: &str, _to: &str) -> Self { self }
             pub async fn apply(self) -> Result<(), anyhow::Error> { Ok(()) }
             pub fn with_edits(self, _edits: impl IntoIterator<Item = ConfigEdit>) -> Self { self }
         }
@@ -878,14 +987,14 @@ pub mod config {
             SetNoticeExternalConfigMigrationPromptHomeLastPromptedAt(i64),
             SetNoticeExternalConfigMigrationPromptProjectLastPromptedAt(String, i64),
             SetNoticeHideExternalConfigMigrationPromptHome(bool),
-            SetNoticeHideExternalConfigMigrationPromptProject(bool),
-            SetModelAvailabilityNuxCount(u32),
-            SetRealtimeSpeaker(String),
-            SetRealtimeMicrophone(String),
+            SetNoticeHideExternalConfigMigrationPromptProject(String, bool),
+            SetModelAvailabilityNuxCount(HashMap<String, u32>),
+            SetRealtimeSpeaker(Option<String>),
+            SetRealtimeMicrophone(Option<String>),
             SetRealtimeAudioDevice(String, String),
-            SetHideWorldWritableWarning,
-            SetHideRateLimitModelNudge,
-            SetHideFullAccessWarning,
+            SetHideWorldWritableWarning(bool),
+            SetHideRateLimitModelNudge(bool),
+            SetHideFullAccessWarning(bool),
             RecordModelMigrationSeen(String),
             SetPath {
                 segments: Vec<String>,
@@ -894,23 +1003,33 @@ pub mod config {
             Other,
         }
 
-        pub fn keymap_bindings_edit() -> ConfigEdit { ConfigEdit::Other }
-        pub fn keymap_binding_clear_edit() -> ConfigEdit { ConfigEdit::Other }
-        pub fn status_line_items_edit() -> ConfigEdit { ConfigEdit::Other }
-        pub fn status_line_use_colors_edit() -> ConfigEdit { ConfigEdit::Other }
-        pub fn syntax_theme_edit() -> ConfigEdit { ConfigEdit::Other }
-        pub fn terminal_title_items_edit() -> ConfigEdit { ConfigEdit::Other }
-        pub fn tui_pet_edit() -> ConfigEdit { ConfigEdit::Other }
+        pub fn keymap_bindings_edit(_context: &str, _action: &str, _bindings: &[String]) -> ConfigEdit { ConfigEdit::Other }
+        pub fn keymap_binding_clear_edit(_context: &str, _action: &str) -> ConfigEdit { ConfigEdit::Other }
+        pub fn status_line_items_edit(_ids: &[String]) -> ConfigEdit { ConfigEdit::Other }
+        pub fn status_line_use_colors_edit(_use_colors: bool) -> ConfigEdit { ConfigEdit::Other }
+        pub fn syntax_theme_edit(_name: &str) -> ConfigEdit { ConfigEdit::Other }
+        pub fn terminal_title_items_edit(_ids: &[String]) -> ConfigEdit { ConfigEdit::Other }
+        pub fn tui_pet_edit(_pet_id: &str) -> ConfigEdit { ConfigEdit::Other }
     }
 
     // Additional config stubs
     pub fn format_config_error_with_source(_err: &anyhow::Error) -> String { String::new() }
     pub fn find_codex_home() -> Option<AbsolutePathBuf> { None }
     pub fn set_project_trust_level() {}
-    pub fn set_default_oss_provider() {}
-    pub fn resolve_oss_provider(_provider: Option<&str>, _config: &()) -> Option<String> { None }
+    pub fn set_default_oss_provider(
+        _codex_home: &std::path::Path,
+        _provider: &str,
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+    pub fn resolve_oss_provider(
+        _provider: Option<&str>,
+        _config: &loom_config::config_toml::ConfigToml,
+    ) -> Option<String> {
+        None
+    }
 
-    pub fn load_config_as_toml_with_cli_and_load_options(
+    pub async fn load_config_as_toml_with_cli_and_load_options(
         _codex_home: &std::path::Path,
         _config_cwd: Option<&AbsolutePathBuf>,
         _cli_kv_overrides: Vec<(String, toml::Value)>,
@@ -930,13 +1049,14 @@ pub mod config {
 // ─── codex-login ───
 pub mod login {
     use std::path::PathBuf;
+    use super::ForcedLoginMethod;
 
     #[derive(Debug, Clone)]
     pub struct AuthConfig {
         pub auth_credentials_store_mode: String,
         pub chatgpt_base_url: Option<String>,
         pub codex_home: PathBuf,
-        pub forced_login_method: Option<String>,
+        pub forced_login_method: Option<ForcedLoginMethod>,
         pub forced_chatgpt_workspace_id: Option<String>,
     }
     impl Default for AuthConfig {
@@ -950,16 +1070,27 @@ pub mod login {
             }
         }
     }
-    pub fn enforce_login_restrictions() {}
-    pub fn set_default_client_residency_requirement() {}
+    pub async fn enforce_login_restrictions(_config: &AuthConfig) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+    pub fn set_default_client_residency_requirement(
+        _enforce_residency: Option<String>,
+    ) {}
     pub fn read_openai_api_key_from_env() -> Option<String> {
         None
     }
+    #[derive(Debug, Clone)]
+    pub struct DefaultOriginator {
+        pub value: String,
+    }
     pub mod default_client {
-        pub fn originator() -> String {
-            String::new()
+        use super::DefaultOriginator;
+        pub fn originator() -> DefaultOriginator {
+            DefaultOriginator { value: String::new() }
         }
-        pub fn set_default_client_residency_requirement() {}
+        pub fn set_default_client_residency_requirement(
+            _enforce_residency: Option<String>,
+        ) {}
     }
 }
 
@@ -980,13 +1111,22 @@ pub mod realtime_webrtc {
 // ─── codex-windows-sandbox (cfg-gated) ───
 #[cfg(target_os = "windows")]
 pub mod windows_sandbox {
+    use std::path::Path;
     pub struct WindowsSandbox;
     impl WindowsSandbox {
         pub fn new() -> Self {
             Self
         }
     }
-    pub fn apply_world_writable_scan_and_denies() {}
+    pub fn apply_world_writable_scan_and_denies(
+        _logs_base_dir_path: &Path,
+        _cwd: &Path,
+        _env: &std::collections::HashMap<String, String>,
+        _sandbox_policy: &loom_protocol::protocol::SandboxPolicy,
+        _logs_base: Option<&Path>,
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
 }
 
 // ═══ Comprehensive remaining stubs (appended) ═══
@@ -997,7 +1137,7 @@ impl realtime_webrtc::RealtimeWebrtcSession {
 }
 
 impl realtime_webrtc::RealtimeWebrtcSessionHandle {
-    pub fn apply_answer_sdp(&self) {}
+    pub fn apply_answer_sdp(&self, _sdp: &str) {}
     pub fn local_audio_peak(&self) -> u16 { 0 }
     pub fn close(&self) {}
 }
@@ -1018,7 +1158,12 @@ impl Eq for config::NetworkProxySpec {}
 
 // PermissionProfileSnapshot
 impl config::PermissionProfileSnapshot {
-    pub fn active<P: Clone>(_profile: P) -> Self { Self::default() }
+    pub fn active<P: Clone>(
+        _profile: P,
+        _active: loom_protocol::models::ActivePermissionProfile,
+    ) -> Self {
+        Self::default()
+    }
     pub fn from_session_snapshot<P1, P2>(_profile: P1, _active: P2) -> Self { Self::default() }
 }
 
@@ -1026,13 +1171,6 @@ impl config::PermissionProfileSnapshot {
 impl<T: Clone> config::Constrained<T> {
     pub fn allow_only(_value: T) -> Self { config::Constrained::<T>(_value) }
     pub fn allow_any(value: T) -> Self { config::Constrained::<T>(value) }
-}
-
-// TerminalResizeReflowMaxRows associated constants
-impl config::TerminalResizeReflowMaxRows {
-    pub const Auto: config::TerminalResizeReflowMaxRows = config::TerminalResizeReflowMaxRows(0);
-    pub const Disabled: config::TerminalResizeReflowMaxRows = config::TerminalResizeReflowMaxRows(0);
-    pub const Limit: config::TerminalResizeReflowMaxRows = config::TerminalResizeReflowMaxRows(0);
 }
 
 // Config methods
