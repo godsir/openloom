@@ -4,8 +4,6 @@ members = [
     "crates/*",
     "crates/loom-utils/absolute-path",
     "crates/loom-utils/ansi-escape",
-    "crates/loom-utils/approval-presets",
-    "crates/loom-utils/arg0",
     "crates/loom-utils/async-utils",
     "crates/loom-utils/elapsed",
     "crates/loom-utils/fuzzy-match",
@@ -13,13 +11,13 @@ members = [
     "crates/loom-utils/install-context",
     "crates/loom-utils/path",
     "crates/loom-utils/rustls-provider",
-    "crates/loom-utils/sandbox-summary",
     "crates/loom-utils/string",
     "crates/loom-utils/terminal-detection",
     "crates/loom-utils/uds",
 ]
 exclude = [
     "crates/loom-utils",
+    "crates/loom-protocol",
 ]
 
 [workspace.package]
