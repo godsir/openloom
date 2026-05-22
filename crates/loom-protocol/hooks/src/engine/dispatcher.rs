@@ -3,13 +3,13 @@ use std::path::Path;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 
-use codex_protocol::protocol::HookCompletedEvent;
-use codex_protocol::protocol::HookEventName;
-use codex_protocol::protocol::HookExecutionMode;
-use codex_protocol::protocol::HookHandlerType;
-use codex_protocol::protocol::HookRunStatus;
-use codex_protocol::protocol::HookRunSummary;
-use codex_protocol::protocol::HookScope;
+use loom_protocol::protocol::HookCompletedEvent;
+use loom_protocol::protocol::HookEventName;
+use loom_protocol::protocol::HookExecutionMode;
+use loom_protocol::protocol::HookHandlerType;
+use loom_protocol::protocol::HookRunStatus;
+use loom_protocol::protocol::HookRunSummary;
+use loom_protocol::protocol::HookScope;
 
 use super::CommandShell;
 use super::ConfiguredHandler;
@@ -119,7 +119,7 @@ pub(crate) fn completed_summary(
     handler: &ConfiguredHandler,
     run_result: &CommandRunResult,
     status: HookRunStatus,
-    entries: Vec<codex_protocol::protocol::HookOutputEntry>,
+    entries: Vec<loom_protocol::protocol::HookOutputEntry>,
 ) -> HookRunSummary {
     HookRunSummary {
         id: handler.run_id(),
@@ -155,8 +155,8 @@ fn scope_for_event(event_name: HookEventName) -> HookScope {
 
 #[cfg(test)]
 mod tests {
-    use codex_protocol::protocol::HookEventName;
-    use codex_protocol::protocol::HookSource;
+    use loom_protocol::protocol::HookEventName;
+    use loom_protocol::protocol::HookSource;
     use loom_absolute_path::test_support::PathBufExt;
     use loom_absolute_path::test_support::test_path_buf;
 

@@ -3,10 +3,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::RwLock;
 
-use codex_config::ConfigLayerStack;
+use loom_shim_stubs::config::ConfigLayerStack;
 use loom_exec_server::ExecutorFileSystem;
-use codex_protocol::protocol::Product;
-use codex_protocol::protocol::SkillScope;
+use loom_protocol::protocol::Product;
+use loom_protocol::protocol::SkillScope;
 use loom_absolute_path::AbsolutePathBuf;
 use loom_plugins::PluginSkillRoot;
 use tracing::info;
@@ -22,7 +22,7 @@ use crate::loader::load_skills_from_roots;
 use crate::loader::skill_roots;
 use crate::system::install_system_skills;
 use crate::system::uninstall_system_skills;
-use codex_config::SkillsConfig;
+use loom_shim_stubs::config::SkillsConfig;
 
 #[derive(Debug, Clone)]
 pub struct SkillsLoadInput {
@@ -223,7 +223,7 @@ struct ConfigSkillsCacheKey {
 }
 
 pub fn bundled_skills_enabled_from_stack(
-    config_layer_stack: &codex_config::ConfigLayerStack,
+    config_layer_stack: &loom_shim_stubs::config::ConfigLayerStack,
 ) -> bool {
     let effective_config = config_layer_stack.effective_config();
     let Some(skills_value) = effective_config

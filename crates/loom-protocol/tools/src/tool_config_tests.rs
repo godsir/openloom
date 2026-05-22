@@ -1,10 +1,10 @@
-use codex_features::Feature;
-use codex_features::Features;
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::openai_models::ConfigShellToolType;
-use codex_protocol::openai_models::ModelInfo;
-use codex_protocol::openai_models::ModelVisibility;
-use codex_protocol::openai_models::TruncationPolicyConfig;
+use loom_features::Feature;
+use loom_features::Features;
+use loom_protocol::config_types::ModeKind;
+use loom_protocol::openai_models::ConfigShellToolType;
+use loom_protocol::openai_models::ModelInfo;
+use loom_protocol::openai_models::ModelVisibility;
+use loom_protocol::openai_models::TruncationPolicyConfig;
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -41,7 +41,7 @@ fn model_with_shell_type(shell_type: ConfigShellToolType) -> ModelInfo {
         auto_compact_token_limit: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
-        input_modalities: codex_protocol::openai_models::default_input_modalities(),
+        input_modalities: loom_protocol::openai_models::default_input_modalities(),
         used_fallback_model_metadata: false,
         supports_search_tool: false,
     }
@@ -65,7 +65,7 @@ fn shell_type_is_derived_from_model_and_feature_gates() {
     );
 
     features.enable(Feature::UnifiedExec);
-    let expected_unified_exec = if codex_utils_pty::conpty_supported() {
+    let expected_unified_exec = if loom_shim_stubs::utils_pty::conpty_supported() {
         ConfigShellToolType::UnifiedExec
     } else {
         ConfigShellToolType::ShellCommand

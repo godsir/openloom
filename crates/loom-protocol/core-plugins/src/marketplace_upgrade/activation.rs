@@ -1,5 +1,5 @@
 use super::ConfiguredGitMarketplace;
-use codex_config::types::MarketplaceSourceType;
+use loom_shim_stubs::config::types::MarketplaceSourceType;
 use serde::Deserialize;
 use serde::Serialize;
 use std::path::Path;

@@ -4,8 +4,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use loom_exec_server::ExecutorFileSystem;
-use codex_protocol::protocol::Product;
-use codex_protocol::protocol::SkillScope;
+use loom_protocol::protocol::Product;
+use loom_protocol::protocol::SkillScope;
 use loom_absolute_path::AbsolutePathBuf;
 
 #[derive(Debug, Clone, PartialEq)]

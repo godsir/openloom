@@ -1,8 +1,8 @@
 use crate::FunctionCallError;
 use crate::ToolName;
 use crate::ToolPayload;
-use codex_protocol::models::ResponseItem;
-use codex_utils_output_truncation::TruncationPolicy;
+use loom_protocol::models::ResponseItem;
+use loom_shim_stubs::utils_output_truncation::TruncationPolicy;
 use std::sync::Arc;
 
 /// Raw response history snapshot available when an extension tool is invoked.

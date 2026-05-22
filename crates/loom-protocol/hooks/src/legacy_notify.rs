@@ -72,7 +72,7 @@ pub fn notify_hook(argv: Vec<String>) -> Hook {
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use codex_protocol::ThreadId;
+    use loom_protocol::ThreadId;
     use loom_absolute_path::test_support::PathBufExt;
     use loom_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;

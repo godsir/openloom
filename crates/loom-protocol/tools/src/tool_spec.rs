@@ -3,10 +3,10 @@ use crate::JsonSchema;
 use crate::LoadableToolSpec;
 use crate::ResponsesApiNamespace;
 use crate::ResponsesApiTool;
-use codex_protocol::config_types::WebSearchContextSize;
-use codex_protocol::config_types::WebSearchFilters as ConfigWebSearchFilters;
-use codex_protocol::config_types::WebSearchUserLocation as ConfigWebSearchUserLocation;
-use codex_protocol::config_types::WebSearchUserLocationType;
+use loom_protocol::config_types::WebSearchContextSize;
+use loom_protocol::config_types::WebSearchFilters as ConfigWebSearchFilters;
+use loom_protocol::config_types::WebSearchUserLocation as ConfigWebSearchUserLocation;
+use loom_protocol::config_types::WebSearchUserLocationType;
 use serde::Serialize;
 use serde_json::Value;
 

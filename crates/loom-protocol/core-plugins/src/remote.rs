@@ -1,14 +1,14 @@
 use crate::store::PLUGINS_CACHE_DIR;
 use crate::store::PluginStore;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::PluginAuthPolicy;
-use codex_app_server_protocol::PluginAvailability;
-use codex_app_server_protocol::PluginInstallPolicy;
-use codex_app_server_protocol::PluginInterface;
-use codex_app_server_protocol::SkillInterface;
-use codex_login::CodexAuth;
-use codex_login::default_client::build_reqwest_client;
-use codex_plugin::PluginId;
+use loom_app_server_protocol::JSONRPCErrorError;
+use loom_app_server_protocol::PluginAuthPolicy;
+use loom_app_server_protocol::PluginAvailability;
+use loom_app_server_protocol::PluginInstallPolicy;
+use loom_app_server_protocol::PluginInterface;
+use loom_app_server_protocol::SkillInterface;
+use loom_shim_stubs::login::CodexAuth;
+use loom_shim_stubs::login::default_client::build_reqwest_client;
+use loom_shim_stubs::plugin::PluginId;
 use loom_absolute_path::AbsolutePathBuf;
 use reqwest::RequestBuilder;
 use serde::Deserialize;
@@ -1415,7 +1415,7 @@ fn authenticated_request(
 ) -> Result<RequestBuilder, RemotePluginCatalogError> {
     Ok(request
         .timeout(REMOTE_PLUGIN_CATALOG_TIMEOUT)
-        .headers(codex_model_provider::auth_provider_from_auth(auth).to_auth_headers()))
+        .headers(loom_shim_stubs::model_provider::auth_provider_from_auth(auth).to_auth_headers()))
 }
 
 async fn send_and_decode<T: for<'de> Deserialize<'de>>(

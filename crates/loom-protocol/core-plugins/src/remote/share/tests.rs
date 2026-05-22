@@ -1,8 +1,8 @@
 use super::*;
-use codex_app_server_protocol::PluginAuthPolicy;
-use codex_app_server_protocol::PluginInstallPolicy;
-use codex_app_server_protocol::PluginInterface;
-use codex_login::CodexAuth;
+use loom_app_server_protocol::PluginAuthPolicy;
+use loom_app_server_protocol::PluginInstallPolicy;
+use loom_app_server_protocol::PluginInterface;
+use loom_shim_stubs::login::CodexAuth;
 use loom_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use serde_json::json;

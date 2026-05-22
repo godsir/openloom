@@ -3,10 +3,10 @@ use std::path::Path;
 
 use crate::OPENAI_CURATED_MARKETPLACE_NAME;
 use crate::PluginsConfigInput;
-use codex_config::CloudRequirementsLoader;
-use codex_config::LoaderOverrides;
-use codex_config::NoopThreadConfigLoader;
-use codex_config::loader::load_config_layers_state;
+use loom_shim_stubs::config::CloudRequirementsLoader;
+use loom_shim_stubs::config::LoaderOverrides;
+use loom_shim_stubs::config::NoopThreadConfigLoader;
+use loom_shim_stubs::config::loader::load_config_layers_state;
 use loom_exec_server::LOCAL_FS;
 use loom_absolute_path::AbsolutePathBuf;
 use toml::Value;

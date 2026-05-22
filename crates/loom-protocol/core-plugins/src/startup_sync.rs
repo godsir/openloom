@@ -5,15 +5,15 @@ use std::process::Output;
 use std::process::Stdio;
 use std::time::Duration;
 
-use codex_otel::CURATED_PLUGINS_STARTUP_SYNC_FINAL_METRIC;
-use codex_otel::CURATED_PLUGINS_STARTUP_SYNC_METRIC;
+use loom_shim_stubs::otel::CURATED_PLUGINS_STARTUP_SYNC_FINAL_METRIC;
+use loom_shim_stubs::otel::CURATED_PLUGINS_STARTUP_SYNC_METRIC;
 use reqwest::Client;
 use serde::Deserialize;
 use tempfile::TempDir;
 use tracing::warn;
 use zip::ZipArchive;
 
-use codex_login::default_client::build_reqwest_client;
+use loom_shim_stubs::login::default_client::build_reqwest_client;
 
 const GITHUB_API_BASE_URL: &str = "https://api.github.com";
 const GITHUB_API_ACCEPT_HEADER: &str = "application/vnd.github+json";
@@ -361,7 +361,7 @@ fn emit_curated_plugins_startup_sync_counter(
     transport: &'static str,
     status: &'static str,
 ) {
-    let Some(metrics) = codex_otel::global() else {
+    let Some(metrics) = loom_shim_stubs::otel::global() else {
         return;
     };
     let tags = [("transport", transport), ("status", status)];

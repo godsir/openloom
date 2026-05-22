@@ -1,10 +1,10 @@
 use super::*;
 use crate::manifest::load_plugin_manifest;
-use codex_config::ConfigLayerEntry;
-use codex_config::ConfigLayerSource;
-use codex_config::ConfigRequirements;
-use codex_config::ConfigRequirementsToml;
-use codex_plugin::PluginId;
+use loom_shim_stubs::config::ConfigLayerEntry;
+use loom_shim_stubs::config::ConfigLayerSource;
+use loom_shim_stubs::config::ConfigRequirements;
+use loom_shim_stubs::config::ConfigRequirementsToml;
+use loom_shim_stubs::plugin::PluginId;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 

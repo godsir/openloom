@@ -1,7 +1,7 @@
 use crate::manifest::PluginManifest;
 use crate::manifest::load_plugin_manifest;
-use codex_plugin::PluginId;
-use codex_plugin::validate_plugin_segment;
+use loom_shim_stubs::plugin::PluginId;
+use loom_shim_stubs::plugin::validate_plugin_segment;
 use loom_absolute_path::AbsolutePathBuf;
 use loom_plugins::find_plugin_manifest_path;
 use semver::Version;

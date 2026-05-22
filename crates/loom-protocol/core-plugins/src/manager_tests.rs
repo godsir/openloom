@@ -15,20 +15,20 @@ use crate::test_support::load_plugins_config as load_plugins_config_input;
 use crate::test_support::write_curated_plugin_sha_with as write_curated_plugin_sha;
 use crate::test_support::write_file;
 use crate::test_support::write_openai_curated_marketplace;
-use codex_app_server_protocol::ConfigLayerSource;
-use codex_config::AppToolApproval;
-use codex_config::CONFIG_TOML_FILE;
-use codex_config::ConfigLayerEntry;
-use codex_config::ConfigLayerStack;
-use codex_config::ConfigRequirements;
-use codex_config::ConfigRequirementsToml;
-use codex_config::McpServerConfig;
-use codex_config::McpServerOAuthConfig;
-use codex_config::McpServerToolConfig;
-use codex_config::types::McpServerTransportConfig;
-use codex_login::CodexAuth;
-use codex_protocol::protocol::HookEventName;
-use codex_protocol::protocol::Product;
+use loom_app_server_protocol::ConfigLayerSource;
+use loom_shim_stubs::config::AppToolApproval;
+use loom_shim_stubs::config::CONFIG_TOML_FILE;
+use loom_shim_stubs::config::ConfigLayerEntry;
+use loom_shim_stubs::config::ConfigLayerStack;
+use loom_shim_stubs::config::ConfigRequirements;
+use loom_shim_stubs::config::ConfigRequirementsToml;
+use loom_shim_stubs::config::McpServerConfig;
+use loom_shim_stubs::config::McpServerOAuthConfig;
+use loom_shim_stubs::config::McpServerToolConfig;
+use loom_shim_stubs::config::types::McpServerTransportConfig;
+use loom_shim_stubs::login::CodexAuth;
+use loom_protocol::protocol::HookEventName;
+use loom_protocol::protocol::Product;
 use loom_absolute_path::test_support::PathBufExt;
 use pretty_assertions::assert_eq;
 use std::fs;
@@ -138,9 +138,9 @@ fn remote_installed_linear_plugin() -> RemoteInstalledPlugin {
         id: "plugins~Plugin_linear".to_string(),
         name: "linear".to_string(),
         enabled: true,
-        install_policy: codex_app_server_protocol::PluginInstallPolicy::Available,
-        auth_policy: codex_app_server_protocol::PluginAuthPolicy::OnUse,
-        availability: codex_app_server_protocol::PluginAvailability::Available,
+        install_policy: loom_app_server_protocol::PluginInstallPolicy::Available,
+        auth_policy: loom_app_server_protocol::PluginAuthPolicy::OnUse,
+        availability: loom_app_server_protocol::PluginAvailability::Available,
         interface: None,
         keywords: Vec::new(),
     }
@@ -357,9 +357,9 @@ async fn build_remote_installed_plugin_marketplaces_from_cache_uses_remote_metad
     let codex_home = TempDir::new().unwrap();
     let manager = PluginsManager::new(codex_home.path().to_path_buf());
     let mut plugin = remote_installed_linear_plugin();
-    plugin.install_policy = codex_app_server_protocol::PluginInstallPolicy::InstalledByDefault;
-    plugin.auth_policy = codex_app_server_protocol::PluginAuthPolicy::OnInstall;
-    plugin.interface = Some(codex_app_server_protocol::PluginInterface {
+    plugin.install_policy = loom_app_server_protocol::PluginInstallPolicy::InstalledByDefault;
+    plugin.auth_policy = loom_app_server_protocol::PluginAuthPolicy::OnInstall;
+    plugin.interface = Some(loom_app_server_protocol::PluginInterface {
         display_name: Some("Linear".to_string()),
         short_description: Some("Track remote work".to_string()),
         long_description: None,
@@ -396,11 +396,11 @@ async fn build_remote_installed_plugin_marketplaces_from_cache_uses_remote_metad
     assert_eq!(plugin.enabled, true);
     assert_eq!(
         plugin.install_policy,
-        codex_app_server_protocol::PluginInstallPolicy::InstalledByDefault
+        loom_app_server_protocol::PluginInstallPolicy::InstalledByDefault
     );
     assert_eq!(
         plugin.auth_policy,
-        codex_app_server_protocol::PluginAuthPolicy::OnInstall
+        loom_app_server_protocol::PluginAuthPolicy::OnInstall
     );
     assert_eq!(plugin.keywords, vec!["issues".to_string()]);
     assert_eq!(

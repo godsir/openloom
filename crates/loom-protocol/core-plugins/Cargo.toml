@@ -14,18 +14,13 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-codex-analytics = { workspace = true }
-codex-app-server-protocol = { workspace = true }
-codex-config = { workspace = true }
+loom-shim-stubs = { workspace = true }
+loom-app-server-protocol = { workspace = true }
 loom-core-skills = { workspace = true }
 loom-exec-server = { workspace = true }
 loom-git-utils = { workspace = true }
 loom-hooks = { workspace = true }
-codex-login = { workspace = true }
-codex-model-provider = { workspace = true }
-codex-otel = { workspace = true }
-codex-plugin = { workspace = true }
-codex-protocol = { workspace = true }
+loom-protocol = { workspace = true }
 loom-absolute-path = { workspace = true }
 loom-plugins = { workspace = true }
 chrono = { workspace = true }

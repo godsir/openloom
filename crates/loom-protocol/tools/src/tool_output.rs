@@ -1,8 +1,8 @@
-use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
-use codex_protocol::models::FunctionCallOutputBody;
-use codex_protocol::models::FunctionCallOutputContentItem;
-use codex_protocol::models::FunctionCallOutputPayload;
-use codex_protocol::models::ResponseInputItem;
+use loom_protocol::models::DEFAULT_IMAGE_DETAIL;
+use loom_protocol::models::FunctionCallOutputBody;
+use loom_protocol::models::FunctionCallOutputContentItem;
+use loom_protocol::models::FunctionCallOutputPayload;
+use loom_protocol::models::ResponseInputItem;
 use loom_string::take_bytes_at_char_boundary;
 use serde_json::Value as JsonValue;
 
@@ -136,7 +136,7 @@ impl ToolOutput for JsonToolOutput {
     }
 }
 
-impl ToolOutput for codex_protocol::mcp::CallToolResult {
+impl ToolOutput for loom_protocol::mcp::CallToolResult {
     fn log_preview(&self) -> String {
         let output = self.as_function_call_output_payload();
         let preview = output.body.to_text().unwrap_or_else(|| output.to_string());
@@ -167,11 +167,11 @@ fn response_input_to_code_mode_result(response: ResponseInputItem) -> JsonValue 
             &content
                 .into_iter()
                 .map(|item| match item {
-                    codex_protocol::models::ContentItem::InputText { text }
-                    | codex_protocol::models::ContentItem::OutputText { text } => {
+                    loom_protocol::models::ContentItem::InputText { text }
+                    | loom_protocol::models::ContentItem::OutputText { text } => {
                         FunctionCallOutputContentItem::InputText { text }
                     }
-                    codex_protocol::models::ContentItem::InputImage { image_url, detail } => {
+                    loom_protocol::models::ContentItem::InputImage { image_url, detail } => {
                         FunctionCallOutputContentItem::InputImage {
                             image_url,
                             detail: detail.or(Some(DEFAULT_IMAGE_DETAIL)),

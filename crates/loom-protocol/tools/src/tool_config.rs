@@ -1,9 +1,9 @@
-use codex_features::Feature;
-use codex_features::Features;
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::config_types::TUI_VISIBLE_COLLABORATION_MODES;
-use codex_protocol::openai_models::ConfigShellToolType;
-use codex_protocol::openai_models::ModelInfo;
+use loom_features::Feature;
+use loom_features::Features;
+use loom_protocol::config_types::ModeKind;
+use loom_protocol::config_types::TUI_VISIBLE_COLLABORATION_MODES;
+use loom_protocol::openai_models::ConfigShellToolType;
+use loom_protocol::openai_models::ModelInfo;
 use loom_absolute_path::AbsolutePathBuf;
 use std::path::PathBuf;
 
@@ -61,7 +61,7 @@ pub fn shell_type_for_model_and_features(
     } else if features.enabled(Feature::ShellZshFork) {
         ConfigShellToolType::ShellCommand
     } else if unified_exec_enabled {
-        if codex_utils_pty::conpty_supported() {
+        if loom_shim_stubs::utils_pty::conpty_supported() {
             ConfigShellToolType::UnifiedExec
         } else {
             ConfigShellToolType::ShellCommand

@@ -1,5 +1,5 @@
 use crate::now_unix_seconds;
-use codex_protocol::ThreadId;
+use loom_protocol::ThreadId;
 use serde::Deserialize;
 use serde::Serialize;
 use sha2::Digest;

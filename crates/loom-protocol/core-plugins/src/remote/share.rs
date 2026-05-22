@@ -1,6 +1,6 @@
 use super::*;
-use codex_login::CodexAuth;
-use codex_login::default_client::build_reqwest_client;
+use loom_shim_stubs::login::CodexAuth;
+use loom_shim_stubs::login::default_client::build_reqwest_client;
 use loom_absolute_path::AbsolutePathBuf;
 use flate2::Compression;
 use flate2::write::GzEncoder;

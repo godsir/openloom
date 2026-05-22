@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use codex_config::ConfigLayerSource;
-use codex_config::ConfigLayerStack;
-use codex_config::ConfigLayerStackOrdering;
-use codex_config::HookStateToml;
-use codex_config::TomlValue;
+use loom_shim_stubs::config::ConfigLayerSource;
+use loom_shim_stubs::config::ConfigLayerStack;
+use loom_shim_stubs::config::ConfigLayerStackOrdering;
+use loom_shim_stubs::config::HookStateToml;
+use loom_shim_stubs::config::TomlValue;
 
 /// Build effective hook state from config layers that are allowed to override
 /// user preferences.
@@ -71,8 +71,8 @@ pub fn hook_states_from_stack(
 
 #[cfg(test)]
 mod tests {
-    use codex_config::ConfigLayerEntry;
-    use codex_config::TomlValue;
+    use loom_shim_stubs::config::ConfigLayerEntry;
+    use loom_shim_stubs::config::TomlValue;
     use loom_absolute_path::test_support::PathBufExt;
     use loom_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;

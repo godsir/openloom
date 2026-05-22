@@ -2,21 +2,21 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use codex_config::CONFIG_TOML_FILE;
-use codex_config::ConfigLayerEntry;
-use codex_config::ConfigLayerSource;
-use codex_config::ConfigLayerStack;
-use codex_config::ConfigLayerStackOrdering;
-use codex_config::HookEventsToml;
-use codex_config::HookHandlerConfig;
-use codex_config::HookStateToml;
-use codex_config::HooksFile;
-use codex_config::ManagedHooksRequirementsToml;
-use codex_config::MatcherGroup;
-use codex_config::RequirementSource;
-use codex_config::TomlValue;
-use codex_config::version_for_toml;
-use codex_plugin::PluginHookSource;
+use loom_shim_stubs::config::CONFIG_TOML_FILE;
+use loom_shim_stubs::config::ConfigLayerEntry;
+use loom_shim_stubs::config::ConfigLayerSource;
+use loom_shim_stubs::config::ConfigLayerStack;
+use loom_shim_stubs::config::ConfigLayerStackOrdering;
+use loom_shim_stubs::config::HookEventsToml;
+use loom_shim_stubs::config::HookHandlerConfig;
+use loom_shim_stubs::config::HookStateToml;
+use loom_shim_stubs::config::HooksFile;
+use loom_shim_stubs::config::ManagedHooksRequirementsToml;
+use loom_shim_stubs::config::MatcherGroup;
+use loom_shim_stubs::config::RequirementSource;
+use loom_shim_stubs::config::TomlValue;
+use loom_shim_stubs::config::version_for_toml;
+use loom_shim_stubs::plugin::PluginHookSource;
 use loom_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 use serde::Serialize;
@@ -26,9 +26,9 @@ use super::HookListEntry;
 use crate::config_rules::hook_states_from_stack;
 use crate::events::common::matcher_pattern_for_event;
 use crate::events::common::validate_matcher_pattern;
-use codex_protocol::protocol::HookHandlerType;
-use codex_protocol::protocol::HookSource;
-use codex_protocol::protocol::HookTrustStatus;
+use loom_protocol::protocol::HookHandlerType;
+use loom_protocol::protocol::HookSource;
+use loom_protocol::protocol::HookTrustStatus;
 
 pub(crate) struct DiscoveryResult {
     pub handlers: Vec<ConfiguredHandler>,
@@ -412,7 +412,7 @@ fn append_matcher_groups(
     warnings: &mut Vec<String>,
     display_order: &mut i64,
     source: &HookHandlerSource<'_>,
-    event_name: codex_protocol::protocol::HookEventName,
+    event_name: loom_protocol::protocol::HookEventName,
     groups: Vec<MatcherGroup>,
 ) {
     for (group_index, group) in groups.into_iter().enumerate() {
@@ -536,7 +536,7 @@ struct NormalizedHookIdentity {
 }
 
 fn command_hook_hash(
-    event_name: codex_protocol::protocol::HookEventName,
+    event_name: loom_protocol::protocol::HookEventName,
     matcher: Option<&str>,
     group: &MatcherGroup,
     normalized_handler: HookHandlerConfig,
@@ -613,11 +613,11 @@ fn hook_source_for_requirement_source(source: Option<&RequirementSource>) -> Hoo
 
 #[cfg(test)]
 mod tests {
-    use codex_config::ConfigLayerEntry;
-    use codex_config::ConfigLayerSource;
-    use codex_config::HookEventsToml;
-    use codex_protocol::protocol::HookEventName;
-    use codex_protocol::protocol::HookSource;
+    use loom_shim_stubs::config::ConfigLayerEntry;
+    use loom_shim_stubs::config::ConfigLayerSource;
+    use loom_shim_stubs::config::HookEventsToml;
+    use loom_protocol::protocol::HookEventName;
+    use loom_protocol::protocol::HookSource;
     use loom_absolute_path::AbsolutePathBuf;
     use loom_absolute_path::test_support::PathBufExt;
     use loom_absolute_path::test_support::test_path_buf;
@@ -625,11 +625,11 @@ mod tests {
 
     use super::ConfiguredHandler;
     use super::append_matcher_groups;
-    use codex_config::HookHandlerConfig;
-    use codex_config::HookStateToml;
-    use codex_config::MatcherGroup;
-    use codex_config::TomlValue;
-    use codex_protocol::protocol::HookTrustStatus;
+    use loom_shim_stubs::config::HookHandlerConfig;
+    use loom_shim_stubs::config::HookStateToml;
+    use loom_shim_stubs::config::MatcherGroup;
+    use loom_shim_stubs::config::TomlValue;
+    use loom_protocol::protocol::HookTrustStatus;
 
     fn source_path() -> AbsolutePathBuf {
         test_path_buf("/tmp/hooks.json").abs()

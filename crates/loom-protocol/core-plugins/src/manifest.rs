@@ -1,4 +1,4 @@
-use codex_config::HooksFile;
+use loom_shim_stubs::config::HooksFile;
 use loom_absolute_path::AbsolutePathBuf;
 use loom_plugins::find_plugin_manifest_path;
 use serde::Deserialize;

@@ -5,14 +5,14 @@ use std::path::Path;
 
 use crate::model::SkillLoadOutcome;
 use crate::model::SkillMetadata;
-use codex_otel::SessionTelemetry;
-use codex_otel::THREAD_SKILLS_DESCRIPTION_TRUNCATED_CHARS_METRIC;
-use codex_otel::THREAD_SKILLS_ENABLED_TOTAL_METRIC;
-use codex_otel::THREAD_SKILLS_KEPT_TOTAL_METRIC;
-use codex_otel::THREAD_SKILLS_TRUNCATED_METRIC;
-use codex_protocol::protocol::SkillScope;
+use loom_shim_stubs::otel::SessionTelemetry;
+use loom_shim_stubs::otel::THREAD_SKILLS_DESCRIPTION_TRUNCATED_CHARS_METRIC;
+use loom_shim_stubs::otel::THREAD_SKILLS_ENABLED_TOTAL_METRIC;
+use loom_shim_stubs::otel::THREAD_SKILLS_KEPT_TOTAL_METRIC;
+use loom_shim_stubs::otel::THREAD_SKILLS_TRUNCATED_METRIC;
+use loom_protocol::protocol::SkillScope;
 use loom_absolute_path::AbsolutePathBuf;
-use codex_utils_output_truncation::approx_token_count;
+use loom_shim_stubs::utils_output_truncation::approx_token_count;
 
 const DEFAULT_SKILL_METADATA_CHAR_BUDGET: usize = 8_000;
 const SKILL_METADATA_CONTEXT_WINDOW_PERCENT: usize = 2;

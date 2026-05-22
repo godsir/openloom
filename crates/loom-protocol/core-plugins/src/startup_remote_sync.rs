@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::manager::PluginsConfigInput;
 use crate::manager::PluginsManager;
 use crate::startup_sync::has_local_curated_plugins_snapshot;
-use codex_login::AuthManager;
+use loom_shim_stubs::login::AuthManager;
 use tracing::info;
 use tracing::warn;
 

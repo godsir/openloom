@@ -1,4 +1,4 @@
-use codex_app_server_protocol::AppInfo;
+use loom_app_server_protocol::AppInfo;
 use serde::Deserialize;
 use serde::Serialize;
 

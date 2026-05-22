@@ -1,7 +1,7 @@
 use crate::remote::RemotePluginServiceConfig;
-use codex_login::CodexAuth;
-use codex_login::default_client::build_reqwest_client;
-use codex_protocol::protocol::Product;
+use loom_shim_stubs::login::CodexAuth;
+use loom_shim_stubs::login::default_client::build_reqwest_client;
+use loom_protocol::protocol::Product;
 use serde::Deserialize;
 use std::time::Duration;
 use url::Url;
@@ -133,7 +133,7 @@ pub async fn fetch_remote_plugin_status(
     let request = client
         .get(&url)
         .timeout(REMOTE_PLUGIN_FETCH_TIMEOUT)
-        .headers(codex_model_provider::auth_provider_from_auth(auth).to_auth_headers());
+        .headers(loom_shim_stubs::model_provider::auth_provider_from_auth(auth).to_auth_headers());
 
     let response = request
         .send()
@@ -172,7 +172,7 @@ pub async fn fetch_remote_featured_plugin_ids(
 
     if let Some(auth) = auth.filter(|auth| auth.uses_codex_backend()) {
         request =
-            request.headers(codex_model_provider::auth_provider_from_auth(auth).to_auth_headers());
+            request.headers(loom_shim_stubs::model_provider::auth_provider_from_auth(auth).to_auth_headers());
     }
 
     let response = request
@@ -240,7 +240,7 @@ async fn post_remote_plugin_mutation(
     let request = client
         .post(url.clone())
         .timeout(REMOTE_PLUGIN_MUTATION_TIMEOUT)
-        .headers(codex_model_provider::auth_provider_from_auth(auth).to_auth_headers());
+        .headers(loom_shim_stubs::model_provider::auth_provider_from_auth(auth).to_auth_headers());
 
     let response = request
         .send()

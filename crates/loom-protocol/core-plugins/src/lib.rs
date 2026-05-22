@@ -38,8 +38,8 @@ pub const TOOL_SUGGEST_DISCOVERABLE_PLUGIN_ALLOWLIST: &[&str] = &[
     "computer-use@openai-bundled",
 ];
 
-pub type LoadedPlugin = codex_plugin::LoadedPlugin<codex_config::McpServerConfig>;
-pub type PluginLoadOutcome = codex_plugin::PluginLoadOutcome<codex_config::McpServerConfig>;
+pub type LoadedPlugin = loom_shim_stubs::plugin::LoadedPlugin<loom_shim_stubs::config::McpServerConfig>;
+pub type PluginLoadOutcome = loom_shim_stubs::plugin::PluginLoadOutcome<loom_shim_stubs::config::McpServerConfig>;
 
 pub use manager::ConfiguredMarketplace;
 pub use manager::ConfiguredMarketplaceListOutcome;

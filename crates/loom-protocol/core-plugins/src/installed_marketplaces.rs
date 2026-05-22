@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::path::PathBuf;
 
-use codex_config::ConfigLayerStack;
-use codex_plugin::validate_plugin_segment;
+use loom_shim_stubs::config::ConfigLayerStack;
+use loom_shim_stubs::plugin::validate_plugin_segment;
 use loom_absolute_path::AbsolutePathBuf;
 use tracing::warn;
 

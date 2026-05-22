@@ -20,7 +20,7 @@ fn test_skill_metadata(skill_doc_path: AbsolutePathBuf) -> SkillMetadata {
         dependencies: None,
         policy: None,
         path_to_skills_md: skill_doc_path,
-        scope: codex_protocol::protocol::SkillScope::User,
+        scope: loom_protocol::protocol::SkillScope::User,
         plugin_id: None,
     }
 }

@@ -4,21 +4,38 @@ members = [
     "crates/*",
     "crates/loom-utils/absolute-path",
     "crates/loom-utils/ansi-escape",
+    "crates/loom-utils/approval-presets",
     "crates/loom-utils/async-utils",
+    "crates/loom-utils/cache",
+    "crates/loom-utils/cli",
     "crates/loom-utils/elapsed",
+    "crates/loom-utils/file-search",
+    "crates/loom-utils/file-system",
     "crates/loom-utils/fuzzy-match",
+    "crates/loom-utils/git-utils",
     "crates/loom-utils/home-dir",
+    "crates/loom-utils/image",
     "crates/loom-utils/install-context",
     "crates/loom-utils/path",
     "crates/loom-utils/rustls-provider",
+    "crates/loom-utils/sleep-inhibitor",
     "crates/loom-utils/string",
     "crates/loom-utils/terminal-detection",
     "crates/loom-utils/uds",
     "crates/loom-protocol/execpolicy",
     "crates/loom-protocol/network-proxy",
+    "crates/loom-protocol/protocol",
+    "crates/loom-protocol/sandboxing",
+    "crates/loom-protocol/shell-command",
     "crates/loom-protocol/skills",
-    "crates/loom-utils/file-search",
-    "crates/loom-utils/sleep-inhibitor",
+    "crates/loom-protocol/app-server-protocol",
+    "crates/loom-utils/otel-stub",
+    "crates/loom-protocol/features",
+    "crates/loom-utils/shim-stubs",
+    "crates/loom-protocol/tools",
+    "crates/loom-protocol/hooks",
+    "crates/loom-protocol/external-agent-migration",
+    "crates/loom-protocol/external-agent-sessions",
 ]
 exclude = [
     "crates/loom-utils",
@@ -80,6 +97,7 @@ encoding_rs = "0.8.35"
 globset = "0.4"
 wildmatch = "2.6.1"
 rmcp = { version = "0.15.0", default-features = false }
+inventory = "0.3"
 schemars = "0.8.22"
 ts-rs = "11"
 strum = "0.27.2"
@@ -97,6 +115,8 @@ dunce = "1.0.4"
 pathdiff = "0.2"
 itertools = "0.14.0"
 lazy_static = "1"
+landlock = "0.4.4"
+lru = "0.16.3"
 derive_more = "2"
 shlex = "1.3.0"
 textwrap = "0.16.2"
@@ -106,6 +126,7 @@ color-eyre = "0.6.3"
 base64 = "0.22.1"
 chrono = "0.4.43"
 sha2 = "0.10"
+sha1 = "0.10.6"
 rand = "0.9"
 image = { version = "^0.25.9", default-features = false }
 indexmap = "2.12.0"
@@ -122,6 +143,7 @@ url = "2"
 urlencoding = "2.1"
 futures = { version = "0.3", default-features = false }
 syntect = "5"
+sys-locale = "0.3.2"
 starlark = "0.13.0"
 tree-sitter = "0.25.10"
 tree-sitter-bash = "0.25"
@@ -132,10 +154,12 @@ uuid = { version = "1", features = ["v4"] }
 libc = "0.2.182"
 which = "8"
 flate2 = "1.1.8"
+seccompiler = "0.5.0"
 semver = "1.0"
 tar = { version = "=0.4.45", default-features = false }
 zip = "2.4.2"
 serde_yaml = "0.9"
+serde_with = "3.17"
 jsonptr = { version = "0.7.1", default-features = false }
 crossbeam-channel = "0.5.15"
 ignore = "0.4.23"
@@ -170,9 +194,18 @@ loom-absolute-path = { path = "crates/loom-utils/absolute-path" }
 loom-home-dir = { path = "crates/loom-utils/home-dir" }
 
 # Level 1-2 crate path entries (for workspace = true references)
+loom-approval-presets = { path = "crates/loom-utils/approval-presets" }
+loom-arg0 = { path = "crates/loom-utils/arg0" }
+loom-cache = { path = "crates/loom-utils/cache" }
 loom-execpolicy = { path = "crates/loom-protocol/execpolicy" }
 loom-network-proxy = { path = "crates/loom-protocol/network-proxy" }
+loom-protocol = { path = "crates/loom-protocol/protocol" }
+loom-sandbox-summary = { path = "crates/loom-utils/sandbox-summary" }
 loom-shell-command = { path = "crates/loom-protocol/shell-command" }
+loom-app-server-protocol = { path = "crates/loom-protocol/app-server-protocol" }
+loom-features = { path = "crates/loom-protocol/features" }
+loom-otel-stub = { path = "crates/loom-utils/otel-stub" }
+loom-shim-stubs = { path = "crates/loom-utils/shim-stubs" }
 loom-sandboxing = { path = "crates/loom-protocol/sandboxing" }
 loom-exec-server = { path = "crates/loom-protocol/exec-server" }
 loom-skills = { path = "crates/loom-protocol/skills" }
@@ -206,7 +239,12 @@ loom-path-utils = { path = "crates/loom-utils/path" }
 anyhow = "1"
 async-trait = "0.1.89"
 clap = "4"
+http = "1.3.1"
+icu_decimal = "2.1"
+icu_locale_core = "2.1"
+icu_provider = { version = "2.1", features = ["sync"] }
 once_cell = "1.20.2"
+quick-xml = "0.38.4"
 regex = "1.12.3"
 reqwest = { version = "0.12", features = ["cookies"] }
 serde = "1"

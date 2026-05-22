@@ -6,8 +6,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use codex_login::CodexAuth;
-use codex_login::default_client::build_reqwest_client;
+use loom_shim_stubs::login::CodexAuth;
+use loom_shim_stubs::login::default_client::build_reqwest_client;
 
 const REMOTE_SKILLS_API_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -112,7 +112,7 @@ pub async fn list_remote_skills(
         .get(&url)
         .timeout(REMOTE_SKILLS_API_TIMEOUT)
         .query(&query_params)
-        .headers(codex_model_provider::auth_provider_from_auth(auth).to_auth_headers());
+        .headers(loom_shim_stubs::model_provider::auth_provider_from_auth(auth).to_auth_headers());
     let response = request
         .send()
         .await
@@ -152,7 +152,7 @@ pub async fn export_remote_skill(
     let request = client
         .get(&url)
         .timeout(REMOTE_SKILLS_API_TIMEOUT)
-        .headers(codex_model_provider::auth_provider_from_auth(auth).to_auth_headers());
+        .headers(loom_shim_stubs::model_provider::auth_provider_from_auth(auth).to_auth_headers());
 
     let response = request
         .send()

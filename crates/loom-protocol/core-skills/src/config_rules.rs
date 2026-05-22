@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
-use codex_app_server_protocol::ConfigLayerSource;
-use codex_config::ConfigLayerStack;
-use codex_config::ConfigLayerStackOrdering;
-use codex_config::SkillConfig;
-use codex_config::SkillsConfig;
+use loom_app_server_protocol::ConfigLayerSource;
+use loom_shim_stubs::config::ConfigLayerStack;
+use loom_shim_stubs::config::ConfigLayerStackOrdering;
+use loom_shim_stubs::config::SkillConfig;
+use loom_shim_stubs::config::SkillsConfig;
 use loom_absolute_path::AbsolutePathBuf;
 use tracing::warn;
 

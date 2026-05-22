@@ -1,5 +1,5 @@
 use super::*;
-use codex_plugin::PluginId;
+use loom_shim_stubs::plugin::PluginId;
 use pretty_assertions::assert_eq;
 use tempfile::tempdir;
 

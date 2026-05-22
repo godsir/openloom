@@ -5,7 +5,7 @@ mod export;
 mod ledger;
 mod records;
 
-use codex_protocol::protocol::RolloutItem;
+use loom_protocol::protocol::RolloutItem;
 use std::collections::HashSet;
 use std::io;
 use std::path::Path;
@@ -171,7 +171,7 @@ fn now_unix_seconds() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::ThreadId;
+    use loom_protocol::ThreadId;
     use tempfile::TempDir;
 
     #[test]
