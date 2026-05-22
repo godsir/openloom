@@ -169,10 +169,7 @@ pub fn build_lines_for_messages(
                 if in_code_block {
                     lines.push(Line::from(vec![
                         Span::styled("    ", Style::new()),
-                        Span::styled(
-                            raw_line.to_string(),
-                            Style::new().fg(p.text_dim),
-                        ),
+                        Span::styled(raw_line.to_string(), Style::new().fg(p.text_dim)),
                     ]));
                 } else {
                     for w in wrap_text(raw_line, content_width) {
@@ -295,8 +292,14 @@ fn tool_call_summary(content: &str) -> String {
 
 fn tool_result_summary(content: &str) -> String {
     let lines: Vec<&str> = content.lines().collect();
-    let added = lines.iter().filter(|l| l.starts_with('+') && !l.starts_with("+++")).count();
-    let removed = lines.iter().filter(|l| l.starts_with('-') && !l.starts_with("---")).count();
+    let added = lines
+        .iter()
+        .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
+        .count();
+    let removed = lines
+        .iter()
+        .filter(|l| l.starts_with('-') && !l.starts_with("---"))
+        .count();
 
     if added > 0 || removed > 0 {
         return format!("+{} -{} lines", added, removed);
@@ -373,7 +376,10 @@ fn render_markdown_line(text: &str, p: &Palette) -> Line<'static> {
     }
 
     // Bullet lists
-    if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
+    if let Some(rest) = trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+    {
         spans.push(Span::styled("\u{2022} ", Style::new().fg(p.accent)));
         parse_inline_markdown(rest, p, &mut spans);
         return Line::from(spans);
@@ -473,10 +479,7 @@ fn parse_inline_markdown(text: &str, p: &Palette, spans: &mut Vec<Span<'static>>
             }
             _ => {
                 // No more markers — push rest as plain text
-                spans.push(Span::styled(
-                    remaining.to_string(),
-                    Style::new().fg(p.text),
-                ));
+                spans.push(Span::styled(remaining.to_string(), Style::new().fg(p.text)));
                 break;
             }
         }
@@ -913,7 +916,10 @@ pub fn draw_command_palette(f: &mut Frame, app: &App, input_area: Rect, p: &Pale
     // History search mode: show matching history entries
     if app.history_search_active {
         let query = current_input.to_lowercase();
-        let history_matches: Vec<(String, String)> = app.history.iter().rev()
+        let history_matches: Vec<(String, String)> = app
+            .history
+            .iter()
+            .rev()
             .filter(|h| query.is_empty() || h.to_lowercase().contains(&query))
             .take(10)
             .map(|h| {

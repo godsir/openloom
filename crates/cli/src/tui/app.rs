@@ -388,7 +388,9 @@ impl App {
         let model_pref = self.model_pref;
         let thinking = self.thinking;
         let handle = tokio::spawn(async move {
-            let _ = engine.handle_message_streaming(msg, &session_id, tx, mode, model_pref, thinking).await;
+            let _ = engine
+                .handle_message_streaming(msg, &session_id, tx, mode, model_pref, thinking)
+                .await;
         });
 
         self.stream.abort_handle = Some(handle);

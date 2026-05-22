@@ -186,17 +186,187 @@ pub struct ChatMessage {
     pub timestamp: DateTime<Utc>,
 }
 
+// === Native Tool Calling Types (aligned with OpenCode) ===
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    System,
+    User,
+    Assistant,
+    Tool,
+}
+
+impl Role {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Role::System => "system",
+            Role::User => "user",
+            Role::Assistant => "assistant",
+            Role::Tool => "tool",
+        }
+    }
+}
+
+/// A content part within a message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentPart {
+    Text {
+        text: String,
+    },
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
+    ToolResult {
+        tool_call_id: String,
+        name: String,
+        result: String,
+    },
+}
+
+/// A structured message with role-separated content parts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub role: Role,
+    pub content: Vec<ContentPart>,
+    #[serde(skip)]
+    pub timestamp: DateTime<Utc>,
+}
+
+impl Message {
+    pub fn user(text: impl Into<String>) -> Self {
+        Self {
+            role: Role::User,
+            content: vec![ContentPart::Text { text: text.into() }],
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub fn assistant(text: impl Into<String>) -> Self {
+        Self {
+            role: Role::Assistant,
+            content: vec![ContentPart::Text { text: text.into() }],
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub fn tool(
+        tool_call_id: impl Into<String>,
+        name: impl Into<String>,
+        result: impl Into<String>,
+    ) -> Self {
+        Self {
+            role: Role::Tool,
+            content: vec![ContentPart::ToolResult {
+                tool_call_id: tool_call_id.into(),
+                name: name.into(),
+                result: result.into(),
+            }],
+            timestamp: Utc::now(),
+        }
+    }
+
+    /// Extract text content from this message.
+    pub fn text_content(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(|p| match p {
+                ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Extract tool calls from this message.
+    pub fn tool_calls(&self) -> Vec<&ContentPart> {
+        self.content
+            .iter()
+            .filter(|p| matches!(p, ContentPart::ToolCall { .. }))
+            .collect()
+    }
+
+    /// Convert legacy ChatMessage to new Message.
+    pub fn from_legacy(msg: &ChatMessage) -> Self {
+        let role = match msg.role.as_str() {
+            "system" => Role::System,
+            "assistant" => Role::Assistant,
+            _ => Role::User,
+        };
+        if msg.role == "tool" {
+            // Tool content is "tc_id|result" format; extract id and result
+            let (tc_id, result) = if let Some(pos) = msg.content.find('|') {
+                (msg.content[..pos].to_string(), msg.content[pos + 1..].to_string())
+            } else {
+                ("tool_legacy".into(), msg.content.clone())
+            };
+            return Self {
+                role: Role::Tool,
+                content: vec![ContentPart::ToolResult {
+                    tool_call_id: tc_id,
+                    name: "unknown".into(),
+                    result,
+                }],
+                timestamp: msg.timestamp,
+            };
+        }
+        // Assistant messages starting with "ToolCall|" have structured tool call info
+        if msg.role == "assistant" && msg.content.starts_with("ToolCall|") {
+            let parts: Vec<&str> = msg.content.splitn(4, '|').collect();
+            let tc_id = parts.get(1).map(|s| s.to_string()).unwrap_or_else(|| "tool_legacy".into());
+            let tc_name = parts.get(2).map(|s| s.to_string()).unwrap_or_else(|| "unknown".into());
+            return Self {
+                role: Role::Assistant,
+                content: vec![ContentPart::ToolCall {
+                    id: tc_id,
+                    name: tc_name,
+                    arguments: serde_json::Value::Object(Default::default()),
+                }],
+                timestamp: msg.timestamp,
+            };
+        }
+        Self {
+            role,
+            content: vec![ContentPart::Text {
+                text: msg.content.clone(),
+            }],
+            timestamp: msg.timestamp,
+        }
+    }
+}
+
+/// Tool definition sent to the API in the `tools` parameter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+/// A parsed tool call extracted from the model response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolChoice {
+    Auto,
+    None,
+    Required,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatResponse {
     pub response: String,
     pub session_id: String,
     pub token_usage: TokenUsage,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCall {
-    pub tool: String,
-    pub params: serde_json::Value,
 }
 
 /// A permission request sent from the engine to the UI for user approval.
@@ -266,12 +436,13 @@ pub struct ModeConfig {
     pub status_label: &'static str,
 }
 
-const READ_ONLY_TOOLS: &[&str] = &[
-    "file_read", "file_search", "content_search", "web_browser",
-];
+const READ_ONLY_TOOLS: &[&str] = &["file_read", "file_search", "content_search", "web_browser"];
 
 const SELECTIVE_TOOLS: &[&str] = &[
-    "file_read", "file_search", "content_search", "web_browser",
+    "file_read",
+    "file_search",
+    "content_search",
+    "web_browser",
     "schedule_reminder",
 ];
 
@@ -280,10 +451,7 @@ impl ToolScope {
         match self {
             ToolScope::None => false,
             ToolScope::ReadOnly => READ_ONLY_TOOLS.contains(&tool_name),
-            ToolScope::Selective => {
-                SELECTIVE_TOOLS.contains(&tool_name)
-                    || tool_name.contains(':')
-            }
+            ToolScope::Selective => SELECTIVE_TOOLS.contains(&tool_name) || tool_name.contains(':'),
             ToolScope::Full => true,
         }
     }

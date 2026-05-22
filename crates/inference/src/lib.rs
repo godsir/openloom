@@ -1,12 +1,25 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use openloom_models::ContentPart;
 use openloom_models::GpuInfo;
+use openloom_models::Message;
 use openloom_models::ModelBackend;
+use openloom_models::ToolCall;
+use openloom_models::ToolChoice;
+use openloom_models::ToolDefinition;
 use reqwest::Client as HttpClient;
 use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct CompletionRequest {
+    /// Structured messages array (system/user/assistant/tool).
+    pub messages: Vec<Message>,
+    /// Tool definitions sent to the API.
+    pub tools: Vec<ToolDefinition>,
+    /// Tool choice mode.
+    pub tool_choice: Option<ToolChoice>,
+
+    // Legacy: flat prompt string (kept for backward compat).
     pub prompt: String,
     pub max_tokens: usize,
     pub temperature: f32,
@@ -19,6 +32,9 @@ pub struct CompletionRequest {
 impl Default for CompletionRequest {
     fn default() -> Self {
         Self {
+            messages: Vec::new(),
+            tools: Vec::new(),
+            tool_choice: None,
             prompt: String::new(),
             max_tokens: 4096,
             temperature: 0.7,
@@ -30,9 +46,24 @@ impl Default for CompletionRequest {
     }
 }
 
+impl CompletionRequest {
+    /// Get the effective messages array: if messages is non-empty use it,
+    /// otherwise convert the legacy flat prompt into a single user message.
+    pub fn effective_messages(&self) -> Vec<Message> {
+        if !self.messages.is_empty() {
+            self.messages.clone()
+        } else if !self.prompt.is_empty() {
+            vec![Message::user(&self.prompt)]
+        } else {
+            vec![]
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CompletionResponse {
     pub text: String,
+    pub tool_calls: Vec<ToolCall>,
     pub prompt_tokens: usize,
     pub completion_tokens: usize,
     pub cached_tokens: usize,
@@ -209,6 +240,7 @@ impl InferenceEngine {
                 completion_tokens,
                 cached_tokens: 0,
                 latency_ms: 0,
+                tool_calls: Vec::new(),
             })
         })
         .await
@@ -305,6 +337,7 @@ fn stub_complete(req: &CompletionRequest) -> CompletionResponse {
         completion_tokens: response_tokens,
         cached_tokens: 0,
         latency_ms: 0,
+        tool_calls: Vec::new(),
     }
 }
 
@@ -396,11 +429,39 @@ impl AnthropicClient {
     }
 
     async fn try_complete(&self, req: &CompletionRequest) -> anyhow::Result<CompletionResponse> {
+        let messages = self.lower_messages(&req.effective_messages());
         let mut body = serde_json::json!({
             "model": self.model,
             "max_tokens": req.max_tokens,
-            "messages": [{"role": "user", "content": &req.prompt}],
+            "messages": messages,
         });
+        if !req.tools.is_empty() {
+            let anthropic_tools: Vec<serde_json::Value> = req
+                .tools
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "input_schema": t.input_schema,
+                    })
+                })
+                .collect();
+            body["tools"] = serde_json::json!(anthropic_tools);
+        }
+        if let Some(ref tc) = req.tool_choice {
+            match tc {
+                ToolChoice::Auto => {
+                    body["tool_choice"] = serde_json::json!({"type": "auto"});
+                }
+                ToolChoice::None => {
+                    body["tools"] = serde_json::json!([]);
+                }
+                ToolChoice::Required => {
+                    body["tool_choice"] = serde_json::json!({"type": "any"});
+                }
+            }
+        }
         if let Some(budget) = req.thinking_budget {
             body["thinking"] = serde_json::json!({
                 "type": "enabled",
@@ -428,10 +489,8 @@ impl AnthropicClient {
             let preview = &body_text[..body_text.len().min(500)];
             anyhow::anyhow!("Anthropic response parse error: {}, body: {}", e, preview)
         })?;
-        let text = json["content"][0]["text"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+
+        let (text, tool_calls) = self.parse_anthropic_content(&json);
         let prompt_tokens = json["usage"]["input_tokens"].as_u64().unwrap_or(0) as usize;
         let completion_tokens = json["usage"]["output_tokens"].as_u64().unwrap_or(0) as usize;
         let cached_tokens = json["usage"]["cache_read_input_tokens"]
@@ -440,11 +499,85 @@ impl AnthropicClient {
 
         Ok(CompletionResponse {
             text,
+            tool_calls,
             prompt_tokens,
             completion_tokens,
             cached_tokens,
             latency_ms: 0,
         })
+    }
+
+    /// Convert canonical Messages to Anthropic wire format.
+    fn lower_messages(&self, messages: &[Message]) -> Vec<serde_json::Value> {
+        messages
+            .iter()
+            .map(|msg| {
+                let role = msg.role.as_str();
+                let content: Vec<serde_json::Value> = msg
+                    .content
+                    .iter()
+                    .map(|part| match part {
+                        ContentPart::Text { text } => serde_json::json!({
+                            "type": "text", "text": text
+                        }),
+                        ContentPart::ToolCall {
+                            id,
+                            name,
+                            arguments,
+                        } => serde_json::json!({
+                            "type": "tool_use",
+                            "id": id,
+                            "name": name,
+                            "input": arguments,
+                        }),
+                        ContentPart::ToolResult {
+                            tool_call_id,
+                            name: _,
+                            result,
+                        } => serde_json::json!({
+                            "type": "tool_result",
+                            "tool_use_id": tool_call_id,
+                            "content": result,
+                        }),
+                    })
+                    .collect();
+                serde_json::json!({ "role": role, "content": content })
+            })
+            .collect()
+    }
+
+    /// Parse Anthropic response content blocks into text + tool_calls.
+    fn parse_anthropic_content(&self, json: &serde_json::Value) -> (String, Vec<ToolCall>) {
+        let content = json["content"]
+            .as_array()
+            .map(|a| a.as_slice())
+            .unwrap_or(&[]);
+
+        let texts: Vec<String> = content
+            .iter()
+            .filter_map(|block| {
+                if block["type"].as_str() == Some("text") {
+                    block["text"].as_str().map(|s| s.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let text = texts.join("\n");
+
+        let tool_calls: Vec<ToolCall> = content
+            .iter()
+            .filter(|block| matches!(block["type"].as_str(), Some("tool_use")))
+            .filter_map(|block| {
+                Some(ToolCall {
+                    id: block["id"].as_str()?.to_string(),
+                    name: block["name"].as_str()?.to_string(),
+                    arguments: block["input"].clone(),
+                })
+            })
+            .collect();
+
+        (text, tool_calls)
     }
 }
 
@@ -587,11 +720,45 @@ impl OpenAIClient {
     }
 
     async fn try_complete(&self, req: &CompletionRequest) -> anyhow::Result<CompletionResponse> {
-        let body = serde_json::json!({
+        let messages = self.lower_messages(&req.effective_messages());
+        let mut body = serde_json::json!({
             "model": self.model,
             "max_tokens": req.max_tokens,
-            "messages": [{"role": "user", "content": &req.prompt}],
+            "messages": messages,
         });
+        if !req.tools.is_empty() {
+            let openai_tools: Vec<serde_json::Value> = req
+                .tools
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.input_schema,
+                        }
+                    })
+                })
+                .collect();
+            body["tools"] = serde_json::json!(openai_tools);
+        }
+        if let Some(ref tc) = req.tool_choice {
+            match tc {
+                ToolChoice::Auto => {
+                    body["tool_choice"] = serde_json::json!("auto");
+                }
+                ToolChoice::None => {
+                    body["tool_choice"] = serde_json::json!("none");
+                }
+                ToolChoice::Required => {
+                    body["tool_choice"] = serde_json::json!("required");
+                }
+            }
+        }
+        if req.temperature > 0.0 {
+            body["temperature"] = serde_json::json!(req.temperature);
+        }
 
         let resp = self
             .http
@@ -612,10 +779,27 @@ impl OpenAIClient {
             let preview = &body_text[..body_text.len().min(500)];
             anyhow::anyhow!("API response parse error: {}, body: {}", e, preview)
         })?;
-        let text = json["choices"][0]["message"]["content"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+
+        let choice = &json["choices"][0]["message"];
+        let text = choice["content"].as_str().unwrap_or("").to_string();
+        let tool_calls: Vec<ToolCall> = choice["tool_calls"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|tc| {
+                        Some(ToolCall {
+                            id: tc["id"].as_str()?.to_string(),
+                            name: tc["function"]["name"].as_str()?.to_string(),
+                            arguments: serde_json::from_str(
+                                tc["function"]["arguments"].as_str().unwrap_or("{}"),
+                            )
+                            .unwrap_or(serde_json::Value::Object(Default::default())),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let prompt_tokens = json["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as usize;
         let completion_tokens = json["usage"]["completion_tokens"].as_u64().unwrap_or(0) as usize;
         let cached_tokens = json["usage"]["prompt_tokens_details"]["cached_tokens"]
@@ -624,11 +808,84 @@ impl OpenAIClient {
 
         Ok(CompletionResponse {
             text,
+            tool_calls,
             prompt_tokens,
             completion_tokens,
             cached_tokens,
             latency_ms: 0,
         })
+    }
+
+    /// Convert canonical Messages to OpenAI Chat Completions wire format.
+    fn lower_messages(&self, messages: &[Message]) -> Vec<serde_json::Value> {
+        let result: Vec<serde_json::Value> = messages
+            .iter()
+            .map(|msg| {
+                let role = msg.role.as_str();
+                let mut obj = serde_json::json!({ "role": role });
+
+                if role == "assistant" {
+                    // DeepSeek requires reasoning_content on every assistant message (even empty)
+                    obj["reasoning_content"] = serde_json::json!("");
+                }
+
+                if role == "tool" {
+                    if let Some(ContentPart::ToolResult {
+                        tool_call_id,
+                        name: _,
+                        result,
+                    }) = msg.content.first()
+                    {
+                        obj["tool_call_id"] = serde_json::json!(tool_call_id);
+                        obj["content"] = serde_json::json!(result);
+                    }
+                    return obj;
+                }
+
+                let texts: Vec<&str> = msg
+                    .content
+                    .iter()
+                    .filter_map(|p| match p {
+                        ContentPart::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+
+                let tool_calls: Vec<serde_json::Value> = msg
+                    .content
+                    .iter()
+                    .filter_map(|p| match p {
+                        ContentPart::ToolCall {
+                            id,
+                            name,
+                            arguments,
+                        } => Some(serde_json::json!({
+                            "id": id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": serde_json::to_string(arguments).unwrap_or_default(),
+                            }
+                        })),
+                        _ => None,
+                    })
+                    .collect();
+
+                if texts.is_empty() && tool_calls.is_empty() {
+                    obj["content"] = serde_json::json!("");
+                } else if !texts.is_empty() {
+                    obj["content"] = serde_json::json!(texts.join("\n"));
+                    if !tool_calls.is_empty() {
+                        obj["tool_calls"] = serde_json::json!(tool_calls);
+                    }
+                } else {
+                    obj["content"] = serde_json::Value::Null;
+                    obj["tool_calls"] = serde_json::json!(tool_calls);
+                }
+
+                obj
+            })
+            .collect()
     }
 }
 
@@ -783,6 +1040,33 @@ pub fn create_cloud_client(
         ModelBackend::Ollama => Ok(Box::new(OpenAIClient::new(api_key, model, base_url))),
         ModelBackend::LlamaCpp => anyhow::bail!("LlamaCpp is not a cloud backend"),
     }
+}
+
+/// Call LM Studio's load model API to ensure a model is loaded before inference.
+pub async fn ensure_lm_studio_model(base_url: &str, model: &str, context_size: usize) -> Result<()> {
+    let load_url = format!(
+        "{}/api/v1/models/load",
+        base_url.trim_end_matches("/v1")
+    );
+    let client = HttpClient::new();
+    let body = serde_json::json!({
+        "model": model,
+        "context_length": context_size,
+    });
+    let resp = client
+        .post(&load_url)
+        .json(&body)
+        .send()
+        .await?;
+    if resp.status().is_success() {
+        tracing::info!(%model, "LM Studio model loaded successfully");
+    } else {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        // Don't fail — model might already be loaded
+        tracing::debug!(%model, %status, %text, "LM Studio load model response (non-fatal)");
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -18,11 +18,11 @@ use crossterm::terminal::{self, ClearType};
 use crossterm::{cursor, execute};
 use openloom_engine::Engine;
 use ratatui::Terminal;
+use ratatui::Viewport;
 use ratatui::backend::CrosstermBackend;
 use ratatui::buffer::Buffer;
 use ratatui::text::Text;
 use ratatui::widgets::{Paragraph, Widget};
-use ratatui::Viewport;
 
 use crate::tui::app::{App, AppState};
 
@@ -70,10 +70,8 @@ pub async fn run(engine: Arc<Engine>, resume_session: Option<String>) -> anyhow:
     for skill in &all_skills {
         if skill.name.contains(':') {
             let short = skill.name.split(':').next_back().unwrap_or(&skill.name);
-            app.external_commands.push((
-                format!("/{}", short),
-                skill.description.clone(),
-            ));
+            app.external_commands
+                .push((format!("/{}", short), skill.description.clone()));
         }
     }
 
@@ -136,13 +134,12 @@ fn print_welcome(engine: &Engine) {
         AR, AG, AB,
     );
     let data_dir = engine.data_dir().display();
-    println!(
-        "  \x1b[90mData: {}\x1b[0m",
-        data_dir,
-    );
+    println!("  \x1b[90mData: {}\x1b[0m", data_dir,);
     println!(
         "\x1b[90m{}\x1b[0m",
-        terminal::size().map(|(w, _)| "\u{2500}".repeat(w as usize)).unwrap_or_else(|_| "\u{2500}".repeat(80))
+        terminal::size()
+            .map(|(w, _)| "\u{2500}".repeat(w as usize))
+            .unwrap_or_else(|_| "\u{2500}".repeat(80))
     );
 }
 
@@ -169,7 +166,7 @@ async fn app_run(
                 crate::tui::overlays::approval::ApprovalOverlay::new(
                     format!("Allow {}?", req.tool_name),
                     format!("{}\n\nRisk: {}", req.description, req.risk_level),
-                )
+                ),
             ));
             app.state = AppState::Overlay;
         }
@@ -187,7 +184,10 @@ async fn app_run(
 
                 if let Some(context) = app.engine.find_skill_by_name(skill_name) {
                     activated = Some((skill_name.to_string(), context));
-                } else if let Some(context) = app.engine.find_skill_by_name(&format!("project:{}", skill_name)) {
+                } else if let Some(context) = app
+                    .engine
+                    .find_skill_by_name(&format!("project:{}", skill_name))
+                {
                     activated = Some((format!("project:{}", skill_name), context));
                 } else {
                     let all_skills = app.engine.external_skill_names();
@@ -254,7 +254,11 @@ async fn app_run(
                 let mut msg = crate::tui::app::Message::assistant("[no response]".into());
                 msg.elapsed_ms = elapsed_ms;
                 app.messages.push(msg);
-            } else if let Some(last) = app.messages.iter_mut().rev().find(|m| m.role == "assistant")
+            } else if let Some(last) = app
+                .messages
+                .iter_mut()
+                .rev()
+                .find(|m| m.role == "assistant")
             {
                 last.elapsed_ms = elapsed_ms;
             }
@@ -343,7 +347,8 @@ fn flush_messages_to_scrollback(
     let width = terminal::size().map(|(w, _)| w as usize).unwrap_or(80);
 
     let messages_to_flush = &app.messages[app.flushed_up_to..flush_end];
-    let lines = render::build_lines_for_messages(messages_to_flush, p, width, app.flushed_up_to > 0);
+    let lines =
+        render::build_lines_for_messages(messages_to_flush, p, width, app.flushed_up_to > 0);
 
     if !lines.is_empty() {
         let height = lines.len() as u16;

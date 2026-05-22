@@ -272,7 +272,8 @@ pub async fn execute_command(app: &mut App, cmd: SlashCommand) -> String {
                         _ => "Usage: /model use <local|cloud|auto>".into(),
                     }
                 }
-                _ => "Usage: /model [set <backend> <model> [api_key_env] | use <local|cloud|auto>]".into(),
+                _ => "Usage: /model [set <backend> <model> [api_key_env] | use <local|cloud|auto>]"
+                    .into(),
             }
         }
         SlashCommand::Cost => token_command(app, "").await,
@@ -685,7 +686,9 @@ pub async fn execute_command(app: &mut App, cmd: SlashCommand) -> String {
                         role: "mode".into(),
                         content: format!(
                             "Switched from {} to {} mode ({})",
-                            old_label, cfg.status_label, new_mode.description()
+                            old_label,
+                            cfg.status_label,
+                            new_mode.description()
                         ),
                         collapsed: false,
                         elapsed_ms: None,
@@ -720,12 +723,16 @@ pub async fn execute_command(app: &mut App, cmd: SlashCommand) -> String {
                 lines.join("\n")
             } else if let Some(level) = openloom_models::ThinkingLevel::from_key(sub) {
                 app.thinking = level;
-                let budget_info = level.budget_tokens()
+                let budget_info = level
+                    .budget_tokens()
                     .map(|b| format!(" (budget: {} tokens)", b))
                     .unwrap_or_else(|| " (disabled)".into());
                 format!("Thinking set to {}{}", level.label(), budget_info)
             } else {
-                format!("Unknown level: '{}'. Available: none, low, mid, high, max", sub)
+                format!(
+                    "Unknown level: '{}'. Available: none, low, mid, high, max",
+                    sub
+                )
             }
         }
     }

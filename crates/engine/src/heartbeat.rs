@@ -48,6 +48,9 @@ pub(crate) fn spawn_hub_heartbeat(
                     stop: vec!["\n".into()],
                     stream: false,
                     thinking_budget: None,
+                    messages: Vec::new(),
+                    tools: Vec::new(),
+                    tool_choice: None,
                 })
                 .await
             {

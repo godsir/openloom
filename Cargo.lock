@@ -1439,7 +1439,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "openloom"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1466,7 +1466,7 @@ dependencies = [
 
 [[package]]
 name = "openloom-cache"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "safetensors",
  "serde",
@@ -1475,7 +1475,7 @@ dependencies = [
 
 [[package]]
 name = "openloom-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1499,7 +1499,7 @@ dependencies = [
 
 [[package]]
 name = "openloom-inference"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1515,7 +1515,7 @@ dependencies = [
 
 [[package]]
 name = "openloom-memory"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1533,7 +1533,7 @@ dependencies = [
 
 [[package]]
 name = "openloom-models"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1544,7 +1544,7 @@ dependencies = [
 
 [[package]]
 name = "openloom-router"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "openloom-models",
  "regex",
@@ -1561,7 +1561,7 @@ dependencies = [
 
 [[package]]
 name = "openloom-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1580,7 +1580,7 @@ dependencies = [
 
 [[package]]
 name = "openloom-skills"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1599,7 +1599,7 @@ dependencies = [
 
 [[package]]
 name = "openloom-weaver"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",

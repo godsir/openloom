@@ -58,9 +58,13 @@ impl Engine {
         // Complex intent, skill match, or cloud model available -> agent loop with streaming markers
         let has_cloud = self.cloud.is_some();
         let mode_cfg = mode.config();
-        if mode_cfg.agent_loop && (out.complexity >= 0.5 || out.skill_match.is_some() || has_cloud) {
+        if mode_cfg.agent_loop && (out.complexity >= 0.5 || out.skill_match.is_some() || has_cloud)
+        {
             let tx_clone = tx.clone();
-            match self.agent_loop_streaming(&msg, session_id, tx_clone, mode).await {
+            match self
+                .agent_loop_streaming(&msg, session_id, tx_clone, mode)
+                .await
+            {
                 Ok(resp) => {
                     let _ = tx.send(resp.response).await;
                 }
@@ -79,7 +83,7 @@ impl Engine {
         });
         let working_memory = self.get_working_memory(session_id).unwrap_or_default();
         let persona_summary = self.persona.summarize().await.unwrap_or_default();
-        let system = crate::system_instruction().replace("[tools]", "None");
+        let system = crate::system_instruction();
         let system = if mode_cfg.system_suffix.is_empty() {
             system
         } else {
@@ -126,11 +130,14 @@ impl Engine {
         let req = CompletionRequest {
             prompt: assembled.prompt.clone(),
             max_tokens: self.max_output_tokens,
-            temperature: 0.7,
+            temperature: 0.0,
             top_p: 1.0,
             stop: Vec::new(),
             stream: true,
             thinking_budget: thinking.budget_tokens(),
+            messages: Vec::new(),
+            tools: Vec::new(),
+            tool_choice: None,
         };
 
         let stream_result = match model_pref {

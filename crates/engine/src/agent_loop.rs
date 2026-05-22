@@ -2,7 +2,7 @@ use super::Engine;
 use crate::token_store::TokenUsageRecord;
 use anyhow::Result;
 use chrono::Utc;
-use openloom_inference::CompletionRequest;
+use openloom_inference::{CompletionRequest, CompletionResponse};
 use openloom_models::*;
 use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
@@ -46,7 +46,8 @@ impl Engine {
         let mut history: Vec<ChatMessage> = self.get_working_memory(session_id).unwrap_or_default();
         history.push(msg.clone());
 
-        let skill_list = self.build_skill_list_string();
+        let skill_infos = self.skills.list_all();
+        let tool_definitions = crate::build_tool_definitions(&skill_infos);
 
         let mut all_tool_messages: Vec<ChatMessage> = Vec::new();
         let mut last_response = String::new();
@@ -65,35 +66,42 @@ impl Engine {
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
             for _iteration in 0..max_iterations {
                 let persona_summary = self.persona.summarize().await.unwrap_or_default();
-                let system_with_tools = crate::system_instruction().replace("[tools]", &skill_list);
-                let system_with_tools = if mode_cfg.system_suffix.is_empty() {
-                    system_with_tools
+                let system_with_mode = crate::system_instruction();
+                let system_with_mode = if mode_cfg.system_suffix.is_empty() {
+                    system_with_mode
                 } else {
-                    format!("{}\n\n{}", system_with_tools, mode_cfg.system_suffix)
+                    format!("{}\n\n{}", system_with_mode, mode_cfg.system_suffix)
                 };
-                let assembled =
-                    self.weaver
-                        .assemble_with_limit(&system_with_tools, "", &persona_summary, None, &history, self.context_max_chars);
+                let messages = self.weaver.assemble_messages(
+                    &system_with_mode,
+                    "",
+                    &persona_summary,
+                    None,
+                    &history,
+                    self.context_max_chars,
+                );
 
-                let response = self.invoke_model_raw(&assembled.prompt).await?;
-                total_prompt_tokens += self.inference.token_count(&assembled.prompt);
-                total_completion_tokens += self.inference.token_count(&response);
+                let completion_req = CompletionRequest {
+                    messages,
+                    tools: tool_definitions.clone(),
+                    tool_choice: None,
+                    prompt: String::new(),
+                    max_tokens: self.max_output_tokens,
+                    temperature: 0.0,
+                    ..Default::default()
+                };
 
-                if let Some(tool_call) = self.parse_tool_call(&response) {
-                    // Send thinking marker — extract text before the JSON/fence block
+                let response = self.invoke_model_native(&completion_req).await?;
+                total_prompt_tokens += response.prompt_tokens;
+                total_completion_tokens += response.completion_tokens;
+
+                if !response.tool_calls.is_empty() {
+                    // Stream tool call markers to UI
                     if let Some(ref tx) = tx {
-                        let thinking_text = if let Some(fence) = response.find("```") {
-                            response[..fence].trim()
-                        } else if let Some(brace) = response.find('{') {
-                            response[..brace].trim()
-                        } else {
-                            ""
-                        };
-                        if !thinking_text.is_empty() {
-                            let _ = tx.send(format!("\x01THINK\x02{}", thinking_text)).await;
+                        for tc in &response.tool_calls {
+                            let call_json = serde_json::to_string(tc).unwrap_or_default();
+                            let _ = tx.send(format!("\x01CALL\x02{}", call_json)).await;
                         }
-                        let call_json = serde_json::to_string(&tool_call).unwrap_or_default();
-                        let _ = tx.send(format!("\x01CALL\x02{}", call_json)).await;
                     }
 
                     *self.agent_state.write().await = AgentState::Acting;
@@ -102,58 +110,75 @@ impl Engine {
                         new_state: AgentState::Acting,
                     });
 
-                    let result = match self.execute_tool(&tool_call, mode).await {
-                        Ok(output) => truncate_tool_result(&output),
-                        Err(e) => format!("Tool error: {}", e),
-                    };
+                    // Execute each tool call
+                    for tc in &response.tool_calls {
+                        let result = match self.execute_tool(tc, mode).await {
+                            Ok(output) => truncate_tool_result(&output),
+                            Err(e) => format!("Tool error: {}", e),
+                        };
 
-                    // Send result marker
-                    if let Some(ref tx) = tx {
-                        let _ = tx.send(format!("\x01RESULT\x02{}", result)).await;
+                        if let Some(ref tx) = tx {
+                            let _ = tx.send(format!("\x01RESULT\x02{}", result)).await;
+                        }
+
+                        let ts = Utc::now();
+                        history.push(ChatMessage {
+                            role: "assistant".into(),
+                            content: format!("ToolCall|{}|{}", tc.id, tc.name),
+                            timestamp: ts,
+                        });
+                        history.push(ChatMessage {
+                            role: "tool".into(),
+                            content: format!("{}|{}", tc.id, result.clone()),
+                            timestamp: ts,
+                        });
+                        all_tool_messages.push(ChatMessage {
+                            role: "assistant".into(),
+                            content: format!("ToolCall|{}|{}", tc.id, tc.name),
+                            timestamp: ts,
+                        });
+                        all_tool_messages.push(ChatMessage {
+                            role: "tool".into(),
+                            content: format!("{}|{}", tc.id, result),
+                            timestamp: ts,
+                        });
                     }
-
-                    let ts = Utc::now();
-                    history.push(ChatMessage {
-                        role: "assistant".into(),
-                        content: response.clone(),
-                        timestamp: ts,
-                    });
-                    history.push(ChatMessage {
-                        role: "tool".into(),
-                        content: result.clone(),
-                        timestamp: ts,
-                    });
-                    all_tool_messages.push(ChatMessage {
-                        role: "assistant".into(),
-                        content: response,
-                        timestamp: ts,
-                    });
-                    all_tool_messages.push(ChatMessage {
-                        role: "tool".into(),
-                        content: result,
-                        timestamp: ts,
-                    });
                     *self.agent_state.write().await = AgentState::Thinking;
                 } else {
-                    last_response = response;
+                    last_response = response.text;
                     break;
                 }
             }
 
             if last_response.is_empty() && !all_tool_messages.is_empty() {
                 let persona_summary = self.persona.summarize().await.unwrap_or_default();
-                let system_with_tools = crate::system_instruction().replace("[tools]", &skill_list);
-                let system_with_tools = if mode_cfg.system_suffix.is_empty() {
-                    system_with_tools
+                let system_with_mode = crate::system_instruction();
+                let system_with_mode = if mode_cfg.system_suffix.is_empty() {
+                    system_with_mode
                 } else {
-                    format!("{}\n\n{}", system_with_tools, mode_cfg.system_suffix)
+                    format!("{}\n\n{}", system_with_mode, mode_cfg.system_suffix)
                 };
-                let assembled =
-                    self.weaver
-                        .assemble_with_limit(&system_with_tools, "", &persona_summary, None, &history, self.context_max_chars);
-                last_response = self.invoke_model_raw(&assembled.prompt).await?;
-                total_prompt_tokens += self.inference.token_count(&assembled.prompt);
-                total_completion_tokens += self.inference.token_count(&last_response);
+                let messages = self.weaver.assemble_messages(
+                    &system_with_mode,
+                    "",
+                    &persona_summary,
+                    None,
+                    &history,
+                    self.context_max_chars,
+                );
+                let completion_req = CompletionRequest {
+                    messages,
+                    tools: tool_definitions.clone(),
+                    tool_choice: None,
+                    prompt: String::new(),
+                    max_tokens: self.max_output_tokens,
+                    temperature: 0.0,
+                    ..Default::default()
+                };
+                let response = self.invoke_model_native(&completion_req).await?;
+                total_prompt_tokens += response.prompt_tokens;
+                total_completion_tokens += response.completion_tokens;
+                last_response = response.text;
             }
 
             Ok::<_, anyhow::Error>(last_response)
@@ -214,18 +239,48 @@ impl Engine {
         }
     }
 
-    pub(crate) fn build_skill_list_string(&self) -> String {
-        let skills = self.skills.all_skills();
-        if skills.is_empty() {
-            return "None".into();
+    pub(crate) async fn invoke_model_native(
+        &self,
+        req: &CompletionRequest,
+    ) -> Result<CompletionResponse> {
+        if let Some(ref cloud) = self.cloud {
+            // Pre-flight: ensure LM Studio has a model loaded
+            if cloud.provider() == ModelBackend::LmStudio {
+                let _ = openloom_inference::ensure_lm_studio_model(
+                    "http://localhost:1234/v1",
+                    cloud.model_name(),
+                    32000,
+                )
+                .await;
+            }
+            match cloud.complete(req.clone()).await {
+                Ok(r) => return Ok(r),
+                Err(e) => tracing::warn!("Cloud failed, trying local: {}", e),
+            }
         }
-        skills
+        // Fallback: construct text-only request from messages
+        let prompt = req
+            .effective_messages()
             .iter()
-            .map(|s| format!("### {}\n{}", s.name(), s.context_md()))
+            .map(|m| format!("{}: {}", m.role.as_str(), m.text_content()))
             .collect::<Vec<_>>()
-            .join("\n\n")
+            .join("\n");
+        let fallback_req = CompletionRequest {
+            prompt,
+            max_tokens: req.max_tokens,
+            temperature: req.temperature,
+            ..Default::default()
+        };
+        if let Some(ref local) = self.local_client {
+            match local.complete(fallback_req.clone()).await {
+                Ok(r) => return Ok(r),
+                Err(e) => tracing::warn!("Local client failed, trying inference engine: {}", e),
+            }
+        }
+        self.inference.complete(fallback_req).await
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn invoke_model_raw(&self, prompt: &str) -> Result<String> {
         let max_tokens = self.max_output_tokens;
         if let Some(ref cloud) = self.cloud {
@@ -264,77 +319,55 @@ impl Engine {
             .map(|r| r.text)
     }
 
-    pub(crate) fn parse_tool_call(&self, response: &str) -> Option<ToolCall> {
-        let trimmed = response.trim();
-
-        // Strip markdown code fences if present
-        let content = if let Some(fence_start) = trimmed.find("```") {
-            let after_fence = &trimmed[fence_start + 3..];
-            let body_start = after_fence.find('\n').map(|i| i + 1).unwrap_or(0);
-            let body = &after_fence[body_start..];
-            if let Some(fence_end) = body.find("```") {
-                body[..fence_end].trim()
-            } else {
-                body.trim()
-            }
+    pub(crate) async fn execute_tool(
+        &self,
+        call: &ToolCall,
+        mode: openloom_models::Mode,
+    ) -> Result<String> {
+        // Reverse sanitize: model returns safe name, find actual skill by matching sanitized forms
+        let tool_name = if self.skills.find_by_name(&call.name).is_some() {
+            call.name.clone()
         } else {
-            trimmed
+            // Try matching by sanitizing each registered skill name
+            let all = self.skills.list_all();
+            all.iter()
+                .find(|s| crate::sanitize_tool_name(&s.name) == call.name)
+                .map(|s| s.name.clone())
+                .unwrap_or_else(|| call.name.clone())
         };
 
-        // Try each '{' as potential start of a tool call JSON object
-        let mut search_from = 0;
-        while let Some(brace_pos) = content[search_from..].find('{') {
-            let abs_pos = search_from + brace_pos;
-            let slice = &content[abs_pos..];
-
-            let mut depth = 0;
-            let mut end = 0;
-            for (i, ch) in slice.char_indices() {
-                match ch {
-                    '{' => depth += 1,
-                    '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            end = i;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if end > 0 {
-                let json_str = &slice[..=end];
-                if let Ok(call) = serde_json::from_str::<ToolCall>(json_str) {
-                    return Some(call);
-                }
-            }
-            search_from = abs_pos + 1;
-        }
-
-        None
-    }
-
-    pub(crate) async fn execute_tool(&self, call: &ToolCall, mode: openloom_models::Mode) -> Result<String> {
         let mode_cfg = mode.config();
-        if !mode_cfg.tool_scope.allows(&call.tool) {
+        if !mode_cfg.tool_scope.allows(&tool_name) {
             return Ok(format!(
                 "Tool '{}' is not available in {} mode.",
-                call.tool, mode_cfg.status_label
+                tool_name, mode_cfg.status_label
             ));
         }
-        let risk = openloom_sandbox::classify_risk(&call.tool, &call.params);
+        let risk = openloom_sandbox::classify_risk(&tool_name, &call.arguments);
 
         // Permission confirmation for risky tools (skip if --dangerously-skip-permissions)
         if !self.skip_permissions
-            && matches!(risk, openloom_models::RiskLevel::Medium | openloom_models::RiskLevel::High)
+            && matches!(
+                risk,
+                openloom_models::RiskLevel::Medium | openloom_models::RiskLevel::High
+            )
         {
             let risk_str = format!("{:?}", risk);
-            let desc = format!("{}({})", call.tool,
-                call.params.as_object()
-                    .map(|p| p.iter().take(2).map(|(k,v)| format!("{}={}", k, v)).collect::<Vec<_>>().join(", "))
-                    .unwrap_or_default());
+            let desc = format!(
+                "{}({})",
+                tool_name,
+                call.arguments
+                    .as_object()
+                    .map(|p| p
+                        .iter()
+                        .take(2)
+                        .map(|(k, v)| format!("{}={}", k, v))
+                        .collect::<Vec<_>>()
+                        .join(", "))
+                    .unwrap_or_default()
+            );
             let req = openloom_models::PermissionRequest {
-                tool_name: call.tool.clone(),
+                tool_name: tool_name.clone(),
                 description: desc,
                 risk_level: risk_str,
             };
@@ -342,19 +375,19 @@ impl Engine {
             if self.perm_request_tx.send((req, resp_tx)).await.is_ok() {
                 match resp_rx.await {
                     Ok(true) => {} // approved, continue
-                    _ => return Ok(format!("Tool '{}' denied by user.", call.tool)),
+                    _ => return Ok(format!("Tool '{}' denied by user.", tool_name)),
                 }
             }
         }
 
         // Always block Forbidden-level risks regardless of permissions
         if matches!(risk, openloom_models::RiskLevel::Forbidden) {
-            let msg = openloom_sandbox::risk_message(&call.tool, &call.params, &risk);
+            let msg = openloom_sandbox::risk_message(&tool_name, &call.arguments, &risk);
             return Ok(msg);
         }
 
         self.skills
-            .invoke(&call.tool, call.params.clone())
+            .invoke(&tool_name, call.arguments.clone())
             .await
             .map(|v| v.to_string())
     }

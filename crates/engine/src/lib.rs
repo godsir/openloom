@@ -54,7 +54,7 @@ use openloom_memory::persona::CognitionsPersonaProvider;
 use openloom_memory::store::MessageStore;
 use openloom_models::*;
 use openloom_router::SmartRouter;
-use openloom_skills::{Skill, SkillRegistry, builtins};
+use openloom_skills::{Skill, SkillInfo, SkillRegistry, builtins};
 use openloom_weaver::ContextWeaver;
 use std::sync::Mutex;
 use std::sync::{
@@ -69,21 +69,12 @@ pub use openloom_models::EngineEvent;
 /// Channel payload: a permission request paired with a oneshot sender for the user's response.
 pub type PermissionChannelItem = (PermissionRequest, tokio::sync::oneshot::Sender<bool>);
 
-pub(crate) const SYSTEM_INSTRUCTION: &str = "You are openLoom, a coding assistant and AI agent running locally.
+pub(crate) const SYSTEM_INSTRUCTION: &str =
+    "You are openLoom, a coding assistant and AI agent running locally.
 
 ## Environment
 - Working directory: [cwd]
 - Platform: [platform]
-
-## Tool Use
-When you need to use a tool, respond with ONLY a JSON block:
-{\"tool\": \"<name>\", \"params\": {\"key\": \"value\"}}
-
-One tool call per response. After getting the result, you may call another tool or give your final answer.
-
-## Available Tools
-
-[tools]
 
 ## Workflow
 1. Read files before editing them.
@@ -92,9 +83,9 @@ One tool call per response. After getting the result, you may call another tool 
 4. Search before making assumptions about code structure.
 
 ## Rules
-- Final answers must be natural language (no JSON).
 - Answer in the same language as the user.
-- Be concise and direct.";
+- Be concise and direct.
+";
 
 pub(crate) fn system_instruction() -> String {
     let cwd = std::env::current_dir()
@@ -124,9 +115,7 @@ fn detect_project_context() -> String {
         Err(_) => return String::new(),
     };
 
-    let data_dir = dirs::data_dir()
-        .unwrap_or_default()
-        .join("openLoom");
+    let data_dir = dirs::data_dir().unwrap_or_default().join("openLoom");
 
     let mut context_parts: Vec<String> = Vec::new();
 
@@ -157,6 +146,118 @@ fn detect_project_context() -> String {
     }
 
     context_parts.join("\n")
+}
+
+/// Build ToolDefinition array from registered skills for native tool calling.
+/// Sanitize a skill name for API tool name requirements: ^[a-zA-Z0-9_-]+$
+pub(crate) fn sanitize_tool_name(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .collect()
+}
+
+fn input_schema_for_skill(name: &str) -> serde_json::Value {
+    match name {
+        "file_read" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path to read"},
+                "offset": {"type": "integer", "description": "Line to start from (0-indexed, default 0)"},
+                "limit": {"type": "integer", "description": "Max lines to return (default 2000)"}
+            },
+            "required": ["path"]
+        }),
+        "file_write" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path to write to"},
+                "content": {"type": "string", "description": "Content to write"}
+            },
+            "required": ["path"]
+        }),
+        "file_edit" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path to edit"},
+                "old_string": {"type": "string", "description": "Exact string to replace"},
+                "new_string": {"type": "string", "description": "Replacement string"},
+                "replace_all": {"type": "boolean", "description": "Replace all occurrences (default false)"}
+            },
+            "required": ["path", "old_string"]
+        }),
+        "file_search" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Glob pattern, e.g. '**/*.rs'"},
+                "path": {"type": "string", "description": "Base directory (default current dir)"}
+            },
+            "required": ["pattern"]
+        }),
+        "content_search" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Regex pattern to search for"},
+                "path": {"type": "string", "description": "Base directory (default current dir)"},
+                "glob": {"type": "string", "description": "File glob filter, e.g. '**/*.html' (default '**/*')"},
+                "max_results": {"type": "integer", "description": "Max results (default 50)"}
+            },
+            "required": ["pattern"]
+        }),
+        "shell" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "Shell command to execute"},
+                "cwd": {"type": "string", "description": "Working directory for command"},
+                "timeout_ms": {"type": "integer", "description": "Timeout in ms (default 120000)"}
+            },
+            "required": ["command"]
+        }),
+        "web-browser" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "URL to fetch via HTTP GET"}
+            },
+            "required": ["url"]
+        }),
+        "schedule-reminder" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["add", "list"]},
+                "title": {"type": "string", "description": "Reminder title"},
+                "time": {"type": "string", "description": "Reminder time"}
+            },
+            "required": ["action"]
+        }),
+        _ => serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": true
+        }),
+    }
+}
+
+pub(crate) fn build_tool_definitions(skills: &[SkillInfo]) -> Vec<ToolDefinition> {
+    let mut seen = std::collections::HashSet::new();
+    skills
+        .iter()
+        .filter_map(|s| {
+            let safe_name = sanitize_tool_name(&s.name);
+            if !seen.insert(safe_name.clone()) {
+                return None;
+            }
+            let schema = input_schema_for_skill(&s.name);
+            let schema = if schema.get("properties").map_or(true, |p| p.as_object().map_or(true, |o| o.is_empty())) {
+                input_schema_for_skill(&safe_name)
+            } else {
+                schema
+            };
+            Some(ToolDefinition {
+                name: safe_name,
+                description: s.description.clone(),
+                input_schema: schema,
+            })
+        })
+        .collect()
 }
 
 pub struct Engine {
@@ -283,10 +384,8 @@ impl Engine {
 
         // Discover and register external skills (plugins + project-local)
         let cwd = std::env::current_dir().unwrap_or_default();
-        let external_skills = openloom_skills::plugin_loader::PluginLoader::discover(
-            &config.data_dir,
-            &cwd,
-        );
+        let external_skills =
+            openloom_skills::plugin_loader::PluginLoader::discover(&config.data_dir, &cwd);
         for ext_skill in external_skills {
             tracing::info!(name = ext_skill.qualified_name(), "Loaded external skill");
             let manifest = ext_skill.manifest().clone();
@@ -414,7 +513,12 @@ impl Engine {
 \n\
 当前支持的命令：文件管理、代码协助、网页搜索、日程提醒。";
 
-    pub async fn handle_message(&self, msg: ChatMessage, session_id: &str, mode: openloom_models::Mode) -> Result<ChatResponse> {
+    pub async fn handle_message(
+        &self,
+        msg: ChatMessage,
+        session_id: &str,
+        mode: openloom_models::Mode,
+    ) -> Result<ChatResponse> {
         // Rate limiting
         {
             let mut limiter = self.rate_limiter.lock().unwrap();
@@ -1009,44 +1113,6 @@ mod tests {
             .build()
             .unwrap()
             .block_on(setup_test_engine())
-    }
-
-    #[test]
-    fn test_parse_tool_call_valid() {
-        let (engine, _dir) = sync_setup();
-        let result = engine.parse_tool_call("{\"tool\": \"test\", \"params\": {\"k\": \"v\"}}");
-        assert!(result.is_some());
-        let call = result.unwrap();
-        assert_eq!(call.tool, "test");
-    }
-
-    #[test]
-    fn test_parse_tool_call_with_whitespace() {
-        let (engine, _dir) = sync_setup();
-        let result = engine.parse_tool_call("  {\"tool\": \"test\", \"params\": {}}");
-        assert!(result.is_some());
-    }
-
-    #[test]
-    fn test_parse_tool_call_malformed_json() {
-        let (engine, _dir) = sync_setup();
-        let result = engine.parse_tool_call("{\"tool\": \"test\", \"params\": {}");
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_parse_tool_call_no_json() {
-        let (engine, _dir) = sync_setup();
-        let result = engine.parse_tool_call("This is a normal response");
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_parse_tool_call_nested_braces() {
-        let (engine, _dir) = sync_setup();
-        let json = "{\"tool\": \"test\", \"params\": {\"nested\": {\"a\": 1}}}";
-        let result = engine.parse_tool_call(json);
-        assert!(result.is_some());
     }
 
     #[test]

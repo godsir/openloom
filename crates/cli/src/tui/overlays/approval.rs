@@ -147,6 +147,7 @@ impl Overlay for ApprovalOverlay {
     }
 
     fn approval_result(&self) -> Option<bool> {
-        self.confirmed.map(|c| matches!(c, ApprovalChoice::Approve | ApprovalChoice::ApproveSession))
+        self.confirmed
+            .map(|c| matches!(c, ApprovalChoice::Approve | ApprovalChoice::ApproveSession))
     }
 }

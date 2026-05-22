@@ -34,10 +34,15 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             // If in history search, select the highlighted match
             if app.history_search_active {
                 let query = app.current_line().to_lowercase();
-                let matches: Vec<&String> = app.history.iter().rev()
+                let matches: Vec<&String> = app
+                    .history
+                    .iter()
+                    .rev()
                     .filter(|h| query.is_empty() || h.to_lowercase().contains(&query))
                     .collect();
-                let idx = app.command_palette_selected.min(matches.len().saturating_sub(1));
+                let idx = app
+                    .command_palette_selected
+                    .min(matches.len().saturating_sub(1));
                 if let Some(selected) = matches.get(idx) {
                     app.input = crate::tui::app::build_textarea();
                     app.input.insert_str(selected);
@@ -185,7 +190,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
 
         Action::ToggleThinking => {
             // Toggle only the last turn's thinking/tool messages (after last user message)
-            let last_user_idx = app.messages.iter().rposition(|m| m.role == "user").unwrap_or(0);
+            let last_user_idx = app
+                .messages
+                .iter()
+                .rposition(|m| m.role == "user")
+                .unwrap_or(0);
             for msg in app.messages[last_user_idx..].iter_mut() {
                 if msg.role == "thinking" || msg.role == "tool_call" || msg.role == "tool_result" {
                     msg.collapsed = !msg.collapsed;
@@ -202,7 +211,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
                 role: "mode".into(),
                 content: format!(
                     "Switched from {} to {} mode ({})",
-                    old_label, cfg.status_label, app.mode.description()
+                    old_label,
+                    cfg.status_label,
+                    app.mode.description()
                 ),
                 collapsed: false,
                 elapsed_ms: None,
@@ -244,10 +255,14 @@ fn palette_cycle(app: &mut App, delta: i32) {
 
 fn history_search_cycle(app: &mut App, delta: i32) {
     let query = app.current_line().to_lowercase();
-    let count = app.history.iter()
+    let count = app
+        .history
+        .iter()
         .filter(|h| query.is_empty() || h.to_lowercase().contains(&query))
         .count();
-    if count == 0 { return; }
+    if count == 0 {
+        return;
+    }
     let len = count as i32;
     let new_idx = ((app.command_palette_selected as i32 + delta) % len + len) % len;
     app.command_palette_selected = new_idx as usize;

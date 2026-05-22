@@ -687,10 +687,7 @@ impl<'a> MessageStore<'a> {
         Ok(rows)
     }
 
-    pub fn all(
-        &self,
-        session_id: &str,
-    ) -> anyhow::Result<Vec<openloom_models::ChatMessage>> {
+    pub fn all(&self, session_id: &str) -> anyhow::Result<Vec<openloom_models::ChatMessage>> {
         let mut stmt = self.conn.prepare(
             "SELECT role, content, timestamp FROM message_history
              WHERE session_id = ?1 ORDER BY seq ASC",

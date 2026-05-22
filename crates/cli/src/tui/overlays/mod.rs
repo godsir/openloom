@@ -22,5 +22,7 @@ pub trait Overlay {
     fn context(&self) -> &str;
     /// For approval overlays, return the user's decision (true = approved).
     /// Returns None for non-approval overlays or when no decision has been made.
-    fn approval_result(&self) -> Option<bool> { None }
+    fn approval_result(&self) -> Option<bool> {
+        None
+    }
 }
