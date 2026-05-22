@@ -3988,6 +3988,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "loom-tui-stubs"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "loom-absolute-path",
+ "loom-app-server-protocol",
+ "loom-config",
+ "loom-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "loom-uds"
 version = "0.2.0"
 dependencies = [

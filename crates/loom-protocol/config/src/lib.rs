@@ -12,7 +12,7 @@ mod marketplace_edit;
 mod mcp_edit;
 mod mcp_types;
 mod merge;
-mod model_info;
+pub mod model_info;
 mod overrides;
 pub mod permissions_toml;
 mod plugin_edit;

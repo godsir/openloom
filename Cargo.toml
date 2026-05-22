@@ -32,6 +32,7 @@ members = [
     "crates/loom-utils/otel-stub",
     "crates/loom-protocol/features",
     "crates/loom-utils/shim-stubs",
+    "crates/loom-utils/tui-stubs",
     "crates/loom-protocol/tools",
     "crates/loom-protocol/hooks",
     "crates/loom-protocol/external-agent-migration",
@@ -210,6 +211,7 @@ loom-app-server-protocol = { path = "crates/loom-protocol/app-server-protocol" }
 loom-features = { path = "crates/loom-protocol/features" }
 loom-otel-stub = { path = "crates/loom-utils/otel-stub" }
 loom-shim-stubs = { path = "crates/loom-utils/shim-stubs" }
+loom-tui-stubs = { path = "crates/loom-utils/tui-stubs" }
 loom-sandboxing = { path = "crates/loom-protocol/sandboxing" }
 loom-exec-server = { path = "crates/loom-protocol/exec-server" }
 loom-skills = { path = "crates/loom-protocol/skills" }
