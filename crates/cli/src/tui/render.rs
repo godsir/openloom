@@ -639,9 +639,9 @@ fn draw_status_line(f: &mut Frame, area: Rect, app: &App, p: &Palette) {
     if matches!(app.state, AppState::Idle | AppState::Overlay) {
         left_parts.push(short_cwd(&app.status.cwd));
         if app.status.context_max > 0 {
-            let total_tokens = app.total_prompt_tokens + app.total_completion_tokens;
-            if total_tokens > 0 {
-                let pct = (total_tokens as f64 / app.status.context_max as f64 * 100.0).min(100.0);
+            let last_prompt = app.status.turn_prompt_tokens;
+            if last_prompt > 0 {
+                let pct = (last_prompt as f64 / app.status.context_max as f64 * 100.0).min(100.0);
                 left_parts.push(format!(
                     "{:.0}% of {}",
                     pct,

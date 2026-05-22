@@ -7,6 +7,7 @@ pub struct StatusLine {
     pub agent_state: AgentState,
     pub context_pct: f64,
     pub turn_tokens: usize,
+    pub turn_prompt_tokens: usize,
     pub git_branch: String,
     pub cwd: String,
     pub context_max: usize,

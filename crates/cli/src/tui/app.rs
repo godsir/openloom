@@ -185,6 +185,7 @@ impl App {
                 agent_state: AgentState::Idle,
                 context_pct: 0.0,
                 turn_tokens: 0,
+                turn_prompt_tokens: 0,
                 git_branch,
                 cwd,
                 context_max,
@@ -244,6 +245,7 @@ impl App {
                     self.total_completion_tokens += completion_tokens;
                     self.total_cached_tokens += cached_tokens;
                     self.status.turn_tokens = completion_tokens;
+                    self.status.turn_prompt_tokens = prompt_tokens;
                     self.status.last_model = Some(model);
                     self.total_cost += (prompt_tokens as f64) * 3.0 / 1_000_000.0
                         + (completion_tokens as f64) * 15.0 / 1_000_000.0;
