@@ -38,6 +38,7 @@ members = [
     "crates/loom-protocol/external-agent-migration",
     "crates/loom-protocol/external-agent-sessions",
     "crates/loom-protocol/config",
+    "crates/loom-protocol/app-server-client",
 ]
 exclude = [
     "crates/loom-utils",
@@ -175,7 +176,7 @@ walkdir = "2.5.0"
 time = "0.3.47"
 toml = "0.9.5"
 mime_guess = "2.0.5"
-tokio-tungstenite = { version = "0.28.0", features = ["proxy", "rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-native-roots"] }
 rama-core = "=0.3.0-alpha.4"
 rama-http = "=0.3.0-alpha.4"
 rama-http-backend = { version = "=0.3.0-alpha.4", features = ["tls"] }
@@ -208,6 +209,7 @@ loom-protocol = { path = "crates/loom-protocol/protocol" }
 loom-sandbox-summary = { path = "crates/loom-utils/sandbox-summary" }
 loom-shell-command = { path = "crates/loom-protocol/shell-command" }
 loom-app-server-protocol = { path = "crates/loom-protocol/app-server-protocol" }
+loom-app-server-client = { path = "crates/loom-protocol/app-server-client" }
 loom-features = { path = "crates/loom-protocol/features" }
 loom-otel-stub = { path = "crates/loom-utils/otel-stub" }
 loom-shim-stubs = { path = "crates/loom-utils/shim-stubs" }

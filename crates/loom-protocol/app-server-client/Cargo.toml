@@ -1,0 +1,34 @@
+[package]
+name = "loom-app-server-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "loom_app_server_client"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+loom-app-server-protocol = { workspace = true }
+loom-absolute-path = { workspace = true }
+loom-rustls-provider = { workspace = true }
+loom-tui-stubs = { workspace = true }
+loom-uds = { workspace = true }
+openloom-engine = { path = "../../engine" }
+openloom-models = { path = "../../models" }
+anyhow = { workspace = true }
+dirs = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time", "rt"] }
+tokio-tungstenite = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
