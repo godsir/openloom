@@ -1,9 +1,9 @@
 
 [package]
-edition.workspace = true
-license.workspace = true
+edition = "2024"
+license = "Apache-2.0"
 name = "loom-plugins"
-version.workspace = true
+version = "0.2.0"
 
 [lib]
 doctest = false
@@ -15,7 +15,7 @@ workspace = true
 
 [dependencies]
 loom-exec-server = { workspace = true }
-codex-login = { workspace = true }
+loom-shim-stubs = { workspace = true }
 loom-absolute-path = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

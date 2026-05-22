@@ -23,4 +23,5 @@ impl MetricsStub {
     pub fn counter(&self, _name: &str, _inc: u64, _attrs: &[(&str, &str)]) {}
     pub fn gauge(&self, _name: &str, _val: f64, _attrs: &[(&str, &str)]) {}
     pub fn histogram(&self, _name: &str, _val: f64, _attrs: &[(&str, &str)]) {}
+    pub fn record_duration(&self, _name: &str, _duration: std::time::Duration, _attrs: &[(&str, &str)]) {}
 }

@@ -1,17 +1,15 @@
 [package]
 name = "loom-oss"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+version = "0.2.0"
+edition = "2024"
+license = "Apache-2.0"
 
 [lints]
 workspace = true
 
 [dependencies]
-codex-core = { workspace = true }
-codex-lmstudio = { workspace = true }
-codex-model-provider-info = { workspace = true }
-codex-ollama = { workspace = true }
+loom-shim-stubs = { workspace = true }
+loom-tui-stubs = { workspace = true }
 
 [lib]
 doctest = false

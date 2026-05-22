@@ -3,9 +3,9 @@ use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
 
-use codex_apply_patch::CODEX_CORE_APPLY_PATCH_ARG1;
-use codex_exec_server::CODEX_FS_HELPER_ARG1;
-use codex_sandboxing::landlock::CODEX_LINUX_SANDBOX_ARG0;
+use loom_shim_stubs::CODEX_CORE_APPLY_PATCH_ARG1;
+use loom_exec_server::CODEX_FS_HELPER_ARG1;
+use loom_sandboxing::landlock::CODEX_LINUX_SANDBOX_ARG0;
 use loom_home_dir::find_codex_home;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
@@ -78,7 +78,7 @@ pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
             Err(_) => std::process::exit(1),
         };
         let exit_code = runtime.block_on(
-            codex_shell_escalation::run_shell_escalation_execve_wrapper(file, argv),
+            loom_shim_stubs::run_shell_escalation_execve_wrapper(file, argv),
         );
         match exit_code {
             Ok(exit_code) => std::process::exit(exit_code),
@@ -88,14 +88,14 @@ pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
 
     if exe_name == CODEX_LINUX_SANDBOX_ARG0 {
         // Safety: [`run_main`] never returns.
-        codex_linux_sandbox::run_main();
+        loom_shim_stubs::run_main();
     } else if exe_name == APPLY_PATCH_ARG0 || exe_name == MISSPELLED_APPLY_PATCH_ARG0 {
-        codex_apply_patch::main();
+        loom_shim_stubs::run_main();
     }
 
     let argv1 = args.next().unwrap_or_default();
     if argv1 == CODEX_FS_HELPER_ARG1 {
-        codex_exec_server::run_fs_helper_main();
+        loom_exec_server::run_fs_helper_main();
     }
     if argv1 == CODEX_CORE_APPLY_PATCH_ARG1 {
         let patch_arg = args.next().and_then(|s| s.to_str().map(str::to_owned));
@@ -114,12 +114,12 @@ pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
                     Ok(runtime) => runtime,
                     Err(_) => std::process::exit(1),
                 };
-                match runtime.block_on(codex_apply_patch::apply_patch(
+                match runtime.block_on(loom_shim_stubs::apply_patch(
                     &patch_arg,
                     &cwd,
                     &mut stdout,
                     &mut stderr,
-                    codex_exec_server::LOCAL_FS.as_ref(),
+                    loom_exec_server::LOCAL_FS.as_ref(),
                     /*sandbox*/ None,
                 )) {
                     Ok(_) => 0,
@@ -157,7 +157,7 @@ pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
 ///
 /// When the current executable is invoked through the hard-link or alias named
 /// `codex-linux-sandbox` we *directly* execute
-/// [`codex_linux_sandbox::run_main`] (which never returns). Otherwise we:
+/// [`loom_shim_stubs::run_main`] (which never returns). Otherwise we:
 ///
 /// 1.  Load `.env` values from `~/.codex/.env` before creating any threads.
 /// 2.  Construct a Tokio multi-thread runtime.

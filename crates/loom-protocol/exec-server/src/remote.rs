@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use loom_shim_stubs::SharedAuthProvider;
+use loom_shim_stubs::api::SharedAuthProvider;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use tokio::time::sleep;

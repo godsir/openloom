@@ -20,6 +20,7 @@ impl AuthManager {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CodexAuth {
     None,
+    UsesCodexBackend,
 }
 
 impl CodexAuth {
@@ -34,6 +35,10 @@ impl CodexAuth {
     pub fn is_workspace_account(&self) -> bool {
         false
     }
+
+    pub fn uses_codex_backend(&self) -> bool {
+        matches!(self, Self::UsesCodexBackend)
+    }
 }
 
 /// Stub default client module.
@@ -43,6 +48,32 @@ pub mod default_client {
     /// Build a reqwest client. Returns a default client.
     pub fn build_reqwest_client() -> std::result::Result<Client, reqwest::Error> {
         Client::builder().build()
+    }
+
+    /// Stub Originator struct.
+    #[derive(Debug, Clone)]
+    pub struct Originator {
+        pub value: String,
+    }
+
+    /// Stub: always returns empty originator.
+    pub fn originator() -> Originator {
+        Originator {
+            value: String::new(),
+        }
+    }
+
+    /// Stub: always returns false.
+    pub fn is_first_party_chat_originator(_value: &str) -> bool {
+        false
+    }
+
+    /// Stub user agent suffix.
+    pub const USER_AGENT_SUFFIX: &str = "";
+
+    /// Stub: returns default user agent string.
+    pub fn get_codex_user_agent() -> String {
+        String::from("loom/0.2.0")
     }
 }
 

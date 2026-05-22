@@ -100,7 +100,7 @@ pub mod state {
 // ─── codex-rollout ───
 pub mod rollout {
     use super::*;
-    pub type StateDbHandle = Arc<super::state::StateRuntime>;
+    pub type StateDbHandle = Arc<state::StateRuntime>;
     pub mod state_db {
         pub use super::StateDbHandle;
     }
@@ -173,12 +173,90 @@ pub mod plugin {
 
 // ─── codex-connectors ───
 pub mod connectors {
+    use loom_app_server_protocol::AppInfo;
+
     /// Uses AppInfo from app-server-protocol
-    pub fn connector_display_label(connector: &loom_app_server_protocol::AppInfo) -> String {
+    pub fn connector_display_label(connector: &AppInfo) -> String {
         connector.name.clone()
     }
-    pub fn connector_mention_slug(connector: &loom_app_server_protocol::AppInfo) -> String {
+    pub fn connector_mention_slug(connector: &AppInfo) -> String {
         connector.name.to_lowercase().replace(' ', "-")
+    }
+
+    // Additional codex-core::connectors stubs
+    use std::sync::Arc;
+
+    #[derive(Debug, Clone)]
+    pub struct ConnectorDirectoryCacheContext;
+    #[derive(Debug, Clone, Hash, PartialEq, Eq)]
+    pub struct ConnectorDirectoryCacheKey(pub String);
+    #[derive(Debug, Clone)]
+    pub struct DirectoryListResponse;
+
+    pub mod filter {
+        use super::AppInfo;
+        pub fn filter_disallowed_connectors(_connectors: Vec<AppInfo>, _enabled: bool) -> Vec<AppInfo> {
+            vec![]
+        }
+    }
+
+    pub mod merge {
+        use super::AppInfo;
+        pub fn merge_connectors(_a: Vec<AppInfo>, _b: Vec<AppInfo>) -> Vec<AppInfo> {
+            vec![]
+        }
+        pub fn merge_plugin_connectors(_a: Vec<AppInfo>, _b: &crate::plugin::PluginCapabilitySummary) -> Vec<AppInfo> {
+            vec![]
+        }
+    }
+
+    pub mod metadata {
+        use super::AppInfo;
+        pub fn connector_install_url(_connector: &AppInfo) -> Option<String> {
+            None
+        }
+    }
+
+    pub async fn list_accessible_connectors_from_mcp_tools(
+        _config: &super::Config,
+    ) -> anyhow::Result<Vec<AppInfo>> {
+        Ok(vec![])
+    }
+
+    pub async fn list_accessible_connectors_from_mcp_tools_with_environment_manager(
+        _config: &super::Config,
+        _env_manager: &Arc<loom_exec_server::EnvironmentManager>,
+    ) -> anyhow::Result<Vec<AppInfo>> {
+        Ok(vec![])
+    }
+
+    pub async fn list_accessible_connectors_from_mcp_tools_with_options(
+        _config: &super::Config,
+        _env_manager: &Arc<loom_exec_server::EnvironmentManager>,
+        _cache_context: Option<ConnectorDirectoryCacheContext>,
+    ) -> anyhow::Result<Vec<AppInfo>> {
+        Ok(vec![])
+    }
+
+    pub async fn list_accessible_connectors_from_mcp_tools_with_options_and_status(
+        _config: &super::Config,
+        _env_manager: &Arc<loom_exec_server::EnvironmentManager>,
+        _cache_context: Option<ConnectorDirectoryCacheContext>,
+    ) -> anyhow::Result<(Vec<AppInfo>, Vec<(AppInfo, bool)>)> {
+        Ok((vec![], vec![]))
+    }
+
+    pub async fn list_cached_accessible_connectors_from_mcp_tools(
+        _cache_key: &ConnectorDirectoryCacheKey,
+    ) -> anyhow::Result<DirectoryListResponse> {
+        Ok(DirectoryListResponse)
+    }
+
+    pub async fn with_app_enabled_state(
+        _config: &super::Config,
+        _connectors: Vec<AppInfo>,
+    ) -> Vec<(AppInfo, bool)> {
+        vec![]
     }
 }
 
@@ -217,6 +295,158 @@ pub mod models_manager {
 // ─── codex-cloud-requirements ───
 pub mod cloud_requirements {
     pub fn cloud_requirements_loader_for_storage() {}
+}
+
+// ─── codex-core ───
+// Config re-exported from the config sub-module below.
+pub use config::Config;
+
+use loom_protocol::ThreadId;
+
+pub use loom_absolute_path::AbsolutePathBuf;
+
+/// Stub thread type.
+#[derive(Clone)]
+pub struct CodexThread;
+
+/// Stub new thread params.
+pub struct NewThread;
+
+/// Stub thread manager.
+#[derive(Clone)]
+pub struct ThreadManager;
+
+impl ThreadManager {
+    pub async fn new() -> Self {
+        Self
+    }
+    pub async fn start_thread(&self, _thread: NewThread) -> Result<CodexThread, anyhow::Error> {
+        Ok(CodexThread)
+    }
+    pub async fn resolve_thread(&self, _id: ThreadId) -> Option<CodexThread> {
+        Some(CodexThread)
+    }
+}
+
+pub type StateDbHandle = Arc<state::StateRuntime>;
+
+pub fn resolve_installation_id(_codex_home: &std::path::Path) -> String {
+    String::new()
+}
+
+pub fn check_execpolicy_for_warnings(_config: &Config) -> Vec<String> {
+    vec![]
+}
+
+pub fn format_exec_policy_error_with_source(_err: &anyhow::Error) -> String {
+    String::new()
+}
+
+pub fn find_thread_meta_by_name_str(_name: &str, _config: &Config) -> Option<(ThreadId, String)> {
+    None
+}
+
+pub mod path_utils {
+    use std::path::Path;
+    pub fn resolve_codex_home_path(_path: &Path) -> std::path::PathBuf {
+        Path::new(".").to_path_buf()
+    }
+}
+
+pub mod config {
+    use loom_absolute_path::AbsolutePathBuf;
+
+    /// Stub Config type for the runtime configuration.
+    #[derive(Debug, Clone)]
+    pub struct Config {
+        pub cwd: loom_absolute_path::AbsolutePathBuf,
+        pub model_provider: String,
+        pub model_provider_id: String,
+        pub model_reasoning_effort: Option<String>,
+        pub model_reasoning_summary: Option<String>,
+        pub permissions: loom_protocol::models::PermissionProfile,
+    }
+
+    impl Default for Config {
+        fn default() -> Self {
+            Self {
+                cwd: AbsolutePathBuf::current_dir().unwrap_or_else(|_| {
+                    AbsolutePathBuf::try_from(std::path::PathBuf::from(".")).unwrap()
+                }),
+                model_provider: String::new(),
+                model_provider_id: String::new(),
+                model_reasoning_effort: None,
+                model_reasoning_summary: None,
+                permissions: loom_protocol::models::PermissionProfile::default(),
+            }
+        }
+    }
+
+    /// Stub ConfigBuilder.
+    #[derive(Debug, Clone, Default)]
+    pub struct ConfigBuilder;
+
+    impl ConfigBuilder {
+        pub fn new() -> Self {
+            Self
+        }
+        pub fn build(self) -> Config {
+            Config::default()
+        }
+    }
+
+    /// Stub ConfigOverrides.
+    #[derive(Debug, Clone, Default)]
+    pub struct ConfigOverrides;
+
+    /// Stub ConfigLoadError.
+    #[derive(Debug)]
+    pub struct ConfigLoadError;
+
+    impl std::fmt::Display for ConfigLoadError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "config load error")
+        }
+    }
+
+    impl std::error::Error for ConfigLoadError {}
+
+    /// Stub ConfigLoadOptions.
+    #[derive(Debug, Clone, Default)]
+    pub struct ConfigLoadOptions;
+
+    /// Stub LoaderOverrides.
+    #[derive(Debug, Clone, Default)]
+    pub struct LoaderOverrides;
+
+    /// Stub: formats a config error.
+    pub fn format_config_error_with_source(_err: &anyhow::Error) -> String {
+        String::new()
+    }
+
+    /// Stub: finds codex home directory.
+    pub fn find_codex_home() -> Option<AbsolutePathBuf> {
+        None
+    }
+
+    /// Stub: loads config as TOML.
+    pub fn load_config_as_toml_with_cli_and_load_options(
+        _overrides: ConfigOverrides,
+        _cli_config_overrides: &loom_cli_utils::CliConfigOverrides,
+        _options: ConfigLoadOptions,
+    ) -> Result<toml_edit::ImDocument<String>, ConfigLoadError> {
+        Ok(toml_edit::ImDocument::parse(String::new()).unwrap())
+    }
+
+    /// Stub: resolves OSS provider.
+    pub fn resolve_oss_provider(_config: &Config) -> Option<String> {
+        None
+    }
+
+    /// Stub: resolves profile v2 config path.
+    pub fn resolve_profile_v2_config_path() -> Option<AbsolutePathBuf> {
+        None
+    }
 }
 
 // ─── codex-login ───

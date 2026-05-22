@@ -1,8 +1,8 @@
 [package]
 name = "loom-tui-stubs"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+version = "0.2.0"
+edition = "2024"
+license = "Apache-2.0"
 
 [dependencies]
 chrono = { workspace = true, features = ["serde"] }
@@ -17,3 +17,6 @@ loom-absolute-path = { workspace = true }
 loom-config = { workspace = true }
 loom-app-server-protocol = { workspace = true }
 anyhow = { workspace = true }
+loom-exec-server = { workspace = true }
+loom-cli-utils = { workspace = true }
+toml_edit = { workspace = true }

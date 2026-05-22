@@ -33,12 +33,26 @@ members = [
     "crates/loom-protocol/features",
     "crates/loom-utils/shim-stubs",
     "crates/loom-utils/tui-stubs",
+    "crates/loom-utils/plugins",
+    # "crates/loom-utils/sandbox-summary",
+    # "crates/loom-utils/oss",
+    "crates/loom-utils/arg0",
+    "crates/loom-utils/oss",
+    "crates/loom-utils/sandbox-summary",
+    "crates/loom-protocol/exec-server",
+    "crates/loom-protocol/core-plugins",
+    "crates/loom-protocol/core-skills",
     "crates/loom-protocol/tools",
     "crates/loom-protocol/hooks",
     "crates/loom-protocol/external-agent-migration",
     "crates/loom-protocol/external-agent-sessions",
     "crates/loom-protocol/config",
     "crates/loom-protocol/app-server-client",
+    "crates/loom-protocol/mcp",
+    "crates/loom-protocol/mcp-server",
+    "crates/loom-protocol/rmcp-client",
+    "crates/loom-protocol/chatgpt",
+    "crates/loom-protocol/exec",
 ]
 exclude = [
     "crates/loom-utils",
@@ -94,6 +108,7 @@ unwrap_used = "deny"
 # External dependencies needed by ported Codex crates.
 # Versions sourced from F:/codex/codex-rs/Cargo.toml [workspace.dependencies].
 
+async-channel = "2.3.1"
 chardetng = "0.1.17"
 allocative = "=0.3.4"
 encoding_rs = "0.8.35"
@@ -158,6 +173,9 @@ libc = "0.2.182"
 which = "8"
 wiremock = "0.6.5"
 flate2 = "1.1.8"
+oauth2 = "5"
+keyring = { version = "3.6", default-features = false }
+sse-stream = "0.2.1"
 seccompiler = "0.5.0"
 semver = "1.0"
 tar = { version = "=0.4.45", default-features = false }
@@ -243,6 +261,11 @@ loom-terminal-detection = { path = "crates/loom-utils/terminal-detection" }
 loom-uds = { path = "crates/loom-utils/uds" }
 loom-path-utils = { path = "crates/loom-utils/path" }
 loom-config = { path = "crates/loom-protocol/config" }
+loom-mcp = { path = "crates/loom-protocol/mcp" }
+loom-mcp-server = { path = "crates/loom-protocol/mcp-server" }
+loom-rmcp-client = { path = "crates/loom-protocol/rmcp-client" }
+loom-chatgpt = { path = "crates/loom-protocol/chatgpt" }
+loom-exec = { path = "crates/loom-protocol/exec" }
 
 # Commonly used deps (already used by openLoom, centralized here)
 anyhow = "1"
@@ -261,6 +284,7 @@ serde = "1"
 serde_json = "1"
 tempfile = "3.23.0"
 thiserror = "2.0.17"
+tiny_http = "0.12"
 tokio = "1"
 tonic = { version = "0.14.3", default-features = false, features = ["channel", "codegen"] }
 tonic-prost = "0.14.3"

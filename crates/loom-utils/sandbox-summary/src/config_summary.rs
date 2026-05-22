@@ -1,5 +1,5 @@
-use codex_core::config::Config;
-use codex_model_provider_info::WireApi;
+use loom_tui_stubs::config::Config;
+use loom_tui_stubs::model_provider_info::WireApi;
 
 use crate::sandbox_summary::summarize_sandbox_policy;
 

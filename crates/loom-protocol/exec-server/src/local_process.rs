@@ -9,8 +9,8 @@ use loom_app_server_protocol::JSONRPCErrorError;
 use loom_protocol::config_types::EnvironmentVariablePattern;
 use loom_protocol::config_types::ShellEnvironmentPolicy;
 use loom_protocol::shell_environment;
-use codex_utils_pty::ExecCommandSession;
-use codex_utils_pty::TerminalSize;
+use loom_shim_stubs::utils_pty::ExecCommandSession;
+use loom_shim_stubs::utils_pty::TerminalSize;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 use tokio::sync::mpsc;
@@ -164,7 +164,7 @@ impl LocalProcess {
 
         let env = child_env(&params);
         let spawned_result = if params.tty {
-            codex_utils_pty::spawn_pty_process(
+            loom_shim_stubs::utils_pty::spawn_pty_process(
                 program,
                 args,
                 params.cwd.as_path(),
@@ -174,7 +174,7 @@ impl LocalProcess {
             )
             .await
         } else if params.pipe_stdin {
-            codex_utils_pty::spawn_pipe_process(
+            loom_shim_stubs::utils_pty::spawn_pipe_process(
                 program,
                 args,
                 params.cwd.as_path(),
@@ -183,7 +183,7 @@ impl LocalProcess {
             )
             .await
         } else {
-            codex_utils_pty::spawn_pipe_process_no_stdin(
+            loom_shim_stubs::utils_pty::spawn_pipe_process_no_stdin(
                 program,
                 args,
                 params.cwd.as_path(),
@@ -707,7 +707,7 @@ fn notification_sender(inner: &Inner) -> Option<RpcNotificationSender> {
 mod tests {
     use super::*;
     use loom_protocol::config_types::ShellEnvironmentPolicyInherit;
-    use codex_utils_pty::ProcessDriver;
+    use loom_shim_stubs::utils_pty::ProcessDriver;
     use pretty_assertions::assert_eq;
     use tokio::sync::oneshot;
     use tokio::time::timeout;
@@ -930,7 +930,7 @@ mod tests {
         let (_stderr_tx, stderr_rx) = tokio::sync::broadcast::channel(1);
         let (_exit_tx, exit_rx) = oneshot::channel();
 
-        codex_utils_pty::spawn_from_driver(ProcessDriver {
+        loom_shim_stubs::utils_pty::spawn_from_driver(ProcessDriver {
             writer_tx,
             stdout_rx,
             stderr_rx: Some(stderr_rx),

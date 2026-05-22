@@ -1,0 +1,28 @@
+[package]
+name = "loom-chatgpt"
+version = "0.2.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+loom-app-server-protocol = { workspace = true }
+loom-core-plugins = { workspace = true }
+loom-git-utils = { workspace = true }
+loom-cli-utils = { workspace = true }
+loom-shim-stubs = { workspace = true }
+loom-tui-stubs = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["full"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+
+[lib]
+doctest = false

@@ -1,0 +1,48 @@
+[package]
+name = "loom-mcp-server"
+version = "0.2.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[[bin]]
+name = "loom-mcp-server"
+path = "src/main.rs"
+
+[lib]
+name = "loom_mcp_server"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+loom-arg0 = { workspace = true }
+loom-config = { workspace = true }
+loom-exec-server = { workspace = true }
+loom-protocol = { workspace = true }
+loom-cli-utils = { workspace = true }
+loom-shim-stubs = { workspace = true }
+loom-tui-stubs = { workspace = true }
+rmcp = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+shlex = { workspace = true }
+tokio = { workspace = true, features = [
+    "io-std",
+    "macros",
+    "process",
+    "rt-multi-thread",
+    "signal",
+] }
+tracing = { workspace = true, features = ["log"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+loom-absolute-path = { workspace = true }
+loom-shell-command = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+wiremock = { workspace = true }
