@@ -5,6 +5,7 @@ use serde_json::Value;
 pub mod builtins;
 pub mod external;
 pub mod loom_context;
+pub mod plugin_loader;
 
 /// Skill trait — Phase 1: Rust native implementation; Phase 2: WASM compilation
 #[async_trait::async_trait]
