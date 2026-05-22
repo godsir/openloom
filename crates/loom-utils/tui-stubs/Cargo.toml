@@ -20,3 +20,5 @@ anyhow = { workspace = true }
 loom-exec-server = { workspace = true }
 loom-cli-utils = { workspace = true }
 toml_edit = { workspace = true }
+toml = { workspace = true }
+loom-otel-stub = { workspace = true }

@@ -40,6 +40,65 @@ pub use crate::remote::RemoteAppServerEndpoint;
 pub use loom_tui_stubs::feedback::CodexFeedback;
 pub type StateDbHandle = std::sync::Arc<loom_tui_stubs::state::StateRuntime>;
 
+/// Stub InProcessAppServerClient for TUI compatibility.
+pub struct InProcessAppServerClient;
+
+impl InProcessAppServerClient {
+    pub async fn start(_args: InProcessClientStartArgs) -> std::io::Result<Self> {
+        Ok(Self)
+    }
+    pub async fn shutdown(self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Stub InProcessClientStartArgs for TUI compatibility.
+#[derive(Debug, Clone)]
+pub struct InProcessClientStartArgs {
+    pub arg0_paths: loom_arg0::Arg0DispatchPaths,
+    pub config: std::sync::Arc<loom_tui_stubs::config::Config>,
+    pub cli_overrides: Vec<(String, toml::Value)>,
+    pub loader_overrides: loom_config::LoaderOverrides,
+    pub strict_config: bool,
+    pub cloud_requirements: loom_config::CloudRequirementsLoader,
+    pub feedback: CodexFeedback,
+    pub log_db: Option<()>,
+    pub state_db: Option<StateDbHandle>,
+    pub environment_manager: std::sync::Arc<loom_exec_server::EnvironmentManager>,
+    pub config_warnings: Vec<loom_app_server_protocol::ConfigWarningNotification>,
+    pub session_source: serde_json::Value,
+    pub enable_codex_api_key_env: bool,
+    pub client_name: String,
+    pub client_version: String,
+    pub experimental_api: bool,
+    pub opt_out_notification_methods: Vec<String>,
+    pub channel_capacity: usize,
+}
+impl Default for InProcessClientStartArgs {
+    fn default() -> Self {
+        Self {
+            arg0_paths: loom_arg0::Arg0DispatchPaths::default(),
+            config: std::sync::Arc::new(loom_tui_stubs::config::Config::default()),
+            cli_overrides: Vec::new(),
+            loader_overrides: loom_config::LoaderOverrides::default(),
+            strict_config: false,
+            cloud_requirements: loom_config::CloudRequirementsLoader::default(),
+            feedback: CodexFeedback::new(),
+            log_db: None,
+            state_db: None,
+            environment_manager: std::sync::Arc::new(loom_exec_server::EnvironmentManager::default_for_tests()),
+            config_warnings: Vec::new(),
+            session_source: serde_json::json!("cli"),
+            enable_codex_api_key_env: false,
+            client_name: String::new(),
+            client_version: String::new(),
+            experimental_api: false,
+            opt_out_notification_methods: Vec::new(),
+            channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+        }
+    }
+}
+
 /// Default channel capacity used by in-process and remote transport layers.
 pub const DEFAULT_IN_PROCESS_CHANNEL_CAPACITY: usize = 256;
 

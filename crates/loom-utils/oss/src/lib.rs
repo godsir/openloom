@@ -20,13 +20,15 @@ pub async fn ensure_oss_provider_ready(
 ) -> Result<(), std::io::Error> {
     match provider_id {
         LMSTUDIO_OSS_PROVIDER_ID => {
-            loom_shim_stubs::ensure_oss_ready(config)
+            loom_shim_stubs::ensure_oss_ready(config as &dyn std::any::Any)
                 .await
                 .map_err(|e| std::io::Error::other(format!("OSS setup failed: {e}")))?;
         }
         OLLAMA_OSS_PROVIDER_ID => {
-            loom_shim_stubs::ensure_responses_supported(&config.model_provider).await?;
-            loom_shim_stubs::ensure_oss_ready(config)
+            loom_shim_stubs::ensure_responses_supported(&config.model_provider as &dyn std::any::Any)
+                .await
+                .map_err(|e| std::io::Error::other(format!("responses check failed: {e}")))?;
+            loom_shim_stubs::ensure_oss_ready(config as &dyn std::any::Any)
                 .await
                 .map_err(|e| std::io::Error::other(format!("OSS setup failed: {e}")))?;
         }

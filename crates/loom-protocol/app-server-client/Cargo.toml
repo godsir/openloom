@@ -1,8 +1,8 @@
 [package]
 name = "loom-app-server-client"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+version = "0.2.0"
+edition = "2024"
+license = "Apache-2.0"
 
 [lib]
 name = "loom_app_server_client"
@@ -15,6 +15,9 @@ workspace = true
 [dependencies]
 loom-app-server-protocol = { workspace = true }
 loom-absolute-path = { workspace = true }
+loom-arg0 = { workspace = true }
+loom-config = { workspace = true }
+loom-exec-server = { workspace = true }
 loom-rustls-provider = { workspace = true }
 loom-tui-stubs = { workspace = true }
 loom-uds = { workspace = true }
@@ -26,6 +29,7 @@ futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
+toml = { workspace = true }
 tokio-tungstenite = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }

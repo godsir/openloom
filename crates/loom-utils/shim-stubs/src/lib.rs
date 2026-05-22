@@ -49,10 +49,10 @@ pub mod utils_pty;
 // OSS provider stubs (for codex-lmstudio + codex-ollama)
 pub const DEFAULT_OSS_MODEL: &str = "";
 
-pub async fn ensure_oss_ready(_config: &()) -> anyhow::Result<()> {
+pub async fn ensure_oss_ready(_config: &dyn std::any::Any) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn ensure_responses_supported(_model_provider: &()) -> anyhow::Result<()> {
+pub async fn ensure_responses_supported(_model_provider: &dyn std::any::Any) -> anyhow::Result<()> {
     Ok(())
 }
