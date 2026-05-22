@@ -36,6 +36,7 @@ members = [
     "crates/loom-protocol/hooks",
     "crates/loom-protocol/external-agent-migration",
     "crates/loom-protocol/external-agent-sessions",
+    "crates/loom-protocol/config",
 ]
 exclude = [
     "crates/loom-utils",
@@ -234,6 +235,7 @@ loom-string = { path = "crates/loom-utils/string" }
 loom-terminal-detection = { path = "crates/loom-utils/terminal-detection" }
 loom-uds = { path = "crates/loom-utils/uds" }
 loom-path-utils = { path = "crates/loom-utils/path" }
+loom-config = { path = "crates/loom-protocol/config" }
 
 # Commonly used deps (already used by openLoom, centralized here)
 anyhow = "1"
@@ -252,8 +254,13 @@ serde_json = "1"
 tempfile = "3.23.0"
 thiserror = "2.0.17"
 tokio = "1"
+tonic = { version = "0.14.3", default-features = false, features = ["channel", "codegen"] }
+tonic-prost = "0.14.3"
+toml_edit = "0.24.0"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.22"
+dns-lookup = "3.0.1"
+winapi-util = "0.1.11"
 
 # [patch.crates-io] — Temporarily commented out.
 # These Codex-forks (crossterm, ratatui, tokio-tungstenite, tungstenite) are only
