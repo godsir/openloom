@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub mod builtins;
+pub mod loom_context;
 
 /// Skill trait — Phase 1: Rust native implementation; Phase 2: WASM compilation
 #[async_trait::async_trait]
