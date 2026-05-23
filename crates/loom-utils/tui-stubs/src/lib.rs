@@ -1022,15 +1022,15 @@ pub mod config {
         impl ConfigEditsBuilder {
             pub fn new(_codex_home: &std::path::Path) -> Self { Self { edits: Vec::new() } }
             pub fn for_config(_config: &super::Config) -> Self { Self { edits: Vec::new() } }
-            pub fn set_session_picker_view(mut self, _view: SessionPickerViewMode) -> Self { self }
-            pub fn set_realtime_speaker(mut self, _name: Option<&str>) -> Self { self }
-            pub fn set_realtime_microphone(mut self, _name: Option<&str>) -> Self { self }
-            pub fn set_realtime_audio_device(mut self, _kind: &str, _name: String) -> Self { self }
-            pub fn set_model_availability_nux_count(mut self, _count: &HashMap<String, u32>) -> Self { self }
-            pub fn set_hide_world_writable_warning(mut self, _acknowledged: bool) -> Self { self }
-            pub fn set_hide_rate_limit_model_nudge(mut self, _acknowledged: bool) -> Self { self }
-            pub fn set_hide_full_access_warning(mut self, _acknowledged: bool) -> Self { self }
-            pub fn record_model_migration_seen(mut self, _from: &str, _to: &str) -> Self { self }
+            pub fn set_session_picker_view(self, _view: SessionPickerViewMode) -> Self { self }
+            pub fn set_realtime_speaker(self, _name: Option<&str>) -> Self { self }
+            pub fn set_realtime_microphone(self, _name: Option<&str>) -> Self { self }
+            pub fn set_realtime_audio_device(self, _kind: &str, _name: String) -> Self { self }
+            pub fn set_model_availability_nux_count(self, _count: &HashMap<String, u32>) -> Self { self }
+            pub fn set_hide_world_writable_warning(self, _acknowledged: bool) -> Self { self }
+            pub fn set_hide_rate_limit_model_nudge(self, _acknowledged: bool) -> Self { self }
+            pub fn set_hide_full_access_warning(self, _acknowledged: bool) -> Self { self }
+            pub fn record_model_migration_seen(self, _from: &str, _to: &str) -> Self { self }
             pub fn with_edits(mut self, edits: impl IntoIterator<Item = ConfigEdit>) -> Self {
                 self.edits.extend(edits);
                 self

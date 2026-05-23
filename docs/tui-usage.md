@@ -2,9 +2,36 @@
 
 ## 安装
 
+### 从源码编译
+
 ```bash
+git clone https://github.com/godsir/openloom.git
+cd openLoom
 cargo build -p loom-cli --release
+
+# Windows
+cp target/release/loom.exe %USERPROFILE%\.cargo\bin\
+
+# Linux / macOS
 cp target/release/loom ~/.cargo/bin/
+```
+
+> 需要 Rust 1.80+。国内用户可设置镜像：`~/.cargo/config.toml` 中配置 `replace-with = 'ustc'` 或 `aliyun`。
+
+### 卸载旧版
+
+```bash
+# 如果之前装过 openloom 旧版
+rm ~/.cargo/bin/openloom    # Linux/macOS
+del %USERPROFILE%\.cargo\bin\openloom.exe   # Windows
+```
+
+### 验证安装
+
+```bash
+loom --version
+loom --help
+loom doctor    # 诊断安装状态
 ```
 
 ## 快速开始
