@@ -93,6 +93,11 @@ impl InferenceEngine {
         })
     }
 
+    /// Create a no-op engine when no GGUF model is available.
+    pub fn dummy() -> Self {
+        Self { _model_path: std::path::PathBuf::new(), _n_gpu_layers: 0 }
+    }
+
     pub async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse> {
         Ok(stub_complete(&req))
     }

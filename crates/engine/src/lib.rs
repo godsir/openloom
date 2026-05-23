@@ -380,7 +380,11 @@ impl Engine {
             tracing::info!(path = %model_path.display(), "Using local model");
         }
 
-        let inference = Arc::new(InferenceEngine::load_blocking(&model_path, 0)?);
+        let inference = if model_available {
+            Arc::new(InferenceEngine::load_blocking(&model_path, 0)?)
+        } else {
+            Arc::new(InferenceEngine::dummy())
+        };
 
         let mut router =
             SmartRouter::new_keywords_only(openloom_router::keywords::default_keyword_rules());

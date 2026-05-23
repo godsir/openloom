@@ -307,6 +307,7 @@ impl LoomAppServerClient {
     }
 
     /// Creates a client by loading model config from config.toml.
+    /// Falls back to stub engine if config loading or engine creation fails.
     pub async fn from_config() -> anyhow::Result<Self> {
         let data_dir = loom_home_dir::find_loom_home()
             .map(|p| p.as_path().to_path_buf())
@@ -316,7 +317,12 @@ impl LoomAppServerClient {
                     .unwrap_or_default()
             });
 
+        eprintln!("[loom] from_config: data_dir={}", data_dir.display());
+
         let (cloud_config, local_config) = load_model_configs(&data_dir);
+        eprintln!("[loom] from_config: cloud={:?} local={:?}",
+            cloud_config.as_ref().map(|c| &c.model),
+            local_config.as_ref().map(|c| &c.model));
 
         let config = openloom_engine::EngineConfig {
             data_dir: data_dir.clone(),
@@ -331,7 +337,19 @@ impl LoomAppServerClient {
             skip_permissions: true,
         };
 
-        Self::new(config).await
+        // Try real engine first; if it fails (no GGUF model), use stub
+        match openloom_engine::Engine::new(config) {
+            Ok(engine) => {
+                eprintln!("[loom] from_config: Engine created successfully");
+                let engine = Arc::new(engine);
+                let (event_tx, event_rx) = mpsc::unbounded_channel();
+                Ok(Self { engine, event_rx, event_tx })
+            }
+            Err(e) => {
+                eprintln!("[loom] from_config: Engine::new failed ({}), using stub", e);
+                Ok(Self::stub())
+            }
+        }
     }
 
     /// Sends a typed client request and returns a deserialized response body.
