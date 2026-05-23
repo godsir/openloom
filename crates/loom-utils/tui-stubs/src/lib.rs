@@ -933,18 +933,182 @@ pub mod config {
         strict: bool,
         cloud_requirements: Option<LoomCloudRequirementsLoader>,
         fallback_cwd: Option<PathBuf>,
+        cli_kv_overrides: Vec<(String, toml::Value)>,
     }
 
     impl ConfigBuilder {
         pub fn new() -> Self { Self::default() }
         pub fn codex_home(mut self, path: PathBuf) -> Self { self.codex_home = Some(path); self }
-        pub fn cli_overrides(self, _overrides: Vec<(String, toml::Value)>) -> Self { self }
+        pub fn cli_overrides(mut self, overrides: Vec<(String, toml::Value)>) -> Self {
+            self.cli_kv_overrides = overrides;
+            self
+        }
         pub fn harness_overrides(mut self, overrides: ConfigOverrides) -> Self { self.overrides = overrides; self }
         pub fn loader_overrides(mut self, overrides: LoaderOverrides) -> Self { self.loader_overrides = overrides; self }
         pub fn strict_config(mut self, strict: bool) -> Self { self.strict = strict; self }
         pub fn cloud_requirements(mut self, cr: LoomCloudRequirementsLoader) -> Self { self.cloud_requirements = Some(cr); self }
         pub fn fallback_cwd(mut self, cwd: Option<PathBuf>) -> Self { self.fallback_cwd = cwd; self }
-        pub async fn build(self) -> Result<Config, ConfigLoadError> { Ok(Config::default()) }
+
+        pub async fn build(self) -> Result<Config, ConfigLoadError> {
+            let codex_home = match self.codex_home {
+                Some(ref p) => p.clone(),
+                None => find_codex_home().unwrap_or_else(|_| PathBuf::from(".")),
+            };
+
+            let codex_home_abs = AbsolutePathBuf::try_from(codex_home.clone())
+                .unwrap_or_else(|_| AbsolutePathBuf::current_dir().unwrap());
+
+            let config_toml = load_config_as_toml_with_cli_and_load_options(
+                &codex_home,
+                self.fallback_cwd.as_ref().and_then(|p| AbsolutePathBuf::try_from(p.clone()).ok()).as_ref(),
+                self.cli_kv_overrides,
+                ConfigLoadOptions {
+                    loader_overrides: self.loader_overrides.clone(),
+                    strict_config: self.strict,
+                },
+            )
+            .await
+            .unwrap_or_default();
+
+            let cwd = self
+                .overrides
+                .cwd
+                .as_ref()
+                .and_then(|p| AbsolutePathBuf::try_from(p.clone()).ok())
+                .or_else(|| self.fallback_cwd.as_ref().and_then(|p| AbsolutePathBuf::try_from(p.clone()).ok()))
+                .unwrap_or_else(|| AbsolutePathBuf::current_dir().unwrap());
+
+            let sqlite_home = config_toml
+                .sqlite_home
+                .as_ref()
+                .map(|p| p.as_path().to_path_buf())
+                .unwrap_or_else(|| codex_home.clone());
+
+            let log_dir = config_toml
+                .log_dir
+                .as_ref()
+                .map(|p| p.as_path().to_path_buf())
+                .unwrap_or_else(|| codex_home.join("log"));
+
+            let model = self.overrides.model.clone().or(config_toml.model.clone());
+
+            // Resolve tui config
+            let tui_cfg = config_toml.tui.as_ref();
+
+            Ok(Config {
+                cwd,
+                codex_home: codex_home_abs,
+                sqlite_home,
+                log_dir,
+                model: model.clone(),
+                model_provider: Default::default(),
+                model_provider_id: self
+                    .overrides
+                    .model_provider
+                    .clone()
+                    .or(config_toml.model_provider.clone())
+                    .unwrap_or_default(),
+                model_reasoning_effort: config_toml.model_reasoning_effort,
+                model_reasoning_summary: config_toml.model_reasoning_summary,
+                model_context_window: config_toml.model_context_window,
+                model_verbosity: None,
+                service_tier: config_toml.service_tier.clone(),
+                permissions: PermissionsStub {
+                    approval_policy: Constrained(
+                        self.overrides
+                            .approval_policy
+                            .or(config_toml.approval_policy)
+                            .unwrap_or(loom_protocol::protocol::AskForApproval::OnRequest),
+                    ),
+                    network: None,
+                    windows_sandbox_mode: None,
+                },
+                approvals_reviewer: config_toml
+                    .approvals_reviewer
+                    .unwrap_or_default(),
+                enforce_residency: Constrained(None),
+                features: ManagedFeaturesStub::default(),
+                animations: tui_cfg.map(|t| t.animations).unwrap_or(true),
+                show_tooltips: tui_cfg.map(|t| t.show_tooltips).unwrap_or(true),
+                tui_alternate_screen: tui_cfg
+                    .map(|t| t.alternate_screen)
+                    .unwrap_or(loom_protocol::config_types::AltScreenMode::Auto),
+                tui_keymap: loom_config::types::TuiKeymap::default(),
+                tui_notifications: NotificationsStub::default(),
+                config_layer_stack: ConfigLayerStackStub::default(),
+                startup_warnings: Vec::new(),
+                personality: config_toml.personality,
+                base_instructions: config_toml.instructions.clone(),
+                developer_instructions: config_toml.developer_instructions.clone(),
+                active_project: loom_config::config_toml::ProjectConfig { trust_level: None },
+                chatgpt_base_url: config_toml
+                    .chatgpt_base_url
+                    .clone()
+                    .unwrap_or_default(),
+                cli_auth_credentials_store_mode: config_toml
+                    .cli_auth_credentials_store
+                    .map(|m| match m {
+                        loom_config::types::AuthCredentialsStoreMode::File => "file".to_string(),
+                        loom_config::types::AuthCredentialsStoreMode::Keyring => "keyring".to_string(),
+                        loom_config::types::AuthCredentialsStoreMode::Auto => "auto".to_string(),
+                        loom_config::types::AuthCredentialsStoreMode::Ephemeral => "ephemeral".to_string(),
+                    })
+                    .unwrap_or_default(),
+                forced_login_method: config_toml.forced_login_method,
+                forced_chatgpt_workspace_id: config_toml
+                    .forced_chatgpt_workspace_id
+                    .map(|ids| ids.into_vec().join(",")),
+                disable_paste_burst: config_toml.disable_paste_burst.unwrap_or(false),
+                ephemeral: false,
+                feedback_enabled: config_toml
+                    .feedback
+                    .as_ref()
+                    .and_then(|f| f.enabled)
+                    .unwrap_or(true),
+                check_for_update_on_startup: config_toml.check_for_update_on_startup.unwrap_or(true),
+                history: config_toml.history.is_some(),
+                memories: MemoriesTomlStub::default(),
+                terminal_resize_reflow: TerminalResizeReflowConfig::default(),
+                notices: NoticesTomlStub::default(),
+                otel: loom_otel_stub::SessionTelemetry::default(),
+                mcp_servers: config_toml.mcp_servers.keys().cloned().collect(),
+                show_raw_agent_reasoning: self
+                    .overrides
+                    .show_raw_agent_reasoning
+                    .or(config_toml.show_raw_agent_reasoning)
+                    .unwrap_or(false),
+                tui_theme: tui_cfg.and_then(|t| t.theme.clone()),
+                tui_pet: tui_cfg.and_then(|t| t.pet.clone()),
+                tui_pet_anchor: tui_cfg.map(|t| t.pet_anchor),
+                tui_status_line: tui_cfg.and_then(|t| t.status_line.clone()),
+                tui_status_line_use_colors: tui_cfg
+                    .map(|t| t.status_line_use_colors)
+                    .unwrap_or(true),
+                tui_terminal_title: tui_cfg.and_then(|t| t.terminal_title.clone()),
+                tui_vim_mode_default: tui_cfg.map(|t| t.vim_mode_default).unwrap_or(false),
+                tui_session_picker_view: SessionPickerViewMode::default(),
+                tui_raw_output_mode: tui_cfg.map(|t| t.raw_output_mode).unwrap_or(false),
+                workspace_roots: Vec::new(),
+                web_search_mode: Constrained(loom_protocol::config_types::WebSearchMode::Disabled),
+                realtime: config_toml.realtime.clone(),
+                realtime_audio: config_toml
+                    .audio
+                    .map(|a| loom_config::config_toml::RealtimeAudioToml {
+                        microphone: a.microphone,
+                        speaker: a.speaker,
+                    })
+                    .unwrap_or_default(),
+                mcp_oauth_credentials_store_mode: config_toml
+                    .mcp_oauth_credentials_store
+                    .unwrap_or_default(),
+                mcp_oauth_callback_port: config_toml.mcp_oauth_callback_port,
+                mcp_oauth_callback_url: config_toml.mcp_oauth_callback_url.clone(),
+                plan_mode_reasoning_effort: config_toml.plan_mode_reasoning_effort,
+                model_availability_nux: ModelAvailabilityNuxConfig::default(),
+                network: None,
+                shell_environment_policy: ShellEnvironmentPolicyStub::default(),
+            })
+        }
     }
 
     /// Stub ConfigOverrides with all fields.
@@ -1184,12 +1348,76 @@ pub mod config {
     }
 
     pub async fn load_config_as_toml_with_cli_and_load_options(
-        _codex_home: &Path,
+        codex_home: &Path,
         _config_cwd: Option<&AbsolutePathBuf>,
-        _cli_kv_overrides: Vec<(String, toml::Value)>,
-        _options: loom_config::ConfigLoadOptions,
+        cli_kv_overrides: Vec<(String, toml::Value)>,
+        options: loom_config::ConfigLoadOptions,
     ) -> Result<loom_config::config_toml::ConfigToml, ConfigLoadError> {
-        Ok(loom_config::config_toml::ConfigToml::default())
+        let user_config_path = options
+            .loader_overrides
+            .user_config_path(codex_home)
+            .unwrap_or_else(|_| {
+                AbsolutePathBuf::resolve_path_against_base("config.toml", codex_home)
+            });
+
+        let path = user_config_path.as_path().to_path_buf();
+
+        let contents = match tokio::fs::read_to_string(user_config_path.as_path()).await {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(loom_config::config_toml::ConfigToml::default());
+            }
+            Err(e) => {
+                let range = loom_config::TextRange {
+                    start: loom_config::TextPosition { line: 1, column: 1 },
+                    end: loom_config::TextPosition { line: 1, column: 1 },
+                };
+                return Err(ConfigLoadError::new(
+                    loom_config::ConfigError::new(
+                        path.clone(),
+                        range,
+                        format!("Failed to read config file {}: {e}", path.display()),
+                    ),
+                    None,
+                ));
+            }
+        };
+
+        let mut config_toml: loom_config::config_toml::ConfigToml =
+            toml::from_str(&contents).map_err(|e| {
+                let range = loom_config::TextRange {
+                    start: loom_config::TextPosition { line: 1, column: 1 },
+                    end: loom_config::TextPosition { line: 1, column: 1 },
+                };
+                ConfigLoadError::new(
+                    loom_config::ConfigError::new(
+                        path.clone(),
+                        range,
+                        format!("Failed to parse config file {}: {e}", path.display()),
+                    ),
+                    Some(e),
+                )
+            })?;
+
+        // Apply CLI key-value overrides on top.
+        for (key, value) in &cli_kv_overrides {
+            let _ = apply_cli_override(&mut config_toml, key, value);
+        }
+
+        Ok(config_toml)
+    }
+
+    fn apply_cli_override(
+        config: &mut loom_config::config_toml::ConfigToml,
+        key: &str,
+        value: &toml::Value,
+    ) -> Result<(), String> {
+        match key {
+            "model" => config.model = Some(value.as_str().unwrap_or_default().to_string()),
+            "model_provider" => config.model_provider = Some(value.as_str().unwrap_or_default().to_string()),
+            _ => {}
+        }
+        Ok(())
     }
 }
 

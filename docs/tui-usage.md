@@ -9,7 +9,10 @@ git clone https://github.com/godsir/openloom.git
 cd openLoom
 cargo build -p loom-cli --release
 
-# Windows
+# Windows (PowerShell)
+cp target/release/loom.exe $HOME\.cargo\bin\
+
+# Windows (CMD)
 cp target/release/loom.exe %USERPROFILE%\.cargo\bin\
 
 # Linux / macOS
@@ -21,9 +24,10 @@ cp target/release/loom ~/.cargo/bin/
 ### 卸载旧版
 
 ```bash
-# 如果之前装过 openloom 旧版
-rm ~/.cargo/bin/openloom    # Linux/macOS
-del %USERPROFILE%\.cargo\bin\openloom.exe   # Windows
+# 如果之前装过 loom 旧版
+rm ~/.cargo/bin/loom              # Linux/macOS
+rm $HOME\.cargo\bin\loom.exe      # Windows (PowerShell)
+del %USERPROFILE%\.cargo\bin\loom.exe   # Windows (CMD)
 ```
 
 ### 验证安装
