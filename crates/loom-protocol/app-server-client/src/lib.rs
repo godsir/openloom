@@ -824,6 +824,22 @@ async fn dispatch_request<T: DeserializeOwned>(
                     let mut pending_call: Option<(String /*item_id*/, String /*tool*/, serde_json::Value /*args*/)> = None;
 
                     while let Some(token) = token_rx.recv().await {
+                        // ─── REASONING marker (DeepSeek-R1 / o1 thinking) ─────────────────────
+                        if let Some(reasoning_delta) = token.strip_prefix("\x02REASONING\x02") {
+                            let _ = forward_tx.send(AppServerEvent::ServerNotification(
+                                ServerNotification::ReasoningSummaryTextDelta(
+                                    loom_app_server_protocol::ReasoningSummaryTextDeltaNotification {
+                                        thread_id: fwd_tid.clone(),
+                                        turn_id: fwd_turn_inner.clone(),
+                                        item_id: fwd_item.clone(),
+                                        delta: reasoning_delta.to_string(),
+                                        summary_index: 0,
+                                    },
+                                ),
+                            ));
+                            continue;
+                        }
+
                         // ─── CALL marker ──────────────────────────────────────────────────────
                         if let Some(call_json) = token.strip_prefix("\x01CALL\x02") {
                             // Parse ToolCall JSON from engine

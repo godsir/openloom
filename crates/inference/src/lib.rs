@@ -733,8 +733,22 @@ impl CloudClient for OpenAIClient {
                             return Ok(());
                         }
                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
-                            // Stream text tokens
-                            if let Some(text) = val["choices"][0]["delta"]["content"].as_str()
+                            let delta = &val["choices"][0]["delta"];
+
+                            // ─── Reasoning/thinking content (DeepSeek-R1, o1/o3) ───
+                            // Sent with special prefix so the forwarder can convert to
+                            // ReasoningSummaryTextDelta without the content leaking as text.
+                            if let Some(reasoning) = delta["reasoning_content"].as_str() {
+                                if !reasoning.is_empty() {
+                                    let marker = format!("\x02REASONING\x02{}", reasoning);
+                                    if tx.send(marker).await.is_err() {
+                                        return Ok(());
+                                    }
+                                }
+                            }
+
+                            // ─── Normal text token ───
+                            if let Some(text) = delta["content"].as_str()
                                 && tx.send(text.to_string()).await.is_err()
                             {
                                 return Ok(());

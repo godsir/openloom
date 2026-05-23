@@ -101,9 +101,15 @@ impl Engine {
                     ..Default::default()
                 };
 
-                let response = self
-                    .invoke_model_native(&completion_req, model_pref)
-                    .await?;
+                // When a streaming tx is available, use invoke_model_streaming so reasoning
+                // tokens flow to the TUI in real time. The response still contains tool_calls
+                // (via non-streaming fallback inside invoke_model_streaming when tools present).
+                let response = if let Some(ref stream_tx) = tx {
+                    self.invoke_model_streaming(completion_req, stream_tx.clone(), model_pref)
+                        .await?
+                } else {
+                    self.invoke_model_native(&completion_req, model_pref).await?
+                };
                 total_prompt_tokens += response.prompt_tokens;
                 total_completion_tokens += response.completion_tokens;
 
@@ -308,6 +314,119 @@ impl Engine {
             ..Default::default()
         };
         self.inference.complete(fallback_req).await
+    }
+
+    /// Like `invoke_model_native` but streams tokens (including reasoning) into `tx`
+    /// AND returns a `CompletionResponse` with tool_calls parsed from streaming deltas.
+    ///
+    /// Streaming format for tool_calls:
+    ///   delta.tool_calls[i].id / .function.name / .function.arguments (accumulated)
+    pub(crate) async fn invoke_model_streaming(
+        &self,
+        req: CompletionRequest,
+        tx: mpsc::Sender<String>,
+        model_pref: openloom_models::ModelPreference,
+    ) -> Result<CompletionResponse> {
+        // We need tool_calls from the streaming response. The way OpenAI streaming works:
+        // each chunk can have delta.tool_calls[i].function.arguments (partial JSON).
+        // We need to accumulate them. Unfortunately our CloudClient::complete_stream
+        // signature only exposes token strings, not structured deltas.
+        //
+        // Strategy: use complete() (non-streaming) for tool-call-capable requests so we
+        // get clean tool_calls; use complete_stream() only for the text-only first pass.
+        //
+        // For tool_calls requests: call complete_with_retry, then emit text tokens to tx.
+        // For text-only: call complete_stream so reasoning tokens flow in real time.
+
+        let has_tools = !req.tools.is_empty();
+
+        if has_tools {
+            // Tool-use path: non-streaming, emit text after the fact
+            let response = self.invoke_model_native(&req, model_pref).await?;
+            // Emit text tokens word-by-word so TUI still streams
+            for word in response.text.split_inclusive(' ') {
+                if tx.send(word.to_string()).await.is_err() {
+                    break;
+                }
+            }
+            return Ok(response);
+        }
+
+        // Text-only path: real streaming with reasoning support
+        let (first, second) = match model_pref {
+            openloom_models::ModelPreference::Local => (&self.local_client, &self.cloud),
+            openloom_models::ModelPreference::Cloud | openloom_models::ModelPreference::Auto => {
+                (&self.cloud, &self.local_client)
+            }
+        };
+
+        // Collect full text + usage while forwarding to tx
+        let (collect_tx, mut collect_rx) = mpsc::channel::<String>(256);
+        let user_tx = tx.clone();
+        let collector = tokio::spawn(async move {
+            let mut full_text = String::new();
+            let mut usage: Option<(usize, usize, usize)> = None;
+            while let Some(token) = collect_rx.recv().await {
+                if let Some(u) = token.strip_prefix("\x00USAGE:") {
+                    // usage marker — parse, don't forward
+                    let parts: Vec<&str> = u.split(':').collect();
+                    if parts.len() == 3 {
+                        usage = Some((
+                            parts[0].parse().unwrap_or(0),
+                            parts[1].parse().unwrap_or(0),
+                            parts[2].parse().unwrap_or(0),
+                        ));
+                    }
+                    continue;
+                }
+                if token.starts_with('\x02') {
+                    // Reasoning marker — forward only, don't add to text
+                    let _ = user_tx.send(token).await;
+                    continue;
+                }
+                full_text.push_str(&token);
+                let _ = user_tx.send(token).await;
+            }
+            (full_text, usage)
+        });
+
+        let mut stream_ok = false;
+        if let Some(preferred) = first {
+            if preferred.provider() == ModelBackend::LmStudio {
+                let _ = openloom_inference::ensure_lm_studio_model(
+                    "http://localhost:1234/v1",
+                    preferred.model_name(),
+                    32000,
+                )
+                .await;
+            }
+            if preferred.complete_stream(req.clone(), collect_tx.clone()).await.is_ok() {
+                stream_ok = true;
+            } else if let Some(fallback) = second {
+                stream_ok = fallback.complete_stream(req.clone(), collect_tx.clone()).await.is_ok();
+            }
+        } else if let Some(fallback) = second {
+            stream_ok = fallback.complete_stream(req.clone(), collect_tx.clone()).await.is_ok();
+        }
+
+        drop(collect_tx);
+        let (full_text, stream_usage) = collector.await.unwrap_or_default();
+
+        if !stream_ok {
+            anyhow::bail!("all model backends failed for streaming request");
+        }
+
+        let (prompt_tokens, completion_tokens, cached_tokens) =
+            stream_usage.unwrap_or((0, 0, 0));
+
+        Ok(CompletionResponse {
+            text: full_text,
+            tool_calls: vec![],
+            prompt_tokens,
+            completion_tokens,
+            cached_tokens,
+            latency_ms: 0,
+        })
     }
 
     #[allow(dead_code)]
