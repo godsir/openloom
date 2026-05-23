@@ -792,6 +792,7 @@ pub mod config {
         pub disable_paste_burst: bool,
         pub ephemeral: bool,
         pub feedback_enabled: bool,
+        pub check_for_update_on_startup: bool,
         pub history: bool,
         pub memories: MemoriesTomlStub,
         pub terminal_resize_reflow: TerminalResizeReflowConfig,
@@ -893,6 +894,7 @@ pub mod config {
                 disable_paste_burst: false,
                 ephemeral: false,
                 feedback_enabled: false,
+                check_for_update_on_startup: false,
                 history: true,
                 memories: MemoriesTomlStub::default(),
                 terminal_resize_reflow: TerminalResizeReflowConfig::default(),
@@ -1157,9 +1159,7 @@ pub mod login {
     pub fn set_default_client_residency_requirement(
         _enforce_residency: Option<String>,
     ) {}
-    pub fn read_openai_api_key_from_env() -> Option<String> {
-        None
-    }
+    pub fn read_openai_api_key_from_env() -> Option<String> { None }
     #[derive(Debug, Clone)]
     pub struct DefaultOriginator {
         pub value: String,
@@ -1172,6 +1172,9 @@ pub mod login {
         pub fn set_default_client_residency_requirement(
             _enforce_residency: Option<String>,
         ) {}
+        pub fn create_client() -> reqwest::Client {
+            reqwest::Client::new()
+        }
     }
 }
 

@@ -18,6 +18,7 @@ loom-config = { workspace = true }
 loom-app-server-protocol = { workspace = true }
 loom-features = { workspace = true }
 anyhow = { workspace = true }
+reqwest = { workspace = true }
 loom-exec-server = { workspace = true }
 loom-cli-utils = { workspace = true }
 toml_edit = { workspace = true }
