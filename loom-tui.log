@@ -50,3 +50,18 @@ Caused by:
 2026-05-23T03:22:31.694920Z  WARN loom_tui::app: app-server event stream closed
 2026-05-23T03:22:35.657564Z  WARN loom_tui::startup_hooks_review: failed to load startup hook review state: hooks/list failed in TUI: method not found (not yet mapped in Loom adapter)
 2026-05-23T03:22:35.665036Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=7 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=3 initial_session_ms=0 event_stream_ms=0
+2026-05-23T03:25:44.732305Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
+2026-05-23T03:25:44.732793Z  WARN loom_tui::app: app-server event stream closed
+2026-05-23T03:26:00.355735Z  INFO loom_tui::app::event_dispatch: Selected model: no model configured, Selected effort: medium
+2026-05-23T03:26:01.631077Z  INFO loom_tui::app::event_dispatch: Selected model: no model configured, Selected effort: medium
+2026-05-23T03:34:52.195133Z  WARN loom_tui::app::thread_routing: failed to unsubscribe thread 9047faed-74af-42ed-a614-4de935e83131: thread/unsubscribe failed in TUI
+2026-05-23T03:34:57.455513Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=0 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
+2026-05-23T03:34:57.455599Z  WARN loom_tui::app: app-server event stream closed
+2026-05-23T03:34:59.554885Z  WARN loom_tui::app::thread_routing: failed to unsubscribe thread 6616da1d-97d7-4ef7-b2bd-4b6ba06cf671: thread/unsubscribe failed in TUI
+2026-05-23T03:35:47.314121Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=2 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=1 initial_session_ms=0 event_stream_ms=0
+2026-05-23T03:35:47.314198Z  WARN loom_tui::app: app-server event stream closed
+2026-05-23T03:35:58.366943Z  INFO loom_tui::app::event_dispatch: Selected model: deepseek-v4-pro[1m], Selected effort: medium
+2026-05-23T03:36:02.060886Z  INFO loom_tui::app::event_dispatch: Selected model: gemma-4-26b-a4b-it-ultra-uncensored-heretic, Selected effort: medium
+2026-05-23T03:36:05.994184Z  INFO loom_tui::app::event_dispatch: Selected model: deepseek-v4-pro[1m], Selected effort: medium
+2026-05-23T03:36:51.193519Z  INFO loom_tui::app::event_dispatch: Selected model: gemma-4-26b-a4b-it-ultra-uncensored-heretic, Selected effort: medium
+2026-05-23T03:37:40.252244Z  WARN loom_tui::app::thread_routing: failed to unsubscribe thread dc3bf130-5624-4a26-831e-d176652020ca: thread/unsubscribe failed in TUI

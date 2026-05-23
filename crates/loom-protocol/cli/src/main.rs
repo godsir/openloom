@@ -823,6 +823,23 @@ async fn run_interactive_tui(
             remote_endpoint.clone(),
         )
     };
+
+    // Double Ctrl+C to exit: first press is ignored (TUI handles it),
+    // second press within 2 seconds forces immediate exit.
+    let last_ctrlc = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0));
+    let last_ctrlc_clone = last_ctrlc.clone();
+    ctrlc::set_handler(move || {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let last = last_ctrlc_clone.load(std::sync::atomic::Ordering::Relaxed);
+        if last > 0 && now - last < 2000 {
+            std::process::exit(0);
+        }
+        last_ctrlc_clone.store(now, std::sync::atomic::Ordering::Relaxed);
+    }).ok();
+
     let mut attempted_repair = false;
     loop {
         let err = match start_tui().await {
