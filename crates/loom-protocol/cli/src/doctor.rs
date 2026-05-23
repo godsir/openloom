@@ -269,7 +269,7 @@ async fn check_config() -> DoctorCheck {
             vec!["Using default configuration".to_string()]
         },
         remediation: if !exists {
-            Some("Create a config.toml in your Loom home directory, or use defaults".to_string())
+            Some("Create a config.toml in your Loom data directory, or use defaults".to_string())
         } else {
             None
         },
