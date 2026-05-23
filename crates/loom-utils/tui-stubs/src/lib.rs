@@ -1070,12 +1070,11 @@ pub mod config {
     /// Returns AbsolutePathBuf for TUI compatibility.
     pub fn find_codex_home_tui() -> Option<AbsolutePathBuf> { None }
 
-    /// Resolves CODEX_HOME for CLI use (returns PathBuf).
+    /// Resolves LOOM_HOME, returns PathBuf.
     pub fn find_codex_home() -> anyhow::Result<PathBuf> {
-        if let Ok(home) = std::env::var("CODEX_HOME") {
-            return Ok(PathBuf::from(home));
-        }
-        Ok(PathBuf::from(".codex"))
+        loom_home_dir::find_codex_home()
+            .map(|p| p.as_path().to_path_buf())
+            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     /// Resolves the config path for a profile v2 (TUI compatibility).

@@ -1,2 +1,21 @@
 2026-05-23T02:39:09.116624Z  WARN loom_tui::startup_hooks_review: failed to load startup hook review state: hooks/list failed in TUI: method not found (not yet mapped in Loom adapter)
 2026-05-23T02:40:47.679005Z  WARN loom_tui::startup_hooks_review: failed to load startup hook review state: hooks/list failed in TUI: method not found (not yet mapped in Loom adapter)
+2026-05-23T02:55:29.493413Z ERROR loom_tui: panic: panicked at crates\engine\src\session.rs:23:57:
+session db open: SqliteFailure(Error { code: CannotOpen, extended_code: 14 }, Some("unable to open database file: C:\\Users\\Suyi\\AppData\\Local\\Temp\\.tmppZS8Uy\\data\\db.sqlite"))
+2026-05-23T02:55:29.499573Z ERROR loom_tui: panic: panicked at crates\engine\src\memory_thread.rs:32:14:
+failed to open database with migrations: unable to open database file: C:\Users\Suyi\AppData\Local\Temp\.tmppZS8Uy\data\db.sqlite
+
+Caused by:
+    Error code 14: Unable to open the database file
+2026-05-23T02:55:30.368566Z  WARN loom_tui::startup_hooks_review: failed to load startup hook review state: hooks/list failed in TUI: method not found (not yet mapped in Loom adapter)
+2026-05-23T02:55:30.381356Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=12 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=6 initial_session_ms=0 event_stream_ms=0
+2026-05-23T02:58:55.550581Z ERROR loom_tui: panic: panicked at crates\engine\src\session.rs:23:57:
+session db open: SqliteFailure(Error { code: CannotOpen, extended_code: 14 }, Some("unable to open database file: C:\\Users\\Suyi\\AppData\\Local\\Temp\\.tmpjSiCCg\\data\\db.sqlite"))
+2026-05-23T02:58:55.554811Z ERROR loom_tui: panic: panicked at crates\engine\src\memory_thread.rs:32:14:
+failed to open database with migrations: unable to open database file: C:\Users\Suyi\AppData\Local\Temp\.tmpjSiCCg\data\db.sqlite
+
+Caused by:
+    Error code 14: Unable to open the database file
+2026-05-23T02:58:56.892907Z  WARN loom_tui::startup_hooks_review: failed to load startup hook review state: hooks/list failed in TUI: method not found (not yet mapped in Loom adapter)
+2026-05-23T02:58:56.901507Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=8 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=4 initial_session_ms=0 event_stream_ms=0
+2026-05-23T02:58:56.905022Z  WARN loom_tui::app: app-server event stream closed

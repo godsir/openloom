@@ -24,3 +24,4 @@ loom-cli-utils = { workspace = true }
 toml_edit = { workspace = true }
 toml = { workspace = true }
 loom-otel-stub = { workspace = true }
+loom-home-dir.workspace = true
