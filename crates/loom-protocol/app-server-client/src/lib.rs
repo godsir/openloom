@@ -51,7 +51,8 @@ pub struct InProcessAppServerClient {
 
 impl InProcessAppServerClient {
     pub async fn start(_args: InProcessClientStartArgs) -> std::io::Result<Self> {
-        let inner = LoomAppServerClient::stub();
+        let inner = LoomAppServerClient::from_config().await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         let engine = Arc::clone(&inner.engine);
         let event_tx = inner.event_tx.clone();
         Ok(Self { inner, engine, event_tx })
@@ -303,6 +304,34 @@ impl LoomAppServerClient {
             event_rx,
             event_tx,
         })
+    }
+
+    /// Creates a client by loading model config from config.toml.
+    pub async fn from_config() -> anyhow::Result<Self> {
+        let data_dir = loom_home_dir::find_loom_home()
+            .map(|p| p.as_path().to_path_buf())
+            .unwrap_or_else(|_| {
+                dirs::data_dir()
+                    .map(|d| d.join("openLoom"))
+                    .unwrap_or_default()
+            });
+
+        let (cloud_config, local_config) = load_model_configs(&data_dir);
+
+        let config = openloom_engine::EngineConfig {
+            data_dir: data_dir.clone(),
+            threshold: 3,
+            cloud_config,
+            local_config,
+            rate_limit_ms: 100,
+            heartbeat_interval_secs: 1800,
+            heartbeat_idle_threshold_min: 120,
+            model_override: None,
+            project_scope: "global".into(),
+            skip_permissions: true,
+        };
+
+        Self::new(config).await
     }
 
     /// Sends a typed client request and returns a deserialized response body.
@@ -557,6 +586,55 @@ impl LoomAppServerClient {
 // ─── Request dispatch helpers ───
 
 /// Load models from openLoom config.toml into Codex-format Model entries.
+/// Load model configs from config.toml, separated into cloud and local.
+fn load_model_configs(data_dir: &std::path::Path) -> (Option<openloom_models::ModelConfig>, Option<openloom_models::ModelConfig>) {
+    let config_path = data_dir.join("config.toml");
+    let mut cloud: Option<openloom_models::ModelConfig> = None;
+    let mut local: Option<openloom_models::ModelConfig> = None;
+
+    if let Ok(content) = std::fs::read_to_string(&config_path) {
+        if let Ok(config) = toml::from_str::<toml::Table>(&content) {
+            if let Some(models_section) = config.get("models") {
+                if let Some(arr) = models_section.as_array() {
+                    for entry in arr {
+                        let t = entry.as_table();
+                        let backend = t.and_then(|t| t.get("backend")).and_then(|v| v.as_str()).unwrap_or("");
+                        let cfg = openloom_models::ModelConfig {
+                            name: t.and_then(|t| t.get("name")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            model: t.and_then(|t| t.get("model")).and_then(|v| v.as_str()).map(|s| s.to_string()),
+                            model_type: openloom_models::ModelType::Reasoning,
+                            backend: match backend.to_lowercase().as_str() {
+                                "anthropic" => openloom_models::ModelBackend::Anthropic,
+                                "openai" => openloom_models::ModelBackend::OpenAI,
+                                "deepseek" => openloom_models::ModelBackend::DeepSeek,
+                                "ollama" => openloom_models::ModelBackend::Ollama,
+                                _ => openloom_models::ModelBackend::LmStudio,
+                            },
+                            path: None,
+                            context_size: t.and_then(|t| t.get("context_size")).and_then(|v| v.as_integer()).unwrap_or(4096) as usize,
+                            max_output_tokens: t.and_then(|t| t.get("max_output_tokens")).and_then(|v| v.as_integer()).map(|v| v as usize),
+                            n_gpu_layers: 0,
+                            api_key_env: t.and_then(|t| t.get("api_key_env")).and_then(|v| v.as_str()).map(|s| s.to_string()),
+                            base_url: t.and_then(|t| t.get("base_url")).and_then(|v| v.as_str()).map(|s| s.to_string()),
+                        };
+                        match cfg.backend {
+                            openloom_models::ModelBackend::Anthropic
+                            | openloom_models::ModelBackend::OpenAI
+                            | openloom_models::ModelBackend::DeepSeek => {
+                                if cloud.is_none() { cloud = Some(cfg); }
+                            }
+                            _ => {
+                                if local.is_none() { local = Some(cfg); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (cloud, local)
+}
+
 fn load_model_list() -> Vec<loom_app_server_protocol::Model> {
     let mut models = Vec::new();
 
