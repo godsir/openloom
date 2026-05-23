@@ -14,8 +14,14 @@ impl Engine {
         session_id: &str,
         mode: openloom_models::Mode,
     ) -> Result<ChatResponse> {
-        self.agent_loop_inner(msg, session_id, None, mode, openloom_models::ModelPreference::Auto)
-            .await
+        self.agent_loop_inner(
+            msg,
+            session_id,
+            None,
+            mode,
+            openloom_models::ModelPreference::Auto,
+        )
+        .await
     }
 
     pub(crate) async fn agent_loop_streaming(
@@ -95,7 +101,9 @@ impl Engine {
                     ..Default::default()
                 };
 
-                let response = self.invoke_model_native(&completion_req, model_pref).await?;
+                let response = self
+                    .invoke_model_native(&completion_req, model_pref)
+                    .await?;
                 total_prompt_tokens += response.prompt_tokens;
                 total_completion_tokens += response.completion_tokens;
 
@@ -179,7 +187,9 @@ impl Engine {
                     temperature: 0.0,
                     ..Default::default()
                 };
-                let response = self.invoke_model_native(&completion_req, model_pref).await?;
+                let response = self
+                    .invoke_model_native(&completion_req, model_pref)
+                    .await?;
                 total_prompt_tokens += response.prompt_tokens;
                 total_completion_tokens += response.completion_tokens;
                 last_response = response.text;
@@ -270,7 +280,8 @@ impl Engine {
                 Ok(r) => return Ok(r),
                 Err(e) => tracing::warn!(
                     "Preferred model failed (pref={:?}), trying fallback: {}",
-                    model_pref, e
+                    model_pref,
+                    e
                 ),
             }
         }

@@ -4359,6 +4359,7 @@ name = "loom-app-server-client"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "dirs",
  "futures",
  "loom-absolute-path",
@@ -4366,6 +4367,7 @@ dependencies = [
  "loom-arg0",
  "loom-config",
  "loom-exec-server",
+ "loom-protocol",
  "loom-rustls-provider",
  "loom-tui-stubs",
  "loom-uds",
@@ -4379,6 +4381,7 @@ dependencies = [
  "toml 0.9.12+spec-1.1.0",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]
