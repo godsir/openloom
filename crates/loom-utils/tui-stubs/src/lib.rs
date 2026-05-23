@@ -1016,21 +1016,63 @@ pub mod config {
         use super::SessionPickerViewMode;
 
         #[derive(Debug, Clone)]
-        pub struct ConfigEditsBuilder;
+        pub struct ConfigEditsBuilder {
+            edits: Vec<ConfigEdit>,
+        }
         impl ConfigEditsBuilder {
-            pub fn new(_codex_home: &std::path::Path) -> Self { Self }
-            pub fn for_config(_config: &super::Config) -> Self { Self }
-            pub fn set_session_picker_view(self, _view: SessionPickerViewMode) -> Self { self }
-            pub fn set_realtime_speaker(self, _name: Option<&str>) -> Self { self }
-            pub fn set_realtime_microphone(self, _name: Option<&str>) -> Self { self }
-            pub fn set_realtime_audio_device(self, _kind: &str, _name: String) -> Self { self }
-            pub fn set_model_availability_nux_count(self, _count: &HashMap<String, u32>) -> Self { self }
-            pub fn set_hide_world_writable_warning(self, _acknowledged: bool) -> Self { self }
-            pub fn set_hide_rate_limit_model_nudge(self, _acknowledged: bool) -> Self { self }
-            pub fn set_hide_full_access_warning(self, _acknowledged: bool) -> Self { self }
-            pub fn record_model_migration_seen(self, _from: &str, _to: &str) -> Self { self }
-            pub async fn apply(self) -> Result<(), anyhow::Error> { Ok(()) }
-            pub fn with_edits(self, _edits: impl IntoIterator<Item = ConfigEdit>) -> Self { self }
+            pub fn new(_codex_home: &std::path::Path) -> Self { Self { edits: Vec::new() } }
+            pub fn for_config(_config: &super::Config) -> Self { Self { edits: Vec::new() } }
+            pub fn set_session_picker_view(mut self, _view: SessionPickerViewMode) -> Self { self }
+            pub fn set_realtime_speaker(mut self, _name: Option<&str>) -> Self { self }
+            pub fn set_realtime_microphone(mut self, _name: Option<&str>) -> Self { self }
+            pub fn set_realtime_audio_device(mut self, _kind: &str, _name: String) -> Self { self }
+            pub fn set_model_availability_nux_count(mut self, _count: &HashMap<String, u32>) -> Self { self }
+            pub fn set_hide_world_writable_warning(mut self, _acknowledged: bool) -> Self { self }
+            pub fn set_hide_rate_limit_model_nudge(mut self, _acknowledged: bool) -> Self { self }
+            pub fn set_hide_full_access_warning(mut self, _acknowledged: bool) -> Self { self }
+            pub fn record_model_migration_seen(mut self, _from: &str, _to: &str) -> Self { self }
+            pub fn with_edits(mut self, edits: impl IntoIterator<Item = ConfigEdit>) -> Self {
+                self.edits.extend(edits);
+                self
+            }
+            pub async fn apply(self) -> Result<(), anyhow::Error> {
+                let config_path = match loom_home_dir::find_loom_home() {
+                    Ok(p) => p.into_path_buf().join("config.toml"),
+                    Err(_) => {
+                        std::env::var("APPDATA").ok()
+                            .map(|d| std::path::PathBuf::from(d).join("openLoom").join("config.toml"))
+                            .ok_or_else(|| anyhow::anyhow!("could not determine config path: APPDATA not set"))?
+                    }
+                };
+
+                let content = match std::fs::read_to_string(&config_path) {
+                    Ok(c) => c,
+                    Err(_) => String::new(),
+                };
+                let mut table: toml::Table = toml::from_str(&content).unwrap_or_default();
+
+                for edit in &self.edits {
+                    if let ConfigEdit::SetPath { segments, value } = edit {
+                        let mut current = &mut table;
+                        for (i, seg) in segments.iter().enumerate() {
+                            if i == segments.len() - 1 {
+                                current.insert(seg.clone(), value.clone().into());
+                            } else {
+                                current = current.entry(seg.clone())
+                                    .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+                                    .as_table_mut()
+                                    .ok_or_else(|| anyhow::anyhow!("config path segment '{}' is not a table", seg))?;
+                            }
+                        }
+                    }
+                }
+
+                if let Some(parent) = config_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&config_path, toml::to_string_pretty(&table)?)?;
+                Ok(())
+            }
         }
 
         #[derive(Debug, Clone)]
@@ -1056,11 +1098,36 @@ pub mod config {
 
         pub fn keymap_bindings_edit(_context: &str, _action: &str, _bindings: &[String]) -> ConfigEdit { ConfigEdit::Other }
         pub fn keymap_binding_clear_edit(_context: &str, _action: &str) -> ConfigEdit { ConfigEdit::Other }
-        pub fn status_line_items_edit(_ids: &[String]) -> ConfigEdit { ConfigEdit::Other }
-        pub fn status_line_use_colors_edit(_use_colors: bool) -> ConfigEdit { ConfigEdit::Other }
-        pub fn syntax_theme_edit(_name: &str) -> ConfigEdit { ConfigEdit::Other }
-        pub fn terminal_title_items_edit(_ids: &[String]) -> ConfigEdit { ConfigEdit::Other }
-        pub fn tui_pet_edit(_pet_id: &str) -> ConfigEdit { ConfigEdit::Other }
+        pub fn status_line_items_edit(ids: &[String]) -> ConfigEdit {
+            ConfigEdit::SetPath {
+                segments: vec!["tui".into(), "status_line".into()],
+                value: toml::Value::Array(ids.iter().map(|s| toml::Value::String(s.clone())).collect()),
+            }
+        }
+        pub fn status_line_use_colors_edit(use_colors: bool) -> ConfigEdit {
+            ConfigEdit::SetPath {
+                segments: vec!["tui".into(), "status_line_use_colors".into()],
+                value: toml::Value::Boolean(use_colors),
+            }
+        }
+        pub fn syntax_theme_edit(name: &str) -> ConfigEdit {
+            ConfigEdit::SetPath {
+                segments: vec!["tui".into(), "theme".into()],
+                value: toml::Value::String(name.to_string()),
+            }
+        }
+        pub fn terminal_title_items_edit(ids: &[String]) -> ConfigEdit {
+            ConfigEdit::SetPath {
+                segments: vec!["tui".into(), "terminal_title".into()],
+                value: toml::Value::Array(ids.iter().map(|s| toml::Value::String(s.clone())).collect()),
+            }
+        }
+        pub fn tui_pet_edit(pet_id: &str) -> ConfigEdit {
+            ConfigEdit::SetPath {
+                segments: vec!["tui".into(), "pet".into()],
+                value: toml::Value::String(pet_id.to_string()),
+            }
+        }
     }
 
     // Additional config stubs
