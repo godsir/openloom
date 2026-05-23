@@ -422,7 +422,7 @@ impl AppServerRequestHandle {
         match self {
             Self::Loom(handle) => handle.request_typed(request).await,
             Self::Remote(handle) => handle.request_typed(request).await,
-            Self::InProcess(_handle) => Err(TypedRequestError::MethodNotFound),
+            Self::InProcess(handle) => handle.request_typed(request).await,
         }
     }
 }
@@ -949,7 +949,7 @@ async fn dispatch_request<T: DeserializeOwned>(
         ),
 
         // ─── Catch-all: not yet mapped ───
-        _ => Err(TypedRequestError::MethodNotFound),
+        _ => Err(TypedRequestError::MethodNotFound),,
     }
 }
 
