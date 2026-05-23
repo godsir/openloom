@@ -74,16 +74,11 @@ impl WelcomeWidget {
 impl WidgetRef for &WelcomeWidget {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         Clear.render(area, buf);
-        if self.animations_enabled && !self.animations_suppressed.get() {
-            self.animation.schedule_next_frame();
-        }
+        // Animation is disabled; no frame scheduling needed.
 
         let layout_area = self.layout_area.get().unwrap_or(area);
-        // Skip the animation entirely when the viewport is too small so we don't clip frames.
-        let show_animation = self.animations_enabled
-            && !self.animations_suppressed.get()
-            && layout_area.height >= MIN_ANIMATION_HEIGHT
-            && layout_area.width >= MIN_ANIMATION_WIDTH;
+        // Animation disabled for openLoom (replaced by static ASCII logo in welcome text)
+        let show_animation = false;
 
         let mut lines: Vec<Line> = Vec::new();
         if show_animation {

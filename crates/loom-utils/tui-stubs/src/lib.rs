@@ -904,7 +904,7 @@ pub mod config {
                 tui_pet: None,
                 tui_pet_anchor: None,
                 tui_status_line: None,
-                tui_status_line_use_colors: false,
+                tui_status_line_use_colors: true,
                 tui_terminal_title: None,
                 tui_vim_mode_default: false,
                 tui_session_picker_view: SessionPickerViewMode::default(),
