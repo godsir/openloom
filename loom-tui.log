@@ -68,3 +68,21 @@ Caused by:
 2026-05-23T03:37:42.591794Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
 2026-05-23T03:37:42.591882Z  WARN loom_tui::app: app-server event stream closed
 2026-05-23T03:39:37.586855Z  WARN loom_tui::app::thread_routing: failed to unsubscribe thread 3d9d856c-7425-430b-a551-e5b0d0db24d5: thread/unsubscribe failed in TUI
+2026-05-23T03:40:26.722175Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
+2026-05-23T03:40:26.722324Z  WARN loom_tui::app: app-server event stream closed
+2026-05-23T03:42:09.869702Z  INFO loom_tui::chatwidget::status_controls: terminal title setup confirmed with items: [
+    Spinner,
+    Project,
+    CurrentDir,
+    Status,
+    ContextRemaining,
+    UsedTokens,
+    TotalInputTokens,
+    TotalOutputTokens,
+    TaskProgress,
+]
+2026-05-23T03:42:24.987867Z  WARN loom_tui::app::thread_routing: failed to unsubscribe thread 8fbd996c-dded-4a5d-9050-dce7f68d7881: thread/unsubscribe failed in TUI
+2026-05-23T03:42:33.000092Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
+2026-05-23T03:42:33.000448Z  WARN loom_tui::app: app-server event stream closed
+2026-05-23T03:42:38.314883Z  INFO loom_tui::app::event_dispatch: Selected model: gemma-4-26b-a4b-it-ultra-uncensored-heretic, Selected effort: medium
+2026-05-23T03:42:50.494206Z  WARN loom_tui::app::thread_routing: failed to unsubscribe thread 0fbf38cd-a317-4cc3-ad25-513d4e983c27: thread/unsubscribe failed in TUI

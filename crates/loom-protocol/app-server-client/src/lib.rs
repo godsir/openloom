@@ -560,13 +560,14 @@ impl LoomAppServerClient {
 fn load_model_list() -> Vec<loom_app_server_protocol::Model> {
     let mut models = Vec::new();
 
-    // Try to find config file in standard locations
-    let config_path = loom_home_dir::find_loom_home()
-        .map(|h| h.join("config.toml"))
-        .ok();
+    // Try multiple locations for config.toml
+    let config_paths: Vec<std::path::PathBuf> = vec![
+        loom_home_dir::find_loom_home().ok().map(|h| h.as_path().join("config.toml")),
+        dirs::data_dir().map(|d| d.join("openLoom").join("config.toml")),
+    ].into_iter().flatten().collect();
 
-    if let Some(path) = config_path {
-        if let Ok(content) = std::fs::read_to_string(&path) {
+    for path in &config_paths {
+        if let Ok(content) = std::fs::read_to_string(path) {
             if let Ok(config) = toml::from_str::<toml::Table>(&content) {
                 if let Some(models_section) = config.get("models") {
                     if let Some(arr) = models_section.as_array() {

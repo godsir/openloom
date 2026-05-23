@@ -26,7 +26,7 @@ openloom-engine = { path = "../../engine" }
 openloom-models = { path = "../../models" }
 anyhow = { workspace = true }
 chrono = { workspace = true }
-dirs = { workspace = true }
+dirs.workspace = true
 futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
