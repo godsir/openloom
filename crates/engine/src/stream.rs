@@ -65,8 +65,9 @@ impl Engine {
                 .agent_loop_streaming(&msg, session_id, tx_clone, mode, model_pref)
                 .await
             {
-                Ok(resp) => {
-                    let _ = tx.send(resp.response).await;
+                Ok(_resp) => {
+                    // Text was already streamed token-by-token inside agent_loop_streaming.
+                    // Do not re-send resp.response here to avoid duplicate output.
                 }
                 Err(e) => {
                     let _ = tx.send(format!("[agent error: {}]", e)).await;

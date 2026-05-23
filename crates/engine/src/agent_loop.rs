@@ -63,6 +63,9 @@ impl Engine {
         let mut last_response = String::new();
         let mut total_prompt_tokens = 0usize;
         let mut total_completion_tokens = 0usize;
+        // Only stream on the very first LLM call so reasoning tokens flow to TUI.
+        // Tool-use follow-up rounds use non-streaming (cleaner tool_call parsing).
+        let mut first_iteration = true;
 
         let (max_iterations, timeout_secs) = {
             let cfg = self.config.read().await;
@@ -101,13 +104,17 @@ impl Engine {
                     ..Default::default()
                 };
 
-                // When a streaming tx is available, use invoke_model_streaming so reasoning
-                // tokens flow to the TUI in real time. The response still contains tool_calls
-                // (via non-streaming fallback inside invoke_model_streaming when tools present).
-                let response = if let Some(ref stream_tx) = tx {
+                // When a streaming tx is available, use invoke_model_streaming on the
+                // FIRST iteration only — so reasoning tokens flow to TUI in real time.
+                // Subsequent tool-call rounds use non-streaming for clean tool_call parsing.
+                let response = if let Some(ref stream_tx) = tx
+                    && first_iteration
+                {
+                    first_iteration = false;
                     self.invoke_model_streaming(completion_req, stream_tx.clone(), model_pref)
                         .await?
                 } else {
+                    first_iteration = false;
                     self.invoke_model_native(&completion_req, model_pref).await?
                 };
                 total_prompt_tokens += response.prompt_tokens;
@@ -163,7 +170,18 @@ impl Engine {
                     }
                     *self.agent_state.write().await = AgentState::Thinking;
                 } else {
-                    last_response = response.text;
+                    last_response = response.text.clone();
+                    // If this is a non-first iteration (tool-use follow-up), the text
+                    // was not streamed yet — send it now so TUI shows the final answer.
+                    if !first_iteration {
+                        if let Some(ref stream_tx) = tx {
+                            for word in response.text.split_inclusive(' ') {
+                                if stream_tx.send(word.to_string()).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
                     break;
                 }
             }
@@ -198,7 +216,15 @@ impl Engine {
                     .await?;
                 total_prompt_tokens += response.prompt_tokens;
                 total_completion_tokens += response.completion_tokens;
-                last_response = response.text;
+                last_response = response.text.clone();
+                // Send final answer to TUI (not streamed yet on this fallback path)
+                if let Some(ref stream_tx) = tx {
+                    for word in response.text.split_inclusive(' ') {
+                        if stream_tx.send(word.to_string()).await.is_err() {
+                            break;
+                        }
+                    }
+                }
             }
 
             Ok::<_, anyhow::Error>(last_response)
@@ -341,15 +367,10 @@ impl Engine {
         let has_tools = !req.tools.is_empty();
 
         if has_tools {
-            // Tool-use path: non-streaming, emit text after the fact
-            let response = self.invoke_model_native(&req, model_pref).await?;
-            // Emit text tokens word-by-word so TUI still streams
-            for word in response.text.split_inclusive(' ') {
-                if tx.send(word.to_string()).await.is_err() {
-                    break;
-                }
-            }
-            return Ok(response);
+            // Tool-use path: non-streaming.
+            // The caller (agent_loop_inner / stream.rs) is responsible for streaming
+            // the final text after all tool rounds complete.
+            return self.invoke_model_native(&req, model_pref).await;
         }
 
         // Text-only path: real streaming with reasoning support
