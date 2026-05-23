@@ -645,7 +645,9 @@ fn load_model_list() -> Vec<loom_app_server_protocol::Model> {
     ].into_iter().flatten().collect();
 
     for path in &config_paths {
+        eprintln!("[loom] load_model_list: trying {}", path.display());
         if let Ok(content) = std::fs::read_to_string(path) {
+            eprintln!("[loom] load_model_list: found config, {} bytes", content.len());
             if let Ok(config) = toml::from_str::<toml::Table>(&content) {
                 if let Some(models_section) = config.get("models") {
                     if let Some(arr) = models_section.as_array() {
@@ -690,6 +692,7 @@ fn load_model_list() -> Vec<loom_app_server_protocol::Model> {
 
     // Fallback if no config or empty
     if models.is_empty() {
+        eprintln!("[loom] load_model_list: No models found, using fallback qwen3-1.7b");
         models.push(loom_app_server_protocol::Model {
             id: "default".into(),
             model: "qwen3-1.7b".into(),

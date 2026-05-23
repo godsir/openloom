@@ -89,3 +89,6 @@ Caused by:
 2026-05-23T04:18:53.005128Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
 2026-05-23T04:18:53.005260Z  WARN loom_tui::app: app-server event stream closed
 2026-05-23T04:21:05.779590Z  WARN loom_tui::app::thread_routing: failed to unsubscribe thread 97680d70-6835-4f83-855d-6ab17c3218cf: thread/unsubscribe failed in TUI
+2026-05-23T04:25:27.953865Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
+2026-05-23T04:25:27.954314Z  WARN loom_tui::app: app-server event stream closed
+2026-05-23T04:25:58.907807Z  WARN loom_tui::app::thread_routing: failed to unsubscribe thread 08672d29-9a2a-404a-b1e0-495ae708b233: thread/unsubscribe failed in TUI
