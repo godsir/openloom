@@ -1,349 +1,150 @@
-# openLoom TUI 使用文档
+# Loom CLI 使用文档
+
+> 基于 Codex CLI 移植，命令体系与 Codex 兼容。
 
 ## 安装
 
 ```bash
-
-# 编译
-cargo build --release 
-# 从源码安装（推荐）
-cargo install --path crates/cli
-# 或者从 crates.io 安装（如果已发布）
-cargo install openloom
+cargo build -p loom-cli --release
+# 二进制路径: ./target/release/loom.exe (Windows) / ./target/release/loom (Linux/macOS)
 ```
-
-安装后 `openloom` 命令全局可用（安装到 `~/.cargo/bin/`，确保该路径在 PATH 中）。
 
 ## 启动
 
 ```bash
-# 交互模式（默认，新建会话）
-openloom chat
+# 交互模式（默认，启动 TUI）
+loom
 
-# 继续上次对话（恢复最近一个会话）
-openloom chat --continue
-openloom chat -r
+# 带初始提示词启动
+loom "帮我重构这个函数"
 
-# 继续指定会话
-openloom chat --continue <session-id>
-openloom chat -r <session-id>
+# 非交互执行
+loom exec "解释这段代码"
+loom e "解释这段代码"          # 别名
 
-# 指定模型
-openloom chat -m "anthropic:claude-sonnet-4-20250514"
+# 代码审查
+loom review
 
-# 单次执行（非交互）
-openloom chat -c "解释什么是认知图谱"
+# 继续上次会话
+loom resume
+loom resume --last
 
-# 跳过权限确认（危险）
-openloom chat --dangerously-skip-permissions
+# 分叉会话
+loom fork
+loom fork --last
 
-# 指定配置文件
-openloom chat --config /path/to/config.toml
+# 应用最近的 diff
+loom apply
+loom a                          # 别名
 
-# 组合使用
-openloom chat -r -m "deepseek-chat"
+# Shell 补全
+loom completion bash
+loom completion zsh
+loom completion fish
 ```
 
-### 其他命令
+## 其他命令
 
 ```bash
-openloom serve              # 启动 HTTP/WebSocket 服务
-openloom run "写一首诗"     # 单次执行并退出
-openloom doctor             # 系统诊断
-openloom memory persona     # 查看认知画像
-openloom session list       # 列出所有会话
-openloom config path        # 显示配置文件路径
-openloom download-model     # 下载 GGUF 模型
+loom doctor              # 诊断：配置、环境、存储
+loom mcp                 # MCP 服务器管理
+loom plugin              # 插件管理
+loom sandbox             # 沙箱执行
+loom debug               # 调试工具
+loom execpolicy          # 执行策略检查
 ```
 
-## 界面架构
+## 快捷键（Codex TUI）
 
-openLoom 使用 **内联视口 (Inline Viewport)** 架构，类似 Claude Code：
+Codex TUI 使用 Vim 风格的快捷键体系。
 
-- 已完成的消息通过 `insert_before` 推入**终端原生滚动缓冲区**，可用鼠标滚轮、终端滚动条回看
-- 底部固定一个 ratatui 管理的**内联区域**（状态栏 + 分隔线 + 输入框）
-- 流式输出时，内联区域顶部显示实时预览；完成后推入滚动缓冲区
-
-```
-  ❯ you                                          ←─┐
-    你好                                            │
-                                                    │ 终端原生滚动缓冲区
-  ◆ openLoom (3.2s)                                 │ （鼠标滚轮 / 滚动条）
-    你好！有什么我可以帮你的？                         │
-  ● tool  Update(src/main.rs)                       │
-  └ result  +12 -3 lines                            │
-    ...                                           ←─┘
-┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
- ● model [code] think:mid │ 12% of 200k   1.2k / 3.4k  ← 状态栏
-─ streaming ──────────────────────────────────────────    ← 分隔线
- > _                                                      ← 输入区域
-```
-
-### 消息角色标记
-
-| 标记 | 角色 | 说明 |
-|------|------|------|
-| `❯ you` | 用户 | 用户输入 |
-| `◆ openLoom (3.2s)` | 助手 | 回复内容 + 耗时，Markdown 渲染（加粗/标题/代码/列表/表格） |
-| `✦ skill` | 技能 | 折叠显示，`/<skill>` 激活时注入 LLM 上下文 |
-| `✦ mode` | 模式 | 模式切换通知 |
-| `○ thinking` | 思考 | 折叠显示，`Ctrl+O` 展开当前轮次 |
-| `● tool` | 工具调用 | 折叠显示，结构化格式：`Read(file)` / `Update(file)` / `Bash(cmd)` |
-| `└ result` | 工具结果 | 折叠显示，diff 统计：`+12 -3 lines` |
-| `✖ error` | 错误 | 红色展开显示 |
-
-## 快捷键
-
-### 输入模式
+### 输入
 
 | 按键 | 功能 |
 |------|------|
-| `Enter` | 发送消息 / 选择弹窗命令 / 选择历史搜索 |
-| `Shift+Enter` | 插入换行 |
-| `Ctrl+J` | 插入换行（备选） |
-| `Tab` | 斜杠命令补全 / 文件路径补全（无弹窗时） |
-| `↑` / `↓` | 浏览历史 / 导航弹窗 / 导航历史搜索 |
-| `Ctrl+G` | 打开外部编辑器（$EDITOR） |
-| `Ctrl+R` | 历史搜索（输入关键词过滤，Enter 选择，Esc 取消） |
-| `Ctrl+M` | 循环切换模式（chat → plan → code → assistant） |
-| `Ctrl+O` | 展开/折叠当前轮次的 thinking/tool 消息 |
-| `Esc` | 关闭命令弹窗 / 取消历史搜索 |
+| `Enter` | 发送消息 |
+| `Shift+Enter` | 换行 |
+| `Esc` | 退出当前模式 / 取消 |
+| `Ctrl+C` | 中断生成 |
+| `Ctrl+R` | 搜索历史 |
+| `Ctrl+G` | 打开外部编辑器 |
+| `Tab` | 补全 |
 
-### 全局
+### 导航
 
 | 按键 | 功能 |
 |------|------|
-| `Ctrl+C` | 取消流式输出（第一次）/ 退出（第二次，2秒内） |
-| `Ctrl+L` | 重绘屏幕 |
-
-### 流式状态
-
-| 按键 | 功能 |
-|------|------|
-| `Ctrl+C` | 取消当前生成 |
-| `Esc` | 取消当前生成 |
-
-### Overlay 模式（帮助/权限确认）
-
-| 按键 | 功能 |
-|------|------|
-| `Esc` / `q` | 关闭 |
 | `j` / `k` / `↑` / `↓` | 上下滚动 |
-| `A` / `D` / `S` / `C` | 批准 / 拒绝 / 本次全批准 / 取消（权限确认） |
+| `Ctrl+D` / `Ctrl+U` | 半页滚动 |
+| `Ctrl+F` / `Ctrl+B` | 全页滚动 |
+| `gg` / `G` | 跳转到开头/结尾 |
 
-## 模式系统 (Modes)
+### 模式
 
-openLoom 支持四种运行模式，控制 Agent 行为和工具权限：
+| 按键 | 功能 |
+|------|------|
+| `/code` | 切换到编码模式（默认） |
+| `/chat` | 切换到陪伴模式 |
+| `Esc` | 退出弹窗/对话框 |
 
-| 模式 | 工具范围 | Agent Loop | 说明 |
-|------|---------|-----------|------|
-| `chat` | 无 | 否 | 纯对话，不触发工具调用 |
-| `plan` | 只读 | 是 | 可读代码、探索架构，不修改文件 |
-| `code` | 完整 | 是 | 完整 agent loop + 工具调用（默认） |
-| `assistant` | 选择性 | 是 | 可读、搜索、写记忆/技能，不改代码 |
+## 模式系统
 
-切换方式：
-- `/mode` — 查看当前模式
-- `/mode plan` — 切换到指定模式
-- `Ctrl+M` — 循环切换到下一个模式
+两种核心模式通过命令切换：
 
-模式为会话级，`/session new` 重置为 Code 模式。状态栏显示当前模式标签（如 `[code]`）。
+- **编码模式（默认）**：完整工具链——文件读写、diff 预览、shell 执行、沙箱。`loom` 启动默认进入。
+- **陪伴模式**：全局记忆、人格交互、日常对话。`/chat` 切换。
 
-## 扩展思考 (Thinking)
+编码时的洞察可写入全局记忆，陪伴时可调用。
 
-控制 LLM 的思考深度，类似 Claude Code 的 thinking 模式：
+## 权限审批
 
-| 级别 | Token 预算 | 说明 |
-|------|-----------|------|
-| `none` | 禁用 | 不使用扩展思考 |
-| `low` | 1,024 | 简单推理 |
-| `mid` | 4,096 | 中等深度（默认） |
-| `high` | 16,384 | 深度推理 |
-| `max` | 65,536 | 最大思考预算 |
-
-切换方式：
-- `/think` — 查看当前级别
-- `/think high` — 切换到指定级别
-
-思考级别显示在状态栏（如 `think:high`）。设为 `none` 时不显示。
-
-## 模型切换
-
-运行时切换本地/云端模型，无需重启：
-
-- `/model use local` — 强制使用本地模型（LM Studio/Ollama）
-- `/model use cloud` — 强制使用云端 API
-- `/model use auto` — 引擎自动路由（默认）
-
-## 权限确认
-
-Code 模式下执行工具调用时，Medium/High 风险操作会弹出确认对话框：
+高风险操作（文件写入、shell 执行）弹出确认对话框：
 
 - **A** — 批准本次
 - **D** — 拒绝
 - **S** — 本次会话全部批准
 - **C** — 取消
 
-使用 `--dangerously-skip-permissions` 启动可跳过所有确认。
+## 配置文件
 
-## 自动上下文压缩
+```toml
+# ~/.loom/config.toml 或项目 .loom/config.toml
 
-当对话历史接近上下文窗口上限时，引擎自动截断最早的消息，保留最近的对话。截断后插入 `[Earlier messages were compacted]` 标记。状态栏显示当前使用百分比（如 `12% of 200k`）。
+[model]
+model = "anthropic:claude-sonnet-4-20250514"
 
-## 斜杠命令
+[features]
+code_mode = true
+memories = true
+plugins = true
+```
 
-输入 `/` 触发命令弹窗，支持：
-- **↑/↓ 键导航** — 移动高亮选择
-- **Tab** — 循环并填充到输入框
-- **Enter** — 选择高亮命令
-- **Esc** — 关闭弹窗
-- **继续输入** — 实时过滤匹配
+## 功能开关
 
-弹窗同时显示内置命令和已加载的外部技能。
+```bash
+loom -c features.memories=true           # 启用记忆
+loom -c features.code_mode=false         # 禁用编码模式
+```
 
-| 命令 | 说明 |
+## 外部技能
+
+```
+<data_dir>/skills/*/SKILL.md             # 全局技能
+<cwd>/.loom/skills/*/SKILL.md            # 项目技能
+```
+
+## 项目指令
+
+| 文件 | 作用 |
 |------|------|
-| `/help` | 显示帮助面板 |
-| `/model` | 显示模型详细信息 |
-| `/model set <backend> <model> [key_env]` | 配置云端模型 |
-| `/model use local\|cloud\|auto` | 运行时切换模型 |
-| `/token` | 当前会话 token 用量 + 费用 |
-| `/token summary` | 全局按模型分组统计 |
-| `/token today` | 今日用量 |
-| `/token session [id]` | 指定会话明细 |
-| `/token history [N]` | 最近 N 条请求 |
-| `/cost` | `/token` 的别名 |
-| `/health` | 引擎状态、GPU、缓存诊断 |
-| `/clear` | 清空所有消息 |
-| `/theme dark\|light` | 切换主题 |
-| `/session new\|list\|<id>` | 会话管理 |
-| `/memory persona\|events\|cognitions\|search` | 记忆查询 |
-| `/skills list` | 列出已注册技能 |
-| `/skills invoke <name> [params]` | 调用技能 |
-| `/<skill-name>` | 直接调用外部技能 |
-| `/mode` | 查看/切换 Agent 模式 |
-| `/mode chat\|plan\|code\|assistant` | 切换模式 |
-| `/think` | 查看/设置思考深度 |
-| `/think none\|low\|mid\|high\|max` | 设置扩展思考 |
-| `/local status\|set\|test\|url` | 本地模型管理 |
-| `/config get\|set` | 配置管理 |
-
-> 提示：以 `//` 开头的消息会作为普通文本发送，不触发命令。
-
-### 技能名称解析
-
-输入 `/<name>` 调用外部技能时，按以下顺序匹配：
-1. 精确匹配（如 `/project:my-skill`）
-2. 尝试 `project:<name>` 前缀（项目本地技能）
-3. 按短名称搜索所有已注册插件技能（如 `/greet` → `myplugin:greet`）
-
-## 状态栏说明
-
-```
- ● model [code] think:mid │ cwd │ 12% of 200k    1.2k / 3.4k  cache 85%  $0.0012
-```
-
-- **状态指示器**：`●` 绿色=空闲，⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ 黄色=思考中，蓝色=流式输出
-- **model**：当前使用的模型名称 + 上次使用的模型来源（如 `← agent-loop`）
-- **[code]**：当前模式
-- **think:mid**：思考级别（none 时隐藏）
-- **cwd**：当前工作目录
-- **12% of 200k**：上下文使用百分比
-- **右侧**：token 数 + cache 命中率 + 费用
-
-## 主题
-
-内置两套主题：
-
-- **dark**（默认）— 纯黑背景 `#0d0d0d`，低饱和蓝 accent `#6ea0ff`
-- **light** — 白色背景，深蓝 accent
-
-通过 `/theme dark` 或 `/theme light` 切换。
-
-## Markdown 渲染
-
-助手消息自动渲染 Markdown：
-- **标题**（`#`/`##`/`###`）— accent 色加粗
-- **加粗**（`**text**`）— bold 样式
-- **行内代码**（`` `code` ``）— accent 色
-- **列表**（`-`/`*`/`1.`）— bullet 符号
-- **表格**（`| col |`）— 分隔符 dim 色
-- **代码块**（` ``` `）— dim 色，fence 行隐藏
-
-## 滚动行为
-
-- **鼠标滚轮**：终端原生滚动
-- **鼠标左键拖拽**：终端原生文本选择
-- 消息完成后自动推入终端滚动缓冲区
-
-## 外部编辑器
-
-按 `Ctrl+G` 打开外部编辑器编写长文本。优先使用 `$EDITOR`，其次 `$VISUAL`，Windows 默认 `notepad`，其他系统默认 `vi`。
-
-## 项目指令 (loom.md)
-
-在项目根目录放置 `loom.md` 文件，其内容自动注入系统提示。
-
-| 文件位置 | 作用 |
-|---------|------|
-| `<data_dir>/loom.md` | 全局指令，所有项目生效 |
-| `<cwd>/loom.md` | 项目级指令，仅当前目录生效 |
-
-两者同时存在时，全局指令在前，项目指令在后拼接。同时兼容 `CLAUDE.md`。
-
-## 外部技能 (Skills)
-
-SKILL.md 文件使用 YAML frontmatter 格式，调用时注入 LLM 上下文：
-
-```markdown
----
-name: my-skill
-description: "技能描述"
----
-
-技能正文。
-```
-
-### 技能加载路径
-
-| 路径 | 命名空间 | 说明 |
-|------|---------|------|
-| `<data_dir>/skills/*/SKILL.md` | `global:<skill>` | 全局独立技能 |
-| `<data_dir>/plugins/.../skills/*/SKILL.md` | `<plugin>:<skill>` | 插件技能（递归扫描） |
-| `<cwd>/.loom/skills/*/SKILL.md` | `project:<skill>` | 项目本地技能 |
-
-调用技能后，完整内容存为活跃技能上下文，后续每次消息自动注入 LLM。`/clear` 或 `/session new` 清除。
-
-## 插件系统 (Plugins)
-
-兼容 Claude Code 插件格式，递归扫描 `<data_dir>/plugins/`，支持嵌套 `cache/<marketplace>/<plugin>/<version>/` 结构。
-
-```
-<data_dir>/plugins/
-└── my-plugin/
-    ├── .loom-plugin/          # 或 .claude-plugin/
-    │   └── plugin.json
-    └── skills/
-        └── my-skill/
-            └── SKILL.md
-```
+| `<data_dir>/loom.md` | 全局指令 |
+| `<cwd>/loom.md` | 项目级指令 |
+| `<cwd>/CLAUDE.md` | 兼容格式 |
 
 ## 数据目录
 
-首次启动自动创建（欢迎横幅显示路径）：
-
-```
-<data_dir>/
-├── loom.md        ← 全局指令（自动创建）
-├── plugins/       ← 插件目录（递归扫描）
-├── skills/        ← 全局独立技能
-├── models/        ← GGUF 模型
-├── db/            ← SQLite
-└── config.toml    ← 配置
-```
-
-| 平台 | data_dir |
-|------|---------|
+| 平台 | 路径 |
+|------|------|
 | Windows | `%APPDATA%/openLoom/` |
 | macOS | `~/Library/Application Support/openLoom/` |
 | Linux | `~/.local/share/openLoom/` |
