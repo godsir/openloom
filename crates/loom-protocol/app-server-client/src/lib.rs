@@ -272,7 +272,7 @@ impl LoomAppServerClient {
                 openloom_engine::Engine::new_test(
                     tempfile::TempDir::new()
                         .expect("temp dir")
-                        .into_path()
+                        .keep()
                         .join("db.sqlite"),
                 )
                 .expect("test engine"),
