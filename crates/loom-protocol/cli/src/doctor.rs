@@ -225,7 +225,7 @@ async fn check_loom_home() -> DoctorCheck {
             status: CheckStatus::Fail,
             summary: "Cannot resolve Loom home directory".to_string(),
             details: vec![format!("Error: {e}")],
-            remediation: Some("Set CODEX_HOME environment variable to a writable directory".to_string()),
+            remediation: Some("Set LOOM_HOME environment variable to a writable directory".to_string()),
             duration_ms: start.elapsed().as_millis() as u64,
         },
     }
@@ -242,7 +242,7 @@ async fn check_config() -> DoctorCheck {
                 status: CheckStatus::Fail,
                 summary: "Cannot check config: home directory not found".to_string(),
                 details: vec![format!("Error: {e}")],
-                remediation: Some("Set CODEX_HOME first".to_string()),
+                remediation: Some("Set LOOM_HOME first".to_string()),
                 duration_ms: start.elapsed().as_millis() as u64,
             };
         }
@@ -289,7 +289,7 @@ async fn check_database() -> DoctorCheck {
                 status: CheckStatus::Fail,
                 summary: "Cannot check database: home directory not found".to_string(),
                 details: vec![format!("Error: {e}")],
-                remediation: Some("Set CODEX_HOME first".to_string()),
+                remediation: Some("Set LOOM_HOME first".to_string()),
                 duration_ms: start.elapsed().as_millis() as u64,
             };
         }

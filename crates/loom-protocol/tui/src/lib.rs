@@ -390,7 +390,7 @@ fn websocket_url_supports_auth_token(parsed: &Url) -> bool {
 pub fn resolve_remote_addr(addr: &str) -> color_eyre::Result<RemoteAppServerEndpoint> {
     if let Some(socket_path) = addr.strip_prefix("unix://") {
         let socket_path: AbsolutePathBuf = if socket_path.is_empty() {
-            let _codex_home = find_codex_home().wrap_err("failed to resolve CODEX_HOME")?;
+            let _codex_home = find_codex_home().wrap_err("failed to resolve LOOM_HOME")?;
             AbsolutePathBuf::try_from(loom_app_server_client::app_server_control_socket_path())
                 .map_err(color_eyre::Report::new)?
         } else {
@@ -895,7 +895,7 @@ pub async fn run_main(
     let codex_home = match find_codex_home() {
         Ok(codex_home) => codex_home.to_path_buf(),
         Err(err) => {
-            eprintln!("Error finding codex home: {err}");
+            eprintln!("Error finding loom home: {err}");
             std::process::exit(1);
         }
     };
@@ -1172,7 +1172,7 @@ pub async fn run_main(
     // Ensure the file is only readable and writable by the current user.
     // Doing the equivalent to `chmod 600` on Windows is quite a bit more code
     // and requires the Windows API crates, so we can reconsider that when
-    // Codex CLI is officially supported on Windows.
+    // Loom CLI is officially supported on Windows.
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -1184,10 +1184,10 @@ pub async fn run_main(
     // Wrap file in non‑blocking writer.
     let (non_blocking, _guard) = non_blocking(log_file);
 
-    // use RUST_LOG env var, default to info for codex crates.
+    // use RUST_LOG env var, default to info for loom crates.
     let env_filter = || {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            EnvFilter::new("loom_tui_stubs=info,loom_tui=info,codex_rmcp_client=info")
+            EnvFilter::new("loom_tui_stubs=info,loom_tui=info,loom_rmcp_client=info")
         })
     };
 
@@ -1451,7 +1451,7 @@ async fn run_ratatui_app(
             thread_name: None,
             update_action: None,
             exit_reason: ExitReason::Fatal(format!(
-                "No saved session found with ID {id_str}. Run `codex {action}` without an ID to choose from existing sessions."
+                "No saved session found with ID {id_str}. Run `loom {action}` without an ID to choose from existing sessions."
             )),
         })
     };
@@ -1995,7 +1995,7 @@ mod tests {
 
     #[test]
     fn resolve_remote_addr_accepts_default_socket() -> color_eyre::Result<()> {
-        let codex_home = find_codex_home().wrap_err("failed to resolve CODEX_HOME")?;
+        let codex_home = find_codex_home().wrap_err("failed to resolve LOOM_HOME")?;
         assert_eq!(
             resolve_remote_addr("unix://")?,
             RemoteAppServerEndpoint::UnixSocket {
@@ -2327,7 +2327,7 @@ mod tests {
                 id: thread_id,
                 timestamp: meta_rfc3339.to_string(),
                 cwd: cwd.to_path_buf(),
-                originator: "codex".to_string(),
+                originator: "loom".to_string(),
                 cli_version: "0.0.0".to_string(),
                 source: loom_protocol::protocol::SessionSource::Cli,
                 model_provider: Some(model_provider.to_string()),

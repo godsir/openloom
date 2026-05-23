@@ -278,7 +278,7 @@ pub(crate) fn server_notification_requires_delivery(notification: &ServerNotific
 /// This is the primary variant for local use. It wraps `openloom_engine::Engine`
 /// and provides the same request/notification/event model as the original
 /// `InProcessAppServerClient`, but routed through openLoom's internals instead
-/// of the codex-app-server message processor.
+/// of the loom-app-server message processor.
 pub struct LoomAppServerClient {
     engine: Arc<openloom_engine::Engine>,
     event_rx: mpsc::UnboundedReceiver<AppServerEvent>,
@@ -663,7 +663,7 @@ impl LoomAppServerClient {
 
 // ─── Request dispatch helpers ───
 
-/// Load models from openLoom config.toml into Codex-format Model entries.
+/// Load models from openLoom config.toml into Loom-format Model entries.
 /// Load model configs from config.toml, separated into cloud and local.
 fn load_model_configs(data_dir: &std::path::Path) -> (Option<openloom_models::ModelConfig>, Option<openloom_models::ModelConfig>) {
     let config_path = data_dir.join("config.toml");
@@ -779,6 +779,31 @@ async fn dispatch_request<T: DeserializeOwned>(
             let spawned_turn_id = turn_id.clone();
             let spawned_item_id = item_id.clone();
             let spawned_thread_id = thread_id.clone();
+
+            // Emit TurnStarted so TUI spinner activates immediately
+            let turn_started_turn = loom_app_server_protocol::Turn {
+                id: turn_id.clone(),
+                items: vec![],
+                items_view: loom_app_server_protocol::TurnItemsView::Full,
+                status: loom_app_server_protocol::TurnStatus::InProgress,
+                error: None,
+                started_at: Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64,
+                ),
+                completed_at: None,
+                duration_ms: None,
+            };
+            let _ = event_tx.send(AppServerEvent::ServerNotification(
+                ServerNotification::TurnStarted(
+                    loom_app_server_protocol::TurnStartedNotification {
+                        thread_id: thread_id.clone(),
+                        turn: turn_started_turn,
+                    },
+                ),
+            ));
 
             // Spawn streaming bridge: tokens from engine become AgentMessageDelta events
             let e = Arc::clone(&engine);

@@ -110,3 +110,7 @@ Caused by:
 2026-05-23T05:23:11.784207Z  INFO loom_tui::app::event_dispatch: Selected model: gemma-4-26b-a4b-it-ultra-uncensored-heretic, Selected effort: medium
 2026-05-23T05:45:13.256151Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
 2026-05-23T05:45:13.256274Z  WARN loom_tui::app: app-server event stream closed
+2026-05-23T05:57:51.809269Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
+2026-05-23T06:01:55.952292Z  INFO loom_tui::chatwidget::status_controls: Terminal title setup canceled by user
+2026-05-23T06:10:29.201240Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
+2026-05-23T06:13:27.870986Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
