@@ -70,8 +70,8 @@ impl Engine {
         let (max_iterations, timeout_secs) = {
             let cfg = self.config.read().await;
             (
-                cfg.agent.max_iterations.max(3),
-                cfg.agent.timeout_secs.max(60),
+                cfg.agent.max_iterations.max(10),   // at least 10 tool-call rounds
+                cfg.agent.timeout_secs.max(120),    // at least 2 minutes
             )
         };
 
@@ -186,7 +186,14 @@ impl Engine {
                 }
             }
 
-            if last_response.is_empty() && !all_tool_messages.is_empty() {
+            // ── Post-loop: ensure a text response reaches the user ──────────────────────
+            //
+            // If the loop exhausted its iterations without the model producing a text
+            // response (it kept calling tools), make one final call with tool_choice=none
+            // so the model is forced to summarise the gathered tool results.
+            // If that also fails, synthesise a best-effort summary from raw tool output.
+            if last_response.is_empty() {
+                let has_tool_results = !all_tool_messages.is_empty();
                 let persona_summary = self.persona.summarize().await.unwrap_or_default();
                 let system_with_mode = crate::system_instruction();
                 let system_with_mode = if mode_cfg.system_suffix.is_empty() {
@@ -202,27 +209,51 @@ impl Engine {
                     &history,
                     self.context_max_chars,
                 );
+                // Force text-only response: omit tools, set tool_choice=none
                 let completion_req = CompletionRequest {
                     messages,
-                    tools: tool_definitions.clone(),
-                    tool_choice: None,
+                    tools: vec![],                              // ← no tools
+                    tool_choice: Some(ToolChoice::None),        // ← force text
                     prompt: String::new(),
                     max_tokens: self.max_output_tokens,
                     temperature: 0.0,
                     ..Default::default()
                 };
-                let response = self
-                    .invoke_model_native(&completion_req, model_pref)
-                    .await?;
-                total_prompt_tokens += response.prompt_tokens;
-                total_completion_tokens += response.completion_tokens;
-                last_response = response.text.clone();
-                // Send final answer to TUI (not streamed yet on this fallback path)
-                if let Some(ref stream_tx) = tx {
-                    for word in response.text.split_inclusive(' ') {
-                        if stream_tx.send(word.to_string()).await.is_err() {
-                            break;
+                match self.invoke_model_native(&completion_req, model_pref).await {
+                    Ok(response) if !response.text.is_empty() => {
+                        last_response = response.text.clone();
+                        total_prompt_tokens += response.prompt_tokens;
+                        total_completion_tokens += response.completion_tokens;
+                        if let Some(ref stream_tx) = tx {
+                            for word in response.text.split_inclusive(' ') {
+                                if stream_tx.send(word.to_string()).await.is_err() {
+                                    break;
+                                }
+                            }
                         }
+                    }
+                    _ => {
+                        // Last resort: synthesise from tool results if any exist
+                        if has_tool_results {
+                            let summary = all_tool_messages
+                                .iter()
+                                .filter(|m| m.role == "tool")
+                                .map(|m| {
+                                    // strip the "id|" prefix from tool result format
+                                    m.content
+                                        .splitn(2, '|')
+                                        .nth(1)
+                                        .unwrap_or(&m.content)
+                                        .to_string()
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n\n---\n\n");
+                            last_response = summary.clone();
+                            if let Some(ref stream_tx) = tx {
+                                let _ = stream_tx.send(summary).await;
+                            }
+                        }
+                        // if still empty, the error check below surfaces it
                     }
                 }
             }

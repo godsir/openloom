@@ -114,3 +114,18 @@ Caused by:
 2026-05-23T06:01:55.952292Z  INFO loom_tui::chatwidget::status_controls: Terminal title setup canceled by user
 2026-05-23T06:10:29.201240Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
 2026-05-23T06:13:27.870986Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
+2026-05-23T06:29:29.800466Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=2 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=1 initial_session_ms=0 event_stream_ms=0
+2026-05-23T06:30:52.587710Z  INFO loom_tui::chatwidget::status_controls: Status line setup canceled by user
+2026-05-23T06:31:00.753733Z  INFO loom_tui::chatwidget::status_controls: status line setup confirmed with items: [
+    ModelWithReasoning,
+    CurrentDir,
+], use_theme_colors: true
+2026-05-23T06:31:36.697391Z  INFO loom_tui::chatwidget::status_controls: status line setup confirmed with items: [
+    ModelWithReasoning,
+    CurrentDir,
+    ProjectRoot,
+    ContextUsed,
+    UsedTokens,
+    TotalInputTokens,
+    TotalOutputTokens,
+], use_theme_colors: true
