@@ -209,10 +209,7 @@ async fn status_surface_preview_lines_rate_limits_snapshot() {
 
     let snapshot = combined_preview_snapshot(
         &mut chat,
-        &[StatusLineItem::FiveHourLimit, StatusLineItem::WeeklyLimit],
         &[
-            TerminalTitleItem::FiveHourLimit,
-            TerminalTitleItem::WeeklyLimit,
         ],
     );
 
@@ -238,13 +235,11 @@ async fn status_surface_preview_omits_unavailable_rate_limit_items() {
     }));
 
     assert_eq!(
-        status_preview_line_option(&mut chat, &[StatusLineItem::FiveHourLimit]),
         None
     );
     assert_eq!(
         status_preview_line(
             &mut chat,
-            &[StatusLineItem::FiveHourLimit, StatusLineItem::WeeklyLimit]
         ),
         "weekly 91%"
     );
@@ -252,8 +247,6 @@ async fn status_surface_preview_omits_unavailable_rate_limit_items() {
         title_preview_line(
             &mut chat,
             &[
-                TerminalTitleItem::FiveHourLimit,
-                TerminalTitleItem::WeeklyLimit
             ],
         ),
         "weekly 91%"
@@ -265,8 +258,6 @@ async fn status_line_setup_popup_rate_limits_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     cache_rate_limit_snapshot(&mut chat);
     chat.config.tui_status_line = Some(vec![
-        "five-hour-limit".to_string(),
-        "weekly-limit".to_string(),
     ]);
 
     assert_chatwidget_snapshot!(
@@ -348,8 +339,6 @@ async fn terminal_title_setup_popup_rate_limits_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     cache_rate_limit_snapshot(&mut chat);
     chat.config.tui_terminal_title = Some(vec![
-        "five-hour-limit".to_string(),
-        "weekly-limit".to_string(),
     ]);
 
     assert_chatwidget_snapshot!(

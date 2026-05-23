@@ -61,11 +61,9 @@ pub(crate) enum TerminalTitleItem {
     #[strum(to_string = "context-used", serialize = "context-usage")]
     ContextUsed,
     /// Remaining usage on the primary rate limit.
-    FiveHourLimit,
     /// Remaining usage on the secondary rate limit.
-    WeeklyLimit,
     /// Loom application version.
-    CodexVersion,
+    LoomVersion,
     /// Total tokens used in the current session.
     UsedTokens,
     /// Total input tokens consumed.
@@ -106,13 +104,7 @@ impl TerminalTitleItem {
             TerminalTitleItem::ContextUsed => {
                 "Percentage of context window used (omitted when unknown)"
             }
-            TerminalTitleItem::FiveHourLimit => {
-                "Remaining usage on the primary usage limit (omitted when unavailable)"
-            }
-            TerminalTitleItem::WeeklyLimit => {
-                "Remaining usage on the secondary usage limit (omitted when unavailable)"
-            }
-            TerminalTitleItem::CodexVersion => "Loom application version",
+            TerminalTitleItem::LoomVersion => "Loom application version",
             TerminalTitleItem::UsedTokens => "Total tokens used in session (omitted when zero)",
             TerminalTitleItem::TotalInputTokens => "Total input tokens used in session",
             TerminalTitleItem::TotalOutputTokens => "Total output tokens used in session",
@@ -139,9 +131,7 @@ impl TerminalTitleItem {
             TerminalTitleItem::GitBranch => Some(StatusSurfacePreviewItem::GitBranch),
             TerminalTitleItem::ContextRemaining => Some(StatusSurfacePreviewItem::ContextRemaining),
             TerminalTitleItem::ContextUsed => Some(StatusSurfacePreviewItem::ContextUsed),
-            TerminalTitleItem::FiveHourLimit => Some(StatusSurfacePreviewItem::FiveHourLimit),
-            TerminalTitleItem::WeeklyLimit => Some(StatusSurfacePreviewItem::WeeklyLimit),
-            TerminalTitleItem::CodexVersion => Some(StatusSurfacePreviewItem::CodexVersion),
+            TerminalTitleItem::LoomVersion => Some(StatusSurfacePreviewItem::LoomVersion),
             TerminalTitleItem::UsedTokens => Some(StatusSurfacePreviewItem::UsedTokens),
             TerminalTitleItem::TotalInputTokens => Some(StatusSurfacePreviewItem::TotalInputTokens),
             TerminalTitleItem::TotalOutputTokens => {
@@ -319,14 +309,11 @@ impl TerminalTitleSetupView {
         let default_name = item.to_string();
         let default_description = item.description();
         let (name, description) = match item.preview_item() {
-            Some(
-                preview_item @ (StatusSurfacePreviewItem::FiveHourLimit
-                | StatusSurfacePreviewItem::WeeklyLimit),
-            ) => (
+            Some(preview_item) => (
                 preview_data.rate_limit_item_name(preview_item, &default_name),
                 preview_data.rate_limit_item_description(preview_item, default_description),
             ),
-            _ => (default_name, default_description.to_string()),
+            None => (default_name, default_description.to_string()),
         };
 
         MultiSelectItem {
@@ -523,15 +510,13 @@ mod tests {
                 "app-name",
                 "context-remaining",
                 "context-used",
-                "five-hour-limit",
                 "git-branch",
                 "activity",
                 "current-dir",
                 "project-name",
                 "model",
                 "model-with-reasoning",
-                "weekly-limit",
-                "codex-version",
+                "loom-version",
                 "used-tokens",
                 "total-input-tokens",
                 "total-output-tokens",
@@ -546,15 +531,13 @@ mod tests {
                 TerminalTitleItem::AppName,
                 TerminalTitleItem::ContextRemaining,
                 TerminalTitleItem::ContextUsed,
-                TerminalTitleItem::FiveHourLimit,
                 TerminalTitleItem::GitBranch,
                 TerminalTitleItem::Spinner,
                 TerminalTitleItem::CurrentDir,
                 TerminalTitleItem::Project,
                 TerminalTitleItem::Model,
                 TerminalTitleItem::ModelWithReasoning,
-                TerminalTitleItem::WeeklyLimit,
-                TerminalTitleItem::CodexVersion,
+                TerminalTitleItem::LoomVersion,
                 TerminalTitleItem::UsedTokens,
                 TerminalTitleItem::TotalInputTokens,
                 TerminalTitleItem::TotalOutputTokens,

@@ -20,9 +20,7 @@ pub(crate) enum StatusSurfacePreviewItem {
     ApprovalMode,
     ContextRemaining,
     ContextUsed,
-    FiveHourLimit,
-    WeeklyLimit,
-    CodexVersion,
+    LoomVersion,
     ContextWindowSize,
     UsedTokens,
     TotalInputTokens,
@@ -51,9 +49,7 @@ impl StatusSurfacePreviewItem {
             StatusSurfacePreviewItem::ApprovalMode => "on-request",
             StatusSurfacePreviewItem::ContextRemaining => "Context 0% left",
             StatusSurfacePreviewItem::ContextUsed => "Context 0% used",
-            StatusSurfacePreviewItem::FiveHourLimit => "primary 0%",
-            StatusSurfacePreviewItem::WeeklyLimit => "secondary 0%",
-            StatusSurfacePreviewItem::CodexVersion => "0.0.0",
+            StatusSurfacePreviewItem::LoomVersion => "0.0.0",
             StatusSurfacePreviewItem::ContextWindowSize => "0 window",
             StatusSurfacePreviewItem::UsedTokens => "0 used",
             StatusSurfacePreviewItem::TotalInputTokens => "0 in",
@@ -82,9 +78,7 @@ impl StatusSurfacePreviewItem {
             Self::ApprovalMode,
             Self::ContextRemaining,
             Self::ContextUsed,
-            Self::FiveHourLimit,
-            Self::WeeklyLimit,
-            Self::CodexVersion,
+            Self::LoomVersion,
             Self::ContextWindowSize,
             Self::UsedTokens,
             Self::TotalInputTokens,
@@ -247,7 +241,7 @@ fn rate_limit_preview_copy(value: &str) -> Option<RateLimitPreviewCopy> {
         })
     } else if value.starts_with("5h ") {
         Some(RateLimitPreviewCopy {
-            name: "five-hour-limit",
+            name: "5h-limit",
             description: "Remaining usage on the 5-hour usage limit (omitted when unavailable)",
         })
     } else if value.starts_with("daily ") {
