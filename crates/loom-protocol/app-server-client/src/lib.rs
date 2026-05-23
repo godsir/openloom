@@ -415,14 +415,16 @@ impl AppServerRequestHandle {
         }
     }
 
-    pub async fn request_typed<T: DeserializeOwned>(
+    pub fn request_typed<T: DeserializeOwned + 'static>(
         &self,
         request: ClientRequest,
-    ) -> Result<T, TypedRequestError> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, TypedRequestError>> + Send + '_>> {
         match self {
-            Self::Loom(handle) => handle.request_typed(request).await,
-            Self::Remote(handle) => handle.request_typed(request).await,
-            Self::InProcess(handle) => handle.request_typed(request).await,
+            Self::Loom(handle) => Box::pin(handle.request_typed(request)),
+            Self::Remote(handle) => Box::pin(handle.request_typed(request)),
+            Self::InProcess(_handle) => {
+                Box::pin(async { Err(TypedRequestError::MethodNotFound) })
+            }
         }
     }
 }
@@ -458,14 +460,18 @@ impl AppServerClient {
         }
     }
 
-    pub async fn request_typed<T: DeserializeOwned>(
+    pub fn request_typed<T: DeserializeOwned + 'static>(
         &self,
         request: ClientRequest,
-    ) -> Result<T, TypedRequestError> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, TypedRequestError>> + Send + '_>> {
         match self {
-            Self::Loom(client) => client.request_typed(request).await,
-            Self::Remote(client) => client.request_typed(request).await,
-            Self::InProcess(client) => client.request_typed(request).await,
+            Self::Loom(client) => Box::pin(client.request_typed(request)),
+            Self::Remote(client) => Box::pin(client.request_typed(request)),
+            Self::InProcess(client) => Box::pin(dispatch_request(
+                Arc::clone(&client.inner.engine),
+                client.inner.event_tx.clone(),
+                request,
+            )),
         }
     }
 
