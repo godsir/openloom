@@ -656,28 +656,21 @@ fn load_model_configs(data_dir: &std::path::Path) -> (Option<openloom_models::Mo
 fn load_model_list() -> Vec<loom_app_server_protocol::Model> {
     let mut models = Vec::new();
 
-    // Try multiple locations for config.toml
-    let config_paths: Vec<std::path::PathBuf> = {
-        let mut paths = Vec::new();
-        if let Ok(home) = loom_home_dir::find_loom_home() {
-            paths.push(home.as_path().join("config.toml"));
-        }
-        if let Some(data) = dirs::data_dir() {
-            paths.push(data.join("openLoom").join("config.toml"));
-        }
-        // Direct %APPDATA% on Windows
-        if let Ok(appdata) = std::env::var("APPDATA") {
-            paths.push(std::path::PathBuf::from(appdata).join("openLoom").join("config.toml"));
-        }
-        paths
-    };
+    // Read config.toml from standard locations
+    let config_paths = [
+        std::env::var("APPDATA").ok().map(|d| std::path::PathBuf::from(d).join("openLoom").join("config.toml")),
+        dirs::data_dir().map(|d| d.join("openLoom").join("config.toml")),
+    ];
 
-    for path in &config_paths {
-        eprintln!("[loom] load_model_list: trying {}", path.display());
-        if let Ok(content) = std::fs::read_to_string(path) {
-            eprintln!("[loom] load_model_list: found config, {} bytes", content.len());
-            if let Ok(config) = toml::from_str::<toml::Table>(&content) {
-                if let Some(models_section) = config.get("models") {
+    for path_opt in &config_paths {
+        if let Some(path) = path_opt {
+            let _ = std::fs::write("F:/openLoom/loom-debug.log", format!("trying: {}\n", path.display()));
+            if let Ok(content) = std::fs::read_to_string(path) {
+                let _ = std::fs::write("F:/openLoom/loom-debug.log", format!("found config at {}: {} bytes\n", path.display(), content.len()));
+                if let Ok(config) = toml::from_str::<toml::Table>(&content) {
+                    if let Some(models_section) = config.get("models") {
+                        if let Some(arr) = models_section.as_array() {
+                            let _ = std::fs::write("F:/openLoom/loom-debug.log", format!("found {} models\n", arr.len()));
                     if let Some(arr) = models_section.as_array() {
                         for entry in arr {
                             let table = entry.as_table();
