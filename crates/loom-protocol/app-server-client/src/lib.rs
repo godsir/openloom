@@ -949,7 +949,7 @@ async fn dispatch_request<T: DeserializeOwned>(
         ),
 
         // ─── Catch-all: not yet mapped ───
-        _ => Err(TypedRequestError::MethodNotFound),,
+        _ => Err(TypedRequestError::MethodNotFound),
     }
 }
 
