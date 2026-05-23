@@ -59,6 +59,9 @@ impl InProcessAppServerClient {
     pub async fn shutdown(self) -> std::io::Result<()> {
         self.inner.shutdown().await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     }
+    pub fn next_event(&mut self) -> Option<AppServerEvent> {
+        self.inner.next_event()
+    }
     pub fn request_handle(&self) -> AppServerRequestHandle {
         AppServerRequestHandle::Loom(LoomAppServerRequestHandle::default())
     }
@@ -516,7 +519,7 @@ impl AppServerClient {
         match self {
             Self::Loom(client) => client.next_event(),
             Self::Remote(client) => client.next_event().await,
-            Self::InProcess(_) => None,
+            Self::InProcess(client) => client.next_event(),
         }
     }
 
