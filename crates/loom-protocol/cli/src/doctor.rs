@@ -49,6 +49,7 @@ struct DoctorReport {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct DoctorCheck {
     id: String,
     category: String,
