@@ -65,3 +65,6 @@ Caused by:
 2026-05-23T03:36:05.994184Z  INFO loom_tui::app::event_dispatch: Selected model: deepseek-v4-pro[1m], Selected effort: medium
 2026-05-23T03:36:51.193519Z  INFO loom_tui::app::event_dispatch: Selected model: gemma-4-26b-a4b-it-ultra-uncensored-heretic, Selected effort: medium
 2026-05-23T03:37:40.252244Z  WARN loom_tui::app::thread_routing: failed to unsubscribe thread dc3bf130-5624-4a26-831e-d176652020ca: thread/unsubscribe failed in TUI
+2026-05-23T03:37:42.591794Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
+2026-05-23T03:37:42.591882Z  WARN loom_tui::app: app-server event stream closed
+2026-05-23T03:39:37.586855Z  WARN loom_tui::app::thread_routing: failed to unsubscribe thread 3d9d856c-7425-430b-a551-e5b0d0db24d5: thread/unsubscribe failed in TUI

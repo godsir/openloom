@@ -631,7 +631,7 @@ async fn status_model_provider_uses_bedrock_runtime_base_url_and_gates_usage_lin
     );
     assert!(
         !rendered.contains("https://chatgpt.com/codex/settings/usage"),
-        "expected /status to hide ChatGPT usage link for Bedrock, got: {rendered}"
+        "expected /status to hide usage link for Bedrock, got: {rendered}"
     );
 
     config.model_provider_id = "openai-proxy".to_string();
@@ -663,7 +663,7 @@ async fn status_model_provider_uses_bedrock_runtime_base_url_and_gates_usage_lin
 
     assert!(
         rendered.contains("https://chatgpt.com/codex/settings/usage"),
-        "expected /status to show ChatGPT usage link for OpenAI-auth proxy, got: {rendered}"
+        "expected /status to show usage link for OpenAI-auth proxy, got: {rendered}"
     );
 }
 

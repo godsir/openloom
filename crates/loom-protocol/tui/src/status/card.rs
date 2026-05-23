@@ -701,10 +701,10 @@ impl HistoryCell for StatusHistoryCell {
                 (Some(email), Some(plan)) => format!("{email} ({plan})"),
                 (Some(email), None) => email.clone(),
                 (None, Some(plan)) => plan.clone(),
-                (None, None) => "ChatGPT".to_string(),
+                (None, None) => "Loom".to_string(),
             },
             StatusAccountDisplay::ApiKey => {
-                "API key configured (run codex login to use ChatGPT)".to_string()
+                "API key configured (configure models in config.toml)".to_string()
             }
         });
 
@@ -768,7 +768,7 @@ impl HistoryCell for StatusHistoryCell {
             [note_first_line, note_second_line],
             RtOptions::new(available_inner_width),
         );
-        // The ChatGPT usage page only applies to providers backed by OpenAI auth;
+        // The usage page only applies to providers backed by OpenAI auth;
         // providers like Bedrock manage limits and billing elsewhere.
         if self.show_chatgpt_usage_link {
             lines.extend(note_lines);
@@ -812,7 +812,7 @@ impl HistoryCell for StatusHistoryCell {
         }
 
         lines.push(Line::from(Vec::<Span<'static>>::new()));
-        // Hide token usage only for ChatGPT subscribers
+        // Hide token usage only for subscribers
         if !matches!(self.account, Some(StatusAccountDisplay::ChatGpt { .. })) {
             lines.push(formatter.line("Token usage", self.token_usage_spans()));
         }

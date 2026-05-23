@@ -885,9 +885,9 @@ impl ChatWidget {
 
         if let Some(install_url) = app.install_url.clone() {
             let install_label = if is_installed {
-                "Manage on ChatGPT"
+                "Manage online"
             } else {
-                "Install on ChatGPT"
+                "Install online"
             };
             items.push(SelectionItem {
                 name: install_label.to_string(),

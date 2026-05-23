@@ -307,7 +307,7 @@ impl AppLinkView {
             AppLinkScreen::Link => {
                 if self.is_installed {
                     vec![
-                        "Manage on ChatGPT",
+                        "Manage online",
                         if self.is_enabled {
                             "Disable app"
                         } else {
@@ -316,7 +316,7 @@ impl AppLinkView {
                         "Back",
                     ]
                 } else {
-                    vec!["Install on ChatGPT", "Back"]
+                    vec!["Install online", "Back"]
                 }
             }
             AppLinkScreen::InstallConfirmation => vec!["I already Installed it", "Back"],
@@ -579,7 +579,7 @@ impl AppLinkView {
         if is_auth_suggestion {
             for line in wrap(
                 if is_codex_apps_auth {
-                    "Sign in to the app on ChatGPT in the browser window that just opened."
+                    "Sign in to the app online in the browser window that just opened."
                 } else {
                     "Complete authentication in the browser window that just opened."
                 },
@@ -605,7 +605,7 @@ impl AppLinkView {
             }
         } else {
             for line in wrap(
-                "Complete app setup on ChatGPT in the browser window that just opened.",
+                "Complete app setup online in the browser window that just opened.",
                 usable_width,
             ) {
                 lines.push(Line::from(line.into_owned()));
@@ -885,7 +885,7 @@ mod tests {
                     },
                 },
             })),
-            message: "Reconnect Google Calendar on ChatGPT.".to_string(),
+            message: "Reconnect Google Calendar online.".to_string(),
             url: url.to_string(),
             elicitation_id: "codex_apps_auth_call_123".to_string(),
         }
@@ -1038,7 +1038,7 @@ mod tests {
 
         assert_eq!(
             view.action_labels(),
-            vec!["Manage on ChatGPT", "Disable app", "Back"]
+            vec!["Manage online", "Disable app", "Back"]
         );
     }
 
@@ -1189,7 +1189,7 @@ mod tests {
 
         assert_eq!(
             view.action_labels(),
-            vec!["Manage on ChatGPT", "Enable app", "Back"]
+            vec!["Manage online", "Enable app", "Back"]
         );
     }
 
@@ -1619,7 +1619,7 @@ mod tests {
                     .to_string(),
                 is_installed: true,
                 is_enabled: true,
-                suggest_reason: Some("Reconnect Google Calendar on ChatGPT.".to_string()),
+                suggest_reason: Some("Reconnect Google Calendar online.".to_string()),
                 suggestion_type: Some(AppLinkSuggestionType::Auth),
                 elicitation_target: Some(suggestion_target()),
             },
