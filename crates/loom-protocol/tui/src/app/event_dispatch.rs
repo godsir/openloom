@@ -321,6 +321,16 @@ impl App {
             AppEvent::CodexOp(op) => {
                 self.submit_active_thread_op(app_server, op).await?;
             }
+            AppEvent::SetCodeMode => {
+                app_server.set_code_mode();
+                self.chat_widget
+                    .add_info_message("Switched to Code mode.".to_string(), None);
+            }
+            AppEvent::SetChatMode => {
+                app_server.set_chat_mode();
+                self.chat_widget
+                    .add_info_message("Switched to Chat mode.".to_string(), None);
+            }
             AppEvent::AppendMessageHistoryEntry { thread_id, text } => {
                 self.append_message_history_entry(thread_id, text);
             }

@@ -1339,7 +1339,17 @@ async fn run_ratatui_app(
     )
     .await
     {
-        Ok(app_server) => AppServerSession::new(app_server, app_server_target.thread_params_mode()),
+        Ok(app_server) => {
+            let session = AppServerSession::new(app_server, app_server_target.thread_params_mode());
+            // Set initial engine mode from CLI
+            if let Some(ref mode_str) = cli.start_mode {
+                match mode_str.as_str() {
+                    "code" => session.set_code_mode(),
+                    _ => session.set_chat_mode(),
+                }
+            }
+            session
+        }
         Err(err) => {
             terminal_restore_guard.restore_silently();
             session_log::log_session_end();

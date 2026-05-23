@@ -225,6 +225,10 @@ impl ChatWidget {
             SlashCommand::Plan => {
                 self.apply_plan_slash_command();
             }
+            SlashCommand::Code => {
+                self.app_event_tx
+                    .send(AppEvent::SetCodeMode);
+            }
             SlashCommand::Goal => {
                 if !self.config.features.enabled(Feature::Goals) {
                     return;
@@ -961,6 +965,7 @@ impl ChatWidget {
             | SlashCommand::Settings
             | SlashCommand::Personality
             | SlashCommand::Plan
+            | SlashCommand::Code
             | SlashCommand::Goal
             | SlashCommand::Side
             | SlashCommand::Btw

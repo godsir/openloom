@@ -37,6 +37,9 @@ pub use crate::remote::RemoteAppServerClient;
 pub use crate::remote::RemoteAppServerConnectArgs;
 pub use crate::remote::RemoteAppServerEndpoint;
 
+// Re-export openLoom engine types used by TUI surfaces.
+pub use openloom_models::Mode;
+
 // ─── Re-exports from stubs (kept for API compatibility) ───
 
 pub use loom_tui_stubs::feedback::CodexFeedback;
@@ -47,6 +50,7 @@ pub struct InProcessAppServerClient {
     inner: LoomAppServerClient,
     engine: Arc<openloom_engine::Engine>,
     event_tx: mpsc::UnboundedSender<AppServerEvent>,
+    current_mode: Arc<std::sync::Mutex<openloom_models::Mode>>,
 }
 
 impl InProcessAppServerClient {
@@ -55,7 +59,8 @@ impl InProcessAppServerClient {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         let engine = Arc::clone(&inner.engine);
         let event_tx = inner.event_tx.clone();
-        Ok(Self { inner, engine, event_tx })
+        let current_mode = inner.current_mode.clone();
+        Ok(Self { inner, engine, event_tx, current_mode })
     }
     pub async fn shutdown(self) -> std::io::Result<()> {
         self.inner.shutdown().await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
@@ -77,6 +82,9 @@ impl InProcessAppServerClient {
         request: ClientRequest,
     ) -> Result<T, TypedRequestError> {
         self.inner.request_typed::<T>(request).await
+    }
+    pub fn set_mode(&self, mode: openloom_models::Mode) {
+        *self.current_mode.lock().unwrap() = mode;
     }
 }
 
@@ -269,6 +277,7 @@ pub struct LoomAppServerClient {
     engine: Arc<openloom_engine::Engine>,
     event_rx: mpsc::UnboundedReceiver<AppServerEvent>,
     event_tx: mpsc::UnboundedSender<AppServerEvent>,
+    current_mode: Arc<std::sync::Mutex<openloom_models::Mode>>,
 }
 
 impl LoomAppServerClient {
@@ -288,6 +297,7 @@ impl LoomAppServerClient {
             ),
             event_rx,
             event_tx,
+            current_mode: Arc::new(std::sync::Mutex::new(openloom_models::Mode::Chat)),
         }
     }
 
@@ -303,6 +313,7 @@ impl LoomAppServerClient {
             engine,
             event_rx,
             event_tx,
+            current_mode: Arc::new(std::sync::Mutex::new(openloom_models::Mode::Chat)),
         })
     }
 
@@ -335,7 +346,7 @@ impl LoomAppServerClient {
             ))?;
         let engine = Arc::new(engine);
         let (event_tx, event_rx) = mpsc::unbounded_channel();
-        Ok(Self { engine, event_rx, event_tx })
+        Ok(Self { engine, event_rx, event_tx, current_mode: Arc::new(std::sync::Mutex::new(openloom_models::Mode::Chat)) })
     }
 
     /// Sends a typed client request and returns a deserialized response body.
@@ -343,7 +354,7 @@ impl LoomAppServerClient {
         &self,
         req: ClientRequest,
     ) -> Result<T, TypedRequestError> {
-        dispatch_request::<T>(Arc::clone(&self.engine), self.event_tx.clone(), req).await
+        dispatch_request::<T>(Arc::clone(&self.engine), self.event_tx.clone(), req, self.current_mode.clone()).await
     }
 
     /// Returns a handle that can be cloned and used concurrently for
@@ -353,6 +364,11 @@ impl LoomAppServerClient {
             engine: Arc::clone(&self.engine),
             event_tx: self.event_tx.clone(),
         }
+    }
+
+    /// Set the current engine mode for subsequent turns.
+    pub fn set_mode(&self, mode: openloom_models::Mode) {
+        *self.current_mode.lock().unwrap() = mode;
     }
 
     /// Sends a typed client notification (no response expected).
@@ -431,7 +447,13 @@ impl LoomAppServerRequestHandle {
         &self,
         req: ClientRequest,
     ) -> Result<T, TypedRequestError> {
-        dispatch_request::<T>(Arc::clone(&self.engine), self.event_tx.clone(), req).await
+        dispatch_request::<T>(
+            Arc::clone(&self.engine),
+            self.event_tx.clone(),
+            req,
+            Arc::new(std::sync::Mutex::new(openloom_models::Mode::Code)),
+        )
+        .await
     }
 }
 
@@ -512,6 +534,7 @@ impl AppServerClient {
                 Arc::clone(&client.inner.engine),
                 client.inner.event_tx.clone(),
                 request,
+                client.current_mode.clone(),
             )),
         }
     }
@@ -575,6 +598,25 @@ impl AppServerClient {
                 })
             }
         }
+    }
+
+    /// Set the current engine mode for subsequent turns.
+    pub fn set_mode(&self, mode: Mode) {
+        match self {
+            Self::Loom(client) => client.set_mode(mode),
+            Self::Remote(_) => {}
+            Self::InProcess(client) => client.set_mode(mode),
+        }
+    }
+
+    /// Switch to companion (Chat) mode — no tools, no agent loop.
+    pub fn set_chat_mode(&self) {
+        self.set_mode(Mode::Chat);
+    }
+
+    /// Switch to coding mode — full agent loop with tool access.
+    pub fn set_code_mode(&self) {
+        self.set_mode(Mode::Code);
     }
 }
 
@@ -683,6 +725,7 @@ async fn dispatch_request<T: DeserializeOwned>(
     engine: Arc<openloom_engine::Engine>,
     event_tx: mpsc::UnboundedSender<AppServerEvent>,
     req: ClientRequest,
+    current_mode: Arc<std::sync::Mutex<openloom_models::Mode>>,
 ) -> Result<T, TypedRequestError> {
     let method = req.method();
     match req {
@@ -734,12 +777,13 @@ async fn dispatch_request<T: DeserializeOwned>(
                 });
 
                 // Run the model
+                let mode = *current_mode.lock().unwrap();
                 let _ = e
                     .handle_message_streaming(
                         msg,
                         &session_id,
                         token_tx,
-                        openloom_models::Mode::Code,
+                        mode,
                         openloom_models::ModelPreference::Auto,
                         openloom_models::ThinkingLevel::default(),
                     )
@@ -809,9 +853,10 @@ async fn dispatch_request<T: DeserializeOwned>(
             .unwrap_or_else(|_| {
                 loom_absolute_path::AbsolutePathBuf::from_absolute_path("/").unwrap()
             });
+            let default_model = engine.current_model_id();
             let response = loom_app_server_protocol::ThreadStartResponse {
                 thread,
-                model: params.model.unwrap_or_else(|| "qwen3-1.7b".into()),
+                model: params.model.unwrap_or_else(|| default_model.clone()),
                 model_provider: params.model_provider.unwrap_or_else(|| "local".into()),
                 service_tier: None,
                 cwd,
@@ -865,9 +910,10 @@ async fn dispatch_request<T: DeserializeOwned>(
             .unwrap_or_else(|_| {
                 loom_absolute_path::AbsolutePathBuf::from_absolute_path("/").unwrap()
             });
+            let default_model = engine.current_model_id();
             let response = loom_app_server_protocol::ThreadResumeResponse {
                 thread,
-                model: params.model.unwrap_or_else(|| "qwen3-1.7b".into()),
+                model: params.model.unwrap_or_else(|| default_model.clone()),
                 model_provider: params.model_provider.unwrap_or_else(|| "local".into()),
                 service_tier: None,
                 cwd,
@@ -898,9 +944,10 @@ async fn dispatch_request<T: DeserializeOwned>(
             .unwrap_or_else(|_| {
                 loom_absolute_path::AbsolutePathBuf::from_absolute_path("/").unwrap()
             });
+            let default_model = engine.current_model_id();
             let response = loom_app_server_protocol::ThreadForkResponse {
                 thread,
-                model: params.model.unwrap_or_else(|| "qwen3-1.7b".into()),
+                model: params.model.unwrap_or_else(|| default_model.clone()),
                 model_provider: params.model_provider.unwrap_or_else(|| "local".into()),
                 service_tier: None,
                 cwd,

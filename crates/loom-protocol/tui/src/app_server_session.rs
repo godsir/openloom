@@ -1082,6 +1082,16 @@ impl AppServerSession {
         self.client.request_handle()
     }
 
+    /// Switch the underlying engine to Code mode (agent loop + tools).
+    pub(crate) fn set_code_mode(&self) {
+        self.client.set_code_mode();
+    }
+
+    /// Switch the underlying engine to Chat mode (companion, no tools).
+    pub(crate) fn set_chat_mode(&self) {
+        self.client.set_chat_mode();
+    }
+
     fn next_request_id(&mut self) -> RequestId {
         let request_id = self.next_request_id;
         self.next_request_id += 1;

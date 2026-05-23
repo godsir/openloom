@@ -1004,6 +1004,12 @@ pub(crate) enum AppEvent {
         context: String,
         action: String,
     },
+
+    /// Switch engine mode to Code (full agent loop, tool access).
+    SetCodeMode,
+
+    /// Switch engine mode to Chat (companion mode, no tools).
+    SetChatMode,
 }
 
 /// Named profile selection to apply after any required UI guardrails complete.

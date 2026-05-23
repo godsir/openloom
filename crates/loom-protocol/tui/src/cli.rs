@@ -73,6 +73,10 @@ pub struct Cli {
 
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
+
+    /// Internal: initial engine mode (set by `loom code` subcommand).
+    #[clap(skip)]
+    pub start_mode: Option<String>,
 }
 
 impl std::ops::Deref for Cli {

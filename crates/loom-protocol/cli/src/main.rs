@@ -106,7 +106,13 @@ enum Subcommand {
 
     /// Fork a previous interactive session (picker by default; use --last to fork the most recent).
     Fork(ForkCommand),
+
+    /// Start interactive session in coding mode (full agent loop, tool access).
+    Code(CodeCommand),
 }
+
+#[derive(Debug, Parser)]
+struct CodeCommand {}
 
 #[derive(Debug, Parser)]
 struct CompletionCommand {
@@ -374,10 +380,31 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 &mut interactive.config_overrides,
                 root_config_overrides.clone(),
             );
+            interactive.start_mode = Some("chat".to_string());
             let exit_info = run_interactive_tui(
                 interactive,
                 root_remote.clone(),
                 root_remote_auth_token_env.clone(),
+                arg0_paths.clone(),
+            )
+            .await?;
+            handle_app_exit(exit_info)?;
+        }
+        Some(Subcommand::Code { .. }) => {
+            reject_remote_mode_for_subcommand(
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+                "code",
+            )?;
+            prepend_config_flags(
+                &mut interactive.config_overrides,
+                root_config_overrides.clone(),
+            );
+            interactive.start_mode = Some("code".to_string());
+            let exit_info = run_interactive_tui(
+                interactive,
+                /*remote*/ None,
+                /*remote_auth_token_env*/ None,
                 arg0_paths.clone(),
             )
             .await?;
@@ -624,6 +651,7 @@ fn profile_v2_for_subcommand<'a>(
         | Subcommand::Review(_)
         | Subcommand::Resume(_)
         | Subcommand::Fork(_)
+        | Subcommand::Code(_)
         | Subcommand::Mcp(_)
         | Subcommand::Debug(DebugCommand {
             subcommand: DebugSubcommand::PromptInput(_),
@@ -746,6 +774,7 @@ fn unsupported_subcommand_name_for_strict_config(
         Some(Subcommand::Debug(_)) => Some("debug"),
         Some(Subcommand::Execpolicy(_)) => Some("execpolicy"),
         Some(Subcommand::Apply(_)) => Some("apply"),
+        Some(Subcommand::Code(_)) => Some("code"),
     }
 }
 

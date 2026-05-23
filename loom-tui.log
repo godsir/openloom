@@ -99,3 +99,12 @@ Caused by:
 2026-05-23T04:43:20.844122Z  WARN loom_tui::app: app-server event stream closed
 2026-05-23T04:44:00.209011Z  INFO loom_tui::app::event_dispatch: Selected model: deepseek-v4-pro[1m], Selected effort: medium
 2026-05-23T04:47:16.871219Z  WARN loom_tui::app::thread_routing: failed to unsubscribe thread 5cc9f5fc-e541-4eec-914a-32ed914ed906: thread/unsubscribe failed in TUI
+2026-05-23T05:06:32.089501Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
+2026-05-23T05:06:32.089596Z  WARN loom_tui::app: app-server event stream closed
+2026-05-23T05:06:44.333305Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
+2026-05-23T05:06:44.333409Z  WARN loom_tui::app: app-server event stream closed
+2026-05-23T05:17:54.593509Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
+2026-05-23T05:17:54.593634Z  WARN loom_tui::app: app-server event stream closed
+2026-05-23T05:23:04.631841Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=1 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=0 initial_session_ms=0 event_stream_ms=0
+2026-05-23T05:23:04.632152Z  WARN loom_tui::app: app-server event stream closed
+2026-05-23T05:23:11.784207Z  INFO loom_tui::app::event_dispatch: Selected model: gemma-4-26b-a4b-it-ultra-uncensored-heretic, Selected effort: medium

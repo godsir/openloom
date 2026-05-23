@@ -652,9 +652,10 @@ impl Engine {
         let completion_tokens = self.inference.token_count(&response);
         let latency_ms = start.elapsed().as_millis() as u64;
         self.in_flight.fetch_sub(1, Ordering::SeqCst);
+        let model_id = self.current_model_id();
         let _ = self.event_bus.send(EngineEvent::TokenUsage {
             session_id: session_id.to_string(),
-            model: "qwen3-1.7b".into(),
+            model: model_id.clone(),
             prompt_tokens,
             completion_tokens,
             cached_tokens: 0,
@@ -662,7 +663,7 @@ impl Engine {
         });
         let _ = self.token_store_tx.send(TokenUsageRecord {
             session_id: session_id.to_string(),
-            model: "qwen3-1.7b".into(),
+            model: model_id,
             prompt_tokens,
             completion_tokens,
             cached_tokens: 0,
@@ -905,6 +906,19 @@ impl Engine {
             .filter(|s| s.name.contains(':'))
             .map(|s| (s.name.clone(), s.description.clone()))
             .collect()
+    }
+
+    /// Returns the raw model ID string (e.g. "deepseek-v4-pro[1m]") for use in
+    /// protocol responses. Prefers cloud over local. Returns empty string when
+    /// no model is configured so callers can supply their own fallback.
+    pub fn current_model_id(&self) -> String {
+        if let Some(ref cloud) = self.cloud {
+            return cloud.model_name().to_string();
+        }
+        if let Some(ref local) = self.local_client {
+            return local.model_name().to_string();
+        }
+        String::new()
     }
 
     pub fn model_display_name(&self) -> String {

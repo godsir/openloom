@@ -31,8 +31,13 @@ pub async fn dispatch_method(
                 content: content.to_string(),
                 timestamp: chrono::Utc::now(),
             };
+            let mode = p
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .and_then(openloom_models::Mode::from_key)
+                .unwrap_or(openloom_models::Mode::Chat);
             engine
-                .handle_message(msg, &session_id, openloom_models::Mode::Code)
+                .handle_message(msg, &session_id, mode)
                 .await
                 .map(|r| serde_json::to_value(r).unwrap_or_default())
                 .map_err(|e| JsonRpcError {
@@ -171,8 +176,9 @@ pub async fn dispatch_method(
         }
         "agent.status" => {
             let state = engine.agent_state().await;
+            let model_info = engine.current_model_id();
             Ok(
-                serde_json::json!({"state": state, "active_session": null, "model_info": {"router": "qwen3-1.7b"}}),
+                serde_json::json!({"state": state, "active_session": null, "model_info": {"router": model_info}}),
             )
         }
         "cache.stats" => {

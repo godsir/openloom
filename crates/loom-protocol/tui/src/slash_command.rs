@@ -35,6 +35,7 @@ pub enum SlashCommand {
     Init,
     Compact,
     Plan,
+    Code,
     Goal,
     Agent,
     Side,
@@ -113,6 +114,7 @@ impl SlashCommand {
             SlashCommand::Realtime => "toggle realtime voice mode (experimental)",
             SlashCommand::Settings => "configure realtime microphone/speaker",
             SlashCommand::Plan => "switch to Plan mode",
+            SlashCommand::Code => "switch to Code mode (full agent loop, tool access)",
             SlashCommand::Goal => "set or view the goal for a long-running task",
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",
             SlashCommand::Side | SlashCommand::Btw => {
@@ -228,6 +230,7 @@ impl SlashCommand {
             SlashCommand::Realtime => true,
             SlashCommand::Settings => true,
             SlashCommand::Agent | SlashCommand::MultiAgents => true,
+            SlashCommand::Code => true,
             SlashCommand::Theme | SlashCommand::Pets => false,
         }
     }
