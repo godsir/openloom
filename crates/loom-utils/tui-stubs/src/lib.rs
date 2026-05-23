@@ -472,6 +472,8 @@ pub mod path_utils {
 
 pub mod config {
     use std::collections::BTreeMap;
+    use std::collections::HashMap;
+    use std::path::Path;
     use std::path::PathBuf;
     use loom_absolute_path::AbsolutePathBuf;
     use super::ConfigLayerSource;
@@ -817,6 +819,11 @@ pub mod config {
         pub realtime: Option<loom_config::config_toml::RealtimeToml>,
         pub realtime_audio: loom_config::config_toml::RealtimeAudioToml,
 
+        // MCP OAuth
+        pub mcp_oauth_credentials_store_mode: loom_config::types::OAuthCredentialsStoreMode,
+        pub mcp_oauth_callback_port: Option<u16>,
+        pub mcp_oauth_callback_url: Option<String>,
+
         // Other
         pub plan_mode_reasoning_effort: Option<loom_protocol::openai_models::ReasoningEffort>,
         pub model_availability_nux: ModelAvailabilityNuxConfig,
@@ -827,6 +834,14 @@ pub mod config {
     impl Config {
         pub fn effective_permission_profile(&self) -> loom_protocol::models::PermissionProfile {
             loom_protocol::models::PermissionProfile::default()
+        }
+
+        pub async fn load_with_cli_overrides(_overrides: Vec<(String, toml::Value)>) -> Result<Config, ConfigLoadError> {
+            Ok(Config::default())
+        }
+
+        pub fn plugins_config_input(&self) -> () {
+            ()
         }
 
         #[cfg(target_os = "windows")]
@@ -898,6 +913,9 @@ pub mod config {
                 web_search_mode: Constrained(loom_protocol::config_types::WebSearchMode::Cached),
                 realtime: None,
                 realtime_audio: loom_config::config_toml::RealtimeAudioToml::default(),
+                mcp_oauth_credentials_store_mode: loom_config::types::OAuthCredentialsStoreMode::default(),
+                mcp_oauth_callback_port: None,
+                mcp_oauth_callback_url: None,
                 plan_mode_reasoning_effort: None,
                 model_availability_nux: ModelAvailabilityNuxConfig::default(),
                 network: None,
@@ -958,6 +976,39 @@ pub mod config {
     #[derive(Debug, Clone, Default)]
     pub struct CloudRequirementsLoader;
 
+    /// Stub PluginsConfigInput for CLI plugin commands.
+    #[derive(Debug, Clone, Default)]
+    pub struct PluginsConfigInput {
+        pub config_layer_stack: loom_config::ConfigLayerStack,
+    }
+
+    /// Stub McpManager for CLI MCP commands.
+    #[derive(Debug, Clone)]
+    pub struct McpManager {
+        _plugins_dir: PathBuf,
+    }
+
+    impl McpManager {
+        pub fn new(plugins_dir: PathBuf) -> Self {
+            Self { _plugins_dir: plugins_dir }
+        }
+
+        pub async fn configured_servers(
+            &self,
+            _config: &Config,
+        ) -> HashMap<String, loom_config::types::McpServerConfig> {
+            HashMap::new()
+        }
+
+        pub async fn effective_servers(
+            &self,
+            _config: &Config,
+            _auth: Option<&()>,
+        ) -> HashMap<String, loom_config::types::McpServerConfig> {
+            HashMap::new()
+        }
+    }
+
     // Config edit stubs
     pub mod edit {
         use std::collections::HashMap;
@@ -1014,10 +1065,47 @@ pub mod config {
 
     // Additional config stubs
     pub fn format_config_error_with_source(_err: &anyhow::Error) -> String { String::new() }
-    pub fn find_codex_home() -> Option<AbsolutePathBuf> { None }
+
+    /// Resolves CODEX_HOME from env var or default platform data dir.
+    /// Returns AbsolutePathBuf for TUI compatibility.
+    pub fn find_codex_home_tui() -> Option<AbsolutePathBuf> { None }
+
+    /// Resolves CODEX_HOME for CLI use (returns PathBuf).
+    pub fn find_codex_home() -> anyhow::Result<PathBuf> {
+        if let Ok(home) = std::env::var("CODEX_HOME") {
+            return Ok(PathBuf::from(home));
+        }
+        Ok(PathBuf::from(".codex"))
+    }
+
+    /// Resolves the config path for a profile v2 (TUI compatibility).
+    pub fn resolve_profile_v2_config_path_tui(
+        _codex_home: &Path,
+        _profile_v2: &str,
+    ) -> AbsolutePathBuf {
+        AbsolutePathBuf::current_dir().unwrap()
+    }
+
+    /// Resolves the config path for a profile v2 (TUI compatibility — returns AbsolutePathBuf).
+    pub fn resolve_profile_v2_config_path(
+        _codex_home: &Path,
+        _profile_v2: &str,
+    ) -> AbsolutePathBuf {
+        AbsolutePathBuf::current_dir().unwrap()
+    }
+
+    /// Resolves the config path for a profile v2 (CLI use — returns AbsolutePathBuf).
+    pub fn resolve_profile_v2_config_path_cli(
+        codex_home: &Path,
+        profile_v2: &str,
+    ) -> AbsolutePathBuf {
+        let path = codex_home.join("profiles").join(profile_v2).join("config.toml");
+        AbsolutePathBuf::try_from(path).unwrap_or_else(|_| AbsolutePathBuf::current_dir().unwrap())
+    }
+
     pub fn set_project_trust_level() {}
     pub fn set_default_oss_provider(
-        _codex_home: &std::path::Path,
+        _codex_home: &Path,
         _provider: &str,
     ) -> Result<(), anyhow::Error> {
         Ok(())
@@ -1030,19 +1118,12 @@ pub mod config {
     }
 
     pub async fn load_config_as_toml_with_cli_and_load_options(
-        _codex_home: &std::path::Path,
+        _codex_home: &Path,
         _config_cwd: Option<&AbsolutePathBuf>,
         _cli_kv_overrides: Vec<(String, toml::Value)>,
         _options: loom_config::ConfigLoadOptions,
     ) -> Result<loom_config::config_toml::ConfigToml, ConfigLoadError> {
         Ok(loom_config::config_toml::ConfigToml::default())
-    }
-
-    pub fn resolve_profile_v2_config_path(
-        _codex_home: &std::path::Path,
-        _profile_v2: &str,
-    ) -> AbsolutePathBuf {
-        AbsolutePathBuf::current_dir().unwrap()
     }
 }
 
@@ -1176,7 +1257,6 @@ impl<T: Clone> config::Constrained<T> {
 // Config methods
 impl config::Config {
     pub fn effective_workspace_roots(&self) -> Vec<loom_absolute_path::AbsolutePathBuf> { vec![] }
-    pub fn plugins_config_input(&self) -> () { () }
     pub fn set_windows_elevated_sandbox_enabled(&mut self, _val: bool) {}
     pub fn legacy_sandbox_policy(&self, _cwd: &std::path::Path) -> loom_protocol::protocol::SandboxPolicy {
         loom_protocol::protocol::SandboxPolicy::DangerFullAccess

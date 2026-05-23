@@ -52,6 +52,7 @@ members = [
     "crates/loom-protocol/rmcp-client",
     "crates/loom-protocol/chatgpt",
     "crates/loom-protocol/tui",
+    "crates/loom-protocol/cli",
 ]
 exclude = [
     "crates/loom-utils",
@@ -221,6 +222,7 @@ loom-approval-presets = { path = "crates/loom-utils/approval-presets" }
 loom-arg0 = { path = "crates/loom-utils/arg0" }
 loom-cache = { path = "crates/loom-utils/cache" }
 loom-execpolicy = { path = "crates/loom-protocol/execpolicy" }
+loom-exec = { path = "crates/loom-protocol/exec" }
 loom-network-proxy = { path = "crates/loom-protocol/network-proxy" }
 loom-protocol = { path = "crates/loom-protocol/protocol" }
 loom-sandbox-summary = { path = "crates/loom-utils/sandbox-summary" }
@@ -264,12 +266,14 @@ loom-mcp = { path = "crates/loom-protocol/mcp" }
 loom-rmcp-client = { path = "crates/loom-protocol/rmcp-client" }
 loom-chatgpt = { path = "crates/loom-protocol/chatgpt" }
 loom-tui = { path = "crates/loom-protocol/tui" }
+loom-cli = { path = "crates/loom-protocol/cli" }
 loom-install-context = { path = "crates/loom-utils/install-context" }
 
 # Commonly used deps (already used by openLoom, centralized here)
 anyhow = "1"
 async-trait = "0.1.89"
 clap = "4"
+clap_complete = "4"
 http = "1.3.1"
 axum = "0.7"
 icu_decimal = "2.1"
