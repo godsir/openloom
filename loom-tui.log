@@ -43,3 +43,10 @@ Caused by:
 2026-05-23T03:12:55.626393Z  WARN loom_tui::app: app-server event stream closed
 2026-05-23T03:15:44.619773Z  WARN loom_tui::startup_hooks_review: failed to load startup hook review state: hooks/list failed in TUI: method not found (not yet mapped in Loom adapter)
 2026-05-23T03:15:44.642303Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=22 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=3 initial_session_ms=0 event_stream_ms=0
+2026-05-23T03:22:25.764869Z  WARN loom_tui::startup_hooks_review: failed to load startup hook review state: hooks/list failed in TUI: method not found (not yet mapped in Loom adapter)
+2026-05-23T03:22:25.773107Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=8 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=4 initial_session_ms=0 event_stream_ms=0
+2026-05-23T03:22:31.682541Z  WARN loom_tui::startup_hooks_review: failed to load startup hook review state: hooks/list failed in TUI: method not found (not yet mapped in Loom adapter)
+2026-05-23T03:22:31.689957Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=7 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=3 initial_session_ms=0 event_stream_ms=0
+2026-05-23T03:22:31.694920Z  WARN loom_tui::app: app-server event stream closed
+2026-05-23T03:22:35.657564Z  WARN loom_tui::startup_hooks_review: failed to load startup hook review state: hooks/list failed in TUI: method not found (not yet mapped in Loom adapter)
+2026-05-23T03:22:35.665036Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=7 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=3 initial_session_ms=0 event_stream_ms=0

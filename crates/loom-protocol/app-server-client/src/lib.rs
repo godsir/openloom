@@ -45,11 +45,16 @@ pub type StateDbHandle = std::sync::Arc<loom_tui_stubs::state::StateRuntime>;
 /// InProcessAppServerClient wraps LoomAppServerClient for TUI compatibility.
 pub struct InProcessAppServerClient {
     inner: LoomAppServerClient,
+    engine: Arc<openloom_engine::Engine>,
+    event_tx: mpsc::UnboundedSender<AppServerEvent>,
 }
 
 impl InProcessAppServerClient {
     pub async fn start(_args: InProcessClientStartArgs) -> std::io::Result<Self> {
-        Ok(Self { inner: LoomAppServerClient::stub() })
+        let inner = LoomAppServerClient::stub();
+        let engine = Arc::clone(&inner.engine);
+        let event_tx = inner.event_tx.clone();
+        Ok(Self { inner, engine, event_tx })
     }
     pub async fn shutdown(self) -> std::io::Result<()> {
         self.inner.shutdown().await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
@@ -528,7 +533,10 @@ impl AppServerClient {
             Self::Loom(client) => AppServerRequestHandle::Loom(client.request_handle()),
             Self::Remote(client) => AppServerRequestHandle::Remote(client.request_handle()),
             Self::InProcess(client) => {
-                AppServerRequestHandle::InProcess(Box::new(client.request_handle()))
+                AppServerRequestHandle::Loom(LoomAppServerRequestHandle {
+                    engine: Arc::clone(&client.engine),
+                    event_tx: client.event_tx.clone()
+                })
             }
         }
     }
