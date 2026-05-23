@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_variables, unused_mut)]
 //! Resolve saved-session state needed before resuming or forking a thread.
 //!
 //! The app-server API owns normal thread lifecycle data. This module coordinates
@@ -66,7 +67,7 @@ pub(crate) async fn resolve_session_thread_id(
 
 pub(crate) async fn read_session_model(
     state_db_ctx: Option<&StateRuntime>,
-    thread_id: ThreadId,
+    _thread_id: ThreadId,
     path: Option<&Path>,
 ) -> Option<String> {
     // Stub: state_db_ctx.get_thread returns Option<()> with no .model field.

@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_variables, unused_mut)]
 //! CLI recovery for local state database startup failures (stub).
 //! Full state DB recovery deferred until loom-engine DB layer is stable.
 
@@ -26,7 +27,7 @@ impl std::fmt::Display for LocalStateDbStartupError {
 
 impl std::error::Error for LocalStateDbStartupError {}
 
-pub(crate) fn startup_error(err: &std::io::Error) -> Option<&LocalStateDbStartupError> {
+pub(crate) fn startup_error(_err: &std::io::Error) -> Option<&LocalStateDbStartupError> {
     // Stub: never detect startup errors
     None
 }

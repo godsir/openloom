@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_variables, unused_mut)]
 // Forbid accidental stdout/stderr writes in the *library* portion of the TUI.
 // The standalone `loom-tui` binary prints a short help message before the
 // alternate‑screen mode starts; that file opts‑out locally via `allow`.
@@ -39,7 +40,6 @@ use loom_app_server_protocol::ThreadSortKey as AppServerThreadSortKey;
 use loom_app_server_protocol::ThreadSourceKind;
 use loom_tui_stubs::cloud_requirements::cloud_requirements_loader_for_storage;
 use loom_config::CloudRequirementsLoader;
-use loom_config::ConfigLoadError;
 use loom_config::LoaderOverrides;
 use loom_config::format_config_error_with_source;
 use loom_exec_server::EnvironmentManager;
@@ -67,12 +67,10 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 pub use token_usage::TokenUsage;
-use tracing::Level;
 use tracing::error;
 use tracing::warn;
 use tracing_appender::non_blocking;
 use tracing_subscriber::EnvFilter;
-use tracing_subscriber::filter::Targets;
 use tracing_subscriber::prelude::*;
 use url::Url;
 use uuid::Uuid;

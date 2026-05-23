@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
@@ -131,11 +129,11 @@ pub mod rollout {
     pub mod state_db {
         pub use super::StateDbHandle;
 
-        pub async fn try_init(config: &super::super::config::Config) -> Result<std::sync::Arc<super::super::state::StateRuntime>, anyhow::Error> {
+        pub async fn try_init(_config: &super::super::config::Config) -> Result<std::sync::Arc<super::super::state::StateRuntime>, anyhow::Error> {
             Ok(std::sync::Arc::new(super::super::state::StateRuntime))
         }
 
-        pub async fn get_state_db(config: &super::super::config::Config) -> Option<std::sync::Arc<super::super::state::StateRuntime>> {
+        pub async fn get_state_db(_config: &super::super::config::Config) -> Option<std::sync::Arc<super::super::state::StateRuntime>> {
             Some(std::sync::Arc::new(super::super::state::StateRuntime))
         }
     }
@@ -940,7 +938,7 @@ pub mod config {
     impl ConfigBuilder {
         pub fn new() -> Self { Self::default() }
         pub fn codex_home(mut self, path: PathBuf) -> Self { self.codex_home = Some(path); self }
-        pub fn cli_overrides(mut self, _overrides: Vec<(String, toml::Value)>) -> Self { self }
+        pub fn cli_overrides(self, _overrides: Vec<(String, toml::Value)>) -> Self { self }
         pub fn harness_overrides(mut self, overrides: ConfigOverrides) -> Self { self.overrides = overrides; self }
         pub fn loader_overrides(mut self, overrides: LoaderOverrides) -> Self { self.loader_overrides = overrides; self }
         pub fn strict_config(mut self, strict: bool) -> Self { self.strict = strict; self }
@@ -1014,7 +1012,7 @@ pub mod config {
     // Config edit stubs
     pub mod edit {
         use std::collections::HashMap;
-        use std::path::PathBuf;
+        
         use super::SessionPickerViewMode;
 
         #[derive(Debug, Clone)]

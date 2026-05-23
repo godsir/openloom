@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_variables, unused_mut)]
 #[cfg(unix)]
 pub(crate) fn handle_exit_status(status: std::process::ExitStatus) -> ! {
     use std::os::unix::process::ExitStatusExt;

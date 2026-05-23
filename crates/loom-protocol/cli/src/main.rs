@@ -11,7 +11,6 @@ use loom_execpolicy::ExecPolicyCheckCommand;
 use loom_tui::AppExitInfo;
 use loom_tui::Cli as TuiCli;
 use loom_tui::ExitReason;
-use loom_absolute_path::AbsolutePathBuf;
 use loom_cli_utils::CliConfigOverrides;
 use loom_cli_utils::ProfileV2Name;
 use loom_cli_utils::resume_hint;
@@ -34,7 +33,6 @@ use state_db_recovery as local_state_db;
 use loom_config::LoaderOverrides;
 use loom_tui_stubs::config::find_codex_home;
 use loom_tui_stubs::config::resolve_profile_v2_config_path_cli;
-use loom_features::FEATURES;
 use loom_features::Stage;
 use loom_features::is_known_feature_key;
 use loom_protocol::user_input::UserInput;
@@ -655,9 +653,9 @@ async fn run_debug_prompt_input_command(
     cmd: DebugPromptInputCommand,
     root_config_overrides: CliConfigOverrides,
     interactive: TuiCli,
-    arg0_paths: Arg0DispatchPaths,
+    _arg0_paths: Arg0DispatchPaths,
 ) -> anyhow::Result<()> {
-    let loader_overrides = loader_overrides_for_profile(interactive.config_profile_v2.as_ref())?;
+    let _loader_overrides = loader_overrides_for_profile(interactive.config_profile_v2.as_ref())?;
     let shared = interactive.shared.into_inner();
     let mut _cli_kv_overrides = root_config_overrides
         .parse_overrides()

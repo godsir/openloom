@@ -54,7 +54,6 @@ use loom_app_server_protocol::McpServerStatusDetail;
 use loom_app_server_protocol::ToolRequestUserInputAnswer;
 use loom_app_server_protocol::ToolRequestUserInputQuestion;
 use loom_app_server_protocol::WebSearchAction;
-use loom_config::types::McpServerTransportConfig;
 #[cfg(test)]
 use loom_mcp::qualified_mcp_tool_name_prefix;
 use loom_otel_stub::RuntimeMetricsSummary;
@@ -75,7 +74,6 @@ use loom_protocol::plan_tool::StepStatus;
 use loom_protocol::plan_tool::UpdatePlanArgs;
 use loom_protocol::user_input::TextElement;
 use loom_absolute_path::AbsolutePathBuf;
-use loom_cli_utils::format_env_display;
 use image::DynamicImage;
 use image::ImageReader;
 use ratatui::prelude::*;

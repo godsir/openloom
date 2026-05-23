@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_variables, unused_mut)]
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;

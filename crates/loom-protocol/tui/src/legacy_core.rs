@@ -1,28 +1,19 @@
+#![allow(dead_code, unused_imports, unused_variables, unused_mut)]
 //! Legacy core re-exports -- bridges the TUI crate to loom-tui-stubs.
 //! Originally `codex-app-server-client::legacy_core` which re-exported from `codex-core`.
 
-use std::path::Path;
-use std::path::PathBuf;
-use loom_tui_stubs::config::Config;
-use loom_tui_stubs::StateDbHandle;
 
 // Re-export stubbed types that were in codex-core
 pub use loom_tui_stubs::check_execpolicy_for_warnings;
 pub use loom_tui_stubs::format_exec_policy_error_with_source;
-pub use loom_tui_stubs::resolve_installation_id;
-pub use loom_tui_stubs::AbsolutePathBuf;
-pub use loom_tui_stubs::CodexThread;
-pub use loom_tui_stubs::NewThread;
-pub use loom_tui_stubs::ThreadManager;
-pub use loom_tui_stubs::config::Config as StubConfig;
 
 // ─── config sub-module ───
 pub mod config {
     pub use loom_tui_stubs::config::*;
-    pub use loom_config::ConfigLoadError;
-    pub use loom_config::ConfigLoadOptions;
-    pub use loom_config::LoaderOverrides;
-    pub use loom_config::format_config_error_with_source;
+    
+    
+    
+    
 
     pub mod edit {
         pub use loom_tui_stubs::config::edit::*;
@@ -34,7 +25,7 @@ pub use windows_sandbox::grant_read_root_non_elevated;
 
 // ─── connectors ───
 pub mod connectors {
-    pub use loom_tui_stubs::connectors::*;
+    
 }
 
 // ─── otel_init ───
@@ -75,7 +66,7 @@ pub mod otel_init {
 // ─── personality_migration ───
 pub mod personality_migration {
     use std::path::Path;
-    use loom_tui_stubs::config::Config;
+    
     use loom_tui_stubs::StateDbHandle;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,7 +148,6 @@ pub mod review_prompts {}
 pub mod test_support {}
 
 // ─── state_db functions (re-export from tui-stubs) ───
-pub use loom_tui_stubs::rollout::state_db;
 
 // ─── Constants ───
 pub const DEFAULT_AGENTS_MD_FILENAME: &str = "AGENTS.md";

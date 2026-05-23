@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_variables, unused_mut)]
 // Stub for codex-model-provider types.
 
 use http::HeaderMap;

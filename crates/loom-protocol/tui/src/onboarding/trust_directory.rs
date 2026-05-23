@@ -1,7 +1,7 @@
+#![allow(dead_code, unused_imports, unused_variables, unused_mut)]
 use std::path::PathBuf;
 
 use crate::legacy_core::config::set_project_trust_level;
-use loom_protocol::config_types::TrustLevel;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use ratatui::buffer::Buffer;
@@ -166,7 +166,7 @@ impl StepStateProvider for TrustDirectoryWidget {
 
 impl TrustDirectoryWidget {
     fn handle_trust(&mut self) {
-        let target = self.trust_target.clone();
+        let _target = self.trust_target.clone();
         set_project_trust_level();
         self.selection = Some(TrustDirectorySelection::Trust);
     }

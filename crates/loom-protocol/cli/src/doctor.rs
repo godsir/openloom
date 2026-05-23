@@ -6,9 +6,7 @@
 //! - Database file presence
 //! - Terminal capability
 
-use std::path::PathBuf;
 
-use anyhow::Context;
 use clap::Parser;
 use loom_arg0::Arg0DispatchPaths;
 use loom_cli_utils::CliConfigOverrides;
@@ -80,7 +78,7 @@ fn status_icon(status: CheckStatus, ascii: bool) -> &'static str {
 
 /// Render a human-readable report.
 fn render_human_report(report: &DoctorReport, summary_only: bool, ascii: bool) {
-    let color_enabled = supports_color::on(Stream::Stdout).is_some();
+    let _color_enabled = supports_color::on(Stream::Stdout).is_some();
 
     println!("Loom Doctor — version {}", report.loom_version);
     println!();
@@ -89,7 +87,7 @@ fn render_human_report(report: &DoctorReport, summary_only: bool, ascii: bool) {
     let mut warn_count = 0;
     let mut fail_count = 0;
 
-    let mut categories: Vec<&str> = report
+    let categories: Vec<&str> = report
         .checks
         .iter()
         .map(|c| c.category.as_str())
@@ -142,12 +140,12 @@ fn render_human_report(report: &DoctorReport, summary_only: bool, ascii: bool) {
 
 pub async fn run_doctor(
     doctor_cli: DoctorCommand,
-    root_config_overrides: CliConfigOverrides,
+    _root_config_overrides: CliConfigOverrides,
     _interactive: &TuiCli,
     _arg0_paths: &Arg0DispatchPaths,
 ) -> anyhow::Result<()> {
     let mut checks = Vec::new();
-    let start = std::time::Instant::now();
+    let _start = std::time::Instant::now();
 
     // Check 1: Loom home directory
     let home_check = check_loom_home().await;
