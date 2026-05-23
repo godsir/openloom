@@ -150,7 +150,7 @@ pub mod test_support {}
 // ─── state_db functions (re-export from tui-stubs) ───
 
 // ─── Constants ───
-pub const DEFAULT_AGENTS_MD_FILENAME: &str = "AGENTS.md";
+pub const DEFAULT_AGENTS_MD_FILENAME: &str = "loom.md";
 pub const LOCAL_AGENTS_MD_FILENAME: &str = "AGENTS.local.md";
 pub const CODEX_CLI_VERSION: &str = "0.2.0";
 

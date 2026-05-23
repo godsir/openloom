@@ -98,7 +98,7 @@ async fn status_command_uses_catalog_default_reasoning_when_config_empty() {
 #[tokio::test]
 async fn status_command_renders_instruction_sources_from_thread_session() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    chat.instruction_source_paths = vec![chat.config.cwd.join("AGENTS.md")];
+    chat.instruction_source_paths = vec![chat.config.cwd.join("loom.md")];
 
     chat.dispatch_command(SlashCommand::Status);
 
