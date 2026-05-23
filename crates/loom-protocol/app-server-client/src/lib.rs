@@ -49,22 +49,7 @@ pub struct InProcessAppServerClient {
 
 impl InProcessAppServerClient {
     pub async fn start(_args: InProcessClientStartArgs) -> std::io::Result<Self> {
-        let tmp = tempfile::TempDir::new().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        let inner = LoomAppServerClient::new(openloom_engine::EngineConfig {
-            data_dir: tmp.path().to_path_buf(),
-            threshold: 3,
-            cloud_config: None,
-            local_config: None,
-            rate_limit_ms: 0,
-            heartbeat_interval_secs: 1800,
-            heartbeat_idle_threshold_min: 120,
-            model_override: None,
-            project_scope: "global".into(),
-            skip_permissions: true,
-        })
-        .await
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        Ok(Self { inner })
+        Ok(Self { inner: LoomAppServerClient::stub() })
     }
     pub async fn shutdown(self) -> std::io::Result<()> {
         self.inner.shutdown().await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
@@ -278,6 +263,25 @@ pub struct LoomAppServerClient {
 }
 
 impl LoomAppServerClient {
+    /// Creates a stub client without a real Engine — only used for TUI bootstrap.
+    /// All requests return stub/success responses.
+    pub fn stub() -> Self {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        Self {
+            engine: Arc::new(
+                openloom_engine::Engine::new_test(
+                    tempfile::TempDir::new()
+                        .expect("temp dir")
+                        .into_path()
+                        .join("db.sqlite"),
+                )
+                .expect("test engine"),
+            ),
+            event_rx,
+            event_tx,
+        }
+    }
+
     /// Creates a new in-process client wrapping the openLoom Engine.
     ///
     /// The engine is initialised with the provided config and can be used
@@ -658,15 +662,8 @@ async fn dispatch_request<T: DeserializeOwned>(
 
         // ─── Thread lifecycle ───
         ClientRequest::ThreadStart { params, .. } => {
-            let session =
-                engine
-                    .create_session()
-                    .await
-                    .map_err(|e| TypedRequestError::Transport {
-                        method: method.clone(),
-                        source: IoError::new(ErrorKind::Other, e.to_string()),
-                    })?;
-            let thread = make_thread_stub(&session.id, params.model_provider.as_deref());
+            let thread_id = uuid::Uuid::new_v4().to_string();
+            let thread = make_thread_stub(&thread_id, params.model_provider.as_deref());
             let cwd = loom_absolute_path::AbsolutePathBuf::from_absolute_path(
                 std::env::current_dir().unwrap_or_default(),
             )
