@@ -553,6 +553,84 @@ impl LoomAppServerClient {
 
 // ─── Request dispatch helpers ───
 
+/// Load models from openLoom config.toml into Codex-format Model entries.
+fn load_model_list() -> Vec<loom_app_server_protocol::Model> {
+    let mut models = Vec::new();
+
+    // Try to find config file in standard locations
+    let config_path = loom_home_dir::find_loom_home()
+        .map(|h| h.join("config.toml"))
+        .ok();
+
+    if let Some(path) = config_path {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(config) = toml::from_str::<toml::Table>(&content) {
+                if let Some(models_section) = config.get("models") {
+                    if let Some(arr) = models_section.as_array() {
+                        for entry in arr {
+                            let table = entry.as_table();
+                            let name = table
+                                .and_then(|t| t.get("name"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            let model = table
+                                .and_then(|t| t.get("model"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(name);
+                            let backend = table
+                                .and_then(|t| t.get("backend"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("local");
+                            models.push(loom_app_server_protocol::Model {
+                                id: name.to_string(),
+                                model: model.to_string(),
+                                upgrade: None,
+                                upgrade_info: None,
+                                availability_nux: None,
+                                display_name: format!("{} ({})", name, backend),
+                                description: format!("{} backend", backend),
+                                hidden: false,
+                                supported_reasoning_efforts: vec![],
+                                default_reasoning_effort: loom_protocol::openai_models::ReasoningEffort::Medium,
+                                input_modalities: vec![],
+                                supports_personality: false,
+                                additional_speed_tiers: vec![],
+                                service_tiers: vec![],
+                                default_service_tier: None,
+                                is_default: models.is_empty(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback if no config or empty
+    if models.is_empty() {
+        models.push(loom_app_server_protocol::Model {
+            id: "default".into(),
+            model: "qwen3-1.7b".into(),
+            upgrade: None,
+            upgrade_info: None,
+            availability_nux: None,
+            display_name: "Local (qwen3-1.7b)".into(),
+            description: "Default local model".into(),
+            hidden: false,
+            supported_reasoning_efforts: vec![],
+            default_reasoning_effort: loom_protocol::openai_models::ReasoningEffort::Medium,
+            input_modalities: vec![],
+            supports_personality: false,
+            additional_speed_tiers: vec![],
+            service_tiers: vec![],
+            default_service_tier: None,
+            is_default: true,
+        });
+    }
+
+    models
+}
+
 /// Core dispatch: maps ClientRequest variants to engine calls.
 async fn dispatch_request<T: DeserializeOwned>(
     engine: Arc<openloom_engine::Engine>,
@@ -833,26 +911,7 @@ async fn dispatch_request<T: DeserializeOwned>(
 
         // ─── Models ───
         ClientRequest::ModelList { .. } => {
-            let display_name = engine.model_display_name();
-            let model_entries: Vec<loom_app_server_protocol::Model> =
-                vec![loom_app_server_protocol::Model {
-                    id: "openloom-local".into(),
-                    model: display_name.clone(),
-                    upgrade: None,
-                    upgrade_info: None,
-                    availability_nux: None,
-                    display_name,
-                    description: "openLoom local model".into(),
-                    hidden: false,
-                    supported_reasoning_efforts: vec![],
-                    default_reasoning_effort: loom_protocol::openai_models::ReasoningEffort::Medium,
-                    input_modalities: vec![],
-                    supports_personality: false,
-                    additional_speed_tiers: vec![],
-                    service_tiers: vec![],
-                    default_service_tier: None,
-                    is_default: true,
-                }];
+            let model_entries = load_model_list();
             respond(
                 &method,
                 loom_app_server_protocol::ModelListResponse {

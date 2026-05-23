@@ -4390,6 +4390,7 @@ dependencies = [
  "loom-arg0",
  "loom-config",
  "loom-exec-server",
+ "loom-home-dir",
  "loom-protocol",
  "loom-rustls-provider",
  "loom-tui-stubs",

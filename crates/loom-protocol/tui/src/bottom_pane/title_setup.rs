@@ -112,7 +112,7 @@ impl TerminalTitleItem {
             TerminalTitleItem::WeeklyLimit => {
                 "Remaining usage on the secondary usage limit (omitted when unavailable)"
             }
-            TerminalTitleItem::LoomVersion => "Loom application version",
+            TerminalTitleItem::CodexVersion => "Loom application version",
             TerminalTitleItem::UsedTokens => "Total tokens used in session (omitted when zero)",
             TerminalTitleItem::TotalInputTokens => "Total input tokens used in session",
             TerminalTitleItem::TotalOutputTokens => "Total output tokens used in session",
@@ -141,7 +141,7 @@ impl TerminalTitleItem {
             TerminalTitleItem::ContextUsed => Some(StatusSurfacePreviewItem::ContextUsed),
             TerminalTitleItem::FiveHourLimit => Some(StatusSurfacePreviewItem::FiveHourLimit),
             TerminalTitleItem::WeeklyLimit => Some(StatusSurfacePreviewItem::WeeklyLimit),
-            TerminalTitleItem::LoomVersion => Some(StatusSurfacePreviewItem::CodexVersion),
+            TerminalTitleItem::CodexVersion => Some(StatusSurfacePreviewItem::CodexVersion),
             TerminalTitleItem::UsedTokens => Some(StatusSurfacePreviewItem::UsedTokens),
             TerminalTitleItem::TotalInputTokens => Some(StatusSurfacePreviewItem::TotalInputTokens),
             TerminalTitleItem::TotalOutputTokens => {
@@ -554,7 +554,7 @@ mod tests {
                 TerminalTitleItem::Model,
                 TerminalTitleItem::ModelWithReasoning,
                 TerminalTitleItem::WeeklyLimit,
-                TerminalTitleItem::LoomVersion,
+                TerminalTitleItem::CodexVersion,
                 TerminalTitleItem::UsedTokens,
                 TerminalTitleItem::TotalInputTokens,
                 TerminalTitleItem::TotalOutputTokens,
