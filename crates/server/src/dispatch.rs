@@ -36,8 +36,13 @@ pub async fn dispatch_method(
                 .and_then(|v| v.as_str())
                 .and_then(openloom_models::Mode::from_key)
                 .unwrap_or(openloom_models::Mode::Chat);
+            let model_pref = p
+                .get("model_pref")
+                .and_then(|v| v.as_str())
+                .and_then(openloom_models::ModelPreference::from_key)
+                .unwrap_or_default();
             engine
-                .handle_message(msg, &session_id, mode)
+                .handle_message(msg, &session_id, mode, model_pref)
                 .await
                 .map(|r| serde_json::to_value(r).unwrap_or_default())
                 .map_err(|e| JsonRpcError {

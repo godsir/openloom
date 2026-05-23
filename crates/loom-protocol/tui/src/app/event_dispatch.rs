@@ -341,6 +341,16 @@ impl App {
                 self.chat_widget
                     .add_info_message(format!("Switched to {} mode.", label), None);
             }
+            AppEvent::SetModelPreference(pref) => {
+                let label = match pref {
+                    crate::app_event::ModelPreference::Local => "local",
+                    crate::app_event::ModelPreference::Cloud => "cloud",
+                    crate::app_event::ModelPreference::Auto => "auto",
+                };
+                app_server.set_model_preference(pref);
+                self.chat_widget
+                    .add_info_message(format!("Model preference set to {}.", label), None);
+            }
             AppEvent::AppendMessageHistoryEntry { thread_id, text } => {
                 self.append_message_history_entry(thread_id, text);
             }

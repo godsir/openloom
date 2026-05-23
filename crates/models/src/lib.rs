@@ -472,6 +472,25 @@ pub enum ModelPreference {
     Cloud,
 }
 
+impl ModelPreference {
+    pub fn from_key(s: &str) -> Option<ModelPreference> {
+        match s.to_lowercase().as_str() {
+            "auto" => Some(ModelPreference::Auto),
+            "local" => Some(ModelPreference::Local),
+            "cloud" => Some(ModelPreference::Cloud),
+            _ => None,
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            ModelPreference::Auto => "auto (cloud first, local fallback)",
+            ModelPreference::Local => "local only",
+            ModelPreference::Cloud => "cloud first",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ThinkingLevel {
     None,

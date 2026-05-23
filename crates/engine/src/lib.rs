@@ -531,6 +531,7 @@ impl Engine {
         msg: ChatMessage,
         session_id: &str,
         mode: openloom_models::Mode,
+        model_pref: openloom_models::ModelPreference,
     ) -> Result<ChatResponse> {
         // Rate limiting
         {
@@ -565,7 +566,7 @@ impl Engine {
         // C3 fix: complex intent or skill match -> agent loop
         let mode_cfg = mode.config();
         if mode_cfg.agent_loop && (out.complexity >= 0.8 || out.skill_match.is_some()) {
-            return self.agent_loop(&msg, session_id, mode).await;
+            return self.agent_loop(&msg, session_id, mode, model_pref).await;
         }
 
         // Simple path: track in_flight here (agent_loop tracks its own)

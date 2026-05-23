@@ -1103,6 +1103,11 @@ impl AppServerSession {
         new_mode.config().status_label
     }
 
+    /// Set the model preference for subsequent turns.
+    pub(crate) fn set_model_preference(&self, pref: loom_app_server_client::ModelPreference) {
+        self.client.set_model_preference(pref);
+    }
+
     fn next_request_id(&mut self) -> RequestId {
         let request_id = self.next_request_id;
         self.next_request_id += 1;

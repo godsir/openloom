@@ -40,6 +40,7 @@ use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::chatwidget::UserMessage;
 use loom_app_server_protocol::AskForApproval;
+pub use loom_app_server_client::ModelPreference;
 use loom_config::types::ApprovalsReviewer;
 use loom_features::Feature;
 use loom_tui_stubs::plugin::PluginCapabilitySummary;
@@ -1016,6 +1017,9 @@ pub(crate) enum AppEvent {
 
     /// Cycle to the next engine mode (Chat → Plan → Code → Assistant → Chat).
     CycleMode,
+
+    /// Set the model preference (local, cloud, or auto).
+    SetModelPreference(ModelPreference),
 }
 
 /// Named profile selection to apply after any required UI guardrails complete.

@@ -165,6 +165,7 @@ impl SlashCommand {
                 | SlashCommand::Resume
                 | SlashCommand::SandboxReadRoot
                 | SlashCommand::Mode
+                | SlashCommand::Model
         )
     }
 

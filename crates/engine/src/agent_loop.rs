@@ -13,13 +13,14 @@ impl Engine {
         msg: &ChatMessage,
         session_id: &str,
         mode: openloom_models::Mode,
+        model_pref: openloom_models::ModelPreference,
     ) -> Result<ChatResponse> {
         self.agent_loop_inner(
             msg,
             session_id,
             None,
             mode,
-            openloom_models::ModelPreference::Auto,
+            model_pref,
         )
         .await
     }

@@ -39,6 +39,7 @@ pub use crate::remote::RemoteAppServerEndpoint;
 
 // Re-export openLoom engine types used by TUI surfaces.
 pub use openloom_models::Mode;
+pub use openloom_models::ModelPreference;
 
 // ─── Re-exports from stubs (kept for API compatibility) ───
 
@@ -51,6 +52,7 @@ pub struct InProcessAppServerClient {
     engine: Arc<openloom_engine::Engine>,
     event_tx: mpsc::UnboundedSender<AppServerEvent>,
     current_mode: Arc<std::sync::Mutex<openloom_models::Mode>>,
+    model_preference: Arc<std::sync::Mutex<openloom_models::ModelPreference>>,
 }
 
 impl InProcessAppServerClient {
@@ -60,7 +62,8 @@ impl InProcessAppServerClient {
         let engine = Arc::clone(&inner.engine);
         let event_tx = inner.event_tx.clone();
         let current_mode = inner.current_mode.clone();
-        Ok(Self { inner, engine, event_tx, current_mode })
+        let model_preference = inner.model_preference.clone();
+        Ok(Self { inner, engine, event_tx, current_mode, model_preference })
     }
     pub async fn shutdown(self) -> std::io::Result<()> {
         self.inner.shutdown().await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
@@ -91,6 +94,9 @@ impl InProcessAppServerClient {
     }
     pub fn cycle_mode(&self) -> openloom_models::Mode {
         self.inner.cycle_mode()
+    }
+    pub fn set_model_preference(&self, pref: openloom_models::ModelPreference) {
+        *self.model_preference.lock().unwrap() = pref;
     }
 }
 
@@ -284,6 +290,7 @@ pub struct LoomAppServerClient {
     event_rx: mpsc::UnboundedReceiver<AppServerEvent>,
     event_tx: mpsc::UnboundedSender<AppServerEvent>,
     current_mode: Arc<std::sync::Mutex<openloom_models::Mode>>,
+    model_preference: Arc<std::sync::Mutex<openloom_models::ModelPreference>>,
 }
 
 impl LoomAppServerClient {
@@ -304,6 +311,7 @@ impl LoomAppServerClient {
             event_rx,
             event_tx,
             current_mode: Arc::new(std::sync::Mutex::new(openloom_models::Mode::Chat)),
+            model_preference: Arc::new(std::sync::Mutex::new(openloom_models::ModelPreference::Auto)),
         }
     }
 
@@ -320,6 +328,7 @@ impl LoomAppServerClient {
             event_rx,
             event_tx,
             current_mode: Arc::new(std::sync::Mutex::new(openloom_models::Mode::Chat)),
+            model_preference: Arc::new(std::sync::Mutex::new(openloom_models::ModelPreference::Auto)),
         })
     }
 
@@ -352,7 +361,7 @@ impl LoomAppServerClient {
             ))?;
         let engine = Arc::new(engine);
         let (event_tx, event_rx) = mpsc::unbounded_channel();
-        Ok(Self { engine, event_rx, event_tx, current_mode: Arc::new(std::sync::Mutex::new(openloom_models::Mode::Chat)) })
+        Ok(Self { engine, event_rx, event_tx, current_mode: Arc::new(std::sync::Mutex::new(openloom_models::Mode::Chat)), model_preference: Arc::new(std::sync::Mutex::new(openloom_models::ModelPreference::Auto)) })
     }
 
     /// Sends a typed client request and returns a deserialized response body.
@@ -360,7 +369,7 @@ impl LoomAppServerClient {
         &self,
         req: ClientRequest,
     ) -> Result<T, TypedRequestError> {
-        dispatch_request::<T>(Arc::clone(&self.engine), self.event_tx.clone(), req, self.current_mode.clone()).await
+        dispatch_request::<T>(Arc::clone(&self.engine), self.event_tx.clone(), req, self.current_mode.clone(), self.model_preference.clone()).await
     }
 
     /// Returns a handle that can be cloned and used concurrently for
@@ -382,6 +391,11 @@ impl LoomAppServerClient {
         let mut guard = self.current_mode.lock().unwrap();
         *guard = guard.next();
         *guard
+    }
+
+    /// Set the model preference for subsequent turns.
+    pub fn set_model_preference(&self, pref: openloom_models::ModelPreference) {
+        *self.model_preference.lock().unwrap() = pref;
     }
 
     /// Sends a typed client notification (no response expected).
@@ -470,6 +484,7 @@ impl LoomAppServerRequestHandle {
             self.event_tx.clone(),
             req,
             Arc::new(std::sync::Mutex::new(openloom_models::Mode::Code)),
+            Arc::new(std::sync::Mutex::new(openloom_models::ModelPreference::Auto)),
         )
         .await
     }
@@ -553,6 +568,7 @@ impl AppServerClient {
                 client.inner.event_tx.clone(),
                 request,
                 client.current_mode.clone(),
+                client.model_preference.clone(),
             )),
         }
     }
@@ -648,6 +664,15 @@ impl AppServerClient {
             Self::Loom(client) => client.cycle_mode(),
             Self::Remote(_) => Mode::Code,
             Self::InProcess(client) => client.cycle_mode(),
+        }
+    }
+
+    /// Set the model preference for subsequent turns.
+    pub fn set_model_preference(&self, pref: ModelPreference) {
+        match self {
+            Self::Loom(client) => client.set_model_preference(pref),
+            Self::Remote(_) => {}
+            Self::InProcess(client) => client.set_model_preference(pref),
         }
     }
 }
@@ -758,6 +783,7 @@ async fn dispatch_request<T: DeserializeOwned>(
     event_tx: mpsc::UnboundedSender<AppServerEvent>,
     req: ClientRequest,
     current_mode: Arc<std::sync::Mutex<openloom_models::Mode>>,
+    model_preference: Arc<std::sync::Mutex<openloom_models::ModelPreference>>,
 ) -> Result<T, TypedRequestError> {
     let method = req.method();
     match req {
@@ -932,13 +958,14 @@ async fn dispatch_request<T: DeserializeOwned>(
 
                 // Run the model
                 let mode = *current_mode.lock().unwrap();
+                let model_pref = *model_preference.lock().unwrap();
                 let _ = e
                     .handle_message_streaming(
                         msg,
                         &session_id,
                         token_tx,
                         mode,
-                        openloom_models::ModelPreference::Auto,
+                        model_pref,
                         openloom_models::ThinkingLevel::default(),
                     )
                     .await;
