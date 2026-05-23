@@ -693,13 +693,33 @@ impl CloudClient for OpenAIClient {
         req: CompletionRequest,
         tx: tokio::sync::mpsc::Sender<String>,
     ) -> anyhow::Result<()> {
-        let body = serde_json::json!({
+        let messages = self.lower_messages(&req.effective_messages());
+        let mut body = serde_json::json!({
             "model": self.model,
             "max_tokens": req.max_tokens,
-            "messages": [{"role": "user", "content": req.prompt}],
+            "messages": messages,
             "stream": true,
             "stream_options": {"include_usage": true},
         });
+        if req.temperature > 0.0 {
+            body["temperature"] = serde_json::json!(req.temperature);
+        }
+        if !req.tools.is_empty() {
+            let openai_tools: Vec<serde_json::Value> = req
+                .tools
+                .iter()
+                .map(|t| serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.input_schema,
+                    }
+                }))
+                .collect();
+            body["tools"] = serde_json::json!(openai_tools);
+            body["tool_choice"] = serde_json::json!("auto");
+        }
 
         let resp = self
             .http

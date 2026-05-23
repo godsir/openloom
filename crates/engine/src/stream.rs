@@ -120,6 +120,11 @@ impl Engine {
                     }
                     continue;
                 }
+                // Reasoning token — forward to TUI but don't add to message history
+                if token.starts_with('\x02') {
+                    let _ = user_tx.send(token).await;
+                    continue;
+                }
                 full_response.push_str(&token);
                 let _ = user_tx.send(token).await;
             }
