@@ -1,1 +1,2 @@
 2026-05-23T02:39:09.116624Z  WARN loom_tui::startup_hooks_review: failed to load startup hook review state: hooks/list failed in TUI: method not found (not yet mapped in Loom adapter)
+2026-05-23T02:40:47.679005Z  WARN loom_tui::startup_hooks_review: failed to load startup hook review state: hooks/list failed in TUI: method not found (not yet mapped in Loom adapter)

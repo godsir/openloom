@@ -42,15 +42,32 @@ pub use crate::remote::RemoteAppServerEndpoint;
 pub use loom_tui_stubs::feedback::CodexFeedback;
 pub type StateDbHandle = std::sync::Arc<loom_tui_stubs::state::StateRuntime>;
 
-/// Stub InProcessAppServerClient for TUI compatibility.
-pub struct InProcessAppServerClient;
+/// InProcessAppServerClient wraps LoomAppServerClient for TUI compatibility.
+pub struct InProcessAppServerClient {
+    inner: LoomAppServerClient,
+}
 
 impl InProcessAppServerClient {
     pub async fn start(_args: InProcessClientStartArgs) -> std::io::Result<Self> {
-        Ok(Self)
+        let tmp = tempfile::TempDir::new().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let inner = LoomAppServerClient::new(openloom_engine::EngineConfig {
+            data_dir: tmp.path().to_path_buf(),
+            threshold: 3,
+            cloud_config: None,
+            local_config: None,
+            rate_limit_ms: 0,
+            heartbeat_interval_secs: 1800,
+            heartbeat_idle_threshold_min: 120,
+            model_override: None,
+            project_scope: "global".into(),
+            skip_permissions: true,
+        })
+        .await
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        Ok(Self { inner })
     }
     pub async fn shutdown(self) -> std::io::Result<()> {
-        Ok(())
+        self.inner.shutdown().await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     }
     pub fn request_handle(&self) -> AppServerRequestHandle {
         AppServerRequestHandle::Loom(LoomAppServerRequestHandle::default())
@@ -58,14 +75,14 @@ impl InProcessAppServerClient {
     pub async fn request(&self, _request: ClientRequest) -> std::io::Result<RequestResult> {
         Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
-            "InProcess stub not wired",
+            "use request_typed instead",
         ))
     }
     pub async fn request_typed<T: DeserializeOwned>(
         &self,
-        _request: ClientRequest,
+        request: ClientRequest,
     ) -> Result<T, TypedRequestError> {
-        Err(TypedRequestError::MethodNotFound)
+        self.inner.request_typed::<T>(request).await
     }
 }
 
