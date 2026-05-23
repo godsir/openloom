@@ -787,14 +787,95 @@ async fn dispatch_request<T: DeserializeOwned>(
             tokio::spawn(async move {
                 let (token_tx, mut token_rx) = tokio::sync::mpsc::channel::<String>(64);
 
-                // Forward tokens to event stream
+                // Forward tokens to event stream, translating \x01CALL\x02 / \x01RESULT\x02 markers
+                // into proper ItemStarted/ItemCompleted notifications.
                 let forward_tx = tx.clone();
                 let fwd_tid = spawned_thread_id.clone();
                 let fwd_turn_inner = spawned_turn_id.clone();
                 let fwd_turn_outer = spawned_turn_id;
                 let fwd_item = spawned_item_id;
                 let forward_handle = tokio::spawn(async move {
+                    // track pending tool call items waiting for a RESULT
+                    let mut pending_call: Option<(String /*item_id*/, String /*tool*/, serde_json::Value /*args*/)> = None;
+
                     while let Some(token) = token_rx.recv().await {
+                        // ─── CALL marker ──────────────────────────────────────────────────────
+                        if let Some(call_json) = token.strip_prefix("\x01CALL\x02") {
+                            // Parse ToolCall JSON from engine
+                            let parsed: serde_json::Value = serde_json::from_str(call_json)
+                                .unwrap_or(serde_json::Value::Null);
+                            let tc_id = parsed["id"].as_str()
+                                .unwrap_or("tool-call")
+                                .to_string();
+                            let tool_name = parsed["name"].as_str()
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let args = parsed["arguments"].clone();
+
+                            let item_id = tc_id.clone();
+                            pending_call = Some((item_id.clone(), tool_name.clone(), args.clone()));
+
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as i64;
+
+                            let _ = forward_tx.send(AppServerEvent::ServerNotification(
+                                ServerNotification::ItemStarted(
+                                    loom_app_server_protocol::ItemStartedNotification {
+                                        thread_id: fwd_tid.clone(),
+                                        turn_id: fwd_turn_inner.clone(),
+                                        started_at_ms: now_ms,
+                                        item: loom_app_server_protocol::ThreadItem::DynamicToolCall {
+                                            id: item_id,
+                                            namespace: None,
+                                            tool: tool_name,
+                                            arguments: args,
+                                            status: loom_app_server_protocol::DynamicToolCallStatus::InProgress,
+                                            content_items: None,
+                                            success: None,
+                                            duration_ms: None,
+                                        },
+                                    },
+                                ),
+                            ));
+                            continue;
+                        }
+
+                        // ─── RESULT marker ────────────────────────────────────────────────────
+                        if let Some(result_text) = token.strip_prefix("\x01RESULT\x02") {
+                            if let Some((item_id, tool_name, args)) = pending_call.take() {
+                                let now_ms = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_millis() as i64;
+                                let output = loom_app_server_protocol::DynamicToolCallOutputContentItem::InputText {
+                                    text: result_text.to_string(),
+                                };
+                                let _ = forward_tx.send(AppServerEvent::ServerNotification(
+                                    ServerNotification::ItemCompleted(
+                                        loom_app_server_protocol::ItemCompletedNotification {
+                                            thread_id: fwd_tid.clone(),
+                                            turn_id: fwd_turn_inner.clone(),
+                                            completed_at_ms: now_ms,
+                                            item: loom_app_server_protocol::ThreadItem::DynamicToolCall {
+                                                id: item_id,
+                                                namespace: None,
+                                                tool: tool_name,
+                                                arguments: args,
+                                                status: loom_app_server_protocol::DynamicToolCallStatus::Completed,
+                                                content_items: Some(vec![output]),
+                                                success: Some(true),
+                                                duration_ms: Some(now_ms),
+                                            },
+                                        },
+                                    ),
+                                ));
+                            }
+                            continue;
+                        }
+
+                        // ─── Normal text delta ─────────────────────────────────────────────────
                         let _ = forward_tx.send(AppServerEvent::ServerNotification(
                             ServerNotification::AgentMessageDelta(
                                 loom_app_server_protocol::AgentMessageDeltaNotification {

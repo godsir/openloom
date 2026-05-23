@@ -62,6 +62,107 @@ impl ChatWidget {
         );
     }
 
+    /// DynamicToolCall started — rendered as an active MCP-style cell (tool name = namespace).
+    pub(super) fn on_dynamic_tool_call_started(&mut self, item: ThreadItem) {
+        let ThreadItem::DynamicToolCall {
+            id,
+            namespace,
+            tool,
+            arguments,
+            ..
+        } = &item
+        else {
+            return;
+        };
+        let id = id.clone();
+        let server = namespace.clone().unwrap_or_else(|| "engine".to_string());
+        let tool = tool.clone();
+        let arguments = arguments.clone();
+        self.flush_answer_stream_with_separator();
+        self.flush_active_cell();
+        self.transcript.active_cell = Some(Box::new(history_cell::new_active_mcp_tool_call(
+            id,
+            McpInvocation {
+                server,
+                tool,
+                arguments: Some(arguments),
+            },
+            self.config.animations,
+        )));
+        self.bump_active_cell_revision();
+        self.request_redraw();
+    }
+
+    /// DynamicToolCall completed — shows output in the collapsed cell.
+    pub(super) fn on_dynamic_tool_call_completed(&mut self, item: ThreadItem) {
+        let ThreadItem::DynamicToolCall {
+            id,
+            namespace,
+            tool,
+            arguments,
+            content_items,
+            success,
+            duration_ms,
+            ..
+        } = item
+        else {
+            return;
+        };
+        self.flush_answer_stream_with_separator();
+        let server = namespace.unwrap_or_else(|| "engine".to_string());
+        let invocation = McpInvocation {
+            server,
+            tool,
+            arguments: Some(arguments),
+        };
+        let duration = Duration::from_millis(duration_ms.unwrap_or_default().max(0) as u64);
+        let result_text = content_items
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|item| match item {
+                loom_app_server_protocol::DynamicToolCallOutputContentItem::InputText { text } => {
+                    Some(text)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let ok = success.unwrap_or(true);
+        let result = if ok {
+            Ok(loom_protocol::mcp::CallToolResult {
+                content: vec![serde_json::json!({"type": "text", "text": result_text})],
+                structured_content: None,
+                is_error: Some(false),
+                meta: None,
+            })
+        } else {
+            Err(result_text)
+        };
+
+        let extra_cell = match self
+            .transcript
+            .active_cell
+            .as_mut()
+            .and_then(|cell| cell.as_any_mut().downcast_mut::<McpToolCallCell>())
+        {
+            Some(cell) if cell.call_id() == id => cell.complete(duration, result),
+            _ => {
+                self.flush_active_cell();
+                let mut cell =
+                    history_cell::new_active_mcp_tool_call(id, invocation, self.config.animations);
+                let extra_cell = cell.complete(duration, result);
+                self.transcript.active_cell = Some(Box::new(cell));
+                extra_cell
+            }
+        };
+
+        self.flush_active_cell();
+        if let Some(extra) = extra_cell {
+            self.add_boxed_history(extra);
+        }
+        self.transcript.had_work_activity = true;
+    }
+
     pub(super) fn on_web_search_begin(&mut self, call_id: String) {
         self.flush_answer_stream_with_separator();
         self.flush_active_cell();
@@ -247,6 +348,9 @@ impl ChatWidget {
             item @ ThreadItem::McpToolCall { .. } => {
                 self.handle_mcp_tool_call_started_now(item);
             }
+            item @ ThreadItem::DynamicToolCall { .. } => {
+                self.on_dynamic_tool_call_started(item);
+            }
             _ => {}
         }
     }
@@ -258,6 +362,9 @@ impl ChatWidget {
             }
             item @ ThreadItem::FileChange { .. } => self.handle_file_change_completed_now(item),
             item @ ThreadItem::McpToolCall { .. } => self.handle_mcp_tool_call_completed_now(item),
+            item @ ThreadItem::DynamicToolCall { .. } => {
+                self.on_dynamic_tool_call_completed(item);
+            }
             _ => {}
         }
     }
