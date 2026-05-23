@@ -331,6 +331,16 @@ impl App {
                 self.chat_widget
                     .add_info_message("Switched to Chat mode.".to_string(), None);
             }
+            AppEvent::SetAssistantMode => {
+                app_server.set_assistant_mode();
+                self.chat_widget
+                    .add_info_message("Switched to Assistant mode.".to_string(), None);
+            }
+            AppEvent::CycleMode => {
+                let label = app_server.cycle_mode();
+                self.chat_widget
+                    .add_info_message(format!("Switched to {} mode.", label), None);
+            }
             AppEvent::AppendMessageHistoryEntry { thread_id, text } => {
                 self.append_message_history_entry(thread_id, text);
             }

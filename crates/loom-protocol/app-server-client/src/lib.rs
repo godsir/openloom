@@ -68,6 +68,9 @@ impl InProcessAppServerClient {
     pub fn next_event(&mut self) -> Option<AppServerEvent> {
         self.inner.next_event()
     }
+    pub async fn recv_event(&mut self) -> Option<AppServerEvent> {
+        self.inner.recv_event().await
+    }
     pub fn request_handle(&self) -> AppServerRequestHandle {
         AppServerRequestHandle::Loom(LoomAppServerRequestHandle::default())
     }
@@ -85,6 +88,9 @@ impl InProcessAppServerClient {
     }
     pub fn set_mode(&self, mode: openloom_models::Mode) {
         *self.current_mode.lock().unwrap() = mode;
+    }
+    pub fn cycle_mode(&self) -> openloom_models::Mode {
+        self.inner.cycle_mode()
     }
 }
 
@@ -371,6 +377,13 @@ impl LoomAppServerClient {
         *self.current_mode.lock().unwrap() = mode;
     }
 
+    /// Cycle to the next engine mode and return the new mode.
+    pub fn cycle_mode(&self) -> openloom_models::Mode {
+        let mut guard = self.current_mode.lock().unwrap();
+        *guard = guard.next();
+        *guard
+    }
+
     /// Sends a typed client notification (no response expected).
     pub async fn notify(&self, _notification: ClientNotification) -> IoResult<()> {
         // Notifications are no-ops until Phase 8.1
@@ -401,6 +414,11 @@ impl LoomAppServerClient {
     /// `AppServerEvent::Lagged` markers may be emitted to signal backpressure.
     pub fn next_event(&mut self) -> Option<AppServerEvent> {
         self.event_rx.try_recv().ok()
+    }
+
+    /// Async variant — awaits the next event rather than polling.
+    pub async fn recv_event(&mut self) -> Option<AppServerEvent> {
+        self.event_rx.recv().await
     }
 
     /// Shuts down the engine and event stream.
@@ -573,9 +591,9 @@ impl AppServerClient {
 
     pub async fn next_event(&mut self) -> Option<AppServerEvent> {
         match self {
-            Self::Loom(client) => client.next_event(),
+            Self::Loom(client) => client.recv_event().await,
             Self::Remote(client) => client.next_event().await,
-            Self::InProcess(client) => client.next_event(),
+            Self::InProcess(client) => client.recv_event().await,
         }
     }
 
@@ -617,6 +635,20 @@ impl AppServerClient {
     /// Switch to coding mode — full agent loop with tool access.
     pub fn set_code_mode(&self) {
         self.set_mode(Mode::Code);
+    }
+
+    /// Switch to assistant mode — selective tools, no file write/shell.
+    pub fn set_assistant_mode(&self) {
+        self.set_mode(Mode::Assistant);
+    }
+
+    /// Cycle to the next engine mode and return the new mode.
+    pub fn cycle_mode(&self) -> Mode {
+        match self {
+            Self::Loom(client) => client.cycle_mode(),
+            Self::Remote(_) => Mode::Code,
+            Self::InProcess(client) => client.cycle_mode(),
+        }
     }
 }
 

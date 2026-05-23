@@ -1010,6 +1010,12 @@ pub(crate) enum AppEvent {
 
     /// Switch engine mode to Chat (companion mode, no tools).
     SetChatMode,
+
+    /// Switch engine mode to Assistant (selective tools, no file write/shell).
+    SetAssistantMode,
+
+    /// Cycle to the next engine mode (Chat → Plan → Code → Assistant → Chat).
+    CycleMode,
 }
 
 /// Named profile selection to apply after any required UI guardrails complete.

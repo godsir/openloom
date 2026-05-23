@@ -1092,6 +1092,17 @@ impl AppServerSession {
         self.client.set_chat_mode();
     }
 
+    /// Switch the underlying engine to Assistant mode (selective tools).
+    pub(crate) fn set_assistant_mode(&self) {
+        self.client.set_assistant_mode();
+    }
+
+    /// Cycle to the next engine mode and return the mode name.
+    pub(crate) fn cycle_mode(&self) -> &'static str {
+        let new_mode = self.client.cycle_mode();
+        new_mode.config().status_label
+    }
+
     fn next_request_id(&mut self) -> RequestId {
         let request_id = self.next_request_id;
         self.next_request_id += 1;
