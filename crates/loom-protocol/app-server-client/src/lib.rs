@@ -307,25 +307,17 @@ impl LoomAppServerClient {
     }
 
     /// Creates a client by loading model config from config.toml.
-    /// Falls back to stub engine if config loading or engine creation fails.
     pub async fn from_config() -> anyhow::Result<Self> {
         let data_dir = loom_home_dir::find_loom_home()
             .map(|p| p.as_path().to_path_buf())
             .unwrap_or_else(|_| {
-                dirs::data_dir()
-                    .map(|d| d.join("openLoom"))
-                    .unwrap_or_default()
+                dirs::data_dir().map(|d| d.join("openLoom")).unwrap_or_default()
             });
 
-        eprintln!("[loom] from_config: data_dir={}", data_dir.display());
-
         let (cloud_config, local_config) = load_model_configs(&data_dir);
-        eprintln!("[loom] from_config: cloud={:?} local={:?}",
-            cloud_config.as_ref().map(|c| &c.model),
-            local_config.as_ref().map(|c| &c.model));
 
         let config = openloom_engine::EngineConfig {
-            data_dir: data_dir.clone(),
+            data_dir,
             threshold: 3,
             cloud_config,
             local_config,
@@ -337,19 +329,13 @@ impl LoomAppServerClient {
             skip_permissions: true,
         };
 
-        // Try real engine first; if it fails (no GGUF model), use stub
-        match openloom_engine::Engine::new(config) {
-            Ok(engine) => {
-                eprintln!("[loom] from_config: Engine created successfully");
-                let engine = Arc::new(engine);
-                let (event_tx, event_rx) = mpsc::unbounded_channel();
-                Ok(Self { engine, event_rx, event_tx })
-            }
-            Err(e) => {
-                eprintln!("[loom] from_config: Engine::new failed ({}), using stub", e);
-                Ok(Self::stub())
-            }
-        }
+        let engine = openloom_engine::Engine::new(config)
+            .or_else(|_| openloom_engine::Engine::new_test(
+                dirs::data_dir().map(|d| d.join("openLoom").join("data").join("test.db")).unwrap_or_default()
+            ))?;
+        let engine = Arc::new(engine);
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        Ok(Self { engine, event_rx, event_tx })
     }
 
     /// Sends a typed client request and returns a deserialized response body.
@@ -655,52 +641,31 @@ fn load_model_configs(data_dir: &std::path::Path) -> (Option<openloom_models::Mo
 
 fn load_model_list() -> Vec<loom_app_server_protocol::Model> {
     let mut models = Vec::new();
-
-    // Read config.toml from standard locations
     let config_paths = [
         std::env::var("APPDATA").ok().map(|d| std::path::PathBuf::from(d).join("openLoom").join("config.toml")),
         dirs::data_dir().map(|d| d.join("openLoom").join("config.toml")),
     ];
-
     for path_opt in &config_paths {
         if let Some(path) = path_opt {
-            let _ = std::fs::write("F:/openLoom/loom-debug.log", format!("trying: {}\n", path.display()));
             if let Ok(content) = std::fs::read_to_string(path) {
-                let _ = std::fs::write("F:/openLoom/loom-debug.log", format!("found config at {}: {} bytes\n", path.display(), content.len()));
                 if let Ok(config) = toml::from_str::<toml::Table>(&content) {
-                    if let Some(models_section) = config.get("models") {
-                        if let Some(arr) = models_section.as_array() {
-                            let _ = std::fs::write("F:/openLoom/loom-debug.log", format!("found {} models\n", arr.len()));
-                    if let Some(arr) = models_section.as_array() {
+                    if let Some(arr) = config.get("models").and_then(|v| v.as_array()) {
                         for entry in arr {
-                            let table = entry.as_table();
-                            let name = table
-                                .and_then(|t| t.get("name"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("unknown");
-                            let model = table
-                                .and_then(|t| t.get("model"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or(name);
-                            let backend = table
-                                .and_then(|t| t.get("backend"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("local");
+                            let t = entry.as_table();
+                            let name = t.and_then(|t| t.get("name")).and_then(|v| v.as_str()).unwrap_or("unknown");
+                            let model = t.and_then(|t| t.get("model")).and_then(|v| v.as_str()).unwrap_or(name);
+                            let backend = t.and_then(|t| t.get("backend")).and_then(|v| v.as_str()).unwrap_or("local");
                             models.push(loom_app_server_protocol::Model {
                                 id: name.to_string(),
                                 model: model.to_string(),
-                                upgrade: None,
-                                upgrade_info: None,
-                                availability_nux: None,
+                                upgrade: None, upgrade_info: None, availability_nux: None,
                                 display_name: format!("{} ({})", name, backend),
                                 description: format!("{} backend", backend),
                                 hidden: false,
                                 supported_reasoning_efforts: vec![],
                                 default_reasoning_effort: loom_protocol::openai_models::ReasoningEffort::Medium,
-                                input_modalities: vec![],
-                                supports_personality: false,
-                                additional_speed_tiers: vec![],
-                                service_tiers: vec![],
+                                input_modalities: vec![], supports_personality: false,
+                                additional_speed_tiers: vec![], service_tiers: vec![],
                                 default_service_tier: None,
                                 is_default: models.is_empty(),
                             });
@@ -710,12 +675,6 @@ fn load_model_list() -> Vec<loom_app_server_protocol::Model> {
             }
         }
     }
-
-    // Fallback if no config or empty: return empty, no hardcoded model
-    if models.is_empty() {
-        eprintln!("[loom] load_model_list: No models found in config, returning empty list");
-    }
-
     models
 }
 
@@ -1108,6 +1067,22 @@ async fn dispatch_request<T: DeserializeOwned>(
             &method,
             loom_app_server_protocol::HooksListResponse { data: vec![] },
         ),
+
+        // ─── Batch: return stubs for lifecycle methods the TUI calls ───
+        ClientRequest::ThreadUnsubscribe { .. } => {
+            respond(&method, loom_app_server_protocol::ThreadUnsubscribeResponse {
+                status: loom_app_server_protocol::ThreadUnsubscribeStatus::Unsubscribed,
+            })
+        }
+        ClientRequest::ThreadArchive { .. } => {
+            respond(&method, loom_app_server_protocol::ThreadArchiveResponse {})
+        }
+        ClientRequest::ThreadCompactStart { .. } => {
+            respond(&method, loom_app_server_protocol::ThreadCompactStartResponse {})
+        }
+        ClientRequest::ThreadMemoryModeSet { .. } => {
+            respond(&method, loom_app_server_protocol::ThreadMemoryModeSetResponse {})
+        }
 
         // ─── Catch-all: not yet mapped ───
         _ => Err(TypedRequestError::MethodNotFound),
