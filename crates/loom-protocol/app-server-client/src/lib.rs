@@ -639,10 +639,20 @@ fn load_model_list() -> Vec<loom_app_server_protocol::Model> {
     let mut models = Vec::new();
 
     // Try multiple locations for config.toml
-    let config_paths: Vec<std::path::PathBuf> = vec![
-        loom_home_dir::find_loom_home().ok().map(|h| h.as_path().join("config.toml")),
-        dirs::data_dir().map(|d| d.join("openLoom").join("config.toml")),
-    ].into_iter().flatten().collect();
+    let config_paths: Vec<std::path::PathBuf> = {
+        let mut paths = Vec::new();
+        if let Ok(home) = loom_home_dir::find_loom_home() {
+            paths.push(home.as_path().join("config.toml"));
+        }
+        if let Some(data) = dirs::data_dir() {
+            paths.push(data.join("openLoom").join("config.toml"));
+        }
+        // Direct %APPDATA% on Windows
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            paths.push(std::path::PathBuf::from(appdata).join("openLoom").join("config.toml"));
+        }
+        paths
+    };
 
     for path in &config_paths {
         eprintln!("[loom] load_model_list: trying {}", path.display());
@@ -690,27 +700,9 @@ fn load_model_list() -> Vec<loom_app_server_protocol::Model> {
         }
     }
 
-    // Fallback if no config or empty
+    // Fallback if no config or empty: return empty, no hardcoded model
     if models.is_empty() {
-        eprintln!("[loom] load_model_list: No models found, using fallback qwen3-1.7b");
-        models.push(loom_app_server_protocol::Model {
-            id: "default".into(),
-            model: "qwen3-1.7b".into(),
-            upgrade: None,
-            upgrade_info: None,
-            availability_nux: None,
-            display_name: "Local (qwen3-1.7b)".into(),
-            description: "Default local model".into(),
-            hidden: false,
-            supported_reasoning_efforts: vec![],
-            default_reasoning_effort: loom_protocol::openai_models::ReasoningEffort::Medium,
-            input_modalities: vec![],
-            supports_personality: false,
-            additional_speed_tiers: vec![],
-            service_tiers: vec![],
-            default_service_tier: None,
-            is_default: true,
-        });
+        eprintln!("[loom] load_model_list: No models found in config, returning empty list");
     }
 
     models
