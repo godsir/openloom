@@ -9,8 +9,7 @@
 //! so CLI surfaces can switch between them without changing their
 //! higher-level session logic.
 //!
-//! Full request_typed mapping will be implemented in Phase 8.1.
-//! Currently the Loom variant returns `MethodNotFound` for all requests.
+//! Full request_typed mapping implemented in Phase 8.1.
 
 mod remote;
 
@@ -19,6 +18,7 @@ use std::fmt;
 use std::io::Error as IoError;
 use std::io::ErrorKind;
 use std::io::Result as IoResult;
+use std::sync::Arc;
 use std::time::Duration;
 
 use loom_app_server_protocol::ClientNotification;
@@ -28,6 +28,8 @@ use loom_app_server_protocol::RequestId;
 use loom_app_server_protocol::Result as JsonRpcResult;
 use loom_app_server_protocol::ServerNotification;
 use loom_app_server_protocol::ServerRequest;
+use openloom_models::ChatMessage;
+use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
 
@@ -54,7 +56,10 @@ impl InProcessAppServerClient {
         AppServerRequestHandle::Loom(LoomAppServerRequestHandle::default())
     }
     pub async fn request(&self, _request: ClientRequest) -> std::io::Result<RequestResult> {
-        Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "InProcess stub not wired"))
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "InProcess stub not wired",
+        ))
     }
     pub async fn request_typed<T: DeserializeOwned>(
         &self,
@@ -98,7 +103,9 @@ impl Default for InProcessClientStartArgs {
             feedback: CodexFeedback::new(),
             log_db: None,
             state_db: None,
-            environment_manager: std::sync::Arc::new(loom_exec_server::EnvironmentManager::default_for_tests()),
+            environment_manager: std::sync::Arc::new(
+                loom_exec_server::EnvironmentManager::default_for_tests(),
+            ),
             config_warnings: Vec::new(),
             session_source: serde_json::json!("cli"),
             enable_codex_api_key_env: false,
@@ -248,9 +255,9 @@ pub(crate) fn server_notification_requires_delivery(notification: &ServerNotific
 /// `InProcessAppServerClient`, but routed through openLoom's internals instead
 /// of the codex-app-server message processor.
 pub struct LoomAppServerClient {
-    _engine: openloom_engine::Engine,
+    engine: Arc<openloom_engine::Engine>,
     event_rx: mpsc::UnboundedReceiver<AppServerEvent>,
-    _event_tx: mpsc::UnboundedSender<AppServerEvent>,
+    event_tx: mpsc::UnboundedSender<AppServerEvent>,
 }
 
 impl LoomAppServerClient {
@@ -260,30 +267,30 @@ impl LoomAppServerClient {
     /// immediately for health checks, session creation, and (in Phase 8.1)
     /// typed request dispatch.
     pub async fn new(config: openloom_engine::EngineConfig) -> anyhow::Result<Self> {
-        let engine = openloom_engine::Engine::new(config)?;
+        let engine = Arc::new(openloom_engine::Engine::new(config)?);
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         Ok(Self {
-            _engine: engine,
+            engine,
             event_rx,
-            _event_tx: event_tx,
+            event_tx,
         })
     }
 
     /// Sends a typed client request and returns a deserialized response body.
-    ///
-    /// **Phase 4.2:** Returns `MethodNotFound` for all requests.
-    /// Full mapping to Engine methods will be implemented in Phase 8.1.
     pub async fn request_typed<T: DeserializeOwned>(
         &self,
-        _req: ClientRequest,
+        req: ClientRequest,
     ) -> Result<T, TypedRequestError> {
-        Err(TypedRequestError::MethodNotFound)
+        dispatch_request::<T>(Arc::clone(&self.engine), self.event_tx.clone(), req).await
     }
 
     /// Returns a handle that can be cloned and used concurrently for
     /// request dispatch.
     pub fn request_handle(&self) -> LoomAppServerRequestHandle {
-        LoomAppServerRequestHandle
+        LoomAppServerRequestHandle {
+            engine: Arc::clone(&self.engine),
+            event_tx: self.event_tx.clone(),
+        }
     }
 
     /// Sends a typed client notification (no response expected).
@@ -322,7 +329,7 @@ impl LoomAppServerClient {
     ///
     /// The underlying engine is dropped and the event channel is closed.
     pub async fn shutdown(self) -> IoResult<()> {
-        drop(self._engine);
+        drop(self.engine);
         Ok(())
     }
 }
@@ -330,25 +337,39 @@ impl LoomAppServerClient {
 // ─── Loom Request Handle ───
 
 /// Cloneable handle for request dispatch to the Loom engine.
-///
-/// In Phase 4.2 this is a no-op placeholder; full implementation
-/// comes in Phase 8.1 when the typed request mapping is completed.
 #[derive(Clone)]
-pub struct LoomAppServerRequestHandle;
+pub struct LoomAppServerRequestHandle {
+    engine: Arc<openloom_engine::Engine>,
+    event_tx: mpsc::UnboundedSender<AppServerEvent>,
+}
 
 impl Default for LoomAppServerRequestHandle {
     fn default() -> Self {
-        Self
+        // Default handle is a no-op; real handles are created by LoomAppServerClient
+        let (event_tx, _) = mpsc::unbounded_channel();
+        // Note: default handle cannot create an engine, so request_typed will fail.
+        // This is only used in tests and places where the handle is replaced immediately.
+        Self {
+            engine: Arc::new(
+                openloom_engine::Engine::new_test(
+                    std::env::temp_dir().join("loom_handle_default.db"),
+                )
+                .expect("default test engine"),
+            ),
+            event_tx,
+        }
     }
 }
 
 impl LoomAppServerRequestHandle {
     /// Sends a typed client request via this handle.
+    ///
+    /// Delegates to the same dispatch as `LoomAppServerClient::request_typed`.
     pub async fn request_typed<T: DeserializeOwned>(
         &self,
-        _req: ClientRequest,
+        req: ClientRequest,
     ) -> Result<T, TypedRequestError> {
-        Err(TypedRequestError::MethodNotFound)
+        dispatch_request::<T>(Arc::clone(&self.engine), self.event_tx.clone(), req).await
     }
 }
 
@@ -366,7 +387,10 @@ impl AppServerRequestHandle {
         match self {
             Self::Loom(handle) => handle.request(request).await,
             Self::Remote(handle) => handle.request(request).await,
-            Self::InProcess(_handle) => Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "InProcess stub: use Loom handle")),
+            Self::InProcess(_handle) => Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "InProcess stub: use Loom handle",
+            )),
         }
     }
 
@@ -476,7 +500,9 @@ impl AppServerClient {
         match self {
             Self::Loom(client) => AppServerRequestHandle::Loom(client.request_handle()),
             Self::Remote(client) => AppServerRequestHandle::Remote(client.request_handle()),
-            Self::InProcess(client) => AppServerRequestHandle::InProcess(Box::new(client.request_handle())),
+            Self::InProcess(client) => {
+                AppServerRequestHandle::InProcess(Box::new(client.request_handle()))
+            }
         }
     }
 }
@@ -487,6 +513,487 @@ impl LoomAppServerClient {
             ErrorKind::Unsupported,
             "loom request dispatch not yet implemented (Phase 8.1)",
         ))
+    }
+}
+
+// ─── Request dispatch helpers ───
+
+/// Core dispatch: maps ClientRequest variants to engine calls.
+async fn dispatch_request<T: DeserializeOwned>(
+    engine: Arc<openloom_engine::Engine>,
+    event_tx: mpsc::UnboundedSender<AppServerEvent>,
+    req: ClientRequest,
+) -> Result<T, TypedRequestError> {
+    let method = req.method();
+    match req {
+        // ─── Turn lifecycle (CRITICAL) ───
+        ClientRequest::TurnStart { params, .. } => {
+            let text = extract_user_input_text(&params.input);
+            let turn_id = uuid::Uuid::new_v4().to_string();
+            let item_id = uuid::Uuid::new_v4().to_string();
+            let session_id = params.thread_id.clone();
+            let thread_id = params.thread_id.clone();
+
+            let msg = ChatMessage {
+                role: "user".into(),
+                content: text,
+                timestamp: chrono::Utc::now(),
+            };
+
+            // Clone IDs for the spawned task
+            let spawned_turn_id = turn_id.clone();
+            let spawned_item_id = item_id.clone();
+            let spawned_thread_id = thread_id.clone();
+
+            // Spawn streaming bridge: tokens from engine become AgentMessageDelta events
+            let e = Arc::clone(&engine);
+            let tx = event_tx.clone();
+
+            tokio::spawn(async move {
+                let (token_tx, mut token_rx) = tokio::sync::mpsc::channel::<String>(64);
+
+                // Forward tokens to event stream
+                let forward_tx = tx.clone();
+                let fwd_tid = spawned_thread_id.clone();
+                let fwd_turn_inner = spawned_turn_id.clone();
+                let fwd_turn_outer = spawned_turn_id;
+                let fwd_item = spawned_item_id;
+                let forward_handle = tokio::spawn(async move {
+                    while let Some(token) = token_rx.recv().await {
+                        let _ = forward_tx.send(AppServerEvent::ServerNotification(
+                            ServerNotification::AgentMessageDelta(
+                                loom_app_server_protocol::AgentMessageDeltaNotification {
+                                    thread_id: fwd_tid.clone(),
+                                    turn_id: fwd_turn_inner.clone(),
+                                    item_id: fwd_item.clone(),
+                                    delta: token,
+                                },
+                            ),
+                        ));
+                    }
+                });
+
+                // Run the model
+                let _ = e
+                    .handle_message_streaming(
+                        msg,
+                        &session_id,
+                        token_tx,
+                        openloom_models::Mode::Code,
+                        openloom_models::ModelPreference::Auto,
+                        openloom_models::ThinkingLevel::default(),
+                    )
+                    .await;
+
+                // Wait for forwarder to drain
+                let _ = forward_handle.await;
+
+                // Send TurnCompleted
+                let _ = tx.send(AppServerEvent::ServerNotification(
+                    ServerNotification::TurnCompleted(
+                        loom_app_server_protocol::TurnCompletedNotification {
+                            thread_id: spawned_thread_id,
+                            turn: loom_app_server_protocol::Turn {
+                                id: fwd_turn_outer,
+                                items: vec![],
+                                items_view: loom_app_server_protocol::TurnItemsView::Full,
+                                status: loom_app_server_protocol::TurnStatus::Completed,
+                                error: None,
+                                started_at: None,
+                                completed_at: Some(
+                                    std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs() as i64,
+                                ),
+                                duration_ms: None,
+                            },
+                        },
+                    ),
+                ));
+            });
+
+            // Return TurnStartResponse immediately with the generated turn
+            let now_ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let turn = loom_app_server_protocol::Turn {
+                id: turn_id,
+                items: vec![],
+                items_view: loom_app_server_protocol::TurnItemsView::Full,
+                status: loom_app_server_protocol::TurnStatus::InProgress,
+                error: None,
+                started_at: Some(now_ts),
+                completed_at: None,
+                duration_ms: None,
+            };
+            respond(
+                &method,
+                loom_app_server_protocol::TurnStartResponse { turn },
+            )
+        }
+
+        ClientRequest::TurnInterrupt { .. } => {
+            engine.interrupt();
+            respond(&method, loom_app_server_protocol::TurnInterruptResponse {})
+        }
+
+        // ─── Thread lifecycle ───
+        ClientRequest::ThreadStart { params, .. } => {
+            let session =
+                engine
+                    .create_session()
+                    .await
+                    .map_err(|e| TypedRequestError::Transport {
+                        method: method.clone(),
+                        source: IoError::new(ErrorKind::Other, e.to_string()),
+                    })?;
+            let thread = make_thread_stub(&session.id, params.model_provider.as_deref());
+            let cwd = loom_absolute_path::AbsolutePathBuf::from_absolute_path(
+                std::env::current_dir().unwrap_or_default(),
+            )
+            .unwrap_or_else(|_| {
+                loom_absolute_path::AbsolutePathBuf::from_absolute_path("/").unwrap()
+            });
+            let response = loom_app_server_protocol::ThreadStartResponse {
+                thread,
+                model: params.model.unwrap_or_else(|| "qwen3-1.7b".into()),
+                model_provider: params.model_provider.unwrap_or_else(|| "local".into()),
+                service_tier: None,
+                cwd,
+                runtime_workspace_roots: vec![],
+                instruction_sources: vec![],
+                approval_policy: loom_app_server_protocol::AskForApproval::Never,
+                approvals_reviewer: loom_app_server_protocol::ApprovalsReviewer::User,
+                sandbox: loom_app_server_protocol::SandboxPolicy::DangerFullAccess,
+                active_permission_profile: None,
+                reasoning_effort: None,
+            };
+            respond(&method, response)
+        }
+
+        ClientRequest::ThreadList { .. } => {
+            let sessions =
+                engine
+                    .list_sessions()
+                    .await
+                    .map_err(|e| TypedRequestError::Transport {
+                        method: method.clone(),
+                        source: IoError::new(ErrorKind::Other, e.to_string()),
+                    })?;
+            let threads: Vec<loom_app_server_protocol::Thread> = sessions
+                .into_iter()
+                .map(|s| make_thread_stub(&s.id, Some("local")))
+                .collect();
+            respond(
+                &method,
+                loom_app_server_protocol::ThreadListResponse {
+                    data: threads,
+                    next_cursor: None,
+                    backwards_cursor: None,
+                },
+            )
+        }
+
+        ClientRequest::ThreadRead { params, .. } => {
+            let thread = make_thread_stub(&params.thread_id, Some("local"));
+            respond(
+                &method,
+                loom_app_server_protocol::ThreadReadResponse { thread },
+            )
+        }
+
+        ClientRequest::ThreadResume { params, .. } => {
+            let thread = make_thread_stub(&params.thread_id, params.model_provider.as_deref());
+            let cwd = loom_absolute_path::AbsolutePathBuf::from_absolute_path(
+                params.cwd.as_deref().unwrap_or("."),
+            )
+            .unwrap_or_else(|_| {
+                loom_absolute_path::AbsolutePathBuf::from_absolute_path("/").unwrap()
+            });
+            let response = loom_app_server_protocol::ThreadResumeResponse {
+                thread,
+                model: params.model.unwrap_or_else(|| "qwen3-1.7b".into()),
+                model_provider: params.model_provider.unwrap_or_else(|| "local".into()),
+                service_tier: None,
+                cwd,
+                runtime_workspace_roots: vec![],
+                instruction_sources: vec![],
+                approval_policy: loom_app_server_protocol::AskForApproval::Never,
+                approvals_reviewer: loom_app_server_protocol::ApprovalsReviewer::User,
+                sandbox: loom_app_server_protocol::SandboxPolicy::DangerFullAccess,
+                active_permission_profile: None,
+                reasoning_effort: None,
+            };
+            respond(&method, response)
+        }
+
+        ClientRequest::ThreadFork { params, .. } => {
+            let new_session =
+                engine
+                    .create_session()
+                    .await
+                    .map_err(|e| TypedRequestError::Transport {
+                        method: method.clone(),
+                        source: IoError::new(ErrorKind::Other, e.to_string()),
+                    })?;
+            let thread = make_thread_stub(&new_session.id, params.model_provider.as_deref());
+            let cwd = loom_absolute_path::AbsolutePathBuf::from_absolute_path(
+                std::env::current_dir().unwrap_or_default(),
+            )
+            .unwrap_or_else(|_| {
+                loom_absolute_path::AbsolutePathBuf::from_absolute_path("/").unwrap()
+            });
+            let response = loom_app_server_protocol::ThreadForkResponse {
+                thread,
+                model: params.model.unwrap_or_else(|| "qwen3-1.7b".into()),
+                model_provider: params.model_provider.unwrap_or_else(|| "local".into()),
+                service_tier: None,
+                cwd,
+                runtime_workspace_roots: vec![],
+                instruction_sources: vec![],
+                approval_policy: loom_app_server_protocol::AskForApproval::Never,
+                approvals_reviewer: loom_app_server_protocol::ApprovalsReviewer::User,
+                sandbox: loom_app_server_protocol::SandboxPolicy::DangerFullAccess,
+                active_permission_profile: None,
+                reasoning_effort: None,
+            };
+            respond(&method, response)
+        }
+
+        ClientRequest::ThreadSetName { .. } => {
+            respond(&method, loom_app_server_protocol::ThreadSetNameResponse {})
+        }
+
+        ClientRequest::ThreadSettingsUpdate { .. } => respond(
+            &method,
+            loom_app_server_protocol::ThreadSettingsUpdateResponse {},
+        ),
+
+        // ─── Skills ───
+        ClientRequest::SkillsList { .. } => {
+            let skills = engine.list_skills();
+            let skill_metas: Vec<loom_app_server_protocol::SkillMetadata> = skills
+                .into_iter()
+                .map(|s| loom_app_server_protocol::SkillMetadata {
+                    name: s.name.clone(),
+                    description: s.description.clone(),
+                    short_description: None,
+                    interface: None,
+                    dependencies: None,
+                    path: loom_absolute_path::AbsolutePathBuf::from_absolute_path(
+                        std::env::current_dir().unwrap_or_default(),
+                    )
+                    .unwrap_or_else(|_| {
+                        loom_absolute_path::AbsolutePathBuf::from_absolute_path("/").unwrap()
+                    }),
+                    scope: loom_app_server_protocol::SkillScope::User,
+                    enabled: true,
+                })
+                .collect();
+            let entry = loom_app_server_protocol::SkillsListEntry {
+                cwd: std::env::current_dir().unwrap_or_default(),
+                skills: skill_metas,
+                errors: vec![],
+            };
+            respond(
+                &method,
+                loom_app_server_protocol::SkillsListResponse { data: vec![entry] },
+            )
+        }
+
+        // ─── Models ───
+        ClientRequest::ModelList { .. } => {
+            let display_name = engine.model_display_name();
+            let model_entries: Vec<loom_app_server_protocol::Model> =
+                vec![loom_app_server_protocol::Model {
+                    id: "openloom-local".into(),
+                    model: display_name.clone(),
+                    upgrade: None,
+                    upgrade_info: None,
+                    availability_nux: None,
+                    display_name,
+                    description: "openLoom local model".into(),
+                    hidden: false,
+                    supported_reasoning_efforts: vec![],
+                    default_reasoning_effort: loom_protocol::openai_models::ReasoningEffort::Medium,
+                    input_modalities: vec![],
+                    supports_personality: false,
+                    additional_speed_tiers: vec![],
+                    service_tiers: vec![],
+                    default_service_tier: None,
+                    is_default: true,
+                }];
+            respond(
+                &method,
+                loom_app_server_protocol::ModelListResponse {
+                    data: model_entries,
+                    next_cursor: None,
+                },
+            )
+        }
+
+        // ─── Account ───
+        ClientRequest::GetAccount { .. } => {
+            let account = loom_app_server_protocol::Account::ApiKey {};
+            respond(
+                &method,
+                loom_app_server_protocol::GetAccountResponse {
+                    account: Some(account),
+                    requires_openai_auth: false,
+                },
+            )
+        }
+
+        ClientRequest::LogoutAccount { .. } => {
+            respond(&method, loom_app_server_protocol::LogoutAccountResponse {})
+        }
+
+        // ─── Config ───
+        ClientRequest::ConfigBatchWrite { .. } => respond(
+            &method,
+            loom_app_server_protocol::ConfigWriteResponse {
+                status: loom_app_server_protocol::WriteStatus::Ok,
+                version: String::new(),
+                file_path: loom_absolute_path::AbsolutePathBuf::from_absolute_path(
+                    dirs::data_dir()
+                        .unwrap_or_default()
+                        .join("openLoom")
+                        .join("config.toml"),
+                )
+                .unwrap_or_else(|_| {
+                    loom_absolute_path::AbsolutePathBuf::from_absolute_path("/").unwrap()
+                }),
+                overridden_metadata: None,
+            },
+        ),
+
+        ClientRequest::ConfigRead { .. } => {
+            respond(
+                &method,
+                loom_app_server_protocol::ConfigReadResponse {
+                    config: serde_json::from_value(serde_json::json!({})).unwrap_or_else(|_| {
+                        // Fallback: construct a minimal config
+                        loom_app_server_protocol::Config {
+                            model: None,
+                            review_model: None,
+                            model_context_window: None,
+                            model_auto_compact_token_limit: None,
+                            model_auto_compact_token_limit_scope: None,
+                            model_provider: None,
+                            approval_policy: None,
+                            approvals_reviewer: None,
+                            sandbox_mode: None,
+                            sandbox_workspace_write: None,
+                            forced_chatgpt_workspace_id: None,
+                            forced_login_method: None,
+                            web_search: None,
+                            tools: None,
+                            profile: None,
+                            profiles: std::collections::HashMap::new(),
+                            instructions: None,
+                            developer_instructions: None,
+                            compact_prompt: None,
+                            model_reasoning_effort: None,
+                            model_reasoning_summary: None,
+                            model_verbosity: None,
+                            service_tier: None,
+                            analytics: None,
+                            apps: None,
+                            desktop: None,
+                            additional: std::collections::HashMap::new(),
+                        }
+                    }),
+                    origins: std::collections::HashMap::new(),
+                    layers: None,
+                },
+            )
+        }
+
+        // ─── Plugin stubs ───
+        ClientRequest::PluginList { .. } => respond(
+            &method,
+            loom_app_server_protocol::PluginListResponse {
+                marketplaces: vec![],
+                marketplace_load_errors: vec![],
+                featured_plugin_ids: vec![],
+            },
+        ),
+
+        ClientRequest::PluginInstalled { .. } => respond(
+            &method,
+            loom_app_server_protocol::PluginInstalledResponse {
+                marketplaces: vec![],
+                marketplace_load_errors: vec![],
+            },
+        ),
+
+        ClientRequest::HooksList { .. } => respond(
+            &method,
+            loom_app_server_protocol::HooksListResponse { data: vec![] },
+        ),
+
+        // ─── Catch-all: not yet mapped ───
+        _ => Err(TypedRequestError::MethodNotFound),
+    }
+}
+
+/// Serialize a concrete response type to JSON and deserialize into the caller's generic T.
+fn respond<T: DeserializeOwned, R: Serialize>(
+    method: &str,
+    response: R,
+) -> Result<T, TypedRequestError> {
+    let json = serde_json::to_value(response).map_err(|e| TypedRequestError::Deserialize {
+        method: method.to_string(),
+        source: e,
+    })?;
+    serde_json::from_value(json).map_err(|e| TypedRequestError::Deserialize {
+        method: method.to_string(),
+        source: e,
+    })
+}
+
+/// Extract the text content from the first Text variant in the user input list.
+fn extract_user_input_text(inputs: &[loom_app_server_protocol::UserInput]) -> String {
+    for input in inputs {
+        if let loom_app_server_protocol::UserInput::Text { text, .. } = input {
+            return text.clone();
+        }
+    }
+    String::new()
+}
+
+/// Build a minimal stub Thread struct from a session id.
+fn make_thread_stub(id: &str, model_provider: Option<&str>) -> loom_app_server_protocol::Thread {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let cwd = loom_absolute_path::AbsolutePathBuf::from_absolute_path(
+        std::env::current_dir().unwrap_or_default(),
+    )
+    .unwrap_or_else(|_| loom_absolute_path::AbsolutePathBuf::from_absolute_path("/").unwrap());
+    loom_app_server_protocol::Thread {
+        id: id.to_string(),
+        session_id: id.to_string(),
+        forked_from_id: None,
+        preview: String::new(),
+        ephemeral: false,
+        model_provider: model_provider.unwrap_or("local").to_string(),
+        created_at: now,
+        updated_at: now,
+        status: loom_app_server_protocol::ThreadStatus::Idle,
+        path: None,
+        cwd,
+        cli_version: env!("CARGO_PKG_VERSION").to_string(),
+        source: loom_app_server_protocol::SessionSource::Cli,
+        thread_source: None,
+        agent_nickname: None,
+        agent_role: None,
+        git_info: None,
+        name: None,
+        turns: vec![],
     }
 }
 

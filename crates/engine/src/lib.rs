@@ -868,6 +868,13 @@ impl Engine {
         self.agent_state.read().await.clone()
     }
 
+    /// Signal an interrupt to the engine, clearing the busy flag so a new
+    /// turn can start. Used by TurnInterrupt RPC mapping.
+    pub fn interrupt(&self) {
+        self.interruptible
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
     pub fn cache_stats(&self) -> openloom_cache::CacheStats {
         self.weaver.cache().stats()
     }
