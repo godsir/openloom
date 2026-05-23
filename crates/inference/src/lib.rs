@@ -573,8 +573,10 @@ impl OpenAIClient {
         })?;
 
         let choice = &json["choices"][0]["message"];
-        let text = choice["content"].as_str().unwrap_or("").to_string();
-        let tool_calls: Vec<ToolCall> = choice["tool_calls"]
+        let raw_text = choice["content"].as_str().unwrap_or("").to_string();
+
+        // ── Parse tool_calls from OpenAI-format field ──────────────────────────
+        let mut tool_calls: Vec<ToolCall> = choice["tool_calls"]
             .as_array()
             .map(|arr| {
                 arr.iter()
@@ -591,6 +593,16 @@ impl OpenAIClient {
                     .collect()
             })
             .unwrap_or_default();
+
+        // ── Fallback: parse Gemma/non-standard native tool call formats ─────────
+        // Gemma 4 uses <｜｜DSML｜｜tool_calls>…</｜｜DSML｜｜tool_calls> tags.
+        // Other models may emit JSON blocks in text with {"tool": "…", "arguments": {…}}.
+        let (text, extra_tool_calls) = if tool_calls.is_empty() {
+            parse_inline_tool_calls(&raw_text)
+        } else {
+            (raw_text, vec![])
+        };
+        tool_calls.extend(extra_tool_calls);
 
         let prompt_tokens = json["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as usize;
         let completion_tokens = json["usage"]["completion_tokens"].as_u64().unwrap_or(0) as usize;
@@ -890,6 +902,64 @@ pub async fn ensure_lm_studio_model(
         tracing::debug!(%model, %status, %text, "LM Studio load model response (non-fatal)");
     }
     Ok(())
+}
+
+/// Parse non-standard inline tool calls from model text output.
+///
+/// Handles:
+/// 1. Gemma 4 format:
+///    `<｜｜DSML｜｜tool_calls>{"name":"…","arguments":{…}}</｜｜DSML｜｜tool_calls>`
+/// 2. Generic JSON tool call blocks in text:
+///    `{"tool": "…", "arguments": {…}}` or `{"function": {"name": "…", "arguments": {…}}}`
+///
+/// Returns `(cleaned_text, tool_calls)` — cleaned text has the tool call tags stripped.
+fn parse_inline_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
+    let mut tool_calls: Vec<ToolCall> = Vec::new();
+    let mut cleaned = text.to_string();
+
+    // ── Gemma DSML format ──────────────────────────────────────────────────────
+    let dsml_open = "<｜｜DSML｜｜tool_calls>";
+    let dsml_close = "</｜｜DSML｜｜tool_calls>";
+    let mut search_from = 0;
+    while let Some(start) = cleaned[search_from..].find(dsml_open) {
+        let abs_start = search_from + start;
+        let content_start = abs_start + dsml_open.len();
+        if let Some(end_offset) = cleaned[content_start..].find(dsml_close) {
+            let content = &cleaned[content_start..content_start + end_offset];
+            // Parse JSON content — may be array or single object
+            let tc_json: serde_json::Value = serde_json::from_str(content)
+                .unwrap_or(serde_json::Value::Null);
+            let items = match tc_json {
+                serde_json::Value::Array(arr) => arr,
+                obj @ serde_json::Value::Object(_) => vec![obj],
+                _ => vec![],
+            };
+            for item in items {
+                let name = item["name"].as_str()
+                    .or_else(|| item["function"]["name"].as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                let arguments = item.get("arguments")
+                    .or_else(|| item["function"].get("arguments"))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Object(Default::default()));
+                tool_calls.push(ToolCall {
+                    id: format!("dsml-{}", tool_calls.len()),
+                    name,
+                    arguments,
+                });
+            }
+            let abs_end = content_start + end_offset + dsml_close.len();
+            cleaned.replace_range(abs_start..abs_end, "");
+            // Don't advance — range was removed
+        } else {
+            search_from = content_start;
+        }
+    }
+
+    // Strip surrounding whitespace from cleaned text
+    let cleaned = cleaned.trim().to_string();
+    (cleaned, tool_calls)
 }
 
 #[cfg(test)]

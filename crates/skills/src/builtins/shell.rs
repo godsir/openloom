@@ -38,19 +38,33 @@ impl Skill for Shell {
             return Ok(json!({"error": "command is required"}));
         }
 
-        let shell = if cfg!(target_os = "windows") {
-            "cmd"
+        // Build the OS-appropriate command.
+        // On Windows we prefer PowerShell over cmd for better Unicode/quoting support.
+        // If the model already wrote "powershell …" or "cmd /c …", pass through as-is.
+        let cmd_lower = command.to_ascii_lowercase();
+        let mut cmd = if cfg!(target_os = "windows") {
+            if cmd_lower.starts_with("powershell") || cmd_lower.starts_with("cmd") {
+                // Model provided an explicit shell invocation — run directly via cmd /C
+                let mut c = Command::new("cmd");
+                c.args(["/C", command]);
+                c
+            } else {
+                // Wrap in powershell for better Unicode and quoting support
+                let mut c = Command::new("powershell");
+                c.args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy", "Bypass",
+                    "-Command",
+                    command,
+                ]);
+                c
+            }
         } else {
-            "bash"
+            let mut c = Command::new("bash");
+            c.arg("-c").arg(command);
+            c
         };
-        let shell_flag = if cfg!(target_os = "windows") {
-            "/C"
-        } else {
-            "-c"
-        };
-
-        let mut cmd = Command::new(shell);
-        cmd.arg(shell_flag).arg(command);
 
         if let Some(dir) = cwd {
             cmd.current_dir(dir);

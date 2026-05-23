@@ -129,3 +129,4 @@ Caused by:
     TotalInputTokens,
     TotalOutputTokens,
 ], use_theme_colors: true
+2026-05-23T07:25:27.680500Z  INFO loom_tui::app: tui startup initial frame scheduled duration_ms=2 bootstrap_ms=0 runtime_model_provider_ms=0 thread_and_widget_ms=1 initial_session_ms=0 event_stream_ms=0
