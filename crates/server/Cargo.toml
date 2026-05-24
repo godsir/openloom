@@ -3,17 +3,25 @@ name = "openloom-server"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "loom-server"
+path = "src/main.rs"
+
 [dependencies]
 openloom-engine = { path = "../engine" }
 openloom-inference = { path = "../inference" }
 openloom-models = { path = "../models" }
 chrono = "0.4"
 axum = { version = "0.7", features = ["ws"] }
-tokio = { version = "1", features = ["rt", "sync", "macros", "net"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros", "net"] }
 tower = "0.4"
+tower-http = { version = "0.6", features = ["cors"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 dirs = "6"
 tracing = "0.1"
 futures = "0.3"
+reqwest = { workspace = true, features = ["json"] }
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }

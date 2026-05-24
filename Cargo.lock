@@ -4528,6 +4528,7 @@ dependencies = [
  "clap_complete",
  "crossterm",
  "ctrlc",
+ "dirs",
  "http",
  "libc",
  "loom-absolute-path",
@@ -4543,6 +4544,9 @@ dependencies = [
  "loom-terminal-detection",
  "loom-tui",
  "loom-tui-stubs",
+ "openloom-engine",
+ "openloom-models",
+ "openloom-server",
  "owo-colors",
  "pretty_assertions",
  "regex-lite",
@@ -6019,7 +6023,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "toml 0.8.23",
+ "toml 0.9.12+spec-1.1.0",
  "tracing",
  "uuid",
 ]
@@ -6091,17 +6095,21 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum 0.7.9",
+ "base64",
  "chrono",
  "dirs",
  "futures",
  "openloom-engine",
  "openloom-inference",
  "openloom-models",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
  "tower 0.4.13",
+ "tower-http",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -6120,6 +6128,7 @@ dependencies = [
  "serde_yaml",
  "tempfile",
  "tokio",
+ "toml 0.8.23",
  "tracing",
 ]
 

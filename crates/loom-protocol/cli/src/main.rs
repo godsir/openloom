@@ -109,10 +109,20 @@ enum Subcommand {
 
     /// Start interactive session in coding mode (full agent loop, tool access).
     Code(CodeCommand),
+
+    /// Start headless HTTP/WS server (for Electron sidecar mode).
+    Serve(ServeCommand),
 }
 
 #[derive(Debug, Parser)]
 struct CodeCommand {}
+
+#[derive(Debug, Parser)]
+struct ServeCommand {
+    /// Port to listen on (0 = auto-assign)
+    #[arg(long, default_value_t = 0)]
+    port: u16,
+}
 
 #[derive(Debug, Parser)]
 struct CompletionCommand {
@@ -410,6 +420,28 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             .await?;
             handle_app_exit(exit_info)?;
         }
+        Some(Subcommand::Serve(serve)) => {
+            use openloom_engine::{Engine, EngineConfig};
+            use openloom_server::Server;
+            let data_dir = dirs::data_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("openLoom");
+            let config = EngineConfig {
+                data_dir,
+                threshold: 3,
+                cloud_config: None,
+                local_config: None,
+                rate_limit_ms: 0,
+                heartbeat_interval_secs: 300,
+                heartbeat_idle_threshold_min: 5,
+                model_override: None,
+                project_scope: String::new(),
+                skip_permissions: true,
+            };
+            let engine = Engine::new(config)?;
+            let server = Server::new(engine, None);
+            server.serve(serve.port).await?;
+        }
         Some(Subcommand::Exec(_exec_cli)) => {
             reject_remote_mode_for_subcommand(
                 root_remote.as_deref(),
@@ -652,6 +684,7 @@ fn profile_v2_for_subcommand<'a>(
         | Subcommand::Resume(_)
         | Subcommand::Fork(_)
         | Subcommand::Code(_)
+        | Subcommand::Serve(_)
         | Subcommand::Mcp(_)
         | Subcommand::Debug(DebugCommand {
             subcommand: DebugSubcommand::PromptInput(_),
@@ -775,6 +808,7 @@ fn unsupported_subcommand_name_for_strict_config(
         Some(Subcommand::Execpolicy(_)) => Some("execpolicy"),
         Some(Subcommand::Apply(_)) => Some("apply"),
         Some(Subcommand::Code(_)) => Some("code"),
+        Some(Subcommand::Serve(_)) => Some("serve"),
     }
 }
 

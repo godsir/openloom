@@ -1,3 +1,5 @@
+pub mod avatar;
+pub mod blob;
 pub mod dispatch;
 pub mod jsonrpc;
 pub mod sse;
@@ -10,6 +12,7 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tower_http::cors::{CorsLayer, Any};
 
 pub struct Server {
     engine: Arc<Engine>,
@@ -20,8 +23,10 @@ pub struct Server {
 
 impl Server {
     pub fn new(engine: Engine, config_path: Option<PathBuf>) -> Self {
+        let engine = Arc::new(engine);
+        engine.start_cron_scheduler();
         Self {
-            engine: Arc::new(engine),
+            engine,
             port: 0,
             config_path,
         }
@@ -36,6 +41,11 @@ impl Server {
 
         let engine = self.engine.clone();
 
+        let cors = CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any);
+
         let app = Router::new()
             .route(
                 "/health",
@@ -47,6 +57,9 @@ impl Server {
             .route("/ws", get(ws::ws_handler))
             .route("/sse/{session_id}", get(sse::sse_handler))
             .route("/api", axum::routing::post(jsonrpc::handle_jsonrpc))
+            .route("/api/upload-blob", axum::routing::post(blob::handle_upload_blob))
+            .route("/api/avatar/{role}", axum::routing::get(avatar::serve_avatar).post(avatar::upload_avatar))
+            .layer(cors)
             .with_state(engine);
 
         let addr = SocketAddr::from(([127, 0, 0, 1], self.port));

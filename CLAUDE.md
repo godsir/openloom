@@ -46,7 +46,7 @@ F:/openLoom/
 2. **提交粒度:** 每个 Task 一个 commit，commit message 遵循 `feat:` / `test:` / `fix:` / `chore:` 前缀
 3. **代码风格:** `cargo fmt` + `cargo clippy -- -D warnings` 零警告
 4. **测试覆盖:** 每个公开函数必须有单元测试，每个管线阶段必须有集成测试
-5. **禁止:** 不写 docstring（代码即文档），不引入不必要的抽象层。功能实现以当前 Phase 设计 spec 为准；若设计评审认为某跨 Phase 功能是当前 Phase 的硬依赖（如 Cloud 路径对 Router 是必要的出口），可提前实现并在 spec 中注明。
+5. **禁止:** 不写 docstring（代码即文档），不引入不必要的抽象层。功能实现以当前 Phase 设计 spec 为准；若设计评审认为某跨 Phase 功能是当前 Phase 的硬依赖（如 Cloud 路径对 Router 是必要的出口），可提前实现并在 spec 中注明。禁止自己使用npm run dev启动Electron和server，用户会自己手动启动
 6. **错误处理:** 使用 `anyhow::Result` 作为公开 API 返回类型，内部用 `thiserror` (Phase 1+)
 7. **日志:** `tracing` crate，默认 INFO 级别，不记录用户对话内容
 

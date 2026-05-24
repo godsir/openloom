@@ -18,6 +18,10 @@ doctest = false
 workspace = true
 
 [dependencies]
+openloom-engine = { path = "../../engine" }
+openloom-server = { path = "../../server" }
+openloom-models = { path = "../../models" }
+dirs = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true, features = ["derive"] }

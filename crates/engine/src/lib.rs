@@ -1,14 +1,17 @@
 pub mod agent_loop;
 pub mod config;
+pub mod cron_scheduler;
 pub mod events;
 pub mod heartbeat;
 pub mod memory_thread;
 pub mod persona_watcher;
 pub mod rate_limiter;
+pub mod secrets;
 pub mod session;
 pub mod shutdown;
 pub mod stream;
 pub mod token_store;
+pub mod vision;
 
 use crate::heartbeat::spawn_hub_heartbeat;
 use crate::rate_limiter::RateLimiter;
@@ -55,6 +58,7 @@ use openloom_memory::store::MessageStore;
 use openloom_models::*;
 use openloom_router::SmartRouter;
 use openloom_skills::{Skill, SkillInfo, SkillRegistry, builtins};
+use openloom_skills::cron_store::{CronStore, NotificationStore};
 use openloom_weaver::ContextWeaver;
 use std::sync::Mutex;
 use std::sync::{
@@ -297,6 +301,28 @@ pub struct Engine {
     context_max_chars: usize,
     perm_request_tx: tokio::sync::mpsc::Sender<PermissionChannelItem>,
     perm_request_rx: std::sync::Mutex<Option<tokio::sync::mpsc::Receiver<PermissionChannelItem>>>,
+    /// Per-session abort flags. Set to true to cancel an in-progress streaming response.
+    abort_flags: Arc<Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>>,
+    /// Per-session permission mode ("operate" | "ask" | "read_only").
+    /// Default mode (when key is missing or session_id is empty) is "ask".
+    permission_modes: Arc<Mutex<std::collections::HashMap<String, String>>>,
+    /// Default permission mode for new sessions ("operate" | "ask" | "read_only").
+    default_permission_mode: Arc<Mutex<String>>,
+    /// Cron job store for scheduled task persistence.
+    cron_store: Arc<CronStore>,
+    /// Notification store for automation notifications.
+    notification_store: Arc<NotificationStore>,
+}
+
+impl Engine {
+    /// Start the cron scheduler. Must be called after the engine is wrapped in Arc.
+    pub fn start_cron_scheduler(self: &Arc<Self>) {
+        cron_scheduler::spawn_cron_scheduler(
+            self.clone(),
+            self.cron_store.clone(),
+            self.notification_store.clone(),
+        );
+    }
 }
 
 pub struct EngineConfig {
@@ -388,11 +414,55 @@ impl Engine {
 
         let mut router =
             SmartRouter::new_keywords_only(openloom_router::keywords::default_keyword_rules());
+
+        // Load AppConfig from disk (needed for skill registration)
+        let app_config_raw: AppConfig = {
+            let config_path = config.data_dir.join("config.toml");
+            if config_path.exists() {
+                match std::fs::read_to_string(&config_path) {
+                    Ok(content) => match toml::from_str::<AppConfig>(&content) {
+                        Ok(loaded) => {
+                            tracing::info!(path = %config_path.display(), "Loaded config from disk");
+                            loaded
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Failed to parse config.toml, using defaults");
+                            AppConfig::default()
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to read config.toml, using defaults");
+                        AppConfig::default()
+                    }
+                }
+            } else {
+                AppConfig::default()
+            }
+        };
+        let app_config: Arc<RwLock<AppConfig>> = Arc::new(RwLock::new(app_config_raw.clone()));
+
         let mut skills = SkillRegistry::new();
-        builtins::register_all(&mut skills);
+        let cron_store = Arc::new(CronStore::new(&config.data_dir));
+        let notification_store = Arc::new(NotificationStore::new(&config.data_dir));
+        builtins::register_all(&mut skills, app_config.clone(), &config.data_dir, cron_store.clone());
         for skill in skills.all_skills() {
             let manifest = skill.manifest();
             router.register_skill_triggers(skill.name(), manifest.triggers.clone());
+        }
+
+        // Apply tools.disabled from config (read before wrapping in Arc)
+        {
+            let names: Vec<String> = app_config_raw
+                .settings
+                .get("tools")
+                .and_then(|t| t.get("disabled"))
+                .and_then(|d| d.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            if !names.is_empty() {
+                tracing::info!(?names, "Applying tool disabled list from config");
+                skills.set_disabled(names);
+            }
         }
 
         // Discover and register external skills (plugins + project-local)
@@ -451,6 +521,9 @@ impl Engine {
         let session_tx = spawn_session_thread(db_path.clone());
         let token_store_tx = spawn_token_store_thread(db_path.clone());
 
+        // Load secrets into process environment
+        secrets::load(&config.data_dir);
+
         // Extract heartbeat config before config is partially moved into Self
         let hb_interval = config.heartbeat_interval_secs;
         let hb_idle_threshold = config.heartbeat_idle_threshold_min;
@@ -472,7 +545,7 @@ impl Engine {
             interruptible: AtomicBool::new(false),
             data_dir: config.data_dir.clone(),
             db_path: db_path.clone(),
-            config: Arc::new(RwLock::new(AppConfig::default())),
+            config: app_config,
             start_time: Instant::now(),
             draining: AtomicBool::new(false),
             in_flight: AtomicUsize::new(0),
@@ -495,6 +568,11 @@ impl Engine {
                 .unwrap_or(0),
             perm_request_tx,
             perm_request_rx: std::sync::Mutex::new(Some(perm_request_rx)),
+            abort_flags: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            permission_modes: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            default_permission_mode: Arc::new(Mutex::new("ask".to_string())),
+            cron_store: cron_store.clone(),
+            notification_store,
         };
 
         // Spawn persona watcher (from persona_watcher module)
@@ -515,16 +593,9 @@ impl Engine {
 
     // === Core handler ===
 
-    /// Template response when no cloud API key is configured and the router
-    /// would otherwise send chat requests to the local 1.7B model.
-    const NO_CLOUD_RESPONSE: &str = "\
-我是 openLoom，一个本地优先的 AI 助理。\n\
-\n\
-我注意到你还没有配置云端 API key。目前本地小模型（Qwen3-1.7B）的定位是意图分类和关键词路由，不适合生成对话回复。\n\
-\n\
-请设置环境变量 OPENAI_API_KEY 或 ANTHROPIC_API_KEY 后重启，我就能正常对话了。\n\
-\n\
-当前支持的命令：文件管理、代码协助、网页搜索、日程提醒。";
+    /// Template response when no model is available at all.
+    const NO_MODEL_RESPONSE: &str = "\
+当前没有可用的模型。请在设置中配置至少一个云端或本地模型。";
 
     pub async fn handle_message(
         &self,
@@ -577,7 +648,43 @@ impl Engine {
                 .find_by_name(name)
                 .map(|s| s.context_md().to_string())
         });
-        let working_memory = self.get_working_memory(session_id).unwrap_or_default();
+        let mut working_memory = self.get_working_memory(session_id).unwrap_or_default();
+
+        // Auto-compact: if history exceeds 80% of context window, summarize the older half.
+        // Only affects this LLM call — stored history is NOT modified.
+        let history_chars: usize = working_memory.iter().map(|m| m.content.chars().count()).sum();
+        let compact_threshold = (self.context_max_chars as f64 * 0.8) as usize;
+        if history_chars > compact_threshold && self.context_max_chars > 0 && working_memory.len() > 4 {
+            let split = working_memory.len() / 2;
+            let older_text: String = working_memory[..split]
+                .iter()
+                .filter(|m| m.role == "user" || m.role == "assistant")
+                .map(|m| format!("[{}]: {}", m.role, m.content))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            if !older_text.is_empty() {
+                let compact_prompt = format!(
+                    "Summarize this conversation history concisely. Include key decisions, code changes, and important context. Keep under 500 characters.\n\n{}",
+                    older_text
+                );
+                if let Ok(summary) = self.invoke_model_raw(&compact_prompt).await {
+                    let compact_msg = ChatMessage {
+                        role: "system".into(),
+                        content: format!("[Earlier conversation summary]\n{}", summary.trim()),
+                        timestamp: chrono::Utc::now(),
+                        metadata: None,
+                        id: None,
+                        seq: None,
+                    };
+                    working_memory = vec![compact_msg]
+                        .into_iter()
+                        .chain(working_memory[split..].to_vec())
+                        .collect();
+                    tracing::info!(session_id, "auto-compacted context for chat path");
+                }
+            }
+        }
+
         // Persona failure -> empty string fallback
         let persona_summary = self.persona.summarize().await.unwrap_or_default();
         let system = system_instruction();
@@ -611,8 +718,9 @@ impl Engine {
                         })
                         .await?
                         .text
-                } else if self.cloud.is_some() {
-                    self.inference
+                } else if let Some(ref cloud) = self.cloud {
+                    // No local model available, fall back to cloud
+                    cloud
                         .complete(CompletionRequest {
                             prompt: assembled.prompt.clone(),
                             ..Default::default()
@@ -620,7 +728,21 @@ impl Engine {
                         .await?
                         .text
                 } else {
-                    Self::NO_CLOUD_RESPONSE.to_string()
+                    // Try the user's selected active model as last resort
+                    let config = self.config.read().await;
+                    let active = config.get_nested("settings.active_model");
+                    drop(config);
+                    if let Some(active) = active {
+                        let mid = active.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                        let prov = active.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+                        if !mid.is_empty() && !prov.is_empty() {
+                            self.complete_with_model(session_id, &assembled.prompt, mid, prov).await.unwrap_or_else(|_| Self::NO_MODEL_RESPONSE.to_string())
+                        } else {
+                            Self::NO_MODEL_RESPONSE.to_string()
+                        }
+                    } else {
+                        Self::NO_MODEL_RESPONSE.to_string()
+                    }
                 }
             }
             TargetModel::Cloud => {
@@ -641,7 +763,21 @@ impl Engine {
                         .await?
                         .text
                 } else {
-                    Self::NO_CLOUD_RESPONSE.to_string()
+                    // Try the user's selected active model as last resort
+                    let config = self.config.read().await;
+                    let active = config.get_nested("settings.active_model");
+                    drop(config);
+                    if let Some(active) = active {
+                        let mid = active.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                        let prov = active.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+                        if !mid.is_empty() && !prov.is_empty() {
+                            self.complete_with_model(session_id, &assembled.prompt, mid, prov).await.unwrap_or_else(|_| Self::NO_MODEL_RESPONSE.to_string())
+                        } else {
+                            Self::NO_MODEL_RESPONSE.to_string()
+                        }
+                    } else {
+                        Self::NO_MODEL_RESPONSE.to_string()
+                    }
                 }
             }
         };
@@ -688,7 +824,7 @@ impl Engine {
 
     // === Message persistence (non-fatal) ===
 
-    fn save_messages(
+    pub fn save_messages(
         &self,
         session_id: &str,
         user_msg: &ChatMessage,
@@ -702,9 +838,11 @@ impl Engine {
             }
         };
         let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
+        // Ensure metadata column exists (migration may not have run)
+        let _ = conn.execute_batch("ALTER TABLE message_history ADD COLUMN metadata TEXT;");
         let store = MessageStore::new(&conn);
         let next_seq = store.max_seq(session_id).unwrap_or(0) + 1;
-        let _ = store.insert(session_id, next_seq, "user", &user_msg.content);
+        let _ = store.insert_with_metadata(session_id, next_seq, "user", &user_msg.content, user_msg.metadata.as_deref());
         let _ = store.insert(session_id, next_seq + 1, "assistant", assistant_response);
         let _ = self.session_tx.send(SessionCommand::UpdateCount {
             id: session_id.to_string(),
@@ -757,7 +895,681 @@ impl Engine {
         }
     }
 
+    /// Compute context usage for a session: (used_tokens, total_window, percent).
+    /// Uses the live model config for the total window and includes system instruction
+    /// overhead in the used count.
+    pub async fn context_usage(&self, session_id: &str) -> (usize, usize, f64) {
+        let history = self.get_working_memory(session_id).unwrap_or_default();
+        let history_text: String = history
+            .iter()
+            .map(|m| format!("{}: {}\n", m.role, m.content))
+            .collect();
+        // Include system instruction overhead
+        let system_text = system_instruction();
+        let full_text = if history_text.is_empty() {
+            system_text
+        } else {
+            system_text + "\n" + &history_text
+        };
+        // Rough token estimate: 1 token ≈ 4 chars for Latin, 2 chars for CJK.
+        // Use a blended estimate: count CJK chars at ratio 1:2, others at 1:4.
+        let used = {
+            let mut cjk = 0usize;
+            let mut other = 0usize;
+            for c in full_text.chars() {
+                if ('\u{4E00}'..='\u{9FFF}').contains(&c)
+                    || ('\u{3400}'..='\u{4DBF}').contains(&c)
+                    || ('\u{F900}'..='\u{FAFF}').contains(&c)
+                {
+                    cjk += 1;
+                } else {
+                    other += 1;
+                }
+            }
+            (cjk / 2 + other / 4).max(1)
+        };
+
+        // Find the active model's context window.
+        // Priority: (1) active model in config.models, (2) settings.providers model,
+        // (3) fallback to a sensible default.
+        let config = self.config.read().await;
+
+        // Try typed config.models first
+        let typed_total = config.models.first().map(|m| m.context_size);
+
+        // Try settings providers
+        let settings_total = if typed_total.is_none() {
+            config.settings
+                .get("providers")
+                .and_then(|p| p.as_object())
+                .and_then(|pmap| {
+                    pmap.values()
+                        .filter_map(|prov| {
+                            prov.get("models")
+                                .and_then(|m| m.as_array())
+                                .and_then(|arr| arr.first())
+                                .and_then(|m| m.get("context_size").and_then(|v| v.as_u64()))
+                        })
+                        .next()
+                })
+                .map(|v| v as usize)
+        } else {
+            None
+        };
+
+        let total = typed_total
+            .or(settings_total)
+            .unwrap_or(128_000)
+            .max(1);
+
+        let percent = (used as f64 / total as f64 * 100.0).min(100.0);
+        (used, total, percent)
+    }
+
+    /// Complete a chat request using a specific model by ID and provider.
+    /// Looks up the ModelConfig from config.models OR settings.providers,
+    /// creates a cloud client on the fly, and sends the request.
+    pub async fn complete_with_model(
+        &self,
+        session_id: &str,
+        prompt: &str,
+        model_id: &str,
+        provider: &str,
+    ) -> Result<String> {
+        // Build message history from the session
+        let history = self.get_working_memory(session_id).unwrap_or_default();
+        let messages: Vec<Message> = history
+            .iter()
+            .map(|m| {
+                if m.role == "user" {
+                    Message::user(&m.content)
+                } else {
+                    Message::assistant(&m.content)
+                }
+            })
+            .chain(std::iter::once(Message::user(prompt)))
+            .collect();
+
+        let config = self.config.read().await;
+        let provider_lower = provider.to_lowercase();
+        let backend = match provider_lower.as_str() {
+            "anthropic" => openloom_models::ModelBackend::Anthropic,
+            "openai" => openloom_models::ModelBackend::OpenAI,
+            "deepseek" => openloom_models::ModelBackend::DeepSeek,
+            "lmstudio" | "lm-studio" => openloom_models::ModelBackend::LmStudio,
+            "ollama" => openloom_models::ModelBackend::Ollama,
+            _ => openloom_models::ModelBackend::OpenAI,
+        };
+
+        // Step 1: Try typed config.models
+        let typed_cfg = config.models.iter().find(|m| {
+            let m_id = m.model.as_deref().unwrap_or(&m.name);
+            m_id == model_id
+                && (m.backend == backend
+                    || m.backend.name().eq_ignore_ascii_case(provider))
+        }).cloned();
+
+        // Step 2: If not found, try settings.providers
+        let settings_cfg = if typed_cfg.is_none() {
+            Self::find_model_in_settings(&config.settings, model_id, provider)
+        } else {
+            None
+        };
+
+        drop(config);
+
+        let req = CompletionRequest {
+            messages,
+            ..Default::default()
+        };
+
+        // For LM Studio: proactively load the model before sending the request.
+        if backend == openloom_models::ModelBackend::LmStudio {
+            let lm_base = typed_cfg.as_ref()
+                .and_then(|c| c.base_url.clone())
+                .unwrap_or_else(|| "http://localhost:1234/v1".to_string());
+            let ctx = typed_cfg.as_ref().map(|c| c.context_size).unwrap_or(32000);
+            let _ = openloom_inference::ensure_lm_studio_model(&lm_base, model_id, ctx).await;
+        }
+
+        // Try typed config first
+        if let Some(cfg) = typed_cfg {
+            if cfg.backend == openloom_models::ModelBackend::LmStudio {
+                let lm_base = cfg.base_url.clone().unwrap_or_else(|| "http://localhost:1234/v1".to_string());
+                let ctx = cfg.context_size;
+                let _ = openloom_inference::ensure_lm_studio_model(&lm_base, model_id, ctx).await;
+            }
+            match openloom_inference::create_cloud_client(&cfg) {
+                Ok(client) => {
+                    let resp = client.complete(req).await?;
+                    return Ok(resp.text);
+                }
+                Err(e) => {
+                    tracing::warn!("create_cloud_client for {model_id}: {e}, falling back");
+                }
+            }
+        }
+
+        // Try settings-based config
+        if let Some(cfg) = settings_cfg {
+            if cfg.backend == openloom_models::ModelBackend::LmStudio {
+                let lm_base = cfg.base_url.clone().unwrap_or_else(|| "http://localhost:1234/v1".to_string());
+                let ctx = cfg.context_size;
+                let _ = openloom_inference::ensure_lm_studio_model(&lm_base, model_id, ctx).await;
+            }
+            match openloom_inference::create_cloud_client(&cfg) {
+                Ok(client) => {
+                    let resp = client.complete(req).await?;
+                    return Ok(resp.text);
+                }
+                Err(e) => {
+                    tracing::warn!("create_cloud_client from settings for {model_id}: {e}, falling back");
+                }
+            }
+        }
+
+        // Fallback: try pre-configured clients
+        if backend != openloom_models::ModelBackend::LmStudio
+            && backend != openloom_models::ModelBackend::Ollama
+            && let Some(ref cloud) = self.cloud
+        {
+            let resp = cloud
+                .complete(CompletionRequest {
+                    prompt: prompt.to_string(),
+                    ..Default::default()
+                })
+                .await?;
+            return Ok(resp.text);
+        }
+        if let Some(ref local) = self.local_client {
+            let resp = local
+                .complete(CompletionRequest {
+                    prompt: prompt.to_string(),
+                    ..Default::default()
+                })
+                .await?;
+            return Ok(resp.text);
+        }
+
+        Ok(Self::NO_MODEL_RESPONSE.to_string())
+    }
+
+    /// Streaming variant of complete_with_model.
+    /// Sends each token as a `StreamDelta` event via event_bus, then fires `StreamEnd`.
+    pub async fn complete_with_model_streaming(
+        &self,
+        session_id: &str,
+        prompt: &str,
+        images: &[openloom_models::ImagePart],
+        model_id: &str,
+        provider: &str,
+    ) -> Result<()> {
+        self.complete_with_model_streaming_meta(session_id, prompt, images, None, model_id, provider).await
+    }
+
+    pub async fn complete_with_model_streaming_meta(
+        &self,
+        session_id: &str,
+        prompt: &str,
+        images: &[openloom_models::ImagePart],
+        metadata: Option<&str>,
+        model_id: &str,
+        provider: &str,
+    ) -> Result<()> {
+        // Build message history with system prompt + persona
+        let history = self.get_working_memory(session_id).unwrap_or_default();
+        let persona_summary = self.persona.summarize().await.unwrap_or_default();
+        let base_system = system_instruction();
+        // Read current permission mode for this session and translate to a directive
+        let permission_mode = self.permission_mode(session_id);
+        let permission_directive = match permission_mode.as_str() {
+            "read_only" => "## Permission Mode: READ-ONLY\n\
+You are operating in READ-ONLY mode. You may read, analyze, summarize, and answer questions, \
+but you MUST NOT propose any actions that would modify files, run mutating shell commands, \
+change configuration, install software, or alter any system state. If the user asks for such \
+an action, politely refuse and explain that read-only mode is active. Suggest they switch to \
+\"ask\" or \"operate\" mode if mutation is required.",
+            "ask" => "## Permission Mode: ASK-BEFORE-ACTING\n\
+You are operating in ASK mode. Before suggesting any action that would modify files, run \
+mutating shell commands, change configuration, install software, or alter system state, \
+explicitly state what you intend to do and ask the user to confirm. Do not assume permission \
+even if the user seemed to grant it earlier in the conversation — re-confirm for each \
+new mutating action.",
+            _ => "## Permission Mode: AUTO-OPERATE\n\
+You are operating in AUTO-OPERATE mode. You may proceed with reasonable actions without \
+asking for confirmation each time, but still warn the user about destructive or irreversible \
+operations (e.g. force-delete, force-push, dropping databases) before performing them.",
+        };
+        // Read agent identity/ishiki from saved settings
+        let agent_system = {
+            let cfg = self.config.read().await;
+            let settings = &cfg.settings;
+            let identity = settings
+                .get("identity").and_then(|v| v.as_str()).unwrap_or("");
+            let ishiki = settings
+                .get("ishiki").and_then(|v| v.as_str()).unwrap_or("");
+            let mut parts = vec![base_system.clone()];
+            parts.push(permission_directive.to_string());
+            if !persona_summary.is_empty() { parts.push(persona_summary.clone()); }
+            if !identity.is_empty() { parts.push(format!("## Identity\n{}", identity)); }
+            if !ishiki.is_empty() { parts.push(format!("## Consciousness\n{}", ishiki)); }
+            parts.join("\n\n")
+        };
+        // ── Determine backend & check vision auxiliary ──
+        let (backend, typed_cfg_pre, settings_snapshot) = {
+            let config = self.config.read().await;
+            let provider_lower = provider.to_lowercase();
+            let backend = match provider_lower.as_str() {
+                "anthropic" => openloom_models::ModelBackend::Anthropic,
+                "openai" => openloom_models::ModelBackend::OpenAI,
+                "deepseek" => openloom_models::ModelBackend::DeepSeek,
+                "lmstudio" | "lm-studio" => openloom_models::ModelBackend::LmStudio,
+                "ollama" => openloom_models::ModelBackend::Ollama,
+                _ => openloom_models::ModelBackend::OpenAI,
+            };
+            let typed_cfg = config.models.iter().find(|m| {
+                let m_id = m.model.as_deref().unwrap_or(&m.name);
+                m_id == model_id
+                    && (m.backend == backend
+                        || m.backend.name().eq_ignore_ascii_case(provider))
+            }).cloned();
+            let snapshot = config.settings.clone();
+            (backend, typed_cfg, snapshot)
+        }; // config lock released
+
+        // ── Auxiliary vision interception ──
+        let use_auxiliary = !images.is_empty()
+            && vision::should_use_auxiliary_vision(&settings_snapshot, &backend, images);
+
+        let vision_text = if use_auxiliary {
+            match vision::prepare_vision_context(&settings_snapshot, prompt, images).await {
+                Ok(Some(text)) => {
+                    tracing::info!(image_count = images.len(), "vision auxiliary analysis complete");
+                    Some(text)
+                }
+                Ok(None) => {
+                    tracing::info!("vision auxiliary skipped (no model configured)");
+                    None
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "vision auxiliary model failed, proceeding text-only");
+                    Some(format!("[Image analysis unavailable: {}]\n\n", e))
+                }
+            }
+        } else {
+            None
+        };
+
+        // ── Build final user message ──
+        let user_message = if let Some(ref vtext) = vision_text {
+            let enhanced = format!("{}\n\n{}", vtext, prompt);
+            Message::user(&enhanced)
+        } else if images.is_empty() {
+            Message::user(prompt)
+        } else {
+            Message::user_with_images(prompt, images)
+        };
+
+        // ── Build messages chain ──
+        let messages: Vec<Message> = std::iter::once(Message {
+                role: Role::System,
+                content: vec![openloom_models::ContentPart::Text { text: agent_system }],
+                timestamp: chrono::Utc::now(),
+            })
+            .chain(history.iter().map(|m| {
+                if m.role == "user" {
+                    Message::user(&m.content)
+                } else {
+                    Message::assistant(&m.content)
+                }
+            }))
+            .chain(std::iter::once(user_message))
+            .collect();
+
+        // Re-acquire config for typed_cfg fallback and settings_cfg
+        let config = self.config.read().await;
+        let typed_cfg = if typed_cfg_pre.is_some() {
+            typed_cfg_pre
+        } else {
+            config.models.iter().find(|m| {
+                let m_id = m.model.as_deref().unwrap_or(&m.name);
+                m_id == model_id
+                    && (m.backend == backend
+                        || m.backend.name().eq_ignore_ascii_case(provider))
+            }).cloned()
+        };
+
+        let settings_cfg = if typed_cfg.is_none() {
+            Self::find_model_in_settings(&config.settings, model_id, provider)
+        } else {
+            None
+        };
+
+        drop(config);
+
+        let req = CompletionRequest {
+            messages,
+            stream: true,
+            ..Default::default()
+        };
+
+        let event_bus = self.event_bus().clone();
+        let sid = session_id.to_string();
+        let prompt_owned = prompt.to_string();
+
+        // Feed user message into memory pipeline for automatic cognition extraction
+        self.feed_memory_pipeline(&sid, &prompt_owned, "user_message");
+
+        // Create/reset the abort flag for this session
+        let abort_flag = self.session_abort_flag(&sid);
+        abort_flag.store(false, Ordering::SeqCst);
+
+        let (token_tx, mut token_rx) = tokio::sync::mpsc::channel::<String>(256);
+
+        // Spawn token collector: forwards each token as StreamDelta event
+        // Stops early if the abort flag is set.
+        let sid_clone = sid.clone();
+        let bus_clone = event_bus.clone();
+        let abort_clone = abort_flag.clone();
+        let collect_handle = tokio::spawn(async move {
+            let mut full = String::new();
+            let mut last_prompt_tokens: usize = 0;
+            while let Some(token) = token_rx.recv().await {
+                if abort_clone.load(Ordering::SeqCst) {
+                    break;
+                }
+                // Parse and suppress internal usage signals "\x00USAGE:prompt:completion:cached"
+                if token.starts_with('\x00') {
+                    if let Some(usage_str) = token.strip_prefix('\x00').and_then(|s| s.strip_prefix("USAGE:")) {
+                        let parts: Vec<&str> = usage_str.split(':').collect();
+                        if let Ok(pt) = parts.first().unwrap_or(&"0").parse::<usize>() {
+                            last_prompt_tokens = pt;
+                        }
+                    }
+                    continue;
+                }
+                full.push_str(&token);
+                let _ = bus_clone.send(EngineEvent::StreamDelta {
+                    session_id: sid_clone.clone(),
+                    delta: token,
+                });
+            }
+            (full, last_prompt_tokens)
+        });
+
+        // Pick client and stream
+        // For LM Studio: proactively load the model before sending the request.
+        // LM Studio returns "Unexpected endpoint or method" if no model is loaded.
+        if backend == openloom_models::ModelBackend::LmStudio {
+            let lm_base = typed_cfg.as_ref()
+                .and_then(|c| c.base_url.clone())
+                .unwrap_or_else(|| "http://localhost:1234/v1".to_string());
+            let context_size = typed_cfg.as_ref()
+                .map(|c| c.context_size)
+                .unwrap_or(32000);
+            let _ = openloom_inference::ensure_lm_studio_model(&lm_base, model_id, context_size).await;
+        }
+
+        let stream_result = if let Some(cfg) = typed_cfg {
+            match openloom_inference::create_cloud_client(&cfg) {
+                Ok(client) => client.complete_stream(req, token_tx).await,
+                Err(e) => Err(e),
+            }
+        } else if let Some(cfg) = settings_cfg {
+            // For LM Studio from settings, also ensure model is loaded
+            if backend == openloom_models::ModelBackend::LmStudio {
+                let lm_base = cfg.base_url.clone().unwrap_or_else(|| "http://localhost:1234/v1".to_string());
+                let context_size = cfg.context_size;
+                let _ = openloom_inference::ensure_lm_studio_model(&lm_base, model_id, context_size).await;
+            }
+            match openloom_inference::create_cloud_client(&cfg) {
+                Ok(client) => client.complete_stream(req, token_tx).await,
+                Err(e) => Err(e),
+            }
+        } else if backend != openloom_models::ModelBackend::LmStudio
+            && backend != openloom_models::ModelBackend::Ollama
+        {
+            if let Some(ref cloud) = self.cloud {
+                cloud.complete_stream(CompletionRequest {
+                    prompt: prompt_owned.clone(),
+                    stream: true,
+                    ..Default::default()
+                }, token_tx).await
+            } else {
+                Err(anyhow::anyhow!("no cloud client available"))
+            }
+        } else if let Some(ref local) = self.local_client {
+            // local_client for LM Studio / Ollama: also ensure LM Studio model
+            if local.provider() == openloom_models::ModelBackend::LmStudio {
+                let _ = openloom_inference::ensure_lm_studio_model(
+                    "http://localhost:1234/v1",
+                    local.model_name(),
+                    32000,
+                ).await;
+            }
+            local.complete_stream(CompletionRequest {
+                prompt: prompt_owned.clone(),
+                stream: true,
+                ..Default::default()
+            }, token_tx).await
+        } else {
+            Err(anyhow::anyhow!("no model client available"))
+        };
+
+        let (full_response, actual_prompt_tokens) = collect_handle.await.unwrap_or_default();
+
+        // If the inference layer reported real prompt_tokens via USAGE signal,
+        // fire a TokenUsage event so the frontend context ring can show accurate numbers.
+        if actual_prompt_tokens > 0 {
+            let model_id = if !model_id.is_empty() { model_id.to_string() } else { "unknown".to_string() };
+            let completion_tokens = {
+                // Estimate: completion text / 4 chars per token
+                full_response.chars().count() / 4
+            };
+            let _ = event_bus.send(EngineEvent::TokenUsage {
+                session_id: sid.clone(),
+                model: model_id,
+                prompt_tokens: actual_prompt_tokens,
+                completion_tokens,
+                cached_tokens: 0,
+                latency_ms: 0,
+            });
+        }
+
+        // Feed both sides of the conversation into the memory pipeline
+        // (user message was already fed at the start; feed assistant response now)
+        if !full_response.is_empty() && !full_response.starts_with("[error") && !full_response.starts_with("[aborted") {
+            self.feed_memory_pipeline(&sid, &full_response, "assistant_response");
+        }
+
+        if let Err(e) = stream_result {
+            let _ = event_bus.send(EngineEvent::StreamEnd {
+                session_id: sid.clone(),
+                full_response: format!("[error: {}]", e),
+            });
+            return Err(e);
+        }
+
+        // Save messages (even partial response on abort)
+        let was_aborted = abort_flag.load(Ordering::SeqCst);
+        self.remove_abort_flag(&sid);
+
+        let user_msg = openloom_models::ChatMessage {
+            role: "user".into(),
+            content: prompt_owned,
+            timestamp: chrono::Utc::now(),
+            id: None,
+            seq: None,
+            metadata: metadata.map(|s| s.to_string()),
+        };
+        let _ = self.save_messages(&sid, &user_msg, &full_response);
+
+        // Fire StreamEnd — if aborted, send partial response so frontend finalizes the message
+        let _ = event_bus.send(EngineEvent::StreamEnd {
+            session_id: sid.clone(),
+            full_response: if was_aborted && !full_response.is_empty() {
+                full_response
+            } else if was_aborted {
+                "[aborted]".to_string()
+            } else {
+                full_response
+            },
+        });
+
+        Ok(())
+    }
+
+    /// Find a model in settings.providers and construct a ModelConfig from it.
+    pub(crate) fn find_model_in_settings(
+        settings: &serde_json::Value,
+        model_id: &str,
+        provider: &str,
+    ) -> Option<openloom_models::ModelConfig> {
+        let providers = settings
+            .get("providers")
+            .or_else(|| settings.get("general").and_then(|g| g.get("providers")))
+            .and_then(|p| p.as_object())?;
+
+        let provider_lower = provider.to_lowercase();
+        let (prov_key, prov_val) = providers.iter().find(|(k, _)| {
+            k.eq_ignore_ascii_case(&provider_lower) || k.eq_ignore_ascii_case(provider)
+        })?;
+
+        let models = prov_val.get("models").and_then(|m| m.as_array())?;
+        let _model_entry = models.iter().find(|m| {
+            if m.is_string() {
+                m.as_str() == Some(model_id)
+            } else if m.is_object() {
+                m.get("id").and_then(|v| v.as_str()) == Some(model_id)
+            } else {
+                false
+            }
+        })?;
+
+        // Construct a ModelConfig from the provider info
+        let api_key_env = prov_val
+            .get("api_key_env")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let raw_base_url = prov_val
+            .get("base_url")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let backend = match provider_lower.as_str() {
+            "anthropic" => openloom_models::ModelBackend::Anthropic,
+            "openai" => openloom_models::ModelBackend::OpenAI,
+            "deepseek" => openloom_models::ModelBackend::DeepSeek,
+            "lmstudio" | "lm-studio" => openloom_models::ModelBackend::LmStudio,
+            "ollama" => openloom_models::ModelBackend::Ollama,
+            _ => openloom_models::ModelBackend::OpenAI,
+        };
+
+        // Normalize base_url: LM Studio and compatible local servers need /v1 suffix.
+        // If the user stored "http://localhost:1234" without /v1, append it.
+        let base_url = raw_base_url.map(|url| {
+            let trimmed = url.trim_end_matches('/');
+            if (backend == openloom_models::ModelBackend::LmStudio
+                || backend == openloom_models::ModelBackend::Ollama
+                || backend == openloom_models::ModelBackend::OpenAI)
+                && !trimmed.ends_with("/v1")
+                && !trimmed.is_empty()
+            {
+                format!("{}/v1", trimmed)
+            } else {
+                trimmed.to_string()
+            }
+        });
+
+        Some(openloom_models::ModelConfig {
+            name: prov_key.clone(),
+            model: Some(model_id.to_string()),
+            model_type: openloom_models::ModelType::Router,
+            backend,
+            path: None,
+            context_size: 128000,
+            max_output_tokens: None,
+            n_gpu_layers: 0,
+            api_key_env,
+            base_url,
+        })
+    }
+
     // === Public API ===
+
+    pub fn event_bus(&self) -> &broadcast::Sender<EngineEvent> {
+        &self.event_bus
+    }
+
+    /// Streaming version of complete_with_model: sends tokens to the provided channel.
+    pub async fn stream_with_model(
+        &self,
+        session_id: &str,
+        prompt: &str,
+        model_id: &str,
+        provider: &str,
+        token_tx: tokio::sync::mpsc::Sender<String>,
+    ) -> anyhow::Result<()> {
+        // Try to find and create a streaming client
+        let config = self.config.read().await;
+        let provider_lower = provider.to_lowercase();
+        let backend = match provider_lower.as_str() {
+            "anthropic" => openloom_models::ModelBackend::Anthropic,
+            "openai" => openloom_models::ModelBackend::OpenAI,
+            "deepseek" => openloom_models::ModelBackend::DeepSeek,
+            "lmstudio" | "lm-studio" => openloom_models::ModelBackend::LmStudio,
+            "ollama" => openloom_models::ModelBackend::Ollama,
+            _ => openloom_models::ModelBackend::OpenAI,
+        };
+
+        // Step 1: Try typed config.models
+        let typed_cfg = config.models.iter().find(|m| {
+            let m_id = m.model.as_deref().unwrap_or(&m.name);
+            m_id == model_id
+                && (m.backend == backend
+                    || m.backend.name().eq_ignore_ascii_case(provider))
+        }).cloned();
+
+        // Step 2: Try settings.providers
+        let settings_cfg = if typed_cfg.is_none() {
+            Self::find_model_in_settings(&config.settings, model_id, provider)
+        } else {
+            None
+        };
+
+        drop(config);
+
+        let history = self.get_working_memory(session_id).unwrap_or_default();
+        let messages: Vec<Message> = history
+            .iter()
+            .map(|m| {
+                if m.role == "user" { Message::user(&m.content) } else { Message::assistant(&m.content) }
+            })
+            .chain(std::iter::once(Message::user(prompt)))
+            .collect();
+
+        let req = CompletionRequest {
+            messages,
+            stream: true,
+            ..Default::default()
+        };
+
+        if let Some(cfg) = typed_cfg.or(settings_cfg) {
+            match openloom_inference::create_cloud_client(&cfg) {
+                Ok(client) => {
+                    return client.complete_stream(req, token_tx).await;
+                }
+                Err(e) => {
+                    tracing::warn!("stream create_cloud_client for {model_id}: {e}, falling back");
+                }
+            }
+        }
+
+        // Fallback: non-streaming complete, send as single chunk
+        let response = self.complete_with_model(session_id, prompt, model_id, provider).await?;
+        let _ = token_tx.send(response).await;
+        Ok(())
+    }
 
     pub async fn health_check(&self) -> HealthStatus {
         let gpu = InferenceEngine::detect_gpu();
@@ -788,14 +1600,87 @@ impl Engine {
         rx.await.map_err(|e| anyhow::anyhow!("{}", e))
     }
 
+    pub async fn archive_session(&self, session_id: &str) -> Result<bool> {
+        let (tx, rx) = oneshot::channel();
+        self.session_tx
+            .send(SessionCommand::Archive { id: session_id.to_string(), reply: tx })
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        rx.await.map_err(|e| anyhow::anyhow!("{}", e))
+    }
+
+    pub async fn delete_session(&self, session_id: &str) -> Result<bool> {
+        let (tx, rx) = oneshot::channel();
+        self.session_tx
+            .send(SessionCommand::Delete { id: session_id.to_string(), reply: tx })
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        rx.await.map_err(|e| anyhow::anyhow!("{}", e))
+    }
+
+    pub fn delete_message(&self, session_id: &str, msg_id: i64) -> Result<bool> {
+        let conn = rusqlite::Connection::open(&self.db_path)?;
+        let store = MessageStore::new(&conn);
+        store.delete_by_id(session_id, msg_id)
+    }
+
+    pub async fn list_archived_sessions(&self) -> Result<Vec<SessionInfo>> {
+        let (tx, rx) = oneshot::channel();
+        self.session_tx
+            .send(SessionCommand::ListArchived { reply: tx })
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        rx.await.map_err(|e| anyhow::anyhow!("{}", e))
+    }
+
+    pub async fn restore_session(&self, session_id: &str) -> Result<bool> {
+        let (tx, rx) = oneshot::channel();
+        self.session_tx
+            .send(SessionCommand::Restore { id: session_id.to_string(), reply: tx })
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        rx.await.map_err(|e| anyhow::anyhow!("{}", e))
+    }
+
+    pub async fn delete_archived_session(&self, session_id: &str) -> Result<bool> {
+        let (tx, rx) = oneshot::channel();
+        self.session_tx
+            .send(SessionCommand::DeleteArchived { id: session_id.to_string(), reply: tx })
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        rx.await.map_err(|e| anyhow::anyhow!("{}", e))
+    }
+
+    pub async fn cleanup_archived_sessions(&self, max_age_days: u32) -> Result<usize> {
+        let (tx, rx) = oneshot::channel();
+        self.session_tx
+            .send(SessionCommand::Cleanup { max_age_days, reply: tx })
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        rx.await.map_err(|e| anyhow::anyhow!("{}", e))
+    }
+
+    pub async fn rename_session(&self, session_id: &str, title: &str) -> Result<bool> {
+        let (tx, rx) = oneshot::channel();
+        self.session_tx
+            .send(SessionCommand::Rename { id: session_id.to_string(), title: title.to_string(), reply: tx })
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        rx.await.map_err(|e| anyhow::anyhow!("{}", e))
+    }
+
+    pub async fn pin_session(&self, session_id: &str, pinned: bool) -> Result<bool> {
+        let (tx, rx) = oneshot::channel();
+        let pinned_at = if pinned { Some(chrono::Utc::now().to_rfc3339()) } else { None };
+        self.session_tx
+            .send(SessionCommand::Pin { id: session_id.to_string(), pinned_at, reply: tx })
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        rx.await.map_err(|e| anyhow::anyhow!("{}", e))
+    }
+
     pub async fn list_cognitions(
         &self,
         subject: &str,
+        scope: Option<&str>,
         limit: usize,
+        offset: usize,
     ) -> Result<Vec<openloom_memory::store::CognitionRow>> {
         let conn = rusqlite::Connection::open(&self.db_path)?;
         let store = openloom_memory::store::CognitionStore::new(&conn);
-        store.query_by_subject(subject, limit)
+        store.query_by_subject_and_scope(subject, scope, limit, offset)
     }
 
     pub async fn cognition_snapshots(
@@ -843,8 +1728,173 @@ impl Engine {
         Ok(())
     }
 
+    pub async fn count_cognitions(&self, subject: &str, scope: Option<&str>) -> Result<usize> {
+        let conn = rusqlite::Connection::open(&self.db_path)?;
+        let store = openloom_memory::store::CognitionStore::new(&conn);
+        store.count_by_subject_and_scope(subject, scope)
+    }
+
+    pub async fn delete_cognition(&self, cognition_id: i64) -> Result<()> {
+        let conn = rusqlite::Connection::open(&self.db_path)?;
+        let store = openloom_memory::store::CognitionStore::new(&conn);
+        store.delete(cognition_id)
+    }
+
     pub async fn persona_summary(&self) -> String {
         self.persona.summarize().await.unwrap_or_default()
+    }
+
+    /// Feed conversation text into the memory pipeline for automatic extraction.
+    pub fn feed_memory_pipeline(&self, session_id: &str, text: &str, context: &str) {
+        let _ = self.memory_tx.send(memory_thread::ProcessRequest {
+            session_id: session_id.to_string(),
+            text: text.to_string(),
+            context: context.to_string(),
+        });
+    }
+
+    /// Use the configured utility model to extract cognitions, scoped to a session.
+    /// Reads the user's 小工具模型 (settings.models.models.utility) from config.
+    /// Returns the number of cognitions extracted.
+    pub async fn extract_cognitions_with_local_model(&self, text: &str, scope: &str) -> Result<usize> {
+        let config = self.config.read().await;
+        // Read the user's configured 小工具模型: settings.models.models.utility
+        let utility = config.settings
+            .get("models").and_then(|m| m.get("models")).and_then(|m| m.get("utility"));
+        let utility_id = utility.and_then(|u| u.get("id")).and_then(|v| v.as_str());
+        let utility_provider = utility.and_then(|u| u.get("provider")).and_then(|v| v.as_str());
+
+        let local_model = utility_id
+            .and_then(|id| Self::find_model_in_settings(&config.settings, id, utility_provider.unwrap_or("lmstudio")));
+        drop(config);
+
+        let model_cfg = match local_model {
+            Some(cfg) => {
+                tracing::info!(backend = ?cfg.backend, base_url = ?cfg.base_url, "using local model for cognition extraction");
+                cfg
+            }
+            None => {
+                tracing::info!("no local model configured, using rule-based pipeline for manual record");
+                self.feed_memory_pipeline(scope, text, "manual_record");
+                return Ok(0);
+            }
+        };
+
+        let model_id = model_cfg.model.as_deref().unwrap_or(&model_cfg.name);
+
+        // Auto-load the model in LM Studio before sending the request
+        if model_cfg.backend == openloom_models::ModelBackend::LmStudio {
+            let base_url = model_cfg.base_url.as_deref().unwrap_or("http://localhost:1234/v1");
+            let _ = openloom_inference::ensure_lm_studio_model(base_url, model_id, model_cfg.context_size).await;
+        }
+
+        let prompt = format!(
+            "Extract key facts about the user from this text. For each fact, output one line:\n\
+            trait: value (confidence: 0.0 to 1.0)\n\n\
+            Example:\n\
+            profession: backend engineer (confidence: 0.95)\n\
+            preference: likes Rust (confidence: 0.8)\n\
+            tech_stack: Rust, Python (confidence: 0.9)\n\n\
+            Text:\n{text}\n\n\
+            Output one line per fact. If nothing to extract, output NONE."
+        );
+
+        let messages = vec![Message::user(&prompt)];
+        let req = CompletionRequest {
+            messages,
+            ..Default::default()
+        };
+
+        let resp_text = match openloom_inference::create_cloud_client(&model_cfg) {
+            Ok(client) => match client.complete(req).await {
+                Ok(resp) => {
+                    tracing::info!(len = resp.text.len(), "local model returned response for cognition extraction");
+                    resp.text
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "local model call failed, falling back to rule-based");
+                    self.feed_memory_pipeline(scope, text, "manual_record");
+                    return Ok(0);
+                }
+            },
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to create local client, falling back to rule-based");
+                self.feed_memory_pipeline(scope, text, "manual_record");
+                return Ok(0);
+            }
+        };
+
+        tracing::info!(lines = resp_text.lines().count(), scope, "parsing cognition extraction response");
+
+        let mut count = 0;
+        let conn = rusqlite::Connection::open(&self.db_path)?;
+        let store = openloom_memory::store::CognitionStore::new(&conn);
+
+        for line in resp_text.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed == "NONE" { continue; }
+
+            // Parse format: trait: value (confidence: 0.XX)
+            if let Some((trait_name, rest)) = trimmed.split_once(':') {
+                let trait_name = trait_name.trim().to_lowercase().replace(' ', "_");
+                if trait_name.is_empty() { continue; }
+
+                let (value, confidence) = if let Some(conf_start) = rest.find("(confidence:") {
+                    let value = rest[..conf_start].trim();
+                    let conf_part = &rest[conf_start + "(confidence:".len()..];
+                    let conf_str = conf_part.trim_end_matches(')').trim();
+                    let confidence = conf_str.parse::<f64>().unwrap_or(0.7);
+                    (value.to_string(), confidence)
+                } else {
+                    (rest.trim().to_string(), 0.7)
+                };
+
+                if !value.is_empty() {
+                    if let Err(e) = store.insert("USER", &trait_name, &value, confidence, 1, scope) {
+                        tracing::warn!(error = %e, trait_name, scope, "failed to insert cognition");
+                    } else {
+                        count += 1;
+                    }
+                }
+                continue;
+            }
+
+            // Fallback: JSON
+            if trimmed.starts_with('{')
+                && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed)
+            {
+                let trait_name = parsed.get("trait").and_then(|v| v.as_str()).unwrap_or("general");
+                let value = parsed.get("value").and_then(|v| v.as_str()).unwrap_or(trimmed);
+                let confidence = parsed.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.7);
+                if let Err(e) = store.insert("USER", trait_name, value, confidence, 1, scope) {
+                    tracing::warn!(error = %e, trait_name, scope, "failed to insert cognition");
+                } else {
+                    count += 1;
+                }
+            }
+        }
+
+        // Also feed text through pipeline for event-level recording
+        self.feed_memory_pipeline(scope, text, "manual_record");
+
+        Ok(count)
+    }
+
+    /// Auto-extract cognitions from a session's conversation history using the local model.
+    pub async fn extract_cognitions_from_session(&self, session_id: &str) -> Result<usize> {
+        let history = self.get_working_memory(session_id).unwrap_or_default();
+        if history.is_empty() {
+            anyhow::bail!("session has no messages");
+        }
+
+        // Build a conversation transcript
+        let transcript: String = history.iter()
+            .map(|m| format!("[{}]: {}", m.role, m.content))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Reuse the same extraction flow, scoped to this session
+        self.extract_cognitions_with_local_model(&transcript, session_id).await
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<EngineEvent> {
@@ -860,6 +1910,10 @@ impl Engine {
 
     pub fn list_skills(&self) -> Vec<openloom_skills::SkillInfo> {
         self.skills.list_all()
+    }
+
+    pub fn list_all_skills(&self) -> Vec<openloom_skills::SkillInfo> {
+        self.skills.list_all_skills()
     }
 
     pub async fn invoke_skill(
@@ -892,6 +1946,120 @@ impl Engine {
 
     pub fn data_dir(&self) -> &std::path::Path {
         &self.data_dir
+    }
+
+    /// Request abort of the streaming response for the given session.
+    /// Returns true if a flag was found and set (session was streaming).
+    pub fn abort_session(&self, session_id: &str) -> bool {
+        let flags = self.abort_flags.lock().unwrap();
+        if let Some(flag) = flags.get(session_id) {
+            flag.store(true, Ordering::SeqCst);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Compact a session's working memory by summarizing the conversation.
+    /// Returns the number of messages replaced.
+    pub async fn compact_session(&self, session_id: &str) -> Result<usize> {
+        let history = self.get_working_memory(session_id).unwrap_or_default();
+        if history.is_empty() {
+            return Ok(0);
+        }
+
+        // Extract user/assistant messages (skip tool messages)
+        let conversation: Vec<String> = history
+            .iter()
+            .filter(|m| m.role == "user" || m.role == "assistant")
+            .map(|m| format!("[{}]: {}", m.role, m.content))
+            .collect();
+
+        if conversation.is_empty() {
+            return Ok(0);
+        }
+
+        let count = conversation.len();
+        let text = conversation.join("\n\n");
+
+        let prompt = format!(
+            "Summarize the following conversation into a concise summary under 500 characters. Include key decisions, code changes, and important context. Respond with only the summary, no preamble.\n\n{}",
+            text
+        );
+
+        // Use the cloud client or local inference for summarization
+        let summary = match self.invoke_model_raw(&prompt).await {
+            Ok(s) => s.trim().to_string(),
+            Err(e) => {
+                tracing::warn!(error = %e, "Compaction summarization failed, using heuristic truncation");
+                // Fallback: keep last 500 chars
+                let fallback: String = text.chars().rev().take(500).collect::<Vec<_>>().into_iter().rev().collect();
+                format!("[Compacted context]\n\n...{}", fallback)
+            }
+        };
+
+        // Replace working memory with the summary
+        let compact_msg = ChatMessage {
+            role: "system".into(),
+            content: format!("[Compacted session context]\n\n{}", summary),
+            timestamp: chrono::Utc::now(),
+            id: None,
+            seq: None,
+            metadata: None,
+        };
+
+        let conn = rusqlite::Connection::open(&self.db_path)?;
+        // Delete old messages for this session
+        conn.execute(
+            "DELETE FROM message_history WHERE session_id = ?1",
+            rusqlite::params![session_id],
+        )?;
+        // Insert compacted summary
+        let store = openloom_memory::store::MessageStore::new(&conn);
+        store.insert(session_id, 1, &compact_msg.role, &compact_msg.content)?;
+
+        tracing::info!(session_id, count, "Session compacted");
+        Ok(count)
+    }
+
+    /// Get or create the abort flag for a session. The flag is removed when streaming ends.
+    fn session_abort_flag(&self, session_id: &str) -> Arc<AtomicBool> {
+        let mut flags = self.abort_flags.lock().unwrap();
+        flags.entry(session_id.to_string())
+            .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+            .clone()
+    }
+
+    fn remove_abort_flag(&self, session_id: &str) {
+        let mut flags = self.abort_flags.lock().unwrap();
+        flags.remove(session_id);
+    }
+
+    /// Get the permission mode for a session. Falls back to default mode.
+    pub fn permission_mode(&self, session_id: &str) -> String {
+        if !session_id.is_empty() {
+            let modes = self.permission_modes.lock().unwrap();
+            if let Some(m) = modes.get(session_id) {
+                return m.clone();
+            }
+        }
+        self.default_permission_mode.lock().unwrap().clone()
+    }
+
+    /// Set the permission mode for a specific session, or set the default for new sessions.
+    /// Valid modes: "operate", "ask", "read_only". Other values default to "ask".
+    pub fn set_permission_mode(&self, session_id: &str, mode: &str, pending_new_session: bool) -> String {
+        let normalized = match mode {
+            "operate" | "ask" | "read_only" => mode.to_string(),
+            _ => "ask".to_string(),
+        };
+        if pending_new_session || session_id.is_empty() {
+            *self.default_permission_mode.lock().unwrap() = normalized.clone();
+        } else {
+            let mut modes = self.permission_modes.lock().unwrap();
+            modes.insert(session_id.to_string(), normalized.clone());
+        }
+        normalized
     }
 
     pub fn find_skill_by_name(&self, name: &str) -> Option<String> {
@@ -999,12 +2167,14 @@ impl Engine {
     pub async fn model_info(&self) -> ModelInfoResult {
         let (model_id, backend, base_url, api_key_env) = {
             let config = self.config.read().await;
-            let cloud = config.models.iter().find(|m| m.backend.is_cloud_capable());
-            let local = config
-                .models
-                .iter()
-                .find(|m| m.backend.is_local_inference());
-            let active = cloud.or(local);
+            // Prefer the user's saved active model from settings, falling back to
+            // the first cloud-capable (or local) model in the config list.
+            let active = resolve_active_model(&config.models, &config.settings)
+                .or_else(|| {
+                    let cloud = config.models.iter().find(|m| m.backend.is_cloud_capable());
+                    let local = config.models.iter().find(|m| m.backend.is_local_inference());
+                    cloud.or(local)
+                });
             (
                 active.and_then(|c| c.model.clone()).unwrap_or_default(),
                 active
@@ -1043,6 +2213,21 @@ pub struct ModelInfoResult {
     pub api_key_env: String,
     pub api_key_set: bool,
     pub context_size: usize,
+}
+
+/// Resolve the active model from `settings.active_model` against the typed model configs.
+/// Returns None if no active model is set or the referenced model is not found.
+fn resolve_active_model<'a>(
+    models: &'a [openloom_models::ModelConfig],
+    settings: &serde_json::Value,
+) -> Option<&'a openloom_models::ModelConfig> {
+    let active = settings.get("active_model")?;
+    let id = active.get("id")?.as_str()?;
+    let provider = active.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+    models.iter().find(|m| {
+        let m_id = m.model.as_deref().unwrap_or("");
+        m_id == id && m.backend.name().eq_ignore_ascii_case(provider)
+    })
 }
 
 fn parse_context_hint(model_name: &str) -> Option<usize> {
@@ -1098,9 +2283,10 @@ mod tests {
             role: "user".into(),
             content: "hello".into(),
             timestamp: Utc::now(),
+            metadata: None,
         };
         let sid = engine.create_session().await.unwrap().id;
-        let resp = engine.handle_message(msg, &sid, Mode::Code).await.unwrap();
+        let resp = engine.handle_message(msg, &sid, Mode::Code, openloom_models::ModelPreference::default()).await.unwrap();
         assert_eq!(resp.session_id, sid);
     }
 
@@ -1122,9 +2308,10 @@ mod tests {
             role: "user".into(),
             content: "hello".into(),
             timestamp: Utc::now(),
+            metadata: None,
         };
         let sid = engine.create_session().await.unwrap().id;
-        engine.handle_message(msg, &sid, Mode::Code).await.unwrap();
+        engine.handle_message(msg, &sid, Mode::Code, openloom_models::ModelPreference::default()).await.unwrap();
         let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await;
         assert!(event.is_ok(), "should receive TokenUsage event");
     }
@@ -1136,9 +2323,10 @@ mod tests {
             role: "user".into(),
             content: "帮我管理文件".into(),
             timestamp: Utc::now(),
+            metadata: None,
         };
         let sid = engine.create_session().await.unwrap().id;
-        let resp = engine.handle_message(msg, &sid, Mode::Code).await.unwrap();
+        let resp = engine.handle_message(msg, &sid, Mode::Code, openloom_models::ModelPreference::default()).await.unwrap();
         assert!(!resp.session_id.is_empty());
     }
 
@@ -1166,9 +2354,10 @@ mod tests {
             role: "user".into(),
             content: "hello".into(),
             timestamp: Utc::now(),
+            metadata: None,
         };
         let sid = engine.create_session().await.unwrap().id;
-        let resp = engine.handle_message(msg, &sid, Mode::Code).await;
+        let resp = engine.handle_message(msg, &sid, Mode::Code, openloom_models::ModelPreference::default()).await;
         // First request must pass rate limiter (interval=100ms, elapsed=0 but check resets)
         assert!(
             resp.is_ok(),

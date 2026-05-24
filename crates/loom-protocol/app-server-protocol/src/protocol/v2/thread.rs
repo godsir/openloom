@@ -1321,7 +1321,7 @@ impl crate::experimental_api::ExperimentalApi for ThreadStartParams {
         if self.runtime_workspace_roots.as_ref().is_some_and(|v| !v.is_empty()) {
             return Some("thread/start.runtimeWorkspaceRoots");
         }
-        if let Some(reason) = self.approval_policy.as_ref().and_then(|v| v.experimental_reason()) {
+        if let Some(reason) = self.approval_policy.as_ref().and_then(crate::experimental_api::ExperimentalApi::experimental_reason) {
             return Some(reason);
         }
         if self.permissions.is_some() {
@@ -1363,7 +1363,7 @@ impl crate::experimental_api::ExperimentalApi for ThreadStartResponse {
 
 impl crate::experimental_api::ExperimentalApi for ThreadSettingsUpdateParams {
     fn experimental_reason(&self) -> Option<&'static str> {
-        if let Some(reason) = self.approval_policy.as_ref().and_then(|v| v.experimental_reason()) {
+        if let Some(reason) = self.approval_policy.as_ref().and_then(crate::experimental_api::ExperimentalApi::experimental_reason) {
             return Some(reason);
         }
         if self.permissions.is_some() {
@@ -1387,7 +1387,7 @@ impl crate::experimental_api::ExperimentalApi for ThreadResumeParams {
         if self.runtime_workspace_roots.as_ref().is_some_and(|v| !v.is_empty()) {
             return Some("thread/resume.runtimeWorkspaceRoots");
         }
-        if let Some(reason) = self.approval_policy.as_ref().and_then(|v| v.experimental_reason()) {
+        if let Some(reason) = self.approval_policy.as_ref().and_then(crate::experimental_api::ExperimentalApi::experimental_reason) {
             return Some(reason);
         }
         if self.permissions.is_some() {
@@ -1426,7 +1426,7 @@ impl crate::experimental_api::ExperimentalApi for ThreadForkParams {
         if self.runtime_workspace_roots.as_ref().is_some_and(|v| !v.is_empty()) {
             return Some("thread/fork.runtimeWorkspaceRoots");
         }
-        if let Some(reason) = self.approval_policy.as_ref().and_then(|v| v.experimental_reason()) {
+        if let Some(reason) = self.approval_policy.as_ref().and_then(crate::experimental_api::ExperimentalApi::experimental_reason) {
             return Some(reason);
         }
         if self.permissions.is_some() {

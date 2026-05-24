@@ -17,6 +17,9 @@ debug/
 Thumbs.db
 *.db
 
+# Logs
+*.log
+
 # Node / Electron
 node_modules/
 dist/

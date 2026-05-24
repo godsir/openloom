@@ -745,7 +745,7 @@ pub struct ConfigWarningNotification {
 
 impl crate::experimental_api::ExperimentalApi for ProfileV2 {
     fn experimental_reason(&self) -> Option<&'static str> {
-        if let Some(reason) = self.approval_policy.as_ref().and_then(|v| v.experimental_reason()) {
+        if let Some(reason) = self.approval_policy.as_ref().and_then(crate::experimental_api::ExperimentalApi::experimental_reason) {
             return Some(reason);
         }
         if self.approvals_reviewer.is_some() {
@@ -757,7 +757,7 @@ impl crate::experimental_api::ExperimentalApi for ProfileV2 {
 
 impl crate::experimental_api::ExperimentalApi for Config {
     fn experimental_reason(&self) -> Option<&'static str> {
-        if let Some(reason) = self.approval_policy.as_ref().and_then(|v| v.experimental_reason()) {
+        if let Some(reason) = self.approval_policy.as_ref().and_then(crate::experimental_api::ExperimentalApi::experimental_reason) {
             return Some(reason);
         }
         if self.approvals_reviewer.is_some() {
@@ -786,7 +786,7 @@ impl crate::experimental_api::ExperimentalApi for ConfigRequirements {
         if let Some(reason) = self
             .allowed_approval_policies
             .as_ref()
-            .and_then(|v| v.experimental_reason())
+            .and_then(crate::experimental_api::ExperimentalApi::experimental_reason)
         {
             return Some(reason);
         }
@@ -805,6 +805,6 @@ impl crate::experimental_api::ExperimentalApi for ConfigRequirements {
 
 impl crate::experimental_api::ExperimentalApi for ConfigRequirementsReadResponse {
     fn experimental_reason(&self) -> Option<&'static str> {
-        self.requirements.as_ref().and_then(|v| v.experimental_reason())
+        self.requirements.as_ref().and_then(crate::experimental_api::ExperimentalApi::experimental_reason)
     }
 }

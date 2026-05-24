@@ -21,109 +21,109 @@ impl RuleBasedExtractor {
         let rules = vec![
             // ── 兴趣爱好 ──
             ExtractionRule {
-                pattern: Regex::new(r"(喜欢|爱好|感兴趣|热爱|着迷|痴迷).{0,10}(编程|音乐|游戏|运动|读书|旅行|摄影|画画|烹饪|电影|动漫|写作|健身|钓鱼|园艺)").unwrap(),
+                pattern: Regex::new(r"(喜欢|爱好|感兴趣|热爱|着迷|痴迷|玩).{0,20}(编程|音乐|游戏|运动|读书|旅行|摄影|画画|烹饪|电影|动漫|写作|健身|钓鱼|园艺|Rust|Python|开源|AI|开发)").unwrap(),
                 event_type: EventType::Preference,
                 action: "interest_hobby".into(),
-                min_confidence: 0.80,
+                min_confidence: 0.75,
             },
             // ── 职业身份 ──
             ExtractionRule {
-                pattern: Regex::new(r"(我是|我做|我在).{0,6}(工程师|开发|设计师|产品经理|学生|老师|医生|律师|会计|销售|运营|管理|创业|研究|分析师|自由职业)").unwrap(),
+                pattern: Regex::new(r"(我是|我做|我在|从事|干|做|搞).{0,15}(工程师|开发|程序员|设计师|产品|学生|老师|医生|律师|会计|销售|运营|管理|创业|研究|分析师|自由职业|后端|前端|全栈|架构)").unwrap(),
                 event_type: EventType::BehaviorPattern,
                 action: "profession_identity".into(),
-                min_confidence: 0.85,
+                min_confidence: 0.80,
             },
             // ── 技能水平 ──
             ExtractionRule {
-                pattern: Regex::new(r"(擅长|精通|熟悉|会用|学过|在学|新手|刚入门|不太懂|不太会).{0,10}(Python|Rust|Java|JavaScript|前端|后端|算法|机器学习|数据分析|PS|设计|英语|日语)").unwrap(),
+                pattern: Regex::new(r"(擅长|精通|熟悉|会用|学过|在学|新手|刚入门|不太懂|不太会|会|能写|写过|用了).{0,15}(Python|Rust|Java|JavaScript|TypeScript|Go|C\+\+|前端|后端|算法|机器学习|数据分析|PS|设计|英语|日语|React|Vue|Docker|Linux|Git|SQL|Redis|K8s)").unwrap(),
                 event_type: EventType::BehaviorPattern,
                 action: "skill_level".into(),
-                min_confidence: 0.80,
+                min_confidence: 0.75,
             },
             // ── 通用偏好 ──
             ExtractionRule {
-                pattern: Regex::new(r"(喜欢|偏好|更爱|倾向|习惯)(用|做|看|吃|玩|听|写|选)").unwrap(),
+                pattern: Regex::new(r"(喜欢|偏好|更爱|倾向|习惯|比较喜欢|偏爱)(用|做|看|吃|玩|听|写|选|使|搞)").unwrap(),
                 event_type: EventType::Preference,
                 action: "general_preference".into(),
-                min_confidence: 0.70,
+                min_confidence: 0.65,
             },
             ExtractionRule {
-                pattern: Regex::new(r"(讨厌|不喜欢|烦|受不了|反感).{0,8}").unwrap(),
+                pattern: Regex::new(r"(讨厌|不喜欢|烦|受不了|反感|不想|不要|别).{0,15}").unwrap(),
                 event_type: EventType::Preference,
                 action: "dislike".into(),
-                min_confidence: 0.70,
+                min_confidence: 0.65,
             },
             // ── 情绪状态 ──
             ExtractionRule {
-                pattern: Regex::new(r"(开心|高兴|兴奋|激动|爽|满足|愉快|欣慰)").unwrap(),
+                pattern: Regex::new(r"(开心|高兴|兴奋|激动|爽|满足|愉快|欣慰|挺好|不错)").unwrap(),
                 event_type: EventType::EmotionalState,
                 action: "positive_mood".into(),
-                min_confidence: 0.70,
+                min_confidence: 0.65,
             },
             ExtractionRule {
-                pattern: Regex::new(r"(沮丧|失落|难过|伤心|绝望|崩溃|抑郁|郁闷|烦躁)").unwrap(),
+                pattern: Regex::new(r"(沮丧|失落|难过|伤心|绝望|崩溃|抑郁|郁闷|烦躁|无语|离谱|恶心)").unwrap(),
                 event_type: EventType::EmotionalState,
                 action: "negative_mood".into(),
-                min_confidence: 0.70,
+                min_confidence: 0.65,
             },
             ExtractionRule {
-                pattern: Regex::new(r"(焦虑|担心|害怕|紧张|不安|压力大|累|疲惫)").unwrap(),
+                pattern: Regex::new(r"(焦虑|担心|害怕|紧张|不安|压力大|累|疲惫|没睡好|熬夜)").unwrap(),
                 event_type: EventType::EmotionalState,
                 action: "stressed".into(),
-                min_confidence: 0.70,
+                min_confidence: 0.65,
             },
             // ── 需求目标 ──
             ExtractionRule {
-                pattern: Regex::new(r"(希望|想要|需要|打算|计划|准备|目标是).{0,15}(学|做|买|换|去|找|完成|实现)").unwrap(),
+                pattern: Regex::new(r"(希望|想要|需要|打算|计划|准备|目标是|想|要做).{0,20}(学|做|买|换|去|找|完成|实现|搞|整|写|改|搭|配|部署|上线)").unwrap(),
                 event_type: EventType::BehaviorPattern,
                 action: "goal_expressed".into(),
-                min_confidence: 0.75,
+                min_confidence: 0.70,
             },
             // ── 工作方式 ──
             ExtractionRule {
-                pattern: Regex::new(r"(习惯|通常|一般|总是|经常).{0,8}(早上|晚上|深夜|周末|远程|在家|在公司)").unwrap(),
+                pattern: Regex::new(r"(习惯|通常|一般|总是|经常|每天|平时).{0,15}(早上|晚上|深夜|周末|远程|在家|在公司|写代码|撸码|加班)").unwrap(),
                 event_type: EventType::BehaviorPattern,
                 action: "work_habit".into(),
-                min_confidence: 0.70,
+                min_confidence: 0.65,
             },
             // ── 知识领域 ──
             ExtractionRule {
-                pattern: Regex::new(r"(了解|知道|研究|关注|涉猎|专注).{0,6}(AI|人工智能|区块链|金融|量化|嵌入式|云计算|安全|前端|后端|运维|设计)").unwrap(),
+                pattern: Regex::new(r"(了解|知道|研究|关注|涉猎|专注|搞|做).{0,15}(AI|人工智能|区块链|金融|量化|嵌入式|云计算|安全|前端|后端|运维|设计|游戏|音视频|IoT|Rust|机器学习)").unwrap(),
                 event_type: EventType::BehaviorPattern,
                 action: "knowledge_domain".into(),
-                min_confidence: 0.75,
+                min_confidence: 0.70,
             },
             // ── 沟通偏好 ──
             ExtractionRule {
-                pattern: Regex::new(r"(请|麻烦|帮我).{0,4}(简洁|详细|用中文|用英文|举个例子|不要太长|一步一步)").unwrap(),
+                pattern: Regex::new(r"(请|麻烦|帮我).{0,10}(简洁|详细|用中文|用英文|举个例子|不要太长|一步一步|说人话|直接|别废话)").unwrap(),
                 event_type: EventType::Preference,
                 action: "communication_style".into(),
-                min_confidence: 0.75,
+                min_confidence: 0.70,
             },
             // ── Coding 偏好 ──
             ExtractionRule {
-                pattern: Regex::new(r"(用|写|改成|换成|迁移到).{0,6}(React|Vue|Angular|Svelte|Next|Nuxt|Express|FastAPI|Django|Spring|Rust|Go|TypeScript|Python|Java|C\+\+|Swift)").unwrap(),
+                pattern: Regex::new(r"(用|写|改成|换成|迁移到|重构).{0,15}(React|Vue|Angular|Svelte|Next|Nuxt|Express|FastAPI|Django|Spring|Rust|Go|TypeScript|Python|Java|C\+\+|Swift|Kotlin|Zig)").unwrap(),
                 event_type: EventType::Preference,
                 action: "tech_stack_preference".into(),
-                min_confidence: 0.80,
-            },
-            ExtractionRule {
-                pattern: Regex::new(r"(不要|别|不用).{0,4}(注释|comment|文档|docstring|type hint|any|console\.log)").unwrap(),
-                event_type: EventType::Preference,
-                action: "code_style_dislike".into(),
-                min_confidence: 0.80,
-            },
-            ExtractionRule {
-                pattern: Regex::new(r"(用|加上|要有|保持).{0,4}(TDD|测试|unit test|type safe|严格模式|eslint|prettier|fmt|clippy)").unwrap(),
-                event_type: EventType::Preference,
-                action: "code_quality_preference".into(),
                 min_confidence: 0.75,
             },
             ExtractionRule {
-                pattern: Regex::new(r"(这个|我的|当前).{0,4}(项目|工程|仓库|repo).{0,6}(是|用的|基于)").unwrap(),
+                pattern: Regex::new(r"(不要|别|不用|不想|讨厌).{0,10}(注释|comment|文档|docstring|type hint|any|console\.log|print|debug|魔法数字|硬编码|面条代码)").unwrap(),
+                event_type: EventType::Preference,
+                action: "code_style_dislike".into(),
+                min_confidence: 0.75,
+            },
+            ExtractionRule {
+                pattern: Regex::new(r"(用|加上|要有|保持|必须).{0,10}(TDD|测试|unit test|type safe|严格模式|eslint|prettier|fmt|clippy|CI|code review|格式化|类型检查)").unwrap(),
+                event_type: EventType::Preference,
+                action: "code_quality_preference".into(),
+                min_confidence: 0.70,
+            },
+            ExtractionRule {
+                pattern: Regex::new(r"(这个|我的|当前|在做的).{0,10}(项目|工程|仓库|repo|代码库).{0,10}(是|用的|基于|需要|在)").unwrap(),
                 event_type: EventType::BehaviorPattern,
                 action: "project_context".into(),
-                min_confidence: 0.80,
+                min_confidence: 0.75,
             },
         ];
         Self::new(rules)

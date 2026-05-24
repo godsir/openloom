@@ -1,11 +1,16 @@
+use std::collections::HashSet;
+use std::sync::RwLock;
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub mod builtins;
+pub mod cron_store;
 pub mod external;
 pub mod loom_context;
 pub mod plugin_loader;
+pub mod settings_registry;
 
 /// Skill trait — Phase 1: Rust native implementation; Phase 2: WASM compilation
 #[async_trait::async_trait]
@@ -38,20 +43,31 @@ pub struct SkillInfo {
 
 pub struct SkillRegistry {
     skills: Vec<Box<dyn Skill>>,
+    disabled: RwLock<HashSet<String>>,
 }
 
 impl SkillRegistry {
     pub fn new() -> Self {
-        Self { skills: Vec::new() }
+        Self { skills: Vec::new(), disabled: RwLock::new(HashSet::new()) }
     }
 
     pub fn register(&mut self, skill: Box<dyn Skill>) {
         self.skills.push(skill);
     }
 
+    pub fn set_disabled(&self, names: Vec<String>) {
+        *self.disabled.write().unwrap() = names.into_iter().collect();
+    }
+
+    pub fn is_disabled(&self, name: &str) -> bool {
+        self.disabled.read().unwrap().contains(name)
+    }
+
     pub fn find_by_trigger(&self, text: &str) -> Option<&dyn Skill> {
+        let disabled = self.disabled.read().unwrap();
         self.skills
             .iter()
+            .filter(|s| !disabled.contains(s.name()))
             .find(|s| {
                 s.manifest()
                     .triggers
@@ -62,15 +78,19 @@ impl SkillRegistry {
     }
 
     pub fn find_by_name(&self, name: &str) -> Option<&dyn Skill> {
+        let disabled = self.disabled.read().unwrap();
         self.skills
             .iter()
+            .filter(|s| !disabled.contains(s.name()))
             .find(|s| s.name() == name)
             .map(|s| s.as_ref())
     }
 
     pub fn list_all(&self) -> Vec<SkillInfo> {
+        let disabled = self.disabled.read().unwrap();
         self.skills
             .iter()
+            .filter(|s| !disabled.contains(s.name()))
             .map(|s| {
                 let m = s.manifest();
                 SkillInfo {
@@ -83,15 +103,32 @@ impl SkillRegistry {
     }
 
     pub async fn invoke(&self, name: &str, params: Value) -> Result<Value> {
-        let skill = self
-            .skills
-            .iter()
-            .find(|s| s.name() == name)
-            .ok_or_else(|| anyhow::anyhow!("skill '{}' not found", name))?;
+        let skill = {
+            let disabled = self.disabled.read().unwrap();
+            self.skills
+                .iter()
+                .filter(|s| !disabled.contains(s.name()))
+                .find(|s| s.name() == name)
+                .ok_or_else(|| anyhow::anyhow!("skill '{}' not found", name))?
+        };
         let permissions = skill.manifest().permissions.clone();
         openloom_sandbox::check_permissions(&permissions, name, &params)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         skill.invoke(params).await
+    }
+
+    pub fn list_all_skills(&self) -> Vec<SkillInfo> {
+        self.skills
+            .iter()
+            .map(|s| {
+                let m = s.manifest();
+                SkillInfo {
+                    name: m.name.clone(),
+                    description: m.description.clone(),
+                    triggers: m.triggers.clone(),
+                }
+            })
+            .collect()
     }
 
     pub fn all_skills(&self) -> &[Box<dyn Skill>] {

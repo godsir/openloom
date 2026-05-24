@@ -55,7 +55,6 @@ members = [
     "crates/loom-protocol/cli",
 ]
 exclude = [
-    "crates/cli.old",
     "crates/loom-utils",
     "crates/loom-protocol",
 ]

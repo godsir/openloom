@@ -182,6 +182,12 @@ pub struct ChatMessage {
     pub content: String,
     #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,
+    #[serde(default)]
+    pub metadata: Option<String>,
+    #[serde(default)]
+    pub id: Option<i64>,
+    #[serde(default)]
+    pub seq: Option<i64>,
 }
 
 // === Native Tool Calling Types (aligned with OpenCode) ===
@@ -206,12 +212,25 @@ impl Role {
     }
 }
 
+/// Lightweight image descriptor for constructing multimodal messages.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImagePart {
+    pub data: String,
+    #[serde(rename = "mime_type")]
+    pub mime_type: String,
+}
+
 /// A content part within a message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentPart {
     Text {
         text: String,
+    },
+    Image {
+        source_type: String,
+        media_type: String,
+        data: String,
     },
     ToolCall {
         id: String,
@@ -239,6 +258,27 @@ impl Message {
         Self {
             role: Role::User,
             content: vec![ContentPart::Text { text: text.into() }],
+            timestamp: Utc::now(),
+        }
+    }
+
+    pub fn user_with_images(text: impl Into<String>, images: &[ImagePart]) -> Self {
+        let mut parts: Vec<ContentPart> = Vec::new();
+        // Text MUST come before images in the content array, otherwise llama.cpp's
+        // chat template processing may fail to insert image marker tokens, causing
+        // "number of bitmaps (N) does not match number of markers (0)" errors.
+        let t = text.into();
+        parts.push(ContentPart::Text { text: t });
+        for img in images {
+            parts.push(ContentPart::Image {
+                source_type: "base64".into(),
+                media_type: img.mime_type.clone(),
+                data: img.data.clone(),
+            });
+        }
+        Self {
+            role: Role::User,
+            content: parts,
             timestamp: Utc::now(),
         }
     }
@@ -399,6 +439,12 @@ pub struct SessionInfo {
     pub id: String,
     pub created_at: DateTime<Utc>,
     pub message_count: usize,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub pinned_at: Option<String>,
+    #[serde(default)]
+    pub archived_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -633,6 +679,14 @@ pub enum EngineEvent {
         old_state: AgentState,
         new_state: AgentState,
     },
+    StreamDelta {
+        session_id: String,
+        delta: String,
+    },
+    StreamEnd {
+        session_id: String,
+        full_response: String,
+    },
     TokenUsage {
         session_id: String,
         model: String,
@@ -655,6 +709,19 @@ pub enum EngineEvent {
         tool: String,
         params: serde_json::Value,
         risk_level: RiskLevel,
+    },
+    ToolCallStarted {
+        session_id: String,
+        call_id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
+    ToolCallEnded {
+        session_id: String,
+        call_id: String,
+        name: String,
+        success: bool,
+        result_summary: String,
     },
 }
 
@@ -832,6 +899,8 @@ pub struct AppConfig {
     pub persona: PersonaPrefs,
     #[serde(default)]
     pub rate_limit: RateLimitConfig,
+    #[serde(default)]
+    pub settings: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -906,6 +975,53 @@ impl Default for LoggingPrefs {
     }
 }
 
+/// Recursively set a dot-separated path inside a JSON value, creating intermediate objects.
+fn set_json_path(root: &mut serde_json::Value, path: &str, value: serde_json::Value) {
+    let parts: Vec<&str> = path.split('.').collect();
+    if parts.is_empty() {
+        return;
+    }
+
+    // Walk to the parent, creating intermediate objects as needed
+    let mut current = root;
+    for part in &parts[..parts.len() - 1] {
+        if current.is_null() || !current.is_object() {
+            *current = serde_json::Value::Object(serde_json::Map::new());
+        }
+        current = current
+            .as_object_mut()
+            .unwrap()
+            .entry((*part).to_string())
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    }
+
+    // Insert the leaf value
+    if current.is_null() || !current.is_object() {
+        *current = serde_json::Value::Object(serde_json::Map::new());
+    }
+    if let Some(obj) = current.as_object_mut() {
+        obj.insert(parts.last().unwrap().to_string(), value);
+    }
+}
+
+/// Deep-merge `overlay` into `base`: for object values, recursively merge; otherwise overlay wins.
+fn deep_merge(mut base: serde_json::Value, overlay: serde_json::Value) -> serde_json::Value {
+    match (&mut base, overlay) {
+        (serde_json::Value::Object(base_map), serde_json::Value::Object(overlay_map)) => {
+            for (k, v) in overlay_map {
+                let merged = if let Some(existing) = base_map.get(&k) {
+                    deep_merge(existing.clone(), v)
+                } else {
+                    v
+                };
+                base_map.insert(k, merged);
+            }
+            base
+        }
+        (_, overlay) => overlay,
+    }
+}
+
 impl AppConfig {
     pub fn get_nested(&self, key: &str) -> Option<serde_json::Value> {
         let value = serde_json::to_value(self).ok()?;
@@ -918,29 +1034,81 @@ impl AppConfig {
     }
 
     #[allow(clippy::collapsible_if, clippy::collapsible_match)]
-    pub fn set_nested(&mut self, key: &str, value: &str) -> anyhow::Result<()> {
-        let parts: Vec<&str> = key.split('.').collect();
-        if parts.len() != 2 {
-            anyhow::bail!("key must be 'section.field' format");
+    pub fn set_nested(&mut self, key: &str, value: serde_json::Value) -> anyhow::Result<()> {
+        // Handle `settings.*` keys: write into the free-form settings JSON at arbitrary depth
+        if key.starts_with("settings.") || key == "settings" {
+            let sub_path = key.strip_prefix("settings.").unwrap_or("");
+            if self.settings.is_null() {
+                self.settings = serde_json::Value::Object(serde_json::Map::new());
+            }
+            if sub_path.is_empty() {
+                // Replace entire settings
+                self.settings = value;
+            } else {
+                set_json_path(&mut self.settings, sub_path, value);
+            }
+            return Ok(());
         }
-        let json_value: serde_json::Value = serde_json::from_str(value)
-            .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
+
+        // Handle `general` key: front-end sends `config.set { key: 'general', value: {...} }`
+        // Map it into the settings JSON for round-trip fidelity with deep merge
+        if key == "general" {
+            if self.settings.is_null() {
+                self.settings = serde_json::Value::Object(serde_json::Map::new());
+            }
+            if let Some(map) = self.settings.as_object_mut() {
+                if let serde_json::Value::Object(obj) = value {
+                    for (k, v) in obj {
+                        let merged = if let Some(existing) = map.get(&k) {
+                            deep_merge(existing.clone(), v)
+                        } else {
+                            v
+                        };
+                        map.insert(k, merged);
+                    }
+                } else {
+                    map.insert("general".into(), value);
+                }
+            }
+            return Ok(());
+        }
+
+        // Typed 2-part keys remain unchanged
+        let parts: Vec<&str> = key.split('.').collect();
+        if parts.len() == 1 {
+            // Handle top-level keys like "models"
+            if parts[0] == "models" {
+                if let Ok(parsed) = serde_json::from_value::<Vec<ModelConfig>>(value.clone()) {
+                    self.models = parsed;
+                }
+                // Don't mirror into settings — typed field is authoritative
+                return Ok(());
+            }
+        }
+        if parts.len() != 2 {
+            // Fall back to settings JSON for unknown multi-part keys
+            if self.settings.is_null() {
+                self.settings = serde_json::Value::Object(serde_json::Map::new());
+            }
+            set_json_path(&mut self.settings, key, value);
+            return Ok(());
+        }
         match parts[0] {
             "server" => {
                 if parts[1] == "host" {
-                    if let serde_json::Value::String(s) = json_value {
+                    if let serde_json::Value::String(s) = value {
                         self.server.host = s;
                     }
                 }
             }
             "router" => match parts[1] {
                 "keyword_threshold" => {
-                    if let serde_json::Value::Number(n) = &json_value {
+                    if let serde_json::Value::Number(n) = &value {
                         self.router.keyword_threshold = n.as_f64().unwrap_or(0.85) as f32;
                     }
                 }
                 "fallback_threshold" => {
-                    if let serde_json::Value::Number(n) = &json_value {
+                    if let serde_json::Value::Number(n) = &value {
                         self.router.fallback_threshold = n.as_f64().unwrap_or(0.7) as f32;
                     }
                 }
@@ -948,12 +1116,12 @@ impl AppConfig {
             },
             "agent" => match parts[1] {
                 "max_iterations" => {
-                    if let serde_json::Value::Number(n) = &json_value {
+                    if let serde_json::Value::Number(n) = &value {
                         self.agent.max_iterations = n.as_u64().unwrap_or(3) as usize;
                     }
                 }
                 "timeout_secs" => {
-                    if let serde_json::Value::Number(n) = &json_value {
+                    if let serde_json::Value::Number(n) = &value {
                         self.agent.timeout_secs = n.as_u64().unwrap_or(120);
                     }
                 }
@@ -961,12 +1129,12 @@ impl AppConfig {
             },
             "persona" => match parts[1] {
                 "top_n" => {
-                    if let serde_json::Value::Number(n) = &json_value {
+                    if let serde_json::Value::Number(n) = &value {
                         self.persona.top_n = n.as_u64().unwrap_or(5) as usize;
                     }
                 }
                 "recency_decay_days" => {
-                    if let serde_json::Value::Number(n) = &json_value {
+                    if let serde_json::Value::Number(n) = &value {
                         self.persona.recency_decay_days = n.as_u64().unwrap_or(30) as u32;
                     }
                 }
@@ -974,24 +1142,24 @@ impl AppConfig {
             },
             "rate_limit" => {
                 if parts[1] == "min_interval_ms" {
-                    if let serde_json::Value::Number(n) = &json_value {
+                    if let serde_json::Value::Number(n) = &value {
                         self.rate_limit.min_interval_ms = n.as_u64().unwrap_or(100);
                     }
                 }
             }
             "cache" => match parts[1] {
                 "block_size" => {
-                    if let serde_json::Value::Number(n) = &json_value {
+                    if let serde_json::Value::Number(n) = &value {
                         self.cache.block_size = n.as_u64().unwrap_or(1024) as usize;
                     }
                 }
                 "max_blocks" => {
-                    if let serde_json::Value::Number(n) = &json_value {
+                    if let serde_json::Value::Number(n) = &value {
                         self.cache.max_blocks = n.as_u64().unwrap_or(32) as usize;
                     }
                 }
                 "total_budget_mb" => {
-                    if let serde_json::Value::Number(n) = &json_value {
+                    if let serde_json::Value::Number(n) = &value {
                         self.cache.total_budget_mb = n.as_u64().unwrap_or(5120) as usize;
                     }
                 }
@@ -999,12 +1167,18 @@ impl AppConfig {
             },
             "logging" => {
                 if parts[1] == "level" {
-                    if let serde_json::Value::String(s) = json_value {
+                    if let serde_json::Value::String(s) = value {
                         self.logging.level = s;
                     }
                 }
             }
-            _ => {}
+            _ => {
+                // Unknown section: write into settings JSON
+                if self.settings.is_null() {
+                    self.settings = serde_json::Value::Object(serde_json::Map::new());
+                }
+                set_json_path(&mut self.settings, key, value);
+            }
         }
         Ok(())
     }
@@ -1156,10 +1330,25 @@ mod tests {
     #[test]
     fn test_set_nested_key() {
         let mut config = AppConfig::default();
-        config.set_nested("server.host", "\"0.0.0.0\"").unwrap();
+        config.set_nested("server.host", serde_json::json!("0.0.0.0")).unwrap();
         assert_eq!(config.server.host, "0.0.0.0");
-        config.set_nested("agent.max_iterations", "5").unwrap();
+        config.set_nested("agent.max_iterations", serde_json::json!(5)).unwrap();
         assert_eq!(config.agent.max_iterations, 5);
+    }
+
+    #[test]
+    fn test_set_nested_settings_path() {
+        let mut config = AppConfig::default();
+        config.set_nested("settings.agent.default.name", serde_json::json!("MyAgent")).unwrap();
+        assert_eq!(config.settings["agent"]["default"]["name"], serde_json::json!("MyAgent"));
+    }
+
+    #[test]
+    fn test_set_nested_general_key() {
+        let mut config = AppConfig::default();
+        config.set_nested("general", serde_json::json!({"locale": "zh-CN", "theme": "dark"})).unwrap();
+        assert_eq!(config.settings["locale"], serde_json::json!("zh-CN"));
+        assert_eq!(config.settings["theme"], serde_json::json!("dark"));
     }
 }
 

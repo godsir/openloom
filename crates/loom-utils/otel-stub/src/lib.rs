@@ -11,6 +11,7 @@ pub struct SessionTelemetry {
 }
 
 impl SessionTelemetry {
+    #[allow(clippy::too_many_arguments)]
     pub fn new<C, S>(
         _conversation_id: C,
         _model: &str,

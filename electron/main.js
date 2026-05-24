@@ -1,5 +1,6 @@
-const { app, BrowserWindow, Tray, Menu, session, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, session, nativeImage, ipcMain, dialog, shell } = require('electron');
 const { spawn } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
 let mainWindow = null;
@@ -14,17 +15,28 @@ const READY_TIMEOUT_MS = 10000;
 let tray = null;
 let appIsQuitting = false;
 
+function loadAppIcon() {
+    const isDev = process.argv.includes('--dev');
+    const iconName = isDev ? 'icon_dev.ico' : 'icon.ico';
+    const iconPath = path.join(__dirname, 'icons', iconName);
+    if (fs.existsSync(iconPath)) {
+        return nativeImage.createFromPath(iconPath);
+    }
+    return nativeImage.createEmpty();
+}
+
 function startEngine() {
     const isDev = process.argv.includes('--dev');
     const engineExe = isDev
-        ? path.join(__dirname, '..', 'target', 'debug', 'openloom')
-        : path.join(__dirname, '..', 'target', 'release', 'openloom');
+        ? path.join(__dirname, '..', 'target', 'debug', 'loom-server')
+        : path.join(__dirname, '..', 'target', 'release', 'loom-server');
 
     const exePath = process.platform === 'win32' ? engineExe + '.exe' : engineExe;
 
     console.log(`Starting engine: ${exePath}`);
     engineProcess = spawn(exePath, ['serve', '--port', '0'], {
         stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, RUST_MIN_STACK: '8388608' },
     });
 
     // 10-second ready timeout
@@ -81,6 +93,7 @@ function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1200,
         height: 800,
+        icon: loadAppIcon(),
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
@@ -127,11 +140,96 @@ function updateTrayMenu(statusLabel) {
 }
 
 function createTray() {
-    const icon = nativeImage.createEmpty();
-    tray = new Tray(icon);
+    const icon = loadAppIcon();
+    tray = new Tray(icon.resize({ width: 16, height: 16 }));
     tray.setToolTip('openLoom');
     updateTrayMenu('Agent: Idle');
     tray.on('click', () => mainWindow?.show());
+}
+
+// ─── IPC Handlers for desktop bridge (window.hana) ───────────────────
+function registerIpcHandlers() {
+    ipcMain.handle('get-engine-port', () => enginePort || 0);
+
+    ipcMain.handle('get-engine-token', () => '');
+
+    ipcMain.handle('get-splash-info', () => ({}));
+
+    ipcMain.handle('onboarding-complete', () => {
+        console.log('Onboarding completed');
+        return;
+    });
+
+    ipcMain.handle('reload-main-window', () => {
+        if (mainWindow) mainWindow.reload();
+    });
+
+    ipcMain.handle('get-platform', () => process.platform);
+
+    ipcMain.handle('get-app-version', () => {
+        try { return require('./package.json').version; } catch { return '0.1.0'; }
+    });
+
+    ipcMain.handle('select-folder', async () => {
+        if (!mainWindow) return null;
+        const result = await dialog.showOpenDialog(mainWindow, {
+            properties: ['openDirectory'],
+        });
+        return result.canceled ? null : result.filePaths[0] || null;
+    });
+
+    ipcMain.handle('select-files', async () => {
+        if (!mainWindow) return [];
+        const result = await dialog.showOpenDialog(mainWindow, {
+            properties: ['openFile', 'multiSelections'],
+        });
+        return result.canceled ? [] : result.filePaths;
+    });
+
+    ipcMain.handle('read-file', async (_event, filePath) => {
+        try { return fs.readFileSync(filePath, 'utf-8'); } catch { return ''; }
+    });
+
+    ipcMain.handle('window-minimize', () => mainWindow?.minimize());
+    ipcMain.handle('window-maximize', () => {
+        if (mainWindow?.isMaximized()) mainWindow.unmaximize();
+        else mainWindow?.maximize();
+    });
+    ipcMain.handle('window-close', () => mainWindow?.close());
+    ipcMain.handle('window-is-maximized', () => mainWindow?.isMaximized() ?? false);
+
+    mainWindow?.on('maximize', () => {
+        mainWindow?.webContents.send('maximize-changed', true);
+    });
+    mainWindow?.on('unmaximize', () => {
+        mainWindow?.webContents.send('maximize-changed', false);
+    });
+
+    ipcMain.on('start-drag', (_event, filePaths) => {
+        if (!mainWindow) return;
+        const { startDrag } = require('electron').app;
+        if (startDrag) {
+            // Electron 32+
+            startDrag(filePaths);
+        }
+    });
+
+    ipcMain.handle('app-ready', () => {
+        console.log('Renderer signaled ready');
+        return;
+    });
+
+    ipcMain.handle('open-external', async (_event, url) => {
+        await shell.openExternal(url);
+    });
+
+    ipcMain.handle('open-folder', async (_event, dirPath) => {
+        shell.openPath(dirPath);
+    });
+
+    ipcMain.handle('open-file', async (_event, filePath) => {
+        shell.openPath(filePath);
+    });
 }
 
 app.whenReady().then(() => {
@@ -140,13 +238,14 @@ app.whenReady().then(() => {
             responseHeaders: {
                 ...details.responseHeaders,
                 'Content-Security-Policy': [
-                    "default-src 'self'; connect-src ws://127.0.0.1:* http://127.0.0.1:*; script-src 'self'"
+                    "default-src 'self'; connect-src ws://127.0.0.1:* http://127.0.0.1:* http://localhost:*; img-src 'self' data: file: http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self' data:"
                 ]
             }
         });
     });
 
     startEngine();
+    registerIpcHandlers();
     setTimeout(createWindow, 2000);
     setTimeout(createTray, 3000);
 

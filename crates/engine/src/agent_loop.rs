@@ -77,6 +77,49 @@ impl Engine {
         };
 
         let mode_cfg = mode.config();
+
+        // Auto-compact: if history exceeds 80% of context window, summarize the older half.
+        // The summary is injected as a system message — stored history is NOT modified.
+        let history_chars: usize = history.iter().map(|m| m.content.chars().count()).sum();
+        let compact_threshold = (self.context_max_chars as f64 * 0.8) as usize;
+        if history_chars > compact_threshold && self.context_max_chars > 0 {
+            let split = history.len() / 2;
+            let older: Vec<String> = history[..split]
+                .iter()
+                .filter(|m| m.role == "user" || m.role == "assistant")
+                .map(|m| format!("[{}]: {}", m.role, m.content))
+                .collect();
+            let older_text = older.join("\n\n");
+            if !older_text.is_empty() {
+                let compact_prompt = format!(
+                    "Summarize this conversation history concisely. Include key decisions, code changes, and important context. Keep under 500 characters.\n\n{}",
+                    older_text
+                );
+                if let Ok(summary) = self.invoke_model_raw(&compact_prompt).await {
+                    let summary = summary.trim().to_string();
+                    // Replace older messages with a single system summary
+                    let compact_msg = ChatMessage {
+                        role: "system".into(),
+                        content: format!("[Earlier conversation summary]\n{}", summary),
+                        timestamp: chrono::Utc::now(),
+                        metadata: None,
+                        id: None,
+                        seq: None,
+                    };
+                    history = vec![compact_msg]
+                        .into_iter()
+                        .chain(history[split..].to_vec())
+                        .collect();
+                    tracing::info!(
+                        session_id,
+                        original_msgs = history.len() + split,
+                        compacted_to = history.len(),
+                        "auto-compacted context for LLM call"
+                    );
+                }
+            }
+        }
+
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
             for _iteration in 0..max_iterations {
                 let persona_summary = self.persona.summarize().await.unwrap_or_default();
@@ -86,12 +129,19 @@ impl Engine {
                 } else {
                     format!("{}\n\n{}", system_with_mode, mode_cfg.system_suffix)
                 };
+                // Build a temp history for assembly: the compacted history is only for this call
+                let assembly_history = if _iteration == 0 {
+                    &history
+                } else {
+                    // On tool-use follow-ups, history was already compacted in first iteration
+                    &history
+                };
                 let messages = self.weaver.assemble_messages(
                     &system_with_mode,
                     "",
                     &persona_summary,
                     None,
-                    &history,
+                    assembly_history,
                     self.context_max_chars,
                 );
 
@@ -122,7 +172,7 @@ impl Engine {
                 total_completion_tokens += response.completion_tokens;
 
                 if !response.tool_calls.is_empty() {
-                    // Stream tool call markers to UI
+                    // Stream tool call markers to UI (TUI path via tx channel)
                     if let Some(ref tx) = tx {
                         for tc in &response.tool_calls {
                             let call_json = serde_json::to_string(tc).unwrap_or_default();
@@ -138,10 +188,32 @@ impl Engine {
 
                     // Execute each tool call
                     for tc in &response.tool_calls {
+                        // Notify UI: tool call started
+                        let _ = self.event_bus.send(EngineEvent::ToolCallStarted {
+                            session_id: session_id.to_string(),
+                            call_id: tc.id.clone(),
+                            name: tc.name.clone(),
+                            arguments: tc.arguments.clone(),
+                        });
+
                         let result = match self.execute_tool(tc, mode).await {
                             Ok(output) => truncate_tool_result(&output),
                             Err(e) => format!("Tool error: {}", e),
                         };
+
+                        // Notify UI: tool call ended
+                        let result_summary = if result.len() > 200 {
+                            format!("{}...", &result[..200])
+                        } else {
+                            result.clone()
+                        };
+                        let _ = self.event_bus.send(EngineEvent::ToolCallEnded {
+                            session_id: session_id.to_string(),
+                            call_id: tc.id.clone(),
+                            name: tc.name.clone(),
+                            success: !result.starts_with("Tool error:"),
+                            result_summary,
+                        });
 
                         if let Some(ref tx) = tx {
                             let _ = tx.send(format!("\x01RESULT\x02{}", result)).await;
@@ -152,21 +224,33 @@ impl Engine {
                             role: "assistant".into(),
                             content: format!("ToolCall|{}|{}", tc.id, tc.name),
                             timestamp: ts,
+                            id: None,
+                            seq: None,
+                            metadata: None,
                         });
                         history.push(ChatMessage {
                             role: "tool".into(),
                             content: format!("{}|{}", tc.id, result.clone()),
                             timestamp: ts,
+                            id: None,
+                            seq: None,
+                            metadata: None,
                         });
                         all_tool_messages.push(ChatMessage {
                             role: "assistant".into(),
                             content: format!("ToolCall|{}|{}", tc.id, tc.name),
                             timestamp: ts,
+                            id: None,
+                            seq: None,
+                            metadata: None,
                         });
                         all_tool_messages.push(ChatMessage {
                             role: "tool".into(),
                             content: format!("{}|{}", tc.id, result),
                             timestamp: ts,
+                            id: None,
+                            seq: None,
+                            metadata: None,
                         });
                     }
                     *self.agent_state.write().await = AgentState::Thinking;
@@ -174,12 +258,12 @@ impl Engine {
                     last_response = response.text.clone();
                     // If this is a non-first iteration (tool-use follow-up), the text
                     // was not streamed yet — send it now so TUI shows the final answer.
-                    if !first_iteration {
-                        if let Some(ref stream_tx) = tx {
-                            for word in response.text.split_inclusive(' ') {
-                                if stream_tx.send(word.to_string()).await.is_err() {
-                                    break;
-                                }
+                    if !first_iteration
+                        && let Some(ref stream_tx) = tx
+                    {
+                        for word in response.text.split_inclusive(' ') {
+                            if stream_tx.send(word.to_string()).await.is_err() {
+                                break;
                             }
                         }
                     }
@@ -242,8 +326,8 @@ impl Engine {
                                 .map(|m| {
                                     // strip the "id|" prefix from tool result format
                                     m.content
-                                        .splitn(2, '|')
-                                        .nth(1)
+                                        .split_once('|')
+                                        .map(|x| x.1)
                                         .unwrap_or(&m.content)
                                         .to_string()
                                 })

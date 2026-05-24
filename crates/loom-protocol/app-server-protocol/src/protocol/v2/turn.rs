@@ -413,7 +413,7 @@ impl crate::experimental_api::ExperimentalApi for TurnStartParams {
         if self.runtime_workspace_roots.is_some() {
             return Some("turn/start.runtimeWorkspaceRoots");
         }
-        if let Some(reason) = self.approval_policy.as_ref().and_then(|v| v.experimental_reason()) {
+        if let Some(reason) = self.approval_policy.as_ref().and_then(crate::experimental_api::ExperimentalApi::experimental_reason) {
             return Some(reason);
         }
         if self.permissions.is_some() {

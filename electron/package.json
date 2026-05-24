@@ -1,14 +1,13 @@
 {
   "name": "openloom-electron",
   "version": "0.1.0",
-  "main": "main.js",
+  "main": "main.cjs",
   "scripts": {
-    "start": "electron .",
-    "dev": "electron . --dev",
+    "dev": "node launch.cjs --dev",
+    "dev:no-vite": "node launch.cjs --dev --no-vite",
+    "start": "node launch.cjs",
     "build": "electron-builder",
-    "build:mac": "electron-builder --mac",
-    "build:win": "electron-builder --win",
-    "build:linux": "electron-builder --linux"
+    "build:win": "electron-builder --win"
   },
   "build": {
     "appId": "com.openloom.app",
@@ -16,27 +15,23 @@
     "files": [
       "main.js",
       "preload.js",
+      "icons/icon.png",
       "../web/dist/**/*"
     ],
     "extraResources": [
       {
-        "from": "../target/release/openloom",
+        "from": "../target/release/loom-server",
         "to": "engine"
       }
     ],
-    "mac": {
-      "target": "dmg",
-      "category": "public.app-category.productivity"
-    },
     "win": {
-      "target": "msi"
-    },
-    "linux": {
-      "target": "AppImage"
+      "target": "msi",
+      "icon": "icons/icon.ico"
     }
   },
   "devDependencies": {
-    "electron": "^38.0.0",
-    "electron-builder": "^26.8.1"
+    "electron": "^38.8.6",
+    "electron-builder": "^26.8.1",
+    "sharp": "^0.34.5"
   }
 }

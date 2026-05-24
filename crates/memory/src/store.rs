@@ -387,12 +387,32 @@ impl<'a> CognitionStore<'a> {
         subject: &str,
         limit: usize,
     ) -> anyhow::Result<Vec<CognitionRow>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, subject, trait, value, confidence, evidence_count, first_seen, last_updated, version, scope
-             FROM cognitions WHERE subject = ?1 ORDER BY last_updated DESC LIMIT ?2",
-        )?;
+        self.query_by_subject_and_scope(subject, None, limit, 0)
+    }
+
+    pub fn query_by_subject_and_scope(
+        &self,
+        subject: &str,
+        scope: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> anyhow::Result<Vec<CognitionRow>> {
+        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(s) = scope {
+            (
+                "SELECT id, subject, trait, value, confidence, evidence_count, first_seen, last_updated, version, scope
+                 FROM cognitions WHERE subject = ?1 AND scope = ?2 ORDER BY last_updated DESC LIMIT ?3 OFFSET ?4".into(),
+                vec![Box::new(subject.to_string()), Box::new(s.to_string()), Box::new(limit as i64), Box::new(offset as i64)],
+            )
+        } else {
+            (
+                "SELECT id, subject, trait, value, confidence, evidence_count, first_seen, last_updated, version, scope
+                 FROM cognitions WHERE subject = ?1 ORDER BY last_updated DESC LIMIT ?2 OFFSET ?3".into(),
+                vec![Box::new(subject.to_string()), Box::new(limit as i64), Box::new(offset as i64)],
+            )
+        };
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt
-            .query_map(rusqlite::params![subject, limit as i64], |row| {
+            .query_map(rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())), |row| {
                 Ok(CognitionRow {
                     id: row.get(0)?,
                     subject: row.get(1)?,
@@ -408,6 +428,28 @@ impl<'a> CognitionStore<'a> {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    pub fn count_by_subject_and_scope(&self, subject: &str, scope: Option<&str>) -> anyhow::Result<usize> {
+        let count: i64 = if let Some(s) = scope {
+            self.conn.query_row(
+                "SELECT COUNT(*) FROM cognitions WHERE subject = ?1 AND scope = ?2",
+                rusqlite::params![subject, s],
+                |row| row.get(0),
+            )?
+        } else {
+            self.conn.query_row(
+                "SELECT COUNT(*) FROM cognitions WHERE subject = ?1",
+                rusqlite::params![subject],
+                |row| row.get(0),
+            )?
+        };
+        Ok(count as usize)
+    }
+
+    pub fn delete(&self, id: i64) -> anyhow::Result<()> {
+        self.conn.execute("DELETE FROM cognitions WHERE id = ?1", rusqlite::params![id])?;
+        Ok(())
     }
 
     pub fn latest_version(&self, subject: &str, trait_name: &str) -> Option<i64> {
@@ -463,29 +505,100 @@ impl<'a> SessionStore<'a> {
         Ok(())
     }
 
-    pub fn list_all(&self, limit: usize) -> anyhow::Result<Vec<openloom_models::SessionInfo>> {
+    fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<openloom_models::SessionInfo> {
+        let created_at_str: String = row.get(1)?;
+        let title: Option<String> = row.get(3)?;
+        let pinned_at: Option<String> = row.get(4)?;
+        let archived_at: Option<String> = row.get(5)?;
+        Ok(openloom_models::SessionInfo {
+            id: row.get(0)?,
+            created_at: DateTime::parse_from_rfc3339(&created_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+            message_count: row.get(2)?,
+            title,
+            pinned_at,
+            archived_at,
+        })
+    }
+
+    pub fn list_active(&self, limit: usize) -> anyhow::Result<Vec<openloom_models::SessionInfo>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, created_at, message_count FROM sessions ORDER BY created_at DESC LIMIT ?1",
+            "SELECT id, created_at, message_count, title, pinned_at, archived_at FROM sessions WHERE archived_at IS NULL ORDER BY pinned_at IS NULL, pinned_at DESC, created_at DESC LIMIT ?1",
         )?;
         let rows = stmt
-            .query_map(rusqlite::params![limit as i64], |row| {
-                let created_at_str: String = row.get(1)?;
-                Ok(openloom_models::SessionInfo {
-                    id: row.get(0)?,
-                    created_at: DateTime::parse_from_rfc3339(&created_at_str)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
-                    message_count: row.get(2)?,
-                })
-            })?
+            .query_map(rusqlite::params![limit as i64], Self::map_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    pub fn list_all(&self, limit: usize) -> anyhow::Result<Vec<openloom_models::SessionInfo>> {
+        self.list_active(limit)
+    }
+
+    pub fn list_archived(&self, limit: usize) -> anyhow::Result<Vec<openloom_models::SessionInfo>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, created_at, message_count, title, pinned_at, archived_at FROM sessions WHERE archived_at IS NOT NULL ORDER BY archived_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![limit as i64], Self::map_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn archive(&self, id: &str, archived_at: &str) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET archived_at = ?1, pinned_at = NULL WHERE id = ?2",
+            rusqlite::params![archived_at, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn restore(&self, id: &str) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET archived_at = NULL WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        Ok(())
+    }
+
+    pub fn cleanup_archived(&self, max_age_days: u32) -> anyhow::Result<usize> {
+        let cutoff = Utc::now() - chrono::Duration::days(max_age_days as i64);
+        let deleted = self.conn.execute(
+            "DELETE FROM sessions WHERE archived_at IS NOT NULL AND archived_at < ?1",
+            rusqlite::params![cutoff.to_rfc3339()],
+        )?;
+        Ok(deleted)
     }
 
     pub fn update_message_count(&self, id: &str, count: usize) -> anyhow::Result<()> {
         self.conn.execute(
             "UPDATE sessions SET message_count = ?1 WHERE id = ?2",
             rusqlite::params![count, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn rename(&self, id: &str, title: &str) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET title = ?1 WHERE id = ?2",
+            rusqlite::params![title, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn pin(&self, id: &str, pinned_at: Option<&str>) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET pinned_at = ?1 WHERE id = ?2",
+            rusqlite::params![pinned_at, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete(&self, id: &str) -> anyhow::Result<()> {
+        self.conn.execute(
+            "DELETE FROM sessions WHERE id = ?1",
+            rusqlite::params![id],
         )?;
         Ok(())
     }
@@ -654,10 +767,21 @@ impl<'a> MessageStore<'a> {
         role: &str,
         content: &str,
     ) -> anyhow::Result<i64> {
+        self.insert_with_metadata(session_id, seq, role, content, None)
+    }
+
+    pub fn insert_with_metadata(
+        &self,
+        session_id: &str,
+        seq: usize,
+        role: &str,
+        content: &str,
+        metadata: Option<&str>,
+    ) -> anyhow::Result<i64> {
         self.conn.execute(
-            "INSERT INTO message_history (session_id, seq, role, content, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![session_id, seq, role, content, Utc::now().to_rfc3339()],
+            "INSERT INTO message_history (session_id, seq, role, content, timestamp, metadata)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![session_id, seq, role, content, Utc::now().to_rfc3339(), metadata],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -668,7 +792,7 @@ impl<'a> MessageStore<'a> {
         limit: usize,
     ) -> anyhow::Result<Vec<openloom_models::ChatMessage>> {
         let mut stmt = self.conn.prepare(
-            "SELECT role, content, timestamp FROM message_history
+            "SELECT role, content, timestamp, metadata, id, seq FROM message_history
              WHERE session_id = ?1 ORDER BY seq DESC LIMIT ?2",
         )?;
         let mut rows: Vec<openloom_models::ChatMessage> = stmt
@@ -680,16 +804,19 @@ impl<'a> MessageStore<'a> {
                     timestamp: DateTime::parse_from_rfc3339(&ts_str)
                         .map(|dt| dt.with_timezone(&Utc))
                         .unwrap_or_else(|_| Utc::now()),
+                    metadata: row.get(3)?,
+                    id: row.get(4)?,
+                    seq: row.get::<_, i64>(5).map(|s| s as i64).ok(),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
-        rows.reverse(); // DESC -> chronological order
+        rows.reverse();
         Ok(rows)
     }
 
     pub fn all(&self, session_id: &str) -> anyhow::Result<Vec<openloom_models::ChatMessage>> {
         let mut stmt = self.conn.prepare(
-            "SELECT role, content, timestamp FROM message_history
+            "SELECT role, content, timestamp, metadata, id, seq FROM message_history
              WHERE session_id = ?1 ORDER BY seq ASC",
         )?;
         let rows: Vec<openloom_models::ChatMessage> = stmt
@@ -701,10 +828,21 @@ impl<'a> MessageStore<'a> {
                     timestamp: DateTime::parse_from_rfc3339(&ts_str)
                         .map(|dt| dt.with_timezone(&Utc))
                         .unwrap_or_else(|_| Utc::now()),
+                    metadata: row.get(3)?,
+                    id: row.get(4)?,
+                    seq: row.get::<_, i64>(5).map(|s| s as i64).ok(),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    pub fn delete_by_id(&self, session_id: &str, msg_id: i64) -> anyhow::Result<bool> {
+        let affected = self.conn.execute(
+            "DELETE FROM message_history WHERE session_id = ?1 AND id = ?2",
+            rusqlite::params![session_id, msg_id],
+        )?;
+        Ok(affected > 0)
     }
 
     pub fn max_seq(&self, session_id: &str) -> anyhow::Result<usize> {
@@ -1025,7 +1163,8 @@ mod message_store_tests {
                 seq INTEGER NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
-                timestamp TEXT NOT NULL
+                timestamp TEXT NOT NULL,
+                metadata TEXT
             );",
         )
         .unwrap();
@@ -1083,11 +1222,17 @@ mod message_store_tests {
                 role: "user".into(),
                 content: "a".into(),
                 timestamp: Utc::now(),
+                metadata: None,
+                id: None,
+                seq: None,
             },
             openloom_models::ChatMessage {
                 role: "assistant".into(),
                 content: "b".into(),
                 timestamp: Utc::now(),
+                metadata: None,
+                id: None,
+                seq: None,
             },
         ];
         store.insert_batch("s1", &msgs).unwrap();

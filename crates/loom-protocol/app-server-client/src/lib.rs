@@ -322,6 +322,7 @@ impl LoomAppServerClient {
     /// typed request dispatch.
     pub async fn new(config: openloom_engine::EngineConfig) -> anyhow::Result<Self> {
         let engine = Arc::new(openloom_engine::Engine::new(config)?);
+        engine.start_cron_scheduler();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         Ok(Self {
             engine,
@@ -360,6 +361,7 @@ impl LoomAppServerClient {
                 dirs::data_dir().map(|d| d.join("openLoom").join("data").join("test.db")).unwrap_or_default()
             ))?;
         let engine = Arc::new(engine);
+        engine.start_cron_scheduler();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         Ok(Self { engine, event_rx, event_tx, current_mode: Arc::new(std::sync::Mutex::new(openloom_models::Mode::Chat)), model_preference: Arc::new(std::sync::Mutex::new(openloom_models::ModelPreference::Auto)) })
     }
@@ -799,6 +801,9 @@ async fn dispatch_request<T: DeserializeOwned>(
                 role: "user".into(),
                 content: text,
                 timestamp: chrono::Utc::now(),
+            id: None,
+            seq: None,
+                metadata: None,
             };
 
             // Clone IDs for the spawned task

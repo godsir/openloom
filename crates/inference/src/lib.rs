@@ -312,6 +312,14 @@ impl AnthropicClient {
                         ContentPart::Text { text } => serde_json::json!({
                             "type": "text", "text": text
                         }),
+                        ContentPart::Image { source_type, media_type, data } => serde_json::json!({
+                            "type": "image",
+                            "source": {
+                                "type": source_type,
+                                "media_type": media_type,
+                                "data": data,
+                            }
+                        }),
                         ContentPart::ToolCall {
                             id,
                             name,
@@ -480,7 +488,7 @@ pub struct OpenAIClient {
 }
 
 impl OpenAIClient {
-    pub fn new(api_key: String, model: String, base_url: String) -> Self {
+    pub fn new(api_key: String, model: String, base_url: String, _is_local: bool) -> Self {
         Self {
             api_key,
             model,
@@ -646,6 +654,39 @@ impl OpenAIClient {
                     return obj;
                 }
 
+                let has_images = msg.content.iter().any(|p| matches!(p, ContentPart::Image { .. }));
+
+                if has_images {
+                    // Multimodal: use OpenAI-compatible content array format.
+                    // Text parts MUST come before image parts so llama.cpp can
+                    // properly insert image marker tokens during chat template
+                    // processing. Reversing the order (images before text) can
+                    // cause "bitmaps do not match markers" errors because the
+                    // template has no text context for marker placement.
+                    let mut parts: Vec<serde_json::Value> = Vec::new();
+                    // Emit text parts first
+                    for p in &msg.content {
+                        if let ContentPart::Text { text } = p {
+                            parts.push(serde_json::json!({
+                                "type": "text", "text": text
+                            }));
+                        }
+                    }
+                    // Emit image parts after text
+                    for p in &msg.content {
+                        if let ContentPart::Image { source_type: _, media_type, data } = p {
+                            parts.push(serde_json::json!({
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": format!("data:{};base64,{}", media_type, data)
+                                }
+                            }));
+                        }
+                    }
+                    obj["content"] = serde_json::json!(parts);
+                    return obj;
+                }
+
                 let texts: Vec<&str> = msg
                     .content
                     .iter()
@@ -706,6 +747,34 @@ impl CloudClient for OpenAIClient {
         tx: tokio::sync::mpsc::Sender<String>,
     ) -> anyhow::Result<()> {
         let messages = self.lower_messages(&req.effective_messages());
+
+        // Debug: log vision requests to help diagnose tokenization issues
+        let has_vision = messages.iter().any(|m| {
+            m.get("content").and_then(|c| c.as_array())
+                .map(|arr| arr.iter().any(|p| p.get("type").and_then(|t| t.as_str()) == Some("image_url")))
+                .unwrap_or(false)
+        });
+        if has_vision {
+            tracing::info!(model = %self.model, url = %format!("{}/chat/completions", self.base_url), "vision request with {} messages", messages.len());
+            // Log first image_url (truncated) to verify format
+            for m in &messages {
+                if let Some(parts) = m.get("content").and_then(|c| c.as_array()) {
+                    for p in parts {
+                        if p.get("type").and_then(|t| t.as_str()) == Some("image_url")
+                            && let Some(url) = p.get("image_url").and_then(|u| u.get("url")).and_then(|v| v.as_str())
+                        {
+                            tracing::info!("  image_url starts with: {}...", &url[..url.len().min(60)]);
+                        }
+                        if p.get("type").and_then(|t| t.as_str()) == Some("text")
+                            && let Some(text) = p.get("text").and_then(|v| v.as_str())
+                        {
+                            tracing::info!("  text part: {:?}", &text[..text.len().min(80)]);
+                        }
+                    }
+                }
+            }
+        }
+
         let mut body = serde_json::json!({
             "model": self.model,
             "max_tokens": req.max_tokens,
@@ -770,12 +839,12 @@ impl CloudClient for OpenAIClient {
                             // ─── Reasoning/thinking content (DeepSeek-R1, o1/o3) ───
                             // Sent with special prefix so the forwarder can convert to
                             // ReasoningSummaryTextDelta without the content leaking as text.
-                            if let Some(reasoning) = delta["reasoning_content"].as_str() {
-                                if !reasoning.is_empty() {
-                                    let marker = format!("\x02REASONING\x02{}", reasoning);
-                                    if tx.send(marker).await.is_err() {
-                                        return Ok(());
-                                    }
+                            if let Some(reasoning) = delta["reasoning_content"].as_str()
+                                && !reasoning.is_empty()
+                            {
+                                let marker = format!("\x02REASONING\x02{}", reasoning);
+                                if tx.send(marker).await.is_err() {
+                                    return Ok(());
                                 }
                             }
 
@@ -873,10 +942,10 @@ pub fn create_cloud_client(
     };
     match config.backend {
         ModelBackend::Anthropic => Ok(Box::new(AnthropicClient::new(api_key, model, base_url))),
-        ModelBackend::OpenAI => Ok(Box::new(OpenAIClient::new(api_key, model, base_url))),
-        ModelBackend::DeepSeek => Ok(Box::new(OpenAIClient::new(api_key, model, base_url))),
-        ModelBackend::LmStudio => Ok(Box::new(OpenAIClient::new(api_key, model, base_url))),
-        ModelBackend::Ollama => Ok(Box::new(OpenAIClient::new(api_key, model, base_url))),
+        ModelBackend::OpenAI => Ok(Box::new(OpenAIClient::new(api_key, model, base_url, false))),
+        ModelBackend::DeepSeek => Ok(Box::new(OpenAIClient::new(api_key, model, base_url, false))),
+        ModelBackend::LmStudio => Ok(Box::new(OpenAIClient::new(api_key, model, base_url, true))),
+        ModelBackend::Ollama => Ok(Box::new(OpenAIClient::new(api_key, model, base_url, true))),
     }
 }
 
@@ -886,8 +955,52 @@ pub async fn ensure_lm_studio_model(
     model: &str,
     context_size: usize,
 ) -> Result<()> {
-    let load_url = format!("{}/api/v1/models/load", base_url.trim_end_matches("/v1"));
+    let base = base_url.trim_end_matches('/');
+    // Step 1: Check if the model (or a suffixed variant ":N") is already loaded.
+    // GET /v1/models returns the list of currently-loaded models.
+    let models_url = if base.ends_with("/v1") {
+        format!("{}/models", base)
+    } else {
+        format!("{}/v1/models", base)
+    };
     let client = HttpClient::new();
+    let already_loaded = match client
+        .get(&models_url)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            match resp.json::<serde_json::Value>().await {
+                Ok(body) => {
+                    let loaded_ids: Vec<String> = body
+                        .get("data")
+                        .and_then(|d| d.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    // Match exact id or base name (strip ":N" suffix from loaded ids)
+                    loaded_ids.iter().any(|id| {
+                        let base_id = id.split(':').next().unwrap_or(id);
+                        base_id == model || id == model
+                    })
+                }
+                Err(_) => false,
+            }
+        }
+        _ => false,
+    };
+
+    if already_loaded {
+        tracing::debug!(%model, "LM Studio model already loaded, skipping load request");
+        return Ok(());
+    }
+
+    // Step 2: Model not loaded — request LM Studio to load it.
+    let load_url = format!("{}/api/v1/models/load", base.trim_end_matches("/v1"));
     let body = serde_json::json!({
         "model": model,
         "context_length": context_size,
@@ -898,7 +1011,7 @@ pub async fn ensure_lm_studio_model(
     } else {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        // Don't fail — model might already be loaded
+        // Non-fatal: model might already be loading or load is async
         tracing::debug!(%model, %status, %text, "LM Studio load model response (non-fatal)");
     }
     Ok(())

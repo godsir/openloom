@@ -1,12 +1,26 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="new-warm-paper">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>openLoom</title>
+    <script>
+        // 在 React hydration 前从 localStorage 读取主题，避免主题闪烁
+        (function() {
+            var saved = localStorage.getItem('hana-theme') || 'new-warm-paper';
+            document.documentElement.setAttribute('data-theme', saved);
+        })();
+
+        // i18n stub（Hanako 组件调用 window.t / window.i18n）
+        window.i18n = { t: function(k) { return k; }, locale: 'zh', load: function() { return Promise.resolve(); }, defaultName: 'Loom' };
+        window.t = function(k) { return k; };
+        // 平台 stub
+        window.initPlatform = function() {};
+        window.platform = { getPlatform: function() { return 'win32'; } };
+    </script>
 </head>
-<body class="bg-gray-900 text-white">
-    <div id="root"></div>
+<body>
+    <div id="react-root"></div>
     <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>
