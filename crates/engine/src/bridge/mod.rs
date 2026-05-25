@@ -19,6 +19,7 @@ pub mod types;
 pub use types::*;
 pub use adapter::ChannelAdapter;
 pub use store::{BridgeStore, BridgeSession, BridgeMessageRow, KnownUserRow};
+pub use security::{RateLimiter, MessageDedup, LoopDetector};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
