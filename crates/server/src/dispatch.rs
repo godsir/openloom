@@ -1,6 +1,50 @@
 use openloom_engine::Engine;
 use openloom_models::*;
+use rusqlite;
 use serde_json::Value;
+use std::path::Path;
+
+fn list_desk_files(dir: &str, subdir: &str) -> Result<Value, JsonRpcError> {
+    let base = Path::new(dir);
+    let target = if subdir.is_empty() { base.to_path_buf() } else { base.join(subdir) };
+    if !target.exists() {
+        return Ok(serde_json::json!({"files": [], "basePath": dir}));
+    }
+    let mut files: Vec<Value> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&target) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            // Skip hidden files/dirs
+            if name.starts_with('.') { continue; }
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            let (size, mtime): (Option<u64>, Option<String>) = if is_dir {
+                (None, None)
+            } else {
+                let meta = entry.metadata().ok();
+                (meta.as_ref().map(|m| m.len()), None)
+            };
+            let mut file_obj = serde_json::json!({
+                "name": name,
+                "isDir": is_dir,
+            });
+            if let Some(s) = size {
+                file_obj["size"] = serde_json::json!(s);
+            }
+            if let Some(t) = mtime {
+                file_obj["mtime"] = serde_json::json!(t);
+            }
+            files.push(file_obj);
+        }
+    }
+    files.sort_by(|a, b| {
+        let a_dir = a["isDir"].as_bool().unwrap_or(false);
+        let b_dir = b["isDir"].as_bool().unwrap_or(false);
+        b_dir.cmp(&a_dir).then_with(|| {
+            a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
+        })
+    });
+    Ok(serde_json::json!({"files": files, "basePath": dir}))
+}
 
 pub async fn dispatch_method(
     engine: &std::sync::Arc<Engine>,
@@ -43,12 +87,8 @@ pub async fn dispatch_method(
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
-            // Notify frontend: agent is thinking
-            let event_bus = engine.event_bus().clone();
-            let _ = event_bus.send(EngineEvent::AgentStateChanged {
-                old_state: openloom_models::AgentState::Idle,
-                new_state: openloom_models::AgentState::Thinking,
-            });
+            // agent_loop_inner fires its own AgentStateChanged events;
+            // no need to emit them here — avoids duplicate state transitions.
 
             // Parse images if present
             let images: Vec<openloom_models::ImagePart> = p
@@ -76,10 +116,15 @@ pub async fn dispatch_method(
             if !model_id.is_empty() && !provider.is_empty() {
                 // Use streaming: each token fires StreamDelta via event_bus.
                 // ws.rs spawns this in a background task so the event loop stays alive.
-                let _ = event_bus.send(EngineEvent::AgentStateChanged {
-                    old_state: openloom_models::AgentState::Thinking,
-                    new_state: openloom_models::AgentState::Acting,
-                });
+                // agent_loop_inner fires its own AgentStateChanged events.
+
+                // Parse mode from params
+                let mode = p
+                    .get("mode")
+                    .and_then(|v| v.as_str())
+                    .and_then(openloom_models::Mode::from_key)
+                    .unwrap_or(openloom_models::Mode::Code);
+
                 let metadata = if !images.is_empty() {
                     let imgs: Vec<Value> = images.iter().map(|img| serde_json::json!({
                         "data": img.data,
@@ -87,12 +132,8 @@ pub async fn dispatch_method(
                     })).collect();
                     Some(serde_json::json!({"images": imgs}).to_string())
                 } else { None };
-                match engine.complete_with_model_streaming_meta(&session_id, content, &images, metadata.as_deref(), model_id, provider).await {
+                match engine.complete_with_model_streaming_meta(&session_id, content, &images, metadata.as_deref(), model_id, provider, mode).await {
                     Ok(()) => {
-                        let _ = event_bus.send(EngineEvent::AgentStateChanged {
-                            old_state: openloom_models::AgentState::Acting,
-                            new_state: openloom_models::AgentState::Idle,
-                        });
                         // Background: run LLM extraction every 5 user messages (fallback to rule-based)
                         let bg_engine = engine.clone();
                         let bg_sid = session_id.clone();
@@ -110,10 +151,6 @@ pub async fn dispatch_method(
                         Ok(serde_json::json!({"ok": true, "streaming": true, "session_id": session_id}))
                     }
                     Err(e) => {
-                        let _ = event_bus.send(EngineEvent::AgentStateChanged {
-                            old_state: openloom_models::AgentState::Acting,
-                            new_state: openloom_models::AgentState::Idle,
-                        });
                         Err(JsonRpcError {
                             code: ErrorCode::InternalError,
                             message: e.to_string(),
@@ -144,10 +181,7 @@ pub async fn dispatch_method(
                 let result = engine
                     .handle_message(msg, &session_id, mode, model_pref)
                     .await;
-                let _ = event_bus.send(EngineEvent::AgentStateChanged {
-                    old_state: openloom_models::AgentState::Thinking,
-                    new_state: openloom_models::AgentState::Idle,
-                });
+                // handle_message fires its own AgentStateChanged events.
                 // Background: fallback cognition extraction every 5 user messages
                 let fb_engine = engine.clone();
                 let fb_sid = session_id.clone();
@@ -166,7 +200,7 @@ pub async fn dispatch_method(
                 result
                     .map(|r| {
                         let response = r.response.clone();
-                        let _ = event_bus.send(EngineEvent::StreamEnd {
+                        let _ = engine.event_bus().send(EngineEvent::StreamEnd {
                             session_id: session_id.clone(),
                             full_response: response.clone(),
                         });
@@ -244,12 +278,55 @@ pub async fn dispatch_method(
             Ok(serde_json::json!({"sessions": mapped}))
         }
         "session.create" => {
+            // Sync workspace cwd so the LLM sees the correct working directory
+            if let Some(ref p) = params {
+                if let Some(cwd) = p.get("cwd").and_then(|v| v.as_str()) {
+                    if !cwd.is_empty() {
+                        *engine.active_cwd.write().unwrap() = Some(std::path::PathBuf::from(cwd));
+                    }
+                }
+            }
+
             let session = engine.create_session().await.map_err(|e| JsonRpcError {
                 code: ErrorCode::InternalError,
                 message: e.to_string(),
                 data: None,
             })?;
-            let model_info = engine.model_info().await;
+            // Prefer the agent's configured chat model, falling back to the
+            // globally-connected model. This ensures per-agent model config
+            // (set in AgentTab) is reflected in the chat page's ModelSelector.
+            let agent_config = engine.get_config(Some("settings.agent.default.config")).await;
+
+            // If no cwd was provided and active_cwd is still unset, fall back
+            // to the agent's configured desk.home_folder so the LLM sees the
+            // user-configured workspace instead of the server runtime CWD.
+            if engine.active_cwd.read().unwrap().is_none() {
+                if let Some(home) = agent_config
+                    .get("desk")
+                    .and_then(|d| d.get("home_folder"))
+                    .and_then(|h| h.as_str())
+                {
+                    if !home.is_empty() {
+                        *engine.active_cwd.write().unwrap() =
+                            Some(std::path::PathBuf::from(home));
+                    }
+                }
+            }
+
+            let agent_chat = agent_config
+                .get("models")
+                .and_then(|m| m.get("chat"))
+                .filter(|v| v.get("id").and_then(|i| i.as_str()).is_some_and(|s| !s.is_empty()));
+            let (model_id, model_provider, model_name) = if let Some(chat) = agent_chat {
+                (
+                    chat.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    chat.get("provider").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    chat.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                )
+            } else {
+                let info = engine.model_info().await;
+                (info.model_id, info.backend, info.display_name)
+            };
             let perm_mode = engine.permission_mode(&session.id);
             Ok(serde_json::json!({
                 "session_id": session.id,
@@ -260,9 +337,9 @@ pub async fn dispatch_method(
                 "permissionMode": perm_mode,
                 "accessMode": if perm_mode == "read_only" { "read_only" } else { "full" },
                 "planMode": perm_mode == "read_only",
-                "currentModelId": model_info.model_id,
-                "currentModelProvider": model_info.backend,
-                "currentModelName": model_info.display_name,
+                "currentModelId": model_id,
+                "currentModelProvider": model_provider,
+                "currentModelName": model_name,
                 "currentModelReasoning": false,
                 "memoryEnabled": true,
             }))
@@ -291,7 +368,38 @@ pub async fn dispatch_method(
                 })?;
                 session.id
             };
-            let model_info = engine.model_info().await;
+            // Prefer the agent's configured chat model, falling back to the
+            // globally-connected model.
+            let agent_config = engine.get_config(Some("settings.agent.default.config")).await;
+
+            // If active_cwd is unset, fall back to desk.home_folder
+            if engine.active_cwd.read().unwrap().is_none() {
+                if let Some(home) = agent_config
+                    .get("desk")
+                    .and_then(|d| d.get("home_folder"))
+                    .and_then(|h| h.as_str())
+                {
+                    if !home.is_empty() {
+                        *engine.active_cwd.write().unwrap() =
+                            Some(std::path::PathBuf::from(home));
+                    }
+                }
+            }
+
+            let agent_chat = agent_config
+                .get("models")
+                .and_then(|m| m.get("chat"))
+                .filter(|v| v.get("id").and_then(|i| i.as_str()).is_some_and(|s| !s.is_empty()));
+            let (model_id, model_provider, model_name) = if let Some(chat) = agent_chat {
+                (
+                    chat.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    chat.get("provider").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    chat.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                )
+            } else {
+                let info = engine.model_info().await;
+                (info.model_id, info.backend, info.display_name)
+            };
             let perm_mode = engine.permission_mode(&sid);
             Ok(serde_json::json!({
                 "session_id": sid,
@@ -302,9 +410,9 @@ pub async fn dispatch_method(
                 "permissionMode": perm_mode,
                 "accessMode": if perm_mode == "read_only" { "read_only" } else { "full" },
                 "planMode": perm_mode == "read_only",
-                "currentModelId": model_info.model_id,
-                "currentModelProvider": model_info.backend,
-                "currentModelName": model_info.display_name,
+                "currentModelId": model_id,
+                "currentModelProvider": model_provider,
+                "currentModelName": model_name,
                 "currentModelReasoning": false,
                 "memoryEnabled": true,
             }))
@@ -460,13 +568,27 @@ pub async fn dispatch_method(
                 .cloned()
                 .unwrap_or(serde_json::Value::Null);
             engine
-                .set_config(key, value)
+                .set_config(key, value.clone())
                 .await
                 .map_err(|e| JsonRpcError {
                     code: ErrorCode::InternalError,
                     message: e.to_string(),
                     data: None,
                 })?;
+            // When the agent workspace changes, update active_cwd immediately
+            // so subsequent messages see the new workspace.
+            if key.contains("agent") && key.contains("config") {
+                if let Some(home) = value
+                    .get("desk")
+                    .and_then(|d| d.get("home_folder"))
+                    .and_then(|h| h.as_str())
+                {
+                    if !home.is_empty() {
+                        *engine.active_cwd.write().unwrap() =
+                            Some(std::path::PathBuf::from(home));
+                    }
+                }
+            }
             Ok(serde_json::json!({"ok": true}))
         }
         "memory.cognition_snapshots" => {
@@ -611,12 +733,11 @@ pub async fn dispatch_method(
                 if let Some(seq) = m.seq {
                     msg["seq"] = serde_json::json!(seq);
                 }
-                if let Some(ref meta) = m.metadata {
-                    if let Ok(parsed) = serde_json::from_str::<Value>(meta) {
-                        if let Some(images) = parsed.get("images").and_then(|f| f.as_array()) {
-                            msg["images"] = serde_json::json!(images);
-                        }
-                    }
+                if let Some(ref meta) = m.metadata
+                    && let Ok(parsed) = serde_json::from_str::<Value>(meta)
+                    && let Some(images) = parsed.get("images").and_then(|f| f.as_array())
+                {
+                    msg["images"] = serde_json::json!(images);
                 }
                 msg
             }).collect();
@@ -668,7 +789,27 @@ pub async fn dispatch_method(
         // ── Agent ────────────────────────────────────────────────────
         "agent.list" => {
             let state = engine.agent_state().await;
-            let model = engine.current_model_id();
+            // Read per-agent chat model from agent config (set via AgentTab in settings).
+            // Fall back to the globally-connected model if no per-agent model is configured.
+            let agent_config = engine.get_config(Some("settings.agent.default.config")).await;
+            let chat_model = agent_config
+                .get("models")
+                .and_then(|m| m.get("chat"))
+                .filter(|v| v.get("id").and_then(|i| i.as_str()).is_some_and(|s| !s.is_empty()));
+            let chat_model_val = match chat_model {
+                Some(m) => serde_json::json!({
+                    "id": m.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                    "provider": m.get("provider").and_then(|v| v.as_str()),
+                }),
+                None => {
+                    let global_id = engine.current_model_id();
+                    if global_id.is_empty() {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::json!({ "id": global_id })
+                    }
+                }
+            };
             // Read agent name from settings JSON if available
             let config = engine.get_config(Some("settings.agent")).await;
             let agent_name = config
@@ -685,7 +826,7 @@ pub async fn dispatch_method(
                     "isPrimary": true,
                     "hasAvatar": false,
                     "memoryMasterEnabled": false,
-                    "chatModel": model,
+                    "chatModel": chat_model_val,
                     "state": state,
                 }]
             }))
@@ -798,10 +939,29 @@ pub async fn dispatch_method(
                 }
             }
 
-            // Determine the active model
+            // Determine the active model. Priority:
+            // 1. Explicit global active_model (saved by model.switch)
+            // 2. Agent's configured chat model from settings.agent.default.config
+            // 3. First model in the global models array (fallback)
+            let agent_chat_fallback = || {
+                // This is async but we can't easily call get_config here since it's
+                // already in a non-async closure. Instead, read from the same config_val.
+                config_val
+                    .get("settings").and_then(|s| s.get("agent"))
+                    .and_then(|a| a.get("default"))
+                    .and_then(|d| d.get("config"))
+                    .and_then(|c| c.get("models"))
+                    .and_then(|m| m.get("chat"))
+                    .filter(|v| v.get("id").and_then(|i| i.as_str()).is_some_and(|s| !s.is_empty()))
+                    .map(|chat| serde_json::json!({
+                        "id": chat.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                        "provider": chat.get("provider").and_then(|v| v.as_str()),
+                    }))
+            };
             let active_model = config_val
                 .get("settings").and_then(|s| s.get("active_model"))
                 .cloned()
+                .or_else(agent_chat_fallback)
                 .or_else(|| {
                     // Fallback: derive from first typed ModelConfig
                     models_arr.and_then(|arr| arr.first()).map(|m| {
@@ -1079,7 +1239,7 @@ pub async fn dispatch_method(
                 format!("{}/v1/models", base)
             };
 
-            let client = reqwest::Client::new();
+            let client = crate::proxy::build_client(engine.as_ref());
             let mut req = client.get(&models_url);
             if !effective_key.is_empty() {
                 req = req.bearer_auth(&effective_key);
@@ -1141,7 +1301,7 @@ pub async fn dispatch_method(
             }
 
             let models_url = format!("{}/v1/models", effective_url.trim_end_matches('/'));
-            let client = reqwest::Client::new();
+            let client = crate::proxy::build_client(engine.as_ref());
             let mut req = client.get(&models_url);
             if !effective_key.is_empty() {
                 req = req.bearer_auth(&effective_key);
@@ -1182,10 +1342,19 @@ pub async fn dispatch_method(
         }
 
         // ── Desk (Phase E) ────────────────────────────────────────────
-        "desk.list" => Ok(serde_json::json!({"files": [], "notes": []})),
+        "desk.list" => {
+            let dir = params.as_ref().and_then(|p| p.get("dir")).and_then(|v| v.as_str()).unwrap_or("");
+            let subdir = params.as_ref().and_then(|p| p.get("subdir")).and_then(|v| v.as_str()).unwrap_or("");
+            list_desk_files(dir, subdir)
+        }
+        "desk.create_file" => Ok(serde_json::json!({"ok": true, "files": []})),
+        "desk.create_dir" => Ok(serde_json::json!({"ok": true, "files": []})),
+        "desk.rename" => Ok(serde_json::json!({"ok": true, "files": []})),
+        "desk.move" => Ok(serde_json::json!({"ok": true, "files": []})),
+        "desk.delete_item" => Ok(serde_json::json!({"ok": true, "files": []})),
+        "desk.search" => Ok(serde_json::json!({"results": []})),
         "desk.create_note" => Ok(serde_json::json!({"ok": true, "id": "note-1"})),
         "desk.update_note" => Ok(serde_json::json!({"ok": true})),
-        "desk.delete_item" => Ok(serde_json::json!({"ok": true})),
         "desk.watch" => Ok(serde_json::json!({"ok": true, "watcher_id": "w1"})),
         "desk.unwatch" => Ok(serde_json::json!({"ok": true})),
 
@@ -1207,6 +1376,210 @@ pub async fn dispatch_method(
         "agent.tool_policy.get" => Ok(serde_json::json!({"policies": {}})),
         "agent.tool_policy.set" => Ok(serde_json::json!({"ok": true})),
 
+        // ── Plugin management ───────────────────────────────────────────
+        "plugins.list" => {
+            Ok(engine.list_plugins())
+        }
+        "plugins.get_config" => {
+            let id = params
+                .as_ref()
+                .and_then(|p| p.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Ok(engine.get_plugin_config(id).await)
+        }
+        "plugins.set_config" => {
+            let p = params.unwrap_or_default();
+            let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let config = p.get("config").cloned().unwrap_or(serde_json::json!({}));
+            if id.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "id is required".into(),
+                    data: None,
+                });
+            }
+            engine.set_plugin_config(id, config).await.map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            Ok(serde_json::json!({"ok": true}))
+        }
+        "plugins.diagnostics" => {
+            Ok(engine.get_plugin_diagnostics())
+        }
+        "plugins.settings.get" => {
+            Ok(engine.get_plugin_settings().await)
+        }
+        "plugins.settings.set" => {
+            let settings = params.unwrap_or_default();
+            engine.set_plugin_settings(settings).await.map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            Ok(serde_json::json!({"ok": true}))
+        }
+        "plugins.install" => {
+            let path = params
+                .as_ref()
+                .and_then(|p| p.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if path.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "path is required".into(),
+                    data: None,
+                });
+            }
+            engine.install_plugin(path).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })
+        }
+        "plugins.remove" => {
+            let id = params
+                .as_ref()
+                .and_then(|p| p.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if id.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "id is required".into(),
+                    data: None,
+                });
+            }
+            let removed = engine.remove_plugin(id).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            Ok(serde_json::json!({"ok": removed}))
+        }
+        "plugins.set_enabled" => {
+            let p = params.unwrap_or_default();
+            let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let enabled = p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            if id.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "id is required".into(),
+                    data: None,
+                });
+            }
+            engine.set_plugin_enabled(id, enabled).await.map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            Ok(serde_json::json!({"ok": true}))
+        }
+        "plugins.marketplace.list" => {
+            Ok(engine.list_marketplace_plugins().await)
+        }
+        "plugins.marketplace.readme" => {
+            let id = params
+                .as_ref()
+                .and_then(|p| p.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Ok(engine.get_marketplace_plugin_readme(id))
+        }
+        "plugins.marketplace.install" => {
+            let id = params
+                .as_ref()
+                .and_then(|p| p.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if id.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "id is required".into(),
+                    data: None,
+                });
+            }
+            engine.install_marketplace_plugin(id).await.map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })
+        }
+        "plugins.marketplace.sources.get" => {
+            let sources: Vec<serde_json::Value> = engine.get_marketplace_sources().await
+                .iter()
+                .map(|s| serde_json::json!({
+                    "kind": s.kind,
+                    "name": s.name,
+                    "url": s.url,
+                    "path": s.path,
+                    "configured": s.configured,
+                }))
+                .collect();
+            Ok(serde_json::json!({ "sources": sources }))
+        }
+        "plugins.marketplace.sources.set" => {
+            let sources: Vec<serde_json::Value> = params
+                .as_ref()
+                .and_then(|p| p.get("sources"))
+                .and_then(|v| v.as_array()).cloned()
+                .unwrap_or_default();
+            engine.set_marketplace_sources(sources).await.map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            Ok(serde_json::json!({"ok": true}))
+        }
+        "plugins.marketplace.add_source" => {
+            let p = params.unwrap_or_default();
+            let url = p.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("Marketplace");
+            if url.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "url is required".into(),
+                    data: None,
+                });
+            }
+            engine.add_marketplace_source(url, name).await.map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })
+        }
+        "plugins.marketplace.remove_source" => {
+            let name = params
+                .as_ref()
+                .and_then(|p| p.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if name.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "name is required".into(),
+                    data: None,
+                });
+            }
+            engine.remove_marketplace_source(name).await.map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            Ok(serde_json::json!({"ok": true}))
+        }
+        "plugins.marketplace.refresh" => {
+            engine.refresh_marketplace().await.map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            Ok(serde_json::json!({"ok": true}))
+        }
+
         // ── Skills management (Phase D) ────────────────────────────────
         "skill.enable" => Ok(serde_json::json!({"ok": true})),
         "skill.disable" => Ok(serde_json::json!({"ok": true})),
@@ -1214,6 +1587,218 @@ pub async fn dispatch_method(
             let _name = params.as_ref().and_then(|p| p.get("name")).and_then(|v| v.as_str()).unwrap_or("");
             Ok(serde_json::json!({"name": _name, "description": "", "triggers": [], "enabled": true}))
         },
+
+        // ── User skill management (filesystem-based) ───────────────────
+        "skills.list" => {
+            let agent_id = params
+                .as_ref()
+                .and_then(|p| p.get("agent_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            Ok(engine.list_user_skills(agent_id).await)
+        }
+        "skills.install" => {
+            let path = params
+                .as_ref()
+                .and_then(|p| p.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if path.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "path is required".into(),
+                    data: None,
+                });
+            }
+            engine.install_user_skill(path).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })
+        }
+        "skills.delete" => {
+            let name = params
+                .as_ref()
+                .and_then(|p| p.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if name.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "name is required".into(),
+                    data: None,
+                });
+            }
+            let deleted = engine.delete_user_skill(name).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            Ok(serde_json::json!({"ok": deleted}))
+        }
+        "skills.toggle" => {
+            let p = params.unwrap_or_default();
+            let agent_id = p.get("agent_id").and_then(|v| v.as_str()).unwrap_or("default");
+            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let enabled = p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            if name.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "name is required".into(),
+                    data: None,
+                });
+            }
+            engine.toggle_user_skill(agent_id, name, enabled).await.map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            Ok(serde_json::json!({"ok": true}))
+        }
+        "skills.translate" => {
+            let p = params.unwrap_or_default();
+            let _agent_id = p.get("agentId").and_then(|v| v.as_str()).unwrap_or("");
+            let _lang = p.get("lang").and_then(|v| v.as_str()).unwrap_or("zh");
+            // Translation is a no-op for now (only zh-CN supported)
+            Ok(serde_json::json!({}))
+        }
+        "skills.external_paths.get" => {
+            Ok(engine.get_external_paths_info().await)
+        }
+        "skills.external_paths.set" => {
+            let paths: Vec<String> = params
+                .as_ref()
+                .and_then(|p| p.get("paths"))
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            engine.set_external_skill_paths(paths).await.map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            Ok(serde_json::json!({"ok": true}))
+        }
+
+        // ── Bundle management ──────────────────────────────────────────
+        "skills.bundles.list" => {
+            let agent_id = params
+                .as_ref()
+                .and_then(|p| p.get("agent_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            Ok(engine.list_skill_bundles(agent_id))
+        }
+        "skills.bundles.create" => {
+            let p = params.unwrap_or_default();
+            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("New Bundle");
+            let skill_names: Vec<String> = p
+                .get("skillNames")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            engine.create_skill_bundle(name, skill_names).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })
+        }
+        "skills.bundles.update" => {
+            let p = params.unwrap_or_default();
+            let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            if id.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "id is required".into(),
+                    data: None,
+                });
+            }
+            let name = p.get("name").and_then(|v| v.as_str());
+            let skill_names: Option<Vec<String>> = p
+                .get("skillNames")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+            engine.update_skill_bundle(id, name, skill_names).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })
+        }
+        "skills.bundles.delete" => {
+            let id = params
+                .as_ref()
+                .and_then(|p| p.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if id.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "id is required".into(),
+                    data: None,
+                });
+            }
+            let deleted = engine.delete_skill_bundle(id).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            Ok(serde_json::json!({"ok": deleted}))
+        }
+        "skills.bundles.reorder" => {
+            let bundle_ids: Vec<String> = params
+                .as_ref()
+                .and_then(|p| p.get("bundleIds"))
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            engine.reorder_skill_bundles(&bundle_ids).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })
+        }
+        "skills.bundles.toggle" => {
+            let p = params.unwrap_or_default();
+            let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let agent_id = p.get("agent_id").and_then(|v| v.as_str()).unwrap_or("default");
+            let enabled = p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            if id.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "id is required".into(),
+                    data: None,
+                });
+            }
+            engine.toggle_skill_bundle(id, agent_id, enabled).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            Ok(serde_json::json!({"ok": true}))
+        }
+        "skills.bundles.export" => {
+            let id = params
+                .as_ref()
+                .and_then(|p| p.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if id.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "id is required".into(),
+                    data: None,
+                });
+            }
+            engine.export_skill_bundle(id).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })
+        }
 
         // ── Cron / Automation (Phase C) ────────────────────────────────
         "cron.list" => Ok(serde_json::json!({"jobs": []})),
@@ -1223,6 +1808,239 @@ pub async fn dispatch_method(
         // ── Config schema (Phase F) ────────────────────────────────────
         "config.schema" => Ok(serde_json::json!({"schema": {}})),
         "session.thinking_level.set" => Ok(serde_json::json!({"ok": true})),
+
+        // ── Computer Use ──────────────────────────────────────────────
+        "computer_use.status" => {
+            Ok(engine.get_computer_use_status().await)
+        }
+        "computer_use.list_apps" => {
+            engine.list_computer_use_apps().map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })
+        }
+        "computer_use.get_state" => {
+            let target = params.unwrap_or_default();
+            engine.get_computer_use_app_state(target).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })
+        }
+        "computer_use.perform_action" => {
+            let p = params.unwrap_or_default();
+            let target = p.get("target").cloned().unwrap_or(serde_json::json!({}));
+            let action = p.get("action").cloned().unwrap_or(serde_json::json!({}));
+            engine.perform_computer_use_action(target, action).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })
+        }
+
+        // ── Bridge ─────────────────────────────────────────────────────
+        "bridge.status" => {
+            let agent_id = params
+                .as_ref()
+                .and_then(|p| p.get("agent_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            Ok(engine.get_bridge_status(agent_id).await)
+        }
+        "bridge.test" => {
+            let p = params.unwrap_or_default();
+            let platform = p.get("platform").and_then(|v| v.as_str()).unwrap_or("");
+            let credentials = p.get("credentials").cloned().unwrap_or(serde_json::json!({}));
+            if platform.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "platform is required".into(),
+                    data: None,
+                });
+            }
+            engine.test_bridge_platform(platform, credentials).await.map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })
+        }
+
+        "bridge.sessions" => {
+            let platform_str = params
+                .as_ref()
+                .and_then(|p| p.get("platform"))
+                .and_then(|v| v.as_str());
+            let platform = platform_str.and_then(openloom_engine::bridge::Platform::from_str);
+
+            let conn = rusqlite::Connection::open(engine.db_path()).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            let store = openloom_engine::bridge::BridgeStore::new(&conn);
+            let sessions = store.list_sessions(platform).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+
+            let mapped: Vec<serde_json::Value> = sessions
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "id": s.id,
+                        "platform": s.platform.name(),
+                        "chatId": s.external_chat_id,
+                        "userName": s.user_name,
+                        "accessState": s.access_state.as_str(),
+                        "createdAt": s.created_at,
+                        "lastMessageAt": s.last_message_at,
+                        "messageCount": s.message_count,
+                    })
+                })
+                .collect();
+            Ok(serde_json::json!({"sessions": mapped}))
+        }
+
+        "bridge.messages" => {
+            let session_id = params
+                .as_ref()
+                .and_then(|p| p.get("session_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let limit = params
+                .as_ref()
+                .and_then(|p| p.get("limit"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(50) as usize;
+            let offset = params
+                .as_ref()
+                .and_then(|p| p.get("offset"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize;
+
+            let conn = rusqlite::Connection::open(engine.db_path()).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            let store = openloom_engine::bridge::BridgeStore::new(&conn);
+            let messages = store.list_messages(session_id, limit, offset).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+
+            let mapped: Vec<serde_json::Value> = messages
+                .iter()
+                .map(|m| {
+                    serde_json::json!({
+                        "id": m.id,
+                        "direction": m.direction.as_str(),
+                        "content": m.content,
+                        "mediaType": m.media_type,
+                        "mediaUrl": m.media_url,
+                        "timestamp": m.timestamp,
+                    })
+                })
+                .collect();
+            Ok(serde_json::json!({"messages": mapped}))
+        }
+
+        "bridge.known_users" => {
+            let platform_str = params
+                .as_ref()
+                .and_then(|p| p.get("platform"))
+                .and_then(|v| v.as_str());
+            let platform = platform_str.and_then(openloom_engine::bridge::Platform::from_str);
+
+            let conn = rusqlite::Connection::open(engine.db_path()).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            let store = openloom_engine::bridge::BridgeStore::new(&conn);
+            let users = store.list_known_users(platform).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+
+            let mapped: Vec<serde_json::Value> = users
+                .iter()
+                .map(|u| {
+                    serde_json::json!({
+                        "platform": u.platform.name(),
+                        "userId": u.user_id,
+                        "userName": u.user_name,
+                        "avatarUrl": u.avatar_url,
+                        "firstSeen": u.first_seen,
+                        "lastSeen": u.last_seen,
+                    })
+                })
+                .collect();
+            Ok(serde_json::json!({"users": mapped}))
+        }
+
+        "bridge.send" => {
+            let p = params.unwrap_or_default();
+            let platform_str = p.get("platform").and_then(|v| v.as_str()).unwrap_or("");
+            let chat_id = p.get("chat_id").and_then(|v| v.as_str()).unwrap_or("");
+            let text = p.get("text").and_then(|v| v.as_str()).unwrap_or("");
+
+            if platform_str.is_empty() || chat_id.is_empty() || text.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "platform, chat_id, and text are required".into(),
+                    data: None,
+                });
+            }
+
+            let platform = openloom_engine::bridge::Platform::from_str(platform_str)
+                .ok_or_else(|| JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: format!("unknown platform: {platform_str}"),
+                    data: None,
+                })?;
+
+            // TODO: route through BridgeManager once it's initialized on the Engine
+            Ok(serde_json::json!({
+                "ok": true,
+                "platform": platform.name(),
+                "chat_id": chat_id,
+                "status": "queued"
+            }))
+        }
+
+        "bridge.session.delete" => {
+            let session_id = params
+                .as_ref()
+                .and_then(|p| p.get("session_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if session_id.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "session_id is required".into(),
+                    data: None,
+                });
+            }
+
+            let conn = rusqlite::Connection::open(engine.db_path()).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            let store = openloom_engine::bridge::BridgeStore::new(&conn);
+            let deleted = store.delete_session(session_id).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            })?;
+            Ok(serde_json::json!({"ok": deleted}))
+        }
 
         // ── Session compact ─────────────────────────────────────────
         "session.compact" => {
@@ -1375,6 +2193,100 @@ pub async fn dispatch_method(
                     "size": bytes.len(),
                 }]
             }))
+        }
+
+        // ── Checkpoint / File Backup ──────────────────────────────────
+        "checkpoint.list" => {
+            let store = engine.checkpoint_store.lock().unwrap();
+            let list = store.list();
+            let checkpoints: Vec<Value> = list.iter().map(|c| {
+                serde_json::json!({
+                    "id": c.id,
+                    "ts": c.ts,
+                    "tool": c.tool,
+                    "path": c.path,
+                    "size": c.size,
+                    "sessionPath": c.session_path,
+                })
+            }).collect();
+            Ok(serde_json::json!({"checkpoints": checkpoints}))
+        }
+        "checkpoint.restore" => {
+            let p = params.unwrap_or_default();
+            let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            if id.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "id required".into(),
+                    data: None,
+                });
+            }
+            let store = engine.checkpoint_store.lock().unwrap();
+            store.restore(id).map_err(|e| JsonRpcError {
+                code: ErrorCode::InternalError,
+                message: e,
+                data: None,
+            })?;
+            Ok(serde_json::json!({"ok": true}))
+        }
+        "checkpoint.delete" => {
+            let p = params.unwrap_or_default();
+            let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let store = engine.checkpoint_store.lock().unwrap();
+            let ok = store.delete(id);
+            Ok(serde_json::json!({"ok": ok}))
+        }
+        "checkpoint.cleanup" => {
+            let p = params.unwrap_or_default();
+            let days = p.get("retention_days").and_then(|v| v.as_u64()).unwrap_or(7) as u32;
+            let store = engine.checkpoint_store.lock().unwrap();
+            let deleted = store.cleanup(days);
+            Ok(serde_json::json!({"deleted": deleted}))
+        }
+
+        // ── Workspace ────────────────────────────────────────────────
+        "workspace.set_cwd" => {
+            let p = params.unwrap_or_default();
+            let cwd = p.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
+            if !cwd.is_empty() {
+                let path = std::path::PathBuf::from(cwd);
+                *engine.active_cwd.write().unwrap() = Some(path);
+                tracing::info!(cwd = %cwd, "workspace cwd set");
+                Ok(serde_json::json!({"ok": true, "cwd": cwd}))
+            } else {
+                *engine.active_cwd.write().unwrap() = None;
+                Ok(serde_json::json!({"ok": true, "cwd": null}))
+            }
+        }
+
+        // ── Translate ───────────────────────────────────────────────
+        "translate" => {
+            let text = params
+                .as_ref()
+                .and_then(|p| p.get("text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let target = params
+                .as_ref()
+                .and_then(|p| p.get("target"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Simplified Chinese (zh-CN)");
+            if text.is_empty() {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "text is required".into(),
+                    data: None,
+                });
+            }
+            engine
+                .translate(text, target)
+                .await
+                .map(|translated| serde_json::json!({ "translated": translated }))
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })
         }
 
         _ => Err(JsonRpcError {
