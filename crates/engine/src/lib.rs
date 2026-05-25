@@ -1,14 +1,20 @@
 pub mod agent_loop;
+pub mod bridge;
+pub mod checkpoint;
+pub mod computer_use;
 pub mod config;
 pub mod cron_scheduler;
 pub mod events;
 pub mod heartbeat;
 pub mod memory_thread;
 pub mod persona_watcher;
+pub mod plugin_fs;
 pub mod rate_limiter;
 pub mod secrets;
 pub mod session;
 pub mod shutdown;
+pub mod skill_bundles;
+pub mod skill_fs;
 pub mod stream;
 pub mod token_store;
 pub mod vision;
@@ -91,36 +97,7 @@ pub(crate) const SYSTEM_INSTRUCTION: &str =
 - Be concise and direct.
 ";
 
-pub(crate) fn system_instruction() -> String {
-    let cwd = std::env::current_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "unknown".into());
-    let platform = if cfg!(target_os = "windows") {
-        "Windows"
-    } else if cfg!(target_os = "macos") {
-        "macOS"
-    } else {
-        "Linux"
-    };
-    let project_context = detect_project_context();
-    let mut prompt = SYSTEM_INSTRUCTION
-        .replace("[cwd]", &cwd)
-        .replace("[platform]", platform);
-    if !project_context.is_empty() {
-        prompt.push_str("\n\n## Project Context\n");
-        prompt.push_str(&project_context);
-    }
-    prompt
-}
-
-fn detect_project_context() -> String {
-    let cwd = match std::env::current_dir() {
-        Ok(p) => p,
-        Err(_) => return String::new(),
-    };
-
-    let data_dir = dirs::data_dir().unwrap_or_default().join("openLoom");
-
+fn detect_project_context(cwd: &std::path::Path, data_dir: &std::path::Path) -> String {
     let mut context_parts: Vec<String> = Vec::new();
 
     if cwd.join("Cargo.toml").exists() {
@@ -144,7 +121,7 @@ fn detect_project_context() -> String {
         context_parts.push(format!("- Project instructions (CLAUDE.md):\n{}", preview));
     }
 
-    let loom_ctx = openloom_skills::loom_context::LoomContext::load(&data_dir, &cwd);
+    let loom_ctx = openloom_skills::loom_context::LoomContext::load(data_dir, cwd);
     if !loom_ctx.is_empty() {
         context_parts.push(format!("- Project instructions (loom.md):\n{}", loom_ctx));
     }
@@ -287,6 +264,10 @@ pub struct Engine {
     agent_state: Arc<RwLock<AgentState>>,
     interruptible: AtomicBool,
     data_dir: PathBuf,
+    /// User-configured workspace directory. When set, overrides process cwd in system prompt.
+    pub active_cwd: std::sync::RwLock<Option<PathBuf>>,
+    #[allow(dead_code)]
+    bridge_manager: Option<Arc<crate::bridge::BridgeManager>>,
     db_path: PathBuf,
     config: Arc<RwLock<AppConfig>>,
     start_time: Instant,
@@ -312,6 +293,8 @@ pub struct Engine {
     cron_store: Arc<CronStore>,
     /// Notification store for automation notifications.
     notification_store: Arc<NotificationStore>,
+    /// Checkpoint store for file backup before tool edits.
+    pub checkpoint_store: Arc<std::sync::Mutex<checkpoint::CheckpointStore>>,
 }
 
 impl Engine {
@@ -342,6 +325,50 @@ pub struct EngineConfig {
 }
 
 impl Engine {
+    /// Build the system instruction with the user-configured workspace directory.
+    /// Falls back to process cwd when no workspace is set.
+    pub(crate) fn system_instruction(&self) -> String {
+        let resolved_cwd = self.active_cwd.read().unwrap()
+            .clone()
+            .or_else(|| std::env::current_dir().ok());
+        let cwd_path = resolved_cwd.as_deref().unwrap_or(std::path::Path::new("."));
+        let cwd_str = cwd_path.display().to_string();
+
+        let platform = if cfg!(target_os = "windows") {
+            "Windows"
+        } else if cfg!(target_os = "macos") {
+            "macOS"
+        } else {
+            "Linux"
+        };
+        let project_context = detect_project_context(cwd_path, &self.data_dir);
+        let mut prompt = SYSTEM_INSTRUCTION
+            .replace("[cwd]", &cwd_str)
+            .replace("[platform]", platform);
+        if !project_context.is_empty() {
+            prompt.push_str("\n\n## Project Context\n");
+            prompt.push_str(&project_context);
+        }
+        prompt
+    }
+
+    /// Build a system instruction for bridge conversations.
+    pub(crate) fn bridge_system_instruction(
+        &self,
+        platform: &crate::bridge::Platform,
+        sender_name: &str,
+    ) -> String {
+        let base = self.system_instruction();
+        format!(
+            "{base}\n\n## Bridge Context\n\
+             You are responding via {} (external messaging platform).\n\
+             The user's name on this platform is: {sender_name}.\n\
+             Keep responses concise and conversational. \
+             Do not mention internal tools or file paths.",
+            platform.name()
+        )
+    }
+
     pub fn new_test(db_path: PathBuf) -> Result<Self> {
         let data_dir = db_path.parent().unwrap().to_path_buf();
         // Create dummy model file so tests don't show "degraded" health status
@@ -544,6 +571,8 @@ impl Engine {
             agent_state: Arc::new(RwLock::new(AgentState::Idle)),
             interruptible: AtomicBool::new(false),
             data_dir: config.data_dir.clone(),
+            active_cwd: std::sync::RwLock::new(None),
+            bridge_manager: None,
             db_path: db_path.clone(),
             config: app_config,
             start_time: Instant::now(),
@@ -573,6 +602,9 @@ impl Engine {
             default_permission_mode: Arc::new(Mutex::new("ask".to_string())),
             cron_store: cron_store.clone(),
             notification_store,
+            checkpoint_store: Arc::new(std::sync::Mutex::new(
+                checkpoint::CheckpointStore::new(&config.data_dir),
+            )),
         };
 
         // Spawn persona watcher (from persona_watcher module)
@@ -589,6 +621,55 @@ impl Engine {
         );
 
         Ok(engine)
+    }
+
+    /// Process a message from a bridge platform and return the Agent's reply text.
+    pub async fn handle_bridge_message(
+        &self,
+        msg: crate::bridge::BridgeMessage,
+    ) -> Result<String> {
+        let _session_id = format!("bridge:{}:{}", msg.platform.name(), msg.chat_id);
+        let system = self.bridge_system_instruction(&msg.platform, &msg.sender_name);
+
+        let user_text = match &msg.content {
+            crate::bridge::MessageContent::Text(t) => t.clone(),
+            crate::bridge::MessageContent::Image { caption, url } => {
+                if let Some(c) = caption {
+                    format!("[Image: {url}]\n{c}")
+                } else {
+                    format!("[Image: {url}]")
+                }
+            }
+            crate::bridge::MessageContent::File { name, url, .. } => {
+                format!("[File: {name} ({url})]")
+            }
+            crate::bridge::MessageContent::Audio { url, .. } => {
+                format!("[Audio: {url}]")
+            }
+        };
+
+        if user_text.trim().is_empty() {
+            return Ok("(No text content received)".to_string());
+        }
+
+        // Combine system prompt + user message into a single prompt string
+        let full_prompt = format!("{system}\n\nUser: {user_text}");
+
+        let request = CompletionRequest {
+            prompt: full_prompt,
+            temperature: 0.7,
+            ..Default::default()
+        };
+
+        if let Some(ref cloud) = self.cloud {
+            let response = cloud.complete(request).await?;
+            Ok(response.text)
+        } else if let Some(ref local) = self.local_client {
+            let response = local.complete(request).await?;
+            Ok(response.text)
+        } else {
+            anyhow::bail!("no inference backend available for bridge message")
+        }
     }
 
     // === Core handler ===
@@ -687,7 +768,7 @@ impl Engine {
 
         // Persona failure -> empty string fallback
         let persona_summary = self.persona.summarize().await.unwrap_or_default();
-        let system = system_instruction();
+        let system = self.system_instruction();
         let system = if mode_cfg.system_suffix.is_empty() {
             system
         } else {
@@ -868,7 +949,7 @@ impl Engine {
         let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
         let store = MessageStore::new(&conn);
         let mut seq = store.max_seq(session_id).unwrap_or(0) + 1;
-        let _ = store.insert(session_id, seq, "user", &user_msg.content);
+        let _ = store.insert_with_metadata(session_id, seq, "user", &user_msg.content, user_msg.metadata.as_deref());
         seq += 1;
         for msg in tool_msgs {
             let _ = store.insert(session_id, seq, &msg.role, &msg.content);
@@ -905,7 +986,7 @@ impl Engine {
             .map(|m| format!("{}: {}\n", m.role, m.content))
             .collect();
         // Include system instruction overhead
-        let system_text = system_instruction();
+        let system_text = self.system_instruction();
         let full_text = if history_text.is_empty() {
             system_text
         } else {
@@ -1104,9 +1185,10 @@ impl Engine {
         model_id: &str,
         provider: &str,
     ) -> Result<()> {
-        self.complete_with_model_streaming_meta(session_id, prompt, images, None, model_id, provider).await
+        self.complete_with_model_streaming_meta(session_id, prompt, images, None, model_id, provider, openloom_models::Mode::Code).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn complete_with_model_streaming_meta(
         &self,
         session_id: &str,
@@ -1115,11 +1197,12 @@ impl Engine {
         metadata: Option<&str>,
         model_id: &str,
         provider: &str,
+        mode: openloom_models::Mode,
     ) -> Result<()> {
         // Build message history with system prompt + persona
         let history = self.get_working_memory(session_id).unwrap_or_default();
         let persona_summary = self.persona.summarize().await.unwrap_or_default();
-        let base_system = system_instruction();
+        let base_system = self.system_instruction();
         // Read current permission mode for this session and translate to a directive
         let permission_mode = self.permission_mode(session_id);
         let permission_directive = match permission_mode.as_str() {
@@ -1155,6 +1238,20 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
             if !ishiki.is_empty() { parts.push(format!("## Consciousness\n{}", ishiki)); }
             parts.join("\n\n")
         };
+
+        // Inject skill context into the system prompt so the LLM knows about available tools
+        let skill_infos = self.skills.list_all();
+        let skill_context: String = skill_infos
+            .iter()
+            .map(|s| format!("- {}: {}", s.name, s.description))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let agent_system = if skill_context.is_empty() {
+            agent_system
+        } else {
+            format!("{}\n\n## Available Tools\n{}", agent_system, skill_context)
+        };
+
         // ── Determine backend & check vision auxiliary ──
         let (backend, typed_cfg_pre, settings_snapshot) = {
             let config = self.config.read().await;
@@ -1200,32 +1297,6 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
             None
         };
 
-        // ── Build final user message ──
-        let user_message = if let Some(ref vtext) = vision_text {
-            let enhanced = format!("{}\n\n{}", vtext, prompt);
-            Message::user(&enhanced)
-        } else if images.is_empty() {
-            Message::user(prompt)
-        } else {
-            Message::user_with_images(prompt, images)
-        };
-
-        // ── Build messages chain ──
-        let messages: Vec<Message> = std::iter::once(Message {
-                role: Role::System,
-                content: vec![openloom_models::ContentPart::Text { text: agent_system }],
-                timestamp: chrono::Utc::now(),
-            })
-            .chain(history.iter().map(|m| {
-                if m.role == "user" {
-                    Message::user(&m.content)
-                } else {
-                    Message::assistant(&m.content)
-                }
-            }))
-            .chain(std::iter::once(user_message))
-            .collect();
-
         // Re-acquire config for typed_cfg fallback and settings_cfg
         let config = self.config.read().await;
         let typed_cfg = if typed_cfg_pre.is_some() {
@@ -1247,176 +1318,232 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
 
         drop(config);
 
-        let req = CompletionRequest {
-            messages,
-            stream: true,
-            ..Default::default()
-        };
-
         let event_bus = self.event_bus().clone();
         let sid = session_id.to_string();
-        let prompt_owned = prompt.to_string();
 
-        // Feed user message into memory pipeline for automatic cognition extraction
-        self.feed_memory_pipeline(&sid, &prompt_owned, "user_message");
-
-        // Create/reset the abort flag for this session
-        let abort_flag = self.session_abort_flag(&sid);
-        abort_flag.store(false, Ordering::SeqCst);
-
-        let (token_tx, mut token_rx) = tokio::sync::mpsc::channel::<String>(256);
-
-        // Spawn token collector: forwards each token as StreamDelta event
-        // Stops early if the abort flag is set.
-        let sid_clone = sid.clone();
-        let bus_clone = event_bus.clone();
-        let abort_clone = abort_flag.clone();
-        let collect_handle = tokio::spawn(async move {
-            let mut full = String::new();
-            let mut last_prompt_tokens: usize = 0;
-            while let Some(token) = token_rx.recv().await {
-                if abort_clone.load(Ordering::SeqCst) {
-                    break;
-                }
-                // Parse and suppress internal usage signals "\x00USAGE:prompt:completion:cached"
-                if token.starts_with('\x00') {
-                    if let Some(usage_str) = token.strip_prefix('\x00').and_then(|s| s.strip_prefix("USAGE:")) {
-                        let parts: Vec<&str> = usage_str.split(':').collect();
-                        if let Ok(pt) = parts.first().unwrap_or(&"0").parse::<usize>() {
-                            last_prompt_tokens = pt;
-                        }
-                    }
-                    continue;
-                }
-                full.push_str(&token);
-                let _ = bus_clone.send(EngineEvent::StreamDelta {
-                    session_id: sid_clone.clone(),
-                    delta: token,
-                });
-            }
-            (full, last_prompt_tokens)
-        });
-
-        // Pick client and stream
-        // For LM Studio: proactively load the model before sending the request.
-        // LM Studio returns "Unexpected endpoint or method" if no model is loaded.
-        if backend == openloom_models::ModelBackend::LmStudio {
-            let lm_base = typed_cfg.as_ref()
-                .and_then(|c| c.base_url.clone())
-                .unwrap_or_else(|| "http://localhost:1234/v1".to_string());
-            let context_size = typed_cfg.as_ref()
-                .map(|c| c.context_size)
-                .unwrap_or(32000);
-            let _ = openloom_inference::ensure_lm_studio_model(&lm_base, model_id, context_size).await;
-        }
-
-        let stream_result = if let Some(cfg) = typed_cfg {
-            match openloom_inference::create_cloud_client(&cfg) {
-                Ok(client) => client.complete_stream(req, token_tx).await,
-                Err(e) => Err(e),
-            }
-        } else if let Some(cfg) = settings_cfg {
-            // For LM Studio from settings, also ensure model is loaded
+        // ── Build the model client override ──
+        let model_client: Option<std::sync::Arc<dyn openloom_inference::CloudClient>> = {
+            // For LM Studio: proactively load the model
             if backend == openloom_models::ModelBackend::LmStudio {
-                let lm_base = cfg.base_url.clone().unwrap_or_else(|| "http://localhost:1234/v1".to_string());
-                let context_size = cfg.context_size;
-                let _ = openloom_inference::ensure_lm_studio_model(&lm_base, model_id, context_size).await;
+                let lm_base = typed_cfg.as_ref()
+                    .and_then(|c| c.base_url.clone())
+                    .unwrap_or_else(|| "http://localhost:1234/v1".to_string());
+                let ctx = typed_cfg.as_ref().map(|c| c.context_size).unwrap_or(32000);
+                let _ = openloom_inference::ensure_lm_studio_model(&lm_base, model_id, ctx).await;
             }
-            match openloom_inference::create_cloud_client(&cfg) {
-                Ok(client) => client.complete_stream(req, token_tx).await,
-                Err(e) => Err(e),
-            }
-        } else if backend != openloom_models::ModelBackend::LmStudio
-            && backend != openloom_models::ModelBackend::Ollama
-        {
-            if let Some(ref cloud) = self.cloud {
-                cloud.complete_stream(CompletionRequest {
-                    prompt: prompt_owned.clone(),
-                    stream: true,
-                    ..Default::default()
-                }, token_tx).await
+            if let Some(ref cfg) = typed_cfg {
+                openloom_inference::create_cloud_client(cfg).ok().map(std::sync::Arc::from)
+            } else if let Some(ref cfg) = settings_cfg {
+                if backend == openloom_models::ModelBackend::LmStudio {
+                    let lm_base = cfg.base_url.clone().unwrap_or_else(|| "http://localhost:1234/v1".to_string());
+                    let ctx = cfg.context_size;
+                    let _ = openloom_inference::ensure_lm_studio_model(&lm_base, model_id, ctx).await;
+                }
+                openloom_inference::create_cloud_client(cfg).ok().map(std::sync::Arc::from)
             } else {
-                Err(anyhow::anyhow!("no cloud client available"))
+                None
             }
-        } else if let Some(ref local) = self.local_client {
-            // local_client for LM Studio / Ollama: also ensure LM Studio model
-            if local.provider() == openloom_models::ModelBackend::LmStudio {
-                let _ = openloom_inference::ensure_lm_studio_model(
-                    "http://localhost:1234/v1",
-                    local.model_name(),
-                    32000,
-                ).await;
-            }
-            local.complete_stream(CompletionRequest {
-                prompt: prompt_owned.clone(),
-                stream: true,
-                ..Default::default()
-            }, token_tx).await
-        } else {
-            Err(anyhow::anyhow!("no model client available"))
         };
 
-        let (full_response, actual_prompt_tokens) = collect_handle.await.unwrap_or_default();
-
-        // If the inference layer reported real prompt_tokens via USAGE signal,
-        // fire a TokenUsage event so the frontend context ring can show accurate numbers.
-        if actual_prompt_tokens > 0 {
-            let model_id = if !model_id.is_empty() { model_id.to_string() } else { "unknown".to_string() };
-            let completion_tokens = {
-                // Estimate: completion text / 4 chars per token
-                full_response.chars().count() / 4
-            };
-            let _ = event_bus.send(EngineEvent::TokenUsage {
-                session_id: sid.clone(),
-                model: model_id,
-                prompt_tokens: actual_prompt_tokens,
-                completion_tokens,
-                cached_tokens: 0,
-                latency_ms: 0,
-            });
-        }
-
-        // Feed both sides of the conversation into the memory pipeline
-        // (user message was already fed at the start; feed assistant response now)
-        if !full_response.is_empty() && !full_response.starts_with("[error") && !full_response.starts_with("[aborted") {
-            self.feed_memory_pipeline(&sid, &full_response, "assistant_response");
-        }
-
-        if let Err(e) = stream_result {
-            let _ = event_bus.send(EngineEvent::StreamEnd {
-                session_id: sid.clone(),
-                full_response: format!("[error: {}]", e),
-            });
-            return Err(e);
-        }
-
-        // Save messages (even partial response on abort)
-        let was_aborted = abort_flag.load(Ordering::SeqCst);
-        self.remove_abort_flag(&sid);
+        // ── Build user message (with vision text if available) ──
+        let user_content = if let Some(ref vtext) = vision_text {
+            format!("{}\n\n{}", vtext, prompt)
+        } else {
+            prompt.to_string()
+        };
 
         let user_msg = openloom_models::ChatMessage {
             role: "user".into(),
-            content: prompt_owned,
+            content: user_content.clone(),
             timestamp: chrono::Utc::now(),
             id: None,
             seq: None,
             metadata: metadata.map(|s| s.to_string()),
         };
-        let _ = self.save_messages(&sid, &user_msg, &full_response);
 
-        // Fire StreamEnd — if aborted, send partial response so frontend finalizes the message
-        let _ = event_bus.send(EngineEvent::StreamEnd {
+        // Feed user message into memory pipeline for cognition extraction
+        self.feed_memory_pipeline(&sid, &user_content, "user_message");
+
+        // ── Classify intent: simple queries skip the agent loop ──
+        let router_out = self.router.classify_sync(prompt);
+        let use_agent_loop = router_out.complexity >= 0.8 || router_out.skill_match.is_some();
+
+        // Feed cognition extraction pipeline (non-blocking)
+        let _ = self.memory_tx.send(memory_thread::ProcessRequest {
             session_id: sid.clone(),
-            full_response: if was_aborted && !full_response.is_empty() {
-                full_response
-            } else if was_aborted {
-                "[aborted]".to_string()
-            } else {
-                full_response
-            },
+            text: prompt.to_string(),
+            context: router_out.intent.to_string(),
         });
 
-        Ok(())
+        if use_agent_loop {
+            // ── Complex/skill-match: run the full agent loop with tools ──
+
+            // Create/reset the abort flag for this session
+            let abort_flag = self.session_abort_flag(&sid);
+            abort_flag.store(false, Ordering::SeqCst);
+
+            let sink = crate::agent_loop::OutputSink::Electron {
+                event_bus: event_bus.clone(),
+                session_id: sid.clone(),
+            };
+
+            let model_pref = openloom_models::ModelPreference::Auto;
+
+            let result = self.agent_loop_inner(
+                &user_msg,
+                &sid,
+                sink,
+                Some(agent_system),
+                model_client,
+                mode,
+                model_pref,
+            ).await;
+
+            // Clean up abort flag
+            self.remove_abort_flag(&sid);
+
+            match result {
+                Ok(response) => {
+                    let _ = event_bus.send(EngineEvent::StreamEnd {
+                        session_id: sid.clone(),
+                        full_response: response.response.clone(),
+                    });
+                    if !response.response.is_empty() {
+                        self.feed_memory_pipeline(&sid, &response.response, "assistant_response");
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    let _ = event_bus.send(EngineEvent::StreamEnd {
+                        session_id: sid.clone(),
+                        full_response: format!("[error: {}]", e),
+                    });
+                    Err(e)
+                }
+            }
+        } else {
+            // ── Simple query: fast path without tools (preserves streaming UX) ──
+
+            // Build messages manually for a simple completion (no tools)
+            let simple_messages: Vec<Message> = std::iter::once(Message {
+                    role: Role::System,
+                    content: vec![openloom_models::ContentPart::Text { text: agent_system.clone() }],
+                    timestamp: chrono::Utc::now(),
+                })
+                .chain(history.iter().map(|m| {
+                    if m.role == "user" {
+                        Message::user(&m.content)
+                    } else {
+                        Message::assistant(&m.content)
+                    }
+                }))
+                .chain(std::iter::once(
+                    if images.is_empty() {
+                        Message::user(&user_content)
+                    } else {
+                        Message::user_with_images(&user_content, images)
+                    }
+                ))
+                .collect();
+
+            let req = CompletionRequest {
+                messages: simple_messages,
+                max_tokens: self.max_output_tokens,
+                temperature: 0.0,
+                stream: true,
+                ..Default::default()
+            };
+
+            let (token_tx, mut token_rx) = tokio::sync::mpsc::channel::<String>(256);
+
+            // Spawn token collector: forwards each token as StreamDelta event
+            let sid_clone = sid.clone();
+            let bus_clone = event_bus.clone();
+            let collect_handle = tokio::spawn(async move {
+                let mut full = String::new();
+                let mut in_thinking = false;
+                while let Some(token) = token_rx.recv().await {
+                    if token.starts_with('\x00') { continue; }
+                    // Reasoning/thinking tokens: emit as ThinkingDelta events
+                    if token.starts_with('\x02') {
+                        let reasoning = token.strip_prefix('\x02').unwrap_or("");
+                        let reasoning = reasoning.strip_prefix("REASONING\x02").unwrap_or(reasoning);
+                        if !reasoning.is_empty() {
+                            if !in_thinking {
+                                in_thinking = true;
+                            }
+                            let _ = bus_clone.send(EngineEvent::ThinkingDelta {
+                                session_id: sid_clone.clone(),
+                                delta: reasoning.to_string(),
+                            });
+                        }
+                        continue;
+                    }
+                    // Regular text token: if we were in thinking mode, close it first
+                    if in_thinking {
+                        in_thinking = false;
+                        let _ = bus_clone.send(EngineEvent::ThinkingEnd {
+                            session_id: sid_clone.clone(),
+                        });
+                    }
+                    full.push_str(&token);
+                    let _ = bus_clone.send(EngineEvent::StreamDelta {
+                        session_id: sid_clone.clone(),
+                        delta: token,
+                    });
+                }
+                // Flush any remaining thinking
+                if in_thinking {
+                    let _ = bus_clone.send(EngineEvent::ThinkingEnd {
+                        session_id: sid_clone.clone(),
+                    });
+                }
+                full
+            });
+
+            let stream_result = if let Some(ref client) = model_client {
+                client.complete_stream(req, token_tx).await
+            } else if let Some(ref cloud) = self.cloud {
+                cloud.complete_stream(CompletionRequest {
+                    prompt: user_content.clone(),
+                    stream: true,
+                    ..Default::default()
+                }, token_tx).await
+            } else if let Some(ref local) = self.local_client {
+                local.complete_stream(CompletionRequest {
+                    prompt: user_content.clone(),
+                    stream: true,
+                    ..Default::default()
+                }, token_tx).await
+            } else {
+                Err(anyhow::anyhow!("no model client available"))
+            };
+
+            let full_response = collect_handle.await.unwrap_or_default();
+
+            // Save messages
+            let _ = self.save_messages(&sid, &user_msg, &full_response);
+
+            // Feed assistant response into memory pipeline
+            if !full_response.is_empty() {
+                self.feed_memory_pipeline(&sid, &full_response, "assistant_response");
+            }
+
+            if let Err(e) = stream_result {
+                let _ = event_bus.send(EngineEvent::StreamEnd {
+                    session_id: sid.clone(),
+                    full_response: format!("[error: {}]", e),
+                });
+                return Err(e);
+            }
+
+            let _ = event_bus.send(EngineEvent::StreamEnd {
+                session_id: sid.clone(),
+                full_response,
+            });
+
+            Ok(())
+        }
     }
 
     /// Find a model in settings.providers and construct a ModelConfig from it.
@@ -1924,6 +2051,1219 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
         self.skills.invoke(name, params).await
     }
 
+    // ── User skill management (filesystem-based) ──────────────────────
+
+    /// List all user skills (from skills dir, learned dirs, external paths) with
+    /// per-agent enabled state from config.
+    pub async fn list_user_skills(&self, agent_id: &str) -> serde_json::Value {
+        let mut skills: Vec<serde_json::Value> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        // Get enabled skill names for this agent from config
+        let enabled_key = format!("settings.agent.{}.skills.enabled", agent_id);
+        let enabled_val = self.get_config(Some(&enabled_key)).await;
+        let enabled_set: std::collections::HashSet<String> = enabled_val
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // 1. Scan skills dir (~/.loom/skills/)
+        let skills_dir = self.data_dir.join("skills");
+        for skill in crate::skill_fs::scan_skills_dir(&skills_dir, "user") {
+            if seen.insert(skill.name.clone()) {
+                let enabled = enabled_set.contains(&skill.name);
+                skills.push(serde_json::json!({
+                    "name": skill.name,
+                    "description": skill.description,
+                    "filePath": skill.file_path,
+                    "baseDir": skill.base_dir,
+                    "source": skill.source,
+                    "hidden": false,
+                    "enabled": enabled,
+                    "externalLabel": null,
+                    "externalPath": null,
+                    "readonly": false,
+                }));
+            }
+        }
+
+        // 2. Scan learned skills (from agent dir)
+        let agent_dir = self.data_dir.join("agents").join(agent_id);
+        let learned_dir = agent_dir.join("learned-skills");
+        for skill in crate::skill_fs::scan_learned_skills_dir(&learned_dir, agent_id) {
+            if seen.insert(skill.name.clone()) {
+                let enabled = enabled_set.contains(&skill.name);
+                skills.push(serde_json::json!({
+                    "name": skill.name,
+                    "description": skill.description,
+                    "filePath": skill.file_path,
+                    "baseDir": skill.base_dir,
+                    "source": "learned",
+                    "hidden": false,
+                    "enabled": enabled,
+                    "externalLabel": null,
+                    "externalPath": null,
+                    "readonly": false,
+                }));
+            }
+        }
+
+        // 3. Scan external paths
+        let ext_paths = self.get_external_skill_paths().await;
+        for skill in crate::skill_fs::scan_external_paths(&ext_paths) {
+            if seen.insert(skill.name.clone()) {
+                let enabled = enabled_set.contains(&skill.name);
+                let readonly = skill
+                    .external_label
+                    .as_deref()
+                    .map(|l| l.starts_with("plugin:"))
+                    .unwrap_or(false);
+                skills.push(serde_json::json!({
+                    "name": skill.name,
+                    "description": skill.description,
+                    "filePath": skill.file_path,
+                    "baseDir": skill.base_dir,
+                    "source": "external",
+                    "hidden": false,
+                    "enabled": enabled,
+                    "externalLabel": skill.external_label,
+                    "externalPath": skill.external_path,
+                    "readonly": readonly,
+                }));
+            }
+        }
+
+        serde_json::json!({ "skills": skills })
+    }
+
+    /// Get external skill paths (configured + discovered paths that exist).
+    pub async fn get_external_skill_paths(&self) -> Vec<(String, String)> {
+        let mut paths: Vec<(String, String)> = Vec::new();
+
+        // 1. Configured custom paths from config
+        let config = self
+            .get_config(Some("settings.skills.external_paths"))
+            .await;
+        let configured: Vec<String> = config
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for p in &configured {
+            paths.push((p.clone(), format!("custom:{}", p)));
+        }
+
+        // 2. Discovered paths from known tools (Claude Code, Codex, etc.)
+        let home = dirs::home_dir().unwrap_or_default();
+        for discovered in crate::skill_fs::discover_external_paths(&home) {
+            if discovered.exists {
+                // Skip if already covered by a configured path
+                let already_configured = configured.iter().any(|c| c == &discovered.dir_path);
+                if !already_configured {
+                    paths.push((discovered.dir_path.clone(), discovered.label.clone()));
+                }
+            }
+        }
+
+        paths
+    }
+
+    /// Get external paths info (configured paths + discovered tool paths).
+    pub async fn get_external_paths_info(&self) -> serde_json::Value {
+        // Read configured paths from config
+        let config = self
+            .get_config(Some("settings.skills.external_paths"))
+            .await;
+        let configured: Vec<String> = config
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let home = dirs::home_dir().unwrap_or_default();
+        let discovered: Vec<serde_json::Value> =
+            crate::skill_fs::discover_external_paths(&home)
+                .iter()
+                .map(|d| {
+                    serde_json::json!({
+                        "dirPath": d.dir_path,
+                        "label": d.label,
+                        "exists": d.exists,
+                    })
+                })
+                .collect();
+
+        serde_json::json!({
+            "configured": configured,
+            "discovered": discovered,
+        })
+    }
+
+    /// Set external skill paths.
+    pub async fn set_external_skill_paths(
+        &self,
+        paths: Vec<String>,
+    ) -> Result<()> {
+        let value = serde_json::json!(paths);
+        self.set_config("settings.skills.external_paths", value)
+            .await
+    }
+
+    /// Install a skill from a file path.
+    pub fn install_user_skill(
+        &self,
+        source_path: &str,
+    ) -> Result<serde_json::Value> {
+        let source = std::path::Path::new(source_path);
+        let skills_dir = self.data_dir.join("skills");
+        std::fs::create_dir_all(&skills_dir)?;
+        let skill = crate::skill_fs::install_skill(source, &skills_dir)?;
+        Ok(serde_json::json!({
+            "skill": {
+                "name": skill.name,
+                "description": skill.description,
+                "filePath": skill.file_path,
+                "baseDir": skill.base_dir,
+            }
+        }))
+    }
+
+    /// Delete a user skill by name.
+    pub fn delete_user_skill(&self, name: &str) -> Result<bool> {
+        let skills_dir = self.data_dir.join("skills");
+        crate::skill_fs::delete_skill(&skills_dir, name)
+    }
+
+    /// Toggle a skill's enabled state for an agent.
+    pub async fn toggle_user_skill(
+        &self,
+        agent_id: &str,
+        name: &str,
+        enabled: bool,
+    ) -> Result<()> {
+        let key = format!("settings.agent.{}.skills.enabled", agent_id);
+        let current = self.get_config(Some(&key)).await;
+        let mut names: Vec<String> = current
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if enabled {
+            if !names.contains(&name.to_string()) {
+                names.push(name.to_string());
+            }
+        } else {
+            names.retain(|n| n != name);
+        }
+
+        self.set_config(&key, serde_json::json!(names)).await
+    }
+
+    // ── Bundle management ─────────────────────────────────────────────
+
+    /// List all skill bundles with per-agent enabled state.
+    pub fn list_skill_bundles(&self, _agent_id: &str) -> serde_json::Value {
+        let bundles: Vec<serde_json::Value> =
+            crate::skill_bundles::list_bundles(&self.data_dir)
+                .iter()
+                .map(|b| {
+                    serde_json::json!({
+                        "id": b.id,
+                        "name": b.name,
+                        "skillNames": b.skill_names,
+                        "source": b.source,
+                        "agentId": b.agent_id,
+                        "sourcePackage": b.source_package,
+                        "createdAt": b.created_at,
+                        "updatedAt": b.updated_at,
+                    })
+                })
+                .collect();
+        serde_json::json!({ "bundles": bundles })
+    }
+
+    /// Create a new skill bundle.
+    pub fn create_skill_bundle(
+        &self,
+        name: &str,
+        skill_names: Vec<String>,
+    ) -> Result<serde_json::Value> {
+        let bundle =
+            crate::skill_bundles::create_bundle(&self.data_dir, name, skill_names)?;
+        Ok(serde_json::json!({
+            "bundle": {
+                "id": bundle.id,
+                "name": bundle.name,
+                "skillNames": bundle.skill_names,
+            }
+        }))
+    }
+
+    /// Update a skill bundle.
+    pub fn update_skill_bundle(
+        &self,
+        id: &str,
+        name: Option<&str>,
+        skill_names: Option<Vec<String>>,
+    ) -> Result<serde_json::Value> {
+        let bundle = crate::skill_bundles::update_bundle(
+            &self.data_dir,
+            id,
+            name,
+            skill_names,
+        )?;
+        Ok(serde_json::json!({
+            "bundle": {
+                "id": bundle.id,
+                "name": bundle.name,
+                "skillNames": bundle.skill_names,
+            }
+        }))
+    }
+
+    /// Delete a skill bundle.
+    pub fn delete_skill_bundle(&self, id: &str) -> Result<bool> {
+        crate::skill_bundles::delete_bundle(&self.data_dir, id)
+    }
+
+    /// Reorder skill bundles.
+    pub fn reorder_skill_bundles(
+        &self,
+        bundle_ids: &[String],
+    ) -> Result<serde_json::Value> {
+        let bundles = crate::skill_bundles::reorder_bundles(&self.data_dir, bundle_ids)?;
+        let result: Vec<serde_json::Value> = bundles
+            .iter()
+            .map(|b| {
+                serde_json::json!({
+                    "id": b.id,
+                    "name": b.name,
+                    "skillNames": b.skill_names,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "bundles": result }))
+    }
+
+    /// Toggle a bundle's enabled state for an agent.
+    pub fn toggle_skill_bundle(
+        &self,
+        id: &str,
+        agent_id: &str,
+        enabled: bool,
+    ) -> Result<()> {
+        crate::skill_bundles::set_bundle_enabled(&self.data_dir, id, agent_id, enabled)
+    }
+
+    /// Export a skill bundle as zip.
+    pub fn export_skill_bundle(
+        &self,
+        id: &str,
+    ) -> Result<serde_json::Value> {
+        let skills_dir = self.data_dir.join("skills");
+        let result =
+            crate::skill_bundles::export_bundle(&self.data_dir, &skills_dir, id)?;
+        Ok(serde_json::json!({
+            "filePath": result.file_path,
+            "fileName": result.file_name,
+            "bundle": {
+                "id": result.bundle.id,
+                "name": result.bundle.name,
+                "skillCount": result.bundle.skill_count,
+            },
+            "warnings": result.warnings.iter().map(|w| serde_json::json!({
+                "type": w.r#type,
+                "name": w.name,
+            })).collect::<Vec<_>>(),
+        }))
+    }
+
+    // ── Plugin management ─────────────────────────────────────────────
+
+    /// List all installed plugins.
+    pub fn list_plugins(&self) -> serde_json::Value {
+        let plugins_dir = self.data_dir.join("plugins");
+        let plugins = crate::plugin_fs::scan_plugins_dir(&plugins_dir);
+
+        let plugins_json: Vec<serde_json::Value> = plugins
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "id": p.id,
+                    "name": p.name,
+                    "version": p.version,
+                    "description": p.description,
+                    "source": p.source,
+                    "status": p.status,
+                    "trust": p.trust,
+                    "hidden": p.hidden,
+                    "pluginDir": p.plugin_dir,
+                    "manifestFormat": p.manifest_format,
+                    "contributions": p.contributions,
+                    "configSchema": p.config_schema,
+                    "uiHostCapabilities": p.ui_host_capabilities,
+                    "author": p.author,
+                    "repository": p.repository,
+                    "category": p.category,
+                })
+            })
+            .collect();
+
+        serde_json::json!({ "plugins": plugins_json })
+    }
+
+    /// Get plugin config for a specific plugin.
+    pub async fn get_plugin_config(&self, plugin_id: &str) -> serde_json::Value {
+        let key = format!("settings.plugins.{}.config", plugin_id);
+        self.get_config(Some(&key)).await
+    }
+
+    /// Set plugin config for a specific plugin.
+    pub async fn set_plugin_config(
+        &self,
+        plugin_id: &str,
+        config: serde_json::Value,
+    ) -> Result<()> {
+        let key = format!("settings.plugins.{}.config", plugin_id);
+        self.set_config(&key, config).await
+    }
+
+    /// Get plugin diagnostics.
+    pub fn get_plugin_diagnostics(&self) -> serde_json::Value {
+        let plugins_dir = self.data_dir.join("plugins");
+        let plugins = crate::plugin_fs::scan_plugins_dir(&plugins_dir);
+
+        let diagnostics: Vec<serde_json::Value> = plugins
+            .iter()
+            .map(|p| {
+                let skills_dir = p.plugin_dir.clone() + "/skills";
+                let tools_dir = p.plugin_dir.clone() + "/tools";
+                let commands_dir = p.plugin_dir.clone() + "/commands";
+
+                let list_files = |dir: &str| -> Vec<String> {
+                    let path = Path::new(dir);
+                    if !path.exists() {
+                        return vec![];
+                    }
+                    std::fs::read_dir(path)
+                        .map(|entries| {
+                            entries
+                                .flatten()
+                                .filter_map(|e| {
+                                    let name = e.file_name().to_string_lossy().to_string();
+                                    if name.starts_with('.') {
+                                        None
+                                    } else {
+                                        Some(name)
+                                    }
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                };
+
+                serde_json::json!({
+                    "id": p.id,
+                    "name": p.name,
+                    "version": p.version,
+                    "status": p.status,
+                    "pluginDir": p.plugin_dir,
+                    "tools": list_files(&tools_dir),
+                    "commands": list_files(&commands_dir),
+                    "skills": list_files(&skills_dir),
+                    "configKeys": Vec::<String>::new(),
+                })
+            })
+            .collect();
+
+        serde_json::json!({ "diagnostics": diagnostics })
+    }
+
+    /// Get plugin settings (global).
+    pub async fn get_plugin_settings(&self) -> serde_json::Value {
+        let config = self
+            .get_config(Some("settings.plugins"))
+            .await;
+        let allow_full = config
+            .get("allow_full_access")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let dev_tools = config
+            .get("plugin_dev_tools_enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let plugins_dir = config
+            .get("plugins_dir")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        serde_json::json!({
+            "allow_full_access": allow_full,
+            "plugin_dev_tools_enabled": dev_tools,
+            "plugins_dir": plugins_dir,
+        })
+    }
+
+    /// Update plugin settings (global).
+    pub async fn set_plugin_settings(
+        &self,
+        settings: serde_json::Value,
+    ) -> Result<()> {
+        // Merge with existing
+        let mut existing = self.get_config(Some("settings.plugins")).await;
+        if let Some(obj) = existing.as_object_mut() {
+            if let Some(new_obj) = settings.as_object() {
+                for (k, v) in new_obj {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
+        } else {
+            existing = settings;
+        }
+        self.set_config("settings.plugins", existing).await
+    }
+
+    /// Install a plugin from a source path.
+    pub fn install_plugin(&self, source_path: &str) -> Result<serde_json::Value> {
+        let source = Path::new(source_path);
+        let plugins_dir = self.data_dir.join("plugins");
+        std::fs::create_dir_all(&plugins_dir)?;
+        let plugin = crate::plugin_fs::install_plugin(source, &plugins_dir)?;
+        Ok(serde_json::json!({
+            "plugin": {
+                "id": plugin.id,
+                "name": plugin.name,
+                "version": plugin.version,
+                "status": plugin.status,
+            }
+        }))
+    }
+
+    /// Remove a plugin by ID.
+    pub fn remove_plugin(&self, id: &str) -> Result<bool> {
+        let plugins_dir = self.data_dir.join("plugins");
+        crate::plugin_fs::remove_plugin(&plugins_dir, id)
+    }
+
+    /// Enable or disable a plugin.
+    pub async fn set_plugin_enabled(
+        &self,
+        id: &str,
+        enabled: bool,
+    ) -> Result<()> {
+        let key = "settings.plugins.disabled";
+        let current = self.get_config(Some(key)).await;
+        let mut disabled: Vec<String> = current
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if enabled {
+            disabled.retain(|d| d != id);
+        } else if !disabled.contains(&id.to_string()) {
+            disabled.push(id.to_string());
+        }
+
+        self.set_config(key, serde_json::json!(disabled)).await
+    }
+
+    // ── Plugin marketplace ──────────────────────────────────────────────
+
+    /// Get marketplace sources from config.
+    pub async fn get_marketplace_sources(&self) -> Vec<crate::plugin_fs::MarketplaceSource> {
+        let config = self
+            .get_config(Some("settings.plugins.marketplace_sources"))
+            .await;
+        let sources: Vec<serde_json::Value> = config
+            .as_array().cloned()
+            .unwrap_or_default();
+
+        if sources.is_empty() {
+            // Default: check if marketplace dir has content
+            let mp_dir = crate::plugin_fs::marketplace_dir(&self.data_dir);
+            if mp_dir.exists() {
+                let has_content = std::fs::read_dir(&mp_dir)
+                    .map(|mut entries| entries.any(|e| e.ok().is_some_and(|e| e.path().is_dir() && !e.file_name().to_string_lossy().starts_with('.'))))
+                    .unwrap_or(false);
+                if has_content {
+                    return vec![crate::plugin_fs::MarketplaceSource {
+                        kind: "local".to_string(),
+                        url: None,
+                        path: Some(mp_dir.to_string_lossy().to_string()),
+                        configured: true,
+                        name: "Local Marketplace".to_string(),
+                    }];
+                }
+            }
+            return vec![];
+        }
+
+        sources
+            .iter()
+            .map(|s| crate::plugin_fs::MarketplaceSource {
+                kind: s
+                    .get("kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("local")
+                    .to_string(),
+                url: s.get("url").and_then(|v| v.as_str()).map(String::from),
+                path: s.get("path").and_then(|v| v.as_str()).map(String::from),
+                configured: true,
+                name: s
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Marketplace")
+                    .to_string(),
+            })
+            .collect()
+    }
+
+    /// Add a marketplace source (Git URL or local path). Clones Git repos.
+    pub async fn add_marketplace_source(
+        &self,
+        url: &str,
+        name: &str,
+    ) -> Result<serde_json::Value> {
+        let mp_dir = crate::plugin_fs::marketplace_dir(&self.data_dir);
+        std::fs::create_dir_all(&mp_dir)?;
+
+        let source_dir = if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("git@") {
+            // Git clone
+            let target = mp_dir.join(slugify_str(name));
+            if target.exists() {
+                // git pull
+                let output = std::process::Command::new("git")
+                    .args(["-C", &target.to_string_lossy(), "pull", "--ff-only"])
+                    .output();
+                if let Err(e) = output {
+                    tracing::warn!(error = %e, "git pull failed for marketplace source");
+                }
+            } else {
+                let output = std::process::Command::new("git")
+                    .args(["clone", url, &target.to_string_lossy()])
+                    .output()
+                    .map_err(|e| anyhow::anyhow!("git clone failed: {}", e))?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("git clone failed: {}", stderr);
+                }
+            }
+            target
+        } else {
+            // Local path
+            let p = std::path::Path::new(url);
+            if !p.exists() {
+                anyhow::bail!("local path does not exist: {}", url);
+            }
+            p.to_path_buf()
+        };
+
+        // Save source to config
+        let mut existing: Vec<serde_json::Value> = self
+            .get_config(Some("settings.plugins.marketplace_sources"))
+            .await
+            .as_array().cloned()
+            .unwrap_or_default();
+
+        // Remove existing entry with same name
+        existing.retain(|s| s.get("name").and_then(|v| v.as_str()) != Some(name));
+
+        existing.push(serde_json::json!({
+            "kind": if url.starts_with("http") || url.starts_with("git@") { "git" } else { "local" },
+            "name": name,
+            "url": if url.starts_with("http") || url.starts_with("git@") { serde_json::json!(url) } else { serde_json::Value::Null },
+            "path": source_dir.to_string_lossy().to_string(),
+        }));
+
+        self.set_config("settings.plugins.marketplace_sources", serde_json::json!(existing))
+            .await?;
+
+        Ok(serde_json::json!({
+            "name": name,
+            "path": source_dir.to_string_lossy().to_string(),
+        }))
+    }
+
+    /// Remove a marketplace source by name.
+    pub async fn remove_marketplace_source(&self, name: &str) -> Result<()> {
+        let mut existing: Vec<serde_json::Value> = self
+            .get_config(Some("settings.plugins.marketplace_sources"))
+            .await
+            .as_array().cloned()
+            .unwrap_or_default();
+
+        existing.retain(|s| s.get("name").and_then(|v| v.as_str()) != Some(name));
+        self.set_config("settings.plugins.marketplace_sources", serde_json::json!(existing))
+            .await?;
+
+        // Remove cloned directory
+        let mp_dir = crate::plugin_fs::marketplace_dir(&self.data_dir);
+        let target = mp_dir.join(slugify_str(name));
+        if target.exists() {
+            let _ = std::fs::remove_dir_all(&target);
+        }
+        Ok(())
+    }
+
+    /// Set/replace all marketplace sources.
+    pub async fn set_marketplace_sources(
+        &self,
+        sources: Vec<serde_json::Value>,
+    ) -> Result<()> {
+        self.set_config("settings.plugins.marketplace_sources", serde_json::json!(sources))
+            .await
+    }
+
+    /// Refresh marketplace sources (git pull all).
+    pub async fn refresh_marketplace(&self) -> Result<()> {
+        let sources = self.get_marketplace_sources().await;
+        for source in &sources {
+            if source.kind == "git"
+                && let Some(ref path_str) = source.path
+            {
+                    let target = std::path::Path::new(path_str);
+                    if target.join(".git").exists() {
+                        let output = std::process::Command::new("git")
+                            .args(["-C", path_str, "pull", "--ff-only"])
+                            .output();
+                        match output {
+                            Ok(o) if o.status.success() => {
+                                tracing::info!(source = %source.name, "marketplace source refreshed");
+                            }
+                            Ok(o) => {
+                                tracing::warn!(source = %source.name, stderr = %String::from_utf8_lossy(&o.stderr), "git pull failed");
+                            }
+                            Err(e) => {
+                                tracing::warn!(source = %source.name, error = %e, "git pull error");
+                            }
+                        }
+                    }
+                }
+        }
+        Ok(())
+    }
+
+    // ── Computer Use ───────────────────────────────────────────────────
+
+    /// Get computer use status and settings.
+    pub async fn get_computer_use_status(&self) -> serde_json::Value {
+        let settings = self
+            .get_config(Some("settings.computer-use"))
+            .await;
+        let enabled = settings
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let status = crate::computer_use::check_status();
+        let available = status
+            .get("available")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let reason = status
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let error = status
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let permissions = status
+            .get("permissions")
+            .cloned()
+            .unwrap_or(serde_json::json!([]));
+
+        serde_json::json!({
+            "selectedProviderId": if available { serde_json::json!("loom-sandbox") } else { serde_json::Value::Null },
+            "status": {
+                "enabled": enabled && available,
+                "activeLease": null,
+                "providers": [
+                    {
+                        "providerId": "loom-sandbox",
+                        "status": {
+                            "available": available,
+                            "reason": reason,
+                            "error": error,
+                            "permissions": permissions
+                        }
+                    }
+                ]
+            },
+            "settings": {
+                "enabled": enabled,
+                "app_approvals": []
+            }
+        })
+    }
+
+    // ── Bridge ─────────────────────────────────────────────────────────
+
+    /// Get bridge status for an agent.
+    pub async fn get_bridge_status(&self, agent_id: &str) -> serde_json::Value {
+        let bridge_key = format!("settings.agent.{}.bridge", agent_id);
+        let config = self.get_config(Some(&bridge_key)).await;
+        let global = self.get_config(Some("settings.bridge")).await;
+
+        crate::bridge::build_status(&config, &global, agent_id)
+    }
+
+    /// Test bridge platform credentials.
+    pub async fn test_bridge_platform(
+        &self,
+        platform: &str,
+        credentials: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        crate::bridge::test_platform(platform, &credentials).await
+    }
+
+    // ── Computer Use runtime ───────────────────────────────────────────
+
+    /// List open app windows for computer use.
+    pub fn list_computer_use_apps(&self) -> Result<serde_json::Value> {
+        crate::computer_use::list_apps()
+    }
+
+    /// Get app state (screenshot + accessibility tree).
+    pub fn get_computer_use_app_state(
+        &self,
+        target: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        crate::computer_use::get_app_state(&target)
+    }
+
+    /// Perform a computer use action.
+    pub fn perform_computer_use_action(
+        &self,
+        target: serde_json::Value,
+        action: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        crate::computer_use::perform_action(&target, &action)
+    }
+
+    /// Build the computer use tool definition for LLM tool calling.
+    pub fn computer_use_tool_definition(&self) -> serde_json::Value {
+        serde_json::json!({
+            "name": "computer",
+            "description": "Control a Windows application using accessibility APIs. Actions: list_apps, get_app_state, click_element, type_text, scroll, stop.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list_apps", "get_app_state", "click_element", "type_text", "scroll", "stop"],
+                        "description": "The action to perform."
+                    },
+                    "process_id": {
+                        "type": "number",
+                        "description": "Target process ID (for get_app_state and element actions)."
+                    },
+                    "window_id": {
+                        "type": "number",
+                        "description": "Target window handle."
+                    },
+                    "app_name": {
+                        "type": "string",
+                        "description": "App name to search for."
+                    },
+                    "element_id": {
+                        "type": "string",
+                        "description": "Element ID from the last get_app_state response (e.g. 'uia:5')."
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Text to type into the element."
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["up", "down", "left", "right"],
+                        "description": "Scroll direction."
+                    }
+                },
+                "required": ["action"]
+            }
+        })
+    }
+
+    /// List marketplace plugins from all configured sources.
+    pub async fn list_marketplace_plugins(&self) -> serde_json::Value {
+        let mp_dir = crate::plugin_fs::marketplace_dir(&self.data_dir);
+        let mut plugins: Vec<crate::plugin_fs::MarketplacePlugin> = Vec::new();
+        let mut warnings: Vec<String> = Vec::new();
+
+        let sources = self.get_marketplace_sources().await;
+        let has_sources = !sources.is_empty();
+
+        // Scan top-level marketplace dir (local plugins placed directly)
+        if mp_dir.exists() {
+            let top_level = crate::plugin_fs::scan_marketplace_dir(&mp_dir);
+            plugins.extend(top_level);
+        }
+
+        // Scan cloned repo sources (marketplace/<source-name>/)
+        if mp_dir.exists()
+            && let Ok(entries) = std::fs::read_dir(&mp_dir)
+        {
+            for entry in entries.flatten() {
+                let source_dir = entry.path();
+                if !source_dir.is_dir() { continue; }
+                let dir_name = source_dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                if dir_name.starts_with('.') { continue; }
+                if crate::plugin_fs::find_manifest_in_dir(&source_dir).is_some() { continue; }
+
+                // 1) Try marketplace.json first (primary listing format)
+                let marketplace_json = source_dir.join(".claude-plugin").join("marketplace.json");
+                if marketplace_json.exists() {
+                    match crate::plugin_fs::parse_marketplace_listing(&marketplace_json, &source_dir) {
+                        Ok(listed) => {
+                            tracing::info!(source = %dir_name, count = listed.len(), "loaded marketplace.json");
+                            plugins.extend(listed);
+                            continue;
+                        }
+                        Err(e) => {
+                            warnings.push(format!("源「{}」marketplace.json 解析失败: {}", dir_name, e));
+                        }
+                    }
+                }
+
+                // 2) Fallback: scan plugins/ and external_plugins/ subdirectories
+                let mut found = false;
+                for sub in &["plugins", "external_plugins"] {
+                    let sub_dir = source_dir.join(sub);
+                    if sub_dir.exists() && sub_dir.is_dir() {
+                        let nested = crate::plugin_fs::scan_marketplace_dir(&sub_dir);
+                        plugins.extend(nested);
+                        found = true;
+                    }
+                }
+                if !found {
+                    // Deep scan other subdirectories
+                    if let Ok(sub_entries) = std::fs::read_dir(&source_dir) {
+                        for sub_entry in sub_entries.flatten() {
+                            let sub_path = sub_entry.path();
+                            if !sub_path.is_dir() { continue; }
+                            let sn = sub_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                            if sn.starts_with('.') || sn == "plugins" || sn == "external_plugins" || sn == "scripts" || sn == "tests" || sn == ".github" { continue; }
+                            if crate::plugin_fs::find_manifest_in_dir(&sub_path).is_some() {
+                                if let Ok(entry) = crate::plugin_fs::load_plugin(&sub_path) {
+                                    let ver = entry.version.clone();
+                                    plugins.push(crate::plugin_fs::MarketplacePlugin {
+                                        id: entry.id.clone(), name: entry.name, publisher: entry.author,
+                                        version: Some(ver.clone()), description: if entry.description.is_empty() { None } else { Some(entry.description) },
+                                        trust: entry.trust, contributions: entry.contributions, repository: entry.repository,
+                                        compatibility: crate::plugin_fs::MarketplaceCompatibility { min_app_version: None },
+                                        distribution: Some(crate::plugin_fs::MarketplaceDistribution { kind: "source".to_string(), path: sub_path.to_string_lossy().to_string() }),
+                                        installed: false, installed_version: None, latest_version: Some(ver),
+                                        update_available: false, can_install: true, install_action: "install".to_string(), compatible: true,
+                                    });
+                                    found = true;
+                                }
+                            } else {
+                                let nested = crate::plugin_fs::scan_marketplace_dir(&sub_path);
+                                plugins.extend(nested);
+                                found = true;
+                            }
+                        }
+                    }
+                }
+                if !found && sources.iter().any(|s| s.path.as_deref() == Some(source_dir.to_string_lossy().as_ref())) {
+                    warnings.push(format!("源「{}」未发现插件或 marketplace.json", dir_name));
+                }
+            }
+        }
+
+        // Check for sources whose paths don't exist (clone failed, repo moved, etc.)
+        for source in &sources {
+            if let Some(ref path_str) = source.path {
+                let p = std::path::Path::new(path_str);
+                if !p.exists() {
+                    warnings.push(format!("源「{}」路径不存在（clone 可能失败，请检查URL是否正确）: {}", source.name, path_str));
+                }
+            }
+        }
+
+        // Dedup by ID
+        let mut seen = std::collections::HashSet::new();
+        plugins.retain(|p| seen.insert(p.id.clone()));
+
+        // Cross-reference with installed plugins
+        let plugins_dir = self.data_dir.join("plugins");
+        let installed = crate::plugin_fs::scan_plugins_dir(&plugins_dir);
+        crate::plugin_fs::cross_reference_marketplace(&mut plugins, &installed);
+
+        let plugins_json: Vec<serde_json::Value> = plugins
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "id": p.id,
+                    "name": p.name,
+                    "publisher": p.publisher,
+                    "version": p.version,
+                    "description": p.description,
+                    "trust": p.trust,
+                    "contributions": p.contributions,
+                    "repository": p.repository,
+                    "compatibility": {
+                        "minAppVersion": p.compatibility.min_app_version,
+                    },
+                    "distribution": p.distribution.as_ref().map(|d| serde_json::json!({
+                        "kind": d.kind,
+                        "path": d.path,
+                    })),
+                    "installed": p.installed,
+                    "installedVersion": p.installed_version,
+                    "latestVersion": p.latest_version,
+                    "updateAvailable": p.update_available,
+                    "canInstall": p.can_install,
+                    "installAction": p.install_action,
+                    "compatible": p.compatible,
+                })
+            })
+            .collect();
+
+        serde_json::json!({
+            "source": {
+                "kind": "local",
+                "configured": has_sources,
+                "path": mp_dir.to_string_lossy().to_string(),
+            },
+            "plugins": plugins_json,
+            "warnings": warnings,
+        })
+    }
+
+    /// Get marketplace plugin readme.
+    pub fn get_marketplace_plugin_readme(&self, id: &str) -> serde_json::Value {
+        let mp_dir = crate::plugin_fs::marketplace_dir(&self.data_dir);
+        let plugins = crate::plugin_fs::scan_marketplace_dir(&mp_dir);
+        let plugin = plugins.iter().find(|p| p.id == id);
+
+        let dist_path = plugin.and_then(|p| {
+            p.distribution
+                .as_ref()
+                .map(|d| std::path::PathBuf::from(&d.path))
+        });
+
+        let readme = dist_path.and_then(|dir| {
+            // Try README.md, readme.md, README
+            for name in &["README.md", "readme.md", "README"] {
+                let path = dir.join(name);
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    return Some(content);
+                }
+            }
+            None
+        });
+
+        serde_json::json!({
+            "markdown": readme.unwrap_or_default(),
+        })
+    }
+
+    /// Install a plugin from marketplace by ID.
+    /// Uses the same comprehensive scan as list_marketplace_plugins so
+    /// plugins discovered via marketplace.json or nested repo subdirectories
+    /// can also be installed.
+    pub async fn install_marketplace_plugin(
+        &self,
+        id: &str,
+    ) -> Result<serde_json::Value> {
+        let mp_dir = crate::plugin_fs::marketplace_dir(&self.data_dir);
+
+        // ── Step 1: Try listing JSON to find the plugin ──
+        let listing = self.list_marketplace_plugins().await;
+        let plugins_json = listing
+            .get("plugins")
+            .and_then(|p| p.as_array());
+
+        let dist_path = plugins_json
+            .and_then(|arr| {
+                arr.iter().find(|p| p.get("id").and_then(|v| v.as_str()) == Some(id))
+            })
+            .and_then(|p| {
+                p.get("distribution")
+                    .and_then(|d| d.get("path"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            });
+
+        // ── Step 2: If distribution path missing, scan filesystem directly ──
+        let dist_path = if let Some(ref path) = dist_path {
+            path.clone()
+        } else {
+            // Fallback: do the same comprehensive scan but keep MarketplacePlugin
+            // structs so we can access distribution.path directly.
+            let _sources = self.get_marketplace_sources().await;
+            let mut all: Vec<crate::plugin_fs::MarketplacePlugin> = Vec::new();
+
+            if mp_dir.exists() {
+                all.extend(crate::plugin_fs::scan_marketplace_dir(&mp_dir));
+            }
+
+            if mp_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&mp_dir) {
+                    for entry in entries.flatten() {
+                        let source_dir = entry.path();
+                        if !source_dir.is_dir() { continue; }
+                        let dn = source_dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                        if dn.starts_with('.') { continue; }
+                        if crate::plugin_fs::find_manifest_in_dir(&source_dir).is_some() { continue; }
+
+                        let mj = source_dir.join(".claude-plugin").join("marketplace.json");
+                        if mj.exists() {
+                            if let Ok(listed) = crate::plugin_fs::parse_marketplace_listing(&mj, &source_dir) {
+                                all.extend(listed);
+                                continue;
+                            }
+                        }
+                        for sub in &["plugins", "external_plugins"] {
+                            let sd = source_dir.join(sub);
+                            if sd.exists() && sd.is_dir() {
+                                all.extend(crate::plugin_fs::scan_marketplace_dir(&sd));
+                            }
+                        }
+                        if let Ok(sub_entries) = std::fs::read_dir(&source_dir) {
+                            for sub_entry in sub_entries.flatten() {
+                                let sp = sub_entry.path();
+                                if !sp.is_dir() { continue; }
+                                let sn = sp.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                                if sn.starts_with('.') || sn == "plugins" || sn == "external_plugins"
+                                    || sn == "scripts" || sn == "tests" || sn == ".github" { continue; }
+                                if crate::plugin_fs::find_manifest_in_dir(&sp).is_some() {
+                                    if let Ok(entry) = crate::plugin_fs::load_plugin(&sp) {
+                                        all.push(crate::plugin_fs::MarketplacePlugin {
+                                            id: entry.id.clone(),
+                                            name: entry.name,
+                                            publisher: entry.author,
+                                            version: Some(entry.version.clone()),
+                                            description: if entry.description.is_empty() { None } else { Some(entry.description) },
+                                            trust: entry.trust,
+                                            contributions: entry.contributions,
+                                            repository: entry.repository,
+                                            compatibility: crate::plugin_fs::MarketplaceCompatibility { min_app_version: None },
+                                            distribution: Some(crate::plugin_fs::MarketplaceDistribution {
+                                                kind: "source".to_string(),
+                                                path: sp.to_string_lossy().to_string(),
+                                            }),
+                                            installed: false,
+                                            installed_version: None,
+                                            latest_version: Some(entry.version),
+                                            update_available: false,
+                                            can_install: true,
+                                            install_action: "install".to_string(),
+                                            compatible: true,
+                                        });
+                                    }
+                                } else {
+                                    all.extend(crate::plugin_fs::scan_marketplace_dir(&sp));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            all.iter()
+                .find(|p| p.id == id)
+                .and_then(|p| p.distribution.as_ref().map(|d| d.path.clone()))
+                .ok_or_else(|| anyhow::anyhow!("marketplace plugin not found: {}", id))?
+        };
+
+        let plugins_dir = self.data_dir.join("plugins");
+        std::fs::create_dir_all(&plugins_dir)?;
+        let entry = crate::plugin_fs::install_plugin(
+            std::path::Path::new(&dist_path),
+            &plugins_dir,
+        )?;
+
+        Ok(serde_json::json!({
+            "name": entry.name,
+            "id": entry.id,
+        }))
+    }
+
+    /// Translate text to the target language using any configured model.
+    pub async fn translate(&self, text: &str, target: &str) -> Result<String> {
+        // Find a usable model from config — prefer the active model setting,
+        // then fall back to any cloud-capable or local model in the config list,
+        // then check settings.providers for custom provider models.
+        let config = self.config.read().await;
+        let (model_id, backend): (String, String) = {
+            // 1) Check settings.active_model
+            if let Some(active) = config.settings.get("active_model") {
+                let id = active.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let prov = active.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+                if !id.is_empty() && !prov.is_empty() {
+                    (id.to_string(), prov.to_string())
+                } else {
+                    (String::new(), String::new())
+                }
+            } else {
+                (String::new(), String::new())
+            }
+        };
+        drop(config);
+
+        let (model_id, backend) = if !model_id.is_empty() {
+            (model_id, backend)
+        } else {
+            // 2) Fall back: scan config.models + settings.providers
+            let config = self.config.read().await;
+            let found = config.models.iter().find_map(|m| {
+                let id = m.model.as_deref().unwrap_or(&m.name);
+                if id.is_empty() { return None; }
+                Some((id.to_string(), m.backend.name().to_string()))
+            }).or_else(|| {
+                config.settings.get("providers").and_then(|providers| {
+                    providers.as_object().and_then(|obj| {
+                        obj.iter().find_map(|(name, prov)| {
+                            let models = prov.get("models").and_then(|v| v.as_array())?;
+                            let first = models.first()?;
+                            let id = if let Some(s) = first.as_str() { s } else {
+                                first.get("id")?.as_str()?
+                            };
+                            Some((id.to_string(), name.clone()))
+                        })
+                    })
+                })
+            });
+            drop(config);
+            found.ok_or_else(|| anyhow::anyhow!(
+                "No model configured. Please add a model in Settings → Providers first."
+            ))?
+        };
+
+        let prompt = format!(
+            "Translate the following text to {target}. IMPORTANT: output ONLY the translated text, \
+             preserve all markdown formatting (headings, lists, code blocks, links), \
+             do NOT add any explanations or notes.\n\n{text}",
+        );
+
+        let result = self
+            .complete_with_model("_translate", &prompt, &model_id, &backend)
+            .await?;
+        Ok(result.trim().to_string())
+    }
+
     pub async fn agent_state(&self) -> AgentState {
         self.agent_state.read().await.clone()
     }
@@ -1946,6 +3286,14 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
 
     pub fn data_dir(&self) -> &std::path::Path {
         &self.data_dir
+    }
+
+    pub fn db_path(&self) -> &std::path::Path {
+        &self.db_path
+    }
+
+    pub fn read_settings(&self) -> serde_json::Value {
+        self.config.blocking_read().settings.clone()
     }
 
     /// Request abort of the streaming response for the given session.
@@ -2230,6 +3578,16 @@ fn resolve_active_model<'a>(
     })
 }
 
+fn slugify_str(value: &str) -> String {
+    value
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string()
+}
+
 fn parse_context_hint(model_name: &str) -> Option<usize> {
     let start = model_name.find('[')?;
     let end = model_name.find(']')?;
@@ -2283,7 +3641,9 @@ mod tests {
             role: "user".into(),
             content: "hello".into(),
             timestamp: Utc::now(),
+            id: None,
             metadata: None,
+            seq: None,
         };
         let sid = engine.create_session().await.unwrap().id;
         let resp = engine.handle_message(msg, &sid, Mode::Code, openloom_models::ModelPreference::default()).await.unwrap();
@@ -2308,7 +3668,9 @@ mod tests {
             role: "user".into(),
             content: "hello".into(),
             timestamp: Utc::now(),
+            id: None,
             metadata: None,
+            seq: None,
         };
         let sid = engine.create_session().await.unwrap().id;
         engine.handle_message(msg, &sid, Mode::Code, openloom_models::ModelPreference::default()).await.unwrap();
@@ -2323,7 +3685,9 @@ mod tests {
             role: "user".into(),
             content: "帮我管理文件".into(),
             timestamp: Utc::now(),
+            id: None,
             metadata: None,
+            seq: None,
         };
         let sid = engine.create_session().await.unwrap().id;
         let resp = engine.handle_message(msg, &sid, Mode::Code, openloom_models::ModelPreference::default()).await.unwrap();
@@ -2354,7 +3718,9 @@ mod tests {
             role: "user".into(),
             content: "hello".into(),
             timestamp: Utc::now(),
+            id: None,
             metadata: None,
+            seq: None,
         };
         let sid = engine.create_session().await.unwrap().id;
         let resp = engine.handle_message(msg, &sid, Mode::Code, openloom_models::ModelPreference::default()).await;
