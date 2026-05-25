@@ -107,6 +107,12 @@
     "unpinFailed": "取消置顶失败",
     "archive": "归档",
     "delete": "删除",
+    "select": "选择",
+    "exitSelect": "取消选择",
+    "selectAll": "全选",
+    "clearSelection": "清除选择",
+    "selected": "已选择 {count} 项",
+    "archiveSelected": "归档",
     "summary": {
       "title": "Session 摘要",
       "open": "摘要",
@@ -171,7 +177,8 @@
     "screenshotFailed": "截图保存失败",
     "selectedCount": "已选 {count} 条",
     "allDone": "全部完成",
-    "markAllComplete": "全部标记为已完成"
+    "markAllComplete": "全部标记为已完成",
+    "delete": "删除"
   },
   "chat": {
     "send": "发送",
@@ -238,12 +245,16 @@
     "thinkingLevel": {
       "off": "关闭",
       "auto": "自动",
+      "low": "浅思",
+      "medium": "中等",
       "high": "深度",
       "xhigh": "极限"
     },
     "thinkingDesc": {
       "off": "不推理",
       "auto": "模型决定深度",
+      "low": "轻量推理",
+      "medium": "中等推理",
       "high": "深度推理",
       "xhigh": "最强推理"
     },
@@ -667,12 +678,7 @@
       "auto": "自动",
       "autoMode": "跟随系统",
       "serifFont": "衬线字体",
-      "serifFontHint": "使用衬线体显示正文内容",
-      "paperTexture": "纸质纹理",
-      "paperTextureHint": "为背景添加宣纸质感",
-      "paperTextureDarkDisabledHint": "黑夜模式不支持纸质纹理，切回浅色主题后会按原设置恢复",
-      "leavesOverlay": "晴天模式",
-      "leavesOverlayHint": "没事儿晒晒太阳"
+      "serifFontHint": "使用衬线体显示正文内容"
     },
     "interface": {
       "system": "系统",
@@ -738,6 +744,8 @@
       "systemPromptHint": "定义助手的角色、行为边界和回复风格。每次对话都会注入到 system prompt 中。",
       "personaDesc": "人格描述",
       "personaDescHint": "描述助手的性格、语气和思维模式。从认知图谱中自动提炼，也可手动编辑。",
+      "publicIshiki": "对外人格",
+      "publicIshikiHint": "社交平台上展示的人格描述，用于桥接平台时的角色塑造。",
       "chatModel": "Ta 的模型",
       "chatModelHint": "Ta 在对话与工作中使用的模型",
       "modelUnavailable": "当前不可用：{model}",
@@ -798,8 +806,8 @@
       }
     },
     "about": {
-      "title": "关于 Ta",
-      "tagline": "一个住在你电脑里的助手，记性很好。",
+      "title": "关于 Loom",
+      "tagline": "本地优先的私人 AI 助理内核。",
       "license": "许可证",
       "copyright": "版权",
       "licenseToggle": "许可证全文",
@@ -808,14 +816,14 @@
       "updateChecking": "正在检查更新…",
       "updateDownloading": "{agentName}正在准备新家 {percent}%",
       "updateReadyInstall": "v{version} 已就绪",
-      "updateInstalling": "正在安装更新，Hanako 会自动重启…",
+      "updateInstalling": "正在安装更新，openLoom 会自动重启…",
       "updateInstallManualHint": "点「重启更新」后安装，直接退出不会自动安装",
       "updateInstall": "重启更新",
       "updateProgress": "{percent}%",
       "updateError": "检查更新失败",
       "updateLatest": "已是最新版本",
       "updateCheckBtn": "检查更新",
-      "updateNeedInstall": "请先将 Hanako 移动到应用程序文件夹",
+      "updateNeedInstall": "请先将 openLoom 移动到应用程序文件夹",
       "updateDiskSpace": "磁盘空间不足，无法下载更新",
       "launchAtLogin": "开机自启",
       "betaUpdates": "接收测试版更新",
@@ -1334,7 +1342,9 @@
       "marketDowngradeTo": "当前只能安装兼容版本 v{version}",
       "marketDowngradeConfirm": "当前版本是 v{from}，将降级到 v{to}。继续吗？",
       "marketReadmeLoading": "正在读取 README…",
-      "marketSelectPlugin": "选择一个插件查看 README"
+      "marketSelectPlugin": "选择一个插件查看 README",
+      "translate": "翻译介绍",
+      "translateReadme": "使用 AI 翻译插件介绍为中文"
     },
     "mcp": {
       "masterTitle": "总开关",

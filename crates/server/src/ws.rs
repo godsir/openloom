@@ -204,6 +204,7 @@ fn event_to_notification(event: &EngineEvent) -> serde_json::Value {
             completion_tokens,
             cached_tokens,
             latency_ms,
+            context_window,
         } => {
             serde_json::json!({
                 "jsonrpc": "2.0",
@@ -211,7 +212,8 @@ fn event_to_notification(event: &EngineEvent) -> serde_json::Value {
                 "params": {
                     "session_id": session_id, "model": model,
                     "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
-                    "cached_tokens": cached_tokens, "latency_ms": latency_ms
+                    "cached_tokens": cached_tokens, "latency_ms": latency_ms,
+                    "context_window": context_window
                 }
             })
         }
@@ -290,6 +292,20 @@ fn event_to_notification(event: &EngineEvent) -> serde_json::Value {
                     "success": success,
                     "details": { "summary": result_summary }
                 }
+            })
+        }
+        EngineEvent::ThinkingDelta { session_id, delta } => {
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "thinking.delta",
+                "params": { "session_id": session_id, "delta": delta }
+            })
+        }
+        EngineEvent::ThinkingEnd { session_id } => {
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "thinking.end",
+                "params": { "session_id": session_id }
             })
         }
     }

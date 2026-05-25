@@ -572,9 +572,9 @@ impl ThinkingLevel {
         match s.to_lowercase().as_str() {
             "none" | "off" | "0" => Some(ThinkingLevel::None),
             "low" | "lo" | "1" => Some(ThinkingLevel::Low),
-            "mid" | "medium" | "2" => Some(ThinkingLevel::Medium),
+            "auto" | "mid" | "medium" | "2" => Some(ThinkingLevel::Medium),
             "high" | "hi" | "3" => Some(ThinkingLevel::High),
-            "max" | "full" | "4" => Some(ThinkingLevel::Max),
+            "xhigh" | "max" | "full" | "4" => Some(ThinkingLevel::Max),
             _ => None,
         }
     }
@@ -694,6 +694,7 @@ pub enum EngineEvent {
         completion_tokens: usize,
         cached_tokens: usize,
         latency_ms: u64,
+        context_window: usize,
     },
     Error {
         code: ErrorCode,
@@ -722,6 +723,13 @@ pub enum EngineEvent {
         name: String,
         success: bool,
         result_summary: String,
+    },
+    ThinkingDelta {
+        session_id: String,
+        delta: String,
+    },
+    ThinkingEnd {
+        session_id: String,
     },
 }
 
@@ -1313,10 +1321,13 @@ mod tests {
             completion_tokens: 5,
             cached_tokens: 2,
             latency_ms: 150,
+            context_window: 200_000,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("cached_tokens"));
         assert!(json.contains("latency_ms"));
+        assert!(json.contains("context_window"));
+        assert!(json.contains("200000"));
     }
 
     #[test]

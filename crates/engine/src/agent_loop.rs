@@ -2,7 +2,7 @@ use super::Engine;
 use crate::token_store::TokenUsageRecord;
 use anyhow::Result;
 use chrono::Utc;
-use openloom_inference::{CompletionRequest, CompletionResponse};
+use openloom_inference::{CompletionRequest, CompletionResponse, StreamDelta};
 use openloom_models::*;
 use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
@@ -100,9 +100,6 @@ impl Engine {
         let mut last_response = String::new();
         let mut total_prompt_tokens = 0usize;
         let mut total_completion_tokens = 0usize;
-        // Only stream on the very first LLM call so reasoning tokens flow to TUI.
-        // Tool-use follow-up rounds use non-streaming (cleaner tool_call parsing).
-        let mut first_iteration = true;
 
         let (max_iterations, timeout_secs) = {
             let cfg = self.config.read().await;
@@ -212,62 +209,71 @@ impl Engine {
                     ..Default::default()
                 };
 
-                // When a streaming sink is available, use invoke_model_streaming on the
-                // FIRST iteration only — so reasoning tokens flow to the UI in real time.
-                // Subsequent tool-call rounds use non-streaming for clean tool_call parsing.
-                let response = if first_iteration {
-                    match &sink {
-                        OutputSink::Tui(stream_tx) => {
-                            first_iteration = false;
-                            self.invoke_model_streaming(completion_req, stream_tx.clone(), model_override.clone(), model_pref)
-                                .await?
-                        }
-                        OutputSink::Electron { .. } => {
-                            first_iteration = false;
-                            // Electron: use non-streaming for clean tool_call parsing.
-                            // invoke_model_streaming falls back to non-streaming when tools
-                            // are present anyway (see its has_tools check).
-                            self.invoke_model_native(&completion_req, model_override.clone(), model_pref).await?
-                        }
-                        OutputSink::None => {
-                            first_iteration = false;
-                            self.invoke_model_native(&completion_req, model_override.clone(), model_pref).await?
-                        }
+                // Use streaming on every iteration — structured streaming handles
+                // tool calls properly, so we no longer need non-streaming fallback.
+                let response = match &sink {
+                    OutputSink::Tui(stream_tx) => {
+                        self.invoke_model_streaming(completion_req, stream_tx.clone(), model_override.clone(), model_pref)
+                            .await?
                     }
-                } else {
-                    first_iteration = false;
-                    self.invoke_model_native(&completion_req, model_override.clone(), model_pref).await?
+                    OutputSink::Electron { event_bus, session_id: sid } => {
+                        let (stream_tx, mut stream_rx) = mpsc::channel::<String>(256);
+                        let event_bus_clone = event_bus.clone();
+                        let sid_clone = sid.clone();
+
+                        let forwarder = tokio::spawn(async move {
+                            while let Some(token) = stream_rx.recv().await {
+                                let _ = event_bus_clone.send(EngineEvent::StreamDelta {
+                                    session_id: sid_clone.clone(),
+                                    delta: token,
+                                });
+                            }
+                        });
+
+                        let result = self.invoke_model_streaming(
+                            completion_req,
+                            stream_tx,
+                            model_override.clone(),
+                            model_pref,
+                        ).await;
+
+                        let _ = forwarder.await;
+
+                        result?
+                    }
+                    OutputSink::None => {
+                        self.invoke_model_native(&completion_req, model_override.clone(), model_pref).await?
+                    }
                 };
                 total_prompt_tokens += response.prompt_tokens;
                 total_completion_tokens += response.completion_tokens;
 
                 // Emit thinking/reasoning content before any tool calls or text
-                if let Some(ref thinking) = response.thinking {
-                    if !thinking.is_empty() {
-                        if let OutputSink::Electron { event_bus, session_id: sid } = &sink {
-                            // Chunk thinking into ~100 char pieces for smooth UI animation
-                            let chunks: Vec<&str> = thinking
-                                .as_str()
-                                .char_indices()
-                                .collect::<Vec<_>>()
-                                .chunks(100)
-                                .map(|chunk| {
-                                    let start = chunk[0].0;
-                                    let end = chunk.last().map(|(i, c)| i + c.len_utf8()).unwrap_or(start);
-                                    &thinking[start..end]
-                                })
-                                .collect();
-                            for chunk in chunks {
-                                let _ = event_bus.send(EngineEvent::ThinkingDelta {
-                                    session_id: sid.clone(),
-                                    delta: chunk.to_string(),
-                                });
-                            }
-                            let _ = event_bus.send(EngineEvent::ThinkingEnd {
-                                session_id: sid.clone(),
-                            });
-                        }
+                if let Some(ref thinking) = response.thinking
+                    && !thinking.is_empty()
+                    && let OutputSink::Electron { event_bus, session_id: sid } = &sink
+                {
+                    // Chunk thinking into ~100 char pieces for smooth UI animation
+                    let chunks: Vec<&str> = thinking
+                        .as_str()
+                        .char_indices()
+                        .collect::<Vec<_>>()
+                        .chunks(100)
+                        .map(|chunk| {
+                            let start = chunk[0].0;
+                            let end = chunk.last().map(|(i, c)| i + c.len_utf8()).unwrap_or(start);
+                            &thinking[start..end]
+                        })
+                        .collect();
+                    for chunk in chunks {
+                        let _ = event_bus.send(EngineEvent::ThinkingDelta {
+                            session_id: sid.clone(),
+                            delta: chunk.to_string(),
+                        });
                     }
+                    let _ = event_bus.send(EngineEvent::ThinkingEnd {
+                        session_id: sid.clone(),
+                    });
                 }
 
                 if !response.tool_calls.is_empty() {
@@ -356,28 +362,7 @@ impl Engine {
                     *self.agent_state.write().await = AgentState::Thinking;
                 } else {
                     last_response = response.text.clone();
-                    // If this is a non-first iteration (tool-use follow-up), the text
-                    // was not streamed yet — send it now so the UI shows the final answer.
-                    if !first_iteration {
-                        match &sink {
-                            OutputSink::Tui(stream_tx) => {
-                                for word in response.text.split_inclusive(' ') {
-                                    if stream_tx.send(word.to_string()).await.is_err() {
-                                        break;
-                                    }
-                                }
-                            }
-                            OutputSink::Electron { event_bus, session_id } => {
-                                for word in response.text.split_inclusive(' ') {
-                                    let _ = event_bus.send(EngineEvent::StreamDelta {
-                                        session_id: session_id.clone(),
-                                        delta: word.to_string(),
-                                    });
-                                }
-                            }
-                            OutputSink::None => {}
-                        }
-                    }
+                    // Text was already streamed in real-time by invoke_model_streaming
                     break;
                 }
             }
@@ -415,29 +400,42 @@ impl Engine {
                     temperature: 0.0,
                     ..Default::default()
                 };
-                match self.invoke_model_native(&completion_req, model_override.clone(), model_pref).await {
+                // Use streaming for the forced text response
+                let post_loop_result = match &sink {
+                    OutputSink::Tui(stream_tx) => {
+                        self.invoke_model_streaming(completion_req, stream_tx.clone(), model_override.clone(), model_pref).await
+                    }
+                    OutputSink::Electron { event_bus, session_id: sid } => {
+                        let (stream_tx, mut stream_rx) = mpsc::channel::<String>(256);
+                        let event_bus_clone = event_bus.clone();
+                        let sid_clone = sid.clone();
+                        let forwarder = tokio::spawn(async move {
+                            while let Some(token) = stream_rx.recv().await {
+                                let _ = event_bus_clone.send(EngineEvent::StreamDelta {
+                                    session_id: sid_clone.clone(),
+                                    delta: token,
+                                });
+                            }
+                        });
+                        let result = self.invoke_model_streaming(
+                            completion_req,
+                            stream_tx,
+                            model_override.clone(),
+                            model_pref,
+                        ).await;
+                        let _ = forwarder.await;
+                        result
+                    }
+                    OutputSink::None => {
+                        self.invoke_model_native(&completion_req, model_override.clone(), model_pref).await
+                    }
+                };
+                match post_loop_result {
                     Ok(response) if !response.text.is_empty() => {
                         last_response = response.text.clone();
                         total_prompt_tokens += response.prompt_tokens;
                         total_completion_tokens += response.completion_tokens;
-                        match &sink {
-                            OutputSink::Tui(stream_tx) => {
-                                for word in response.text.split_inclusive(' ') {
-                                    if stream_tx.send(word.to_string()).await.is_err() {
-                                        break;
-                                    }
-                                }
-                            }
-                            OutputSink::Electron { event_bus, session_id } => {
-                                for word in response.text.split_inclusive(' ') {
-                                    let _ = event_bus.send(EngineEvent::StreamDelta {
-                                        session_id: session_id.clone(),
-                                        delta: word.to_string(),
-                                    });
-                                }
-                            }
-                            OutputSink::None => {}
-                        }
+                        // Text was already streamed in real-time
                     }
                     _ => {
                         // Last resort: synthesise from tool results if any exist
@@ -497,6 +495,7 @@ impl Engine {
                 let prompt_tokens = total_prompt_tokens;
                 let completion_tokens = total_completion_tokens;
                 let latency_ms = loop_start.elapsed().as_millis() as u64;
+                let context_window = self.model_context_size().await;
                 let _ = self.event_bus.send(EngineEvent::TokenUsage {
                     session_id: session_id.to_string(),
                     model: "agent-loop".into(),
@@ -504,6 +503,7 @@ impl Engine {
                     completion_tokens,
                     cached_tokens: 0,
                     latency_ms,
+                    context_window,
                 });
                 let _ = self.token_store_tx.send(TokenUsageRecord {
                     session_id: session_id.to_string(),
@@ -628,24 +628,113 @@ impl Engine {
             return client.complete(req).await;
         }
 
-        // We need tool_calls from the streaming response. The way OpenAI streaming works:
-        // each chunk can have delta.tool_calls[i].function.arguments (partial JSON).
-        // We need to accumulate them. Unfortunately our CloudClient::complete_stream
-        // signature only exposes token strings, not structured deltas.
-        //
-        // Strategy: use complete() (non-streaming) for tool-call-capable requests so we
-        // get clean tool_calls; use complete_stream() only for the text-only first pass.
-        //
-        // For tool_calls requests: call complete_with_retry, then emit text tokens to tx.
-        // For text-only: call complete_stream so reasoning tokens flow in real time.
-
+        // Tool-use path: use structured streaming to get real-time text tokens
+        // while accumulating tool call chunks into complete ToolCall objects.
         let has_tools = !req.tools.is_empty();
 
         if has_tools {
-            // Tool-use path: non-streaming.
-            // The caller (agent_loop_inner / stream.rs) is responsible for streaming
-            // the final text after all tool rounds complete.
-            return self.invoke_model_native(&req, None, model_pref).await;
+            let (first, second) = match model_pref {
+                openloom_models::ModelPreference::Local => (&self.local_client, &self.cloud),
+                openloom_models::ModelPreference::Cloud | openloom_models::ModelPreference::Auto => {
+                    (&self.cloud, &self.local_client)
+                }
+            };
+
+            let (delta_tx, mut delta_rx) = mpsc::channel::<StreamDelta>(256);
+            let user_tx = tx.clone();
+            let collector = tokio::spawn(async move {
+                let mut full_text = String::new();
+                let mut thinking_text = String::new();
+                let mut usage: Option<(usize, usize, usize)> = None;
+                // Accumulate tool calls: Vec of (id, name, accumulated_args)
+                let mut tool_calls_acc: Vec<(String, String, String)> = Vec::new();
+
+                while let Some(delta) = delta_rx.recv().await {
+                    match delta {
+                        StreamDelta::Text(t) => {
+                            full_text.push_str(&t);
+                            let _ = user_tx.send(t).await;
+                        }
+                        StreamDelta::Reasoning(r) => {
+                            thinking_text.push_str(&r);
+                            let marker = format!("\x02REASONING\x02{}", r);
+                            let _ = user_tx.send(marker).await;
+                        }
+                        StreamDelta::ToolCallBegin { index, id, name } => {
+                            // Ensure vec is large enough
+                            while tool_calls_acc.len() <= index {
+                                tool_calls_acc.push((String::new(), String::new(), String::new()));
+                            }
+                            tool_calls_acc[index] = (id, name, String::new());
+                        }
+                        StreamDelta::ToolCallArgsChunk { index, chunk } => {
+                            if let Some(entry) = tool_calls_acc.get_mut(index) {
+                                entry.2.push_str(&chunk);
+                            }
+                        }
+                        StreamDelta::Usage { prompt_tokens, completion_tokens, cached_tokens } => {
+                            usage = Some((
+                                prompt_tokens as usize,
+                                completion_tokens as usize,
+                                cached_tokens as usize,
+                            ));
+                        }
+                    }
+                }
+
+                let tool_calls: Vec<openloom_models::ToolCall> = tool_calls_acc
+                    .into_iter()
+                    .filter(|(_, name, _)| !name.is_empty())
+                    .map(|(id, name, args)| {
+                        let arguments = serde_json::from_str(&args)
+                            .unwrap_or(serde_json::Value::String(args));
+                        openloom_models::ToolCall { id, name, arguments }
+                    })
+                    .collect();
+
+                let thinking = if thinking_text.is_empty() { None } else { Some(thinking_text) };
+                (full_text, tool_calls, usage, thinking)
+            });
+
+            let mut stream_ok = false;
+            if let Some(preferred) = first {
+                if preferred.provider() == ModelBackend::LmStudio {
+                    let _ = openloom_inference::ensure_lm_studio_model(
+                        "http://localhost:1234/v1",
+                        preferred.model_name(),
+                        32000,
+                    )
+                    .await;
+                }
+                if preferred.complete_stream_structured(req.clone(), delta_tx.clone()).await.is_ok() {
+                    stream_ok = true;
+                } else if let Some(fallback) = second {
+                    stream_ok = fallback.complete_stream_structured(req.clone(), delta_tx.clone()).await.is_ok();
+                }
+            } else if let Some(fallback) = second {
+                stream_ok = fallback.complete_stream_structured(req.clone(), delta_tx.clone()).await.is_ok();
+            }
+
+            drop(delta_tx);
+            let (full_text, tool_calls, stream_usage, thinking) =
+                collector.await.unwrap_or_default();
+
+            if !stream_ok && full_text.is_empty() && tool_calls.is_empty() {
+                anyhow::bail!("all model backends failed for structured streaming request");
+            }
+
+            let (prompt_tokens, completion_tokens, cached_tokens) =
+                stream_usage.unwrap_or((0, 0, 0));
+
+            return Ok(CompletionResponse {
+                text: full_text,
+                tool_calls,
+                prompt_tokens,
+                completion_tokens,
+                cached_tokens,
+                latency_ms: 0,
+                thinking,
+            });
         }
 
         // Text-only path: real streaming with reasoning support

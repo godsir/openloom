@@ -441,22 +441,32 @@ function handleNotification(method: string, params: any): void {
 
     // Token 用量
     case 'token.usage': {
-      // Update context ring with real token counts from the inference layer
       const promptTokens: number = params?.prompt_tokens ?? 0;
       const contextWindow: number | null = params?.context_window ?? null;
       if (promptTokens > 0) {
         const { currentSessionPath } = useStore.getState();
         const sid = params?.session_id || currentSessionPath;
-        // Fetch model context window if not provided
-        if (contextWindow) {
+        if (contextWindow && contextWindow > 0) {
           const percent = Math.min(100, (promptTokens / contextWindow) * 100);
           useStore.setState({
             contextTokens: promptTokens,
             contextWindow,
             contextPercent: percent,
           });
+          // Also update keyed store for session-switched context rings
+          if (sid) {
+            updateKeyed('contextBySession', sid, {
+              tokens: promptTokens,
+              window: contextWindow,
+              percent,
+            }, (s: any, d: any) => ({
+              contextTokens: d.tokens,
+              contextWindow: d.window,
+              contextPercent: d.percent,
+            }));
+          }
         } else {
-          // No context window in event — just update used tokens, keep existing window
+          // No context window in event — keep promptTokens, fetch window from backend
           const existingWindow = useStore.getState().contextWindow;
           if (existingWindow && existingWindow > 0) {
             const percent = Math.min(100, (promptTokens / existingWindow) * 100);
@@ -467,15 +477,16 @@ function handleNotification(method: string, params: any): void {
           } else {
             useStore.setState({ contextTokens: promptTokens });
           }
-          // Refresh full context usage from backend to get accurate window size
           if (sid) {
             import('../adapter').then(({ loomRpc }) => {
               loomRpc('context_usage', { sessionPath: sid }).then((r: any) => {
-                if (r && typeof r.used === 'number') {
+                if (r && typeof r.total === 'number' && r.total > 0) {
+                  // Use real promptTokens, only take window from backend
+                  const percent = Math.min(100, (promptTokens / r.total) * 100);
                   useStore.setState({
-                    contextTokens: r.used,
-                    contextWindow: r.total ?? null,
-                    contextPercent: r.percent ?? null,
+                    contextTokens: promptTokens,
+                    contextWindow: r.total,
+                    contextPercent: percent,
                   });
                 }
               }).catch(() => {});

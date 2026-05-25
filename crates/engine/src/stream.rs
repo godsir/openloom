@@ -84,7 +84,7 @@ impl Engine {
         });
         let working_memory = self.get_working_memory(session_id).unwrap_or_default();
         let persona_summary = self.persona.summarize().await.unwrap_or_default();
-        let system = crate::system_instruction();
+        let system = self.system_instruction();
         let system = if mode_cfg.system_suffix.is_empty() {
             system
         } else {
@@ -193,6 +193,7 @@ impl Engine {
         let _ = self.save_messages(session_id, &msg, &full_response);
 
         let model_name = self.model_display_name();
+        let context_window = self.model_context_size().await;
         let _ = self.event_bus.send(EngineEvent::TokenUsage {
             session_id: session_id.to_string(),
             model: model_name.clone(),
@@ -200,6 +201,7 @@ impl Engine {
             completion_tokens,
             cached_tokens,
             latency_ms,
+            context_window,
         });
         let _ = self.token_store_tx.send(TokenUsageRecord {
             session_id: session_id.to_string(),

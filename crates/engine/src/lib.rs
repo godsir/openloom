@@ -871,6 +871,7 @@ impl Engine {
         let latency_ms = start.elapsed().as_millis() as u64;
         self.in_flight.fetch_sub(1, Ordering::SeqCst);
         let model_id = self.current_model_id();
+        let context_window = self.model_context_size().await;
         let _ = self.event_bus.send(EngineEvent::TokenUsage {
             session_id: session_id.to_string(),
             model: model_id.clone(),
@@ -878,6 +879,7 @@ impl Engine {
             completion_tokens,
             cached_tokens: 0,
             latency_ms,
+            context_window,
         });
         let _ = self.token_store_tx.send(TokenUsageRecord {
             session_id: session_id.to_string(),
@@ -1010,39 +1012,7 @@ impl Engine {
             (cjk / 2 + other / 4).max(1)
         };
 
-        // Find the active model's context window.
-        // Priority: (1) active model in config.models, (2) settings.providers model,
-        // (3) fallback to a sensible default.
-        let config = self.config.read().await;
-
-        // Try typed config.models first
-        let typed_total = config.models.first().map(|m| m.context_size);
-
-        // Try settings providers
-        let settings_total = if typed_total.is_none() {
-            config.settings
-                .get("providers")
-                .and_then(|p| p.as_object())
-                .and_then(|pmap| {
-                    pmap.values()
-                        .filter_map(|prov| {
-                            prov.get("models")
-                                .and_then(|m| m.as_array())
-                                .and_then(|arr| arr.first())
-                                .and_then(|m| m.get("context_size").and_then(|v| v.as_u64()))
-                        })
-                        .next()
-                })
-                .map(|v| v as usize)
-        } else {
-            None
-        };
-
-        let total = typed_total
-            .or(settings_total)
-            .unwrap_or(128_000)
-            .max(1);
-
+        let total = self.model_context_size().await;
         let percent = (used as f64 / total as f64 * 100.0).min(100.0);
         (used, total, percent)
     }

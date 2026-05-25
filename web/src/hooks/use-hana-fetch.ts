@@ -127,7 +127,8 @@ async function tryRpcBridge(path: string, opts: RequestInit): Promise<Response |
 
     // ── Context usage ──
     if (path === '/api/context-usage') {
-      return json({ used: 0, limit: 128000 });
+      const r = await loomRpc('context_usage', {});
+      return json(r || { used: 0, total: 128000 });
     }
 
     // ── Sessions ──
@@ -145,12 +146,37 @@ async function tryRpcBridge(path: string, opts: RequestInit): Promise<Response |
     if (path.startsWith('/api/plugins/ui-host-capabilities')) return json({ capabilities: {} });
 
     // ── Preferences ──
-    if (path === '/api/preferences/workspace-ui-state') {
+    if (path.startsWith('/api/preferences/workspace-ui-state')) {
       if (method === 'PUT') {
-        await loomRpc('config.set', { key: 'settings.workspace-ui-state', value: body });
+        try {
+          const existing = await loomRpc('config.get', { key: 'settings.workspace-ui-state' });
+          const all = existing?.config ?? {};
+          const ws = body.workspace || '';
+          const surface = body.surface || 'electron';
+          if (!all[ws]) all[ws] = {};
+          all[ws][surface] = body.state ?? {};
+          await loomRpc('config.set', { key: 'settings.workspace-ui-state', value: all });
+        } catch {
+          const ws = body.workspace || '';
+          const surface = body.surface || 'electron';
+          await loomRpc('config.set', {
+            key: 'settings.workspace-ui-state',
+            value: { [ws]: { [surface]: body.state ?? {} } },
+          });
+        }
         return json({ ok: true });
       }
-      return json({});
+      const qs = new URLSearchParams(path.split('?')[1] || '');
+      const workspace = qs.get('workspace') || '';
+      const surface = qs.get('surface') || 'electron';
+      try {
+        const r = await loomRpc('config.get', { key: 'settings.workspace-ui-state' });
+        const all = r?.config ?? r;
+        const state = all?.[workspace]?.[surface] ?? null;
+        return json({ state });
+      } catch {
+        return json({ state: null });
+      }
     }
     if (path === '/api/preferences/plugin-ui') {
       if (method === 'PUT') {
@@ -170,10 +196,65 @@ async function tryRpcBridge(path: string, opts: RequestInit): Promise<Response |
     if (path.startsWith('/api/checkpoints')) return json({ checkpoints: [] });
 
     // ── Search verify ──
-    if (path.startsWith('/api/search')) return json({ ok: false });
+    if (path.startsWith('/api/search')) {
+      const hana = (window as any).hana;
+      if (hana?.searchVerify) {
+        const result = await hana.searchVerify(body);
+        return json(result);
+      }
+      return json({ ok: false, error: 'Desktop bridge not available' });
+    }
 
     // ── Thinking level ──
+    if (path === '/api/session-thinking-level' && method === 'POST') {
+      await loomRpc('session.thinking_level.set', { session_id: body.sessionPath, level: body.level });
+      return json({ ok: true, thinkingLevel: body.level });
+    }
     if (path.startsWith('/api/thinking-level')) return json({ ok: true });
+
+    // ── Desk / Workspace file listing ──
+    if (path.startsWith('/api/desk/files') && method === 'GET') {
+      const qs = new URLSearchParams(path.split('?')[1] || '');
+      const dir = qs.get('dir') || '';
+      const subdir = qs.get('subdir') || '';
+      const r = await loomRpc('desk.list', { dir, subdir });
+      return json(r);
+    }
+    if (path === '/api/desk/files' && method === 'POST') {
+      const actionMap: Record<string, string> = {
+        create: 'desk.create_file',
+        mkdir: 'desk.create_dir',
+        rename: 'desk.rename',
+        move: 'desk.move',
+        safeDelete: 'desk.delete_item',
+      };
+      const rpcMethod = actionMap[body.action] || 'desk.update_item';
+      const r = await loomRpc(rpcMethod, body);
+      return json(r);
+    }
+    if (path.startsWith('/api/desk/jian')) {
+      if (method === 'POST') {
+        const r = await loomRpc('desk.update_note', { content: body.content });
+        return json(r);
+      }
+      const r = await loomRpc('config.get', { key: 'settings.desk.jian' });
+      return json({ content: r?.config || null });
+    }
+    if (path.startsWith('/api/desk/search-files')) {
+      const qs = new URLSearchParams(path.split('?')[1] || '');
+      const r = await loomRpc('desk.search', { dir: qs.get('dir') || '', q: qs.get('q') || '' });
+      return json(r);
+    }
+    if (path.startsWith('/api/desk/skills')) {
+      // stub — skills are loaded by the engine
+      return json({ skills: [] });
+    }
+
+    // ── Config / workspace history ──
+    if (path === '/api/config/workspaces/recent' && method === 'POST') {
+      await loomRpc('config.set', { key: 'settings.cwd_history', value: body.path ? [body.path] : [] });
+      return json({ cwd_history: body.path ? [body.path] : [] });
+    }
 
     // Not mapped — let HTTP fallback handle it
     return null;
