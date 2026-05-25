@@ -18,6 +18,7 @@ pub mod types;
 
 pub use types::*;
 pub use adapter::ChannelAdapter;
+pub use store::{BridgeStore, BridgeSession, BridgeMessageRow, KnownUserRow};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
