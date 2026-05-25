@@ -2,7 +2,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 use reqwest::Client;
-use serde::Deserialize;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -54,6 +53,8 @@ impl FeishuAdapter {
         Ok(token)
     }
 
+    // TODO: Wire into connect() WebSocket event loop when fully implemented
+    #[allow(dead_code)]
     fn parse_event(event: &serde_json::Value) -> Option<BridgeMessage> {
         let msg = event.get("message")?;
         let chat_id = msg.get("chat_id")?.as_str()?.to_string();

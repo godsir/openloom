@@ -53,6 +53,8 @@ impl QQAdapter {
         Ok(token)
     }
 
+    // TODO: Wire into connect() WebSocket event loop when fully implemented
+    #[allow(dead_code)]
     fn parse_c2c_message(event: &serde_json::Value) -> Option<BridgeMessage> {
         let data = event.get("data")?;
         let author = data.get("author")?;
@@ -72,6 +74,8 @@ impl QQAdapter {
         })
     }
 
+    // TODO: Wire into connect() WebSocket event loop when fully implemented
+    #[allow(dead_code)]
     fn parse_group_message(event: &serde_json::Value) -> Option<BridgeMessage> {
         let data = event.get("data")?;
         let group_id = data.get("group_openid")?.as_str()?.to_string();
