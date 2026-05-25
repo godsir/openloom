@@ -68,6 +68,7 @@ pub struct CompletionResponse {
     pub completion_tokens: usize,
     pub cached_tokens: usize,
     pub latency_ms: u64,
+    pub thinking: Option<String>,
 }
 
 #[derive(Debug)]
@@ -130,6 +131,7 @@ fn stub_complete(req: &CompletionRequest) -> CompletionResponse {
         cached_tokens: 0,
         latency_ms: 0,
         tool_calls: Vec::new(),
+        thinking: None,
     }
 }
 
@@ -282,7 +284,7 @@ impl AnthropicClient {
             anyhow::anyhow!("Anthropic response parse error: {}, body: {}", e, preview)
         })?;
 
-        let (text, tool_calls) = self.parse_anthropic_content(&json);
+        let (text, tool_calls, thinking) = self.parse_anthropic_content(&json);
         let prompt_tokens = json["usage"]["input_tokens"].as_u64().unwrap_or(0) as usize;
         let completion_tokens = json["usage"]["output_tokens"].as_u64().unwrap_or(0) as usize;
         let cached_tokens = json["usage"]["cache_read_input_tokens"]
@@ -296,6 +298,7 @@ impl AnthropicClient {
             completion_tokens,
             cached_tokens,
             latency_ms: 0,
+            thinking,
         })
     }
 
@@ -346,8 +349,8 @@ impl AnthropicClient {
             .collect()
     }
 
-    /// Parse Anthropic response content blocks into text + tool_calls.
-    fn parse_anthropic_content(&self, json: &serde_json::Value) -> (String, Vec<ToolCall>) {
+    /// Parse Anthropic response content blocks into text + tool_calls + thinking.
+    fn parse_anthropic_content(&self, json: &serde_json::Value) -> (String, Vec<ToolCall>, Option<String>) {
         let content = json["content"]
             .as_array()
             .map(|a| a.as_slice())
@@ -377,7 +380,25 @@ impl AnthropicClient {
             })
             .collect();
 
-        (text, tool_calls)
+        let thinking: Option<String> = {
+            let thinking_texts: Vec<String> = content
+                .iter()
+                .filter_map(|block| {
+                    if block["type"].as_str() == Some("thinking") {
+                        block["thinking"].as_str().map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if thinking_texts.is_empty() {
+                None
+            } else {
+                Some(thinking_texts.join("\n"))
+            }
+        };
+
+        (text, tool_calls, thinking)
     }
 }
 
@@ -618,6 +639,12 @@ impl OpenAIClient {
             .as_u64()
             .unwrap_or(0) as usize;
 
+        // Extract reasoning/thinking content (DeepSeek-R1, o1/o3, etc.)
+        let thinking: Option<String> = choice["reasoning_content"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
         Ok(CompletionResponse {
             text,
             tool_calls,
@@ -625,6 +652,7 @@ impl OpenAIClient {
             completion_tokens,
             cached_tokens,
             latency_ms: 0,
+            thinking,
         })
     }
 

@@ -7,6 +7,19 @@ use openloom_models::*;
 use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
 
+/// Abstracts over TUI (mpsc channel) and Electron (event_bus) output mechanisms.
+pub(crate) enum OutputSink {
+    /// No streaming output (used by handle_message non-streaming path)
+    None,
+    /// TUI path: sends text tokens and tool markers via mpsc channel
+    Tui(mpsc::Sender<String>),
+    /// Electron path: fires StreamDelta events via event_bus
+    Electron {
+        event_bus: tokio::sync::broadcast::Sender<EngineEvent>,
+        session_id: String,
+    },
+}
+
 impl Engine {
     pub(crate) async fn agent_loop(
         &self,
@@ -18,6 +31,8 @@ impl Engine {
         self.agent_loop_inner(
             msg,
             session_id,
+            OutputSink::None,
+            None,
             None,
             mode,
             model_pref,
@@ -33,15 +48,26 @@ impl Engine {
         mode: openloom_models::Mode,
         model_pref: openloom_models::ModelPreference,
     ) -> Result<ChatResponse> {
-        self.agent_loop_inner(msg, session_id, Some(tx), mode, model_pref)
-            .await
+        self.agent_loop_inner(
+            msg,
+            session_id,
+            OutputSink::Tui(tx),
+            None,
+            None,
+            mode,
+            model_pref,
+        )
+        .await
     }
 
-    async fn agent_loop_inner(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn agent_loop_inner(
         &self,
         msg: &ChatMessage,
         session_id: &str,
-        tx: Option<mpsc::Sender<String>>,
+        sink: OutputSink,
+        system_prompt_override: Option<String>,
+        model_override: Option<std::sync::Arc<dyn openloom_inference::CloudClient>>,
         mode: openloom_models::Mode,
         model_pref: openloom_models::ModelPreference,
     ) -> Result<ChatResponse> {
@@ -58,7 +84,17 @@ impl Engine {
         history.push(msg.clone());
 
         let skill_infos = self.skills.list_all();
-        let tool_definitions = crate::build_tool_definitions(&skill_infos);
+        let mut tool_definitions = crate::build_tool_definitions(&skill_infos);
+
+        // Add computer use tool when available
+        if crate::computer_use::check_available() {
+            let cu_tool = self.computer_use_tool_definition();
+            tool_definitions.push(ToolDefinition {
+                name: cu_tool["name"].as_str().unwrap_or("computer").to_string(),
+                description: cu_tool["description"].as_str().unwrap_or("").to_string(),
+                input_schema: cu_tool["input_schema"].clone(),
+            });
+        }
 
         let mut all_tool_messages: Vec<ChatMessage> = Vec::new();
         let mut last_response = String::new();
@@ -122,12 +158,33 @@ impl Engine {
 
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
             for _iteration in 0..max_iterations {
+                // Check per-session abort flag (set by chat.abort)
+                {
+                    let flags = self.abort_flags.lock().unwrap();
+                    if let Some(flag) = flags.get(session_id)
+                        && flag.load(Ordering::SeqCst)
+                    {
+                        tracing::info!(session_id, "agent loop aborted by user");
+                        break;
+                    }
+                }
+
                 let persona_summary = self.persona.summarize().await.unwrap_or_default();
-                let system_with_mode = crate::system_instruction();
-                let system_with_mode = if mode_cfg.system_suffix.is_empty() {
-                    system_with_mode
+                let system_with_mode = if let Some(ref override_prompt) = system_prompt_override {
+                    override_prompt.clone()
                 } else {
-                    format!("{}\n\n{}", system_with_mode, mode_cfg.system_suffix)
+                    let base = self.system_instruction();
+                    if mode_cfg.system_suffix.is_empty() {
+                        base
+                    } else {
+                        format!("{}\n\n{}", base, mode_cfg.system_suffix)
+                    }
+                };
+                // When system_prompt_override is set, persona is already embedded in it
+                let effective_persona = if system_prompt_override.is_some() {
+                    ""
+                } else {
+                    &persona_summary
                 };
                 // Build a temp history for assembly: the compacted history is only for this call
                 let assembly_history = if _iteration == 0 {
@@ -139,7 +196,7 @@ impl Engine {
                 let messages = self.weaver.assemble_messages(
                     &system_with_mode,
                     "",
-                    &persona_summary,
+                    effective_persona,
                     None,
                     assembly_history,
                     self.context_max_chars,
@@ -155,30 +212,73 @@ impl Engine {
                     ..Default::default()
                 };
 
-                // When a streaming tx is available, use invoke_model_streaming on the
-                // FIRST iteration only — so reasoning tokens flow to TUI in real time.
+                // When a streaming sink is available, use invoke_model_streaming on the
+                // FIRST iteration only — so reasoning tokens flow to the UI in real time.
                 // Subsequent tool-call rounds use non-streaming for clean tool_call parsing.
-                let response = if let Some(ref stream_tx) = tx
-                    && first_iteration
-                {
-                    first_iteration = false;
-                    self.invoke_model_streaming(completion_req, stream_tx.clone(), model_pref)
-                        .await?
+                let response = if first_iteration {
+                    match &sink {
+                        OutputSink::Tui(stream_tx) => {
+                            first_iteration = false;
+                            self.invoke_model_streaming(completion_req, stream_tx.clone(), model_override.clone(), model_pref)
+                                .await?
+                        }
+                        OutputSink::Electron { .. } => {
+                            first_iteration = false;
+                            // Electron: use non-streaming for clean tool_call parsing.
+                            // invoke_model_streaming falls back to non-streaming when tools
+                            // are present anyway (see its has_tools check).
+                            self.invoke_model_native(&completion_req, model_override.clone(), model_pref).await?
+                        }
+                        OutputSink::None => {
+                            first_iteration = false;
+                            self.invoke_model_native(&completion_req, model_override.clone(), model_pref).await?
+                        }
+                    }
                 } else {
                     first_iteration = false;
-                    self.invoke_model_native(&completion_req, model_pref).await?
+                    self.invoke_model_native(&completion_req, model_override.clone(), model_pref).await?
                 };
                 total_prompt_tokens += response.prompt_tokens;
                 total_completion_tokens += response.completion_tokens;
 
+                // Emit thinking/reasoning content before any tool calls or text
+                if let Some(ref thinking) = response.thinking {
+                    if !thinking.is_empty() {
+                        if let OutputSink::Electron { event_bus, session_id: sid } = &sink {
+                            // Chunk thinking into ~100 char pieces for smooth UI animation
+                            let chunks: Vec<&str> = thinking
+                                .as_str()
+                                .char_indices()
+                                .collect::<Vec<_>>()
+                                .chunks(100)
+                                .map(|chunk| {
+                                    let start = chunk[0].0;
+                                    let end = chunk.last().map(|(i, c)| i + c.len_utf8()).unwrap_or(start);
+                                    &thinking[start..end]
+                                })
+                                .collect();
+                            for chunk in chunks {
+                                let _ = event_bus.send(EngineEvent::ThinkingDelta {
+                                    session_id: sid.clone(),
+                                    delta: chunk.to_string(),
+                                });
+                            }
+                            let _ = event_bus.send(EngineEvent::ThinkingEnd {
+                                session_id: sid.clone(),
+                            });
+                        }
+                    }
+                }
+
                 if !response.tool_calls.is_empty() {
-                    // Stream tool call markers to UI (TUI path via tx channel)
-                    if let Some(ref tx) = tx {
+                    // Stream tool call markers to UI
+                    if let OutputSink::Tui(tx) = &sink {
                         for tc in &response.tool_calls {
                             let call_json = serde_json::to_string(tc).unwrap_or_default();
                             let _ = tx.send(format!("\x01CALL\x02{}", call_json)).await;
                         }
                     }
+                    // Electron path: ToolCallStarted events are fired below via event_bus.
 
                     *self.agent_state.write().await = AgentState::Acting;
                     let _ = self.event_bus.send(EngineEvent::AgentStateChanged {
@@ -215,7 +315,7 @@ impl Engine {
                             result_summary,
                         });
 
-                        if let Some(ref tx) = tx {
+                        if let OutputSink::Tui(tx) = &sink {
                             let _ = tx.send(format!("\x01RESULT\x02{}", result)).await;
                         }
 
@@ -257,14 +357,25 @@ impl Engine {
                 } else {
                     last_response = response.text.clone();
                     // If this is a non-first iteration (tool-use follow-up), the text
-                    // was not streamed yet — send it now so TUI shows the final answer.
-                    if !first_iteration
-                        && let Some(ref stream_tx) = tx
-                    {
-                        for word in response.text.split_inclusive(' ') {
-                            if stream_tx.send(word.to_string()).await.is_err() {
-                                break;
+                    // was not streamed yet — send it now so the UI shows the final answer.
+                    if !first_iteration {
+                        match &sink {
+                            OutputSink::Tui(stream_tx) => {
+                                for word in response.text.split_inclusive(' ') {
+                                    if stream_tx.send(word.to_string()).await.is_err() {
+                                        break;
+                                    }
+                                }
                             }
+                            OutputSink::Electron { event_bus, session_id } => {
+                                for word in response.text.split_inclusive(' ') {
+                                    let _ = event_bus.send(EngineEvent::StreamDelta {
+                                        session_id: session_id.clone(),
+                                        delta: word.to_string(),
+                                    });
+                                }
+                            }
+                            OutputSink::None => {}
                         }
                     }
                     break;
@@ -280,7 +391,7 @@ impl Engine {
             if last_response.is_empty() {
                 let has_tool_results = !all_tool_messages.is_empty();
                 let persona_summary = self.persona.summarize().await.unwrap_or_default();
-                let system_with_mode = crate::system_instruction();
+                let system_with_mode = self.system_instruction();
                 let system_with_mode = if mode_cfg.system_suffix.is_empty() {
                     system_with_mode
                 } else {
@@ -304,17 +415,28 @@ impl Engine {
                     temperature: 0.0,
                     ..Default::default()
                 };
-                match self.invoke_model_native(&completion_req, model_pref).await {
+                match self.invoke_model_native(&completion_req, model_override.clone(), model_pref).await {
                     Ok(response) if !response.text.is_empty() => {
                         last_response = response.text.clone();
                         total_prompt_tokens += response.prompt_tokens;
                         total_completion_tokens += response.completion_tokens;
-                        if let Some(ref stream_tx) = tx {
-                            for word in response.text.split_inclusive(' ') {
-                                if stream_tx.send(word.to_string()).await.is_err() {
-                                    break;
+                        match &sink {
+                            OutputSink::Tui(stream_tx) => {
+                                for word in response.text.split_inclusive(' ') {
+                                    if stream_tx.send(word.to_string()).await.is_err() {
+                                        break;
+                                    }
                                 }
                             }
+                            OutputSink::Electron { event_bus, session_id } => {
+                                for word in response.text.split_inclusive(' ') {
+                                    let _ = event_bus.send(EngineEvent::StreamDelta {
+                                        session_id: session_id.clone(),
+                                        delta: word.to_string(),
+                                    });
+                                }
+                            }
+                            OutputSink::None => {}
                         }
                     }
                     _ => {
@@ -334,8 +456,17 @@ impl Engine {
                                 .collect::<Vec<_>>()
                                 .join("\n\n---\n\n");
                             last_response = summary.clone();
-                            if let Some(ref stream_tx) = tx {
-                                let _ = stream_tx.send(summary).await;
+                            match &sink {
+                                OutputSink::Tui(stream_tx) => {
+                                    let _ = stream_tx.send(summary).await;
+                                }
+                                OutputSink::Electron { event_bus, session_id } => {
+                                    let _ = event_bus.send(EngineEvent::StreamDelta {
+                                        session_id: session_id.clone(),
+                                        delta: summary,
+                                    });
+                                }
+                                OutputSink::None => {}
                             }
                         }
                         // if still empty, the error check below surfaces it
@@ -404,8 +535,22 @@ impl Engine {
     pub(crate) async fn invoke_model_native(
         &self,
         req: &CompletionRequest,
+        model_override: Option<std::sync::Arc<dyn openloom_inference::CloudClient>>,
         model_pref: openloom_models::ModelPreference,
     ) -> Result<CompletionResponse> {
+        // If a per-request model override is provided, use it directly
+        if let Some(ref client) = model_override {
+            if client.provider() == ModelBackend::LmStudio {
+                let _ = openloom_inference::ensure_lm_studio_model(
+                    "http://localhost:1234/v1",
+                    client.model_name(),
+                    32000,
+                )
+                .await;
+            }
+            return client.complete(req.clone()).await;
+        }
+
         // Respect user's model preference for ordering
         let (first, second) = match model_pref {
             openloom_models::ModelPreference::Local => (&self.local_client, &self.cloud),
@@ -467,8 +612,22 @@ impl Engine {
         &self,
         req: CompletionRequest,
         tx: mpsc::Sender<String>,
+        model_override: Option<std::sync::Arc<dyn openloom_inference::CloudClient>>,
         model_pref: openloom_models::ModelPreference,
     ) -> Result<CompletionResponse> {
+        // If a per-request model override is provided, use it directly (non-streaming)
+        if let Some(ref client) = model_override {
+            if client.provider() == ModelBackend::LmStudio {
+                let _ = openloom_inference::ensure_lm_studio_model(
+                    "http://localhost:1234/v1",
+                    client.model_name(),
+                    32000,
+                )
+                .await;
+            }
+            return client.complete(req).await;
+        }
+
         // We need tool_calls from the streaming response. The way OpenAI streaming works:
         // each chunk can have delta.tool_calls[i].function.arguments (partial JSON).
         // We need to accumulate them. Unfortunately our CloudClient::complete_stream
@@ -486,7 +645,7 @@ impl Engine {
             // Tool-use path: non-streaming.
             // The caller (agent_loop_inner / stream.rs) is responsible for streaming
             // the final text after all tool rounds complete.
-            return self.invoke_model_native(&req, model_pref).await;
+            return self.invoke_model_native(&req, None, model_pref).await;
         }
 
         // Text-only path: real streaming with reasoning support
@@ -563,6 +722,7 @@ impl Engine {
             completion_tokens,
             cached_tokens,
             latency_ms: 0,
+            thinking: None,
         })
     }
 
@@ -629,47 +789,58 @@ impl Engine {
                 tool_name, mode_cfg.status_label
             ));
         }
-        let risk = openloom_sandbox::classify_risk(&tool_name, &call.arguments);
+        // Read sandbox config — default true (enabled)
+        let sandbox_enabled = {
+            let cfg = self.config.read().await;
+            cfg.settings
+                .get("sandbox")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true)
+        };
 
-        // Permission confirmation for risky tools (skip if --dangerously-skip-permissions)
-        if !self.skip_permissions
-            && matches!(
-                risk,
-                openloom_models::RiskLevel::Medium | openloom_models::RiskLevel::High
-            )
-        {
-            let risk_str = format!("{:?}", risk);
-            let desc = format!(
-                "{}({})",
-                tool_name,
-                call.arguments
-                    .as_object()
-                    .map(|p| p
-                        .iter()
-                        .take(2)
-                        .map(|(k, v)| format!("{}={}", k, v))
-                        .collect::<Vec<_>>()
-                        .join(", "))
-                    .unwrap_or_default()
-            );
-            let req = openloom_models::PermissionRequest {
-                tool_name: tool_name.clone(),
-                description: desc,
-                risk_level: risk_str,
-            };
-            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-            if self.perm_request_tx.send((req, resp_tx)).await.is_ok() {
-                match resp_rx.await {
-                    Ok(true) => {} // approved, continue
-                    _ => return Ok(format!("Tool '{}' denied by user.", tool_name)),
+        if sandbox_enabled {
+            let risk = openloom_sandbox::classify_risk(&tool_name, &call.arguments);
+
+            // Permission confirmation for risky tools (skip if --dangerously-skip-permissions)
+            if !self.skip_permissions
+                && matches!(
+                    risk,
+                    openloom_models::RiskLevel::Medium | openloom_models::RiskLevel::High
+                )
+            {
+                let risk_str = format!("{:?}", risk);
+                let desc = format!(
+                    "{}({})",
+                    tool_name,
+                    call.arguments
+                        .as_object()
+                        .map(|p| p
+                            .iter()
+                            .take(2)
+                            .map(|(k, v)| format!("{}={}", k, v))
+                            .collect::<Vec<_>>()
+                            .join(", "))
+                        .unwrap_or_default()
+                );
+                let req = openloom_models::PermissionRequest {
+                    tool_name: tool_name.clone(),
+                    description: desc,
+                    risk_level: risk_str,
+                };
+                let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                if self.perm_request_tx.send((req, resp_tx)).await.is_ok() {
+                    match resp_rx.await {
+                        Ok(true) => {} // approved, continue
+                        _ => return Ok(format!("Tool '{}' denied by user.", tool_name)),
+                    }
                 }
             }
-        }
 
-        // Always block Forbidden-level risks regardless of permissions
-        if matches!(risk, openloom_models::RiskLevel::Forbidden) {
-            let msg = openloom_sandbox::risk_message(&tool_name, &call.arguments, &risk);
-            return Ok(msg);
+            // Always block Forbidden-level risks regardless of permissions
+            if matches!(risk, openloom_models::RiskLevel::Forbidden) {
+                let msg = openloom_sandbox::risk_message(&tool_name, &call.arguments, &risk);
+                return Ok(msg);
+            }
         }
 
         self.skills
