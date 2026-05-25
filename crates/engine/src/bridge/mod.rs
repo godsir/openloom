@@ -20,6 +20,7 @@ pub use types::*;
 pub use adapter::ChannelAdapter;
 pub use store::{BridgeStore, BridgeSession, BridgeMessageRow, KnownUserRow};
 pub use security::{RateLimiter, MessageDedup, LoopDetector};
+pub use manager::BridgeManager;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
