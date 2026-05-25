@@ -4,6 +4,7 @@ import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { t } from '../helpers';
 import { switchToAgent, loadSettingsConfig, loadAgents } from '../actions';
+import { loadAgents as loadMainAgents } from '../../stores/agent-actions';
 import { Overlay } from '../../ui';
 import styles from '../Settings.module.css';
 
@@ -58,6 +59,7 @@ export function AgentDeleteOverlay() {
       showToast(t('settings.agent.deleted', { name: target.name }), 'success');
       useSettingsStore.setState({ settingsAgentId: null });
       await loadAgents();
+      await loadMainAgents();
       await loadSettingsConfig();
     } catch (err: any) {
       showToast(t('settings.agent.deleteFailed') + ': ' + err.message, 'error');

@@ -34,7 +34,7 @@ export type ChatImageSendPreflightResult =
   }
   | {
     ok: false;
-    reason: 'text-model-image-without-auxiliary';
+    reason: 'text-model-image-without-auxiliary' | 'auxiliary-vision-enabled-no-model';
     imageInputMode: 'text-only';
   };
 
@@ -126,6 +126,9 @@ export async function evaluateChatImageSendPreflight({
   }
   if (canUseVisionAuxiliary(auxiliaryConfig)) {
     return { ok: true, reason: 'auxiliary-vision', imageInputMode };
+  }
+  if (auxiliaryConfig?.enabled === true && !auxiliaryConfig.model) {
+    return { ok: false, reason: 'auxiliary-vision-enabled-no-model', imageInputMode };
   }
   return {
     ok: false,

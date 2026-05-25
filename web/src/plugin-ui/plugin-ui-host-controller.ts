@@ -192,7 +192,7 @@ export async function handlePluginUiRequest({
     return createPluginUiError(
       message,
       PLUGIN_UI_ERROR_CODE.BAD_MESSAGE,
-      validation.error,
+      (validation as { ok: false; error: string }).error,
     );
   }
 

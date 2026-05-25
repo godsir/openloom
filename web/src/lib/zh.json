@@ -235,6 +235,7 @@
     "deskContext": "看着书桌说",
     "pastedImage": "粘贴图片",
     "textModelImageBlocked": "当前模型为文本模型，不能直接发送图片。请在设置里调整模型能力，或配置并启用辅助视觉。",
+    "visionEnabledNoModel": "辅助视觉已启用，但尚未选择视觉模型。请在设置 → 模型 → 视觉辅助模型中选择一个能识图的模型。",
     "textModelVideoBlocked": "当前模型不支持视频输入。请在设置里开启视频能力，或切换到支持视频的模型。",
     "imageReadFailed": "图片读取失败，消息没有发送。请重新粘贴或重新添加图片。",
     "videoReadFailed": "视频读取失败，消息没有发送。请重新添加视频。",

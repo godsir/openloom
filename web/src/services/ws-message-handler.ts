@@ -5,7 +5,7 @@
  * 将聊天消息、Agent 状态变化等事件分发到 Zustand store。
  */
 import { useStore } from '../stores';
-import type { ContentBlock } from '../stores/chat-types';
+import type { ContentBlock, ToolCall } from '../stores/chat-types';
 import { updateKeyed } from '../stores/create-keyed-slice';
 
 // Track streaming assistant message per session
@@ -265,6 +265,8 @@ function handleNotification(method: string, params: any): void {
 
       toolGroup.tools.push({ name, args, done: false, success: false });
 
+      console.debug(`[tool.start] ${name}`, args);
+
       // Update store
       const msgData = {
         id: streaming.id,
@@ -290,6 +292,8 @@ function handleNotification(method: string, params: any): void {
       if (!sid) return;
       const name = params?.name || 'unknown';
       const success = !!params?.success;
+
+      console.debug(`[tool.end] ${name} success=${success}`, params?.details);
       const details = params?.details || {};
 
       const streaming = streamingMessages[sid];
@@ -325,6 +329,42 @@ function handleNotification(method: string, params: any): void {
         isStreaming: true,
       };
       useStore.getState().updateMessageById(sid, streaming.id, () => msgData);
+      break;
+    }
+
+    case 'tool.progress': {
+      const sid = params?.session_id;
+      if (!sid) return;
+      const name = params?.name || 'unknown';
+      const progress = params?.progress ?? null;
+      const message = params?.message || '';
+
+      console.debug(`[tool.progress] ${name} ${progress != null ? Math.round(progress * 100) + '%' : '...'} ${message}`);
+
+      const streaming = streamingMessages[sid];
+      if (!streaming) return;
+
+      const toolGroup = streaming.blocks.find(b => b.type === 'tool_group') as
+        { type: 'tool_group'; tools: Array<ToolCall>; collapsed: boolean } | undefined;
+      if (!toolGroup) return;
+
+      for (let i = toolGroup.tools.length - 1; i >= 0; i--) {
+        const t = toolGroup.tools[i];
+        if (t.name === name && !t.done) {
+          t.progress = progress;
+          t.progressMessage = message;
+          break;
+        }
+      }
+
+      useStore.getState().updateMessageById(sid, streaming.id, () => ({
+        id: streaming.id,
+        role: 'assistant' as const,
+        text: streaming.text,
+        blocks: streaming.blocks,
+        timestamp: Date.now(),
+        isStreaming: true,
+      }));
       break;
     }
 

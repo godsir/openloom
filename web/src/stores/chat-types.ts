@@ -15,6 +15,10 @@ export interface ToolCall {
   done: boolean;
   success: boolean;
   details?: { card?: import('../types').PluginCardDetails; [key: string]: unknown };
+  /** Intermediate progress (0–1) reported by the backend during execution. */
+  progress?: number | null;
+  /** Human-readable progress message from the backend. */
+  progressMessage?: string;
 }
 
 // ── 用户附件 ──

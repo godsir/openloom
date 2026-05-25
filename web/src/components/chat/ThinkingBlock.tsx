@@ -20,7 +20,7 @@ export const ThinkingBlock = memo(function ThinkingBlock({ content, sealed }: Pr
       <summary className={styles.thinkingBlockSummary} onClick={(e) => { e.preventDefault(); toggle(); }}>
         <span className={`${styles.thinkingBlockArrow}${open ? ` ${styles.thinkingBlockArrowOpen}` : ''}`}>›</span>
         {' '}{sealed ? t('thinking.done') : (
-          <>{t('thinking.active')}<span className={styles.thinkingDots} /></>
+          <>{t('thinking.active')}<span className={styles.thinkingDots}><span /><span /><span /></span></>
         )}
       </summary>
       {open && content && (

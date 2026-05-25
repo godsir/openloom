@@ -3,6 +3,7 @@ import { useSettingsStore } from '../store';
 import { hanaFetch } from '../api';
 import { t } from '../helpers';
 import { switchToAgent } from '../actions';
+import { loadAgents as loadMainAgents } from '../../stores/agent-actions';
 import { Overlay } from '../../ui';
 import styles from '../Settings.module.css';
 import { CharacterCardPreviewOverlay, type CharacterCardPlan } from './CharacterCardPreviewOverlay';
@@ -62,6 +63,7 @@ export function AgentCreateOverlay() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       await switchToAgent(data.id);
+      await loadMainAgents();
       close();
       showToast(t('settings.agent.created', { name: data.name }), 'success');
     } catch (err: any) {
@@ -108,6 +110,7 @@ export function AgentCreateOverlay() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       await switchToAgent(data.agent.id);
+      await loadMainAgents();
       close();
       showToast(t('settings.agent.created', { name: data.agent.name }), 'success');
     } catch (err: any) {

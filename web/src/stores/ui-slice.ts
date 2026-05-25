@@ -1,4 +1,4 @@
-import type { ActivePanel, RightWorkspaceTab, TabType, DeskSearchResult } from '../types';
+import type { ActivePanel, RightWorkspaceTab, TabType } from '../types';
 import type { FileRef } from '../types/file-ref';
 
 export interface MediaViewerState {
@@ -32,12 +32,6 @@ export interface UiSlice {
   settingsModal: SettingsModalState;
   /** 频道创建弹窗是否可见 */
   channelCreateOverlayVisible: boolean;
-
-  // ── Desk / workspace ──
-  deskFiles: DeskSearchResult[];
-  deskBasePath: string | null;
-  deskCurrentPath: string | null;
-  homeFolder: string | null;
 
   // ── Screenshot ──
   screenshotTaskCount: number;
@@ -88,12 +82,6 @@ export const createUiSlice = (
   mediaViewer: null,
   settingsModal: { open: false, activeTab: 'agent' },
   channelCreateOverlayVisible: false,
-
-  // Desk / workspace stubs
-  deskFiles: [],
-  deskBasePath: null,
-  deskCurrentPath: null,
-  homeFolder: null,
 
   // Screenshot stubs
   screenshotTaskCount: 0,

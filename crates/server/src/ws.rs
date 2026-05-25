@@ -294,6 +294,25 @@ fn event_to_notification(event: &EngineEvent) -> serde_json::Value {
                 }
             })
         }
+        EngineEvent::ToolCallProgress {
+            session_id,
+            call_id,
+            name,
+            progress,
+            message,
+        } => {
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "tool.progress",
+                "params": {
+                    "session_id": session_id,
+                    "call_id": call_id,
+                    "name": name,
+                    "progress": progress,
+                    "message": message
+                }
+            })
+        }
         EngineEvent::ThinkingDelta { session_id, delta } => {
             serde_json::json!({
                 "jsonrpc": "2.0",

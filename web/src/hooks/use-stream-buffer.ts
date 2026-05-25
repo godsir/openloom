@@ -306,6 +306,7 @@ class StreamBufferManager {
       }
 
       case 'tool_start':
+        console.debug(`[tool_start] ${msg.name}`, msg.args);
         this.ensureMessage(buf);
         // 工具事件频率低，直接写 store
         this.flush(buf); // 先 flush 文本
@@ -336,6 +337,7 @@ class StreamBufferManager {
         break;
 
       case 'tool_end':
+        console.debug(`[tool_end] ${msg.name} success=${msg.success}`, msg.details);
         this.updateTargetMessage(buf, (m) => {
           const blocks = [...(m.blocks || [])];
           // 从后往前找含该 tool 名且未 done 的
@@ -348,6 +350,29 @@ class StreamBufferManager {
               tools[toolIdx] = { ...tools[toolIdx], done: true, success: !!msg.success, details: msg.details };
               const allDone = tools.every(t => t.done);
               blocks[i] = { ...tg, tools, collapsed: allDone && tools.length > 1 };
+              return { ...m, blocks };
+            }
+          }
+          return m;
+        });
+        break;
+
+      case 'tool_progress':
+        console.debug(`[tool_progress] ${msg.name} ${msg.progress != null ? Math.round(msg.progress * 100) + '%' : '...'} ${msg.message || ''}`);
+        this.updateTargetMessage(buf, (m) => {
+          const blocks = [...(m.blocks || [])];
+          for (let i = blocks.length - 1; i >= 0; i--) {
+            if (blocks[i].type !== 'tool_group') continue;
+            const tg = blocks[i] as Extract<ContentBlock, { type: 'tool_group' }>;
+            const toolIdx = tg.tools.findIndex(t => t.name === msg.name && !t.done);
+            if (toolIdx >= 0) {
+              const tools = [...tg.tools];
+              tools[toolIdx] = {
+                ...tools[toolIdx],
+                progress: msg.progress ?? null,
+                progressMessage: msg.message || '',
+              };
+              blocks[i] = { ...tg, tools };
               return { ...m, blocks };
             }
           }

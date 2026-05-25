@@ -1,4 +1,3 @@
-// @ts-expect-error — shared JS module
 import * as sharedEditorTypography from '../../../shared/editor-typography.js';
 
 export interface EditorMarkdownTypography {

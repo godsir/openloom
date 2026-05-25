@@ -849,18 +849,23 @@
 }
 
 .toolDots {
-    display: inline-block;
+    display: inline-flex;
+    gap: 2px;
     margin-left: auto;
-    font-family: var(--font-serif);
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    color: var(--accent);
+    align-items: center;
 }
 
-.toolDots::after {
-    content: '';
-    animation: hana-typewriter-dots 1.4s steps(1, end) infinite;
+.toolDots span {
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: hana-typewriter-dots 1.4s ease-in-out infinite;
 }
+
+.toolDots span:nth-child(2) { animation-delay: 0.2s; }
+.toolDots span:nth-child(3) { animation-delay: 0.4s; }
 
 .toolStatus {
     margin-left: auto;
@@ -873,6 +878,102 @@
 
 .toolStatusFailed {
     color: var(--coral);
+}
+
+/* ── 工具展开面板 ── */
+
+.toolIndicatorWrapper {
+    display: flex;
+    flex-direction: column;
+}
+
+.toolIndicatorClickable {
+    cursor: pointer;
+    user-select: none;
+}
+
+.toolIndicatorClickable:hover {
+    background: var(--overlay-subtle);
+    border-radius: var(--radius-xs);
+}
+
+.toolExpandArrow {
+    display: inline-block;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    width: 0.8em;
+    flex-shrink: 0;
+    transition: transform 0.15s ease;
+}
+
+.toolExpandArrowOpen {
+    transform: rotate(90deg);
+}
+
+.toolElapsed {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    flex-shrink: 0;
+}
+
+.toolProgressMsg {
+    font-size: 0.7rem;
+    color: var(--accent);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 160px;
+    flex-shrink: 1;
+}
+
+.toolExpanded {
+    padding: 0.4rem 0.75rem 0.5rem 1.2rem;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.toolSection {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.toolSectionTitle {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+}
+
+.toolPre {
+    margin: 0;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.7rem;
+    font-family: var(--font-mono);
+    color: var(--tool-text);
+    background: var(--overlay-subtle);
+    border-radius: var(--radius-sm);
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 200px;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.toolResultSummary {
+    font-size: 0.78rem;
+    color: var(--tool-text);
+    padding: 0.3rem 0.6rem;
+    background: var(--overlay-subtle);
+    border-radius: var(--radius-sm);
+    max-height: 120px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 /* ── 思考折叠块 ── */
@@ -899,17 +1000,23 @@
 }
 
 .thinkingBlockSummary .thinkingDots {
-    display: inline-block;
+    display: inline-flex;
+    gap: 2px;
     margin-left: 4px;
-    font-family: var(--font-serif);
-    font-weight: 700;
-    letter-spacing: 0.1em;
+    align-items: center;
 }
 
-.thinkingBlockSummary .thinkingDots::after {
-    content: '';
-    animation: hana-typewriter-dots 1.4s steps(1, end) infinite;
+.thinkingBlockSummary .thinkingDots span {
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: hana-typewriter-dots 1.4s ease-in-out infinite;
 }
+
+.thinkingBlockSummary .thinkingDots span:nth-child(2) { animation-delay: 0.2s; }
+.thinkingBlockSummary .thinkingDots span:nth-child(3) { animation-delay: 0.4s; }
 
 .thinkingBlockArrow {
     display: inline-block;
@@ -1549,10 +1656,23 @@
     animation: hana-fade-up var(--duration-slow) var(--ease-out);
 }
 
-.typingIndicator::after {
-    content: '';
-    animation: hana-typewriter-dots 1.4s steps(1, end) infinite;
+.typingIndicator {
+    display: inline-flex;
+    gap: 2px;
+    align-items: center;
 }
+
+.typingIndicator span {
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: hana-typewriter-dots 1.4s ease-in-out infinite;
+}
+
+.typingIndicator span:nth-child(2) { animation-delay: 0.2s; }
+.typingIndicator span:nth-child(3) { animation-delay: 0.4s; }
 
 /* ── Scroll to bottom FAB ── */
 

@@ -69,7 +69,7 @@ export function DeskBreadcrumb() {
     const parent = cur.includes('/')
       ? cur.substring(0, cur.lastIndexOf('/'))
       : '';
-    loadDeskFiles(parent);
+    loadDeskFiles({ subdir: parent });
   }, []);
 
   if (!deskCurrentPath) return null;

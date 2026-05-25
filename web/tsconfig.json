@@ -15,6 +15,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src"],
-  "exclude": ["src/mobile", "src/browser-viewer", "src/screenshot-themes", "src/onboarding", "src/splash", "**/__tests__/**"]
+  "include": ["src", "../shared"],
+  "exclude": ["src/mobile", "src/browser-viewer", "src/screenshot-themes", "src/onboarding", "src/splash", "**/__tests__/**", "**/*.test.ts", "**/*.test.tsx"]
 }

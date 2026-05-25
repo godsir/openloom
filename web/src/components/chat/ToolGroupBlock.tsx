@@ -2,7 +2,7 @@
  * ToolGroupBlock — 工具调用组，含展开/折叠
  */
 
-import { memo, useState, useCallback, useEffect } from 'react';
+import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import styles from './Chat.module.css';
 import { extractToolDetail } from '../../utils/message-parser';
 import type { ToolDetail } from '../../utils/message-parser';
@@ -21,6 +21,15 @@ function getToolLabel(name: string, phase: string, agentName: string): string {
   const val = t?.(`tool.${name}.${phase}`, vars);
   if (val && val !== `tool.${name}.${phase}`) return val;
   return t?.(`tool._fallback.${phase}`, vars) || name;
+}
+
+function formatElapsed(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
 }
 
 export const ToolGroupBlock = memo(function ToolGroupBlock({ tools: rawTools, collapsed: initialCollapsed, agentName = 'Hanako' }: Props) {
@@ -62,7 +71,7 @@ export const ToolGroupBlock = memo(function ToolGroupBlock({ tools: rawTools, co
           <span className={styles.toolGroupTitle}>{summaryText}</span>
           {allDone && <span className={styles.toolGroupArrow}>{collapsed ? '›' : '‹'}</span>}
           {!allDone && (
-            <span className={styles.toolDots} />
+            <span className={styles.toolDots}><span /><span /><span /></span>
           )}
         </div>
       )}
@@ -115,12 +124,38 @@ function waitToolDetail(tool: ToolCall, now: number): ToolDetail {
   return { text: seconds === null ? '?s' : `${seconds}s` };
 }
 
+function formatJson(obj: Record<string, unknown> | undefined): string | null {
+  if (!obj || Object.keys(obj).length === 0) return null;
+  try {
+    return JSON.stringify(obj, null, 2);
+  } catch {
+    return null;
+  }
+}
+
+function hasDisplayableDetails(tool: ToolCall): boolean {
+  const details = tool.details;
+  if (!details) return false;
+  // Filter out card-only details
+  const keys = Object.keys(details).filter(k => k !== 'card');
+  return keys.length > 0;
+}
+
 const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: ToolCall; agentName: string }) {
+  const [expanded, setExpanded] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const startTimeRef = useRef(Date.now());
+
+  // Update elapsed time every second while running
   useEffect(() => {
-    if (tool.name !== 'wait' || tool.done) return;
-    if (finiteNumber(tool.args?.startedAt) === null || finiteNumber(tool.args?.durationMs) === null) return;
-    setNow(Date.now());
+    if (tool.done) return;
+    // For 'wait' tool with known duration, use the existing logic
+    if (tool.name === 'wait' && finiteNumber(tool.args?.startedAt) !== null && finiteNumber(tool.args?.durationMs) !== null) {
+      setNow(Date.now());
+      const timer = window.setInterval(() => setNow(Date.now()), 1000);
+      return () => window.clearInterval(timer);
+    }
+    // For all other tools, track elapsed since mount
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [tool.name, tool.done, tool.args?.startedAt, tool.args?.durationMs]);
@@ -131,12 +166,34 @@ const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: T
   const label = getToolLabel(tool.name, tool.done ? 'done' : 'running', agentName);
   const detailTitle = detail.title || detail.href;
 
-  // 如果 args 里有 tag 类型信息（如 agent 名）
   const tag = tool.args?.agentId as string | undefined;
 
+  const elapsedMs = now - startTimeRef.current;
+  const elapsedStr = formatElapsed(elapsedMs);
+  const progressMsg = tool.progressMessage;
+
+  const argsJson = formatJson(tool.args);
+  const showDetails = hasDisplayableDetails(tool);
+
+  const toggleExpanded = useCallback(() => {
+    if (argsJson || showDetails) {
+      setExpanded(v => !v);
+    }
+  }, [argsJson, showDetails]);
+
+  const expandable = !!(argsJson || showDetails);
+
   return (
-    <>
-      <div className={styles.toolIndicator} data-tool={tool.name} data-done={String(tool.done)}>
+    <div className={styles.toolIndicatorWrapper}>
+      <div
+        className={`${styles.toolIndicator}${expandable ? ` ${styles.toolIndicatorClickable}` : ''}`}
+        data-tool={tool.name}
+        data-done={String(tool.done)}
+        onClick={toggleExpanded}
+      >
+        {expandable && (
+          <span className={`${styles.toolExpandArrow}${expanded ? ` ${styles.toolExpandArrowOpen}` : ''}`}>›</span>
+        )}
         <span className={styles.toolDesc}>{label}</span>
         {detail.text && (
           detail.href ? (
@@ -152,14 +209,41 @@ const ToolIndicator = memo(function ToolIndicator({ tool, agentName }: { tool: T
           )
         )}
         {tag && <span className={styles.toolTag}>{tag}</span>}
+        {!tool.done && progressMsg && (
+          <span className={styles.toolProgressMsg}>{progressMsg}</span>
+        )}
+        <span className={styles.toolElapsed}>{elapsedStr}</span>
         {tool.done ? (
           <span className={`${styles.toolStatus} ${tool.success ? styles.toolStatusDone : styles.toolStatusFailed}`}>
             {tool.success ? '✓' : '✗'}
           </span>
         ) : (
-          <span className={styles.toolDots} />
+          <span className={styles.toolDots}><span /><span /><span /></span>
         )}
       </div>
-    </>
+      {expanded && (
+        <div className={styles.toolExpanded}>
+          {argsJson && (
+            <div className={styles.toolSection}>
+              <div className={styles.toolSectionTitle}>Input</div>
+              <pre className={styles.toolPre}>{argsJson}</pre>
+            </div>
+          )}
+          {showDetails && tool.details && (
+            <div className={styles.toolSection}>
+              <div className={styles.toolSectionTitle}>Result</div>
+              {tool.details.summary && (
+                <div className={styles.toolResultSummary}>{String(tool.details.summary)}</div>
+              )}
+              {Object.entries(tool.details).filter(([k]) => k !== 'card' && k !== 'summary').length > 0 && (
+                <pre className={styles.toolPre}>
+                  {formatJson(Object.fromEntries(Object.entries(tool.details).filter(([k]) => k !== 'card')))}
+                </pre>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 });

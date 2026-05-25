@@ -664,6 +664,20 @@ pub struct GpuInfo {
     pub supported: bool,
 }
 
+// === Tool progress ===
+
+/// Intermediate progress reported by a skill during execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolProgress {
+    /// Progress fraction 0.0–1.0 (None = indeterminate)
+    pub progress: Option<f64>,
+    /// Human-readable status message
+    pub message: String,
+    /// Optional structured payload
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<serde_json::Value>,
+}
+
 // === Engine events ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -723,6 +737,13 @@ pub enum EngineEvent {
         name: String,
         success: bool,
         result_summary: String,
+    },
+    ToolCallProgress {
+        session_id: String,
+        call_id: String,
+        name: String,
+        progress: Option<f64>,
+        message: String,
     },
     ThinkingDelta {
         session_id: String,

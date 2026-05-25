@@ -214,7 +214,7 @@ const Panel = memo(function Panel({ path, active }: { path: string; active: bool
             registerMessageElement={registerMessageElement}
           />
           {isSessionStreaming && (
-            <div className={styles.typingIndicator} />
+            <div className={styles.typingIndicator}><span /><span /><span /></div>
           )}
           <div className={styles.sessionFooter} />
         </div>

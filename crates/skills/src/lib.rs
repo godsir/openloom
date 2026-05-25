@@ -19,6 +19,16 @@ pub trait Skill: Send + Sync {
     fn manifest(&self) -> &SkillManifest;
     async fn invoke(&self, params: Value) -> Result<Value>;
     fn context_md(&self) -> &str;
+
+    /// Like invoke, but receives a progress sender for intermediate status updates.
+    /// Default implementation delegates to invoke, discarding the sender.
+    async fn invoke_tracked(
+        &self,
+        params: Value,
+        _progress: tokio::sync::mpsc::UnboundedSender<openloom_models::ToolProgress>,
+    ) -> Result<Value> {
+        self.invoke(params).await
+    }
 }
 
 /// Permission model — now defined in openloom-models for shared use with sandbox crate
@@ -115,6 +125,26 @@ impl SkillRegistry {
         openloom_sandbox::check_permissions(&permissions, name, &params)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         skill.invoke(params).await
+    }
+
+    pub async fn invoke_tracked(
+        &self,
+        name: &str,
+        params: Value,
+        progress: tokio::sync::mpsc::UnboundedSender<openloom_models::ToolProgress>,
+    ) -> Result<Value> {
+        let skill = {
+            let disabled = self.disabled.read().unwrap();
+            self.skills
+                .iter()
+                .filter(|s| !disabled.contains(s.name()))
+                .find(|s| s.name() == name)
+                .ok_or_else(|| anyhow::anyhow!("skill '{}' not found", name))?
+        };
+        let permissions = skill.manifest().permissions.clone();
+        openloom_sandbox::check_permissions(&permissions, name, &params)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        skill.invoke_tracked(params, progress).await
     }
 
     pub fn list_all_skills(&self) -> Vec<SkillInfo> {

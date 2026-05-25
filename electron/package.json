@@ -20,17 +20,37 @@
     ],
     "extraResources": [
       {
-        "from": "../target/release/loom-server",
-        "to": "engine/loom-server"
-      },
-      {
         "from": "../web/dist",
         "to": "web-dist"
       }
     ],
     "win": {
       "target": "nsis",
-      "icon": "icons/icon.ico"
+      "icon": "icons/icon.ico",
+      "extraResources": [
+        {
+          "from": "../target/release/loom-server.exe",
+          "to": "engine/loom-server.exe"
+        }
+      ]
+    },
+    "linux": {
+      "target": "AppImage",
+      "extraResources": [
+        {
+          "from": "../target/release/loom-server",
+          "to": "engine/loom-server"
+        }
+      ]
+    },
+    "mac": {
+      "target": "dmg",
+      "extraResources": [
+        {
+          "from": "../target/release/loom-server",
+          "to": "engine/loom-server"
+        }
+      ]
     },
     "nsis": {
       "include": "installer.nsh",

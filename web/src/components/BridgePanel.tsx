@@ -517,7 +517,7 @@ export function BridgeChatTranscript({
           />
         )}
         {isStreaming && (
-          <div className={chatStyles.typingIndicator} />
+          <div className={chatStyles.typingIndicator}><span /><span /><span /></div>
         )}
       </div>
     </div>

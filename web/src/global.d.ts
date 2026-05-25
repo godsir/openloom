@@ -14,6 +14,7 @@ interface Window {
     t?: (key: string, params?: Record<string, unknown>) => string;
     __hanaLog?: (...args: unknown[]) => void;
     setTheme?: (id: string) => void;
+    applyTheme?: (id: string) => void;
     setSerifFont?: (v: string | boolean) => void;
     loadSavedTheme?: () => void;
     loadSavedFont?: () => void;

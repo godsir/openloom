@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useStore } from '../stores';
-import { loadDeskTreeFiles } from '../stores/desk-actions';
+import { loadDeskFiles } from '../stores/desk-actions';
 import { schedulePersistCurrentWorkspaceUiState } from '../stores/workspace-ui-state-actions';
 import { ContextMenu } from '../ui';
 import { DESK_SORT_KEY, type SortMode, type CtxMenuState, type FileTypeFilter } from './desk/desk-types';
@@ -112,7 +112,7 @@ export function DeskSection({
     if (reloadSubdirs.length === 0) return;
     clearDeskTreeDirty(clearSubdirs);
     for (const subdir of reloadSubdirs) {
-      void loadDeskTreeFiles(subdir, { force: true });
+      void loadDeskFiles({ subdir });
     }
   }, [clearDeskTreeDirty, deskBasePath, deskDirtyTreePaths, deskExpandedPaths]);
 
@@ -134,7 +134,7 @@ export function DeskSection({
       schedulePersistCurrentWorkspaceUiState();
     }
     if (normalizedParent && !deskTreeFilesByPath[normalizedParent]) {
-      await loadDeskTreeFiles(normalizedParent);
+      await loadDeskFiles({ subdir: normalizedParent });
     }
     const latest = useStore.getState();
     const siblings = latest.deskTreeFilesByPath?.[normalizedParent]

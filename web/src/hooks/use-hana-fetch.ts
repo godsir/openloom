@@ -2,6 +2,21 @@ import { getEnginePort, loomRpc } from '../adapter';
 
 const DEFAULT_TIMEOUT = 30_000;
 
+function deepMerge(base: any, overlay: any): any {
+  if (!base || typeof base !== 'object' || Array.isArray(base)) return overlay;
+  if (!overlay || typeof overlay !== 'object' || Array.isArray(overlay)) return overlay;
+  const result = { ...base };
+  for (const key of Object.keys(overlay)) {
+    if (key in result && typeof result[key] === 'object' && result[key] !== null && !Array.isArray(result[key])
+      && typeof overlay[key] === 'object' && overlay[key] !== null && !Array.isArray(overlay[key])) {
+      result[key] = deepMerge(result[key], overlay[key]);
+    } else {
+      result[key] = overlay[key];
+    }
+  }
+  return result;
+}
+
 /**
  * 构建 Loom 本地引擎 HTTP URL
  */
@@ -146,6 +161,17 @@ async function tryRpcBridge(path: string, opts: RequestInit): Promise<Response |
     if (path.startsWith('/api/plugins/ui-host-capabilities')) return json({ capabilities: {} });
 
     // ── Preferences ──
+    if (path === '/api/preferences/models') {
+      if (method === 'PUT') {
+        const existing = await loomRpc('config.get', { key: 'settings.models' });
+        const current = (existing && typeof existing === 'object' ? (existing as any).config : null) ?? {};
+        const merged = deepMerge(current, body);
+        await loomRpc('config.set', { key: 'settings.models', value: merged });
+        return json({ ok: true });
+      }
+      const modelRes = await loomRpc('config.get', { key: 'settings.models' });
+      return json((modelRes && typeof modelRes === 'object' ? (modelRes as any).config : null) ?? {});
+    }
     if (path.startsWith('/api/preferences/workspace-ui-state')) {
       if (method === 'PUT') {
         try {
@@ -248,6 +274,20 @@ async function tryRpcBridge(path: string, opts: RequestInit): Promise<Response |
     if (path.startsWith('/api/desk/skills')) {
       // stub — skills are loaded by the engine
       return json({ skills: [] });
+    }
+
+    // ── Config ──
+    if (path === '/api/config') {
+      if (method === 'PUT') {
+        await loomRpc('config.set', { key: 'general', value: body });
+        return json({ ok: true });
+      }
+      const r = await loomRpc('config.get', {});
+      // Flatten: backend nests inside .config, consumer expects flat
+      const cfg = r?.config ?? r ?? {};
+      const settings = cfg.settings ?? cfg.settings ?? {};
+      const general = cfg.general ?? cfg.general ?? {};
+      return json({ ...cfg, ...settings, ...general });
     }
 
     // ── Config / workspace history ──

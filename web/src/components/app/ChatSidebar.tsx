@@ -1,7 +1,8 @@
 // @ts-nocheck
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import type { ActivePanel } from '../../types';
 import { useStore } from '../../stores';
+import { switchAgent } from '../../stores/agent-actions';
 import { RegionalErrorBoundary } from '../RegionalErrorBoundary';
 import { SessionList } from '../SessionList';
 
@@ -25,12 +26,20 @@ export function ChatSidebar({
   region = 'sidebar',
 }: ChatSidebarProps) {
   const currentAgentId = useStore(s => s.currentAgentId);
+  const agents = useStore(s => s.agents);
   const t = window.t ?? ((p: string) => p);
   const [selectMode, setSelectMode] = useState(false);
 
   const handleToggleSelectMode = () => {
     setSelectMode(prev => !prev);
   };
+
+  const handleAgentChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    const id = e.target.value;
+    if (id && id !== currentAgentId) {
+      switchAgent(id);
+    }
+  }, [currentAgentId]);
 
   return (
     <aside className={`sidebar${open ? '' : ' collapsed'}`} id="sidebar">
@@ -66,6 +75,31 @@ export function ChatSidebar({
               </button>
             </div>
           </div>
+
+          {agents && agents.length > 1 && (
+            <div className="agent-switcher" style={{ padding: '4px 12px' }}>
+              <select
+                value={currentAgentId || ''}
+                onChange={handleAgentChange}
+                style={{
+                  width: '100%',
+                  padding: '6px 8px',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-secondary)',
+                  color: 'var(--text-primary)',
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                }}
+              >
+                {agents.map((agent: any) => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.name} {agent.isPrimary ? '★' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="session-list" id="sessionList">
             <RegionalErrorBoundary region={region} resetKeys={[currentAgentId]}>

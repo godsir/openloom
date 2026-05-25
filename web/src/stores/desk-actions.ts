@@ -427,13 +427,31 @@ export async function saveJianContent(content: string): Promise<boolean> {
 
 // ── Aliases for component compatibility ──
 export { loadDeskFiles as loadDeskTreeFiles };
-export const deskCreateFile = deskCreateFileInSubdir;
-export const deskMoveTreeFiles = deskMoveTreeItem;
+
+export async function deskCreateFile(content: string, name?: string, parentSubdir?: string): Promise<boolean> {
+  const s = useStore.getState();
+  const dir = s.deskBasePath || selectActiveWorkspaceDir();
+  if (!dir || !content) return false;
+  const fileName = name || `note-${Date.now()}.md`;
+  const subdir = parentSubdir ?? s.deskCurrentPath ?? '';
+  return deskCreateFileInSubdir(subdir, fileName, content);
+}
+
+export async function deskMoveTreeFiles(
+  items: { sourceSubdir: string; name: string; isDirectory: boolean }[],
+  targetSubdir: string,
+): Promise<boolean> {
+  let ok = true;
+  for (const item of items) {
+    if (!await deskMoveTreeItem(item.sourceSubdir, item.name, targetSubdir)) ok = false;
+  }
+  return ok;
+}
 
 // ── Not yet wired — placeholder stubs ──
 export function deskCurrentDir(): string { return useStore.getState().deskCurrentPath || ''; }
-export async function deskUploadFiles(files: File[]): Promise<void> {}
-export async function deskUploadFilesToSubdir(_subdir: string, _files: File[]): Promise<void> {}
+export async function deskUploadFiles(_paths: string[]): Promise<void> {}
+export async function deskUploadFilesToSubdir(_paths: string[], _subdir: string): Promise<void> {}
 export async function deskTrashTreeItems(_items: { subdir: string; name: string; isDir: boolean }[]): Promise<boolean> { return false; }
 export function jumpToDeskSearchResult(_result: any): void {}
 

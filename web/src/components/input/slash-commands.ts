@@ -55,7 +55,7 @@ async function execNewSession(addToast: (text: string) => void) {
     const result = await loomRpc('session.create', {});
     const sid = result?.session_id || result?.path;
     if (sid) {
-      useStore.getState().setCurrentSession(sid);
+      useStore.getState().setCurrentSessionPath(sid);
       await loadSessions();
       addToast('已创建新会话');
     }
@@ -85,7 +85,7 @@ async function execClear(addToast: (text: string) => void) {
     const result = await loomRpc('session.create', {});
     const sid = result?.session_id || result?.path;
     if (sid) {
-      useStore.getState().setCurrentSession(sid);
+      useStore.getState().setCurrentSessionPath(sid);
       await loadSessions();
       addToast('已创建新会话，上下文已清空');
     }

@@ -55,6 +55,25 @@ describe('chat image send preflight', () => {
     expect(loadVisionAuxiliaryConfig).toHaveBeenCalledOnce();
   });
 
+  it('returns auxiliary-vision-enabled-no-model when vision is on but no model configured', async () => {
+    const loadVisionAuxiliaryConfig = vi.fn(async () => ({
+      enabled: true,
+      model: null,
+    }));
+
+    const result = await evaluateChatImageSendPreflight({
+      attachments: [{ path: '/tmp/a.png', name: 'a.png' }],
+      model: { id: 'deepseek-v4-pro', provider: 'deepseek', input: ['text'] },
+      loadVisionAuxiliaryConfig,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'auxiliary-vision-enabled-no-model',
+      imageInputMode: 'text-only',
+    });
+  });
+
   it('allows image send for text-only models when auxiliary vision can handle it', async () => {
     const loadVisionAuxiliaryConfig = vi.fn(async () => ({
       enabled: true,

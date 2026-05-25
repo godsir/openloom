@@ -302,7 +302,26 @@ impl Engine {
                             arguments: tc.arguments.clone(),
                         });
 
-                        let result = match self.execute_tool(tc, mode).await {
+                        // Progress channel: skill → EngineEvent bridge
+                        let (progress_tx, mut progress_rx) =
+                            tokio::sync::mpsc::unbounded_channel::<openloom_models::ToolProgress>();
+                        let eb = self.event_bus.clone();
+                        let sid = session_id.to_string();
+                        let cid = tc.id.clone();
+                        let tname = tc.name.clone();
+                        tokio::spawn(async move {
+                            while let Some(p) = progress_rx.recv().await {
+                                let _ = eb.send(EngineEvent::ToolCallProgress {
+                                    session_id: sid.clone(),
+                                    call_id: cid.clone(),
+                                    name: tname.clone(),
+                                    progress: p.progress,
+                                    message: p.message,
+                                });
+                            }
+                        });
+
+                        let result = match self.execute_tool(tc, mode, progress_tx).await {
                             Ok(output) => truncate_tool_result(&output),
                             Err(e) => format!("Tool error: {}", e),
                         };
@@ -858,6 +877,7 @@ impl Engine {
         &self,
         call: &ToolCall,
         mode: openloom_models::Mode,
+        progress: tokio::sync::mpsc::UnboundedSender<openloom_models::ToolProgress>,
     ) -> Result<String> {
         // Reverse sanitize: model returns safe name, find actual skill by matching sanitized forms
         let tool_name = if self.skills.find_by_name(&call.name).is_some() {
@@ -933,7 +953,7 @@ impl Engine {
         }
 
         self.skills
-            .invoke(&tool_name, call.arguments.clone())
+            .invoke_tracked(&tool_name, call.arguments.clone(), progress)
             .await
             .map(|v| v.to_string())
     }

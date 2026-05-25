@@ -14,6 +14,13 @@ import { createSelectionSlice, type SelectionSlice } from './selection-slice';
 import { createPreviewSlice, type PreviewSlice } from './preview-slice';
 import { createDeskSlice, type DeskSlice } from './desk-slice';
 import { createBridgeSlice, type BridgeSlice } from './bridge-slice';
+import { createActivitySlice, type ActivitySlice } from './activity-slice';
+import { createAutomationSlice, type AutomationSlice } from './automation-slice';
+import { createChannelSlice, type ChannelSlice } from './channel-slice';
+import { createPluginUiSlice, type PluginUiSlice } from './plugin-ui-slice';
+import { createSubagentPreviewSlice, type SubagentPreviewSlice } from './subagent-preview-slice';
+import { createScreenshotSlice, type ScreenshotSlice } from './screenshot-slice';
+import { createComputerOverlaySlice, type ComputerOverlaySlice } from './computer-overlay-slice';
 
 export type StoreState = ConnectionSlice &
   SessionSlice &
@@ -29,7 +36,14 @@ export type StoreState = ConnectionSlice &
   SelectionSlice &
   PreviewSlice &
   DeskSlice &
-  BridgeSlice;
+  BridgeSlice &
+  ActivitySlice &
+  AutomationSlice &
+  ChannelSlice &
+  PluginUiSlice &
+  SubagentPreviewSlice &
+  ScreenshotSlice &
+  ComputerOverlaySlice;
 
 export const useStore = create<StoreState>()((set, _get, _api) => ({
   ...createConnectionSlice(set, _get),
@@ -47,4 +61,11 @@ export const useStore = create<StoreState>()((set, _get, _api) => ({
   ...createPreviewSlice(),
   ...createDeskSlice(set),
   ...createBridgeSlice(set),
+  ...createActivitySlice(set),
+  ...createAutomationSlice(set),
+  ...createChannelSlice(set),
+  ...createPluginUiSlice(set),
+  ...createSubagentPreviewSlice(set),
+  ...createScreenshotSlice(set),
+  ...createComputerOverlaySlice(set),
 }));

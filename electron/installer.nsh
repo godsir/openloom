@@ -3,10 +3,12 @@
 
 !macro customInstall
   ; Add the engine directory to user PATH so `loom-server` is available in terminal
-  ${AddToPath} "$INSTDIR\resources\engine"
+  ; NOTE: Requires EnVar NSIS plugin — disabled until plugin is bundled
+  ; ${AddToPath} "$INSTDIR\resources\engine"
 !macroend
 
 !macro customUnInstall
   ; Remove from PATH on uninstall
-  ${RemoveFromPath} "$INSTDIR\resources\engine"
+  ; NOTE: Requires EnVar NSIS plugin — disabled until plugin is bundled
+  ; ${RemoveFromPath} "$INSTDIR\resources\engine"
 !macroend

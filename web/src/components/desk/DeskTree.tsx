@@ -15,7 +15,7 @@ import {
   deskRenameTreeItem,
   deskTrashTreeItems,
   deskUploadFilesToSubdir,
-  loadDeskTreeFiles,
+  loadDeskFiles,
 } from '../../stores/desk-actions';
 import { schedulePersistCurrentWorkspaceUiState } from '../../stores/workspace-ui-state-actions';
 import { openFilePreview } from '../../utils/file-preview';
@@ -326,7 +326,7 @@ function TreeNode({
     if (!file.isDir) return;
     setDeskExpandedPaths(toggleExpanded(expandedPaths, subdir));
     schedulePersistCurrentWorkspaceUiState();
-    if (!expanded) void loadDeskTreeFiles(subdir, { force: true });
+    if (!expanded) void loadDeskFiles({ subdir });
   }, [expanded, expandedPaths, file.isDir, setDeskExpandedPaths, subdir]);
 
   const previewFile = useCallback(() => {
@@ -374,7 +374,7 @@ function TreeNode({
             if (file.isDir) {
               setDeskExpandedPaths(expandedPaths.includes(subdir) ? expandedPaths : [...expandedPaths, subdir]);
               schedulePersistCurrentWorkspaceUiState();
-              void loadDeskTreeFiles(subdir, { force: true });
+              void loadDeskFiles({ subdir });
             } else {
               if (isWebRuntime()) previewFile();
               else window.platform?.openFile?.(path);
@@ -405,9 +405,9 @@ function TreeNode({
             ) ?? false;
             if (!confirmed) return;
             const ok = await deskTrashTreeItems(actionEntries.map(entry => ({
-              sourceSubdir: entry.parent,
+              subdir: entry.parent,
               name: entry.file.name,
-              isDirectory: entry.file.isDir,
+              isDir: entry.file.isDir,
             })));
             if (!ok) dispatchDeskNotice(t('desk.trashFailed'));
           },
@@ -603,7 +603,7 @@ export function DeskTree({
 
   useEffect(() => {
     if (!deskBasePath) return;
-    void loadDeskTreeFiles('');
+    void loadDeskFiles({ subdir: '' });
   }, [deskBasePath]);
 
   useEffect(() => {

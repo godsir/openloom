@@ -1,6 +1,8 @@
 export interface StreamingSlice {
   /** 所有正在 streaming 的 session path 集合（单一事实源） */
   streamingSessions: string[];
+  /** @deprecated 兼容层 — 用 streamingSessions.length > 0 替代 */
+  isStreaming: boolean;
   addStreamingSession: (path: string) => void;
   removeStreamingSession: (path: string) => void;
   /** 按 session path 存储的内联错误（权威源）。text 为 null 表示无 error。 */
@@ -34,14 +36,20 @@ export const createStreamingSlice = (
   get?: () => StreamingSlice,
 ): StreamingSlice => ({
   streamingSessions: [],
+  isStreaming: false,
   addStreamingSession: (path) => set((s) => ({
+    isStreaming: true,
     streamingSessions: s.streamingSessions.includes(path)
       ? s.streamingSessions
       : [...s.streamingSessions, path],
   })),
-  removeStreamingSession: (path) => set((s) => ({
-    streamingSessions: s.streamingSessions.filter(p => p !== path),
-  })),
+  removeStreamingSession: (path) => set((s) => {
+    const next = s.streamingSessions.filter(p => p !== path);
+    return {
+      isStreaming: next.length > 0,
+      streamingSessions: next,
+    };
+  }),
   inlineErrors: {},
   setInlineError: (path, text, ttlMs = 5000) => {
     cancelTimer(path);

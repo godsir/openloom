@@ -50,6 +50,12 @@ function matchCheckpointAction(path: string): { id: string; action: string } | n
   return m ? { id: m[1], action: m[2] } : null;
 }
 
+/** 匹配 /api/agents/{id} (无子路径) */
+function matchAgentIdOnly(path: string): string | null {
+  const m = path.match(/^\/api\/agents\/([^/]+)$/);
+  return m ? m[1] : null;
+}
+
 /** 匹配 /api/agents/{id}/subpath 动态路径 */
 function matchAgentSub(path: string): { agentId: string; sub: string } | null {
   const m = path.match(/^\/api\/agents\/([^/]+)\/(.+)$/);
@@ -105,6 +111,13 @@ export async function hanaFetch(
       return json(r);
     }
 
+    // ── DELETE /api/agents/{id} ──
+    const agentIdOnly = matchAgentIdOnly(path);
+    if (agentIdOnly && method === 'DELETE') {
+      const r = await loomRpc('agent.delete', { id: agentIdOnly });
+      return json(r);
+    }
+
     // ── /api/agents/{id}/subpath ──
     const agentSub = matchAgentSub(path);
     if (agentSub) {
@@ -142,9 +155,13 @@ export async function hanaFetch(
       }
 
       case '/api/agents': {
-        if (method === 'POST' || method === 'PUT') {
-          // agents/order or agents/switch etc — shouldn't hit here but handle gracefully
-          return json({ ok: true });
+        if (method === 'POST') {
+          const r = await loomRpc('agent.create', { name: body.name, yuan: body.yuan });
+          return json(r);
+        }
+        if (method === 'PUT') {
+          const r = await loomRpc('agent.configure', { id: body.id, ...body });
+          return json(r);
         }
         const r = await loomRpc('agent.list');
         return json(r);
@@ -156,7 +173,8 @@ export async function hanaFetch(
       }
 
       case '/api/agents/primary': {
-        return json({ ok: true });
+        const r = await loomRpc('agent.setPrimary', { id: body.id });
+        return json(r);
       }
 
       case '/api/agents/order': {

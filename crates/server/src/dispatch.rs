@@ -813,51 +813,132 @@ pub async fn dispatch_method(
         // ── Agent ────────────────────────────────────────────────────
         "agent.list" => {
             let state = engine.agent_state().await;
-            // Read per-agent chat model from agent config (set via AgentTab in settings).
-            // Fall back to the globally-connected model if no per-agent model is configured.
-            let agent_config = engine.get_config(Some("settings.agent.default.config")).await;
+            let config = engine.get_config(Some("settings.agent")).await;
+            let agents_meta = engine.get_config(Some("settings.agents")).await;
+
+            // Build agent list from stored metadata, or fall back to single "default"
+            let agent_entries: Vec<Value> = if let Some(arr) = agents_meta.as_array() {
+                arr.clone()
+            } else {
+                vec![]
+            };
+
+            let agents: Vec<Value> = if agent_entries.is_empty() {
+                // Backward compat: no agents stored yet, return "default"
+                let agent_name = config
+                    .get("default")
+                    .and_then(|v| v.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Loom")
+                    .to_string();
+                let agent_yuan = config
+                    .get("default")
+                    .and_then(|v| v.get("yuan"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("loom")
+                    .to_string();
+                vec![serde_json::json!({
+                    "id": "default",
+                    "name": agent_name,
+                    "yuan": agent_yuan,
+                    "isPrimary": true,
+                    "hasAvatar": false,
+                    "memoryMasterEnabled": false,
+                    "chatModel": null,
+                    "state": state,
+                })]
+            } else {
+                let mut result = Vec::new();
+                for entry in &agent_entries {
+                    let id = entry.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    if id.is_empty() { continue; }
+                    let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("Agent");
+                    let yuan = entry.get("yuan").and_then(|v| v.as_str()).unwrap_or("loom");
+                    let is_primary = entry.get("isPrimary").and_then(|v| v.as_bool()).unwrap_or(false);
+
+                    // Read per-agent chat model
+                    let agent_config = engine.get_config(
+                        Some(&format!("settings.agent.{}.config", id))
+                    ).await;
+                    let chat_model = agent_config
+                        .get("models")
+                        .and_then(|m| m.get("chat"))
+                        .filter(|v| v.get("id").and_then(|i| i.as_str()).is_some_and(|s| !s.is_empty()));
+                    let chat_model_val = match chat_model {
+                        Some(m) => serde_json::json!({
+                            "id": m.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                            "provider": m.get("provider").and_then(|v| v.as_str()),
+                        }),
+                        None => {
+                            let global_id = engine.current_model_id();
+                            if global_id.is_empty() {
+                                serde_json::Value::Null
+                            } else {
+                                serde_json::json!({ "id": global_id })
+                            }
+                        }
+                    };
+
+                    let has_avatar = engine.get_config(
+                        Some(&format!("settings.agent.{}.hasAvatar", id))
+                    ).await.as_bool().unwrap_or(false);
+
+                    let memory_enabled = engine.get_config(
+                        Some(&format!("settings.agent.{}.memoryMasterEnabled", id))
+                    ).await.as_bool().unwrap_or(false);
+
+                    result.push(serde_json::json!({
+                        "id": id,
+                        "name": name,
+                        "yuan": yuan,
+                        "isPrimary": is_primary,
+                        "hasAvatar": has_avatar,
+                        "memoryMasterEnabled": memory_enabled,
+                        "chatModel": chat_model_val,
+                        "state": if id == "default" { serde_json::to_value(&state).unwrap_or(serde_json::Value::Null) } else { serde_json::Value::Null },
+                    }));
+                }
+                result
+            };
+
+            Ok(serde_json::json!({ "agents": agents }))
+        }
+        "agent.switch" => {
+            let agent_id = params.as_ref().and_then(|p| p.get("agent_id")).and_then(|v| v.as_str()).unwrap_or("default");
+            // Persist active agent ID
+            let _ = engine.set_config("settings.currentAgentId", serde_json::Value::String(agent_id.to_string())).await;
+            // Read agent name/yuan/homeFolder
+            let name = engine.get_config(Some(&format!("settings.agent.{}.name", agent_id))).await;
+            let yuan = engine.get_config(Some(&format!("settings.agent.{}.yuan", agent_id))).await;
+            let agent_name = name.as_str().unwrap_or("Loom");
+            let agent_yuan = yuan.as_str().unwrap_or("loom");
+            // Read per-agent model and switch engine to it
+            let agent_config = engine.get_config(Some(&format!("settings.agent.{}.config", agent_id))).await;
             let chat_model = agent_config
                 .get("models")
                 .and_then(|m| m.get("chat"))
                 .filter(|v| v.get("id").and_then(|i| i.as_str()).is_some_and(|s| !s.is_empty()));
-            let chat_model_val = match chat_model {
-                Some(m) => serde_json::json!({
-                    "id": m.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-                    "provider": m.get("provider").and_then(|v| v.as_str()),
-                }),
-                None => {
-                    let global_id = engine.current_model_id();
-                    if global_id.is_empty() {
-                        serde_json::Value::Null
-                    } else {
-                        serde_json::json!({ "id": global_id })
-                    }
+            if let Some(m) = chat_model {
+                let model_id = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let provider = m.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+                if !model_id.is_empty() {
+                    // Persist active model in settings (same as model.switch)
+                    let active = serde_json::json!({ "id": model_id, "provider": provider });
+                    let _ = engine.set_config("settings.active_model", active).await;
                 }
-            };
-            // Read agent name from settings JSON if available
-            let config = engine.get_config(Some("settings.agent")).await;
-            let agent_name = config
-                .get("default")
-                .and_then(|v| v.get("name"))
+            }
+            // Read homeFolder for workspace restore
+            let home_folder = agent_config
+                .get("desk")
+                .and_then(|d| d.get("home_folder"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("Loom")
-                .to_string();
+                .map(|s| s.to_string());
             Ok(serde_json::json!({
-                "agents": [{
-                    "id": "default",
-                    "name": agent_name,
-                    "yuan": "loom",
-                    "isPrimary": true,
-                    "hasAvatar": false,
-                    "memoryMasterEnabled": false,
-                    "chatModel": chat_model_val,
-                    "state": state,
-                }]
+                "agent_id": agent_id,
+                "agentName": agent_name,
+                "agentYuan": agent_yuan,
+                "homeFolder": home_folder,
             }))
-        }
-        "agent.switch" => {
-            let _agent_id = params.as_ref().and_then(|p| p.get("agent_id")).and_then(|v| v.as_str()).unwrap_or("default");
-            Ok(serde_json::json!({"agent_id": "default", "agentName": "Loom", "agentYuan": "loom"}))
         }
 
         // ── Commands ─────────────────────────────────────────────────
@@ -967,14 +1048,16 @@ pub async fn dispatch_method(
 
             // Determine the active model. Priority:
             // 1. Explicit global active_model (saved by model.switch)
-            // 2. Agent's configured chat model from settings.agent.default.config
+            // 2. Current agent's chat model from settings.agent.{id}.config
             // 3. First model in the global models array (fallback)
+            let current_agent_id = config_val
+                .get("settings").and_then(|s| s.get("currentAgentId"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
             let agent_chat_fallback = || {
-                // This is async but we can't easily call get_config here since it's
-                // already in a non-async closure. Instead, read from the same config_val.
                 config_val
                     .get("settings").and_then(|s| s.get("agent"))
-                    .and_then(|a| a.get("default"))
+                    .and_then(|a| a.get(current_agent_id))
                     .and_then(|d| d.get("config"))
                     .and_then(|c| c.get("models"))
                     .and_then(|m| m.get("chat"))
@@ -1400,10 +1483,91 @@ pub async fn dispatch_method(
         },
         "memory.graph_snapshot" => Ok(serde_json::json!({"nodes": [], "edges": []})),
 
-        // ── Agent CRUD (Phase C) ──────────────────────────────────────
-        "agent.create" => Ok(serde_json::json!({"id": "agent-1", "name": "New Agent"})),
-        "agent.delete" => Ok(serde_json::json!({"ok": true})),
-        "agent.configure" => Ok(serde_json::json!({"ok": true})),
+        // ── Agent CRUD ─────────────────────────────────────────────────
+        "agent.create" => {
+            let name = params.as_ref().and_then(|p| p.get("name")).and_then(|v| v.as_str()).unwrap_or("New Agent");
+            let yuan = params.as_ref().and_then(|p| p.get("yuan")).and_then(|v| v.as_str()).unwrap_or("loom");
+            // Generate a short ID
+            let id = format!("agent-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or("00000000"));
+            // Read existing agents list
+            let agents_val = engine.get_config(Some("settings.agents")).await;
+            let mut agents: Vec<Value> = agents_val.as_array().cloned().unwrap_or_default();
+            // If no agents exist, make the "default" agent entry first
+            if agents.is_empty() {
+                agents.push(serde_json::json!({
+                    "id": "default",
+                    "name": "Loom",
+                    "yuan": "loom",
+                    "isPrimary": true,
+                    "createdAt": chrono::Utc::now().to_rfc3339(),
+                }));
+            }
+            let is_primary = false; // New agents are not primary by default
+            let created_at = chrono::Utc::now().to_rfc3339();
+            // Persist basic agent info
+            let _ = engine.set_config(&format!("settings.agent.{}.name", id), serde_json::Value::String(name.to_string())).await;
+            let _ = engine.set_config(&format!("settings.agent.{}.yuan", id), serde_json::Value::String(yuan.to_string())).await;
+            // Add to agent list
+            agents.push(serde_json::json!({
+                "id": id,
+                "name": name,
+                "yuan": yuan,
+                "isPrimary": is_primary,
+                "createdAt": created_at,
+            }));
+            let _ = engine.set_config("settings.agents", serde_json::Value::Array(agents)).await;
+            Ok(serde_json::json!({"id": id, "name": name, "yuan": yuan, "isPrimary": is_primary}))
+        },
+        "agent.setPrimary" => {
+            let agent_id = params.as_ref().and_then(|p| p.get("id")).and_then(|v| v.as_str()).unwrap_or("default");
+            let agents_val = engine.get_config(Some("settings.agents")).await;
+            let mut agents: Vec<Value> = agents_val.as_array().cloned().unwrap_or_default();
+            for agent in &mut agents {
+                let is_target = agent.get("id").and_then(|v| v.as_str()) == Some(agent_id);
+                if let Some(obj) = agent.as_object_mut() {
+                    obj.insert("isPrimary".to_string(), serde_json::Value::Bool(is_target));
+                }
+            }
+            let _ = engine.set_config("settings.agents", serde_json::Value::Array(agents)).await;
+            Ok(serde_json::json!({"ok": true}))
+        },
+        "agent.delete" => {
+            let agent_id = params.as_ref().and_then(|p| p.get("id")).and_then(|v| v.as_str()).unwrap_or("");
+            if agent_id.is_empty() || agent_id == "default" {
+                return Ok(serde_json::json!({"ok": false, "error": "Cannot delete the default agent"}));
+            }
+            // Remove from agents list
+            let agents_val = engine.get_config(Some("settings.agents")).await;
+            let mut agents: Vec<Value> = agents_val.as_array().cloned().unwrap_or_default();
+            let deleted_was_primary = agents.iter().any(|a| a.get("id").and_then(|v| v.as_str()) == Some(agent_id) && a.get("isPrimary").and_then(|v| v.as_bool()).unwrap_or(false));
+            agents.retain(|a| a.get("id").and_then(|v| v.as_str()) != Some(agent_id));
+            // If deleted agent was primary, make the first remaining agent primary
+            if deleted_was_primary && !agents.is_empty() {
+                if let Some(first) = agents.first_mut() {
+                    *first = {
+                        let mut obj = first.as_object().cloned().unwrap_or_default();
+                        obj.insert("isPrimary".to_string(), serde_json::Value::Bool(true));
+                        serde_json::Value::Object(obj)
+                    };
+                }
+            }
+            let _ = engine.set_config("settings.agents", serde_json::Value::Array(agents)).await;
+            // Clean up agent config keys
+            let _ = engine.set_config(&format!("settings.agent.{}", agent_id), serde_json::Value::Null).await;
+            Ok(serde_json::json!({"ok": true}))
+        },
+        "agent.configure" => {
+            let agent_id = params.as_ref().and_then(|p| p.get("id")).and_then(|v| v.as_str()).unwrap_or("default");
+            // Write the provided fields into settings.agent.{id}
+            if let Some(obj) = params.as_ref().and_then(|p| p.as_object()) {
+                for (key, value) in obj {
+                    if key == "id" { continue; }
+                    let config_key = format!("settings.agent.{}.{}", agent_id, key);
+                    let _ = engine.set_config(&config_key, value.clone()).await;
+                }
+            }
+            Ok(serde_json::json!({"ok": true}))
+        },
         "agent.activity_log" => Ok(serde_json::json!({"entries": []})),
         "agent.tool_policy.get" => Ok(serde_json::json!({"policies": {}})),
         "agent.tool_policy.set" => Ok(serde_json::json!({"ok": true})),

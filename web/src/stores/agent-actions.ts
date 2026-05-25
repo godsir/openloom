@@ -92,6 +92,43 @@ export async function loadAgents(): Promise<void> {
   }
 }
 
+// ── Agent 切换 ──
+
+export async function switchAgent(agentId: string): Promise<void> {
+  const s = useStore.getState();
+  if (agentId === s.currentAgentId) return;
+  try {
+    const data = await loomRpc('agent.switch', { agent_id: agentId });
+    const patch: Record<string, any> = {
+      currentAgentId: data.agent_id || agentId,
+      agentName: data.agentName || '',
+      agentYuan: data.agentYuan || 'loom',
+    };
+    // Restore agent's home folder if configured
+    if (data.homeFolder) {
+      patch.homeFolder = data.homeFolder;
+      patch.selectedFolder = data.homeFolder;
+      patch.deskBasePath = data.homeFolder;
+    }
+    useStore.setState(patch);
+    i18n.defaultName = data.agentName || '';
+    // Refresh models to reflect per-agent model selection
+    try {
+      const { loadModels } = await import('../utils/ui-helpers');
+      await loadModels();
+    } catch {}
+    // Reload workspace files for the new agent's home folder
+    if (data.homeFolder) {
+      try {
+        const { activateWorkspaceDesk } = await import('./desk-actions');
+        await activateWorkspaceDesk(data.homeFolder);
+      } catch {}
+    }
+  } catch (err) {
+    console.error('[agents] switch failed:', err);
+  }
+}
+
 // ── 头像 ──
 
 export async function loadAvatars(avatarsInfo?: Record<string, boolean>): Promise<void> {

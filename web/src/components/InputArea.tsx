@@ -705,9 +705,8 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
   }, []);
 
   // ── Paste image ──
-  // 与拖拽对齐：剪贴板图片同样落盘到 uploads 目录，入 store 的形态和拖拽完全一致
-  // （只有 path/name/isDirectory，没有 base64Data）。是否走 vision 桥由发送阶段的
-  // visionAuxiliary 标记统一决定，handlePaste 不再做能力判断。
+  // 与拖拽对齐：剪贴板图片同样落盘到 uploads 目录，入 store 时同时保留 base64Data/mimeType，
+  // 发送阶段优先使用内存中的 base64，无需从磁盘回读。
   const handlePaste = useCallback((e: ClipboardEvent): boolean => {
     const items = e.clipboardData?.items;
     if (items) {
@@ -738,7 +737,7 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
             const data = await res.json();
             const upload = data?.uploads?.[0];
             if (upload?.dest) {
-              addAttachedFile({ fileId: upload.fileId, path: upload.dest, name: upload.name || name, isDirectory: false });
+              addAttachedFile({ fileId: upload.fileId, path: upload.dest, name: upload.name || name, isDirectory: false, base64Data, mimeType });
             } else {
               notifyPasteUploadFailure(t, upload?.error);
               console.warn('[paste] upload-blob failed', upload?.error || data);
@@ -993,11 +992,26 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
         loadVisionAuxiliaryConfig,
       });
       if (!imagePreflight.ok) {
-        notifyTextModelImageBlocked({
-          t,
-          addToast: useStore.getState().addToast,
-          openSettings: () => openProviderModelSettings(currentModelInfo?.provider),
-        });
+        if (imagePreflight.reason === 'auxiliary-vision-enabled-no-model') {
+          useStore.getState().addToast(
+            t('input.visionEnabledNoModel'),
+            'warning',
+            9000,
+            {
+              dedupeKey: 'text-model-image-blocked',
+              action: {
+                label: t('input.openModelSettings'),
+                onClick: () => openProviderModelSettings(currentModelInfo?.provider),
+              },
+            },
+          );
+        } else {
+          notifyTextModelImageBlocked({
+            t,
+            addToast: useStore.getState().addToast,
+            openSettings: () => openProviderModelSettings(currentModelInfo?.provider),
+          });
+        }
         return;
       }
       const videoPreflight = await evaluateChatVideoSendPreflight({

@@ -3,7 +3,8 @@ import { useStore } from '../../stores';
 import { usePluginIframe } from '../../hooks/use-plugin-iframe';
 import { hanaUrl } from '../../hooks/use-hana-fetch';
 import s from './PluginWidgetView.module.css';
-import { DEFAULT_THEME } from '../../../shared/theme-registry';
+import registry from '../../shared/theme-registry';
+const DEFAULT_THEME = registry.DEFAULT_THEME || 'new-warm-paper';
 
 interface Props {
   pluginId: string;
