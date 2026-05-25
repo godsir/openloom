@@ -107,12 +107,18 @@ async function bootApp(): Promise<void> {
     useStore.setState({ connected: false, wsState: 'disconnected', statusKey: 'status.disconnected' });
   }
 
-  // ── 2.5. 加载用户名 ──
+  // ── 2.5. 加载用户名 + workspace ──
   try {
     const config = await loomRpc('config.get', { key: 'settings' });
     const userName = config?.config?.user?.name || config?.user?.name;
     if (userName) {
       useStore.getState().setUserName(userName);
+    }
+    // Load agent desk.home_folder so session creation sends cwd
+    const homeFolder = config?.config?.agent?.default?.config?.desk?.home_folder
+      || config?.agent?.default?.config?.desk?.home_folder;
+    if (homeFolder) {
+      useStore.getState().setHomeFolder(homeFolder);
     }
   } catch { /* config not available yet */ }
 

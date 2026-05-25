@@ -13,20 +13,29 @@
     "appId": "com.openloom.app",
     "productName": "openLoom",
     "files": [
-      "main.js",
+      "main.cjs",
       "preload.js",
       "icons/icon.png",
-      "../web/dist/**/*"
+      "installer.nsh"
     ],
     "extraResources": [
       {
         "from": "../target/release/loom-server",
-        "to": "engine"
+        "to": "engine/loom-server"
+      },
+      {
+        "from": "../web/dist",
+        "to": "web-dist"
       }
     ],
     "win": {
-      "target": "msi",
+      "target": "nsis",
       "icon": "icons/icon.ico"
+    },
+    "nsis": {
+      "include": "installer.nsh",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     }
   },
   "devDependencies": {

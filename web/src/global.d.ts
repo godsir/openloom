@@ -15,10 +15,8 @@ interface Window {
     __hanaLog?: (...args: unknown[]) => void;
     setTheme?: (id: string) => void;
     setSerifFont?: (v: string | boolean) => void;
-    setPaperTexture?: (v: string | boolean) => void;
     loadSavedTheme?: () => void;
     loadSavedFont?: () => void;
-    loadSavedPaperTexture?: () => void;
     initPlatform?: () => void;
 }
 

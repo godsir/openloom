@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '../store';
+import { useStore } from '../../stores';
 import { t, autoSaveConfig } from '../helpers';
 import { hanaFetch } from '../api';
 import { Toggle } from '../widgets/Toggle';
@@ -41,6 +42,8 @@ export function WorkTab() {
   const [agentDesk, setAgentDesk] = useState<AgentDeskConfig | null>(null);
   // hbInterval 是 draft：用户编辑后点"保存"才落盘，必须独立于 agentDesk
   const [hbIntervalDraft, setHbIntervalDraft] = useState<number | null>(null);
+  // 记录最近一次成功落盘到服务器的 home_folder，用于 onBlur 回滚
+  const lastSavedHomeFolderRef = useRef('');
 
   useEffect(() => {
     if (!selectedAgentId) return;
@@ -58,6 +61,7 @@ export function WorkTab() {
         };
         setAgentDesk(desk);
         setHbIntervalDraft(desk.heartbeat_interval);
+        lastSavedHomeFolderRef.current = desk.home_folder;
       })
       .catch(err => {
         if (err?.name !== 'AbortError') console.warn('[work] fetch agent config failed:', err);
@@ -73,13 +77,40 @@ export function WorkTab() {
     await autoSaveConfig({ desk: { cron_auto_approve: on } });
   };
 
+  function deepMerge(base: any, overlay: any): any {
+    if (!base || typeof base !== 'object' || Array.isArray(base)) return overlay;
+    if (!overlay || typeof overlay !== 'object' || Array.isArray(overlay)) return overlay;
+    const result = { ...base };
+    for (const key of Object.keys(overlay)) {
+      if (key in result && typeof result[key] === 'object' && result[key] !== null && !Array.isArray(result[key])
+        && typeof overlay[key] === 'object' && overlay[key] !== null && !Array.isArray(overlay[key])) {
+        result[key] = deepMerge(result[key], overlay[key]);
+      } else {
+        result[key] = overlay[key];
+      }
+    }
+    return result;
+  }
+
   const saveAgentConfig = async (agentId: string, patch: Record<string, any>): Promise<boolean> => {
     if (!agentId) return false;
     try {
+      // Read existing config first, then deep-merge the patch so partial
+      // updates (e.g. { desk: { home_folder } }) don't overwrite sibling
+      // fields (e.g. heartbeat_enabled, heartbeat_interval).
+      let merged = patch;
+      try {
+        const existingRes = await hanaFetch(`/api/agents/${agentId}/config`);
+        const existing = await existingRes.json();
+        if (existing && !existing.error) {
+          merged = deepMerge(existing, patch);
+        }
+      } catch { /* use patch as-is if read fails */ }
+
       const res = await hanaFetch(`/api/agents/${agentId}/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
+        body: JSON.stringify(merged),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -110,13 +141,17 @@ export function WorkTab() {
     const agentId = selectedAgentIdRef.current;
     if (!agentId) return;
     const previous = agentDesk;
-    const folder = await window.platform?.selectFolder?.();
+    const folder = await (window as any).hana?.selectFolder?.();
     if (!folder) return;
     if (selectedAgentIdRef.current === agentId) {
       setAgentDesk({ ...agentDesk, home_folder: folder });
+      lastSavedHomeFolderRef.current = folder;
     }
     const saved = await saveAgentConfig(agentId, { desk: { home_folder: folder } });
-    if (!saved && selectedAgentIdRef.current === agentId) {
+    if (saved) {
+      useStore.getState().setHomeFolder(folder);
+      useStore.getState().setSelectedFolder(folder);
+    } else if (selectedAgentIdRef.current === agentId) {
       setAgentDesk(previous);
     }
   };
@@ -127,9 +162,28 @@ export function WorkTab() {
     if (!agentId) return;
     const previous = agentDesk;
     setAgentDesk({ ...agentDesk, home_folder: '' });
+    lastSavedHomeFolderRef.current = '';
     const saved = await saveAgentConfig(agentId, { desk: { home_folder: '' } });
     if (!saved && selectedAgentIdRef.current === agentId) {
       setAgentDesk(previous);
+      lastSavedHomeFolderRef.current = previous.home_folder;
+    }
+  };
+
+  const saveHomeFolder = async () => {
+    if (!agentDesk) return;
+    const agentId = selectedAgentIdRef.current;
+    if (!agentId) return;
+    const folder = agentDesk.home_folder;
+    if (folder === lastSavedHomeFolderRef.current) return;
+    const previous = lastSavedHomeFolderRef.current;
+    lastSavedHomeFolderRef.current = folder;
+    const saved = await saveAgentConfig(agentId, { desk: { home_folder: folder } });
+    if (!saved) {
+      lastSavedHomeFolderRef.current = previous;
+      if (selectedAgentIdRef.current === agentId) {
+        setAgentDesk(prev => prev ? { ...prev, home_folder: previous } : prev);
+      }
     }
   };
 
@@ -185,10 +239,11 @@ export function WorkTab() {
                   <input
                     type="text"
                     className={`${styles['settings-input']} ${styles['settings-folder-input']}`}
-                    readOnly
                     value={agentDesk.home_folder}
                     placeholder={t('settings.work.homeFolderPlaceholder')}
-                    onClick={pickHomeFolder}
+                    onChange={e => setAgentDesk({ ...agentDesk, home_folder: e.target.value })}
+                    onBlur={saveHomeFolder}
+                    onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                   />
                   <button className={styles['settings-folder-browse']} onClick={pickHomeFolder}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

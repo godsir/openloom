@@ -12,7 +12,7 @@ export {
 };
 
 export function resolveDefaultWorkspacePath(homeDir = os.homedir()) {
-  return path.join(homeDir, "Desktop", DEFAULT_WORKSPACE_DIRNAME);
+  return path.join(homeDir, DEFAULT_WORKSPACE_DIRNAME);
 }
 
 export function ensureDefaultWorkspace(homeDir = os.homedir()) {

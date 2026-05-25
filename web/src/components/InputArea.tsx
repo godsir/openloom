@@ -16,6 +16,7 @@ import { isImageFile, isVideoFile } from '../utils/format';
 import { fetchConfig } from '../hooks/use-config';
 import { useI18n } from '../hooks/use-i18n';
 import { ensureSession, loadSessions } from '../stores/session-actions';
+import { loomRpc } from '../adapter';
 import { loadDeskFiles, searchDeskFiles, toggleJianSidebar } from '../stores/desk-actions';
 import { getWebSocket } from '../services/websocket';
 import { collectUiContext } from '../utils/ui-context';
@@ -913,9 +914,71 @@ function InputAreaInner({ surface }: Required<InputAreaProps>) {
     setSending(true);
 
     try {
-      if (pendingNewSession) {
+      // Auto-create a session if there's no active conversation
+      if (!currentSessionPath) {
+        // Create session directly — bypass pendingNewSession to avoid useEffect race
+        try {
+          const body: Record<string, any> = { memoryEnabled: useStore.getState().memoryEnabled };
+          const data = await loomRpc('session.create', body);
+          const newPath = data?.path || data?.session_id;
+          if (!newPath) {
+            console.error('[input] session.create returned no path:', data);
+            useStore.getState().addToast?.('Failed to create session', 'error');
+            setSending(false);
+            return;
+          }
+          console.log('[input] session.create ok:', newPath);
+          useStore.getState().initSession(newPath, [], false);
+          const store = useStore.getState();
+          const s = store.sessions;
+          // Prepend the new session to the sidebar list so it appears immediately
+          const now = new Date().toISOString();
+          const already = s.some((x: any) => x.path === newPath);
+          const updatedSessions = already ? s : [{
+            path: newPath,
+            title: null,
+            firstMessage: '',
+            modified: now,
+            messageCount: 0,
+            agentId: data.agentId || null,
+            agentName: data.agentName || null,
+            cwd: store.selectedFolder || store.homeFolder || null,
+            _optimistic: true,
+          }, ...s];
+          const patch: Record<string, any> = {
+            currentSessionPath: newPath,
+            pendingNewSession: false,
+            sessions: updatedSessions,
+            welcomeVisible: false,
+          };
+          if (data.currentModelId && data.currentModelProvider) {
+            patch.sessionModelsByPath = {
+              ...store.sessionModelsByPath,
+              [newPath]: {
+                id: data.currentModelId,
+                provider: data.currentModelProvider,
+                name: data.currentModelName || data.currentModelId,
+              },
+            };
+          }
+          useStore.setState(patch);
+          // Await the backend sync so the sidebar has the canonical list
+          // (with title/cwd/etc. the server assigns). The optimistic entry
+          // above covers the brief gap.
+          try {
+            await loadSessions();
+          } catch (e) {
+            console.warn('[input] loadSessions after create failed:', e);
+          }
+        } catch (err) {
+          console.error('[input] session.create failed:', err);
+          useStore.getState().addToast?.('Failed to create session — please try again', 'error');
+          setSending(false);
+          return;
+        }
+      } else if (pendingNewSession) {
         const ok = await ensureSession();
-        if (!ok) return;
+        if (!ok) { setSending(false); return; }
         loadSessions();
       }
 

@@ -146,7 +146,7 @@ export function CharacterCardPreviewOverlay({
                   <strong>{bundle.name}</strong>
                   <span>{bundle.skillCount} skills</span>
                   <ul>
-                    {bundle.skills.map(skill => <li key={skill.name}>{skill.name}</li>)}
+                    {bundle.skills.map((skill, i) => <li key={`${skill.name}-${i}`}>{skill.name}</li>)}
                   </ul>
                 </div>
               )) : <p>未包含 Skill</p>}
@@ -221,7 +221,7 @@ export function CharacterCardPreviewOverlay({
                     <span className={`${styles['character-card-face-value']} ${styles['character-card-skills-value']}`}>
                       {visibleSkillNames.length > 0 ? (
                         <span className={styles['character-card-skill-list']}>
-                          {visibleSkillNames.map(name => <span key={name}>{name}</span>)}
+                          {visibleSkillNames.map((name, i) => <span key={`skill-${i}`}>{name}</span>)}
                           {hasMoreSkills ? <span>...</span> : null}
                         </span>
                       ) : '无'}

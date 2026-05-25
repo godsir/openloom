@@ -6,8 +6,9 @@ import { RegionalErrorBoundary } from '../RegionalErrorBoundary';
 
 function WelcomeContainer() {
   const visible = useStore(s => s.welcomeVisible);
+  if (!visible) return null;
   return (
-    <div className={`welcome${visible ? '' : ' hidden'}`} id="welcome">
+    <div className="welcome" id="welcome">
       <WelcomeScreen />
     </div>
   );

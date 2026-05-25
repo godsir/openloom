@@ -9,7 +9,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- API 响应 JSON + Record<string, any> patch 对象 */
 
 import { useStore } from './index';
-import { loomRpc, getEnginePort } from '../adapter';
+import { loomRpc } from '../adapter';
 import { closePreview } from './preview-actions';
 
 declare function t(key: string, vars?: Record<string, string>): any;
@@ -94,17 +94,25 @@ export async function loadAgents(): Promise<void> {
 
 // ── 头像 ──
 
-export function loadAvatars(avatarsInfo?: Record<string, boolean>): void {
-  const ts = Date.now();
-  const port = getEnginePort();
+export async function loadAvatars(avatarsInfo?: Record<string, boolean>): Promise<void> {
   const patch: Record<string, any> = {};
 
   for (const role of ['agent', 'user'] as const) {
     const hasAvatar = avatarsInfo?.[role] ?? false;
     if (hasAvatar) {
-      const url = `http://127.0.0.1:${port}/api/avatar/${role}?t=${ts}`;
-      if (role === 'agent') patch.agentAvatarUrl = url;
-      else patch.userAvatarUrl = url;
+      try {
+        const r = await loomRpc('avatar.get', { role });
+        if (r?.data) {
+          if (role === 'agent') patch.agentAvatarUrl = r.data;
+          else patch.userAvatarUrl = r.data;
+        } else {
+          if (role === 'agent') patch.agentAvatarUrl = null;
+          else patch.userAvatarUrl = null;
+        }
+      } catch {
+        if (role === 'agent') patch.agentAvatarUrl = null;
+        else patch.userAvatarUrl = null;
+      }
     } else {
       if (role === 'agent') patch.agentAvatarUrl = null;
       else patch.userAvatarUrl = null;

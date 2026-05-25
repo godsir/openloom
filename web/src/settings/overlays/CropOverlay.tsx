@@ -1,13 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSettingsStore } from '../store';
-import { hanaFetch, hanaUrl } from '../api';
 import { t } from '../helpers';
 import { loadAgents } from '../actions';
 import { Overlay } from '../../ui';
 import styles from '../Settings.module.css';
 
 const CROP_SIZE = 256;
-const OUTPUT_SIZE = 1024;
+const OUTPUT_SIZE = 256;
 
 interface CropState {
   role: string;
@@ -156,32 +155,23 @@ export function CropOverlay() {
 
 async function uploadCroppedAvatar(role: string, dataUrl: string) {
   const store = useSettingsStore.getState();
+
+  // Show the cropped avatar immediately — no HTTP round-trip needed
+  if (role !== 'agent') {
+    store.set({ userAvatarUrl: dataUrl });
+  }
+
+  // Persist to server via RPC (dispatch.rs avatar.upload → saves to disk)
   try {
-    let uploadUrl: string;
-    if (role === 'agent') {
-      const agentId = store.getSettingsAgentId();
-      uploadUrl = `/api/agents/${agentId}/avatar`;
-    } else {
-      uploadUrl = `/api/avatar/${role}`;
-    }
+    const { loomRpc } = await import('../../adapter');
+    const result = await loomRpc('avatar.upload', { role, data: dataUrl });
+    if (!result?.ok) throw new Error('Upload failed');
 
-    const res = await hanaFetch(uploadUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: dataUrl }),
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-
-    const ts = Date.now();
     if (role === 'agent') {
       await loadAgents();
-    } else {
-      const url = hanaUrl(`/api/avatar/${role}?t=${ts}`);
-      store.set({ userAvatarUrl: url });
     }
     store.showToast(t('settings.crop.updated'), 'success');
   } catch (err: any) {
-    store.showToast(err.message, 'error');
+    store.showToast(err.message || 'Upload failed', 'error');
   }
 }

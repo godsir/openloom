@@ -66,7 +66,7 @@ cd openLoom
 
 # Rust 后端
 cargo build
-
+cargo build -p openloom-server
 # 前端
 cd web && npm install && npm run build && cd ..
 
@@ -119,6 +119,21 @@ npm run dev        # 启动 Vite dev server → http://localhost:5173
 ```bash
 cargo test  # 180+ 个测试
 ```
+
+
+  To build a packaged installer, the steps are:
+
+  # 1. Build the Rust backend
+  cargo build -p openloom-server --release
+
+  # 2. Build the frontend
+  cd web && npm run build
+
+  # 3. Package Electron
+  cd ../electron && npm run build:win
+
+  The output installer will be in electron/dist/. Let me know if you want to test anything or move on to the next task.
+
 
 ## 技术栈
 

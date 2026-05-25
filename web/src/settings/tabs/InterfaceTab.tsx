@@ -12,10 +12,6 @@ import {
   normalizeEditorTypography,
   type EditorMarkdownTypography,
 } from '../../editor/typography';
-import {
-  isPaperTextureBlockedTheme,
-  isPaperTextureEnabled,
-} from '../../shared/appearance-preferences';
 import { persistAppearancePreferences } from '../../services/appearance-sync';
 import styles from '../Settings.module.css';
 import registry from '../../shared/theme-registry';
@@ -38,19 +34,12 @@ type MarkdownTypographyKey = keyof EditorMarkdownTypography;
 interface AppearancePrefs {
   currentTheme: string;
   serifEnabled: boolean;
-  paperTextureEnabled: boolean;
-  paperTextureBlocked: boolean;
-  leavesOverlayEnabled: boolean;
 }
 
 function readAppearancePrefs(): AppearancePrefs {
-  const concreteTheme = document.documentElement.getAttribute('data-theme');
   return {
     currentTheme: registry.migrateSavedTheme(localStorage.getItem(registry.STORAGE_KEY)),
     serifEnabled: localStorage.getItem('hana-font-serif') !== '0',
-    paperTextureEnabled: isPaperTextureEnabled(localStorage),
-    paperTextureBlocked: isPaperTextureBlockedTheme(concreteTheme),
-    leavesOverlayEnabled: localStorage.getItem('hana-leaves-overlay') === '1',
   };
 }
 
@@ -84,9 +73,6 @@ export function InterfaceTab() {
   const {
     currentTheme,
     serifEnabled,
-    paperTextureEnabled,
-    paperTextureBlocked,
-    leavesOverlayEnabled,
   } = appearancePrefs;
   const editorTypography = useMemo(
     () => normalizeEditorTypography(settingsConfig?.editor),
@@ -128,12 +114,7 @@ export function InterfaceTab() {
     useSettingsStore.setState({ settingsConfig: previousConfig });
   };
 
-  const locale = settingsConfig?.locale || 'zh-CN';
-  const localeVal = ['zh-CN', 'zh-TW', 'ja', 'ko', 'en'].includes(locale) ? locale
-    : locale.startsWith('zh') ? 'zh-CN'
-    : locale.startsWith('ja') ? 'ja'
-    : locale.startsWith('ko') ? 'ko'
-    : 'en';
+  const locale = 'zh-CN';
 
   // 时区
   const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -190,42 +171,6 @@ export function InterfaceTab() {
                 window.setSerifFont?.(next);
                 platform?.settingsChanged?.('font-changed', { serif: next });
                 syncAppearancePrefs({ serif: next });
-                refreshAppearancePrefs();
-              }}
-            />
-          }
-        />
-        <SettingsRow
-          label={t('settings.appearance.paperTexture')}
-          hint={paperTextureBlocked
-            ? t('settings.appearance.paperTextureDarkDisabledHint')
-            : t('settings.appearance.paperTextureHint')}
-          control={
-            <Toggle
-              on={paperTextureBlocked ? false : paperTextureEnabled}
-              disabled={paperTextureBlocked}
-              onChange={(next) => {
-                window.setPaperTexture?.(next);
-                platform?.settingsChanged?.('paper-texture-changed', { enabled: next });
-                syncAppearancePrefs({ paperTexture: next });
-                refreshAppearancePrefs();
-              }}
-            />
-          }
-        />
-        <SettingsRow
-          label={t('settings.appearance.leavesOverlay')}
-          hint={t('settings.appearance.leavesOverlayHint')}
-          control={
-            <Toggle
-              on={leavesOverlayEnabled}
-              onChange={(next) => {
-                localStorage.setItem('hana-leaves-overlay', next ? '1' : '0');
-                window.dispatchEvent(new CustomEvent('hana-settings', {
-                  detail: { type: 'leaves-overlay-changed', enabled: next },
-                }));
-                platform?.settingsChanged?.('leaves-overlay-changed', { enabled: next });
-                syncAppearancePrefs({ leavesOverlay: next });
                 refreshAppearancePrefs();
               }}
             />
@@ -300,12 +245,8 @@ export function InterfaceTab() {
             <SelectWidget
               options={[
                 { value: 'zh-CN', label: '简体中文' },
-                { value: 'zh-TW', label: '繁體中文' },
-                { value: 'ja', label: '日本語' },
-                { value: 'ko', label: '한국어' },
-                { value: 'en', label: 'English' },
               ]}
-              value={localeVal}
+              value={locale}
               onChange={async (val) => {
                 await autoSaveConfig({ locale: val }, { silent: true });
                 await i18n?.load(val);

@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { useState } from 'react';
 import type { ActivePanel } from '../../types';
 import { useStore } from '../../stores';
 import { RegionalErrorBoundary } from '../RegionalErrorBoundary';
@@ -25,6 +26,11 @@ export function ChatSidebar({
 }: ChatSidebarProps) {
   const currentAgentId = useStore(s => s.currentAgentId);
   const t = window.t ?? ((p: string) => p);
+  const [selectMode, setSelectMode] = useState(false);
+
+  const handleToggleSelectMode = () => {
+    setSelectMode(prev => !prev);
+  };
 
   return (
     <aside className={`sidebar${open ? '' : ' collapsed'}`} id="sidebar">
@@ -47,9 +53,15 @@ export function ChatSidebar({
                   </svg>
                 </button>
               )}
-              <button className="sidebar-action-btn" id="sidebarCollapseBtn" title={t('sidebar.collapse')} onClick={onCollapse}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="15 6 9 12 15 18"></polyline>
+              <button
+                className={`sidebar-action-btn${selectMode ? ' sidebar-action-btn-active' : ''}`}
+                id="sidebarSelectBtn"
+                title={selectMode ? t('session.exitSelect') : t('session.select')}
+                onClick={handleToggleSelectMode}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="9 11 12 14 22 4"></polyline>
+                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
                 </svg>
               </button>
             </div>
@@ -57,7 +69,7 @@ export function ChatSidebar({
 
           <div className="session-list" id="sessionList">
             <RegionalErrorBoundary region={region} resetKeys={[currentAgentId]}>
-              <SessionList />
+              <SessionList selectMode={selectMode} onExitSelectMode={() => setSelectMode(false)} />
             </RegionalErrorBoundary>
           </div>
         </div>

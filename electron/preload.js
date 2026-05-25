@@ -197,6 +197,11 @@ contextBridge.exposeInMainWorld('hana', {
     openExternal: (url) => ipcRenderer.invoke('open-external', url),
     openFolder: (path) => ipcRenderer.invoke('open-folder', path),
     openFile: (path) => ipcRenderer.invoke('open-file', path),
+
+    // Search engine config
+    getSearchConfig: () => ipcRenderer.invoke('search-config-get'),
+    setSearchConfig: (partial) => ipcRenderer.invoke('search-config-set', partial),
+    searchVerify: (params) => ipcRenderer.invoke('search-verify', params),
 });
 
 // ─── Port acquisition via IPC (contextIsolation-safe) ──────────────

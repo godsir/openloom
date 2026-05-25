@@ -2,6 +2,9 @@ const { app, BrowserWindow, Tray, Menu, session, nativeImage, ipcMain, dialog, s
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const https = require('https');
+const http = require('http');
 
 let mainWindow = null;
 let engineProcess = null;
@@ -147,6 +150,84 @@ function createTray() {
     tray.on('click', () => mainWindow?.show());
 }
 
+// ─── Search config helpers (preferences.json) ───────────────────
+
+function getLoomDataDir() {
+    const home = os.homedir();
+    if (process.platform === 'win32') {
+        return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'openLoom');
+    } else if (process.platform === 'darwin') {
+        return path.join(home, 'Library', 'Application Support', 'openLoom');
+    } else {
+        return path.join(process.env.XDG_DATA_HOME || path.join(home, '.local', 'share'), 'openLoom');
+    }
+}
+
+function readPrefs() {
+    try {
+        const p = path.join(getLoomDataDir(), 'preferences.json');
+        if (!fs.existsSync(p)) return {};
+        return JSON.parse(fs.readFileSync(p, 'utf-8'));
+    } catch { return {}; }
+}
+
+function writePrefs(prefs) {
+    const p = path.join(getLoomDataDir(), 'preferences.json');
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(prefs, null, 2) + '\n');
+}
+
+function httpsFetch(url, options = {}) {
+    const lib = url.startsWith('https') ? https : http;
+    return new Promise((resolve, reject) => {
+        const u = new URL(url);
+        const req = lib.request({
+            hostname: u.hostname,
+            port: u.port,
+            path: u.pathname + u.search,
+            method: options.method || 'GET',
+            headers: options.headers || {},
+            timeout: 30000,
+        }, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                if (res.statusCode >= 400) {
+                    reject(new Error(`HTTP ${res.statusCode}: ${data.slice(0, 200)}`));
+                } else {
+                    resolve(data);
+                }
+            });
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
+        if (options.body) req.write(options.body);
+        req.end();
+    });
+}
+
+async function verifyTavilyKey(key) {
+    await httpsFetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: 'test', max_results: 1, api_key: key }),
+    });
+}
+
+async function verifyBraveKey(key) {
+    await httpsFetch('https://api.search.brave.com/res/v1/web/search?q=test&count=1', {
+        headers: { 'X-Subscription-Token': key },
+    });
+}
+
+async function verifySerperKey(key) {
+    await httpsFetch('https://google.serper.dev/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-KEY': key },
+        body: JSON.stringify({ q: 'test' }),
+    });
+}
+
 // ─── IPC Handlers for desktop bridge (window.hana) ───────────────────
 function registerIpcHandlers() {
     ipcMain.handle('get-engine-port', () => enginePort || 0);
@@ -229,6 +310,61 @@ function registerIpcHandlers() {
 
     ipcMain.handle('open-file', async (_event, filePath) => {
         shell.openPath(filePath);
+    });
+
+    // ── Search config (preferences.json) ──────────────────────────
+    ipcMain.handle('search-config-get', () => {
+        const prefs = readPrefs();
+        return {
+            provider: prefs.search_provider || 'auto',
+            api_key: prefs.search_api_key || '',
+            api_keys: prefs.search_api_keys || {},
+        };
+    });
+
+    ipcMain.handle('search-config-set', (_event, partial) => {
+        const prefs = readPrefs();
+        if (partial.provider !== undefined) {
+            if (partial.provider) prefs.search_provider = partial.provider;
+            else delete prefs.search_provider;
+        }
+        if (partial.api_key !== undefined) {
+            if (partial.api_key) prefs.search_api_key = partial.api_key;
+            else delete prefs.search_api_key;
+        }
+        if (partial.api_keys !== undefined) {
+            const keys = partial.api_keys;
+            const existing = prefs.search_api_keys || {};
+            for (const [k, v] of Object.entries(keys)) {
+                if (v) existing[k] = v;
+                else delete existing[k];
+            }
+            if (Object.keys(existing).length > 0) prefs.search_api_keys = existing;
+            else delete prefs.search_api_keys;
+        }
+        writePrefs(prefs);
+        return { ok: true };
+    });
+
+    ipcMain.handle('search-verify', async (_event, { provider, api_key }) => {
+        try {
+            const p = (provider || '').toLowerCase().trim();
+            if (!p || p === 'auto') return { ok: true };
+            if (p.endsWith('_browser')) return { ok: true };
+
+            const key = String(api_key || '').trim();
+            if (!key) return { ok: false, error: 'API key is required' };
+
+            if (p === 'tavily') await verifyTavilyKey(key);
+            else if (p === 'brave') await verifyBraveKey(key);
+            else if (p === 'serper') await verifySerperKey(key);
+            else if (p === 'anysearch') { /* free tier, no verification */ }
+            else return { ok: false, error: `Unknown provider: ${provider}` };
+
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message };
+        }
     });
 }
 

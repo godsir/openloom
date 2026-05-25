@@ -71,6 +71,32 @@ pub struct CompletionResponse {
     pub thinking: Option<String>,
 }
 
+/// Structured streaming delta emitted during true streaming with tool support.
+#[derive(Debug, Clone)]
+pub enum StreamDelta {
+    /// Normal text content token.
+    Text(String),
+    /// Reasoning/thinking content token.
+    Reasoning(String),
+    /// A new tool call has begun; `index` is the position in the tool_calls array.
+    ToolCallBegin {
+        index: usize,
+        id: String,
+        name: String,
+    },
+    /// Partial tool call arguments JSON chunk.
+    ToolCallArgsChunk {
+        index: usize,
+        chunk: String,
+    },
+    /// Usage statistics from the final chunk.
+    Usage {
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        cached_tokens: u64,
+    },
+}
+
 #[derive(Debug)]
 pub struct InferenceEngine {
     _model_path: std::path::PathBuf,
@@ -179,6 +205,41 @@ pub trait CloudClient: Send + Sync {
         req: CompletionRequest,
         tx: tokio::sync::mpsc::Sender<String>,
     ) -> anyhow::Result<()>;
+    /// Structured streaming that emits text tokens, reasoning tokens, and tool call chunks.
+    /// Default implementation wraps `complete_stream` for backward compatibility.
+    async fn complete_stream_structured(
+        &self,
+        req: CompletionRequest,
+        tx: tokio::sync::mpsc::Sender<StreamDelta>,
+    ) -> anyhow::Result<()> {
+        let (legacy_tx, mut legacy_rx) = tokio::sync::mpsc::channel::<String>(256);
+        let forwarder = tokio::spawn(async move {
+            while let Some(token) = legacy_rx.recv().await {
+                let delta = if let Some(stripped) = token.strip_prefix("\x02REASONING\x02") {
+                    StreamDelta::Reasoning(stripped.to_string())
+                } else if let Some(stripped) = token.strip_prefix("\x00USAGE:") {
+                    let parts: Vec<&str> = stripped.split(':').collect();
+                    if parts.len() == 3 {
+                        StreamDelta::Usage {
+                            prompt_tokens: parts[0].parse().unwrap_or(0),
+                            completion_tokens: parts[1].parse().unwrap_or(0),
+                            cached_tokens: parts[2].parse().unwrap_or(0),
+                        }
+                    } else {
+                        continue;
+                    }
+                } else {
+                    StreamDelta::Text(token)
+                };
+                if tx.send(delta).await.is_err() {
+                    break;
+                }
+            }
+        });
+        self.complete_stream(req, legacy_tx).await?;
+        forwarder.await.ok();
+        Ok(())
+    }
     fn provider(&self) -> ModelBackend;
     fn model_name(&self) -> &str;
 }
@@ -413,10 +474,11 @@ impl CloudClient for AnthropicClient {
         req: CompletionRequest,
         tx: tokio::sync::mpsc::Sender<String>,
     ) -> anyhow::Result<()> {
+        let messages = self.lower_messages(&req.effective_messages());
         let mut body = serde_json::json!({
             "model": self.model,
             "max_tokens": req.max_tokens,
-            "messages": [{"role": "user", "content": req.prompt}],
+            "messages": messages,
             "stream": true,
         });
         if let Some(budget) = req.thinking_budget {
@@ -424,6 +486,20 @@ impl CloudClient for AnthropicClient {
                 "type": "enabled",
                 "budget_tokens": budget,
             });
+        }
+        if !req.tools.is_empty() {
+            let anthropic_tools: Vec<serde_json::Value> = req
+                .tools
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "input_schema": t.input_schema,
+                    })
+                })
+                .collect();
+            body["tools"] = serde_json::json!(anthropic_tools);
         }
 
         let resp = self
@@ -897,6 +973,143 @@ impl CloudClient for OpenAIClient {
                                     prompt_tokens, completion_tokens, cached_tokens
                                 );
                                 let _ = tx.send(usage_msg).await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn complete_stream_structured(
+        &self,
+        req: CompletionRequest,
+        tx: tokio::sync::mpsc::Sender<StreamDelta>,
+    ) -> anyhow::Result<()> {
+        let messages = self.lower_messages(&req.effective_messages());
+
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "max_tokens": req.max_tokens,
+            "messages": messages,
+            "stream": true,
+            "stream_options": {"include_usage": true},
+        });
+        if req.temperature > 0.0 {
+            body["temperature"] = serde_json::json!(req.temperature);
+        }
+        if !req.tools.is_empty() {
+            let openai_tools: Vec<serde_json::Value> = req
+                .tools
+                .iter()
+                .map(|t| serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.input_schema,
+                    }
+                }))
+                .collect();
+            body["tools"] = serde_json::json!(openai_tools);
+            body["tool_choice"] = serde_json::json!("auto");
+        }
+
+        let resp = self
+            .http
+            .post(format!("{}/chat/completions", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("API error {}: {}", status, text);
+        }
+
+        use futures::StreamExt;
+        let mut stream = resp.bytes_stream();
+        let mut buffer = String::new();
+
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = chunk_result?;
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+            while let Some(pos) = buffer.find("\n\n") {
+                let frame = buffer[..pos].to_string();
+                buffer = buffer[pos + 2..].to_string();
+
+                for line in frame.lines() {
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if data == "[DONE]" {
+                            return Ok(());
+                        }
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                            let delta = &val["choices"][0]["delta"];
+
+                            // ─── Reasoning/thinking content ───
+                            if let Some(reasoning) = delta["reasoning_content"].as_str()
+                                && !reasoning.is_empty()
+                                && tx.send(StreamDelta::Reasoning(reasoning.to_string())).await.is_err()
+                            {
+                                return Ok(());
+                            }
+
+                            // ─── Normal text token ───
+                            if let Some(text) = delta["content"].as_str()
+                                && !text.is_empty()
+                                && tx.send(StreamDelta::Text(text.to_string())).await.is_err()
+                            {
+                                return Ok(());
+                            }
+
+                            // ─── Tool calls ───
+                            if let Some(tool_calls) = delta["tool_calls"].as_array() {
+                                for tc in tool_calls {
+                                    let index = tc["index"].as_u64().unwrap_or(0) as usize;
+
+                                    // First chunk: has id and function.name
+                                    if let (Some(id), Some(name)) = (
+                                        tc["id"].as_str(),
+                                        tc["function"]["name"].as_str(),
+                                    )
+                                        && tx.send(StreamDelta::ToolCallBegin {
+                                            index,
+                                            id: id.to_string(),
+                                            name: name.to_string(),
+                                        }).await.is_err()
+                                    {
+                                        return Ok(());
+                                    }
+
+                                    // Subsequent chunks: partial arguments
+                                    if let Some(args) = tc["function"]["arguments"].as_str()
+                                        && !args.is_empty()
+                                        && tx.send(StreamDelta::ToolCallArgsChunk {
+                                            index,
+                                            chunk: args.to_string(),
+                                        }).await.is_err()
+                                    {
+                                        return Ok(());
+                                    }
+                                }
+                            }
+
+                            // ─── Usage (final chunk) ───
+                            if let Some(usage) = val.get("usage")
+                                && usage.is_object()
+                                && tx.send(StreamDelta::Usage {
+                                    prompt_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
+                                    completion_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
+                                    cached_tokens: usage["prompt_tokens_details"]["cached_tokens"]
+                                        .as_u64()
+                                        .unwrap_or(0),
+                                }).await.is_err()
+                            {
+                                return Ok(());
                             }
                         }
                     }

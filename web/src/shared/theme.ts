@@ -8,10 +8,6 @@
  * 所有主题元信息来自 theme-registry ESM adapter，这里不再镜像任何常量表。
  */
 import registry, { type ThemeId } from './theme-registry';
-import {
-  loadPaperTexturePreference,
-  setPaperTexturePreference,
-} from './appearance-preferences';
 
 const themeSheet = document.getElementById('themeSheet') as HTMLLinkElement | null;
 
@@ -24,7 +20,6 @@ function applyConcreteTheme(concrete: string): void {
   if (!entry) return;
   document.documentElement.setAttribute('data-theme', concrete);
   if (themeSheet) themeSheet.href = entry.cssPath;
-  loadPaperTexturePreference();
   (window as unknown as { hana?: { syncWindowTheme?: (theme: string) => void } }).hana?.syncWindowTheme?.(concrete);
 }
 
@@ -68,25 +63,13 @@ function loadSavedFont(): void {
   document.body.classList.toggle('font-sans', !enabled);
 }
 
-/* ── 纸质纹理开关 ── */
-function setPaperTexture(enabled: boolean): void {
-  setPaperTexturePreference(enabled);
-}
-
-function loadSavedPaperTexture(): void {
-  loadPaperTexturePreference();
-}
-
 // 暴露给 WS 事件处理器（设置工具远程切换主题用）
 window.setTheme = setTheme;
 window.applyTheme = setTheme;
 window.loadSavedTheme = loadSavedTheme;
 window.setSerifFont = setSerifFont;
 window.loadSavedFont = loadSavedFont;
-window.setPaperTexture = setPaperTexture;
-window.loadSavedPaperTexture = loadSavedPaperTexture;
 
 // 首屏自动加载
 loadSavedTheme();
 loadSavedFont();
-loadSavedPaperTexture();

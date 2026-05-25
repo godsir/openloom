@@ -4,6 +4,20 @@ use rusqlite;
 use serde_json::Value;
 use std::path::Path;
 
+/// Look up a model's `reasoning` field from the config's models array.
+/// Returns `None` if the model isn't found or the field isn't set.
+fn lookup_model_reasoning(config: &Value, model_id: &str, provider: &str) -> Option<bool> {
+    let models = config.get("models")?.as_array()?;
+    for m in models {
+        let id = m.get("model").and_then(|v| v.as_str()).unwrap_or("");
+        let backend = m.get("backend").and_then(|v| v.as_str()).unwrap_or("");
+        if id == model_id && backend.eq_ignore_ascii_case(provider) {
+            return m.get("reasoning").and_then(|v| v.as_bool());
+        }
+    }
+    None
+}
+
 fn list_desk_files(dir: &str, subdir: &str) -> Result<Value, JsonRpcError> {
     let base = Path::new(dir);
     let target = if subdir.is_empty() { base.to_path_buf() } else { base.join(subdir) };
@@ -328,7 +342,9 @@ pub async fn dispatch_method(
                 (info.model_id, info.backend, info.display_name)
             };
             let perm_mode = engine.permission_mode(&session.id);
-            Ok(serde_json::json!({
+            let config_val = engine.get_config(None).await;
+            let reasoning = lookup_model_reasoning(&config_val, &model_id, &model_provider);
+            let mut resp = serde_json::json!({
                 "session_id": session.id,
                 "path": session.id,
                 "agentId": "default",
@@ -340,9 +356,12 @@ pub async fn dispatch_method(
                 "currentModelId": model_id,
                 "currentModelProvider": model_provider,
                 "currentModelName": model_name,
-                "currentModelReasoning": false,
                 "memoryEnabled": true,
-            }))
+            });
+            if let Some(r) = reasoning {
+                resp["currentModelReasoning"] = serde_json::json!(r);
+            }
+            Ok(resp)
         }
         "session.switch" => {
             let session_id = params
@@ -401,7 +420,9 @@ pub async fn dispatch_method(
                 (info.model_id, info.backend, info.display_name)
             };
             let perm_mode = engine.permission_mode(&sid);
-            Ok(serde_json::json!({
+            let config_val = engine.get_config(None).await;
+            let reasoning = lookup_model_reasoning(&config_val, &model_id, &model_provider);
+            let mut resp = serde_json::json!({
                 "session_id": sid,
                 "path": sid,
                 "agentId": "default",
@@ -413,9 +434,12 @@ pub async fn dispatch_method(
                 "currentModelId": model_id,
                 "currentModelProvider": model_provider,
                 "currentModelName": model_name,
-                "currentModelReasoning": false,
                 "memoryEnabled": true,
-            }))
+            });
+            if let Some(r) = reasoning {
+                resp["currentModelReasoning"] = serde_json::json!(r);
+            }
+            Ok(resp)
         }
         "memory.cognitions" => {
             let subject = params
@@ -861,20 +885,23 @@ pub async fn dispatch_method(
                     let context_size = m.get("context_size").and_then(|v| v.as_u64()).unwrap_or(4096);
                     let image = m.get("image").and_then(|v| v.as_bool()).unwrap_or(false);
                     let video = m.get("video").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let reasoning = m.get("reasoning").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let reasoning = m.get("reasoning").and_then(|v| v.as_bool());
                     let mut input = vec!["text"];
                     if image { input.push("image"); }
                     if video { input.push("video"); }
-                    serde_json::json!({
+                    let mut model_obj = serde_json::json!({
                         "id": id,
                         "name": name,
                         "provider": provider,
                         "context_size": context_size,
                         "image": image,
                         "video": video,
-                        "reasoning": reasoning,
                         "input": input,
-                    })
+                    });
+                    if let Some(r) = reasoning {
+                        model_obj["reasoning"] = serde_json::json!(r);
+                    }
+                    model_obj
                 }).collect()
             } else {
                 // Fallback: single active model
@@ -885,7 +912,6 @@ pub async fn dispatch_method(
                     "provider": info.backend,
                     "image": false,
                     "video": false,
-                    "reasoning": false,
                     "input": ["text"],
                 })]
             };
@@ -1049,15 +1075,21 @@ pub async fn dispatch_method(
                     });
                     if let Some(obj) = entry.as_object_mut() {
                         if let Some(models_list) = obj.get_mut("models").and_then(|v| v.as_array_mut()) {
-                            models_list.push(serde_json::json!({
+                            let reasoning = m.get("reasoning").and_then(|v| v.as_bool());
+                            let image = m.get("image").and_then(|v| v.as_bool()).unwrap_or(false);
+                            let video = m.get("video").and_then(|v| v.as_bool()).unwrap_or(false);
+                            let mut model_entry = serde_json::json!({
                                 "id": model_id,
                                 "name": model_name,
                                 "context_size": context_size,
-                                "reasoning": false,
-                                "image": false,
-                                "video": false,
+                                "image": image,
+                                "video": video,
                                 "input": ["text"],
-                            }));
+                            });
+                            if let Some(r) = reasoning {
+                                model_entry["reasoning"] = serde_json::json!(r);
+                            }
+                            models_list.push(model_entry);
                         }
                         // Update has_credentials if any model has credentials
                         if has_credentials {

@@ -120,7 +120,7 @@ export function DeskDropZone({
     if (files && files.length > 0) {
       const paths: string[] = [];
       for (const f of Array.from(files)) {
-        const p = window.platform?.getFilePath?.(f);
+        const p = (window as any).hana?.getFilePath?.(f) || (f as any)?.path;
         if (p) paths.push(p);
       }
       if (paths.length > 0) {

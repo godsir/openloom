@@ -502,12 +502,27 @@ export async function ensureSession(): Promise<boolean> {
 
     // Persist the model snapshot for the newly created session so
     // ModelSelector and InputArea surface the correct active model.
-    if (data.path && data.currentModelId) {
+    if (data.path && data.currentModelId && data.currentModelProvider) {
       useStore.getState().updateSessionModel(data.path, {
         id: data.currentModelId,
-        provider: data.currentModelProvider || '',
+        provider: data.currentModelProvider,
         name: data.currentModelName || data.currentModelId,
       });
+    } else if (data.path) {
+      // Fallback: use the agent's configured chat model when the backend
+      // doesn't return one (e.g. no globally-connected model).
+      const currentAgentId = data.agentId || useStore.getState().currentAgentId;
+      const agent = currentAgentId
+        ? useStore.getState().agents.find((a: any) => a.id === currentAgentId)
+        : null;
+      const chatModel = agent?.chatModel;
+      if (chatModel && typeof chatModel === 'object' && chatModel.id && chatModel.provider) {
+        useStore.getState().updateSessionModel(data.path, {
+          id: chatModel.id,
+          provider: chatModel.provider,
+          name: chatModel.name || chatModel.id,
+        });
+      }
     }
 
     await loadSessions();

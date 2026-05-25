@@ -16,7 +16,6 @@ import { MessageActions } from './MessageActions';
 import { MessageFooterActions, formatMessageTime, type MessageFooterAction } from './MessageFooterActions';
 import { BLOCK_RENDERERS } from './block-renderers';
 import { FileOutputActions } from './FileOutputActions';
-const lazyScreenshot = () => import('../../utils/screenshot').then(m => m.takeScreenshot);
 import type { ChatMessage, ContentBlock } from '../../stores/chat-types';
 import { useStore } from '../../stores';
 import { selectSessionFiles } from '../../stores/selectors/file-refs';
@@ -105,11 +104,6 @@ export const AssistantMessage = memo(function AssistantMessage({
     }).catch(() => {});
   }, [blocks, sessionPath]);
 
-  const handleScreenshot = useCallback(async () => {
-    const fn = await lazyScreenshot();
-    fn(message.id, sessionPath);
-  }, [message.id, sessionPath]);
-
   const handleRegenerate = useCallback(async () => {
     if (!retrySourceMessage || retrying || isStreaming) return;
     setRetrying(true);
@@ -183,7 +177,6 @@ export const AssistantMessage = memo(function AssistantMessage({
           messageId={message.id}
           sessionPath={sessionPath}
           onCopy={handleCopy}
-          onScreenshot={handleScreenshot}
           copied={copied}
           isStreaming={isStreaming}
         />

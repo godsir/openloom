@@ -175,6 +175,9 @@ mod tests {
             role: role.into(),
             content: content.into(),
             timestamp: chrono::Utc::now(),
+            id: None,
+            metadata: None,
+            seq: None,
         }
     }
 

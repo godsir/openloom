@@ -69,11 +69,9 @@ export function initTheme(): void {
     applyTheme(t);
   };
 
-  // Font / texture stubs（Hanako 有些地方会调用，Loom 暂不支持）
+  // Font stub（Hanako 有些地方会调用，Loom 暂不支持）
   (window as any).setSerifFont = (_font: string) => {};
   (window as any).loadSavedFont = () => {};
-  (window as any).setPaperTexture = (_tex: string) => {};
-  (window as any).loadSavedPaperTexture = () => {};
 }
 
 /** 阻止拖拽文件时浏览器跳转 */

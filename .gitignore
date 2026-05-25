@@ -9,6 +9,7 @@ debug/
 # IDE
 .vscode/
 .idea/
+.history/
 *.swp
 *.swo
 
@@ -16,6 +17,13 @@ debug/
 .DS_Store
 Thumbs.db
 *.db
+
+# Claude
+.claude/worktrees/
+.superpower/
+
+# Temp
+tempopencode/
 
 # Logs
 *.log

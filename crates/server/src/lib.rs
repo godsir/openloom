@@ -2,6 +2,7 @@ pub mod avatar;
 pub mod blob;
 pub mod dispatch;
 pub mod jsonrpc;
+pub mod proxy;
 pub mod sse;
 pub mod ws;
 

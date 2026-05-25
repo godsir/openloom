@@ -40,7 +40,6 @@
     --editor-markdown-h6-font-size: 14px;
     --editor-markdown-line-height: 1.72;
     --editor-markdown-content-padding-x: 24px;
-    --paper-texture-card-blend-mode: lighten;
     --sidebar-width: 240px;
     --jian-sidebar-width: 260px;
     --channel-inspector-width: 280px;
@@ -49,45 +48,8 @@
     --titlebar-h: 44px;
 }
 
-html[data-theme="midnight"],
-html[data-theme="midnight-contrast"] {
-    --paper-texture-card-blend-mode: normal;
-}
-
 body.font-sans {
     --font-serif: var(--font-ui);
-}
-
-body.paper-texture,
-body.paper-texture .titlebar,
-body.paper-texture .sidebar {
-    background-image: url('../../assets/textures/rice-paper.png');
-    background-repeat: repeat;
-    background-size: 160px;
-    background-attachment: fixed;
-}
-
-body.paper-texture .jian-card,
-body.paper-texture .msg-card,
-body.paper-texture .input-wrapper,
-body.paper-texture .browser-floating-card,
-body.paper-texture .hana-toast,
-body.paper-texture .ob-input,
-body.paper-texture .provider-card {
-    background-image: url('../../assets/textures/rice-paper.png');
-    background-repeat: repeat;
-    background-size: 160px;
-    background-attachment: fixed;
-    background-blend-mode: var(--paper-texture-card-blend-mode);
-}
-
-html:not([data-theme="midnight"]):not([data-theme="midnight-contrast"]) body.paper-texture::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    background: rgba(255, 253, 247, 0.35);
 }
 
 *,

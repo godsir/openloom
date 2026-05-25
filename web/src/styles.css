@@ -59,9 +59,6 @@
     --editor-markdown-line-height: 1.72;
     --editor-markdown-content-padding-x: 24px;
 
-    /* 纸质纹理：卡片层默认提亮纸纹，深色主题可关闭补偿 */
-    --paper-texture-card-blend-mode: lighten;
-
     /* sidebar 宽度 */
     --sidebar-width: 240px;
     --jian-sidebar-width: 260px;
@@ -74,58 +71,6 @@
 
 }
 
-/* ========================================
-   纸质纹理系统
-   开关：body.paper-texture 显式开启全部纹理
-   三层：surface → card → surface 亮度补偿
-   新增 card 元素只需往 Card 层追加选择器
-   ======================================== */
-
-html[data-theme="midnight"],
-html[data-theme="midnight-contrast"] {
-    --paper-texture-card-blend-mode: normal;
-}
-
-/* ① Surface 层：铺底元素直接叠纹理 */
-body.paper-texture,
-body.paper-texture .titlebar,
-body.paper-texture .sidebar {
-    background-image: url(./assets/textures/rice-paper.png);
-    background-repeat: repeat;
-    background-size: 160px;
-    background-attachment: fixed;
-}
-
-/* ② Card 层：bg-card 元素用 lighten 混合，纹理暗部被背景色提亮 */
-body.paper-texture .jian-card,
-body.paper-texture .msg-card,
-body.paper-texture .input-wrapper,
-body.paper-texture .hana-warning-box,
-body.paper-texture .browser-floating-card,
-body.paper-texture .hana-toast,
-body.paper-texture .ob-input,
-body.paper-texture .provider-card,
-body.paper-texture .ob-provider-trigger,
-body.paper-texture .ob-provider-menu,
-body.paper-texture .model-list,
-body.paper-texture .tutorial-card,
-body.paper-texture .yuan-chip {
-    background-image: url(./assets/textures/rice-paper.png);
-    background-repeat: repeat;
-    background-size: 160px;
-    background-attachment: fixed;
-    background-blend-mode: var(--paper-texture-card-blend-mode);
-}
-
-/* ③ 亮度补偿：暖白叠层抵消纹理变暗（暗色主题跳过） */
-html:not([data-theme="midnight"]):not([data-theme="midnight-contrast"]) body.paper-texture::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    background: rgba(255, 253, 247, 0.35);
-}
 
 /* 无衬线模式：覆盖 --font-serif 为当前 UI 字体 */
 body.font-sans {
@@ -637,6 +582,11 @@ html[data-platform="linux"] .tb-toggle-right {
 }
 
 .sidebar-action-btn:hover {
+    color: var(--accent);
+    background: var(--accent-light);
+}
+
+.sidebar-action-btn-active {
     color: var(--accent);
     background: var(--accent-light);
 }

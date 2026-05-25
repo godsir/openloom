@@ -28,6 +28,16 @@ vi.mock('../../settings/helpers', () => ({
   autoSaveConfig: vi.fn(async () => {}),
 }));
 
+vi.mock('../../stores', () => {
+  const mockStore: any = {
+    setHomeFolder: vi.fn(),
+    setSelectedFolder: vi.fn(),
+  };
+  const hook: any = () => mockStore;
+  hook.getState = () => mockStore;
+  return { useStore: hook };
+});
+
 vi.mock('../../settings/tabs/bridge/AgentSelect', () => ({
   AgentSelect: ({ value }: { value: string | null }) => (
     <div data-testid="agent-select">{value}</div>
@@ -72,17 +82,19 @@ describe('WorkTab workspace persistence', () => {
     cleanup();
   });
 
-  it('saves the selected agent workspace without sending frontend business IPC', async () => {
+  it('saves manually typed workspace path on blur without sending frontend business IPC', async () => {
     const { WorkTab } = await import('../../settings/tabs/WorkTab');
 
     render(<WorkTab />);
 
-    fireEvent.click(await screen.findByDisplayValue('/old-home'));
+    const input = await screen.findByDisplayValue('/old-home');
+    fireEvent.change(input, { target: { value: '/typed-path' } });
+    fireEvent.blur(input);
 
     await waitFor(() => {
       expect(mockHanaFetch).toHaveBeenCalledWith('/api/agents/agent-a/config', expect.objectContaining({
         method: 'PUT',
-        body: JSON.stringify({ desk: { home_folder: '/new-home' } }),
+        body: JSON.stringify({ desk: { home_folder: '/typed-path', heartbeat_enabled: true, heartbeat_interval: 17 } }),
       }));
     });
     expect(window.platform.settingsChanged).not.toHaveBeenCalled();
@@ -98,7 +110,7 @@ describe('WorkTab workspace persistence', () => {
     await waitFor(() => {
       expect(mockHanaFetch).toHaveBeenCalledWith('/api/agents/agent-a/config', expect.objectContaining({
         method: 'PUT',
-        body: JSON.stringify({ desk: { home_folder: '' } }),
+        body: JSON.stringify({ desk: { home_folder: '', heartbeat_enabled: true, heartbeat_interval: 17 } }),
       }));
     });
     expect(window.platform.settingsChanged).not.toHaveBeenCalled();

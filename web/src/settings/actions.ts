@@ -2,7 +2,7 @@
  * Settings shared actions — extracted from SettingsApp to avoid circular imports
  */
 import { useSettingsStore } from './store';
-import { hanaFetch, hanaUrl } from './api';
+import { hanaFetch } from './api';
 import { t } from './helpers';
 
 let _settingsConfigLoadVersion = 0;
@@ -37,17 +37,25 @@ export async function loadAgents() {
 }
 
 export async function loadAvatars() {
-  const ts = Date.now();
   const store = useSettingsStore.getState();
   try {
-    const res = await hanaFetch('/api/health');
-    const data = await res.json();
-    const avatars = data.avatars || {};
-    for (const role of ['agent', 'user']) {
+    const healthRes = await hanaFetch('/api/health');
+    const healthData = await healthRes.json();
+    const avatars = healthData.avatars || {};
+
+    for (const role of ['agent', 'user'] as const) {
       if (avatars[role]) {
-        const url = hanaUrl(`/api/avatar/${role}?t=${ts}`);
-        if (role === 'agent') store.set({ agentAvatarUrl: url });
-        else store.set({ userAvatarUrl: url });
+        try {
+          const getRes = await hanaFetch(`/api/avatar/${role}`);
+          const getData = await getRes.json();
+          if (getData?.data) {
+            if (role === 'agent') store.set({ agentAvatarUrl: getData.data });
+            else store.set({ userAvatarUrl: getData.data });
+          }
+        } catch {
+          if (role === 'agent') store.set({ agentAvatarUrl: null });
+          else store.set({ userAvatarUrl: null });
+        }
       } else {
         if (role === 'agent') store.set({ agentAvatarUrl: null });
         else store.set({ userAvatarUrl: null });

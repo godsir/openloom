@@ -557,3 +557,104 @@
     color: var(--text-muted);
     font-size: 0.78rem;
 }
+
+/* ── Multi-select Mode ── */
+
+.selectModeHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px var(--space-sm);
+    margin: 0 var(--space-sm) 4px;
+    border-bottom: 1px solid var(--border-light, rgba(128,128,128,0.15));
+}
+
+.selectModeToggle,
+.selectModeCancel {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 0.76rem;
+    font-family: inherit;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    transition: background var(--duration-fast);
+}
+
+.selectModeToggle:hover,
+.selectModeCancel:hover {
+    background: var(--accent-light);
+}
+
+.sessionItemSelectMode {
+    padding-left: 2rem;
+    position: relative;
+}
+
+.sessionCheckbox {
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid var(--text-muted);
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--duration-fast);
+    background: transparent;
+    flex-shrink: 0;
+}
+
+.sessionCheckboxChecked {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+}
+
+.sessionItemSelected {
+    background: var(--accent-light);
+}
+
+.batchActionBar {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px var(--space-sm);
+    margin: 4px var(--space-sm) 0;
+    background: var(--sidebar-bg, var(--bg));
+    border-top: 1px solid var(--border-light, rgba(128,128,128,0.15));
+}
+
+.batchCount {
+    font-size: 0.76rem;
+    color: var(--text-muted);
+}
+
+.batchArchiveButton {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 5px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 0.76rem;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background var(--duration-fast);
+}
+
+.batchArchiveButton:hover {
+    background: var(--accent-hover);
+}
+
+.batchArchiveButton svg {
+    flex-shrink: 0;
+}

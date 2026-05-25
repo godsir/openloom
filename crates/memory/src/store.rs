@@ -806,7 +806,7 @@ impl<'a> MessageStore<'a> {
                         .unwrap_or_else(|_| Utc::now()),
                     metadata: row.get(3)?,
                     id: row.get(4)?,
-                    seq: row.get::<_, i64>(5).map(|s| s as i64).ok(),
+                    seq: row.get::<_, i64>(5).ok(),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -830,7 +830,7 @@ impl<'a> MessageStore<'a> {
                         .unwrap_or_else(|_| Utc::now()),
                     metadata: row.get(3)?,
                     id: row.get(4)?,
-                    seq: row.get::<_, i64>(5).map(|s| s as i64).ok(),
+                    seq: row.get::<_, i64>(5).ok(),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

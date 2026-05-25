@@ -17,6 +17,9 @@ async fn scenario_1_skill_path_file_operation() {
         role: "user".into(),
         content: "帮我打开这个文件看看".into(),
         timestamp: chrono::Utc::now(),
+            id: None,
+            metadata: None,
+            seq: None,
     };
     let resp = engine.handle_message(msg, &sid, Mode::Code, ModelPreference::default()).await.unwrap();
     assert!(!resp.session_id.is_empty());
@@ -30,6 +33,9 @@ async fn scenario_2_llm_path_chat() {
         role: "user".into(),
         content: "你好啊，很高兴见到你".into(),
         timestamp: chrono::Utc::now(),
+            id: None,
+            metadata: None,
+            seq: None,
     };
     let resp = engine.handle_message(msg, &sid, Mode::Code, ModelPreference::default()).await.unwrap();
     assert_eq!(resp.session_id, sid);
@@ -43,6 +49,9 @@ async fn scenario_3_empty_input() {
         role: "user".into(),
         content: String::new(),
         timestamp: chrono::Utc::now(),
+            id: None,
+            metadata: None,
+            seq: None,
     };
     let resp = engine.handle_message(msg, &sid, Mode::Code, ModelPreference::default()).await;
     assert!(resp.is_ok());
@@ -57,6 +66,9 @@ async fn scenario_4_consistent_classification() {
             role: "user".into(),
             content: "帮我写一段Python代码".into(),
             timestamp: chrono::Utc::now(),
+            id: None,
+            metadata: None,
+            seq: None,
         };
         let resp = engine.handle_message(msg, &sid, Mode::Code, ModelPreference::default()).await;
         assert!(resp.is_ok());
@@ -72,6 +84,9 @@ async fn scenario_5_long_text() {
         role: "user".into(),
         content: long_text,
         timestamp: chrono::Utc::now(),
+            id: None,
+            metadata: None,
+            seq: None,
     };
     let resp = engine.handle_message(msg, &sid, Mode::Code, ModelPreference::default()).await;
     assert!(resp.is_ok());
@@ -86,6 +101,9 @@ async fn scenario_6_memory_pipeline_non_blocking() {
             role: "user".into(),
             content: format!("消息 {}", i),
             timestamp: chrono::Utc::now(),
+            id: None,
+            metadata: None,
+            seq: None,
         };
         let resp = engine.handle_message(msg, &sid, Mode::Code, ModelPreference::default()).await;
         assert!(resp.is_ok());
@@ -100,6 +118,9 @@ async fn scenario_7_code_assist_skill() {
         role: "user".into(),
         content: "修复这个bug".into(),
         timestamp: chrono::Utc::now(),
+            id: None,
+            metadata: None,
+            seq: None,
     };
     let resp = engine.handle_message(msg, &sid, Mode::Code, ModelPreference::default()).await.unwrap();
     assert!(!resp.session_id.is_empty());
@@ -132,6 +153,9 @@ async fn scenario_10_event_bus_token_usage() {
         role: "user".into(),
         content: "你好".into(),
         timestamp: chrono::Utc::now(),
+            id: None,
+            metadata: None,
+            seq: None,
     };
     engine.handle_message(msg, &sid, Mode::Code, ModelPreference::default()).await.unwrap();
 

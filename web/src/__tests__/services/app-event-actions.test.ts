@@ -80,7 +80,6 @@ describe('handleAppEvent', () => {
     (globalThis as Record<string, unknown>).window = {
       setTheme: vi.fn(),
       setSerifFont: vi.fn(),
-      setPaperTexture: vi.fn(),
       dispatchEvent: vi.fn(),
     };
     (globalThis as Record<string, unknown>).i18n = {

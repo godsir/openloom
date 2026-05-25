@@ -46,7 +46,6 @@ describe('MessageActions', () => {
         messageId="m1"
         sessionPath="/session/a.jsonl"
         onCopy={vi.fn()}
-        onScreenshot={vi.fn()}
         copied={false}
         isStreaming={false}
       />,

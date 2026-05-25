@@ -3,7 +3,7 @@
  * 将 openhanako 的 REST 风格 hanaFetch 调用桥接到 openLoom 的 loomRpc
  * 所有请求走 IPC，无 CORS 问题
  */
-import { loomRpc } from '../adapter';
+import { loomRpc, getEnginePort } from '../adapter';
 import { useSettingsStore } from './store';
 import { yuanFallbackAvatarUrl } from '../utils/yuan-avatar-map';
 
@@ -42,6 +42,12 @@ function matchProviderModel(path: string): { providerId: string; modelId: string
 function matchProviderDiscoveredModels(path: string): string | null {
   const m = path.match(/^\/api\/providers\/([^/]+)\/discovered-models$/);
   return m ? m[1] : null;
+}
+
+/** 匹配 /api/checkpoints/{id}/action 动态路径 */
+function matchCheckpointAction(path: string): { id: string; action: string } | null {
+  const m = path.match(/^\/api\/checkpoints\/([^/]+)\/(restore|delete)$/);
+  return m ? { id: m[1], action: m[2] } : null;
 }
 
 /** 匹配 /api/agents/{id}/subpath 动态路径 */
@@ -103,6 +109,19 @@ export async function hanaFetch(
     const agentSub = matchAgentSub(path);
     if (agentSub) {
       return await handleAgentSub(agentSub.agentId, agentSub.sub, method, body);
+    }
+
+    // ── /api/checkpoints/{id}/{action} ──
+    const cpAction = matchCheckpointAction(path);
+    if (cpAction) {
+      if (cpAction.action === 'restore' && method === 'POST') {
+        const r = await loomRpc('checkpoint.restore', { id: cpAction.id });
+        return json(r);
+      }
+      if (cpAction.action === 'delete' && method === 'DELETE') {
+        const r = await loomRpc('checkpoint.delete', { id: cpAction.id });
+        return json(r);
+      }
     }
 
     // ── 静态路径映射 ──
@@ -180,7 +199,12 @@ export async function hanaFetch(
       }
 
       case '/api/preferences/models': {
+        const hana = (window as any).hana;
         if (method === 'PUT') {
+          // Route search config to preferences.json via desktop bridge
+          if (body.search && hana?.setSearchConfig) {
+            await hana.setSearchConfig(body.search).catch(() => {});
+          }
           // Deep merge with existing settings.models to avoid overwriting other fields
           const existing = await loomRpc('config.get', { key: 'settings.models' });
           const current = existing.config || {};
@@ -188,8 +212,12 @@ export async function hanaFetch(
           const r = await loomRpc('config.set', { key: 'settings.models', value: merged });
           return json(r);
         }
-        const r = await loomRpc('config.get', { key: 'settings.models' });
-        return json(r.config || {});
+        // GET: merge model config with search config from preferences.json
+        const [modelRes, searchConfig] = await Promise.all([
+          loomRpc('config.get', { key: 'settings.models' }),
+          hana?.getSearchConfig ? hana.getSearchConfig().catch(() => ({})) : Promise.resolve({}),
+        ]);
+        return json({ ...(modelRes.config || {}), search: searchConfig });
       }
 
       case '/api/preferences/computer-use': {
@@ -197,7 +225,8 @@ export async function hanaFetch(
           const r = await loomRpc('config.set', { key: 'settings.computer-use', value: body });
           return json(r);
         }
-        return json({});
+        const r = await loomRpc('computer_use.status');
+        return json(r);
       }
 
       case '/api/preferences/computer-use/request-permissions': {
@@ -222,14 +251,17 @@ export async function hanaFetch(
 
       // ── Bridge ──
       case '/api/bridge/settings': {
-        if (method === 'PUT') {
-          return json({ ok: true });
+        if (method === 'PUT' || method === 'POST') {
+          await loomRpc('config.set', { key: 'settings.bridge', value: body });
+          return json(body);
         }
-        return json({});
+        const r = await loomRpc('config.get', { key: 'settings.bridge' });
+        return json(r.config || {});
       }
 
       case '/api/bridge/test': {
-        return json({ ok: false });
+        const r = await loomRpc('bridge.test', { platform: body.platform, credentials: body.credentials || {} });
+        return json(r);
       }
 
       case '/api/bridge/wechat/qrcode': {
@@ -272,28 +304,32 @@ export async function hanaFetch(
 
       // ── Checkpoints ──
       case '/api/checkpoints': {
-        return json({ checkpoints: [] });
+        const r = await loomRpc('checkpoint.list');
+        return json(r);
       }
 
       // ── Plugins ──
       case '/api/plugins/settings': {
-        return json({ allow_full_access: false, plugin_dev_tools_enabled: false, plugins_dir: '' });
+        if (method === 'PUT') {
+          const r = await loomRpc('plugins.settings.set', body);
+          return json(r);
+        }
+        const r = await loomRpc('plugins.settings.get');
+        return json(r);
       }
 
       case '/api/plugins/settings-tabs': {
         return json([]);
       }
 
-      case '/api/plugins/marketplace': {
-        return json({ plugins: [] });
+      case '/api/plugins/diagnostics': {
+        const r = await loomRpc('plugins.diagnostics');
+        return json(r);
       }
 
       case '/api/plugins/install': {
-        return json({ ok: true });
-      }
-
-      case '/api/plugins/diagnostics': {
-        return json({ diagnostics: [] });
+        const r = await loomRpc('plugins.install', { path: body.path || '' });
+        return json(r);
       }
 
       case '/api/plugins/image-gen/providers': {
@@ -317,20 +353,41 @@ export async function hanaFetch(
 
       // ── Skills ──
       case '/api/skills/external-paths': {
-        return json({ paths: [] });
+        if (method === 'PUT') {
+          const r = await loomRpc('skills.external_paths.set', { paths: body.paths || [] });
+          return json(r);
+        }
+        const r = await loomRpc('skills.external_paths.get');
+        return json(r);
       }
 
       case '/api/skills/install': {
-        return json({ ok: true });
+        const r = await loomRpc('skills.install', { path: body.path || '' });
+        return json(r);
       }
 
       case '/api/skills/translate': {
-        return json({ ok: true });
+        const r = await loomRpc('skills.translate', { agentId: body.agentId, names: body.names, lang: body.lang });
+        return json(r);
       }
 
       // ── Search ──
       case '/api/search/verify': {
-        return json({ ok: false });
+        const hana = (window as any).hana;
+        if (hana?.searchVerify) {
+          const result = await hana.searchVerify(body);
+          return json(result);
+        }
+        return json({ ok: false, error: 'Desktop bridge not available' });
+      }
+
+      // ── Translate ──
+      case '/api/translate': {
+        if (method === 'POST') {
+          const r = await loomRpc('translate', { text: body.text, target: body.target });
+          return json(r);
+        }
+        return json({ error: 'POST required' });
       }
 
       // ── Access ──
@@ -360,8 +417,178 @@ export async function hanaFetch(
       }
     }
 
-    // ── 带查询参数的 plugins 路径 ──
-    if (path.startsWith('/api/plugins') || path.startsWith('/api/skills')) {
+    // ── 带查询参数的 bridge / skills / plugins 路径 ──
+    if (path.startsWith('/api/bridge')) {
+      const url = new URL(path, 'http://localhost');
+      const searchParams = url.searchParams;
+      const bp = url.pathname;
+      const agentId = searchParams.get('agentId') || 'default';
+
+      // GET /api/bridge/status?agentId=X
+      if (bp === '/api/bridge/status') {
+        const r = await loomRpc('bridge.status', { agent_id: agentId });
+        return json(r);
+      }
+
+      // POST /api/bridge/config?agentId=X
+      if (bp === '/api/bridge/config' && method === 'POST') {
+        const key = `settings.agent.${agentId}.bridge.${body.platform || 'default'}`;
+        await loomRpc('config.set', { key, value: body });
+        return json({ ok: true });
+      }
+
+      // POST /api/bridge/owner?agentId=X
+      if (bp === '/api/bridge/owner' && method === 'POST') {
+        const key = `settings.agent.${agentId}.bridge.owner`;
+        await loomRpc('config.set', { key, value: { ...body } });
+        return json({ ok: true });
+      }
+
+      return json({});
+    }
+
+    if (path.startsWith('/api/skills')) {
+      const url = new URL(path, 'http://localhost');
+      const searchParams = url.searchParams;
+      const skillsPath = url.pathname;
+
+      // GET /api/skills?agentId=X
+      if (skillsPath === '/api/skills') {
+        const agentId = searchParams.get('agentId') || 'default';
+        const r = await loomRpc('skills.list', { agent_id: agentId });
+        return json(r);
+      }
+
+      // GET /api/skills/bundles?agentId=X
+      if (skillsPath === '/api/skills/bundles') {
+        if (method === 'POST') {
+          const r = await loomRpc('skills.bundles.create', { name: body.name, skillNames: body.skillNames || [] });
+          return json(r);
+        }
+        const agentId = searchParams.get('agentId') || 'default';
+        const r = await loomRpc('skills.bundles.list', { agent_id: agentId });
+        return json(r);
+      }
+
+      // PUT /api/skills/bundles/order?agentId=X
+      if (skillsPath === '/api/skills/bundles/order') {
+        const r = await loomRpc('skills.bundles.reorder', { bundleIds: body.bundleIds || [] });
+        return json(r);
+      }
+
+      // /api/skills/bundles/:id/export
+      const bundleExportMatch = skillsPath.match(/^\/api\/skills\/bundles\/([^/]+)\/export$/);
+      if (bundleExportMatch) {
+        const r = await loomRpc('skills.bundles.export', { id: bundleExportMatch[1] });
+        return json(r);
+      }
+
+      // /api/skills/bundles/:id
+      const bundleIdMatch = skillsPath.match(/^\/api\/skills\/bundles\/([^/]+)$/);
+      if (bundleIdMatch) {
+        const bundleId = bundleIdMatch[1];
+        const agentId = searchParams.get('agentId') || 'default';
+        if (method === 'PUT') {
+          const r = await loomRpc('skills.bundles.update', { id: bundleId, name: body.name, skillNames: body.skillNames });
+          return json(r);
+        }
+        if (method === 'DELETE') {
+          const r = await loomRpc('skills.bundles.delete', { id: bundleId });
+          return json(r);
+        }
+        return json({});
+      }
+
+      // DELETE /api/skills/:name?agentId=X
+      const skillNameMatch = skillsPath.match(/^\/api\/skills\/([^/]+)$/);
+      if (skillNameMatch && method === 'DELETE') {
+        const agentId = searchParams.get('agentId') || 'default';
+        const r = await loomRpc('skills.delete', { name: skillNameMatch[1], agent_id: agentId });
+        return json(r);
+      }
+
+      return json({});
+    }
+
+    if (path.startsWith('/api/plugins')) {
+      const url = new URL(path, 'http://localhost');
+      const pluginsPath = url.pathname;
+
+      // GET /api/plugins?source=community
+      if (pluginsPath === '/api/plugins') {
+        const r = await loomRpc('plugins.list');
+        return json(r);
+      }
+
+      // GET /api/plugins/marketplace
+      if (pluginsPath === '/api/plugins/marketplace') {
+        const r = await loomRpc('plugins.marketplace.list');
+        return json(r);
+      }
+
+      // GET /api/plugins/marketplace/:id/readme
+      const mpReadmeMatch = pluginsPath.match(/^\/api\/plugins\/marketplace\/([^/]+)\/readme$/);
+      if (mpReadmeMatch) {
+        const r = await loomRpc('plugins.marketplace.readme', { id: mpReadmeMatch[1] });
+        return json(r);
+      }
+
+      // POST /api/plugins/marketplace/:id/install
+      const mpInstallMatch = pluginsPath.match(/^\/api\/plugins\/marketplace\/([^/]+)\/install$/);
+      if (mpInstallMatch && method === 'POST') {
+        const r = await loomRpc('plugins.marketplace.install', { id: mpInstallMatch[1] });
+        return json(r);
+      }
+
+      // GET/PUT /api/plugins/marketplace/sources
+      if (pluginsPath === '/api/plugins/marketplace/sources') {
+        if (method === 'PUT') {
+          const r = await loomRpc('plugins.marketplace.sources.set', { sources: body.sources || [] });
+          return json(r);
+        }
+        if (method === 'POST') {
+          const r = await loomRpc('plugins.marketplace.add_source', { url: body.url, name: body.name });
+          return json(r);
+        }
+        if (method === 'DELETE') {
+          const r = await loomRpc('plugins.marketplace.remove_source', { name: body.name });
+          return json(r);
+        }
+        const r = await loomRpc('plugins.marketplace.sources.get');
+        return json(r);
+      }
+
+      // POST /api/plugins/marketplace/refresh
+      if (pluginsPath === '/api/plugins/marketplace/refresh') {
+        const r = await loomRpc('plugins.marketplace.refresh');
+        return json(r);
+      }
+
+      // GET /api/plugins/:id/config
+      const configMatch = pluginsPath.match(/^\/api\/plugins\/([^/]+)\/config$/);
+      if (configMatch) {
+        if (method === 'PUT') {
+          const r = await loomRpc('plugins.set_config', { id: configMatch[1], config: body });
+          return json(r);
+        }
+        const r = await loomRpc('plugins.get_config', { id: configMatch[1] });
+        return json(r);
+      }
+
+      // POST /api/plugins/:id/enabled
+      const enabledMatch = pluginsPath.match(/^\/api\/plugins\/([^/]+)\/enabled$/);
+      if (enabledMatch && method === 'POST') {
+        const r = await loomRpc('plugins.set_enabled', { id: enabledMatch[1], enabled: body.enabled !== false });
+        return json(r);
+      }
+
+      // DELETE /api/plugins/:id
+      const removeMatch = pluginsPath.match(/^\/api\/plugins\/([^/]+)$/);
+      if (removeMatch && method === 'DELETE') {
+        const r = await loomRpc('plugins.remove', { id: removeMatch[1] });
+        return json(r);
+      }
+
       return json({});
     }
 
@@ -444,6 +671,24 @@ async function handleAgentSub(agentId: string, sub: string, method: string, body
     }
 
     default: {
+      // PATCH /api/agents/:agentId/skills/:name
+      const skillToggleMatch = sub.match(/^skills\/(.+)$/);
+      if (skillToggleMatch && method === 'PATCH') {
+        const skillName = decodeURIComponent(skillToggleMatch[1]);
+        const enabled = body.enabled !== false;
+        const r = await loomRpc('skills.toggle', { agent_id: agentId, name: skillName, enabled });
+        return json(r);
+      }
+
+      // PATCH /api/agents/:agentId/skill-bundles/:id
+      const bundleToggleMatch = sub.match(/^skill-bundles\/(.+)$/);
+      if (bundleToggleMatch && method === 'PATCH') {
+        const bundleId = bundleToggleMatch[1];
+        const enabled = body.enabled !== false;
+        const r = await loomRpc('skills.bundles.toggle', { agent_id: agentId, id: bundleId, enabled });
+        return json(r);
+      }
+
       console.warn(`[settings/api] unmapped agent sub: /api/agents/${agentId}/${sub}`);
       return json({});
     }
@@ -452,7 +697,7 @@ async function handleAgentSub(agentId: string, sub: string, method: string, body
 
 /** Build URL for static assets (avatars etc.) */
 export function hanaUrl(path: string): string {
-  const port = (window as any).__enginePort__ ?? 0;
+  const port = getEnginePort();
   return `http://127.0.0.1:${port}${path}`;
 }
 

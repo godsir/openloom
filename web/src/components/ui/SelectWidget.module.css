@@ -117,12 +117,3 @@
   letter-spacing: 0.03em;
   user-select: none;
 }
-
-:global(body.paper-texture) .trigger,
-:global(body.paper-texture) .popup {
-  background-image: url(../../assets/textures/rice-paper.png);
-  background-repeat: repeat;
-  background-size: 160px;
-  background-attachment: var(--paper-texture-attachment, fixed);
-  background-blend-mode: var(--paper-texture-card-blend-mode);
-}

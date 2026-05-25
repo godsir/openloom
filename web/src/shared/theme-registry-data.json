@@ -6,10 +6,6 @@
   "legacyThemeAliases": {
     "claude-design": "new-warm-paper"
   },
-  "paperTextureBlockedThemeIds": [
-    "midnight",
-    "midnight-contrast"
-  ],
   "autoOption": {
     "id": "auto",
     "i18nName": "settings.appearance.auto",

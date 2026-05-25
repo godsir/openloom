@@ -51,7 +51,7 @@ export function WorkspaceStep({ preview, hanaFetch, goToStep, showError }: Works
   }, [preview, hanaFetch, showError]);
 
   const onBrowse = useCallback(async () => {
-    const folder = await window.platform?.selectFolder?.();
+    const folder = await (window as any).hana?.selectFolder?.();
     if (folder) setSelectedPath(folder);
   }, []);
 

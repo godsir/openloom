@@ -508,7 +508,7 @@ function jsonResponseForMobile(url: string, _options?: RequestInit): unknown {
         homeFolder: '/workspace',
         chatModel: { id: 'deepseek-chat', provider: 'deepseek' },
       }],
-      appearance: { theme: registry.DEFAULT_THEME, serif: true, paperTexture: false },
+      appearance: { theme: registry.DEFAULT_THEME, serif: true },
     };
   }
   if (url.includes('/api/models')) {

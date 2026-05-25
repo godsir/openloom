@@ -590,7 +590,5 @@ function normalizeAppearance(value) {
   const out = {};
   if (typeof src.theme === "string" && src.theme.trim()) out.theme = src.theme.trim();
   if (typeof src.serif === "boolean") out.serif = src.serif;
-  if (typeof src.paperTexture === "boolean") out.paperTexture = src.paperTexture;
-  if (typeof src.leavesOverlay === "boolean") out.leavesOverlay = src.leavesOverlay;
   return out;
 }

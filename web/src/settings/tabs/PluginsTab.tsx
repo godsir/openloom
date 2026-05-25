@@ -8,6 +8,7 @@ import { SettingsSection } from '../components/SettingsSection';
 import { SettingsRow } from '../components/SettingsRow';
 
 const platform = window.platform;
+const bridge = (window as any).hana;
 
 interface PluginInfo {
   id: string;
@@ -277,7 +278,7 @@ export function PluginsTab() {
   };
 
   const installByPicker = async () => {
-    const selectedPath = await platform?.selectPlugin?.();
+    const selectedPath = await bridge?.selectFolder?.();
     if (!selectedPath) return;
     await installFromPath(selectedPath);
   };
@@ -287,7 +288,7 @@ export function PluginsTab() {
     setDragOver(false);
     const file = e.dataTransfer.files[0];
     if (!file) return;
-    const filePath = platform?.getFilePath?.(file) || (file as File & { path?: string })?.path;
+    const filePath = bridge?.getFilePath?.(file) || (file as File & { path?: string })?.path;
     if (filePath) await installFromPath(filePath);
   };
 

@@ -93,7 +93,8 @@ export function AgentTab() {
       .then((r: any) => {
         const skills = r?.skills;
         if (Array.isArray(skills)) {
-          setAvailableTools(skills.map((s: any) => s.name));
+          const names = skills.map((s: any) => s.name);
+          setAvailableTools([...new Set(names)]);
         }
       })
       .catch(() => {});

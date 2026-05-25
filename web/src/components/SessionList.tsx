@@ -90,13 +90,13 @@ function normalizeSessionSearchResults(data: unknown): SessionSearchResult[] {
 
 // ── 主组件 ──
 
-export function SessionList() {
-  return <SessionListInner />;
+export function SessionList({ selectMode = false, onExitSelectMode }: { selectMode?: boolean; onExitSelectMode?: () => void }) {
+  return <SessionListInner selectMode={selectMode} onExitSelectMode={onExitSelectMode} />;
 }
 
 // ── 内部组件 ──
 
-function SessionListInner() {
+function SessionListInner({ selectMode, onExitSelectMode }: { selectMode: boolean; onExitSelectMode?: () => void }) {
   const { t } = useI18n();
   const sessions = useStore(s => s.sessions);
   const currentSessionPath = useStore(s => s.currentSessionPath);
@@ -113,6 +113,45 @@ function SessionListInner() {
   const [searchStatus, setSearchStatus] = useState<'idle' | 'title' | 'content' | 'done' | 'error'>('idle');
   const closingBrowserSessionsRef = useRef(new Set<string>());
   const searchQueryTrimmed = searchQuery.trim();
+
+  // ── Multi-select mode ──
+  const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set());
+
+  const toggleSelectSession = useCallback((path: string) => {
+    setSelectedSessions(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAllSessions = useCallback(() => {
+    setSelectedSessions(new Set(sessions.map(s => s.path)));
+  }, [sessions]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedSessions(new Set());
+  }, []);
+
+  const exitSelectMode = useCallback(() => {
+    setSelectedSessions(new Set());
+    onExitSelectMode?.();
+  }, [onExitSelectMode]);
+
+  const handleBatchArchive = useCallback(async () => {
+    if (selectedSessions.size === 0) return;
+    const paths = Array.from(selectedSessions);
+    // Archive all selected sessions
+    for (const path of paths) {
+      await archiveSession(path);
+    }
+    // Exit select mode after archiving
+    exitSelectMode();
+  }, [selectedSessions, exitSelectMode]);
   const sessionsSignature = useMemo(() => (
     sessions.map(s => `${s.path}:${s.title || ''}:${s.modified || ''}:${s.messageCount}`).join('\n')
   ), [sessions]);
@@ -224,8 +263,42 @@ function SessionListInner() {
   const isSearching = !!searchQueryTrimmed;
   const showEmptyState = sessions.length === 0 && !isSearching;
 
+  // Compute sections for rendering (with select mode filtering)
+  const renderSections = selectMode
+    ? sections.map(section => ({
+        ...section,
+        items: section.items.filter(s => !s.pinnedAt), // Can't archive pinned sessions
+      })).filter(section => section.items.length > 0)
+    : sections;
+
+  const allSelectablePaths = new Set(
+    renderSections.flatMap(section => section.items.map(s => s.path))
+  );
+  const allSelected = selectMode && allSelectablePaths.size > 0 &&
+    Array.from(allSelectablePaths).every(path => selectedSessions.has(path));
+
   return (
     <>
+      {/* Select mode header controls */}
+      {selectMode && (
+        <div className={styles.selectModeHeader}>
+          <button
+            type="button"
+            className={styles.selectModeToggle}
+            onClick={allSelected ? clearSelection : selectAllSessions}
+          >
+            {allSelected ? t('session.clearSelection') : t('session.selectAll')}
+          </button>
+          <button
+            type="button"
+            className={styles.selectModeCancel}
+            onClick={exitSelectMode}
+          >
+            {t('common.cancel')}
+          </button>
+        </div>
+      )}
+
       <SessionSearchBox
         value={searchQuery}
         onChange={setSearchQuery}
@@ -243,7 +316,7 @@ function SessionListInner() {
           activeSessionPath={activeSessionPath}
           pendingNewSession={pendingNewSession}
         />
-      ) : sections.map(section => {
+      ) : renderSections.map(section => {
         const items = section.items.map(s => (
           <SessionItem
             key={s.path}
@@ -254,6 +327,9 @@ function SessionListInner() {
             agents={agents}
             browserState={browserSessions[s.path] || null}
             onCloseBrowser={handleCloseBrowserSession}
+            selectMode={selectMode}
+            selected={selectedSessions.has(s.path)}
+            onToggleSelect={() => toggleSelectSession(s.path)}
           />
         ));
 
@@ -281,6 +357,27 @@ function SessionListInner() {
           </Fragment>
         );
       })}
+
+      {/* Batch action bar */}
+      {selectMode && selectedSessions.size > 0 && (
+        <div className={styles.batchActionBar}>
+          <span className={styles.batchCount}>
+            {t('session.selected', { count: selectedSessions.size })}
+          </span>
+          <button
+            type="button"
+            className={styles.batchArchiveButton}
+            onClick={handleBatchArchive}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="21 8 21 21 3 21 3 8" />
+              <rect x="1" y="3" width="22" height="5" />
+              <line x1="10" y1="12" x2="14" y2="12" />
+            </svg>
+            {t('session.archiveSelected')}
+          </button>
+        </div>
+      )}
     </>
   );
 }
@@ -456,7 +553,7 @@ const SessionSearchItem = memo(function SessionSearchItem({
 
 // ── Session Item ──
 
-const SessionItem = memo(function SessionItem({ session: s, isActive, isStreaming, isPinned, agents, browserState, onCloseBrowser }: {
+const SessionItem = memo(function SessionItem({ session: s, isActive, isStreaming, isPinned, agents, browserState, onCloseBrowser, selectMode, selected, onToggleSelect }: {
   session: Session;
   isActive: boolean;
   isStreaming: boolean;
@@ -464,6 +561,9 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isStreamin
   agents: Agent[];
   browserState: BrowserSessionState | null;
   onCloseBrowser: (sessionPath: string) => void;
+  selectMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }) {
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
@@ -474,8 +574,13 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isStreamin
 
   const handleClick = useCallback(() => {
     if (editing) return;
+    // In select mode, toggle selection instead of switching
+    if (selectMode && onToggleSelect) {
+      onToggleSelect();
+      return;
+    }
     switchSession(s.path);
-  }, [s.path, editing]);
+  }, [s.path, editing, selectMode, onToggleSelect]);
 
   const handleArchive = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -560,11 +665,22 @@ const SessionItem = memo(function SessionItem({ session: s, isActive, isStreamin
   return (
     <>
       <button
-        className={`${styles.sessionItem}${isActive ? ` ${styles.sessionItemActive}` : ''}`}
+        className={`${styles.sessionItem}${isActive ? ` ${styles.sessionItemActive}` : ''}${selectMode ? ` ${styles.sessionItemSelectMode}` : ''}${selected ? ` ${styles.sessionItemSelected}` : ''}`}
         data-session-path={s.path}
         onClick={handleClick}
-        onContextMenu={handleContextMenu}
+        onContextMenu={selectMode ? undefined : handleContextMenu}
       >
+        {/* Checkbox for select mode */}
+        {selectMode && (
+          <div className={`${styles.sessionCheckbox}${selected ? ` ${styles.sessionCheckboxChecked}` : ''}`}>
+            {selected && (
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            )}
+          </div>
+        )}
+
         <div className={styles.sessionItemHeader}>
           {s.agentId && (
             <AgentBadge agentId={s.agentId} agentName={s.agentName} agents={agents} />

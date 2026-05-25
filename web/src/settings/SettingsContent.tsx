@@ -44,7 +44,7 @@ import { InputContextMenu } from '../components/InputContextMenu';
 import styles from './Settings.module.css';
 
 // Tabs with no backend support yet — hidden but not deleted
-const HIDDEN_TAB_IDS = new Set(['bridge', 'media', 'access', 'plugins', 'plugin-marketplace', 'sharing', 'computer']);
+const HIDDEN_TAB_IDS = new Set(['media', 'access', 'sharing']);
 
 const TAB_COMPONENTS: Record<string, React.ComponentType> = {
   agent: AgentTab,

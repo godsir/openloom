@@ -278,7 +278,7 @@ const UserAttachmentsView = memo(function UserAttachmentsView({ attachments, des
         const imageSrc = !expired && isImage(att) ? getUserAttachmentImageSrc(att) : null;
         if (imageSrc) {
           return (
-            <div key={att.name || `att-${i}`} className={styles.attachImageWrap}>
+            <div key={`${att.name || 'att'}-${i}`} className={styles.attachImageWrap}>
               <img
                 className={styles.attachImage}
                 src={imageSrc}

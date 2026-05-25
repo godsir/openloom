@@ -5,7 +5,14 @@ use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::Response;
+use axum::Json;
 use openloom_engine::Engine;
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+pub struct AvatarUpload {
+    pub data: String,
+}
 
 fn avatars_dir(data_dir: &std::path::Path) -> PathBuf {
     data_dir.join("avatars")
@@ -37,7 +44,7 @@ pub async fn serve_avatar(
         Err(_) => {
             // No custom avatar — return Loom text fallback
             let color = if role == "agent" { "1a1a1a" } else { "2f6f8f" };
-            let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" height=\"80\" viewBox=\"0 0 80 80\"><rect width=\"80\" height=\"80\" rx=\"20\" fill=\"#fff\" stroke=\"#d0d0d0\" stroke-width=\"1\"/><text x=\"50%\" y=\"54%\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"36\" font-weight=\"600\" fill=\"#".to_string() + &color + "\">L</text></svg>";
+            let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" height=\"80\" viewBox=\"0 0 80 80\"><rect width=\"80\" height=\"80\" rx=\"20\" fill=\"#fff\" stroke=\"#d0d0d0\" stroke-width=\"1\"/><text x=\"50%\" y=\"54%\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"36\" font-weight=\"600\" fill=\"#".to_string() + color + "\">L</text></svg>";
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "image/svg+xml")
@@ -52,7 +59,7 @@ pub async fn serve_avatar(
 pub async fn upload_avatar(
     State(engine): State<Arc<Engine>>,
     Path(role): Path<String>,
-    body: axum::body::Bytes,
+    Json(payload): Json<AvatarUpload>,
 ) -> Response<Body> {
     if !role.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return Response::builder()
@@ -69,27 +76,13 @@ pub async fn upload_avatar(
             .unwrap();
     }
 
-    // Parse the JSON body: { "data": "data:image/png;base64,..." }
-    let json: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(v) => v,
-        Err(e) => {
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::from(format!("invalid json: {}", e)))
-                .unwrap();
-        }
-    };
-
-    let data_url = json
-        .get("data")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let data_url = payload.data;
 
     // Strip data URL prefix
     let b64 = if let Some(comma) = data_url.find(',') {
         &data_url[comma + 1..]
     } else {
-        data_url
+        &data_url
     };
 
     use base64::Engine as _;

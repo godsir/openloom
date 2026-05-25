@@ -14,7 +14,6 @@ vi.mock('../../../services/appearance-sync', () => ({
 type AppearanceGlobals = typeof globalThis & {
   setTheme?: (theme: string) => void;
   setSerifFont?: (enabled: boolean) => void;
-  setPaperTexture?: (enabled: boolean) => void;
 };
 
 function setAppearanceGlobals() {
@@ -25,9 +24,6 @@ function setAppearanceGlobals() {
   (globalThis as AppearanceGlobals).setSerifFont = vi.fn((enabled: boolean) => {
     localStorage.setItem('hana-font-serif', enabled ? '1' : '0');
     document.body.classList.toggle('font-sans', !enabled);
-  });
-  (globalThis as AppearanceGlobals).setPaperTexture = vi.fn((enabled: boolean) => {
-    localStorage.setItem('hana-paper-texture', enabled ? '1' : '0');
   });
 }
 
@@ -74,24 +70,6 @@ describe('InterfaceTab appearance state', () => {
     expect(screen.getAllByRole('switch')[0].getAttribute('aria-checked')).toBe('false');
   });
 
-  it('recomputes paper texture availability when the selected theme changes', () => {
-    localStorage.setItem('hana-theme', registry.DEFAULT_THEME);
-    localStorage.setItem('hana-paper-texture', '1');
-
-    render(React.createElement(InterfaceTab));
-
-    const paperSwitch = () => screen.getAllByRole('switch')[1] as HTMLButtonElement;
-    expect(paperSwitch().getAttribute('aria-checked')).toBe('true');
-    expect(paperSwitch().disabled).toBe(false);
-
-    const midnightTheme = screen.getByText('settings.appearance.midnight').closest('button');
-    expect(midnightTheme).toBeTruthy();
-    fireEvent.click(midnightTheme!);
-
-    expect(paperSwitch().getAttribute('aria-checked')).toBe('false');
-    expect(paperSwitch().disabled).toBe(true);
-  });
-
   it('renders the hardware acceleration switch from settings config', () => {
     useSettingsStore.setState({
       settingsConfig: {
@@ -105,6 +83,6 @@ describe('InterfaceTab appearance state', () => {
     render(React.createElement(InterfaceTab));
 
     expect(screen.getByText('settings.interface.hardwareAcceleration')).toBeTruthy();
-    expect(screen.getAllByRole('switch')[3].getAttribute('aria-checked')).toBe('false');
+    expect(screen.getAllByRole('switch')[1].getAttribute('aria-checked')).toBe('false');
   });
 });

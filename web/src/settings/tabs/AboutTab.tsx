@@ -9,7 +9,7 @@ import { ExpandableRow } from '../components/ExpandableRow';
 import { AutoUpdateStatus } from '../../components/AutoUpdateStatus';
 import { useAutoUpdateState } from '../../hooks/use-auto-update-state';
 import type { AutoLaunchStatus } from '../../types';
-import appIconUrl from '../../icon.png';
+import appIconUrl from '../../assets/icon.png';
 import styles from '../Settings.module.css';
 
 export function AboutTab() {
@@ -80,13 +80,13 @@ export function AboutTab() {
     <div className={`${styles['settings-tab-content']} ${styles['active']}`} data-tab="about">
       {/* Hero：保留原 about-hero 独立视觉组件（icon + name + tagline + version + update + check 按钮） */}
       <div className={styles['about-hero']}>
-        <img className={styles['about-icon']} src={appIconUrl} alt="Hanako" />
-        <div className={styles['about-name']}>Hanako</div>
+        <img className={styles['about-icon']} src={appIconUrl} alt="openLoom" />
+        <div className={styles['about-name']}>openLoom</div>
         <div className={styles['about-tagline']}>{t('settings.about.tagline')}</div>
         {version && <div className={styles['about-version']}>v{version}</div>}
         <AutoUpdateStatus
           state={autoUpdate}
-          agentName={settingsConfig?.agent?.name || 'Hanako'}
+          agentName={settingsConfig?.agent?.name || 'openLoom'}
           onInstall={handleInstall}
         />
         {(!autoUpdate || autoUpdate.status === 'idle' || autoUpdate.status === 'latest' || autoUpdate.status === 'error') && (
@@ -104,7 +104,7 @@ export function AboutTab() {
         />
         <SettingsRow
           label={t('settings.about.copyright')}
-          control={<span>© 2026 liliMozi</span>}
+          control={<span>© 2026 openLoom</span>}
         />
         <SettingsRow
           label="GitHub"
@@ -114,10 +114,10 @@ export function AboutTab() {
               href="#"
               onClick={(e) => {
                 e.preventDefault();
-                hana?.openExternal?.('https://github.com/liliMozi');
+                hana?.openExternal?.('https://github.com/godsir/openloom');
               }}
             >
-              github.com/liliMozi
+              github.com/godsir/openloom
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
                 <polyline points="15 3 21 3 21 9" />
@@ -159,7 +159,7 @@ export function AboutTab() {
 
 const LICENSE_TEXT = `Apache License, Version 2.0
 
-Copyright 2026 liliMozi
+Copyright 2026 openLoom
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.

@@ -12,7 +12,7 @@ function TabIcon({ d }: { d: string }) {
 }
 
 // Tabs with no backend support yet — hidden but not deleted
-const HIDDEN_TAB_IDS = new Set(['bridge', 'media', 'access', 'plugins', 'plugin-marketplace', 'sharing', 'computer']);
+const HIDDEN_TAB_IDS = new Set(['media', 'access', 'sharing']);
 
 const TAB_ITEMS = [
   { id: 'agent', key: 'settings.tabs.agent', d: '<path d="M12 2a5 5 0 0 1 5 5c0 2.76-2.24 5-5 5s-5-2.24-5-5a5 5 0 0 1 5-5z"/><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>' },

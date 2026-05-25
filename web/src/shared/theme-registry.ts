@@ -26,7 +26,6 @@ export const DEFAULT_THEME = data.defaultTheme as ThemeId;
 export const AUTO_LIGHT_DEFAULT = data.autoLightDefault as ThemeId;
 export const AUTO_DARK_DEFAULT = data.autoDarkDefault as ThemeId;
 export const LEGACY_THEME_ALIASES = Object.freeze({ ...data.legacyThemeAliases }) as Readonly<Record<string, ThemeId>>;
-export const PAPER_TEXTURE_BLOCKED_THEME_IDS = Object.freeze([...data.paperTextureBlockedThemeIds]) as ReadonlyArray<ThemeId>;
 export const AUTO_OPTION = Object.freeze({ ...data.autoOption }) as ThemeUIOption;
 
 export const THEMES = Object.freeze(Object.fromEntries(
@@ -70,16 +69,11 @@ export function getAllUIOptions(): ThemeUIOption[] {
   return [...themeOpts, { ...AUTO_OPTION }];
 }
 
-export function isPaperTextureBlockedTheme(themeId: unknown): boolean {
-  return PAPER_TEXTURE_BLOCKED_THEME_IDS.includes(themeId as ThemeId);
-}
-
 const registry = {
   STORAGE_KEY,
   DEFAULT_THEME,
   AUTO_LIGHT_DEFAULT,
   AUTO_DARK_DEFAULT,
-  PAPER_TEXTURE_BLOCKED_THEME_IDS,
   AUTO_OPTION,
   LEGACY_THEME_ALIASES,
   THEMES,
@@ -87,7 +81,6 @@ const registry = {
   resolveSavedTheme,
   getThemeIds,
   getAllUIOptions,
-  isPaperTextureBlockedTheme,
 };
 
 export default registry;

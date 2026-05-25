@@ -11,6 +11,7 @@ import { SettingsSection } from '../components/SettingsSection';
 import styles from '../Settings.module.css';
 
 const platform = window.platform;
+const bridge = (window as any).hana;
 
 type BundleDialogState =
   | { type: 'create'; name: string }
@@ -128,7 +129,7 @@ export function SkillsTab() {
   };
 
   const installSkill = async () => {
-    const selectedPath = await platform?.selectSkill?.();
+    const selectedPath = await bridge?.selectFolder?.();
     if (!selectedPath) return;
     await installSkillFromPath(selectedPath);
   };
@@ -402,12 +403,12 @@ export function SkillsTab() {
     (e.currentTarget as HTMLElement).classList.remove(styles['drag-over']);
     const file = e.dataTransfer.files[0];
     if (!file) return;
-    const filePath = platform?.getFilePath?.(file) || (file as File & { path?: string })?.path;
+    const filePath = bridge?.getFilePath?.(file) || (file as File & { path?: string })?.path;
     if (filePath) await installSkillFromPath(filePath);
   };
 
   const addExternalPath = async () => {
-    const folder = await platform?.selectFolder?.();
+    const folder = await (window as any).hana?.selectFolder?.();
     if (!folder) return;
     const newPaths = [...externalPathsData.configured, folder];
     try {

@@ -127,7 +127,7 @@ export function DeskCwdSkillsPanel() {
     if (!dir) return;
     let installed = false;
     for (const file of files) {
-      const filePath = window.platform?.getFilePath?.(file);
+      const filePath = (window as any).hana?.getFilePath?.(file) || (file as any)?.path;
       console.log('[cwd-skills] filePath=', filePath, 'file.name=', file.name);
       if (!filePath) continue;
       try {
