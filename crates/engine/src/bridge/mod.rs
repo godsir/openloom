@@ -16,6 +16,9 @@ pub mod wechat;
 pub mod qq;
 pub mod types;
 
+pub use types::*;
+pub use adapter::ChannelAdapter;
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
