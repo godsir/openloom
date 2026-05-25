@@ -12,6 +12,8 @@ import { createBrowserSlice, type BrowserSlice } from './browser-slice';
 import { createContextSlice, type ContextSlice } from './context-slice';
 import { createSelectionSlice, type SelectionSlice } from './selection-slice';
 import { createPreviewSlice, type PreviewSlice } from './preview-slice';
+import { createDeskSlice, type DeskSlice } from './desk-slice';
+import { createBridgeSlice, type BridgeSlice } from './bridge-slice';
 
 export type StoreState = ConnectionSlice &
   SessionSlice &
@@ -25,7 +27,9 @@ export type StoreState = ConnectionSlice &
   BrowserSlice &
   ContextSlice &
   SelectionSlice &
-  PreviewSlice;
+  PreviewSlice &
+  DeskSlice &
+  BridgeSlice;
 
 export const useStore = create<StoreState>()((set, _get, _api) => ({
   ...createConnectionSlice(set, _get),
@@ -41,4 +45,6 @@ export const useStore = create<StoreState>()((set, _get, _api) => ({
   ...createContextSlice(set),
   ...createSelectionSlice(set),
   ...createPreviewSlice(),
+  ...createDeskSlice(set),
+  ...createBridgeSlice(set),
 }));

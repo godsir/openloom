@@ -89,7 +89,8 @@ function handleNotification(method: string, params: any): void {
       // Filter internal control signals that may leak into the stream
       const cleanDelta = delta
         .replace(/\x00USAGE:\d+:\d+:\d+/g, '')
-        .replace(/USAGE:\d+:\d+:\d+/g, '');
+        .replace(/USAGE:\d+:\d+:\d+/g, '')
+        .replace(/\x02REASONING\x02/g, '');
       if (!cleanDelta) return;
 
       // Ensure the session is initialized in the store before we can appendItem/updateMessageById
@@ -115,7 +116,9 @@ function handleNotification(method: string, params: any): void {
       // Update the message in the store
       import('../utils/markdown').then(({ renderMarkdown }) => {
         const html = renderMarkdown(streaming.text);
-        streaming.blocks = [{ type: 'text', html, source: streaming.text }];
+        // Preserve non-text blocks (thinking, tool_group, mood) and update/add text block
+        const nonTextBlocks = streaming.blocks.filter(b => b.type !== 'text');
+        streaming.blocks = [...nonTextBlocks, { type: 'text', html, source: streaming.text }];
         const msgData = {
           id: streaming.id,
           role: 'assistant' as const,
@@ -163,12 +166,21 @@ function handleNotification(method: string, params: any): void {
       if (fullText) {
         import('../utils/markdown').then(({ renderMarkdown }) => {
           const html = renderMarkdown(fullText);
+          // Preserve thinking and tool_group blocks from streaming
+          const preservedBlocks = streaming?.blocks?.filter(
+            b => b.type === 'thinking' || b.type === 'tool_group' || b.type === 'mood'
+          ) || [];
+          // Seal any unsealed thinking blocks
+          const sealedBlocks = preservedBlocks.map(b =>
+            b.type === 'thinking' && !b.sealed ? { ...b, sealed: true } : b
+          );
+          const finalBlocks = [...sealedBlocks, { type: 'text' as const, html, source: fullText }];
           const finalMsg = {
             id: streaming?.id || `assistant-${Date.now()}`,
             role: 'assistant' as const,
             text: fullText,
             textHtml: html,
-            blocks: [{ type: 'text' as const, html, source: fullText }],
+            blocks: finalBlocks,
             timestamp: Date.now(),
             isStreaming: false,
           };
@@ -229,6 +241,15 @@ function handleNotification(method: string, params: any): void {
       if (!useStore.getState().chatSessions[sid]) {
         useStore.getState().initSession(sid, [], false);
       }
+      // Hide welcome screen when tool calls arrive
+      const toolSessions = useStore.getState().streamingSessions || [];
+      if (!toolSessions.includes(sid)) {
+        useStore.setState({
+          welcomeVisible: false,
+          isStreaming: true,
+          streamingSessions: [...toolSessions, sid],
+        });
+      }
       const streaming = getOrCreateStreamingMessage(sid);
 
       // Find or create tool_group block
@@ -236,7 +257,10 @@ function handleNotification(method: string, params: any): void {
         { type: 'tool_group'; tools: Array<{ name: string; args?: Record<string, unknown>; done: boolean; success: boolean; details?: Record<string, unknown> }>; collapsed: boolean } | undefined;
       if (!toolGroup) {
         toolGroup = { type: 'tool_group', tools: [], collapsed: false };
-        streaming.blocks = [toolGroup, ...streaming.blocks.filter(b => b.type !== 'tool_group')];
+        // Insert tool_group after thinking/mood blocks, before text
+        const preBlocks = streaming.blocks.filter(b => b.type === 'thinking' || b.type === 'mood');
+        const postBlocks = streaming.blocks.filter(b => b.type !== 'thinking' && b.type !== 'mood' && b.type !== 'tool_group');
+        streaming.blocks = [...preBlocks, toolGroup, ...postBlocks];
       }
 
       toolGroup.tools.push({ name, args, done: false, success: false });
@@ -292,6 +316,106 @@ function handleNotification(method: string, params: any): void {
       }
 
       // Update store
+      const msgData = {
+        id: streaming.id,
+        role: 'assistant' as const,
+        text: streaming.text,
+        blocks: streaming.blocks,
+        timestamp: Date.now(),
+        isStreaming: true,
+      };
+      useStore.getState().updateMessageById(sid, streaming.id, () => msgData);
+      break;
+    }
+
+    // ── Thinking/reasoning blocks ──
+    case 'thinking.start': {
+      const sid = params?.session_id;
+      if (!sid) return;
+      if (!useStore.getState().chatSessions[sid]) {
+        useStore.getState().initSession(sid, [], false);
+      }
+      const streaming = getOrCreateStreamingMessage(sid);
+      const hasThinking = streaming.blocks.some(b => b.type === 'thinking');
+      if (!hasThinking) {
+        streaming.blocks = [{ type: 'thinking', content: '', sealed: false }, ...streaming.blocks];
+      } else {
+        streaming.blocks = streaming.blocks.map(b =>
+          b.type === 'thinking' ? { type: 'thinking', content: '', sealed: false } : b
+        );
+      }
+      const msgData = {
+        id: streaming.id,
+        role: 'assistant' as const,
+        text: streaming.text,
+        blocks: streaming.blocks,
+        timestamp: Date.now(),
+        isStreaming: true,
+      };
+      const existing = useStore.getState().chatSessions[sid]?.items?.find(
+        (item: any) => item.type === 'message' && item.data?.id === streaming.id,
+      );
+      if (existing) {
+        useStore.getState().updateMessageById(sid, streaming.id, () => msgData);
+      } else {
+        useStore.getState().appendItem(sid, { type: 'message', data: msgData });
+      }
+      break;
+    }
+
+    case 'thinking.delta': {
+      const sid = params?.session_id;
+      if (!sid) return;
+      if (!useStore.getState().chatSessions[sid]) {
+        useStore.getState().initSession(sid, [], false);
+      }
+      // Ensure welcome is hidden when thinking arrives
+      const existingSessions = useStore.getState().streamingSessions || [];
+      if (!existingSessions.includes(sid)) {
+        useStore.setState({
+          welcomeVisible: false,
+          isStreaming: true,
+          streamingSessions: [...existingSessions, sid],
+        });
+      }
+      const streaming = getOrCreateStreamingMessage(sid);
+      const delta = params?.delta || '';
+      // Auto-create thinking block if missing
+      const hasThinking = streaming.blocks.some(b => b.type === 'thinking');
+      if (!hasThinking) {
+        streaming.blocks = [{ type: 'thinking', content: delta, sealed: false }, ...streaming.blocks];
+      } else {
+        streaming.blocks = streaming.blocks.map(b =>
+          b.type === 'thinking' ? { ...b, content: b.content + delta } : b
+        );
+      }
+      const msgData = {
+        id: streaming.id,
+        role: 'assistant' as const,
+        text: streaming.text,
+        blocks: streaming.blocks,
+        timestamp: Date.now(),
+        isStreaming: true,
+      };
+      const existing = useStore.getState().chatSessions[sid]?.items?.find(
+        (item: any) => item.type === 'message' && item.data?.id === streaming.id,
+      );
+      if (existing) {
+        useStore.getState().updateMessageById(sid, streaming.id, () => msgData);
+      } else {
+        useStore.getState().appendItem(sid, { type: 'message', data: msgData });
+      }
+      break;
+    }
+
+    case 'thinking.end': {
+      const sid = params?.session_id;
+      if (!sid) return;
+      const streaming = streamingMessages[sid];
+      if (!streaming) return;
+      streaming.blocks = streaming.blocks.map(b =>
+        b.type === 'thinking' ? { ...b, sealed: true } : b
+      );
       const msgData = {
         id: streaming.id,
         role: 'assistant' as const,
@@ -388,6 +512,15 @@ function handleNotification(method: string, params: any): void {
 
     // 权限请求
     case 'permission.required': {
+      break;
+    }
+
+    // Bridge 平台状态变化
+    case 'bridge.status_changed': {
+      const { platform, status } = params || {};
+      if (platform && status) {
+        useStore.getState().setBridgeStatus(platform, status);
+      }
       break;
     }
 
