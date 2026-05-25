@@ -21,6 +21,7 @@ pub use adapter::ChannelAdapter;
 pub use store::{BridgeStore, BridgeSession, BridgeMessageRow, KnownUserRow};
 pub use security::{RateLimiter, MessageDedup, LoopDetector};
 pub use manager::BridgeManager;
+pub use router::MessageRouter;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
