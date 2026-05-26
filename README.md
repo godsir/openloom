@@ -1,139 +1,152 @@
-# openLoom
+# openLoom v2
 
-本地优先的私人 AI 助理内核。用认知图谱替代聊天记录，用事件驱动替代轮询，用本地分级模型替代云端全量调用。
-
-## 核心差异化
-
-现有 AI Agent（OpenClaw / Claude Code / Codex）的共同缺陷：**把所有信息塞进上下文窗口，Token 成本随对话长度指数膨胀，且不会真正"认识"用户。**
-
-openLoom 走另一条路：
-
-| 传统做法 | openLoom 做法 |
-|----------|--------------|
-| 聊天记录 → Embedding → 相似度检索 | 事件提取 → 模式聚合 → 认知图谱演化 |
-| 所有工具定义每轮注入系统 prompt | 技能懒加载，仅激活时注入 ≤200 tokens |
-| 心跳检查也烧 120K tokens | 事件驱动，空闲零消耗 |
-| 记忆 = 关键词召回 | 记忆 = 人格模型持续演化 |
-
-**一句话：一个用认知图谱替代聊天记录、用事件驱动替代轮询、用本地分级模型替代云端全量调用的 AI 内核。**
+可配置多 Agent、多对话的私人 AI 助理内核。认知图谱记忆 + Skills/Plugins/MCP 调用 + 外部消息平台接入。
 
 ## 架构
 
 ```
-Event Bus (Tokio async)
-  ↓
-Smart Router (本地 1.7B 意图分类 + 复杂度评分)
-  ↓  ← 双路并行
-KV Cache Store (Q4 safetensors 块池)  +  Memory Kernel (事件→认知→人格)
-  ↓
-Skill Engine (WASM sandbox + CLI Bridge, 懒加载)
-  ↓
-Context Weaver (按需编织: 前缀 + 认知摘要 + 技能上下文)
-  ↓
-Reasoning Engine (仅复杂任务调用大模型)
+backend/crates/
+├── loom-types        ← 统一类型系统 (14 模块)
+├── loom-inference    ← 推理引擎 (Anthropic/OpenAI/DeepSeek/LM Studio/Ollama)
+├── loom-memory       ← 记忆内核 (SQLite + FTS5 + 知识图谱 kg_nodes/edges/aliases/evidence)
+├── loom-core         ← 编排引擎 (Agent + AgentPool + Orchestrator + ToolRegistry)
+├── loom-context      ← 上下文组装 (ContextAssembler)
+├── loom-security     ← 权限检查
+├── loom-server       ← Axum HTTP + WebSocket + JSON-RPC 2.0
+├── lume-cli          ← CLI (lume serve/chat/mcp/doctor)
+├── lume-mcp          ← MCP 客户端 (stdio + HTTP/SSE + resources + timeout)
+├── lume-skills       ← Skills 解析 (Claude Code + OpenClaw SKILL.md)
+├── lume-bridge       ← Bridge 外部接入 (ChannelAdapter + Telegram + WeChat iLink)
+└── lume-plugins      ← 内置于 lume-cli，兼容 Claude Code/OpenClaw 插件格式
 ```
-
-CLI 和 Electron 桌面壳共享同一个 Rust Engine，走 JSON-RPC 2.0 / WebSocket / SSE 协议。
 
 ## 开发状态
 
 | Phase | 内容 | 状态 |
-|-------|------|------|
-| **Phase 0** | Memory Kernel MVP | ✅ 完成 |
-| **Phase 1** | Smart Router + Skill Engine + Electron 骨架 | ✅ 完成 |
-| **Phase 2** | Agent Loop + Persona + Backend + Electron GUI | ✅ 完成 |
-| **Phase 3A** | AI Activation: LM Studio, SSE streaming, 8B cognition | ✅ 完成 |
-| **Phase 3B** | Productionization: Engine split, sandbox, KV Cache, packaging | ✅ 完成 |
-| **Phase 4** | CLI-first UX + TUI (loom-tui) | ✅ 完成 |
-| **Hanako Fusion** | Hanako 桌面 UI 融合 — 46+ 组件, Zustand stores, 完整设计系统 | ✅ 完成 |
+|-------|------|:--:|
+| Phase 0 | 基础设施 (10 crate + 类型 + inference + V8 迁移) | ✅ |
+| Phase 1 | Agent 核心 (Agent + AgentPool + Orchestrator + Server) | ✅ |
+| Phase 2 | 工具 + 子 Agent (ToolRegistry + MCP + WS + 流式 + 安全) | ✅ |
+| Phase 3 | 记忆 + 技能 (KG + GraphStore + Skills + LLM 提取 + 对话持久) | ✅ |
+| Phase 4 | 前端 + 切换 + 删除 legacy | ⏳ |
 
-**质量：** 180+ tests pass, clippy 0 warnings, fmt clean
+**愿景差距：** 10/11 已修复（只剩 LSP deferred）。详见 [docs/v2-vision-gap-analysis.md](docs/v2-vision-gap-analysis.md)
+
+**质量：** 20+ tests pass, clippy 0 warnings, fmt clean
 
 ## 快速开始
 
-### 前置要求
+### 前置
 
 - Rust 1.85+
-- Node.js 20+
-- 6GB+ VRAM 推荐（本地模型推理，最低 4GB GPU / CPU-only 降级可用）
-- 安装 [LM Studio](https://lmstudio.ai/) 并启动本地推理服务（localhost:1234）
+- 云端推理：任一 API Key（DeepSeek / Anthropic / OpenAI）
+- 本地推理：LM Studio (localhost:1234) 或 Ollama (localhost:11434)
 
-### 开发构建
+### 构建 & 运行
 
-```bash
-git clone https://github.com/godsir/openloom.git
-cd openLoom
+```powershell
+# 构建
+cargo build -p lume-cli --release
 
-# Rust 后端
-cargo build
-cargo build -p openloom-server
-# 前端
-cd web && npm install && npm run build && cd ..
+# 聊天（DeepSeek）
+$env:DEEPSEEK_API_KEY = "sk-xxx"
+.\target\release\lume.exe chat
 
-# CLI
-cargo run -p loom-cli -- serve --port 49350
+# 聊天（本地 LM Studio）
+$env:LMSTUDIO_API_KEY = "lm-studio"
+.\target\release\lume.exe chat --model llama-3-8b --api-key-env LMSTUDIO_API_KEY --base-url http://127.0.0.1:1234
+
+# 继续上次对话
+.\target\release\lume.exe chat --c
+
+# 启动 HTTP/WS 服务
+.\target\release\lume.exe serve --port 8080
+
+# 环境诊断
+.\target\release\lume.exe doctor
 ```
 
-### 启动 Electron 桌面应用
+### 会话管理
 
-```bash
-# 1. 构建前端
-cd web
-npm install
-npm run build
-
-# 2. 构建 Rust 后端
-cd ..
-cargo build
-
-# 3. 启动 Electron（需要先有 electron 二进制，见下方说明）
-cd electron
-npx electron . --dev
+```
+lume chat                    新会话（自动生成唯一 ID）
+lume chat --c                继续 "default" 会话
+lume chat --resume my-sess   恢复指定会话
 ```
 
-`--dev` 标志使用 `target/debug/openloom.exe`；去掉则使用 `target/release/openloom.exe`。
+### MCP 管理
 
-#### 安装 Electron
-
-由于网络原因，直接 `npm install` 可能失败。建议：
-
-```bash
-# 方案 A：使用 Hanako 已有的 Electron 二进制（推荐）
-F:/openhanako/node_modules/electron/dist/electron.exe F:/openLoom/electron --dev
-
-# 方案 B：通过 npm 安装（需要网络）
-cd electron && npm install
+```powershell
+.\target\release\lume.exe mcp add --name my-server --transport stdio --command node --args server.js
+.\target\release\lume.exe mcp list
 ```
 
-### 仅开发前端
+## 核心功能
+
+### 多 Agent 可配置
+
+- `AgentConfig` 16 个字段（system_prompt_override / model / temperature / tool_scope / allowed_tools 等）
+- 5 个 `agent.config.*` RPC 方法
+- 会话绑定 agent（`session.bind_agent`）
+- Agent 作为 tokio task 独立运行
+
+### 知识图谱长期记忆
+
+- 四表结构：kg_nodes / kg_edges / kg_aliases / kg_evidence
+- GraphStore 10 种图查询（search_entities / neighbors / walk / path_between / top_interests）
+- 每轮对话自动注入相关 KG 上下文
+- LLM 对话后实体自动提取写入
+
+### Skills 兼容
+
+- 兼容 Claude Code + OpenClaw SKILL.md 格式
+- 21 个 YAML 字段解析 + 运行时门控
+- `use_skill(name)` 工具：LLM 可获取完整 skill 指令体
+- 扫描 `~/.claude/skills/` / `~/.openclaw/skills/` / `~/.loom/skills/`
+
+### Plugin 系统
+
+- 兼容 Claude Code (manifest.json) + openLoom (plugin.toml) 格式
+- 递归扫描 4 层，自动发现 SKILL.md 目录
+- 扫描 `~/.claude/plugins/` / `~/.openclaw/plugins/` / `~/.loom/plugins/`
+- 支持捆绑 Skills + MCP 配置
+
+### MCP 调用
+
+- 双传输：stdio 子进程 + HTTP/SSE
+- `resources/list` / `resources/read` 协议支持
+- 工具调用超时保护（默认 60s）
+- 连接健康检查
+
+### Bridge 外部接入
+
+- `ChannelAdapter` trait 统一抽象
+- Telegram Bot API (long polling)
+- WeChat iLink 桥接
+- 飞书 / QQ 按需扩展
+
+### E2E 测试
 
 ```bash
-cd web
-npm run dev        # 启动 Vite dev server → http://localhost:5173
+cargo test -p loom-inference -p loom-memory -p lume-skills -p lume-mcp -p loom-core -p loom-context -p loom-security -p lume-bridge
 ```
 
-前端可独立开发调试，无需 Electron。后端未启动时页面显示"连接中..."状态。
+## 数据目录
 
-### 测试
+| 平台 | 路径 |
+|------|------|
+| Windows | `%USERPROFILE%/.loom/` |
+| macOS | `~/.loom/` |
+| Linux | `~/.loom/` |
 
-```bash
-cargo test  # 180+ 个测试
 ```
-
-
-  To build a packaged installer, the steps are:
-
-  # 1. Build the Rust backend
-  cargo build -p openloom-server --release
-
-  # 2. Build the frontend
-  cd web && npm run build
-
-  # 3. Package Electron
-  cd ../electron && npm run build:win
-
-  The output installer will be in electron/dist/. Let me know if you want to test anything or move on to the next task.
-
+~/.loom/
+├── data/memory.db   ← SQLite (26 表, V1~V9 迁移)
+├── skills/          ← 全局技能 (SKILL.md)
+├── plugins/         ← 插件目录
+├── mcp.json         ← MCP 服务配置
+└── config.toml      ← 应用配置
+```
 
 ## 技术栈
 
@@ -141,135 +154,10 @@ cargo test  # 180+ 个测试
 |----|------|
 | 核心引擎 | Rust 2024 + Tokio |
 | 数据库 | SQLite + FTS5 + refinery 迁移 |
-| 本地推理 | LM Studio / Ollama (HTTP OpenAI-compatible API) |
-| 云端推理 | Anthropic / OpenAI / DeepSeek (reqwest) |
-| HTTP/WS | Axum 0.7 + WebSocket + SSE + JSON-RPC 2.0 |
-| 桌面壳 | Electron 38 |
-| 前端 | React 19 + TypeScript + Zustand 5 + Tiptap + CodeMirror + Tailwind CSS 4 + Vite 6 |
-| 设计系统 | Hanako warm-paper 主题（12 套主题, 51 个 CSS 文件） |
-| CLI / TUI | clap + ratatui + crossterm |
-| KV Cache | safetensors (架构预留) |
-| 安全沙箱 | 声明式权限检查 |
-
-## 项目结构
-
-```
-openLoom/
-├── crates/
-│   ├── memory/              ← Memory Kernel (事件提取+聚合+存储+管线+人格)
-│   ├── models/              ← 共享类型定义 (Intent, JSON-RPC, Config, EngineEvent)
-│   ├── inference/           ← 推理封装 (LM Studio/Ollama + Anthropic/OpenAI/DeepSeek)
-│   ├── router/              ← 智能路由 (关键词意图分类 + 技能匹配)
-│   ├── skills/              ← Skill trait + Registry + ExternalSkill + PluginLoader
-│   ├── engine/              ← 编排引擎 (EventBus + 请求派发 + Agent Loop)→11 模块
-│   ├── server/              ← Axum HTTP + WebSocket + SSE + JSON-RPC 2.0
-│   ├── weaver/              ← 上下文组装 (system prompt + persona + skill + history)
-│   ├── cache/               ← KV Cache trait (NoopCache + SafetensorsCache)
-│   ├── sandbox/             ← 安全沙箱 (声明式权限检查)
-│   ├── loom-utils/          ← 工具库 (~20 子 crate: path, file-search, git-utils, ...)
-│   └── loom-protocol/       ← 协议层 (~20 子 crate: tui, cli, config, skills, tools, ...)
-├── electron/
-│   ├── main.js              ← Electron 主进程 (引擎生命周期 + IPC handler)
-│   ├── preload.js           ← contextBridge (window.openloom + window.hana)
-│   ├── auto-updater.cjs     ← Windows 自动更新
-│   ├── file-text-io.cjs     ← 文件读写 IPC
-│   ├── file-watch-registry.cjs    ← 文件监听
-│   └── workspace-watch-registry.cjs ← 工作区监听
-├── web/
-│   └── src/
-│       ├── adapter.ts       ← JSON-RPC 桥接层 (Hanako stores → Loom engine)
-│       ├── stores/          ← Zustand 状态管理 (15 切片, 网络层改写)
-│       ├── components/      ← Hanako UI 组件 (46+ chat/input/sidebar/shared)
-│       ├── hooks/           ← React hooks (stream buffer, scroll, theme, ...)
-│       ├── utils/           ← 工具函数 (markdown, history, message parser, ...)
-│       ├── themes/          ← 12 套主题 CSS
-│       ├── settings/        ← 设置面板
-│       └── onboarding/      ← 首次启动向导
-├── migrations/              ← refinery SQL 迁移 (V1~V4)
-├── tests/                   ← 集成测试
-└── docs/                    ← 设计文档
-```
-
-## 功能特性
-
-### Mode 系统
-
-四种运行模式，`/mode` 或 `Ctrl+M` 切换：
-
-| 模式 | CLI | 说明 |
-|------|-----|------|
-| Chat（陪伴） | `loom`（默认） | 纯对话，不调工具 |
-| Plan（规划） | — | 只读探索，不改文件 |
-| Code（编码） | `loom code` | 完整 agent 循环 + 全工具 |
-| Assistant | — | 读文件 + 记忆 + 技能，不写不执行 |
-
-### 模型偏好
-
-`/model use local|cloud|auto` 运行时切换本地/云端模型，无需重启。
-
-### 扩展思考
-
-`/think none|low|mid|high|max` 控制 LLM 思考深度（1K~64K token 预算）。
-
-### 权限确认
-
-Code 模式下 Medium/High 风险工具调用弹出确认对话框（A 批准 / D 拒绝 / S 全批准）。
-
-### 自动上下文压缩
-
-对话历史超出上下文窗口预算时自动截断旧消息，状态栏显示使用百分比。
-
-### 外部技能 (SKILL.md)
-
-兼容 Claude Code 技能格式。TUI 中输入 `/<skill-name>` 直接激活。
-
-### 插件系统
-
-兼容 Claude Code 插件格式（`.claude-plugin/plugin.json` 或 `.loom-plugin/plugin.json`）。
-
-### 项目指令
-
-在项目根目录放置 `loom.md`，内容自动注入 LLM 系统提示。也兼容 `CLAUDE.md` / `AGENTS.md`。
-
-### 快捷键
-
-| 按键 | 功能 |
-|------|------|
-| `Enter` | 发送消息 |
-| `Shift+Enter` | 换行 |
-| `Ctrl+R` | 增量历史搜索 |
-| `Tab` | 补全 `/` 命令 / 文件路径 |
-| `Esc` | 取消 / 关闭弹窗 |
-| `Ctrl+C`（一次） | 中断当前生成 |
-
-> 完整快捷键和斜杠命令参考见 [docs/tui-usage.md](docs/tui-usage.md)
-
-## 数据目录
-
-| 平台 | 路径 |
-|------|------|
-| Windows | `%APPDATA%/openLoom/` |
-| macOS | `~/Library/Application Support/openLoom/` |
-| Linux | `~/.local/share/openLoom/` |
-
-```
-<data_dir>/
-├── loom.md        ← 全局指令
-├── plugins/       ← 插件目录（递归扫描）
-├── skills/        ← 全局独立技能
-├── models/        ← GGUF 模型
-├── db/            ← SQLite
-└── config.toml    ← 配置
-```
-
-## 已知技术债
-
-| 债项 | 严重度 | 说明 |
-|------|--------|------|
-| 引擎栈溢出 | HIGH | `loom serve` 启动时线程栈溢出，需排查 (不影响前端开发) |
-| SSE 流式发全文非逐 token | HIGH | 待 LM Studio 逐 token 流式适配 |
-| EventSource unmount 时未关闭 | MEDIUM | — |
-| skills invoke() 错误链丢失 | LOW | — |
+| 推理 | Anthropic / OpenAI / DeepSeek / LM Studio / Ollama |
+| 服务 | Axum 0.7 + WebSocket + JSON-RPC 2.0 |
+| CLI | clap + tracing-subscriber |
+| 前端 | React 19 + Tailwind CSS 4 + Vite 6 (Phase 4 迁移中) |
 
 ## 许可证
 
