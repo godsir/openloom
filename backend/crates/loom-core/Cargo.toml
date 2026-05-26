@@ -9,6 +9,7 @@ loom-types = { path = "../loom-types" }
 loom-inference = { path = "../loom-inference" }
 lume-mcp = { path = "../lume-mcp" }
 loom-memory = { path = "../loom-memory" }
+loom-context = { path = "../loom-context" }
 loom-security = { path = "../loom-security" }
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }
 anyhow = "1"

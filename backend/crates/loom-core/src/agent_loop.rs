@@ -5,6 +5,7 @@
 //! until the LLM produces a final text response or max iterations is hit.
 
 use anyhow::Result;
+use loom_context::ContextAssembler;
 use loom_inference::engine::CloudClient;
 use loom_types::{CompletionRequest, ContentPart, Message, Role, StreamDelta};
 use loom_security::check_permission;
@@ -22,6 +23,8 @@ pub struct TurnResult {
     pub iterations: usize,
     pub prompt_tokens: usize,
     pub completion_tokens: usize,
+    /// Number of KV cache hits during this turn (local models only).
+    pub cache_hits: u64,
 }
 
 /// Configuration for the agent loop.
@@ -54,23 +57,14 @@ pub async fn run_agent_turn(
     history: &[Message],
     user_message: &str,
     config: &AgentLoopConfig,
+    allowed_tools: &Option<Vec<String>>,
+    disallowed_tools: &Option<Vec<String>>,
 ) -> Result<TurnResult> {
-    let mut messages = Vec::with_capacity(history.len() + 2);
-
-    // System prompt
-    messages.push(Message {
-        role: Role::System,
-        content: vec![ContentPart::Text { text: config.system_prompt.clone() }],
-        timestamp: chrono::Utc::now(),
-    });
-
-    // Conversation history
-    messages.extend_from_slice(history);
-
-    // Current user message
+    client.prefix_cache_reset();
+    let mut tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
+    let assembler = ContextAssembler::new(&config.system_prompt, 8192);
+    let mut messages = assembler.build(None, history, &tools)?;
     messages.push(Message::user(user_message));
-
-    let mut tools = registry.all_definitions();
     let mut tool_calls_made = 0;
     let mut total_prompt = 0usize;
     let mut total_completion = 0usize;
@@ -119,14 +113,18 @@ pub async fn run_agent_turn(
                 });
             }
 
-            // Add assistant message with tool calls
-            let assistant_content: Vec<ContentPart> = response.tool_calls.iter().map(|tc| {
-                ContentPart::ToolCall {
+            // Add assistant message with tool calls + thinking (if any)
+            let mut assistant_content: Vec<ContentPart> = Vec::new();
+            if let Some(ref thinking) = response.thinking {
+                assistant_content.push(ContentPart::Thinking { text: thinking.clone() });
+            }
+            for tc in &response.tool_calls {
+                assistant_content.push(ContentPart::ToolCall {
                     id: tc.id.clone(),
                     name: tc.name.clone(),
                     arguments: tc.arguments.clone(),
-                }
-            }).collect();
+                });
+            }
             messages.push(Message {
                 role: Role::Assistant,
                 content: assistant_content,
@@ -174,21 +172,25 @@ pub async fn run_agent_turn(
             response.text.clone()
         };
 
+        let cache_stats = client.prefix_cache_stats();
         return Ok(TurnResult {
             response: response_text,
             tool_calls_made,
             iterations: iteration + 1,
             prompt_tokens: total_prompt,
             completion_tokens: total_completion,
+            cache_hits: cache_stats.hits,
         });
     }
 
+    let cache_stats = client.prefix_cache_stats();
     Ok(TurnResult {
         response: "Agent reached maximum iterations without resolving.".into(),
         tool_calls_made,
         iterations: config.max_iterations,
         prompt_tokens: total_prompt,
         completion_tokens: total_completion,
+        cache_hits: cache_stats.hits,
     })
 }
 
@@ -200,17 +202,14 @@ pub async fn run_agent_turn_streaming(
     user_message: &str,
     config: &AgentLoopConfig,
     delta_tx: mpsc::Sender<StreamDelta>,
+    allowed_tools: &Option<Vec<String>>,
+    disallowed_tools: &Option<Vec<String>>,
 ) -> Result<TurnResult> {
-    let mut messages = Vec::with_capacity(history.len() + 2);
-    messages.push(Message {
-        role: Role::System,
-        content: vec![ContentPart::Text { text: config.system_prompt.clone() }],
-        timestamp: chrono::Utc::now(),
-    });
-    messages.extend_from_slice(history);
+    client.prefix_cache_reset();
+    let mut tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
+    let assembler = ContextAssembler::new(&config.system_prompt, 8192);
+    let mut messages = assembler.build(None, history, &tools)?;
     messages.push(Message::user(user_message));
-
-    let mut tools = registry.all_definitions();
     let mut tool_calls_made = 0;
     let mut total_prompt = 0usize;
     let mut total_completion = 0usize;
@@ -230,24 +229,35 @@ pub async fn run_agent_turn_streaming(
             thinking_budget: None,
         };
 
-        // Real streaming: use complete_stream_structured to get token-by-token deltas
-        let (stream_tx, mut stream_rx) = mpsc::channel::<StreamDelta>(256);
-        client.complete_stream_structured(request, stream_tx).await?;
+        // Real streaming: use complete_stream_structured to get token-by-token deltas.
+        // Use unbounded channel + select! to avoid deadlock — stream sender and
+        // receiver must run concurrently.
+        let (stream_tx, mut stream_rx) = mpsc::channel::<StreamDelta>(4096);
+        let stream_fut = client.complete_stream_structured(request, stream_tx);
+        tokio::pin!(stream_fut);
+        let mut stream_done = false;
 
         let mut pending_tool_calls: Vec<(usize, String, String, String)> = Vec::new();
         let mut this_text = String::new();
+        let mut this_thinking = String::new();
 
-        while let Some(delta) = stream_rx.recv().await {
-            match delta {
+        while !stream_done {
+            tokio::select! {
+                r = &mut stream_fut => { r?; stream_done = true; }
+                delta = stream_rx.recv() => {
+                    let Some(delta) = delta else { break };
+                    match delta {
                 StreamDelta::Text(t) => {
                     this_text.push_str(&t);
                     let _ = delta_tx.send(StreamDelta::Text(t)).await;
                 }
                 StreamDelta::Reasoning(t) => {
+                    this_thinking.push_str(&t);
                     let _ = delta_tx.send(StreamDelta::Reasoning(t)).await;
                 }
                 StreamDelta::ToolCallBegin { index, id, name } => {
-                    pending_tool_calls.push((index, id, name, String::new()));
+                    pending_tool_calls.push((index, id.clone(), name.clone(), String::new()));
+                    let _ = delta_tx.send(StreamDelta::ToolCallBegin { index, id, name }).await;
                 }
                 StreamDelta::ToolCallArgsChunk { index, chunk } => {
                     if let Some(tc) = pending_tool_calls.iter_mut().find(|(i, _, _, _)| *i == index) {
@@ -258,16 +268,36 @@ pub async fn run_agent_turn_streaming(
                     total_prompt += prompt_tokens as usize;
                     total_completion += completion_tokens as usize;
                 }
+                    }
+                }
+            }
+        }
+
+
+        // Drain any remaining deltas after stream completes
+        while let Ok(delta) = stream_rx.try_recv() {
+            match delta {
+                StreamDelta::Text(t) => { this_text.push_str(&t); let _ = delta_tx.send(StreamDelta::Text(t)).await; }
+                StreamDelta::Reasoning(t) => { let _ = delta_tx.send(StreamDelta::Reasoning(t)).await; }
+                StreamDelta::Usage { prompt_tokens, completion_tokens, .. } => {
+                    total_prompt += prompt_tokens as usize;
+                    total_completion += completion_tokens as usize;
+                }
+                _ => {}
             }
         }
 
         if !pending_tool_calls.is_empty() {
-            let assistant_content: Vec<ContentPart> = pending_tool_calls.iter().map(|(_, id, name, args)| {
-                ContentPart::ToolCall {
+            let mut assistant_content: Vec<ContentPart> = Vec::new();
+            if !this_thinking.is_empty() {
+                assistant_content.push(ContentPart::Thinking { text: std::mem::take(&mut this_thinking) });
+            }
+            for (_, id, name, args) in &pending_tool_calls {
+                assistant_content.push(ContentPart::ToolCall {
                     id: id.clone(), name: name.clone(),
                     arguments: serde_json::from_str(args).unwrap_or(serde_json::Value::String(args.clone())),
-                }
-            }).collect();
+                });
+            }
             messages.push(Message { role: Role::Assistant, content: assistant_content, timestamp: chrono::Utc::now() });
 
             for (_, tc_id, tc_name, tc_args) in &pending_tool_calls {
@@ -292,5 +322,6 @@ pub async fn run_agent_turn_streaming(
         break;
     }
 
-    Ok(TurnResult { response: final_text, tool_calls_made, iterations: 1, prompt_tokens: total_prompt, completion_tokens: total_completion })
+    let cache_stats = client.prefix_cache_stats();
+    Ok(TurnResult { response: final_text, tool_calls_made, iterations: 1, prompt_tokens: total_prompt, completion_tokens: total_completion, cache_hits: cache_stats.hits })
 }

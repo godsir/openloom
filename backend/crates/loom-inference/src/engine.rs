@@ -1,80 +1,440 @@
-//! InferenceEngine (local model stub) and CloudClient trait.
+//! InferenceEngine — local inference via OpenAI-compatible HTTP API (LM Studio / Ollama)
+//! and CloudClient trait for provider dispatch.
 
 use anyhow::Result;
 use async_trait::async_trait;
-use loom_types::{CompletionRequest, CompletionResponse, GpuInfo, ModelBackend, StreamDelta};
-use std::path::Path;
+use loom_types::{CompletionRequest, CompletionResponse, ContentPart, GpuInfo, Message, ModelBackend, StreamDelta, ToolCall};
+use reqwest::Client as HttpClient;
+use tokio::sync::mpsc;
+use crate::cache::PrefixCache;
 
-#[derive(Debug)]
+/// Local inference engine backed by an OpenAI-compatible HTTP endpoint.
+///
+/// Connects to LM Studio (default `http://localhost:1234/v1`) or Ollama
+/// (`http://localhost:11434/v1`) and implements the `CloudClient` trait
+/// so it slots directly into the agent loop.
 pub struct InferenceEngine {
-    _model_path: std::path::PathBuf,
-    _n_gpu_layers: usize,
+    base_url: String,
+    model: String,
+    http: HttpClient,
+    pub prefix_cache: PrefixCache,
+}
+
+impl std::fmt::Debug for InferenceEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InferenceEngine")
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .finish()
+    }
 }
 
 impl InferenceEngine {
-    pub async fn load(model_path: &Path, n_gpu_layers: usize) -> Result<Self> {
-        tracing::info!(path = %model_path.display(), n_gpu_layers, "loading model");
-        Ok(Self { _model_path: model_path.to_path_buf(), _n_gpu_layers: if n_gpu_layers > 0 { n_gpu_layers } else { 0 } })
+    /// Connect to a local endpoint and trigger model loading if supported.
+    pub async fn connect(base_url: &str, model: &str, _context_size: usize) -> Result<Self> {
+        let base = base_url.trim_end_matches('/').to_string();
+        let http = HttpClient::new();
+
+        // Trigger model load via LM Studio API (non-fatal if it fails)
+        let load_url = base.trim_end_matches("/v1");
+        match http
+            .post(format!("{}/api/v1/models/load", load_url))
+            .json(&serde_json::json!({"model": model}))
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!(%model, "model loaded via LM Studio API");
+            }
+            _ => {
+                tracing::debug!(%model, "model load API skipped (non-LM-Studio or already loaded)");
+            }
+        }
+
+        tracing::info!(%base, %model, "inference engine connected");
+        Ok(Self { base_url: base, model: model.to_string(), http, prefix_cache: PrefixCache::new(2) })
     }
 
-    pub fn load_blocking(model_path: &Path, n_gpu_layers: usize) -> Result<Self> {
-        tracing::info!(path = %model_path.display(), n_gpu_layers, "loading model (sync)");
-        Ok(Self { _model_path: model_path.to_path_buf(), _n_gpu_layers: n_gpu_layers })
+    /// Build an engine pointed at a known endpoint (no load trigger).
+    pub fn new(base_url: String, model: String) -> Self {
+        Self { base_url, model, http: HttpClient::new(), prefix_cache: PrefixCache::new(2) }
     }
 
+    /// Dummy engine for tests — will fail at call time.
     pub fn dummy() -> Self {
-        Self { _model_path: std::path::PathBuf::new(), _n_gpu_layers: 0 }
+        Self { base_url: "http://localhost:1".into(), model: "dummy".into(), http: HttpClient::new(), prefix_cache: PrefixCache::new(2) }
     }
 
+    /// Blocking variant of `connect`.
+    pub fn connect_blocking(base_url: &str, model: &str, context_size: usize) -> Result<Self> {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_time().enable_io().build()?;
+        rt.block_on(Self::connect(base_url, model, context_size))
+    }
+
+    // ── completion ──────────────────────────────────────────────
+
+    /// Send a completion request to the local endpoint.
     pub async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse> {
-        Ok(stub_complete(&req))
+        let messages = lower_messages(&req.effective_messages());
+        let eff = req.effective_messages();
+        let (cache_hit, _) = self.prefix_cache.check(&eff);
+        if cache_hit { tracing::debug!("KV cache hit — llama.cpp reuses prefix"); }
+
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "max_tokens": req.max_tokens,
+            "messages": messages,
+        });
+        if !req.tools.is_empty() {
+            body["tools"] = build_tools_json(&req.tools);
+        }
+        if req.temperature > 0.0 {
+            body["temperature"] = req.temperature.into();
+        }
+
+        let resp = self
+            .http
+            .post(format!("{}/chat/completions", self.base_url))
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Local endpoint error {}: {}", status, text);
+        }
+
+        let json: serde_json::Value = resp.json().await?;
+        let choice = &json["choices"][0]["message"];
+        let raw_text = choice["content"].as_str().unwrap_or("").to_string();
+
+        let tool_calls: Vec<ToolCall> = choice["tool_calls"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|tc| {
+                        Some(ToolCall {
+                            id: tc["id"].as_str()?.to_string(),
+                            name: tc["function"]["name"].as_str()?.to_string(),
+                            arguments: serde_json::from_str(
+                                tc["function"]["arguments"].as_str().unwrap_or("{}"),
+                            )
+                            .unwrap_or_default(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(CompletionResponse {
+            text: if tool_calls.is_empty() { raw_text } else { String::new() },
+            tool_calls,
+            prompt_tokens: json["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as usize,
+            completion_tokens: json["usage"]["completion_tokens"].as_u64().unwrap_or(0) as usize,
+            cached_tokens: 0,
+            latency_ms: 0,
+            thinking: choice["reasoning_content"].as_str().filter(|s| !s.is_empty()).map(String::from),
+        })
     }
 
-    pub async fn complete_stream(&self, req: CompletionRequest, token_tx: tokio::sync::mpsc::Sender<String>) -> Result<()> {
-        let resp = self.complete(req).await?;
-        let _ = token_tx.send(resp.text).await;
+    /// Stream raw tokens via `token_tx`. For structured streaming use `CloudClient::complete_stream_structured`.
+    pub async fn complete_stream(
+        &self,
+        req: CompletionRequest,
+        token_tx: mpsc::Sender<String>,
+    ) -> Result<()> {
+        let messages = lower_messages(&req.effective_messages());
+        let eff = req.effective_messages();
+        let (cache_hit, _) = self.prefix_cache.check(&eff);
+        if cache_hit { tracing::debug!("KV cache hit (stream)"); }
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "max_tokens": req.max_tokens,
+            "messages": messages,
+            "stream": true,
+            "stream_options": {"include_usage": true},
+        });
+        if !req.tools.is_empty() {
+            body["tools"] = build_tools_json(&req.tools);
+        }
+        if req.temperature > 0.0 {
+            body["temperature"] = req.temperature.into();
+        }
+
+        let resp = self
+            .http
+            .post(format!("{}/chat/completions", self.base_url))
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "Local endpoint error {}: {}",
+                resp.status(),
+                resp.text().await.unwrap_or_default()
+            );
+        }
+
+        use futures::StreamExt;
+        let mut stream = resp.bytes_stream();
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            buf.extend_from_slice(&chunk);
+            while let Some(pos) = buf.windows(2).position(|w| w == b"\n\n") {
+                let frame_bytes = buf[..pos].to_vec();
+                buf.drain(..pos + 2);
+                let frame = String::from_utf8_lossy(&frame_bytes);
+                for line in frame.lines() {
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if data == "[DONE]" {
+                            return Ok(());
+                        }
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                            let d = &val["choices"][0]["delta"];
+                            if let Some(r) = d["reasoning_content"].as_str().filter(|s| !s.is_empty()) {
+                                if token_tx.send(format!("\x02REASONING\x02{}", r)).await.is_err() {
+                                    return Ok(());
+                                }
+                            }
+                            if let Some(t) = d["content"].as_str() {
+                                if token_tx.send(t.to_string()).await.is_err() {
+                                    return Ok(());
+                                }
+                            }
+                            if let Some(u) = val.get("usage").filter(|u| u.is_object()) {
+                                let _ = token_tx
+                                    .send(format!(
+                                        "\x00USAGE:{}:{}:{}",
+                                        u["prompt_tokens"].as_u64().unwrap_or(0),
+                                        u["completion_tokens"].as_u64().unwrap_or(0),
+                                        u["prompt_tokens_details"]["cached_tokens"]
+                                            .as_u64()
+                                            .unwrap_or(0),
+                                    ))
+                                    .await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
+    /// Rough token count (char-based estimate — local models vary).
     pub fn token_count(&self, text: &str) -> usize {
         text.chars().count() / 4
     }
 
+    // ── GPU detection ───────────────────────────────────────────
+
     pub fn detect_gpu() -> GpuInfo {
         if let Ok(output) = std::process::Command::new("nvidia-smi")
-            .args(["--query-gpu=name,memory.total", "--format=csv,noheader"]).output()
+            .args(["--query-gpu=name,memory.total", "--format=csv,noheader"])
+            .output()
             && output.status.success()
         {
             let info = String::from_utf8_lossy(&output.stdout);
             if let Some(line) = info.lines().next() {
                 let parts: Vec<&str> = line.split(',').collect();
                 let vendor = parts.first().map(|s| s.trim().to_string()).unwrap_or_default();
-                let vram_mb = parts.get(1)
+                let vram_mb = parts
+                    .get(1)
                     .and_then(|s| s.trim().strip_suffix(" MiB"))
-                    .and_then(|s| s.parse().ok()).unwrap_or(0);
-                return GpuInfo { vendor, vram_mb, supported: vram_mb >= 4096 };
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+                return GpuInfo {
+                    vendor,
+                    vram_mb,
+                    supported: vram_mb >= 4096,
+                };
             }
         }
-        GpuInfo { vendor: "none".into(), vram_mb: 0, supported: false }
+        GpuInfo {
+            vendor: "none".into(),
+            vram_mb: 0,
+            supported: false,
+        }
     }
 }
 
-fn stub_complete(req: &CompletionRequest) -> CompletionResponse {
-    let prompt_chars = req.prompt.chars().count();
-    let response = "[openLoom] No inference backend available.\n\nConfigure a model in config.toml.".to_string();
-    let response_tokens = response.chars().count() / 4;
-    CompletionResponse {
-        text: response, prompt_tokens: prompt_chars / 4, completion_tokens: response_tokens,
-        cached_tokens: 0, latency_ms: 0, tool_calls: Vec::new(), thinking: None,
+// ── CloudClient impl ────────────────────────────────────────────────
+
+#[async_trait]
+impl CloudClient for InferenceEngine {
+    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse> {
+        self.complete(req).await
+    }
+
+    async fn complete_stream(
+        &self,
+        req: CompletionRequest,
+        tx: mpsc::Sender<String>,
+    ) -> Result<()> {
+        self.complete_stream(req, tx).await
+    }
+
+    async fn complete_stream_structured(
+        &self,
+        req: CompletionRequest,
+        tx: mpsc::Sender<StreamDelta>,
+    ) -> Result<()> {
+        let messages = lower_messages(&req.effective_messages());
+        let eff = req.effective_messages();
+        let (cache_hit, _) = self.prefix_cache.check(&eff);
+        if cache_hit { tracing::debug!("KV cache hit (structured stream)"); }
+
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "max_tokens": req.max_tokens,
+            "messages": messages,
+            "stream": true,
+            "stream_options": {"include_usage": true},
+        });
+        if !req.tools.is_empty() {
+            body["tools"] = build_tools_json(&req.tools);
+        }
+        if req.temperature > 0.0 {
+            body["temperature"] = req.temperature.into();
+        }
+
+        let resp = self
+            .http
+            .post(format!("{}/chat/completions", self.base_url))
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "Local endpoint error {}: {}",
+                resp.status(),
+                resp.text().await.unwrap_or_default()
+            );
+        }
+
+        use futures::StreamExt;
+        let mut stream = resp.bytes_stream();
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            buf.extend_from_slice(&chunk);
+            while let Some(pos) = buf.windows(2).position(|w| w == b"\n\n") {
+                let frame_bytes = buf[..pos].to_vec();
+                buf.drain(..pos + 2);
+                let frame = String::from_utf8_lossy(&frame_bytes);
+                for line in frame.lines() {
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if data == "[DONE]" {
+                            return Ok(());
+                        }
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                            let d = &val["choices"][0]["delta"];
+                            if let Some(r) = d["reasoning_content"].as_str()
+                                && !r.is_empty()
+                                && tx.send(StreamDelta::Reasoning(r.to_string())).await.is_err()
+                            {
+                                return Ok(());
+                            }
+                            if let Some(t) = d["content"].as_str()
+                                && !t.is_empty()
+                                && tx.send(StreamDelta::Text(t.to_string())).await.is_err()
+                            {
+                                return Ok(());
+                            }
+                            if let Some(tcs) = d["tool_calls"].as_array() {
+                                for tc in tcs {
+                                    let idx = tc["index"].as_u64().unwrap_or(0) as usize;
+                                    if let (Some(id), Some(name)) =
+                                        (tc["id"].as_str(), tc["function"]["name"].as_str())
+                                        && tx
+                                            .send(StreamDelta::ToolCallBegin {
+                                                index: idx,
+                                                id: id.to_string(),
+                                                name: name.to_string(),
+                                            })
+                                            .await
+                                            .is_err()
+                                    {
+                                        return Ok(());
+                                    }
+                                    if let Some(args) = tc["function"]["arguments"].as_str()
+                                        && !args.is_empty()
+                                        && tx
+                                            .send(StreamDelta::ToolCallArgsChunk {
+                                                index: idx,
+                                                chunk: args.to_string(),
+                                            })
+                                            .await
+                                            .is_err()
+                                    {
+                                        return Ok(());
+                                    }
+                                }
+                            }
+                            if let Some(u) = val.get("usage").filter(|u| u.is_object())
+                                && tx
+                                    .send(StreamDelta::Usage {
+                                        prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0),
+                                        completion_tokens: u["completion_tokens"]
+                                            .as_u64()
+                                            .unwrap_or(0),
+                                        cache_read_tokens: u["prompt_tokens_details"]["cached_tokens"]
+                                            .as_u64()
+                                            .unwrap_or(0),
+                                        cache_write_tokens: 0,
+                                    })
+                                    .await
+                                    .is_err()
+                            {
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn provider(&self) -> ModelBackend {
+        ModelBackend::LmStudio
+    }
+
+    fn model_name(&self) -> &str {
+        &self.model
+    }
+
+    fn prefix_cache_reset(&self) {
+        self.prefix_cache.reset_turn();
+    }
+
+    fn prefix_cache_stats(&self) -> crate::cache::PrefixCacheStats {
+        self.prefix_cache.stats()
     }
 }
 
+// ── CloudClient trait ───────────────────────────────────────────────
+
+/// Common interface for all inference providers (cloud + local).
 #[async_trait]
 pub trait CloudClient: Send + Sync {
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse>;
-    async fn complete_stream(&self, req: CompletionRequest, tx: tokio::sync::mpsc::Sender<String>) -> Result<()>;
-    async fn complete_stream_structured(&self, req: CompletionRequest, tx: tokio::sync::mpsc::Sender<StreamDelta>) -> Result<()> {
-        let (legacy_tx, mut legacy_rx) = tokio::sync::mpsc::channel::<String>(256);
+    async fn complete_stream(
+        &self,
+        req: CompletionRequest,
+        tx: mpsc::Sender<String>,
+    ) -> Result<()>;
+    async fn complete_stream_structured(
+        &self,
+        req: CompletionRequest,
+        tx: mpsc::Sender<StreamDelta>,
+    ) -> Result<()> {
+        let (legacy_tx, mut legacy_rx) = mpsc::channel::<String>(256);
         let forwarder = tokio::spawn(async move {
             while let Some(token) = legacy_rx.recv().await {
                 let delta = if let Some(stripped) = token.strip_prefix("\x02REASONING\x02") {
@@ -82,10 +442,21 @@ pub trait CloudClient: Send + Sync {
                 } else if let Some(stripped) = token.strip_prefix("\x00USAGE:") {
                     let parts: Vec<&str> = stripped.split(':').collect();
                     if parts.len() == 3 {
-                        StreamDelta::Usage { prompt_tokens: parts[0].parse().unwrap_or(0), completion_tokens: parts[1].parse().unwrap_or(0), cached_tokens: parts[2].parse().unwrap_or(0) }
-                    } else { continue; }
-                } else { StreamDelta::Text(token) };
-                if tx.send(delta).await.is_err() { break; }
+                        StreamDelta::Usage {
+                            prompt_tokens: parts[0].parse().unwrap_or(0),
+                            completion_tokens: parts[1].parse().unwrap_or(0),
+                            cache_read_tokens: parts[2].parse().unwrap_or(0),
+                            cache_write_tokens: 0,
+                        }
+                    } else {
+                        continue;
+                    }
+                } else {
+                    StreamDelta::Text(token)
+                };
+                if tx.send(delta).await.is_err() {
+                    break;
+                }
             }
         });
         self.complete_stream(req, legacy_tx).await?;
@@ -94,7 +465,93 @@ pub trait CloudClient: Send + Sync {
     }
     fn provider(&self) -> ModelBackend;
     fn model_name(&self) -> &str;
+    /// Reset per-turn prefix cache state. Default: no-op.
+    fn prefix_cache_reset(&self) {}
+    /// Return prefix cache stats. Default: empty stats.
+    fn prefix_cache_stats(&self) -> crate::cache::PrefixCacheStats { crate::cache::PrefixCacheStats::default() }
 }
+
+// ── helpers ─────────────────────────────────────────────────────────
+
+fn lower_messages(messages: &[Message]) -> Vec<serde_json::Value> {
+    messages
+        .iter()
+        .map(|msg| {
+            let role = msg.role.as_str();
+            let mut obj = serde_json::json!({"role": role});
+
+            // Tool result messages
+            if role == "tool" {
+                if let Some(ContentPart::ToolResult {
+                    tool_call_id,
+                    name: _,
+                    result,
+                }) = msg.content.first()
+                {
+                    obj["tool_call_id"] = serde_json::json!(tool_call_id);
+                    obj["content"] = serde_json::json!(result);
+                }
+                return obj;
+            }
+
+            // Separate text and tool-call parts
+            let texts: Vec<&str> = msg
+                .content
+                .iter()
+                .filter_map(|p| match p {
+                    ContentPart::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let tc_vals: Vec<serde_json::Value> = msg
+                .content
+                .iter()
+                .filter_map(|p| match p {
+                    ContentPart::ToolCall { id, name, arguments } => {
+                        Some(serde_json::json!({
+                            "id": id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": serde_json::to_string(arguments).unwrap_or_default(),
+                            },
+                        }))
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            if texts.is_empty() && tc_vals.is_empty() {
+                obj["content"] = serde_json::json!("");
+            } else if !texts.is_empty() {
+                obj["content"] = serde_json::json!(texts.join("\n"));
+                if !tc_vals.is_empty() {
+                    obj["tool_calls"] = serde_json::json!(tc_vals);
+                }
+            } else {
+                obj["content"] = serde_json::Value::Null;
+                obj["tool_calls"] = serde_json::json!(tc_vals);
+            }
+            obj
+        })
+        .collect()
+}
+
+fn build_tools_json(tools: &[loom_types::ToolDefinition]) -> serde_json::Value {
+    serde_json::json!(tools
+        .iter()
+        .map(|t| serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.input_schema,
+            },
+        }))
+        .collect::<Vec<_>>())
+}
+
+// ── tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -107,8 +564,16 @@ mod tests {
     }
 
     #[test]
-    fn test_load_blocking_does_not_crash() {
-        let result = InferenceEngine::load_blocking(std::path::Path::new("nonexistent.gguf"), 0);
+    fn test_connect_blocking_does_not_crash() {
+        // Should return Ok even if endpoint is unreachable during test
+        let result = InferenceEngine::connect_blocking("http://localhost:1", "test-model", 4096);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_dummy_engine_builds() {
+        let engine = InferenceEngine::dummy();
+        assert_eq!(engine.model_name(), "dummy");
+        assert_eq!(engine.provider(), ModelBackend::LmStudio);
     }
 }

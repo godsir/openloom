@@ -9,6 +9,7 @@
 
 mod mcp_config;
 mod memory;
+mod plugins;
 
 use clap::{Parser, Subcommand};
 use std::sync::Arc;
@@ -39,7 +40,7 @@ enum Command {
     },
     /// Interactive chat demo (auto-loads MCP configs from ~/.openloom/mcp.json)
     Chat {
-        #[arg(long, default_value = "claude-sonnet-4-6")]
+        #[arg(long, default_value = "deepseek-v4-flash")]
         model: String,
         #[arg(long)]
         api_key: Option<String>,
@@ -55,6 +56,12 @@ enum Command {
         /// Skip loading MCP configs from file
         #[arg(long)]
         no_mcp_config: bool,
+        /// Resume a named session
+        #[arg(long)]
+        resume: Option<String>,
+        /// Continue the previous conversation (alias for --resume default)
+        #[arg(short = 'c', long, visible_alias = "c")]
+        r#continue: bool,
     },
     /// Manage MCP servers
     Mcp {
@@ -99,11 +106,32 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Serve { host, port } => {
             let orchestrator = Arc::new(loom_core::Orchestrator::new(3, 20, 300));
-    orchestrator.init_spawn_agent(3, 300).await;
+            orchestrator.init_spawn_agent(3, 300).await;
+            // Set up data directory and memory store
+            let loom_dir = data_dir();
+            let _ = std::fs::create_dir_all(loom_dir.join("data"));
+            let db_path = loom_dir.join("data").join("memory.db");
+            match memory::LoomMemoryStore::open(&db_path) {
+                Ok(store) => {
+                    orchestrator.set_memory_store(Box::new(store)).await;
+                    let _ = orchestrator.load_agent_configs().await;
+                    println!("[server] memory store: {}", db_path.display());
+                }
+                Err(e) => println!("[server] memory unavailable: {}", e),
+            }
             loom_server::serve(&host, port, orchestrator).await?;
         }
-        Command::Chat { model, api_key, api_key_env, provider, base_url, mcp_args, no_mcp_config } => {
-            run_chat_demo(&model, api_key.as_deref(), api_key_env.as_deref(), &provider, base_url.as_deref(), mcp_args.as_deref(), !no_mcp_config).await?;
+        Command::Chat { model, api_key, api_key_env, provider, base_url, mcp_args, no_mcp_config, resume, r#continue } => {
+            // --resume <name>: resume named session | -c: continue "default" session
+            // neither: fresh session with unique ID (no history loaded)
+            let (session, is_new) = if let Some(name) = resume {
+                (name, false)
+            } else if r#continue {
+                ("default".to_string(), false)
+            } else {
+                (format!("session-{}", chrono::Utc::now().timestamp()), true)
+            };
+            run_chat_demo(&model, api_key.as_deref(), api_key_env.as_deref(), &provider, base_url.as_deref(), mcp_args.as_deref(), !no_mcp_config, &session, is_new).await?;
         }
         Command::Mcp { action } => match action {
             McpAction::Add { name, transport, url, command, args, headers } => {
@@ -177,7 +205,7 @@ fn mcp_list() -> anyhow::Result<()> {
 // Chat demo
 // ============================================================================
 
-async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&str>, provider: &str, base_url: Option<&str>, mcp_args: Option<&str>, load_config: bool) -> anyhow::Result<()> {
+async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&str>, provider: &str, base_url: Option<&str>, mcp_args: Option<&str>, load_config: bool, session: &str, is_new: bool) -> anyhow::Result<()> {
     use loom_core::MemoryStore;
     use loom_inference::{AnthropicClient, OpenAIClient};
     use loom_inference::engine::CloudClient;
@@ -196,6 +224,7 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
     } else { provider };
 
     println!("openLoom v2 — Chat Demo (/exit to quit, Ctrl+C to exit)");
+    println!("  session:  {}", session);
     println!("  model:    {}", model);
     if let Some(url) = base_url { println!("  base_url: {}", url); }
 
@@ -204,7 +233,10 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
 
     // Cloud client
     let client: Box<dyn CloudClient> = if let Some(url) = base_url {
-        Box::new(OpenAIClient::new(api_key.clone(), model.to_string(), url.to_string(), false))
+        match provider {
+            "anthropic" => Box::new(AnthropicClient::new(api_key.clone(), model.to_string(), url.to_string())),
+            _ => Box::new(OpenAIClient::new(api_key.clone(), model.to_string(), url.to_string(), false)),
+        }
     } else { match provider {
         "anthropic" => Box::new(AnthropicClient::new(api_key.clone(), model.to_string(), "https://api.anthropic.com".into())),
         "deepseek" => Box::new(OpenAIClient::new(api_key.clone(), model.to_string(), "https://api.deepseek.com/v1".into(), false)),
@@ -264,6 +296,11 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
                 format!("- **{}**: {}", s.manifest.name, s.manifest.description)
             }).collect::<Vec<_>>().join("\n");
             orchestrator.set_skill_context(ctx).await;
+            // Store full skill bodies for use_skill tool
+            let bodies: std::collections::HashMap<String, String> = skills.iter().map(|s| {
+                (s.manifest.name.clone(), s.body.clone())
+            }).collect();
+            orchestrator.set_skill_bodies(bodies).await;
             println!("[skills] {} loaded", skills.len());
         }
         Ok(_) => println!("[skills] 0 loaded (no SKILL.md found)"),
@@ -281,7 +318,19 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
                 println!("[memory] persona loaded");
             }
             orchestrator.set_memory_store(Box::new(store)).await;
-            let _ = orchestrator.load_history("default").await;
+            let _ = orchestrator.load_agent_configs().await;
+            if !is_new {
+                let _ = orchestrator.load_history(session).await;
+                let history = orchestrator.session_history(session).await;
+                if !history.is_empty() {
+                    println!("\n--- session '{}' ({} messages) ---", session, history.len());
+                    for msg in &history {
+                        let role = msg.role.as_str();
+                        println!("[{}] {}", role, msg.text_content());
+                }
+                println!("--- end of history ---\n");
+            }
+            }
             println!("[memory] store opened: {}", db_path.display());
         }
         Err(e) => println!("[memory] unavailable: {}", e),
@@ -333,6 +382,88 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
     }
 
     // Tool list
+    // === Plugins ===
+    let home = loom_dir.parent().unwrap_or(&loom_dir);
+    let mut plugin_manager = plugins::PluginManager::new();
+    match plugin_manager.discover(home) {
+        Ok(n) if n > 0 => {
+            println!("[plugins] {} discovered:", n);
+            for (name, desc, source) in plugin_manager.list() {
+                println!("  - {} [{}]: {}", name, source, if desc.is_empty() { "(no description)" } else { desc });
+            }
+            // Load plugin skill paths into skill loader
+            for path in plugin_manager.skill_paths() {
+                if path.exists() {
+                    skill_loader.add_path(path, "plugin");
+                }
+            }
+            // Re-discover skills with plugin paths included
+            match skill_loader.discover() {
+                Ok(new_skills) if !new_skills.is_empty() => {
+                    let ctx: String = new_skills.iter().map(|s| {
+                        format!("- **{}**: {}", s.manifest.name, s.manifest.description)
+                    }).collect::<Vec<_>>().join("\n");
+                    orchestrator.set_skill_context(ctx).await;
+                    let bodies: std::collections::HashMap<String, String> = new_skills.iter().map(|s| {
+                        (s.manifest.name.clone(), s.body.clone())
+                    }).collect();
+                    orchestrator.set_skill_bodies(bodies).await;
+                    println!("[plugins] {} skills loaded", new_skills.len());
+                }
+                _ => {}
+            }
+            // Connect plugin MCP servers
+            for mcp in plugin_manager.mcp_configs() {
+                let config = lume_mcp::McpServerConfig {
+                    name: mcp.name.clone(),
+                    transport: mcp.transport.clone(),
+                    command: mcp.command.clone(),
+                    args: mcp.args.clone(),
+                    url: mcp.url.clone(),
+                    headers: mcp.headers.clone(),
+                    env: Default::default(),
+                    cwd: None,
+                    startup_timeout_secs: 30,
+                    tool_timeout_secs: 60,
+                    enabled_tools: None,
+                    disabled_tools: None,
+                };
+                println!("[plugins] connecting MCP '{}'...", mcp.name);
+                match orchestrator.connect_mcp_server(config).await {
+                    Ok(name) => println!("[plugins] MCP '{}' connected", name),
+                    Err(e) => println!("[plugins] MCP '{}' failed: {:.120}", mcp.name, e),
+                }
+            }
+        }
+        Ok(_) => {}
+        Err(e) => println!("[plugins] error: {}", e),
+    }
+
+    // === Bridge ===
+    let bridge_manager = std::sync::Arc::new(lume_bridge::BridgeManager::new());
+    if let Ok(token) = std::env::var("TELEGRAM_BOT_TOKEN") {
+        if !token.is_empty() {
+            let tg = lume_bridge::TelegramAdapter::new(token);
+            let mgr = bridge_manager.clone();
+            let _handle = tokio::spawn(async move {
+                mgr.register(Box::new(tg)).await;
+                let _ = mgr.start_platform(lume_bridge::Platform::Telegram).await;
+                println!("[bridge] Telegram connected");
+            });
+        }
+    }
+    if let Ok(key) = std::env::var("ILINK_API_KEY") {
+        if !key.is_empty() {
+            let wx = lume_bridge::WechatAdapter::new(key);
+            let mgr = bridge_manager.clone();
+            let _handle = tokio::spawn(async move {
+                mgr.register(Box::new(wx)).await;
+                let _ = mgr.start_platform(lume_bridge::Platform::Wechat).await;
+                println!("[bridge] WeChat (iLink) connected");
+            });
+        }
+    }
+
     let registry = orchestrator.tool_registry().await;
     let names = registry.list_names();
     println!("[tools] {} available: {:?}\n", names.len(), names);
@@ -375,12 +506,74 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
             continue;
         }
 
-        match orchestrator.process_message(&line).await {
-            Ok(turn) => {
-                println!("\n{}\n", turn.response);
-                if turn.tool_calls_made > 0 {
-                    println!("[{} tools, {} iters, {} tokens]\n", turn.tool_calls_made, turn.iterations, turn.prompt_tokens + turn.completion_tokens);
+        use loom_types::StreamDelta;
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamDelta>(256);
+        let mut fut = std::pin::pin!(orchestrator.process_message_streaming(&line, tx, session));
+        let mut tool_idx = 0usize;
+        let mut think_buf = String::new();
+        let (mut prompt, mut completion, mut cache_read, mut cache_write) = (0u64, 0u64, 0u64, 0u64);
+        println!();
+        let result = loop {
+            tokio::select! {
+                r = &mut fut => { break r; }
+                delta = rx.recv() => match delta {
+                    Some(StreamDelta::Text(t)) => {
+                        if !think_buf.is_empty() {
+                            print!("\n  [think] {}\n", think_buf); think_buf.clear();
+                        }
+                        print!("{}", t); std::io::stdout().flush().ok();
+                    }
+                    Some(StreamDelta::Reasoning(r)) => { think_buf.push_str(&r); }
+                    Some(StreamDelta::ToolCallBegin { name, .. }) => {
+                        if !think_buf.is_empty() {
+                            print!("\n  [think] {}\n", think_buf); think_buf.clear();
+                        }
+                        tool_idx += 1;
+                        print!("\n  [{tool_idx}] calling {}... ", name); std::io::stdout().flush().ok();
+                    }
+                    Some(StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens }) => {
+                        prompt += prompt_tokens;
+                        completion += completion_tokens;
+                        cache_read += cache_read_tokens;
+                        cache_write += cache_write_tokens;
+                    }
+                    None => { break fut.await; }
+                    _ => {}
                 }
+            }
+        };
+        // Drain any remaining deltas
+        while let Ok(delta) = rx.try_recv() {
+            match delta {
+                StreamDelta::Text(t) => { print!("{}", t); std::io::stdout().flush().ok(); }
+                StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens } => {
+                    prompt += prompt_tokens;
+                    completion += completion_tokens;
+                    cache_read += cache_read_tokens;
+                    cache_write += cache_write_tokens;
+                }
+                _ => {}
+            }
+        }
+        // Flush any remaining thinking
+        if !think_buf.is_empty() {
+            print!("\n  [think] {}\n", think_buf);
+        }
+        match result {
+            Ok(turn) => {
+                // Fallback to TurnResult if streaming didn't report usage
+                if prompt == 0 && completion == 0 {
+                    prompt = turn.prompt_tokens as u64;
+                    completion = turn.completion_tokens as u64;
+                }
+                println!();
+                let mut parts = vec![format!("in {}", prompt), format!("out {}", completion)];
+                if cache_read > 0 { parts.push(format!("cr {}", cache_read)); }
+                if cache_write > 0 { parts.push(format!("cw {}", cache_write)); }
+                if turn.cache_hits > 0 { parts.push(format!("kv {}", turn.cache_hits)); }
+                if turn.tool_calls_made > 0 { parts.push(format!("{} tools", turn.tool_calls_made)); }
+                if turn.iterations > 1 { parts.push(format!("{} iters", turn.iterations)); }
+                println!("[{}]\n", parts.join(" | "));
             }
             Err(e) => println!("\n[error] {}\n", e),
         }

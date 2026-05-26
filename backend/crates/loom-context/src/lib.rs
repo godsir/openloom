@@ -32,29 +32,27 @@ impl ContextAssembler {
             Some(p) if !p.is_empty() => format!("{}\n\n[User Profile]\n{}", self.system_prompt, p),
             _ => self.system_prompt.clone(),
         };
-        messages.push(Message::user(system_content)); // Convert to system role when weaver is ready
-        // Note: Role::System exists but context assembler uses user for now
+        messages.push(Message {
+            role: loom_types::Role::System,
+            content: vec![loom_types::ContentPart::Text { text: system_content }],
+            timestamp: chrono::Utc::now(),
+        });
 
-        // Conversation history (truncated to max tokens)
-        let mut token_count = 0;
-        for msg in history.iter().rev() {
+        // Conversation history (truncated to max tokens, newest first scan)
+        let mut token_count = 0usize;
+        let mut included: Vec<usize> = Vec::new();
+        for (i, msg) in history.iter().enumerate().rev() {
             let msg_tokens = msg.text_content().chars().count() / 4;
             if token_count + msg_tokens > self.max_history_tokens {
                 break;
             }
             token_count += msg_tokens;
+            included.push(i);
         }
-        // Reverse back to chronological order
-        let mut history_slice: Vec<Message> = history.iter()
-            .rev()
-            .take_while(|_| {
-                // simplified: take last N messages
-                true
-            })
-            .cloned()
-            .collect();
-        history_slice.reverse();
-        messages.extend(history_slice);
+        included.reverse(); // chronological order
+        for i in included {
+            messages.push(history[i].clone());
+        }
 
         Ok(messages)
     }

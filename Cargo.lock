@@ -4625,6 +4625,7 @@ name = "loom-context"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "loom-types",
  "serde",
  "serde_json",
@@ -4638,6 +4639,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "loom-context",
  "loom-inference",
  "loom-memory",
  "loom-security",
@@ -4905,6 +4907,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "futures",
  "loom-types",
  "reqwest",
@@ -5465,6 +5468,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "lume-bridge"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "loom-types",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "lume-cli"
 version = "0.2.0"
 dependencies = [
@@ -5478,12 +5497,14 @@ dependencies = [
  "loom-memory",
  "loom-server",
  "loom-types",
+ "lume-bridge",
  "lume-mcp",
  "lume-skills",
  "rusqlite",
  "serde",
  "serde_json",
  "tokio",
+ "toml 0.9.12+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
 ]

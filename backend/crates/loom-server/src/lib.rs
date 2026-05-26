@@ -47,6 +47,11 @@ async fn dispatch_handler_http(
 /// Start the server on the given address.
 pub async fn serve(host: &str, port: u16, orchestrator: Arc<Orchestrator>) -> anyhow::Result<()> {
     let state = Arc::new(AppState::new(orchestrator));
+    // Hydrate sessions from persisted store
+    let sessions = state.orchestrator.list_persisted_sessions().await;
+    for (id, created_at, message_count, title) in sessions {
+        state.sessions.restore(id, created_at, message_count, title).await;
+    }
     let app = build_router(state);
     let addr = format!("{}:{}", host, port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;

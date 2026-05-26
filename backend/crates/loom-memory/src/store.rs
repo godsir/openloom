@@ -260,3 +260,138 @@ impl<'a> CognitionStore<'a> {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 }
+
+// ============================================================================
+// AgentConfigStore — named agent profile CRUD
+// ============================================================================
+
+pub struct AgentConfigStore<'a> {
+    conn: &'a Connection,
+}
+
+impl<'a> AgentConfigStore<'a> {
+    pub fn new(conn: &'a Connection) -> Self {
+        Self { conn }
+    }
+
+    pub fn upsert(&self, config: &loom_types::AgentConfig) -> Result<()> {
+        let allowed_json = serde_json::to_string(&config.allowed_tools).ok();
+        let disallowed_json = serde_json::to_string(&config.disallowed_tools).ok();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO agent_configs
+             (name, avatar, persona, system_prompt_override, model, thinking_level,
+              temperature, tool_scope, allowed_tools, disallowed_tools,
+              max_iterations, timeout_secs, max_concurrent_subagents,
+              is_primary, memory_enabled, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, datetime('now'))",
+            params![
+                config.name,
+                config.avatar,
+                config.persona,
+                config.system_prompt_override,
+                config.model,
+                config.thinking_level,
+                config.temperature,
+                config.tool_scope,
+                allowed_json,
+                disallowed_json,
+                config.max_iterations,
+                config.timeout_secs,
+                config.max_concurrent_subagents as i64,
+                config.is_primary as i64,
+                config.memory_enabled as i64,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get(&self, name: &str) -> Result<Option<loom_types::AgentConfig>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, avatar, persona, system_prompt_override, model, thinking_level,
+                    temperature, tool_scope, allowed_tools, disallowed_tools,
+                    max_iterations, timeout_secs, max_concurrent_subagents,
+                    is_primary, memory_enabled
+             FROM agent_configs WHERE name = ?1",
+        )?;
+        let row = stmt.query_row(params![name], |row| {
+            let allowed_s: Option<String> = row.get(8)?;
+            let disallowed_s: Option<String> = row.get(9)?;
+            Ok(loom_types::AgentConfig {
+                name: row.get(0)?,
+                avatar: row.get(1)?,
+                persona: row.get::<_, String>(2).unwrap_or_default(),
+                system_prompt_override: row.get(3)?,
+                model: row.get(4)?,
+                thinking_level: row.get(5)?,
+                temperature: row.get(6)?,
+                tool_scope: row.get(7)?,
+                allowed_tools: allowed_s.and_then(|s| serde_json::from_str(&s).ok()),
+                disallowed_tools: disallowed_s.and_then(|s| serde_json::from_str(&s).ok()),
+                max_iterations: row.get(10)?,
+                timeout_secs: row.get(11)?,
+                max_concurrent_subagents: row.get::<_, i64>(12).unwrap_or(5) as usize,
+                is_primary: row.get::<_, i64>(13).unwrap_or(0) != 0,
+                memory_enabled: row.get::<_, i64>(14).unwrap_or(0) != 0,
+            })
+        }).ok();
+        Ok(row)
+    }
+
+    pub fn list(&self) -> Result<Vec<loom_types::AgentConfig>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, avatar, persona, system_prompt_override, model, thinking_level,
+                    temperature, tool_scope, allowed_tools, disallowed_tools,
+                    max_iterations, timeout_secs, max_concurrent_subagents,
+                    is_primary, memory_enabled
+             FROM agent_configs ORDER BY name",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let allowed_s: Option<String> = row.get(8)?;
+            let disallowed_s: Option<String> = row.get(9)?;
+            Ok(loom_types::AgentConfig {
+                name: row.get(0)?,
+                avatar: row.get(1)?,
+                persona: row.get::<_, String>(2).unwrap_or_default(),
+                system_prompt_override: row.get(3)?,
+                model: row.get(4)?,
+                thinking_level: row.get(5)?,
+                temperature: row.get(6)?,
+                tool_scope: row.get(7)?,
+                allowed_tools: allowed_s.and_then(|s| serde_json::from_str(&s).ok()),
+                disallowed_tools: disallowed_s.and_then(|s| serde_json::from_str(&s).ok()),
+                max_iterations: row.get(10)?,
+                timeout_secs: row.get(11)?,
+                max_concurrent_subagents: row.get::<_, i64>(12).unwrap_or(5) as usize,
+                is_primary: row.get::<_, i64>(13).unwrap_or(0) != 0,
+                memory_enabled: row.get::<_, i64>(14).unwrap_or(0) != 0,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn delete(&self, name: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM agent_configs WHERE name = ?1", params![name])?;
+        Ok(())
+    }
+
+    pub fn set_session_binding(&self, session_id: &str, config_name: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO sessions (id, created_at, message_count) VALUES (?1, datetime('now'), 0)",
+            params![session_id],
+        )?;
+        self.conn.execute(
+            "UPDATE sessions SET agent_config_name = ?1 WHERE id = ?2",
+            params![config_name, session_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_session_binding(&self, session_id: &str) -> Result<Option<String>> {
+        let row: Option<String> = self.conn.query_row(
+            "SELECT agent_config_name FROM sessions WHERE id = ?1",
+            params![session_id],
+            |row| row.get(0),
+        ).ok();
+        Ok(row)
+    }
+}

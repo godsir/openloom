@@ -4,6 +4,7 @@
 pub mod engine;
 pub mod anthropic;
 pub mod openai;
+pub mod cache;
 
 pub use engine::{CloudClient, InferenceEngine};
 pub use anthropic::AnthropicClient;

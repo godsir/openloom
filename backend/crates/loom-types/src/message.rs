@@ -38,6 +38,8 @@ pub enum ContentPart {
     Image { source_type: String, media_type: String, data: String },
     ToolCall { id: String, name: String, arguments: serde_json::Value },
     ToolResult { tool_call_id: String, name: String, result: String },
+    /// Anthropic extended thinking — must be passed back to the API verbatim.
+    Thinking { text: String },
 }
 
 /// Structured message with rich content parts.

@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 
-use loom_types::{ErrorCode, JsonRpcError, JsonRpcRequest, JsonRpcResponse};
+use loom_types::{AgentConfig, ErrorCode, JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use loom_types::Message as LoomMessage;
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
@@ -24,6 +24,8 @@ pub struct SessionData {
     pub message_count: usize,
     pub title: Option<String>,
     pub messages: Vec<LoomMessage>,
+    #[serde(default)]
+    pub agent_config_name: Option<String>,
 }
 
 impl SessionStore {
@@ -39,6 +41,7 @@ impl SessionStore {
             message_count: 0,
             title: cwd.map(|s| s.to_string()),
             messages: Vec::new(),
+            agent_config_name: None,
         };
         self.sessions.write().await.insert(id.clone(), session.clone());
         session
@@ -78,6 +81,28 @@ impl SessionStore {
     pub async fn delete(&self, id: &str) -> bool {
         self.sessions.write().await.remove(id).is_some()
     }
+
+    /// Restore a persisted session on startup.
+    pub async fn restore(&self, id: String, created_at: String, message_count: usize, title: Option<String>) {
+        self.sessions.write().await.insert(id.clone(), SessionData {
+            id, created_at, message_count, title, messages: Vec::new(), agent_config_name: None,
+        });
+    }
+
+    pub async fn bind_agent(&self, session_id: &str, agent_config_name: &str) -> Result<(), String> {
+        let mut sessions = self.sessions.write().await;
+        match sessions.get_mut(session_id) {
+            Some(s) => {
+                s.agent_config_name = Some(agent_config_name.to_string());
+                Ok(())
+            }
+            None => Err("session not found".to_string()),
+        }
+    }
+
+    pub async fn get_bound_agent(&self, session_id: &str) -> Option<String> {
+        self.sessions.read().await.get(session_id).and_then(|s| s.agent_config_name.clone())
+    }
 }
 
 pub async fn dispatch_handler(
@@ -109,9 +134,16 @@ pub async fn dispatch_method(state: &AppState, req: &JsonRpcRequest) -> Result<V
             if content.is_empty() {
                 return Err(err(ErrorCode::InvalidRequest, "content required"));
             }
-            let result = state.orchestrator.process_message(content).await
-                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             let session_id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("default");
+
+            // Resolve agent config for this session
+            let config_name = state.sessions.get_bound_agent(session_id).await
+                .unwrap_or_else(|| "default".to_string());
+            let agent_config = state.orchestrator.agent_config_get(&config_name).await
+                .unwrap_or_default();
+
+            let result = state.orchestrator.process_message_with_config(content, session_id, &agent_config).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             state.sessions.add_message(session_id, "user", content).await;
             state.sessions.add_message(session_id, "assistant", &result.response).await;
             Ok(json!({
@@ -137,12 +169,55 @@ pub async fn dispatch_method(state: &AppState, req: &JsonRpcRequest) -> Result<V
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             Ok(json!({ "ok": true }))
         }
+        "agent.config.list" => {
+            let configs = state.orchestrator.agent_config_list().await;
+            Ok(json!({ "configs": configs }))
+        }
+        "agent.config.get" => {
+            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("default");
+            let config = state.orchestrator.agent_config_get(name).await
+                .map_err(|e| err(ErrorCode::AgentNotFound, &e.to_string()))?;
+            Ok(serde_json::to_value(config).unwrap_or_default())
+        }
+        "agent.config.create" => {
+            let config: AgentConfig = serde_json::from_value(p.clone())
+                .map_err(|e| err(ErrorCode::InvalidRequest, &e.to_string()))?;
+            if config.name.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "name required"));
+            }
+            state.orchestrator.agent_config_create(config).await
+                .map_err(|e| err(ErrorCode::InvalidRequest, &e.to_string()))?;
+            Ok(json!({ "ok": true }))
+        }
+        "agent.config.update" => {
+            let config: AgentConfig = serde_json::from_value(p.clone())
+                .map_err(|e| err(ErrorCode::InvalidRequest, &e.to_string()))?;
+            if config.name.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "name required"));
+            }
+            state.orchestrator.agent_config_update(config).await
+                .map_err(|e| err(ErrorCode::InvalidRequest, &e.to_string()))?;
+            Ok(json!({ "ok": true }))
+        }
+        "agent.config.delete" => {
+            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if name.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "name required"));
+            }
+            if name == "default" {
+                return Err(err(ErrorCode::InvalidRequest, "cannot delete default config"));
+            }
+            state.orchestrator.agent_config_delete(name).await
+                .map_err(|e| err(ErrorCode::InvalidRequest, &e.to_string()))?;
+            Ok(json!({ "ok": true }))
+        }
 
         // === Session ===
         "session.list" => Ok(json!({ "sessions": state.sessions.list().await })),
         "session.create" => {
             let cwd = p.get("cwd").and_then(|v| v.as_str());
             let s = state.sessions.create(cwd).await;
+            state.orchestrator.ensure_session_persisted(&s.id).await;
             Ok(json!({ "session_id": s.id, "path": s.id, "created_at": s.created_at }))
         }
         "session.switch" => {
@@ -164,7 +239,20 @@ pub async fn dispatch_method(state: &AppState, req: &JsonRpcRequest) -> Result<V
         "session.delete" => {
             let id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
             let ok = state.sessions.delete(id).await;
+            if ok { state.orchestrator.delete_session_persisted(id).await; }
             Ok(json!({ "ok": ok }))
+        }
+        "session.bind_agent" => {
+            let session_id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("default");
+            let config_name = p.get("agent_config_name").and_then(|v| v.as_str()).unwrap_or("default");
+
+            // Verify the config exists
+            let _ = state.orchestrator.agent_config_get(config_name).await
+                .map_err(|_e| err(ErrorCode::InvalidRequest, &format!("agent config '{}' not found", config_name)))?;
+
+            state.sessions.bind_agent(session_id, config_name).await
+                .map_err(|e| err(ErrorCode::InternalError, &e))?;
+            Ok(json!({ "ok": true }))
         }
 
         // === Config ===
@@ -189,6 +277,25 @@ pub async fn dispatch_method(state: &AppState, req: &JsonRpcRequest) -> Result<V
             let defs = state.orchestrator.mcp_client().all_tool_definitions().await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             Ok(json!({ "tools": defs }))
+        }
+        "mcp.list_resources" => {
+            let server = p.get("server").and_then(|v| v.as_str()).unwrap_or("");
+            if server.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "server required"));
+            }
+            let resources = state.orchestrator.mcp_client().list_resources(server).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "resources": resources }))
+        }
+        "mcp.read_resource" => {
+            let server = p.get("server").and_then(|v| v.as_str()).unwrap_or("");
+            let uri = p.get("uri").and_then(|v| v.as_str()).unwrap_or("");
+            if server.is_empty() || uri.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "server and uri required"));
+            }
+            let content = state.orchestrator.mcp_client().read_resource(server, uri).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(serde_json::to_value(content).unwrap_or_default())
         }
 
         // === Tools ===

@@ -5,12 +5,13 @@
 //! HTTP transport (POST JSON-RPC 2.0 to an MCP endpoint).
 
 use anyhow::{anyhow, Context, Result};
-use loom_types::{McpTool, ToolDefinition};
+use loom_types::{McpResource, McpResourceContent, McpTool, ToolDefinition};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::RwLock;
@@ -218,6 +219,13 @@ impl McpClient {
     }
 
     pub async fn call_tool(&self, server: &str, tool: &str, args: Value) -> Result<Value> {
+        let timeout = Duration::from_secs(default_tool_timeout());
+        tokio::time::timeout(timeout, self.call_tool_inner(server, tool, args))
+            .await
+            .map_err(|_| anyhow!("MCP tool '{}::{}' timed out after {}s", server, tool, default_tool_timeout()))?
+    }
+
+    async fn call_tool_inner(&self, server: &str, tool: &str, args: Value) -> Result<Value> {
         let mut servers = self.servers.write().await;
         let entry = servers.get_mut(server).ok_or_else(|| anyhow!("MCP server '{}' not found", server))?;
         match entry {
@@ -238,6 +246,82 @@ impl McpClient {
     pub async fn server_names(&self) -> Vec<String> { self.servers.read().await.keys().cloned().collect() }
     pub async fn server_tools(&self, name: &str) -> Result<Vec<McpTool>> {
         Ok(self.servers.read().await.get(name).ok_or_else(|| anyhow!("not found: {}", name))?.tools().to_vec())
+    }
+
+    /// Check if a server connection is alive.
+    pub async fn server_health(&self, name: &str) -> bool {
+        self.servers.read().await.contains_key(name)
+    }
+
+    /// List resources from an MCP server (only HTTP supported currently).
+    pub async fn list_resources(&self, server: &str) -> Result<Vec<McpResource>> {
+        let mut servers = self.servers.write().await;
+        let entry = servers.get_mut(server).ok_or_else(|| anyhow!("MCP server '{}' not found", server))?;
+        match entry {
+            ServerConn::Stdio { conn, stdin, stdout } => {
+                let result = conn.send_request(stdin, stdout, "resources/list", &serde_json::json!({})).await?;
+                let resources = result["resources"].as_array().map(|a| a.iter().filter_map(|r| {
+                    Some(McpResource {
+                        uri: r["uri"].as_str()?.to_string(),
+                        name: r["name"].as_str()?.to_string(),
+                        description: r["description"].as_str().map(String::from),
+                        mime_type: r["mimeType"].as_str().map(String::from),
+                        size: r["size"].as_u64(),
+                    })
+                }).collect()).unwrap_or_default();
+                Ok(resources)
+            }
+            ServerConn::Http { url, headers, client, next_id, .. } => {
+                let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let r = mcp_http_post(client, url, headers, &serde_json::json!({"jsonrpc":"2.0","id":id,"method":"resources/list","params":{}})).await?;
+                let result = r.get("result").ok_or_else(|| anyhow!("MCP: no result"))?;
+                let resources = result["resources"].as_array().map(|a| a.iter().filter_map(|r| {
+                    Some(McpResource {
+                        uri: r["uri"].as_str()?.to_string(),
+                        name: r["name"].as_str()?.to_string(),
+                        description: r["description"].as_str().map(String::from),
+                        mime_type: r["mimeType"].as_str().map(String::from),
+                        size: r["size"].as_u64(),
+                    })
+                }).collect()).unwrap_or_default();
+                Ok(resources)
+            }
+        }
+    }
+
+    /// Read a resource from an MCP server.
+    pub async fn read_resource(&self, server: &str, uri: &str) -> Result<McpResourceContent> {
+        let mut servers = self.servers.write().await;
+        let entry = servers.get_mut(server).ok_or_else(|| anyhow!("MCP server '{}' not found", server))?;
+        let timeout = default_tool_timeout();
+        match entry {
+            ServerConn::Stdio { conn, stdin, stdout } => {
+                let result = tokio::time::timeout(
+                    Duration::from_secs(timeout),
+                    conn.send_request(stdin, stdout, "resources/read", &serde_json::json!({"uri": uri})),
+                ).await.map_err(|_| anyhow!("MCP read_resource timeout after {}s", timeout))??;
+                Ok(McpResourceContent {
+                    uri: uri.to_string(),
+                    mime_type: result["contents"][0]["mimeType"].as_str().map(String::from),
+                    text: result["contents"][0]["text"].as_str().map(String::from),
+                    blob: result["contents"][0]["blob"].as_str().map(String::from),
+                })
+            }
+            ServerConn::Http { url, headers, client, next_id, .. } => {
+                let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let r = tokio::time::timeout(
+                    Duration::from_secs(timeout),
+                    mcp_http_post(client, url, headers, &serde_json::json!({"jsonrpc":"2.0","id":id,"method":"resources/read","params":{"uri":uri}})),
+                ).await.map_err(|_| anyhow!("MCP read_resource timeout after {}s", timeout))??;
+                let result = r.get("result").ok_or_else(|| anyhow!("MCP: no result"))?;
+                Ok(McpResourceContent {
+                    uri: uri.to_string(),
+                    mime_type: result["contents"][0]["mimeType"].as_str().map(String::from),
+                    text: result["contents"][0]["text"].as_str().map(String::from),
+                    blob: result["contents"][0]["blob"].as_str().map(String::from),
+                })
+            }
+        }
     }
 
     /// Disconnect and clean up an MCP server. For stdio transport, kills the child process.

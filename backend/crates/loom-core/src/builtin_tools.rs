@@ -417,6 +417,57 @@ impl AgentTool for FileDeleteTool {
     fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
 }
 
+// ============================================================================
+// UseSkill — activates a loaded external skill (SKILL.md) by name
+// ============================================================================
+
+pub struct UseSkillTool {
+    pub skill_bodies: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
+}
+
+#[async_trait]
+impl AgentTool for UseSkillTool {
+    fn tool_name(&self) -> &str { "use_skill" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "use_skill".into(),
+            description: "Activate an available skill by name to get its full instructions. Use when a task requires a skill you know is available (e.g. from the system prompt skills list).".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "skill_name": { "type": "string", "description": "Name of the skill to activate" }
+                },
+                "required": ["skill_name"]
+            }),
+        }
+    }
+
+    async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>) -> Result<ToolResult> {
+        let name = arguments["skill_name"].as_str().unwrap_or("");
+        if name.is_empty() {
+            return Ok(ToolResult { content: "No skill name provided.".into(), is_error: true, structured_content: None });
+        }
+        let bodies = self.skill_bodies.read().await;
+        if let Some(body) = bodies.get(name) {
+            Ok(ToolResult {
+                content: format!("## Skill: {}\n\n{}", name, body),
+                is_error: false,
+                structured_content: None,
+            })
+        } else {
+            let available: Vec<&String> = bodies.keys().collect();
+            Ok(ToolResult {
+                content: format!("Skill '{}' not found. Available: {:?}", name, available),
+                is_error: true,
+                structured_content: None,
+            })
+        }
+    }
+
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
+
 fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
     if s.len() <= max_bytes { return s; }
     let mut end = max_bytes;

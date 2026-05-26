@@ -86,7 +86,7 @@ pub enum StreamDelta {
     Reasoning(String),
     ToolCallBegin { index: usize, id: String, name: String },
     ToolCallArgsChunk { index: usize, chunk: String },
-    Usage { prompt_tokens: u64, completion_tokens: u64, cached_tokens: u64 },
+    Usage { prompt_tokens: u64, completion_tokens: u64, cache_read_tokens: u64, cache_write_tokens: u64 },
 }
 
 /// Engine health status response.

@@ -173,12 +173,14 @@ impl CloudClient for OpenAIClient {
         }
         use futures::StreamExt;
         let mut stream = resp.bytes_stream();
-        let mut buf = String::new();
+        let mut buf: Vec<u8> = Vec::new();
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result?;
-            buf.push_str(&String::from_utf8_lossy(&chunk));
-            while let Some(pos) = buf.find("\n\n") {
-                let frame = buf[..pos].to_string(); buf = buf[pos + 2..].to_string();
+            buf.extend_from_slice(&chunk);
+            while let Some(pos) = buf.windows(2).position(|w| w == b"\n\n") {
+                let frame_bytes = buf[..pos].to_vec();
+                buf.drain(..pos + 2);
+                let frame = String::from_utf8_lossy(&frame_bytes);
                 for line in frame.lines() {
                     if let Some(data) = line.strip_prefix("data: ") {
                         if data == "[DONE]" { return Ok(()); }
@@ -223,12 +225,14 @@ impl CloudClient for OpenAIClient {
         }
         use futures::StreamExt;
         let mut stream = resp.bytes_stream();
-        let mut buf = String::new();
+        let mut buf: Vec<u8> = Vec::new();
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result?;
-            buf.push_str(&String::from_utf8_lossy(&chunk));
-            while let Some(pos) = buf.find("\n\n") {
-                let frame = buf[..pos].to_string(); buf = buf[pos + 2..].to_string();
+            buf.extend_from_slice(&chunk);
+            while let Some(pos) = buf.windows(2).position(|w| w == b"\n\n") {
+                let frame_bytes = buf[..pos].to_vec();
+                buf.drain(..pos + 2);
+                let frame = String::from_utf8_lossy(&frame_bytes);
                 for line in frame.lines() {
                     if let Some(data) = line.strip_prefix("data: ") {
                         if data == "[DONE]" { return Ok(()); }
@@ -251,7 +255,8 @@ impl CloudClient for OpenAIClient {
                                 && tx.send(StreamDelta::Usage {
                                     prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0),
                                     completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0),
-                                    cached_tokens: u["prompt_tokens_details"]["cached_tokens"].as_u64().unwrap_or(0),
+                                    cache_read_tokens: u["prompt_tokens_details"]["cached_tokens"].as_u64().unwrap_or(0),
+                                    cache_write_tokens: 0,
                                 }).await.is_err() { return Ok(()); }
                         }
                     }

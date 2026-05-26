@@ -4,8 +4,8 @@
 
 use anyhow::Result;
 use loom_core::MemoryStore;
-use loom_memory::{CognitionStore, CognitionsPersonaProvider, GraphStore, NewEvent, SqliteEventStore};
-use loom_types::{Message, PersonaProvider};
+use loom_memory::{AgentConfigStore, CognitionStore, CognitionsPersonaProvider, GraphStore, NewEvent, SqliteEventStore};
+use loom_types::{AgentConfig, Message, PersonaProvider};
 
 pub struct LoomMemoryStore {
     store: std::sync::Mutex<SqliteEventStore>,
@@ -215,6 +215,103 @@ impl MemoryStore for LoomMemoryStore {
             };
             let _ = cognition.insert("USER", &format!("entity_{}", e.entity_type.to_lowercase()), &value, e.confidence, 1, "global");
         }
+        Ok(())
+    }
+
+    async fn save_agent_config(&self, config: &AgentConfig) -> Result<()> {
+        let store = self.store.lock().unwrap();
+        AgentConfigStore::new(store.conn()).upsert(config)
+    }
+
+    async fn get_agent_config(&self, name: &str) -> Result<Option<AgentConfig>> {
+        let store = self.store.lock().unwrap();
+        AgentConfigStore::new(store.conn()).get(name)
+    }
+
+    async fn list_agent_configs(&self) -> Result<Vec<AgentConfig>> {
+        let store = self.store.lock().unwrap();
+        AgentConfigStore::new(store.conn()).list()
+    }
+
+    async fn delete_agent_config(&self, name: &str) -> Result<()> {
+        let store = self.store.lock().unwrap();
+        AgentConfigStore::new(store.conn()).delete(name)
+    }
+
+    async fn save_session_agent_name(&self, session_id: &str, agent_config_name: &str) -> Result<()> {
+        let store = self.store.lock().unwrap();
+        AgentConfigStore::new(store.conn()).set_session_binding(session_id, agent_config_name)
+    }
+
+    async fn get_session_agent_name(&self, session_id: &str) -> Result<Option<String>> {
+        let store = self.store.lock().unwrap();
+        AgentConfigStore::new(store.conn()).get_session_binding(session_id)
+    }
+
+    async fn query_kg_context(&self, entity_names: &[&str], limit: usize) -> Result<String> {
+        let store = self.store.lock().unwrap();
+        let graph = GraphStore::new(store.conn());
+        let mut lines: Vec<String> = Vec::new();
+
+        // Always include the USER node
+        if let Ok(Some(_user_id)) = graph.resolve_node("USER") {
+            let neighbors = graph.neighbors("USER", None, limit)?;
+            for n in &neighbors {
+                let relation = n.relation_type.as_deref().unwrap_or("related_to");
+                lines.push(format!("- USER {} {} (confidence: {:.2})", relation, n.name, n.confidence));
+            }
+        }
+
+        // Query each entity name
+        for name in entity_names {
+            if *name == "USER" || name.is_empty() { continue; }
+            if let Ok(results) = graph.search_entities(name, 3) {
+                for r in &results {
+                    if r.name == "USER" { continue; }
+                    lines.push(format!("- {} is a {}: {} (confidence: {:.2})", r.name, r.entity_type, r.description, r.confidence));
+                    // Get immediate neighbors
+                    if let Ok(neighbors) = graph.neighbors(&r.name, None, 3) {
+                        for n in &neighbors {
+                            if n.name == "USER" || n.name == r.name { continue; }
+                            let relation = n.relation_type.as_deref().unwrap_or("related_to");
+                            lines.push(format!("  └ {} {} {}", r.name, relation, n.name));
+                        }
+                    }
+                }
+            }
+        }
+
+        lines.dedup();
+        if lines.is_empty() {
+            Ok(String::new())
+        } else {
+            Ok(format!("## Knowledge Graph\n{}", lines.join("\n")))
+        }
+    }
+
+    async fn list_sessions(&self) -> Result<Vec<(String, String, usize, Option<String>)>> {
+        let store = self.store.lock().unwrap();
+        let mut stmt = store.conn().prepare(
+            "SELECT id, created_at, message_count, title FROM sessions ORDER BY created_at DESC"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)? as usize, row.get(3)?))
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    async fn ensure_session(&self, id: &str) -> Result<()> {
+        let store = self.store.lock().unwrap();
+        store.conn().execute(
+            "INSERT OR IGNORE INTO sessions (id, created_at, message_count) VALUES (?1, datetime('now'), 0)",
+            rusqlite::params![id],
+        )?;
+        Ok(())
+    }
+
+    async fn delete_session(&self, id: &str) -> Result<()> {
+        let store = self.store.lock().unwrap();
+        store.conn().execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])?;
         Ok(())
     }
 }

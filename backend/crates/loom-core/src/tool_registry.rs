@@ -90,6 +90,25 @@ impl ToolRegistry {
         self.tools.values().map(|t| t.tool_definition()).collect()
     }
 
+    /// Build tool definitions filtered by allow/deny lists.
+    /// If allowed is Some, only tools in the list are returned.
+    /// If disallowed is Some, tools in the list are excluded (applied after allow).
+    /// If both are None, returns all definitions.
+    pub fn filtered_definitions(
+        &self,
+        allowed: &Option<Vec<String>>,
+        disallowed: &Option<Vec<String>>,
+    ) -> Vec<ToolDefinition> {
+        let mut defs: Vec<ToolDefinition> = self.all_definitions();
+        if let Some(allow) = allowed {
+            defs.retain(|d| allow.contains(&d.name));
+        }
+        if let Some(deny) = disallowed {
+            defs.retain(|d| !deny.contains(&d.name));
+        }
+        defs
+    }
+
     /// Execute a tool by name, dispatching to the correct handler.
     pub async fn execute(
         &self,
@@ -208,6 +227,7 @@ impl AgentTool for SpawnAgentTool {
 
         let result = crate::agent_loop::run_agent_turn(
             client.as_ref(), &registry, &[], prompt, &sub_config,
+            &None, &None,
         ).await;
 
         drop(registry); drop(client_guard);
