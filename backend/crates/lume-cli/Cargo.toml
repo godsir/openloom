@@ -1,0 +1,29 @@
+[package]
+name = "lume-cli"
+version = "0.2.0"
+edition = "2024"
+description = "CLI entry point for openLoom v2 — serve, chat demo, doctor"
+
+[[bin]]
+name = "lume"
+path = "src/main.rs"
+
+[dependencies]
+loom-types = { path = "../loom-types" }
+loom-core = { path = "../loom-core" }
+loom-server = { path = "../loom-server" }
+loom-inference = { path = "../loom-inference" }
+loom-memory = { path = "../loom-memory" }
+lume-mcp = { path = "../lume-mcp" }
+lume-skills = { path = "../lume-skills" }
+rusqlite = "0.32"
+anyhow = "1"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+ctrlc = "3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

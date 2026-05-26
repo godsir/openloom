@@ -1,0 +1,21 @@
+[package]
+name = "loom-memory"
+version = "0.2.0"
+edition = "2024"
+description = "Memory kernel for openLoom v2 — event store, cognition pipeline, knowledge graph, persona"
+
+[dependencies]
+loom-types = { path = "../loom-types" }
+refinery = { version = "0.8", features = ["rusqlite"] }
+rusqlite = { version = "0.32", features = ["bundled", "vtab"] }
+anyhow = "1"
+tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
+async-trait = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread"] }

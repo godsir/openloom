@@ -1,0 +1,15 @@
+[package]
+name = "lume-skills"
+version = "0.2.0"
+edition = "2024"
+description = "Skill/plugin loading for openLoom v2 — Claude Code / OpenClaw compatible"
+
+[dependencies]
+loom-types = { path = "../loom-types" }
+anyhow = "1"
+tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+async-trait = "0.1"
+which = "8"

@@ -4621,6 +4621,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "loom-context"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "loom-types",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "loom-core"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "loom-inference",
+ "loom-memory",
+ "loom-security",
+ "loom-types",
+ "lume-mcp",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "loom-core-plugins"
 version = "0.2.0"
 dependencies = [
@@ -4869,6 +4900,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "loom-inference"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "loom-types",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "loom-install-context"
 version = "0.2.0"
 dependencies = [
@@ -4904,6 +4950,24 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "loom-memory"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "loom-types",
+ "refinery",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -5086,6 +5150,37 @@ dependencies = [
  "tracing",
  "url",
  "which",
+]
+
+[[package]]
+name = "loom-security"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "loom-types",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "loom-server"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "axum 0.7.9",
+ "chrono",
+ "futures",
+ "loom-core",
+ "loom-types",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower 0.5.3",
+ "tower-http",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -5309,6 +5404,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "loom-types"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "loom-uds"
 version = "0.2.0"
 dependencies = [
@@ -5355,6 +5462,60 @@ dependencies = [
  "serde_json",
  "serde_repr",
  "url",
+]
+
+[[package]]
+name = "lume-cli"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "clap",
+ "ctrlc",
+ "loom-core",
+ "loom-inference",
+ "loom-memory",
+ "loom-server",
+ "loom-types",
+ "lume-mcp",
+ "lume-skills",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "lume-mcp"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "loom-types",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "lume-skills"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "loom-types",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tracing",
+ "which",
 ]
 
 [[package]]

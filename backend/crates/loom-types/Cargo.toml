@@ -1,0 +1,13 @@
+[package]
+name = "loom-types"
+version = "0.2.0"
+edition = "2024"
+description = "Unified type system for openLoom v2 — canonical types for agents, messages, tools, MCP, sessions, memory, and config"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v7", "serde"] }
+anyhow = "1"
+async-trait = "0.1"

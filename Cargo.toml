@@ -53,6 +53,7 @@ members = [
     "crates/loom-protocol/chatgpt",
     "crates/loom-protocol/tui",
     "crates/loom-protocol/cli",
+    "backend/crates/*",
 ]
 exclude = [
     "crates/loom-utils",

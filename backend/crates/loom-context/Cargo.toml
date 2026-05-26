@@ -1,0 +1,12 @@
+[package]
+name = "loom-context"
+version = "0.2.0"
+edition = "2024"
+description = "Context window assembly for openLoom v2"
+
+[dependencies]
+loom-types = { path = "../loom-types" }
+anyhow = "1"
+tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
