@@ -1,5 +1,5 @@
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::{Skill, SkillManifest, SkillPermissions};
 
@@ -56,10 +56,7 @@ impl Skill for BrowserSkill {
 
 impl BrowserSkill {
     async fn navigate(&self, params: &Value) -> Result<Value> {
-        let url = params
-            .get("url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let url = params.get("url").and_then(|v| v.as_str()).unwrap_or("");
 
         if url.is_empty() {
             return Ok(json!({"error": "'url' is required"}));
@@ -89,7 +86,11 @@ impl BrowserSkill {
                 let title = extract_title(&body);
                 let text = strip_html(&body);
                 let truncated = if text.len() > 4000 {
-                    format!("{}...\n\n[Content truncated: {} total chars]", &text[..4000], text.len())
+                    format!(
+                        "{}...\n\n[Content truncated: {} total chars]",
+                        &text[..4000],
+                        text.len()
+                    )
                 } else {
                     text
                 };
@@ -115,20 +116,14 @@ impl BrowserSkill {
     }
 
     async fn search(&self, params: &Value) -> Result<Value> {
-        let query = params
-            .get("query")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let query = params.get("query").and_then(|v| v.as_str()).unwrap_or("");
 
         if query.is_empty() {
             return Ok(json!({"error": "'query' is required for web search"}));
         }
 
         // Use DuckDuckGo HTML search (no API key needed)
-        let search_url = format!(
-            "https://html.duckduckgo.com/html/?q={}",
-            urlencoding(query)
-        );
+        let search_url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding(query));
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
@@ -187,14 +182,16 @@ fn strip_html(html: &str) -> String {
             } else if i + 6 < bytes.len() && lower.as_bytes()[i..].starts_with(b"<style") {
                 in_style = true;
                 in_tag = true;
-            } else if in_script && i + 8 < bytes.len()
+            } else if in_script
+                && i + 8 < bytes.len()
                 && lower.as_bytes()[i..].starts_with(b"</script>")
             {
                 in_script = false;
                 in_tag = false;
                 i += 9;
                 continue;
-            } else if in_style && i + 7 < bytes.len()
+            } else if in_style
+                && i + 7 < bytes.len()
                 && lower.as_bytes()[i..].starts_with(b"</style>")
             {
                 in_style = false;
@@ -285,17 +282,26 @@ fn extract_search_results(html: &str) -> Vec<Value> {
         // Find href
         let hs = match remaining[pos..].find("href=\"") {
             Some(h) => h,
-            None => { remaining = &remaining[(pos + 50).min(remaining.len())..]; continue; }
+            None => {
+                remaining = &remaining[(pos + 50).min(remaining.len())..];
+                continue;
+            }
         };
         let href_pos = pos + hs + 6;
         let href_end = remaining[href_pos..].find('"').unwrap_or(0);
-        if href_end == 0 { remaining = &remaining[(pos + 50).min(remaining.len())..]; continue; }
+        if href_end == 0 {
+            remaining = &remaining[(pos + 50).min(remaining.len())..];
+            continue;
+        }
         let url = html_decode(&remaining[href_pos..href_pos + href_end]);
 
         let gt = remaining[href_pos + href_end..].find('>').unwrap_or(0);
         let text_start = href_pos + href_end + gt + 1;
         let text_end = remaining[text_start..].find("</a>").unwrap_or(0);
-        if text_end == 0 { remaining = &remaining[(pos + 50).min(remaining.len())..]; continue; }
+        if text_end == 0 {
+            remaining = &remaining[(pos + 50).min(remaining.len())..];
+            continue;
+        }
         let title = strip_html(&remaining[text_start..text_start + text_end]);
 
         if !url.is_empty() && !title.is_empty() {
@@ -305,7 +311,9 @@ fn extract_search_results(html: &str) -> Vec<Value> {
                     let sp_start = text_start + text_end + sp;
                     let gt2 = remaining[sp_start..].find('>')?;
                     let end = remaining[sp_start + gt2 + 1..].find("</").unwrap_or(0);
-                    Some(strip_html(&remaining[sp_start + gt2 + 1..sp_start + gt2 + 1 + end]))
+                    Some(strip_html(
+                        &remaining[sp_start + gt2 + 1..sp_start + gt2 + 1 + end],
+                    ))
                 })
                 .unwrap_or_default();
             results.push(json!({

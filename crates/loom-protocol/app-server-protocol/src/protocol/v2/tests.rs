@@ -1,4 +1,7 @@
 use super::*;
+use loom_absolute_path::AbsolutePathBuf;
+use loom_absolute_path::test_support::PathBufExt;
+use loom_absolute_path::test_support::test_path_buf;
 use loom_protocol::approvals::ElicitationRequest as CoreElicitationRequest;
 use loom_protocol::items::AgentMessageContent;
 use loom_protocol::items::AgentMessageItem;
@@ -30,9 +33,6 @@ use loom_protocol::protocol::GranularApprovalConfig as CoreGranularApprovalConfi
 use loom_protocol::protocol::NetworkAccess as CoreNetworkAccess;
 use loom_protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
 use loom_protocol::user_input::UserInput as CoreUserInput;
-use loom_absolute_path::AbsolutePathBuf;
-use loom_absolute_path::test_support::PathBufExt;
-use loom_absolute_path::test_support::test_path_buf;
 use pretty_assertions::assert_eq;
 use serde_json::Value as JsonValue;
 use serde_json::json;

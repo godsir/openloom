@@ -1,11 +1,11 @@
 #[cfg(test)]
 use crate::app_command::AppCommand as Op;
-use loom_app_server_protocol::McpServerElicitationAction;
-use loom_app_server_protocol::RequestId as AppServerRequestId;
-use loom_protocol::ThreadId;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
+use loom_app_server_protocol::McpServerElicitationAction;
+use loom_app_server_protocol::RequestId as AppServerRequestId;
+use loom_protocol::ThreadId;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
 use ratatui::layout::Layout;

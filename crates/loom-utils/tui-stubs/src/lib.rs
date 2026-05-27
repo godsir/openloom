@@ -4,15 +4,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 // Re-export types from loom_config so they're accessible as loom_tui_stubs::* types
+pub use loom_config::CloudRequirementsLoader as LoomCloudRequirementsLoader;
+pub use loom_config::ConfigLayerSource;
+pub use loom_config::ConfigLayerStackOrdering;
 pub use loom_config::types::ModelAvailabilityNuxConfig;
 pub use loom_config::types::NotificationCondition;
 pub use loom_config::types::NotificationMethod;
 pub use loom_config::types::SessionPickerViewMode;
 pub use loom_config::types::TuiPetAnchor;
 pub use loom_config::types::WindowsSandboxModeToml;
-pub use loom_config::CloudRequirementsLoader as LoomCloudRequirementsLoader;
-pub use loom_config::ConfigLayerSource;
-pub use loom_config::ConfigLayerStackOrdering;
 pub use loom_protocol::config_types::ForcedLoginMethod;
 
 // ─── codex-feedback ───
@@ -97,14 +97,18 @@ pub mod state {
         pub async fn new(_path: PathBuf) -> Result<Self, anyhow::Error> {
             Ok(Self)
         }
-        pub fn get_thread(&self, _id: loom_protocol::ThreadId) -> Option<()> { None }
+        pub fn get_thread(&self, _id: loom_protocol::ThreadId) -> Option<()> {
+            None
+        }
     }
 
     pub fn state_db_path(codex_home: &Path) -> PathBuf {
         codex_home.join("state.db")
     }
 
-    pub async fn try_init(_config: &super::config::Config) -> Result<Arc<StateRuntime>, anyhow::Error> {
+    pub async fn try_init(
+        _config: &super::config::Config,
+    ) -> Result<Arc<StateRuntime>, anyhow::Error> {
         Ok(Arc::new(StateRuntime))
     }
 
@@ -129,11 +133,15 @@ pub mod rollout {
     pub mod state_db {
         pub use super::StateDbHandle;
 
-        pub async fn try_init(_config: &super::super::config::Config) -> Result<std::sync::Arc<super::super::state::StateRuntime>, anyhow::Error> {
+        pub async fn try_init(
+            _config: &super::super::config::Config,
+        ) -> Result<std::sync::Arc<super::super::state::StateRuntime>, anyhow::Error> {
             Ok(std::sync::Arc::new(super::super::state::StateRuntime))
         }
 
-        pub async fn get_state_db(_config: &super::super::config::Config) -> Option<std::sync::Arc<super::super::state::StateRuntime>> {
+        pub async fn get_state_db(
+            _config: &super::super::config::Config,
+        ) -> Option<std::sync::Arc<super::super::state::StateRuntime>> {
             Some(std::sync::Arc::new(super::super::state::StateRuntime))
         }
     }
@@ -199,8 +207,14 @@ pub mod plugin {
         pub marketplace: String,
     }
     impl PluginId {
-        pub fn new(name: impl Into<String>, marketplace: impl Into<String>) -> Result<Self, anyhow::Error> {
-            Ok(Self { name: name.into(), marketplace: marketplace.into() })
+        pub fn new(
+            name: impl Into<String>,
+            marketplace: impl Into<String>,
+        ) -> Result<Self, anyhow::Error> {
+            Ok(Self {
+                name: name.into(),
+                marketplace: marketplace.into(),
+            })
         }
         pub fn as_key(&self) -> String {
             format!("{}::{}", self.name, self.marketplace)
@@ -236,19 +250,26 @@ pub mod connectors {
     #[derive(Debug, Clone)]
     pub struct ConnectorDirectoryCacheContext;
     impl ConnectorDirectoryCacheContext {
-        pub fn new() -> Self { Self }
+        pub fn new() -> Self {
+            Self
+        }
     }
     #[derive(Debug, Clone, Hash, PartialEq, Eq)]
     pub struct ConnectorDirectoryCacheKey(pub String);
     impl ConnectorDirectoryCacheKey {
-        pub fn new(s: impl Into<String>) -> Self { Self(s.into()) }
+        pub fn new(s: impl Into<String>) -> Self {
+            Self(s.into())
+        }
     }
     #[derive(Debug, Clone)]
     pub struct DirectoryListResponse;
 
     pub mod filter {
         use super::AppInfo;
-        pub fn filter_disallowed_connectors(_connectors: Vec<AppInfo>, _enabled: bool) -> Vec<AppInfo> {
+        pub fn filter_disallowed_connectors(
+            _connectors: Vec<AppInfo>,
+            _enabled: bool,
+        ) -> Vec<AppInfo> {
             vec![]
         }
     }
@@ -258,7 +279,10 @@ pub mod connectors {
         pub fn merge_connectors(_a: Vec<AppInfo>, _b: Vec<AppInfo>) -> Vec<AppInfo> {
             vec![]
         }
-        pub fn merge_plugin_connectors(_a: Vec<AppInfo>, _b: &crate::plugin::PluginCapabilitySummary) -> Vec<AppInfo> {
+        pub fn merge_plugin_connectors(
+            _a: Vec<AppInfo>,
+            _b: &crate::plugin::PluginCapabilitySummary,
+        ) -> Vec<AppInfo> {
             vec![]
         }
     }
@@ -328,7 +352,9 @@ pub mod model_provider {
     pub struct ModelProvider;
 
     impl ModelProvider {
-        pub async fn runtime_base_url(&self) -> anyhow::Result<Option<String>> { Ok(None) }
+        pub async fn runtime_base_url(&self) -> anyhow::Result<Option<String>> {
+            Ok(None)
+        }
     }
 
     pub fn create_model_provider(
@@ -361,8 +387,12 @@ pub mod model_provider_info {
     }
 
     impl ModelProviderInfo {
-        pub fn is_openai(&self) -> bool { self.name == "OpenAI" || self.requires_openai_auth }
-        pub fn is_amazon_bedrock(&self) -> bool { self.name == "Amazon Bedrock" }
+        pub fn is_openai(&self) -> bool {
+            self.name == "OpenAI" || self.requires_openai_auth
+        }
+        pub fn is_amazon_bedrock(&self) -> bool {
+            self.name == "Amazon Bedrock"
+        }
     }
 
     impl From<RealModelProviderInfo> for ModelProviderInfo {
@@ -392,7 +422,8 @@ pub mod models_manager {
         pub const HIDE_GPT5_1_MIGRATION_PROMPT_CONFIG: &str = "hide_gpt5_1_migration_prompt";
     }
     pub mod collaboration_mode_presets {
-        pub fn builtin_collaboration_mode_presets() -> Vec<loom_protocol::config_types::CollaborationModeMask> {
+        pub fn builtin_collaboration_mode_presets()
+        -> Vec<loom_protocol::config_types::CollaborationModeMask> {
             vec![]
         }
     }
@@ -449,7 +480,9 @@ pub fn resolve_installation_id(_codex_home: &std::path::Path) -> String {
     String::new()
 }
 
-pub async fn check_execpolicy_for_warnings(_config_layer_stack: &config::ConfigLayerStackStub) -> Result<Vec<String>, anyhow::Error> {
+pub async fn check_execpolicy_for_warnings(
+    _config_layer_stack: &config::ConfigLayerStackStub,
+) -> Result<Vec<String>, anyhow::Error> {
     Ok(vec![])
 }
 
@@ -469,21 +502,21 @@ pub mod path_utils {
 }
 
 pub mod config {
-    use std::collections::BTreeMap;
-    use std::collections::HashMap;
-    use std::path::Path;
-    use std::path::PathBuf;
-    use loom_absolute_path::AbsolutePathBuf;
     use super::ConfigLayerSource;
     use super::ForcedLoginMethod;
     use super::LoomCloudRequirementsLoader;
     use super::ModelAvailabilityNuxConfig;
-    use super::model_provider_info::ModelProviderInfo;
     use super::NotificationCondition;
     use super::NotificationMethod;
     use super::SessionPickerViewMode;
     use super::TuiPetAnchor;
     use super::WindowsSandboxModeToml;
+    use super::model_provider_info::ModelProviderInfo;
+    use loom_absolute_path::AbsolutePathBuf;
+    use std::collections::BTreeMap;
+    use std::collections::HashMap;
+    use std::path::Path;
+    use std::path::PathBuf;
 
     // ═══ Pre-declare stub types needed by Config fields ═══
 
@@ -491,9 +524,16 @@ pub mod config {
     pub struct Constrained<T>(pub T);
 
     impl<T: Clone + PartialEq> Constrained<T> {
-        pub fn value(&self) -> T { self.0.clone() }
-        pub fn set(&mut self, value: T) -> ConstraintResult<()> { self.0 = value; Ok(()) }
-        pub fn can_set(&self, _value: &T) -> bool { true }
+        pub fn value(&self) -> T {
+            self.0.clone()
+        }
+        pub fn set(&mut self, value: T) -> ConstraintResult<()> {
+            self.0 = value;
+            Ok(())
+        }
+        pub fn can_set(&self, _value: &T) -> bool {
+            true
+        }
     }
 
     #[derive(Debug, Clone)]
@@ -513,7 +553,9 @@ pub mod config {
         pub id: String,
     }
     impl Default for PermissionProfileSnapshot {
-        fn default() -> Self { Self { id: String::new() } }
+        fn default() -> Self {
+            Self { id: String::new() }
+        }
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -522,7 +564,12 @@ pub mod config {
         pub max_rows: Option<TerminalResizeReflowMaxRows>,
     }
     impl Default for TerminalResizeReflowConfig {
-        fn default() -> Self { Self { enabled: true, max_rows: None } }
+        fn default() -> Self {
+            Self {
+                enabled: true,
+                max_rows: None,
+            }
+        }
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -555,7 +602,9 @@ pub mod config {
         ) -> Vec<LayerStub> {
             vec![]
         }
-        pub fn get_active_user_layer(&self) -> Option<LayerStub> { None }
+        pub fn get_active_user_layer(&self) -> Option<LayerStub> {
+            None
+        }
         pub fn effective_user_config(&self) -> loom_config::config_toml::ConfigToml {
             Default::default()
         }
@@ -584,13 +633,18 @@ pub mod config {
         pub fn effective_permission_profile(&self) -> loom_protocol::models::PermissionProfile {
             loom_protocol::models::PermissionProfile::default()
         }
-        pub fn legacy_sandbox_policy(&self, _cwd: &std::path::Path) -> loom_protocol::protocol::SandboxPolicy {
+        pub fn legacy_sandbox_policy(
+            &self,
+            _cwd: &std::path::Path,
+        ) -> loom_protocol::protocol::SandboxPolicy {
             loom_protocol::protocol::SandboxPolicy::DangerFullAccess
         }
         pub fn permission_profile(&self) -> loom_protocol::models::PermissionProfile {
             loom_protocol::models::PermissionProfile::default()
         }
-        pub fn active_permission_profile(&self) -> Option<loom_protocol::models::ActivePermissionProfile> {
+        pub fn active_permission_profile(
+            &self,
+        ) -> Option<loom_protocol::models::ActivePermissionProfile> {
             None
         }
         pub fn set_permission_profile_from_session_snapshot(
@@ -600,21 +654,29 @@ pub mod config {
             Ok(())
         }
         pub fn set_workspace_roots(&mut self, _roots: &[loom_absolute_path::AbsolutePathBuf]) {}
-        pub fn replace_permission_profile_from_session_snapshot(&mut self, _snapshot: &PermissionProfileSnapshot) {}
-        pub fn user_visible_workspace_roots(&self) -> Vec<loom_absolute_path::AbsolutePathBuf> { vec![] }
+        pub fn replace_permission_profile_from_session_snapshot(
+            &mut self,
+            _snapshot: &PermissionProfileSnapshot,
+        ) {
+        }
+        pub fn user_visible_workspace_roots(&self) -> Vec<loom_absolute_path::AbsolutePathBuf> {
+            vec![]
+        }
     }
 
     #[derive(Debug, Clone, Default)]
     pub struct NetworkStub;
     impl NetworkStub {
-        pub fn as_ref(&self) -> &Self { self }
+        pub fn as_ref(&self) -> &Self {
+            self
+        }
     }
 
     #[derive(Debug, Clone, Default)]
     pub struct ApprovalsReviewerStub;
 
-    pub use loom_features::Features;
     pub use loom_features::Feature;
+    pub use loom_features::Features;
 
     /// ManagedFeatures stub that wraps real Features with constraint checking.
     #[derive(Debug, Clone)]
@@ -624,18 +686,28 @@ pub mod config {
 
     impl Default for ManagedFeaturesStub {
         fn default() -> Self {
-            Self { value: loom_features::Features::with_defaults() }
+            Self {
+                value: loom_features::Features::with_defaults(),
+            }
         }
     }
 
     impl std::ops::Deref for ManagedFeaturesStub {
         type Target = loom_features::Features;
-        fn deref(&self) -> &Self::Target { &self.value }
+        fn deref(&self) -> &Self::Target {
+            &self.value
+        }
     }
 
     impl ManagedFeaturesStub {
-        pub fn get(&self) -> &loom_features::Features { &self.value }
-        pub fn set_enabled(&mut self, feature: loom_features::Feature, enabled: bool) -> ConstraintResult<()> {
+        pub fn get(&self) -> &loom_features::Features {
+            &self.value
+        }
+        pub fn set_enabled(
+            &mut self,
+            feature: loom_features::Feature,
+            enabled: bool,
+        ) -> ConstraintResult<()> {
             self.value.set_enabled(feature, enabled);
             Ok(())
         }
@@ -647,7 +719,9 @@ pub mod config {
             self.value.disable(feature);
             Ok(())
         }
-        pub fn can_set(&self, _candidate: &loom_features::Features) -> ConstraintResult<()> { Ok(()) }
+        pub fn can_set(&self, _candidate: &loom_features::Features) -> ConstraintResult<()> {
+            Ok(())
+        }
         pub fn set(&mut self, candidate: loom_features::Features) -> ConstraintResult<()> {
             self.value = candidate;
             Ok(())
@@ -735,7 +809,9 @@ pub mod config {
         }
     }
     impl ModelProviderInfoStub {
-        pub fn is_openai(&self) -> bool { self.name == "OpenAI" }
+        pub fn is_openai(&self) -> bool {
+            self.name == "OpenAI"
+        }
     }
 
     /// Comprehensive stub Config for TUI compilation.
@@ -835,7 +911,9 @@ pub mod config {
             loom_protocol::models::PermissionProfile::default()
         }
 
-        pub async fn load_with_cli_overrides(_overrides: Vec<(String, toml::Value)>) -> Result<Config, ConfigLoadError> {
+        pub async fn load_with_cli_overrides(
+            _overrides: Vec<(String, toml::Value)>,
+        ) -> Result<Config, ConfigLoadError> {
             Ok(Config::default())
         }
 
@@ -867,7 +945,9 @@ pub mod config {
                 model_verbosity: None,
                 service_tier: None,
                 permissions: PermissionsStub {
-                    approval_policy: Constrained(loom_protocol::protocol::AskForApproval::OnRequest),
+                    approval_policy: Constrained(
+                        loom_protocol::protocol::AskForApproval::OnRequest,
+                    ),
                     network: None,
                     windows_sandbox_mode: None,
                 },
@@ -913,7 +993,8 @@ pub mod config {
                 web_search_mode: Constrained(loom_protocol::config_types::WebSearchMode::Cached),
                 realtime: None,
                 realtime_audio: loom_config::config_toml::RealtimeAudioToml::default(),
-                mcp_oauth_credentials_store_mode: loom_config::types::OAuthCredentialsStoreMode::default(),
+                mcp_oauth_credentials_store_mode:
+                    loom_config::types::OAuthCredentialsStoreMode::default(),
                 mcp_oauth_callback_port: None,
                 mcp_oauth_callback_url: None,
                 plan_mode_reasoning_effort: None,
@@ -937,17 +1018,37 @@ pub mod config {
     }
 
     impl ConfigBuilder {
-        pub fn new() -> Self { Self::default() }
-        pub fn codex_home(mut self, path: PathBuf) -> Self { self.codex_home = Some(path); self }
+        pub fn new() -> Self {
+            Self::default()
+        }
+        pub fn codex_home(mut self, path: PathBuf) -> Self {
+            self.codex_home = Some(path);
+            self
+        }
         pub fn cli_overrides(mut self, overrides: Vec<(String, toml::Value)>) -> Self {
             self.cli_kv_overrides = overrides;
             self
         }
-        pub fn harness_overrides(mut self, overrides: ConfigOverrides) -> Self { self.overrides = overrides; self }
-        pub fn loader_overrides(mut self, overrides: LoaderOverrides) -> Self { self.loader_overrides = overrides; self }
-        pub fn strict_config(mut self, strict: bool) -> Self { self.strict = strict; self }
-        pub fn cloud_requirements(mut self, cr: LoomCloudRequirementsLoader) -> Self { self.cloud_requirements = Some(cr); self }
-        pub fn fallback_cwd(mut self, cwd: Option<PathBuf>) -> Self { self.fallback_cwd = cwd; self }
+        pub fn harness_overrides(mut self, overrides: ConfigOverrides) -> Self {
+            self.overrides = overrides;
+            self
+        }
+        pub fn loader_overrides(mut self, overrides: LoaderOverrides) -> Self {
+            self.loader_overrides = overrides;
+            self
+        }
+        pub fn strict_config(mut self, strict: bool) -> Self {
+            self.strict = strict;
+            self
+        }
+        pub fn cloud_requirements(mut self, cr: LoomCloudRequirementsLoader) -> Self {
+            self.cloud_requirements = Some(cr);
+            self
+        }
+        pub fn fallback_cwd(mut self, cwd: Option<PathBuf>) -> Self {
+            self.fallback_cwd = cwd;
+            self
+        }
 
         pub async fn build(self) -> Result<Config, ConfigLoadError> {
             let codex_home = match self.codex_home {
@@ -960,7 +1061,10 @@ pub mod config {
 
             let config_toml = load_config_as_toml_with_cli_and_load_options(
                 &codex_home,
-                self.fallback_cwd.as_ref().and_then(|p| AbsolutePathBuf::try_from(p.clone()).ok()).as_ref(),
+                self.fallback_cwd
+                    .as_ref()
+                    .and_then(|p| AbsolutePathBuf::try_from(p.clone()).ok())
+                    .as_ref(),
                 self.cli_kv_overrides,
                 ConfigLoadOptions {
                     loader_overrides: self.loader_overrides.clone(),
@@ -975,7 +1079,11 @@ pub mod config {
                 .cwd
                 .as_ref()
                 .and_then(|p| AbsolutePathBuf::try_from(p.clone()).ok())
-                .or_else(|| self.fallback_cwd.as_ref().and_then(|p| AbsolutePathBuf::try_from(p.clone()).ok()))
+                .or_else(|| {
+                    self.fallback_cwd
+                        .as_ref()
+                        .and_then(|p| AbsolutePathBuf::try_from(p.clone()).ok())
+                })
                 .unwrap_or_else(|| AbsolutePathBuf::current_dir().unwrap());
 
             let sqlite_home = config_toml
@@ -1023,9 +1131,7 @@ pub mod config {
                     network: None,
                     windows_sandbox_mode: None,
                 },
-                approvals_reviewer: config_toml
-                    .approvals_reviewer
-                    .unwrap_or_default(),
+                approvals_reviewer: config_toml.approvals_reviewer.unwrap_or_default(),
                 enforce_residency: Constrained(None),
                 features: ManagedFeaturesStub::default(),
                 animations: tui_cfg.map(|t| t.animations).unwrap_or(true),
@@ -1041,17 +1147,18 @@ pub mod config {
                 base_instructions: config_toml.instructions.clone(),
                 developer_instructions: config_toml.developer_instructions.clone(),
                 active_project: loom_config::config_toml::ProjectConfig { trust_level: None },
-                chatgpt_base_url: config_toml
-                    .chatgpt_base_url
-                    .clone()
-                    .unwrap_or_default(),
+                chatgpt_base_url: config_toml.chatgpt_base_url.clone().unwrap_or_default(),
                 cli_auth_credentials_store_mode: config_toml
                     .cli_auth_credentials_store
                     .map(|m| match m {
                         loom_config::types::AuthCredentialsStoreMode::File => "file".to_string(),
-                        loom_config::types::AuthCredentialsStoreMode::Keyring => "keyring".to_string(),
+                        loom_config::types::AuthCredentialsStoreMode::Keyring => {
+                            "keyring".to_string()
+                        }
                         loom_config::types::AuthCredentialsStoreMode::Auto => "auto".to_string(),
-                        loom_config::types::AuthCredentialsStoreMode::Ephemeral => "ephemeral".to_string(),
+                        loom_config::types::AuthCredentialsStoreMode::Ephemeral => {
+                            "ephemeral".to_string()
+                        }
                     })
                     .unwrap_or_default(),
                 forced_login_method: config_toml.forced_login_method,
@@ -1065,7 +1172,9 @@ pub mod config {
                     .as_ref()
                     .and_then(|f| f.enabled)
                     .unwrap_or(true),
-                check_for_update_on_startup: config_toml.check_for_update_on_startup.unwrap_or(true),
+                check_for_update_on_startup: config_toml
+                    .check_for_update_on_startup
+                    .unwrap_or(true),
                 history: config_toml.history.is_some(),
                 memories: MemoriesTomlStub::default(),
                 terminal_resize_reflow: TerminalResizeReflowConfig::default(),
@@ -1154,7 +1263,9 @@ pub mod config {
 
     impl McpManager {
         pub fn new(plugins_dir: PathBuf) -> Self {
-            Self { _plugins_dir: plugins_dir }
+            Self {
+                _plugins_dir: plugins_dir,
+            }
         }
 
         pub async fn configured_servers(
@@ -1176,7 +1287,7 @@ pub mod config {
     // Config edit stubs
     pub mod edit {
         use std::collections::HashMap;
-        
+
         use super::SessionPickerViewMode;
 
         #[derive(Debug, Clone)]
@@ -1184,17 +1295,39 @@ pub mod config {
             edits: Vec<ConfigEdit>,
         }
         impl ConfigEditsBuilder {
-            pub fn new(_codex_home: &std::path::Path) -> Self { Self { edits: Vec::new() } }
-            pub fn for_config(_config: &super::Config) -> Self { Self { edits: Vec::new() } }
-            pub fn set_session_picker_view(self, _view: SessionPickerViewMode) -> Self { self }
-            pub fn set_realtime_speaker(self, _name: Option<&str>) -> Self { self }
-            pub fn set_realtime_microphone(self, _name: Option<&str>) -> Self { self }
-            pub fn set_realtime_audio_device(self, _kind: &str, _name: String) -> Self { self }
-            pub fn set_model_availability_nux_count(self, _count: &HashMap<String, u32>) -> Self { self }
-            pub fn set_hide_world_writable_warning(self, _acknowledged: bool) -> Self { self }
-            pub fn set_hide_rate_limit_model_nudge(self, _acknowledged: bool) -> Self { self }
-            pub fn set_hide_full_access_warning(self, _acknowledged: bool) -> Self { self }
-            pub fn record_model_migration_seen(self, _from: &str, _to: &str) -> Self { self }
+            pub fn new(_codex_home: &std::path::Path) -> Self {
+                Self { edits: Vec::new() }
+            }
+            pub fn for_config(_config: &super::Config) -> Self {
+                Self { edits: Vec::new() }
+            }
+            pub fn set_session_picker_view(self, _view: SessionPickerViewMode) -> Self {
+                self
+            }
+            pub fn set_realtime_speaker(self, _name: Option<&str>) -> Self {
+                self
+            }
+            pub fn set_realtime_microphone(self, _name: Option<&str>) -> Self {
+                self
+            }
+            pub fn set_realtime_audio_device(self, _kind: &str, _name: String) -> Self {
+                self
+            }
+            pub fn set_model_availability_nux_count(self, _count: &HashMap<String, u32>) -> Self {
+                self
+            }
+            pub fn set_hide_world_writable_warning(self, _acknowledged: bool) -> Self {
+                self
+            }
+            pub fn set_hide_rate_limit_model_nudge(self, _acknowledged: bool) -> Self {
+                self
+            }
+            pub fn set_hide_full_access_warning(self, _acknowledged: bool) -> Self {
+                self
+            }
+            pub fn record_model_migration_seen(self, _from: &str, _to: &str) -> Self {
+                self
+            }
             pub fn with_edits(mut self, edits: impl IntoIterator<Item = ConfigEdit>) -> Self {
                 self.edits.extend(edits);
                 self
@@ -1202,11 +1335,16 @@ pub mod config {
             pub async fn apply(self) -> Result<(), anyhow::Error> {
                 let config_path = match loom_home_dir::find_loom_home() {
                     Ok(p) => p.into_path_buf().join("config.toml"),
-                    Err(_) => {
-                        std::env::var("APPDATA").ok()
-                            .map(|d| std::path::PathBuf::from(d).join("openLoom").join("config.toml"))
-                            .ok_or_else(|| anyhow::anyhow!("could not determine config path: APPDATA not set"))?
-                    }
+                    Err(_) => std::env::var("APPDATA")
+                        .ok()
+                        .map(|d| {
+                            std::path::PathBuf::from(d)
+                                .join("openLoom")
+                                .join("config.toml")
+                        })
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("could not determine config path: APPDATA not set")
+                        })?,
                 };
 
                 let content = match std::fs::read_to_string(&config_path) {
@@ -1222,10 +1360,16 @@ pub mod config {
                             if i == segments.len() - 1 {
                                 current.insert(seg.clone(), value.clone().into());
                             } else {
-                                current = current.entry(seg.clone())
+                                current = current
+                                    .entry(seg.clone())
                                     .or_insert_with(|| toml::Value::Table(toml::Table::new()))
                                     .as_table_mut()
-                                    .ok_or_else(|| anyhow::anyhow!("config path segment '{}' is not a table", seg))?;
+                                    .ok_or_else(|| {
+                                        anyhow::anyhow!(
+                                            "config path segment '{}' is not a table",
+                                            seg
+                                        )
+                                    })?;
                             }
                         }
                     }
@@ -1260,12 +1404,22 @@ pub mod config {
             Other,
         }
 
-        pub fn keymap_bindings_edit(_context: &str, _action: &str, _bindings: &[String]) -> ConfigEdit { ConfigEdit::Other }
-        pub fn keymap_binding_clear_edit(_context: &str, _action: &str) -> ConfigEdit { ConfigEdit::Other }
+        pub fn keymap_bindings_edit(
+            _context: &str,
+            _action: &str,
+            _bindings: &[String],
+        ) -> ConfigEdit {
+            ConfigEdit::Other
+        }
+        pub fn keymap_binding_clear_edit(_context: &str, _action: &str) -> ConfigEdit {
+            ConfigEdit::Other
+        }
         pub fn status_line_items_edit(ids: &[String]) -> ConfigEdit {
             ConfigEdit::SetPath {
                 segments: vec!["tui".into(), "status_line".into()],
-                value: toml::Value::Array(ids.iter().map(|s| toml::Value::String(s.clone())).collect()),
+                value: toml::Value::Array(
+                    ids.iter().map(|s| toml::Value::String(s.clone())).collect(),
+                ),
             }
         }
         pub fn status_line_use_colors_edit(use_colors: bool) -> ConfigEdit {
@@ -1283,7 +1437,9 @@ pub mod config {
         pub fn terminal_title_items_edit(ids: &[String]) -> ConfigEdit {
             ConfigEdit::SetPath {
                 segments: vec!["tui".into(), "terminal_title".into()],
-                value: toml::Value::Array(ids.iter().map(|s| toml::Value::String(s.clone())).collect()),
+                value: toml::Value::Array(
+                    ids.iter().map(|s| toml::Value::String(s.clone())).collect(),
+                ),
             }
         }
         pub fn tui_pet_edit(pet_id: &str) -> ConfigEdit {
@@ -1295,11 +1451,15 @@ pub mod config {
     }
 
     // Additional config stubs
-    pub fn format_config_error_with_source(_err: &anyhow::Error) -> String { String::new() }
+    pub fn format_config_error_with_source(_err: &anyhow::Error) -> String {
+        String::new()
+    }
 
     /// Resolves CODEX_HOME from env var or default platform data dir.
     /// Returns AbsolutePathBuf for TUI compatibility.
-    pub fn find_codex_home_tui() -> Option<AbsolutePathBuf> { None }
+    pub fn find_codex_home_tui() -> Option<AbsolutePathBuf> {
+        None
+    }
 
     /// Resolves LOOM_HOME, returns PathBuf.
     pub fn find_codex_home() -> anyhow::Result<PathBuf> {
@@ -1329,7 +1489,10 @@ pub mod config {
         codex_home: &Path,
         profile_v2: &str,
     ) -> AbsolutePathBuf {
-        let path = codex_home.join("profiles").join(profile_v2).join("config.toml");
+        let path = codex_home
+            .join("profiles")
+            .join(profile_v2)
+            .join("config.toml");
         AbsolutePathBuf::try_from(path).unwrap_or_else(|_| AbsolutePathBuf::current_dir().unwrap())
     }
 
@@ -1383,8 +1546,8 @@ pub mod config {
             }
         };
 
-        let mut config_toml: loom_config::config_toml::ConfigToml =
-            toml::from_str(&contents).map_err(|e| {
+        let mut config_toml: loom_config::config_toml::ConfigToml = toml::from_str(&contents)
+            .map_err(|e| {
                 let range = loom_config::TextRange {
                     start: loom_config::TextPosition { line: 1, column: 1 },
                     end: loom_config::TextPosition { line: 1, column: 1 },
@@ -1414,7 +1577,9 @@ pub mod config {
     ) -> Result<(), String> {
         match key {
             "model" => config.model = Some(value.as_str().unwrap_or_default().to_string()),
-            "model_provider" => config.model_provider = Some(value.as_str().unwrap_or_default().to_string()),
+            "model_provider" => {
+                config.model_provider = Some(value.as_str().unwrap_or_default().to_string())
+            }
             _ => {}
         }
         Ok(())
@@ -1423,8 +1588,8 @@ pub mod config {
 
 // ─── codex-login ───
 pub mod login {
-    use std::path::PathBuf;
     use super::ForcedLoginMethod;
+    use std::path::PathBuf;
 
     #[derive(Debug, Clone)]
     pub struct AuthConfig {
@@ -1448,10 +1613,10 @@ pub mod login {
     pub async fn enforce_login_restrictions(_config: &AuthConfig) -> Result<(), anyhow::Error> {
         Ok(())
     }
-    pub fn set_default_client_residency_requirement(
-        _enforce_residency: Option<String>,
-    ) {}
-    pub fn read_openai_api_key_from_env() -> Option<String> { None }
+    pub fn set_default_client_residency_requirement(_enforce_residency: Option<String>) {}
+    pub fn read_openai_api_key_from_env() -> Option<String> {
+        None
+    }
     #[derive(Debug, Clone)]
     pub struct DefaultOriginator {
         pub value: String,
@@ -1459,11 +1624,11 @@ pub mod login {
     pub mod default_client {
         use super::DefaultOriginator;
         pub fn originator() -> DefaultOriginator {
-            DefaultOriginator { value: String::new() }
+            DefaultOriginator {
+                value: String::new(),
+            }
         }
-        pub fn set_default_client_residency_requirement(
-            _enforce_residency: Option<String>,
-        ) {}
+        pub fn set_default_client_residency_requirement(_enforce_residency: Option<String>) {}
         pub fn create_client() -> reqwest::Client {
             reqwest::Client::new()
         }
@@ -1509,26 +1674,36 @@ pub mod windows_sandbox {
 
 // RealtimeWebrtcSession
 impl realtime_webrtc::RealtimeWebrtcSession {
-    pub fn start() -> realtime_webrtc::RealtimeWebrtcSession { realtime_webrtc::RealtimeWebrtcSession }
+    pub fn start() -> realtime_webrtc::RealtimeWebrtcSession {
+        realtime_webrtc::RealtimeWebrtcSession
+    }
 }
 
 impl realtime_webrtc::RealtimeWebrtcSessionHandle {
     pub fn apply_answer_sdp(&self, _sdp: &str) {}
-    pub fn local_audio_peak(&self) -> u16 { 0 }
+    pub fn local_audio_peak(&self) -> u16 {
+        0
+    }
     pub fn close(&self) {}
 }
 
 // AuthConfig fields
 impl login::AuthConfig {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 // NetworkProxySpec methods
 impl config::NetworkProxySpec {
-    pub fn socks_enabled() -> bool { false }
+    pub fn socks_enabled() -> bool {
+        false
+    }
 }
 impl PartialEq for config::NetworkProxySpec {
-    fn eq(&self, _other: &Self) -> bool { true }
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
 }
 impl Eq for config::NetworkProxySpec {}
 
@@ -1540,42 +1715,63 @@ impl config::PermissionProfileSnapshot {
     ) -> Self {
         Self::default()
     }
-    pub fn from_session_snapshot<P1, P2>(_profile: P1, _active: P2) -> Self { Self::default() }
+    pub fn from_session_snapshot<P1, P2>(_profile: P1, _active: P2) -> Self {
+        Self::default()
+    }
 }
 
 // Constrained — additional factory
 impl<T: Clone> config::Constrained<T> {
-    pub fn allow_only(_value: T) -> Self { config::Constrained::<T>(_value) }
-    pub fn allow_any(value: T) -> Self { config::Constrained::<T>(value) }
+    pub fn allow_only(_value: T) -> Self {
+        config::Constrained::<T>(_value)
+    }
+    pub fn allow_any(value: T) -> Self {
+        config::Constrained::<T>(value)
+    }
 }
 
 // Config methods
 impl config::Config {
-    pub fn effective_workspace_roots(&self) -> Vec<loom_absolute_path::AbsolutePathBuf> { vec![] }
+    pub fn effective_workspace_roots(&self) -> Vec<loom_absolute_path::AbsolutePathBuf> {
+        vec![]
+    }
     pub fn set_windows_elevated_sandbox_enabled(&mut self, _val: bool) {}
-    pub fn legacy_sandbox_policy(&self, _cwd: &std::path::Path) -> loom_protocol::protocol::SandboxPolicy {
+    pub fn legacy_sandbox_policy(
+        &self,
+        _cwd: &std::path::Path,
+    ) -> loom_protocol::protocol::SandboxPolicy {
         loom_protocol::protocol::SandboxPolicy::DangerFullAccess
     }
 }
 
 // Feedback diagnostics
 impl feedback::FeedbackDiagnostics {
-    pub fn diagnostics(&self) -> &Self { self }
-    pub fn is_empty(&self) -> bool { true }
+    pub fn diagnostics(&self) -> &Self {
+        self
+    }
+    pub fn is_empty(&self) -> bool {
+        true
+    }
 }
 impl feedback::FeedbackSnapshot {
-    pub fn feedback_diagnostics(&self) -> feedback::FeedbackDiagnostics { feedback::FeedbackDiagnostics }
+    pub fn feedback_diagnostics(&self) -> feedback::FeedbackDiagnostics {
+        feedback::FeedbackDiagnostics
+    }
 }
 
 // PluginId IntoIterator
 impl<'a> IntoIterator for &'a plugin::PluginId {
     type Item = &'a plugin::PluginId;
     type IntoIter = std::iter::Once<&'a plugin::PluginId>;
-    fn into_iter(self) -> Self::IntoIter { std::iter::once(self) }
+    fn into_iter(self) -> Self::IntoIter {
+        std::iter::once(self)
+    }
 }
 
-    impl<'a> IntoIterator for &'a feedback::FeedbackDiagnostics {
-        type Item = &'a feedback::FeedbackDiagnostic;
-        type IntoIter = std::iter::Empty<&'a feedback::FeedbackDiagnostic>;
-        fn into_iter(self) -> Self::IntoIter { std::iter::empty() }
+impl<'a> IntoIterator for &'a feedback::FeedbackDiagnostics {
+    type Item = &'a feedback::FeedbackDiagnostic;
+    type IntoIter = std::iter::Empty<&'a feedback::FeedbackDiagnostic>;
+    fn into_iter(self) -> Self::IntoIter {
+        std::iter::empty()
     }
+}

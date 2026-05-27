@@ -4087,7 +4087,8 @@ impl ChatComposer {
                 if !connector.is_accessible || !connector.is_enabled {
                     continue;
                 }
-                let display_name = loom_tui_stubs::connectors::metadata::connector_display_label(connector);
+                let display_name =
+                    loom_tui_stubs::connectors::metadata::connector_display_label(connector);
                 let description = Some(Self::connector_brief_description(connector));
                 let slug = loom_tui_stubs::connectors::metadata::connector_mention_slug(connector);
                 let search_terms = vec![display_name.clone(), connector.id.clone(), slug.clone()];

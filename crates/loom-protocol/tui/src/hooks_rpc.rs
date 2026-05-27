@@ -1,3 +1,5 @@
+use color_eyre::eyre::Result;
+use color_eyre::eyre::WrapErr;
 use loom_app_server_client::AppServerRequestHandle;
 use loom_app_server_protocol::ClientRequest;
 use loom_app_server_protocol::ConfigBatchWriteParams;
@@ -9,8 +11,6 @@ use loom_app_server_protocol::HooksListParams;
 use loom_app_server_protocol::HooksListResponse;
 use loom_app_server_protocol::MergeStrategy;
 use loom_app_server_protocol::RequestId;
-use color_eyre::eyre::Result;
-use color_eyre::eyre::WrapErr;
 use std::path::Path;
 use std::path::PathBuf;
 use uuid::Uuid;

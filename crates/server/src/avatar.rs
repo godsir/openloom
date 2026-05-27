@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::Response;
-use axum::Json;
 use openloom_engine::Engine;
 use serde::Deserialize;
 
@@ -24,7 +24,10 @@ pub async fn serve_avatar(
     Path(role): Path<String>,
 ) -> Response<Body> {
     // Only allow alphanumeric role names
-    if !role.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !role
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body(Body::from("invalid role"))
@@ -61,7 +64,10 @@ pub async fn upload_avatar(
     Path(role): Path<String>,
     Json(payload): Json<AvatarUpload>,
 ) -> Response<Body> {
-    if !role.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !role
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body(Body::from("invalid role"))

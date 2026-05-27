@@ -18,8 +18,8 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
 
-use loom_features::Feature;
 use color_eyre::eyre::Result;
+use loom_features::Feature;
 use ratatui::text::Line;
 
 use super::App;

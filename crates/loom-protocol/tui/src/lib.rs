@@ -22,6 +22,10 @@ pub use app::AppExitInfo;
 pub use app::ExitReason;
 use app_server_session::AppServerSession;
 use app_server_session::ThreadParamsMode;
+use color_eyre::eyre::WrapErr;
+use cwd_prompt::CwdPromptAction;
+use loom_absolute_path::AbsolutePathBuf;
+use loom_absolute_path::canonicalize_existing_preserving_symlinks;
 use loom_app_server_client::AppServerClient;
 use loom_app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
 use loom_app_server_client::InProcessAppServerClient;
@@ -38,30 +42,26 @@ use loom_app_server_protocol::ThreadListCwdFilter;
 use loom_app_server_protocol::ThreadListParams;
 use loom_app_server_protocol::ThreadSortKey as AppServerThreadSortKey;
 use loom_app_server_protocol::ThreadSourceKind;
-use loom_tui_stubs::cloud_requirements::cloud_requirements_loader_for_storage;
 use loom_config::CloudRequirementsLoader;
 use loom_config::LoaderOverrides;
 use loom_config::format_config_error_with_source;
 use loom_exec_server::EnvironmentManager;
 use loom_exec_server::ExecServerRuntimePaths;
-use loom_tui_stubs::login::AuthConfig;
-use loom_tui_stubs::login::default_client::originator;
-use loom_tui_stubs::login::default_client::set_default_client_residency_requirement;
-use loom_tui_stubs::login::enforce_login_restrictions;
+use loom_home_dir::find_codex_home;
+use loom_oss::ensure_oss_provider_ready;
+use loom_oss::get_default_model_for_oss_provider;
 use loom_protocol::ThreadId;
 use loom_protocol::config_types::AltScreenMode;
 use loom_protocol::config_types::SandboxMode;
 use loom_protocol::config_types::WindowsSandboxLevel;
+use loom_tui_stubs::cloud_requirements::cloud_requirements_loader_for_storage;
+use loom_tui_stubs::login::AuthConfig;
+use loom_tui_stubs::login::default_client::originator;
+use loom_tui_stubs::login::default_client::set_default_client_residency_requirement;
+use loom_tui_stubs::login::enforce_login_restrictions;
 use loom_tui_stubs::rollout::StateDbHandle;
 use loom_tui_stubs::rollout::state_db;
 use loom_tui_stubs::state::log_db;
-use loom_absolute_path::AbsolutePathBuf;
-use loom_absolute_path::canonicalize_existing_preserving_symlinks;
-use loom_home_dir::find_codex_home;
-use loom_oss::ensure_oss_provider_ready;
-use loom_oss::get_default_model_for_oss_provider;
-use color_eyre::eyre::WrapErr;
-use cwd_prompt::CwdPromptAction;
 use std::fs::OpenOptions;
 use std::path::Path;
 use std::path::PathBuf;
@@ -979,7 +979,10 @@ pub async fn run_main(
     let cloud_requirements = cloud_requirements_loader_for_storage(
         codex_home.to_path_buf(),
         /*enable_codex_api_key_env*/ false,
-        config_toml.cli_auth_credentials_store.map(|m| format!("{:?}", m).to_lowercase()).unwrap_or_default(),
+        config_toml
+            .cli_auth_credentials_store
+            .map(|m| format!("{:?}", m).to_lowercase())
+            .unwrap_or_default(),
         chatgpt_base_url,
     )
     .await;

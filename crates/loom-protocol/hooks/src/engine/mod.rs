@@ -21,15 +21,15 @@ use crate::events::stop::StopRequest;
 use crate::events::user_prompt_submit::UserPromptSubmitOutcome;
 use crate::events::user_prompt_submit::UserPromptSubmitRequest;
 use crate::output_spill::HookOutputSpiller;
-use loom_shim_stubs::config::ConfigLayerStack;
-use loom_shim_stubs::plugin::PluginHookSource;
+use loom_absolute_path::AbsolutePathBuf;
 use loom_protocol::ThreadId;
 use loom_protocol::protocol::HookEventName;
 use loom_protocol::protocol::HookHandlerType;
 use loom_protocol::protocol::HookRunSummary;
 use loom_protocol::protocol::HookSource;
 use loom_protocol::protocol::HookTrustStatus;
-use loom_absolute_path::AbsolutePathBuf;
+use loom_shim_stubs::config::ConfigLayerStack;
+use loom_shim_stubs::plugin::PluginHookSource;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]

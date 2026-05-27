@@ -3,6 +3,8 @@ use super::intersect_permission_profiles;
 use super::merge_file_system_policy_with_additional_permissions;
 use super::normalize_additional_permissions;
 use super::should_require_platform_sandbox;
+use dunce::canonicalize;
+use loom_absolute_path::AbsolutePathBuf;
 use loom_protocol::models::AdditionalPermissionProfile as PermissionProfile;
 use loom_protocol::models::FileSystemPermissions;
 use loom_protocol::models::NetworkPermissions;
@@ -12,8 +14,6 @@ use loom_protocol::permissions::FileSystemSandboxEntry;
 use loom_protocol::permissions::FileSystemSandboxPolicy;
 use loom_protocol::permissions::FileSystemSpecialPath;
 use loom_protocol::permissions::NetworkSandboxPolicy;
-use loom_absolute_path::AbsolutePathBuf;
-use dunce::canonicalize;
 use pretty_assertions::assert_eq;
 #[cfg(unix)]
 use std::path::Path;

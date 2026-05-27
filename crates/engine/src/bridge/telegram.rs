@@ -3,10 +3,10 @@ use async_trait::async_trait;
 use chrono::Utc;
 use reqwest::Client;
 use serde::Deserialize;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 use super::adapter::ChannelAdapter;
 use super::types::*;
@@ -66,7 +66,10 @@ impl TelegramAdapter {
             sender_id,
             sender_name,
             content,
-            reply_to: msg.reply_to_message.as_ref().map(|r| r.message_id.to_string()),
+            reply_to: msg
+                .reply_to_message
+                .as_ref()
+                .map(|r| r.message_id.to_string()),
             external_message_id: msg.message_id.to_string(),
             timestamp: Utc::now(),
         })
@@ -129,10 +132,7 @@ impl ChannelAdapter for TelegramAdapter {
                     break;
                 }
 
-                let url = format!(
-                    "https://api.telegram.org/bot{}/getUpdates",
-                    bot_token
-                );
+                let url = format!("https://api.telegram.org/bot{}/getUpdates", bot_token);
                 let resp = client
                     .post(&url)
                     .json(&serde_json::json!({
@@ -219,7 +219,10 @@ impl ChannelAdapter for TelegramAdapter {
                 Ok(msg_id)
             }
             _ => {
-                anyhow::bail!("unsupported content type for telegram: {}", content.media_type())
+                anyhow::bail!(
+                    "unsupported content type for telegram: {}",
+                    content.media_type()
+                )
             }
         }
     }

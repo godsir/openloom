@@ -10,6 +10,7 @@ use crate::bottom_pane::SkillsToggleView;
 use crate::bottom_pane::popup_consts::standard_popup_hint_line;
 use crate::skills_helpers::skill_description;
 use crate::skills_helpers::skill_display_name;
+use loom_absolute_path::AbsolutePathBuf;
 use loom_app_server_protocol::AppInfo;
 use loom_app_server_protocol::SkillMetadata as ProtocolSkillMetadata;
 use loom_app_server_protocol::SkillsListEntry;
@@ -19,9 +20,8 @@ use loom_core_skills::model::SkillInterface;
 use loom_core_skills::model::SkillMetadata;
 use loom_core_skills::model::SkillToolDependency;
 use loom_features::Feature;
-use loom_protocol::parse_command::ParsedCommand;
-use loom_absolute_path::AbsolutePathBuf;
 use loom_plugins::mention_syntax::TOOL_MENTION_SIGIL;
+use loom_protocol::parse_command::ParsedCommand;
 
 impl ChatWidget {
     pub(crate) fn open_skills_list(&mut self) {

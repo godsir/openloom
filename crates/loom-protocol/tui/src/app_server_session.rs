@@ -11,6 +11,10 @@ use crate::session_state::MessageHistoryMetadata;
 use crate::session_state::ThreadSessionState;
 use crate::status::StatusAccountDisplay;
 use crate::status::plan_type_display_name;
+use color_eyre::eyre::ContextCompat;
+use color_eyre::eyre::Result;
+use color_eyre::eyre::WrapErr;
+use loom_absolute_path::AbsolutePathBuf;
 use loom_app_server_client::AppServerClient;
 use loom_app_server_client::AppServerEvent;
 use loom_app_server_client::AppServerRequestHandle;
@@ -117,10 +121,6 @@ use loom_protocol::openai_models::ModelPreset;
 use loom_protocol::openai_models::ModelServiceTier;
 use loom_protocol::openai_models::ModelUpgrade;
 use loom_protocol::openai_models::ReasoningEffortPreset;
-use loom_absolute_path::AbsolutePathBuf;
-use color_eyre::eyre::ContextCompat;
-use color_eyre::eyre::Result;
-use color_eyre::eyre::WrapErr;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -1689,9 +1689,12 @@ async fn thread_session_state_from_thread_response(
         .map(ThreadId::from_string)
         .transpose()
         .map_err(|err| format!("forked_from_id is invalid: {err}"))?;
-    let history_config =
-        loom_tui_stubs::message_history::HistoryConfig::new(config.codex_home.clone(), &config.history);
-    let (log_id, entry_count) = loom_tui_stubs::message_history::history_metadata(&history_config).await;
+    let history_config = loom_tui_stubs::message_history::HistoryConfig::new(
+        config.codex_home.clone(),
+        &config.history,
+    );
+    let (log_id, entry_count) =
+        loom_tui_stubs::message_history::history_metadata(&history_config).await;
     Ok(ThreadSessionState {
         thread_id,
         forked_from_id,
@@ -1744,6 +1747,8 @@ mod tests {
     use super::*;
     use crate::legacy_core::config::ConfigBuilder;
     use crate::legacy_core::config::ConfigOverrides;
+    use loom_absolute_path::test_support::PathBufExt;
+    use loom_absolute_path::test_support::test_path_buf;
     use loom_app_server_protocol::ThreadStatus;
     use loom_app_server_protocol::Turn;
     use loom_app_server_protocol::TurnStatus;
@@ -1761,8 +1766,6 @@ mod tests {
     use loom_protocol::permissions::FileSystemSandboxEntry;
     use loom_protocol::permissions::FileSystemSpecialPath;
     use loom_protocol::permissions::NetworkSandboxPolicy;
-    use loom_absolute_path::test_support::PathBufExt;
-    use loom_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
@@ -2416,8 +2419,10 @@ mod tests {
         let config = build_config(&temp_dir).await;
         let thread_id = ThreadId::new();
 
-        let history_config =
-            loom_tui_stubs::message_history::HistoryConfig::new(config.codex_home.clone(), &config.history);
+        let history_config = loom_tui_stubs::message_history::HistoryConfig::new(
+            config.codex_home.clone(),
+            &config.history,
+        );
 
         loom_tui_stubs::message_history::append_entry("older", &thread_id, &history_config)
             .await

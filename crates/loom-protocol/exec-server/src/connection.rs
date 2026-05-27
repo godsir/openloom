@@ -7,11 +7,11 @@ use std::time::Duration;
 
 use axum::extract::ws::Message as AxumWebSocketMessage;
 use axum::extract::ws::WebSocket as AxumWebSocket;
-use loom_app_server_protocol::JSONRPCMessage;
 use futures::Sink;
 use futures::SinkExt;
 use futures::Stream;
 use futures::StreamExt;
+use loom_app_server_protocol::JSONRPCMessage;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 use tokio::process::Child;
@@ -149,7 +149,9 @@ fn terminate_process_tree(child_process: &mut Child, process_group_id: Option<u3
     };
 
     #[cfg(unix)]
-    if let Err(err) = loom_shim_stubs::utils_pty::process_group::terminate_process_group(process_group_id) {
+    if let Err(err) =
+        loom_shim_stubs::utils_pty::process_group::terminate_process_group(process_group_id)
+    {
         warn!("failed to terminate exec-server stdio process group {process_group_id}: {err}");
         kill_direct_child(child_process, "terminate");
     }
@@ -173,7 +175,9 @@ fn kill_process_tree(child_process: &mut Child, process_group_id: Option<u32>) {
     };
 
     #[cfg(unix)]
-    if let Err(err) = loom_shim_stubs::utils_pty::process_group::kill_process_group(process_group_id) {
+    if let Err(err) =
+        loom_shim_stubs::utils_pty::process_group::kill_process_group(process_group_id)
+    {
         warn!("failed to kill exec-server stdio process group {process_group_id}: {err}");
     }
 
@@ -596,10 +600,10 @@ mod tests {
     use std::task::Context;
     use std::task::Poll;
 
-    use loom_app_server_protocol::JSONRPCRequest;
-    use loom_app_server_protocol::RequestId;
     use futures::channel::mpsc as futures_mpsc;
     use futures::task::AtomicWaker;
+    use loom_app_server_protocol::JSONRPCRequest;
+    use loom_app_server_protocol::RequestId;
     use tokio::net::TcpListener;
     use tokio::time::timeout;
     use tokio_tungstenite::accept_async;

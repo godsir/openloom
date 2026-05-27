@@ -4,10 +4,10 @@ use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
 
+use loom_absolute_path::AbsolutePathBuf;
 use loom_exec_server::ExecutorFileSystem;
 use loom_protocol::protocol::Product;
 use loom_protocol::protocol::SkillScope;
-use loom_absolute_path::AbsolutePathBuf;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SkillMetadata {

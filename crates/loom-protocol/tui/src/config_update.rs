@@ -4,6 +4,9 @@
 //! when a config mutation must be owned by the app server rather than written
 //! to the local `config.toml` directly.
 
+use color_eyre::eyre::Result;
+use color_eyre::eyre::WrapErr;
+use loom_absolute_path::AbsolutePathBuf;
 use loom_app_server_client::AppServerRequestHandle;
 use loom_app_server_protocol::ClientRequest;
 use loom_app_server_protocol::ConfigBatchWriteParams;
@@ -17,9 +20,6 @@ use loom_app_server_protocol::SkillsConfigWriteParams;
 use loom_app_server_protocol::SkillsConfigWriteResponse;
 use loom_features::FEATURES;
 use loom_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
-use loom_absolute_path::AbsolutePathBuf;
-use color_eyre::eyre::Result;
-use color_eyre::eyre::WrapErr;
 use serde_json::Value as JsonValue;
 use uuid::Uuid;
 

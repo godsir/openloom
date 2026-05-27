@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use loom_absolute_path::AbsolutePathBuf;
 use loom_protocol::config_types::WindowsSandboxLevel;
 use loom_protocol::models::PermissionProfile;
 use loom_protocol::models::SandboxEnforcement;
@@ -8,7 +9,6 @@ use loom_protocol::permissions::FileSystemSandboxPolicy;
 use loom_protocol::permissions::FileSystemSpecialPath;
 use loom_protocol::permissions::NetworkSandboxPolicy;
 use loom_protocol::protocol::SandboxPolicy;
-use loom_absolute_path::AbsolutePathBuf;
 use std::io;
 use std::path::Path;
 

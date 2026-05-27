@@ -1362,23 +1362,37 @@ mod tests {
     #[test]
     fn test_set_nested_key() {
         let mut config = AppConfig::default();
-        config.set_nested("server.host", serde_json::json!("0.0.0.0")).unwrap();
+        config
+            .set_nested("server.host", serde_json::json!("0.0.0.0"))
+            .unwrap();
         assert_eq!(config.server.host, "0.0.0.0");
-        config.set_nested("agent.max_iterations", serde_json::json!(5)).unwrap();
+        config
+            .set_nested("agent.max_iterations", serde_json::json!(5))
+            .unwrap();
         assert_eq!(config.agent.max_iterations, 5);
     }
 
     #[test]
     fn test_set_nested_settings_path() {
         let mut config = AppConfig::default();
-        config.set_nested("settings.agent.default.name", serde_json::json!("MyAgent")).unwrap();
-        assert_eq!(config.settings["agent"]["default"]["name"], serde_json::json!("MyAgent"));
+        config
+            .set_nested("settings.agent.default.name", serde_json::json!("MyAgent"))
+            .unwrap();
+        assert_eq!(
+            config.settings["agent"]["default"]["name"],
+            serde_json::json!("MyAgent")
+        );
     }
 
     #[test]
     fn test_set_nested_general_key() {
         let mut config = AppConfig::default();
-        config.set_nested("general", serde_json::json!({"locale": "zh-CN", "theme": "dark"})).unwrap();
+        config
+            .set_nested(
+                "general",
+                serde_json::json!({"locale": "zh-CN", "theme": "dark"}),
+            )
+            .unwrap();
         assert_eq!(config.settings["locale"], serde_json::json!("zh-CN"));
         assert_eq!(config.settings["theme"], serde_json::json!("dark"));
     }

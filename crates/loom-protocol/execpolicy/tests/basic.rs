@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use anyhow::Result;
+use loom_absolute_path::AbsolutePathBuf;
 use loom_execpolicy::Decision;
 use loom_execpolicy::Error;
 use loom_execpolicy::Evaluation;
@@ -18,7 +19,6 @@ use loom_execpolicy::PrefixRule;
 use loom_execpolicy::RuleMatch;
 use loom_execpolicy::RuleRef;
 use loom_execpolicy::blocking_append_allow_prefix_rule;
-use loom_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use tempfile::tempdir;
 

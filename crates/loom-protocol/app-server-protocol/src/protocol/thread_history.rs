@@ -1204,6 +1204,8 @@ impl From<&PendingTurn> for Turn {
 mod tests {
     use super::*;
     use crate::protocol::v2::CommandExecutionSource;
+    use loom_absolute_path::test_support::PathBufExt;
+    use loom_absolute_path::test_support::test_path_buf;
     use loom_protocol::ThreadId;
     use loom_protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
     use loom_protocol::items::HookPromptFragment as CoreHookPromptFragment;
@@ -1235,8 +1237,6 @@ mod tests {
     use loom_protocol::protocol::TurnStartedEvent;
     use loom_protocol::protocol::UserMessageEvent;
     use loom_protocol::protocol::WebSearchEndEvent;
-    use loom_absolute_path::test_support::PathBufExt;
-    use loom_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
     use std::time::Duration;

@@ -2,6 +2,12 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use loom_protocol::ThreadId;
+use loom_protocol::protocol::HookOutputEntry;
+use loom_protocol::protocol::HookOutputEntryKind;
+use loom_protocol::protocol::HookRunStatus;
+use loom_protocol::protocol::HookSource;
+use loom_protocol::protocol::HookTrustStatus;
 use loom_shim_stubs::config::AbsolutePathBuf;
 use loom_shim_stubs::config::ConfigLayerEntry;
 use loom_shim_stubs::config::ConfigLayerSource;
@@ -19,12 +25,6 @@ use loom_shim_stubs::config::Sourced;
 use loom_shim_stubs::config::TomlValue;
 use loom_shim_stubs::plugin::PluginHookSource;
 use loom_shim_stubs::plugin::PluginId;
-use loom_protocol::ThreadId;
-use loom_protocol::protocol::HookOutputEntry;
-use loom_protocol::protocol::HookOutputEntryKind;
-use loom_protocol::protocol::HookRunStatus;
-use loom_protocol::protocol::HookSource;
-use loom_protocol::protocol::HookTrustStatus;
 use pretty_assertions::assert_eq;
 use tempfile::tempdir;
 

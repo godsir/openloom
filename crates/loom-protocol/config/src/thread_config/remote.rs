@@ -3,11 +3,11 @@ use std::collections::HashMap;
 use std::num::NonZeroU64;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use crate::model_info::ModelProviderInfo;
 use crate::model_info::WireApi;
-use loom_protocol::config_types::ModelProviderAuthInfo;
+use async_trait::async_trait;
 use loom_absolute_path::AbsolutePathBuf;
+use loom_protocol::config_types::ModelProviderAuthInfo;
 
 use super::SessionThreadConfig;
 use super::ThreadConfigContext;
@@ -302,8 +302,8 @@ mod tests {
 
     use crate::model_info::ModelProviderInfo;
     use crate::model_info::WireApi;
-    use loom_protocol::config_types::ModelProviderAuthInfo;
     use loom_absolute_path::AbsolutePathBuf;
+    use loom_protocol::config_types::ModelProviderAuthInfo;
     use pretty_assertions::assert_eq;
     use tonic::Request;
     use tonic::Response;

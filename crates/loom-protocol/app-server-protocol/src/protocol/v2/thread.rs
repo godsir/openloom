@@ -10,6 +10,7 @@ use super::Turn;
 use super::TurnEnvironmentParams;
 use super::TurnItemsView;
 use super::shared::v2_enum_from_core;
+use loom_absolute_path::AbsolutePathBuf;
 use loom_protocol::config_types::CollaborationMode;
 use loom_protocol::config_types::Personality;
 use loom_protocol::config_types::ReasoningSummary;
@@ -18,7 +19,6 @@ use loom_protocol::openai_models::ReasoningEffort;
 use loom_protocol::protocol::ThreadGoalStatus as CoreThreadGoalStatus;
 use loom_protocol::protocol::TokenUsage as CoreTokenUsage;
 use loom_protocol::protocol::TokenUsageInfo as CoreTokenUsageInfo;
-use loom_absolute_path::AbsolutePathBuf;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -86,9 +86,7 @@ impl<'de> Deserialize<'de> for DynamicToolSpec {
 
 // === Threads, Turns, and Items ===
 // Thread APIs
-#[derive(
-    Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema, TS,
-)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct ThreadStartParams {
@@ -209,9 +207,7 @@ pub struct ThreadStartResponse {
     pub reasoning_effort: Option<ReasoningEffort>,
 }
 
-#[derive(
-    Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS,
-)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct ThreadSettingsUpdateParams {
@@ -293,9 +289,7 @@ pub struct ThreadSettingsUpdatedNotification {
     pub thread_settings: ThreadSettings,
 }
 
-#[derive(
-    Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS,
-)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 /// There are three ways to resume a thread:
@@ -412,9 +406,7 @@ pub struct ThreadResumeResponse {
     pub reasoning_effort: Option<ReasoningEffort>,
 }
 
-#[derive(
-    Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS,
-)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 /// There are two ways to fork a thread:
@@ -1318,10 +1310,18 @@ pub struct ContextCompactedNotification {
 
 impl crate::experimental_api::ExperimentalApi for ThreadStartParams {
     fn experimental_reason(&self) -> Option<&'static str> {
-        if self.runtime_workspace_roots.as_ref().is_some_and(|v| !v.is_empty()) {
+        if self
+            .runtime_workspace_roots
+            .as_ref()
+            .is_some_and(|v| !v.is_empty())
+        {
             return Some("thread/start.runtimeWorkspaceRoots");
         }
-        if let Some(reason) = self.approval_policy.as_ref().and_then(crate::experimental_api::ExperimentalApi::experimental_reason) {
+        if let Some(reason) = self
+            .approval_policy
+            .as_ref()
+            .and_then(crate::experimental_api::ExperimentalApi::experimental_reason)
+        {
             return Some(reason);
         }
         if self.permissions.is_some() {
@@ -1363,7 +1363,11 @@ impl crate::experimental_api::ExperimentalApi for ThreadStartResponse {
 
 impl crate::experimental_api::ExperimentalApi for ThreadSettingsUpdateParams {
     fn experimental_reason(&self) -> Option<&'static str> {
-        if let Some(reason) = self.approval_policy.as_ref().and_then(crate::experimental_api::ExperimentalApi::experimental_reason) {
+        if let Some(reason) = self
+            .approval_policy
+            .as_ref()
+            .and_then(crate::experimental_api::ExperimentalApi::experimental_reason)
+        {
             return Some(reason);
         }
         if self.permissions.is_some() {
@@ -1384,10 +1388,18 @@ impl crate::experimental_api::ExperimentalApi for ThreadResumeParams {
         if self.path.is_some() {
             return Some("thread/resume.path");
         }
-        if self.runtime_workspace_roots.as_ref().is_some_and(|v| !v.is_empty()) {
+        if self
+            .runtime_workspace_roots
+            .as_ref()
+            .is_some_and(|v| !v.is_empty())
+        {
             return Some("thread/resume.runtimeWorkspaceRoots");
         }
-        if let Some(reason) = self.approval_policy.as_ref().and_then(crate::experimental_api::ExperimentalApi::experimental_reason) {
+        if let Some(reason) = self
+            .approval_policy
+            .as_ref()
+            .and_then(crate::experimental_api::ExperimentalApi::experimental_reason)
+        {
             return Some(reason);
         }
         if self.permissions.is_some() {
@@ -1423,10 +1435,18 @@ impl crate::experimental_api::ExperimentalApi for ThreadForkParams {
         if self.path.is_some() {
             return Some("thread/fork.path");
         }
-        if self.runtime_workspace_roots.as_ref().is_some_and(|v| !v.is_empty()) {
+        if self
+            .runtime_workspace_roots
+            .as_ref()
+            .is_some_and(|v| !v.is_empty())
+        {
             return Some("thread/fork.runtimeWorkspaceRoots");
         }
-        if let Some(reason) = self.approval_policy.as_ref().and_then(crate::experimental_api::ExperimentalApi::experimental_reason) {
+        if let Some(reason) = self
+            .approval_policy
+            .as_ref()
+            .and_then(crate::experimental_api::ExperimentalApi::experimental_reason)
+        {
             return Some(reason);
         }
         if self.permissions.is_some() {

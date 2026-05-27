@@ -1,8 +1,8 @@
 //! Compatibility projections from the canonical permission profile model into
 //! legacy shapes still required by older or remote app-server APIs.
 
-use loom_protocol::models::PermissionProfile;
 use loom_absolute_path::AbsolutePathBuf;
+use loom_protocol::models::PermissionProfile;
 use std::path::Path;
 
 pub(crate) fn legacy_compatible_permission_profile(

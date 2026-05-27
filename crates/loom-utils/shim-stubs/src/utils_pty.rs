@@ -45,13 +45,10 @@ impl Default for ExecCommandSession {
 
 impl ExecCommandSession {
     pub fn writer_sender(&self) -> tokio::sync::mpsc::Sender<Vec<u8>> {
-        self.writer_tx
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| {
-                let (tx, _rx) = tokio::sync::mpsc::channel(1);
-                tx
-            })
+        self.writer_tx.as_ref().cloned().unwrap_or_else(|| {
+            let (tx, _rx) = tokio::sync::mpsc::channel(1);
+            tx
+        })
     }
 
     pub fn terminate(&self) {}

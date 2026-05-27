@@ -964,9 +964,9 @@ pub(super) fn mcp_inventory_maps_from_statuses(statuses: Vec<McpServerStatus>) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use loom_absolute_path::AbsolutePathBuf;
     use loom_app_server_protocol::PluginMarketplaceEntry;
     use loom_protocol::mcp::Tool;
-    use loom_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
 
     fn test_absolute_path(path: &str) -> AbsolutePathBuf {

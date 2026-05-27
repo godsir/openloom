@@ -6,7 +6,6 @@
 //! - Database file presence
 //! - Terminal capability
 
-
 use clap::Parser;
 use loom_arg0::Arg0DispatchPaths;
 use loom_cli_utils::CliConfigOverrides;
@@ -70,9 +69,9 @@ fn status_icon(status: CheckStatus, ascii: bool) -> &'static str {
         }
     } else {
         match status {
-            CheckStatus::Ok => "\u{2714}",     // heavy check mark
+            CheckStatus::Ok => "\u{2714}",      // heavy check mark
             CheckStatus::Warning => "\u{26a0}", // warning sign
-            CheckStatus::Fail => "\u{2718}",     // heavy ballot x
+            CheckStatus::Fail => "\u{2718}",    // heavy ballot x
         }
     }
 }
@@ -134,9 +133,7 @@ fn render_human_report(report: &DoctorReport, summary_only: bool, ascii: bool) {
         println!();
     }
 
-    println!(
-        "Results: {ok_count} passed, {warn_count} warnings, {fail_count} failures"
-    );
+    println!("Results: {ok_count} passed, {warn_count} warnings, {fail_count} failures");
 }
 
 pub async fn run_doctor(
@@ -209,7 +206,10 @@ async fn check_loom_home() -> DoctorCheck {
                 details: if exists {
                     vec![format!("Directory exists at {}", home.display())]
                 } else {
-                    vec![format!("Directory does not exist yet at {}", home.display())]
+                    vec![format!(
+                        "Directory does not exist yet at {}",
+                        home.display()
+                    )]
                 },
                 remediation: if !exists {
                     Some("Run `loom` to initialize the home directory".to_string())
@@ -225,7 +225,9 @@ async fn check_loom_home() -> DoctorCheck {
             status: CheckStatus::Fail,
             summary: "Cannot resolve Loom home directory".to_string(),
             details: vec![format!("Error: {e}")],
-            remediation: Some("Set LOOM_HOME environment variable to a writable directory".to_string()),
+            remediation: Some(
+                "Set LOOM_HOME environment variable to a writable directory".to_string(),
+            ),
             duration_ms: start.elapsed().as_millis() as u64,
         },
     }
@@ -327,10 +329,7 @@ fn check_terminal() -> DoctorCheck {
         CheckStatus::Ok
     };
 
-    let summary = format!(
-        "Terminal: {:?}",
-        info.name,
-    );
+    let summary = format!("Terminal: {:?}", info.name,);
 
     let mut details = Vec::new();
     if info.name == loom_terminal_detection::TerminalName::Dumb {

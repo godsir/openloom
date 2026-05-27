@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use loom_app_server_protocol::JSONRPCMessage;
 use futures::Sink;
 use futures::SinkExt;
 use futures::Stream;
 use futures::StreamExt;
+use loom_app_server_protocol::JSONRPCMessage;
 use prost::Message as ProstMessage;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
@@ -468,12 +468,12 @@ mod tests {
     use std::task::Poll;
     use std::time::Duration;
 
-    use loom_app_server_protocol::JSONRPCRequest;
-    use loom_app_server_protocol::RequestId;
     use futures::Sink;
     use futures::Stream;
     use futures::channel::mpsc as futures_mpsc;
     use futures::task::AtomicWaker;
+    use loom_app_server_protocol::JSONRPCRequest;
+    use loom_app_server_protocol::RequestId;
     use tokio::net::TcpListener;
     use tokio::time::timeout;
     use tokio_tungstenite::accept_async;

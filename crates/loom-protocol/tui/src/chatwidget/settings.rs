@@ -530,8 +530,7 @@ impl ChatWidget {
             .set_permission_profile_from_session_snapshot(permission_snapshot.clone())
         {
             tracing::warn!(%err, "failed to sync permissions from ThreadSettingsUpdated");
-            self
-                .config
+            self.config
                 .permissions
                 .replace_permission_profile_from_session_snapshot(&permission_snapshot);
         }

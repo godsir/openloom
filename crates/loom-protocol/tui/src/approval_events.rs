@@ -9,13 +9,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::diff_model::FileChange;
+use loom_absolute_path::AbsolutePathBuf;
 use loom_app_server_protocol::AdditionalPermissionProfile;
 use loom_app_server_protocol::CommandExecutionApprovalDecision;
 use loom_app_server_protocol::ExecPolicyAmendment;
 use loom_app_server_protocol::NetworkApprovalContext;
 use loom_app_server_protocol::NetworkPolicyAmendment;
 use loom_app_server_protocol::NetworkPolicyRuleAction;
-use loom_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 use serde::Serialize;
 

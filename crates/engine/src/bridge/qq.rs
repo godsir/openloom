@@ -2,10 +2,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 use reqwest::Client;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 use super::adapter::ChannelAdapter;
 use super::types::*;
@@ -27,10 +27,12 @@ impl QQAdapter {
     pub fn new(app_id: String, token: String) -> Self {
         let (tx, rx) = mpsc::channel(256);
         Self {
-            app_id, token,
+            app_id,
+            token,
             client: Client::new(),
             health: AdapterHealth::Disconnected,
-            rx, tx,
+            rx,
+            tx,
             abort: Arc::new(AtomicBool::new(false)),
             ws_handle: None,
             access_token: None,
@@ -38,15 +40,18 @@ impl QQAdapter {
     }
 
     async fn refresh_access_token(&mut self) -> Result<String> {
-        let resp = self.client
+        let resp = self
+            .client
             .post("https://bots.qq.com/app/getAppAccessToken")
             .json(&serde_json::json!({
                 "appId": self.app_id,
                 "clientSecret": self.token,
             }))
-            .send().await?;
+            .send()
+            .await?;
         let body: serde_json::Value = resp.json().await?;
-        let token = body["access_token"].as_str()
+        let token = body["access_token"]
+            .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing access_token"))?
             .to_string();
         self.access_token = Some(token.clone());
@@ -99,7 +104,9 @@ impl QQAdapter {
 
 #[async_trait]
 impl ChannelAdapter for QQAdapter {
-    fn platform(&self) -> Platform { Platform::QQ }
+    fn platform(&self) -> Platform {
+        Platform::QQ
+    }
 
     async fn connect(&mut self) -> Result<()> {
         self.health = AdapterHealth::Connecting;
@@ -111,34 +118,46 @@ impl ChannelAdapter for QQAdapter {
 
     async fn disconnect(&mut self) -> Result<()> {
         self.abort.store(true, Ordering::SeqCst);
-        if let Some(h) = self.ws_handle.take() { h.abort(); }
+        if let Some(h) = self.ws_handle.take() {
+            h.abort();
+        }
         self.health = AdapterHealth::Disconnected;
         Ok(())
     }
 
     async fn send(&self, chat_id: &str, content: MessageContent) -> Result<String> {
-        let token = self.access_token.as_ref()
+        let token = self
+            .access_token
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("no access token"))?;
         let text = match &content {
             MessageContent::Text(t) => t.clone(),
             _ => anyhow::bail!("unsupported content type for QQ"),
         };
 
-        let resp = self.client
-            .post(&format!("https://api.sgroup.qq.com/v2/users/{chat_id}/messages"))
+        let resp = self
+            .client
+            .post(&format!(
+                "https://api.sgroup.qq.com/v2/users/{chat_id}/messages"
+            ))
             .header("Authorization", format!("QQBot {token}"))
             .json(&serde_json::json!({
                 "content": text,
                 "msg_type": 0,
             }))
-            .send().await?;
+            .send()
+            .await?;
 
         let body: serde_json::Value = resp.json().await?;
         Ok(body["id"].as_str().unwrap_or("").to_string())
     }
 
-    fn receive_rx(&mut self) -> &mut mpsc::Receiver<BridgeMessage> { &mut self.rx }
-    fn health(&self) -> AdapterHealth { self.health.clone() }
+    fn receive_rx(&mut self) -> &mut mpsc::Receiver<BridgeMessage> {
+        &mut self.rx
+    }
+    fn health(&self) -> AdapterHealth {
+        self.health.clone()
+    }
 }
 
 #[cfg(test)]

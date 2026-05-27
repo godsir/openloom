@@ -190,7 +190,10 @@ fn event_to_notification(event: &EngineEvent) -> serde_json::Value {
                 "params": { "session_id": session_id, "delta": delta }
             })
         }
-        EngineEvent::StreamEnd { session_id, full_response } => {
+        EngineEvent::StreamEnd {
+            session_id,
+            full_response,
+        } => {
             serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "chat.stream_end",

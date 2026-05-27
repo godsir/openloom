@@ -1,6 +1,6 @@
-use std::path::PathBuf;
 use anyhow::Result;
 use rusqlite::Connection;
+use std::path::PathBuf;
 
 use super::security::{LoopDetector, MessageDedup, RateLimiter};
 use super::store::BridgeStore;
@@ -59,12 +59,7 @@ impl MessageRouter {
             Some(&msg.sender_name),
         )?;
 
-        store.upsert_known_user(
-            msg.platform,
-            &msg.sender_id,
-            Some(&msg.sender_name),
-            None,
-        )?;
+        store.upsert_known_user(msg.platform, &msg.sender_id, Some(&msg.sender_name), None)?;
 
         let text_content = msg.content.text_content().map(|s| s.to_string());
         store.record_message(
@@ -137,7 +132,8 @@ mod tests {
                 first_seen TEXT NOT NULL, last_seen TEXT,
                 PRIMARY KEY (platform, user_id)
             );",
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     fn make_test_message(platform: Platform, chat_id: &str, text: &str) -> BridgeMessage {

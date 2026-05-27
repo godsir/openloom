@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use loom_absolute_path::AbsolutePathBuf;
 use loom_protocol::ThreadId;
 use loom_protocol::items::HookPromptFragment;
 use loom_protocol::protocol::HookCompletedEvent;
@@ -8,7 +9,6 @@ use loom_protocol::protocol::HookOutputEntry;
 use loom_protocol::protocol::HookOutputEntryKind;
 use loom_protocol::protocol::HookRunStatus;
 use loom_protocol::protocol::HookRunSummary;
-use loom_absolute_path::AbsolutePathBuf;
 
 use super::common;
 use crate::engine::CommandShell;
@@ -419,12 +419,12 @@ fn serialization_failure_outcome(hook_events: Vec<HookCompletedEvent>) -> StopOu
 
 #[cfg(test)]
 mod tests {
+    use loom_absolute_path::test_support::PathBufExt;
+    use loom_absolute_path::test_support::test_path_buf;
     use loom_protocol::protocol::HookEventName;
     use loom_protocol::protocol::HookOutputEntry;
     use loom_protocol::protocol::HookOutputEntryKind;
     use loom_protocol::protocol::HookRunStatus;
-    use loom_absolute_path::test_support::PathBufExt;
-    use loom_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
 
     use loom_protocol::items::HookPromptFragment;

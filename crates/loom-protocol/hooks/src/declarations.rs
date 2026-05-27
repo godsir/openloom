@@ -1,5 +1,5 @@
-use loom_shim_stubs::plugin::PluginHookSource;
 use loom_protocol::protocol::HookEventName;
+use loom_shim_stubs::plugin::PluginHookSource;
 
 /// Minimal declaration metadata for one bundled plugin hook handler.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,12 +38,12 @@ pub(crate) fn plugin_hook_key_source(plugin_id: &str, source_relative_path: &str
 
 #[cfg(test)]
 mod tests {
+    use loom_absolute_path::test_support::PathBufExt;
+    use loom_absolute_path::test_support::test_path_buf;
     use loom_shim_stubs::config::HookEventsToml;
     use loom_shim_stubs::config::HookHandlerConfig;
     use loom_shim_stubs::config::MatcherGroup;
     use loom_shim_stubs::plugin::PluginId;
-    use loom_absolute_path::test_support::PathBufExt;
-    use loom_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
 
     use super::*;

@@ -445,7 +445,8 @@ impl App {
         );
         tokio::spawn(async move {
             if let Err(err) =
-                loom_tui_stubs::message_history::append_entry(&text, thread_id, &history_config).await
+                loom_tui_stubs::message_history::append_entry(&text, thread_id, &history_config)
+                    .await
             {
                 tracing::warn!(
                     thread_id = %thread_id,

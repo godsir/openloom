@@ -13,7 +13,7 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tower_http::cors::{CorsLayer, Any};
+use tower_http::cors::{Any, CorsLayer};
 
 pub struct Server {
     engine: Arc<Engine>,
@@ -58,8 +58,14 @@ impl Server {
             .route("/ws", get(ws::ws_handler))
             .route("/sse/{session_id}", get(sse::sse_handler))
             .route("/api", axum::routing::post(jsonrpc::handle_jsonrpc))
-            .route("/api/upload-blob", axum::routing::post(blob::handle_upload_blob))
-            .route("/api/avatar/{role}", axum::routing::get(avatar::serve_avatar).post(avatar::upload_avatar))
+            .route(
+                "/api/upload-blob",
+                axum::routing::post(blob::handle_upload_blob),
+            )
+            .route(
+                "/api/avatar/{role}",
+                axum::routing::get(avatar::serve_avatar).post(avatar::upload_avatar),
+            )
             .layer(cors)
             .with_state(engine);
 

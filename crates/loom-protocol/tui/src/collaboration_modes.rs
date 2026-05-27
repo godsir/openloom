@@ -1,6 +1,6 @@
-use loom_tui_stubs::models_manager::collaboration_mode_presets::builtin_collaboration_mode_presets;
 use loom_protocol::config_types::CollaborationModeMask;
 use loom_protocol::config_types::ModeKind;
+use loom_tui_stubs::models_manager::collaboration_mode_presets::builtin_collaboration_mode_presets;
 
 use crate::model_catalog::ModelCatalog;
 

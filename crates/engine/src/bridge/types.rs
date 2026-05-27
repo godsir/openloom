@@ -42,9 +42,19 @@ impl std::fmt::Display for Platform {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MessageContent {
     Text(String),
-    Image { url: String, caption: Option<String> },
-    File { url: String, name: String, size: u64 },
-    Audio { url: String, duration_secs: u32 },
+    Image {
+        url: String,
+        caption: Option<String>,
+    },
+    File {
+        url: String,
+        name: String,
+        size: u64,
+    },
+    Audio {
+        url: String,
+        duration_secs: u32,
+    },
 }
 
 impl MessageContent {
@@ -162,7 +172,12 @@ mod tests {
 
     #[test]
     fn test_platform_roundtrip() {
-        let platforms = [Platform::Telegram, Platform::Feishu, Platform::Wechat, Platform::QQ];
+        let platforms = [
+            Platform::Telegram,
+            Platform::Feishu,
+            Platform::Wechat,
+            Platform::QQ,
+        ];
         for p in &platforms {
             let name = p.name();
             let parsed = Platform::from_str(name);
@@ -186,7 +201,10 @@ mod tests {
     #[test]
     fn test_message_content_media_type() {
         assert_eq!(MessageContent::Text("hi".into()).media_type(), "text");
-        let img = MessageContent::Image { url: "u".into(), caption: None };
+        let img = MessageContent::Image {
+            url: "u".into(),
+            caption: None,
+        };
         assert_eq!(img.media_type(), "image");
     }
 
@@ -230,7 +248,11 @@ mod tests {
 
     #[test]
     fn test_access_state_roundtrip() {
-        let states = [AccessState::Active, AccessState::Blocked, AccessState::Pending];
+        let states = [
+            AccessState::Active,
+            AccessState::Blocked,
+            AccessState::Pending,
+        ];
         for s in &states {
             let name = s.as_str();
             let parsed = AccessState::from_str(name);
@@ -240,8 +262,14 @@ mod tests {
 
     #[test]
     fn test_direction_roundtrip() {
-        assert_eq!(MessageDirection::from_str("inbound"), Some(MessageDirection::Inbound));
-        assert_eq!(MessageDirection::from_str("outbound"), Some(MessageDirection::Outbound));
+        assert_eq!(
+            MessageDirection::from_str("inbound"),
+            Some(MessageDirection::Inbound)
+        );
+        assert_eq!(
+            MessageDirection::from_str("outbound"),
+            Some(MessageDirection::Outbound)
+        );
         assert_eq!(MessageDirection::from_str("invalid"), None);
     }
 }

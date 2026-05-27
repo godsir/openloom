@@ -178,11 +178,7 @@ pub fn install_skill(source: &Path, skills_dir: &Path) -> Result<UserSkill> {
     let (skill_dir, skill_md_path) = if source.is_dir() {
         let md = source.join("SKILL.md");
         (source.to_path_buf(), md)
-    } else if source
-        .file_name()
-        .map(|n| n == "SKILL.md")
-        .unwrap_or(false)
-    {
+    } else if source.file_name().map(|n| n == "SKILL.md").unwrap_or(false) {
         let dir = source
             .parent()
             .context("skill file has no parent directory")?
@@ -217,10 +213,7 @@ pub fn install_skill(source: &Path, skills_dir: &Path) -> Result<UserSkill> {
     Ok(UserSkill {
         name,
         description: meta.description,
-        file_path: dest_dir
-            .join("SKILL.md")
-            .to_string_lossy()
-            .to_string(),
+        file_path: dest_dir.join("SKILL.md").to_string_lossy().to_string(),
         base_dir: dest_dir.to_string_lossy().to_string(),
         source: "user".to_string(),
         default_enabled: meta.default_enabled,

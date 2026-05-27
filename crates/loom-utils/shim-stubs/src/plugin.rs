@@ -18,10 +18,7 @@ pub struct PluginId {
 
 impl PluginId {
     /// Create a new PluginId from plugin and marketplace names.
-    pub fn new(
-        plugin_name: String,
-        marketplace_name: String,
-    ) -> Result<Self, PluginIdError> {
+    pub fn new(plugin_name: String, marketplace_name: String) -> Result<Self, PluginIdError> {
         let plugin_name = plugin_name.trim().to_string();
         if plugin_name.is_empty() {
             return Err(PluginIdError::Invalid("plugin name is empty".to_string()));

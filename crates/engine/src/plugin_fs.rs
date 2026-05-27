@@ -183,7 +183,7 @@ pub struct MarketplaceDistribution {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MarketplaceSource {
-    pub kind: String,  // "git", "local"
+    pub kind: String, // "git", "local"
     pub url: Option<String>,
     pub path: Option<String>,
     pub configured: bool,
@@ -250,11 +250,17 @@ pub fn parse_marketplace_listing(
                 .map(|a| a.name.clone())
                 .or_else(|| listing.owner.as_ref().map(|o| o.name.clone())),
             version: entry.version.clone(),
-            description: if entry.description.is_empty() { None } else { Some(entry.description.clone()) },
+            description: if entry.description.is_empty() {
+                None
+            } else {
+                Some(entry.description.clone())
+            },
             trust: "restricted".to_string(),
             contributions: Vec::new(),
             repository: remote_url,
-            compatibility: MarketplaceCompatibility { min_app_version: None },
+            compatibility: MarketplaceCompatibility {
+                min_app_version: None,
+            },
             distribution: local_path.as_ref().map(|p| MarketplaceDistribution {
                 kind: "source".to_string(),
                 path: p.to_string_lossy().to_string(),
@@ -264,7 +270,11 @@ pub fn parse_marketplace_listing(
             latest_version: entry.version.clone(),
             update_available: false,
             can_install: !is_remote,
-            install_action: if is_remote { "incompatible".to_string() } else { "install".to_string() },
+            install_action: if is_remote {
+                "incompatible".to_string()
+            } else {
+                "install".to_string()
+            },
             compatible: !is_remote,
         };
 
@@ -407,12 +417,20 @@ fn load_loom_manifest(manifest_path: &Path, plugin_dir: &Path) -> Result<PluginE
 
     Ok(PluginEntry {
         id: id.clone(),
-        name: if manifest.name.is_empty() { id } else { manifest.name },
+        name: if manifest.name.is_empty() {
+            id
+        } else {
+            manifest.name
+        },
         version: manifest.version,
         description: manifest.description,
         source: "user".to_string(),
         status: "loaded".to_string(),
-        trust: if manifest.trust.is_empty() { "restricted".to_string() } else { manifest.trust },
+        trust: if manifest.trust.is_empty() {
+            "restricted".to_string()
+        } else {
+            manifest.trust
+        },
         hidden: manifest.hidden,
         plugin_dir: plugin_dir.to_string_lossy().to_string(),
         manifest_format: "loom".to_string(),
@@ -441,7 +459,11 @@ fn load_universal_manifest(
         .unwrap_or(&manifest.name)
         .to_string();
 
-    let version = if manifest.version.is_empty() { "0.1.0" } else { &manifest.version };
+    let version = if manifest.version.is_empty() {
+        "0.1.0"
+    } else {
+        &manifest.version
+    };
 
     // Detect contributions from universal layout
     let mut contributions = Vec::new();
@@ -509,7 +531,11 @@ fn load_universal_manifest(
         contributions,
         config_schema: None,
         ui_host_capabilities: None,
-        author: if manifest.author.is_empty() { None } else { Some(manifest.author) },
+        author: if manifest.author.is_empty() {
+            None
+        } else {
+            Some(manifest.author)
+        },
         repository: manifest.repository,
         category,
     })
@@ -521,11 +547,9 @@ fn has_md_files(dir: &Path) -> bool {
     }
     std::fs::read_dir(dir)
         .map(|entries| {
-            entries.flatten().any(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .ends_with(".md")
-            })
+            entries
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().ends_with(".md"))
         })
         .unwrap_or(false)
 }
@@ -586,7 +610,11 @@ pub fn scan_marketplace_dir(source_dir: &Path) -> Vec<MarketplacePlugin> {
                     name: entry.name,
                     publisher: entry.author,
                     version: Some(ver.clone()),
-                    description: if entry.description.is_empty() { None } else { Some(entry.description) },
+                    description: if entry.description.is_empty() {
+                        None
+                    } else {
+                        Some(entry.description)
+                    },
                     trust: entry.trust,
                     contributions: entry.contributions,
                     repository: entry.repository,
@@ -630,7 +658,11 @@ pub fn cross_reference_marketplace(
                 .as_ref()
                 .is_some_and(|lv| lv != &inst.version);
             mp.update_available = has_update;
-            mp.install_action = if has_update { "update".to_string() } else { "reinstall".to_string() };
+            mp.install_action = if has_update {
+                "update".to_string()
+            } else {
+                "reinstall".to_string()
+            };
         } else {
             mp.installed = false;
             mp.installed_version = None;
@@ -726,7 +758,13 @@ fn slugify(value: &str) -> String {
     value
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_string()

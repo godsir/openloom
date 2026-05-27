@@ -15,11 +15,11 @@ pub mod web_browser;
 use std::path::Path;
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
 use openloom_models::AppConfig;
+use tokio::sync::RwLock;
 
-use crate::cron_store::CronStore;
 use crate::SkillRegistry;
+use crate::cron_store::CronStore;
 
 pub fn register_all(
     registry: &mut SkillRegistry,
@@ -44,8 +44,7 @@ pub fn register_all(
     )));
     registry.register(Box::new(cron::CronSkill::new(cron_store.clone())));
     registry.register(Box::new(automation::AutomationSkill::new(
-        cron_store,
-        data_dir,
+        cron_store, data_dir,
     )));
     registry.register(Box::new(browser::BrowserSkill));
 }

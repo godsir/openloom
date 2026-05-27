@@ -2,6 +2,7 @@ use super::ApprovalsReviewer;
 use super::AskForApproval;
 use super::SandboxPolicy;
 use super::Turn;
+use loom_absolute_path::AbsolutePathBuf;
 use loom_protocol::config_types::CollaborationMode;
 use loom_protocol::config_types::Personality;
 use loom_protocol::config_types::ReasoningSummary;
@@ -12,7 +13,6 @@ use loom_protocol::plan_tool::StepStatus as CorePlanStepStatus;
 use loom_protocol::user_input::ByteRange as CoreByteRange;
 use loom_protocol::user_input::TextElement as CoreTextElement;
 use loom_protocol::user_input::UserInput as CoreUserInput;
-use loom_absolute_path::AbsolutePathBuf;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -40,9 +40,7 @@ pub struct TurnEnvironmentParams {
     pub cwd: AbsolutePathBuf,
 }
 
-#[derive(
-    Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS,
-)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct TurnStartParams {
@@ -122,9 +120,7 @@ pub struct TurnStartResponse {
     pub turn: Turn,
 }
 
-#[derive(
-    Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS,
-)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct TurnSteerParams {
@@ -413,7 +409,11 @@ impl crate::experimental_api::ExperimentalApi for TurnStartParams {
         if self.runtime_workspace_roots.is_some() {
             return Some("turn/start.runtimeWorkspaceRoots");
         }
-        if let Some(reason) = self.approval_policy.as_ref().and_then(crate::experimental_api::ExperimentalApi::experimental_reason) {
+        if let Some(reason) = self
+            .approval_policy
+            .as_ref()
+            .and_then(crate::experimental_api::ExperimentalApi::experimental_reason)
+        {
             return Some(reason);
         }
         if self.permissions.is_some() {

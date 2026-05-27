@@ -85,10 +85,7 @@ pub enum StreamDelta {
         name: String,
     },
     /// Partial tool call arguments JSON chunk.
-    ToolCallArgsChunk {
-        index: usize,
-        chunk: String,
-    },
+    ToolCallArgsChunk { index: usize, chunk: String },
     /// Usage statistics from the final chunk.
     Usage {
         prompt_tokens: u64,
@@ -122,7 +119,10 @@ impl InferenceEngine {
 
     /// Create a no-op engine when no GGUF model is available.
     pub fn dummy() -> Self {
-        Self { _model_path: std::path::PathBuf::new(), _n_gpu_layers: 0 }
+        Self {
+            _model_path: std::path::PathBuf::new(),
+            _n_gpu_layers: 0,
+        }
     }
 
     pub async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse> {
@@ -376,7 +376,11 @@ impl AnthropicClient {
                         ContentPart::Text { text } => serde_json::json!({
                             "type": "text", "text": text
                         }),
-                        ContentPart::Image { source_type, media_type, data } => serde_json::json!({
+                        ContentPart::Image {
+                            source_type,
+                            media_type,
+                            data,
+                        } => serde_json::json!({
                             "type": "image",
                             "source": {
                                 "type": source_type,
@@ -411,7 +415,10 @@ impl AnthropicClient {
     }
 
     /// Parse Anthropic response content blocks into text + tool_calls + thinking.
-    fn parse_anthropic_content(&self, json: &serde_json::Value) -> (String, Vec<ToolCall>, Option<String>) {
+    fn parse_anthropic_content(
+        &self,
+        json: &serde_json::Value,
+    ) -> (String, Vec<ToolCall>, Option<String>) {
         let content = json["content"]
             .as_array()
             .map(|a| a.as_slice())
@@ -758,7 +765,10 @@ impl OpenAIClient {
                     return obj;
                 }
 
-                let has_images = msg.content.iter().any(|p| matches!(p, ContentPart::Image { .. }));
+                let has_images = msg
+                    .content
+                    .iter()
+                    .any(|p| matches!(p, ContentPart::Image { .. }));
 
                 if has_images {
                     // Multimodal: use OpenAI-compatible content array format.
@@ -778,7 +788,12 @@ impl OpenAIClient {
                     }
                     // Emit image parts after text
                     for p in &msg.content {
-                        if let ContentPart::Image { source_type: _, media_type, data } = p {
+                        if let ContentPart::Image {
+                            source_type: _,
+                            media_type,
+                            data,
+                        } = p
+                        {
                             parts.push(serde_json::json!({
                                 "type": "image_url",
                                 "image_url": {
@@ -854,8 +869,12 @@ impl CloudClient for OpenAIClient {
 
         // Debug: log vision requests to help diagnose tokenization issues
         let has_vision = messages.iter().any(|m| {
-            m.get("content").and_then(|c| c.as_array())
-                .map(|arr| arr.iter().any(|p| p.get("type").and_then(|t| t.as_str()) == Some("image_url")))
+            m.get("content")
+                .and_then(|c| c.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .any(|p| p.get("type").and_then(|t| t.as_str()) == Some("image_url"))
+                })
                 .unwrap_or(false)
         });
         if has_vision {
@@ -865,9 +884,15 @@ impl CloudClient for OpenAIClient {
                 if let Some(parts) = m.get("content").and_then(|c| c.as_array()) {
                     for p in parts {
                         if p.get("type").and_then(|t| t.as_str()) == Some("image_url")
-                            && let Some(url) = p.get("image_url").and_then(|u| u.get("url")).and_then(|v| v.as_str())
+                            && let Some(url) = p
+                                .get("image_url")
+                                .and_then(|u| u.get("url"))
+                                .and_then(|v| v.as_str())
                         {
-                            tracing::info!("  image_url starts with: {}...", &url[..url.len().min(60)]);
+                            tracing::info!(
+                                "  image_url starts with: {}...",
+                                &url[..url.len().min(60)]
+                            );
                         }
                         if p.get("type").and_then(|t| t.as_str()) == Some("text")
                             && let Some(text) = p.get("text").and_then(|v| v.as_str())
@@ -893,14 +918,16 @@ impl CloudClient for OpenAIClient {
             let openai_tools: Vec<serde_json::Value> = req
                 .tools
                 .iter()
-                .map(|t| serde_json::json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.input_schema,
-                    }
-                }))
+                .map(|t| {
+                    serde_json::json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.input_schema,
+                        }
+                    })
+                })
                 .collect();
             body["tools"] = serde_json::json!(openai_tools);
             body["tool_choice"] = serde_json::json!("auto");
@@ -1003,14 +1030,16 @@ impl CloudClient for OpenAIClient {
             let openai_tools: Vec<serde_json::Value> = req
                 .tools
                 .iter()
-                .map(|t| serde_json::json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.input_schema,
-                    }
-                }))
+                .map(|t| {
+                    serde_json::json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.input_schema,
+                        }
+                    })
+                })
                 .collect();
             body["tools"] = serde_json::json!(openai_tools);
             body["tool_choice"] = serde_json::json!("auto");
@@ -1053,7 +1082,10 @@ impl CloudClient for OpenAIClient {
                             // ─── Reasoning/thinking content ───
                             if let Some(reasoning) = delta["reasoning_content"].as_str()
                                 && !reasoning.is_empty()
-                                && tx.send(StreamDelta::Reasoning(reasoning.to_string())).await.is_err()
+                                && tx
+                                    .send(StreamDelta::Reasoning(reasoning.to_string()))
+                                    .await
+                                    .is_err()
                             {
                                 return Ok(());
                             }
@@ -1072,15 +1104,16 @@ impl CloudClient for OpenAIClient {
                                     let index = tc["index"].as_u64().unwrap_or(0) as usize;
 
                                     // First chunk: has id and function.name
-                                    if let (Some(id), Some(name)) = (
-                                        tc["id"].as_str(),
-                                        tc["function"]["name"].as_str(),
-                                    )
-                                        && tx.send(StreamDelta::ToolCallBegin {
-                                            index,
-                                            id: id.to_string(),
-                                            name: name.to_string(),
-                                        }).await.is_err()
+                                    if let (Some(id), Some(name)) =
+                                        (tc["id"].as_str(), tc["function"]["name"].as_str())
+                                        && tx
+                                            .send(StreamDelta::ToolCallBegin {
+                                                index,
+                                                id: id.to_string(),
+                                                name: name.to_string(),
+                                            })
+                                            .await
+                                            .is_err()
                                     {
                                         return Ok(());
                                     }
@@ -1088,10 +1121,13 @@ impl CloudClient for OpenAIClient {
                                     // Subsequent chunks: partial arguments
                                     if let Some(args) = tc["function"]["arguments"].as_str()
                                         && !args.is_empty()
-                                        && tx.send(StreamDelta::ToolCallArgsChunk {
-                                            index,
-                                            chunk: args.to_string(),
-                                        }).await.is_err()
+                                        && tx
+                                            .send(StreamDelta::ToolCallArgsChunk {
+                                                index,
+                                                chunk: args.to_string(),
+                                            })
+                                            .await
+                                            .is_err()
                                     {
                                         return Ok(());
                                     }
@@ -1101,13 +1137,19 @@ impl CloudClient for OpenAIClient {
                             // ─── Usage (final chunk) ───
                             if let Some(usage) = val.get("usage")
                                 && usage.is_object()
-                                && tx.send(StreamDelta::Usage {
-                                    prompt_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
-                                    completion_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
-                                    cached_tokens: usage["prompt_tokens_details"]["cached_tokens"]
-                                        .as_u64()
-                                        .unwrap_or(0),
-                                }).await.is_err()
+                                && tx
+                                    .send(StreamDelta::Usage {
+                                        prompt_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
+                                        completion_tokens: usage["completion_tokens"]
+                                            .as_u64()
+                                            .unwrap_or(0),
+                                        cached_tokens:
+                                            usage["prompt_tokens_details"]["cached_tokens"]
+                                                .as_u64()
+                                                .unwrap_or(0),
+                                    })
+                                    .await
+                                    .is_err()
                             {
                                 return Ok(());
                             }
@@ -1219,7 +1261,9 @@ pub async fn ensure_lm_studio_model(
                         .and_then(|d| d.as_array())
                         .map(|arr| {
                             arr.iter()
-                                .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                                .filter_map(|m| {
+                                    m.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())
+                                })
                                 .collect()
                         })
                         .unwrap_or_default();
@@ -1281,19 +1325,21 @@ fn parse_inline_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
         if let Some(end_offset) = cleaned[content_start..].find(dsml_close) {
             let content = &cleaned[content_start..content_start + end_offset];
             // Parse JSON content — may be array or single object
-            let tc_json: serde_json::Value = serde_json::from_str(content)
-                .unwrap_or(serde_json::Value::Null);
+            let tc_json: serde_json::Value =
+                serde_json::from_str(content).unwrap_or(serde_json::Value::Null);
             let items = match tc_json {
                 serde_json::Value::Array(arr) => arr,
                 obj @ serde_json::Value::Object(_) => vec![obj],
                 _ => vec![],
             };
             for item in items {
-                let name = item["name"].as_str()
+                let name = item["name"]
+                    .as_str()
                     .or_else(|| item["function"]["name"].as_str())
                     .unwrap_or("unknown")
                     .to_string();
-                let arguments = item.get("arguments")
+                let arguments = item
+                    .get("arguments")
                     .or_else(|| item["function"].get("arguments"))
                     .cloned()
                     .unwrap_or(serde_json::Value::Object(Default::default()));

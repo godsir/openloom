@@ -1,3 +1,5 @@
+use loom_absolute_path::AbsolutePathBuf;
+use loom_absolute_path::canonicalize_preserving_symlinks;
 use loom_protocol::models::AdditionalPermissionProfile;
 use loom_protocol::models::FileSystemPermissions;
 use loom_protocol::models::NetworkPermissions;
@@ -10,8 +12,6 @@ use loom_protocol::permissions::FileSystemSandboxPolicy;
 use loom_protocol::permissions::FileSystemSpecialPath;
 use loom_protocol::permissions::NetworkSandboxPolicy;
 use loom_protocol::permissions::ReadDenyMatcher;
-use loom_absolute_path::AbsolutePathBuf;
-use loom_absolute_path::canonicalize_preserving_symlinks;
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::path::PathBuf;

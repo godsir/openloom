@@ -4,10 +4,10 @@ use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 
-use loom_absolute_path::AbsolutePathBuf;
-use loom_absolute_path::canonicalize_preserving_symlinks;
 use globset::GlobBuilder;
 use globset::GlobMatcher;
+use loom_absolute_path::AbsolutePathBuf;
+use loom_absolute_path::canonicalize_preserving_symlinks;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;

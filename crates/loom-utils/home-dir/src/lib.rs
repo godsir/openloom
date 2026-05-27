@@ -129,8 +129,7 @@ mod tests {
 
     #[test]
     fn loom_home_without_env_uses_default_data_dir() {
-        let resolved =
-            find_loom_home_from_env(None).expect("default LOOM_HOME");
+        let resolved = find_loom_home_from_env(None).expect("default LOOM_HOME");
         let mut expected = dirs::data_dir().expect("data dir");
         expected.push("openLoom");
         let expected = AbsolutePathBuf::from_absolute_path(expected).expect("absolute home");

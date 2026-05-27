@@ -1,7 +1,6 @@
 use chrono::Utc;
 use openloom_engine::bridge::{
-    BridgeMessage, BridgeStore, MessageContent, MessageDirection,
-    MessageRouter, Platform,
+    BridgeMessage, BridgeStore, MessageContent, MessageDirection, MessageRouter, Platform,
 };
 use rusqlite::Connection;
 use tempfile::tempdir;
@@ -86,7 +85,9 @@ fn test_full_bridge_flow() {
     assert_eq!(users[0].user_id, "alice");
 
     // 5. Record outbound reply
-    router.record_outbound(&sid, "Hi Alice!", Some("ext_reply_1")).unwrap();
+    router
+        .record_outbound(&sid, "Hi Alice!", Some("ext_reply_1"))
+        .unwrap();
 
     // 6. Verify both messages exist
     let messages = store.list_messages(&sid, 10, 0).unwrap();
@@ -165,7 +166,10 @@ fn test_rate_limiting_integration() {
     // Different user should still pass
     let other_msg = make_message(Platform::Wechat, "wx_2", "user_y", "other user");
     let result = router.process_inbound(&other_msg).unwrap();
-    assert!(result.is_some(), "different user should not be rate limited");
+    assert!(
+        result.is_some(),
+        "different user should not be rate limited"
+    );
 }
 
 #[test]

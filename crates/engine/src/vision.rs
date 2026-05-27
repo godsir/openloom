@@ -54,9 +54,7 @@ pub fn should_use_auxiliary_vision(
         return false;
     }
 
-    let models = settings
-        .get("models")
-        .and_then(|m| m.get("models"));
+    let models = settings.get("models").and_then(|m| m.get("models"));
 
     let enabled = models
         .and_then(|m| m.get("vision_enabled"))
@@ -141,11 +139,7 @@ pub async fn prepare_vision_context(
             }
             Err(e) => {
                 tracing::warn!(error = %e, image_index = i, "vision auxiliary model call failed");
-                notes.push(format!(
-                    "image_{}: [analysis unavailable: {}]",
-                    i + 1,
-                    e
-                ));
+                notes.push(format!("image_{}: [analysis unavailable: {}]", i + 1, e));
             }
         }
     }
@@ -300,7 +294,11 @@ mod tests {
     fn test_cloud_backend_returns_false() {
         let settings = enabled_vision_settings();
         let images = vec![test_image()];
-        for backend in &[ModelBackend::Anthropic, ModelBackend::OpenAI, ModelBackend::DeepSeek] {
+        for backend in &[
+            ModelBackend::Anthropic,
+            ModelBackend::OpenAI,
+            ModelBackend::DeepSeek,
+        ] {
             assert!(
                 !should_use_auxiliary_vision(&settings, backend, &images),
                 "cloud backend {backend:?} should not use auxiliary vision"
@@ -367,7 +365,8 @@ mod tests {
 
     #[test]
     fn test_extract_fenced_json() {
-        let text = "Here is my analysis:\n```json\n{\"image_overview\": \"A dog\"}\n```\nHope this helps!";
+        let text =
+            "Here is my analysis:\n```json\n{\"image_overview\": \"A dog\"}\n```\nHope this helps!";
         let result = extract_json_object(text);
         assert!(result.is_some());
         let val = result.unwrap();

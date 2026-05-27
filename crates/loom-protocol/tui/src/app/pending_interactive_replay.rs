@@ -565,6 +565,8 @@ mod tests {
     use super::super::ThreadBufferedEvent;
     use super::super::ThreadEventStore;
     use crate::app_command::AppCommand as Op;
+    use loom_absolute_path::test_support::PathBufExt;
+    use loom_absolute_path::test_support::test_path_buf;
     use loom_app_server_protocol::CommandExecutionApprovalDecision;
     use loom_app_server_protocol::CommandExecutionRequestApprovalParams;
     use loom_app_server_protocol::FileChangeRequestApprovalParams;
@@ -583,8 +585,6 @@ mod tests {
     use loom_app_server_protocol::Turn;
     use loom_app_server_protocol::TurnCompletedNotification;
     use loom_app_server_protocol::TurnStatus;
-    use loom_absolute_path::test_support::PathBufExt;
-    use loom_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
     use std::collections::BTreeMap;
     use std::collections::HashMap;

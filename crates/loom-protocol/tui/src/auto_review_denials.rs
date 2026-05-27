@@ -76,9 +76,9 @@ pub(crate) fn action_summary(action: &GuardianAssessmentAction) -> String {
 
 #[cfg(test)]
 mod tests {
-    use loom_protocol::approvals::GuardianCommandSource;
     use loom_absolute_path::test_support::PathBufExt;
     use loom_absolute_path::test_support::test_path_buf;
+    use loom_protocol::approvals::GuardianCommandSource;
     use pretty_assertions::assert_eq;
 
     use super::*;

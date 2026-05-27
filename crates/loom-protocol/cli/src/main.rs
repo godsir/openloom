@@ -7,13 +7,13 @@ use loom_arg0::arg0_dispatch_or_else;
 use loom_cli::LandlockCommand;
 use loom_cli::SeatbeltCommand;
 use loom_cli::WindowsCommand;
+use loom_cli_utils::CliConfigOverrides;
+use loom_cli_utils::ProfileV2Name;
+use loom_cli_utils::resume_hint;
 use loom_execpolicy::ExecPolicyCheckCommand;
 use loom_tui::AppExitInfo;
 use loom_tui::Cli as TuiCli;
 use loom_tui::ExitReason;
-use loom_cli_utils::CliConfigOverrides;
-use loom_cli_utils::ProfileV2Name;
-use loom_cli_utils::resume_hint;
 use owo_colors::OwoColorize;
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -31,12 +31,12 @@ use doctor::DoctorCommand;
 use state_db_recovery as local_state_db;
 
 use loom_config::LoaderOverrides;
-use loom_tui_stubs::config::find_codex_home;
-use loom_tui_stubs::config::resolve_profile_v2_config_path_cli;
 use loom_features::Stage;
 use loom_features::is_known_feature_key;
 use loom_protocol::user_input::UserInput;
 use loom_terminal_detection::TerminalName;
+use loom_tui_stubs::config::find_codex_home;
+use loom_tui_stubs::config::resolve_profile_v2_config_path_cli;
 
 /// Loom CLI
 ///
@@ -901,7 +901,8 @@ async fn run_interactive_tui(
             std::process::exit(0);
         }
         last_ctrlc_clone.store(now, std::sync::atomic::Ordering::Relaxed);
-    }).ok();
+    })
+    .ok();
 
     let mut attempted_repair = false;
     loop {

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use loom_absolute_path::AbsolutePathBuf;
 use loom_shim_stubs::config::CONFIG_TOML_FILE;
 use loom_shim_stubs::config::ConfigLayerEntry;
 use loom_shim_stubs::config::ConfigLayerSource;
@@ -17,7 +18,6 @@ use loom_shim_stubs::config::RequirementSource;
 use loom_shim_stubs::config::TomlValue;
 use loom_shim_stubs::config::version_for_toml;
 use loom_shim_stubs::plugin::PluginHookSource;
-use loom_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -613,23 +613,23 @@ fn hook_source_for_requirement_source(source: Option<&RequirementSource>) -> Hoo
 
 #[cfg(test)]
 mod tests {
-    use loom_shim_stubs::config::ConfigLayerEntry;
-    use loom_shim_stubs::config::ConfigLayerSource;
-    use loom_shim_stubs::config::HookEventsToml;
-    use loom_protocol::protocol::HookEventName;
-    use loom_protocol::protocol::HookSource;
     use loom_absolute_path::AbsolutePathBuf;
     use loom_absolute_path::test_support::PathBufExt;
     use loom_absolute_path::test_support::test_path_buf;
+    use loom_protocol::protocol::HookEventName;
+    use loom_protocol::protocol::HookSource;
+    use loom_shim_stubs::config::ConfigLayerEntry;
+    use loom_shim_stubs::config::ConfigLayerSource;
+    use loom_shim_stubs::config::HookEventsToml;
     use pretty_assertions::assert_eq;
 
     use super::ConfiguredHandler;
     use super::append_matcher_groups;
+    use loom_protocol::protocol::HookTrustStatus;
     use loom_shim_stubs::config::HookHandlerConfig;
     use loom_shim_stubs::config::HookStateToml;
     use loom_shim_stubs::config::MatcherGroup;
     use loom_shim_stubs::config::TomlValue;
-    use loom_protocol::protocol::HookTrustStatus;
 
     fn source_path() -> AbsolutePathBuf {
         test_path_buf("/tmp/hooks.json").abs()

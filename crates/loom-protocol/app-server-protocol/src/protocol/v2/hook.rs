@@ -1,4 +1,5 @@
 use super::shared::v2_enum_from_core;
+use loom_absolute_path::AbsolutePathBuf;
 use loom_protocol::protocol::HookEventName as CoreHookEventName;
 use loom_protocol::protocol::HookExecutionMode as CoreHookExecutionMode;
 use loom_protocol::protocol::HookHandlerType as CoreHookHandlerType;
@@ -9,7 +10,6 @@ use loom_protocol::protocol::HookRunSummary as CoreHookRunSummary;
 use loom_protocol::protocol::HookScope as CoreHookScope;
 use loom_protocol::protocol::HookSource as CoreHookSource;
 use loom_protocol::protocol::HookTrustStatus as CoreHookTrustStatus;
-use loom_absolute_path::AbsolutePathBuf;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;

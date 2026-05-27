@@ -6,22 +6,22 @@
 // the actual platform APIs.
 
 pub mod adapter;
+pub mod feishu;
 pub mod manager;
+pub mod qq;
 pub mod router;
 pub mod security;
 pub mod store;
 pub mod telegram;
-pub mod feishu;
-pub mod wechat;
-pub mod qq;
 pub mod types;
+pub mod wechat;
 
-pub use types::*;
 pub use adapter::ChannelAdapter;
-pub use store::{BridgeStore, BridgeSession, BridgeMessageRow, KnownUserRow};
-pub use security::{RateLimiter, MessageDedup, LoopDetector};
 pub use manager::BridgeManager;
 pub use router::MessageRouter;
+pub use security::{LoopDetector, MessageDedup, RateLimiter};
+pub use store::{BridgeMessageRow, BridgeSession, BridgeStore, KnownUserRow};
+pub use types::*;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -91,10 +91,7 @@ fn mask_secret(value: &str) -> String {
     format!("****{}", &value[value.len() - 4..])
 }
 
-fn platform_status(
-    config: Option<&BridgePlatformConfig>,
-    agent_id: &str,
-) -> PlatformStatus {
+fn platform_status(config: Option<&BridgePlatformConfig>, agent_id: &str) -> PlatformStatus {
     match config {
         Some(cfg) => {
             let configured = has_credentials(&cfg.credentials);
@@ -136,9 +133,9 @@ fn platform_status(
 
 fn has_credentials(credentials: &serde_json::Value) -> bool {
     match credentials {
-        serde_json::Value::Object(obj) => obj.values().any(|v| {
-            v.as_str().map_or(false, |s| !s.is_empty())
-        }),
+        serde_json::Value::Object(obj) => obj
+            .values()
+            .any(|v| v.as_str().map_or(false, |s| !s.is_empty())),
         _ => false,
     }
 }
@@ -152,7 +149,10 @@ fn extract_credential_fields(
     Option<String>,
     Option<String>,
 ) {
-    let token = credentials.get("token").and_then(|v| v.as_str()).map(String::from);
+    let token = credentials
+        .get("token")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let app_id = credentials
         .get("appId")
         .and_then(|v| v.as_str())
@@ -186,7 +186,10 @@ pub fn build_status(
             .and_then(|v| serde_json::from_value(v.clone()).ok())
     };
 
-    let read_only = global_config.get("readOnly").and_then(|v| v.as_bool()).unwrap_or(false);
+    let read_only = global_config
+        .get("readOnly")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let receipt_enabled = global_config
         .get("receiptEnabled")
         .and_then(|v| v.as_bool())

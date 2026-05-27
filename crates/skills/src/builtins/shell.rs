@@ -54,7 +54,8 @@ impl Skill for Shell {
                 c.args([
                     "-NoProfile",
                     "-NonInteractive",
-                    "-ExecutionPolicy", "Bypass",
+                    "-ExecutionPolicy",
+                    "Bypass",
                     "-Command",
                     command,
                 ]);

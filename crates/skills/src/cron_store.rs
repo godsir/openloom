@@ -82,7 +82,12 @@ impl NotificationStore {
         std::fs::write(&self.path, json)
     }
 
-    pub fn add(&self, job_id: &str, title: &str, body: &str) -> std::io::Result<NotificationRecord> {
+    pub fn add(
+        &self,
+        job_id: &str,
+        title: &str,
+        body: &str,
+    ) -> std::io::Result<NotificationRecord> {
         let mut records = self.load();
         let record = NotificationRecord {
             id: chrono_id(),
@@ -140,9 +145,7 @@ impl CronJob {
                 let last = self.last_run_at.unwrap_or(self.created_at);
                 Some(last + interval_ms)
             }
-            ScheduleType::Cron => {
-                next_cron_match(&self.schedule, now_ms)
-            }
+            ScheduleType::Cron => next_cron_match(&self.schedule, now_ms),
         }
     }
 
@@ -216,7 +219,11 @@ fn next_cron_match(expr: &str, now_ms: u64) -> Option<u64> {
                 } else if let Some(slash_pos) = part.find('/') {
                     let base = &part[..slash_pos];
                     let step: u32 = part[slash_pos + 1..].parse().unwrap_or(1);
-                    let start = if base == "*" { 0 } else { base.parse().unwrap_or(0) };
+                    let start = if base == "*" {
+                        0
+                    } else {
+                        base.parse().unwrap_or(0)
+                    };
                     (start..=max).step_by(step as usize).collect()
                 } else if let Some(dash_pos) = part.find('-') {
                     let lo: u32 = part[..dash_pos].parse().unwrap_or(0);
@@ -235,7 +242,12 @@ fn next_cron_match(expr: &str, now_ms: u64) -> Option<u64> {
     let month = parse_field(fields[3], 12);
     let dow = parse_field(fields[4], 7);
 
-    if minutes.is_empty() || hours.is_empty() || dom.is_empty() || month.is_empty() || dow.is_empty() {
+    if minutes.is_empty()
+        || hours.is_empty()
+        || dom.is_empty()
+        || month.is_empty()
+        || dow.is_empty()
+    {
         return None;
     }
 
@@ -255,9 +267,7 @@ fn next_cron_match(expr: &str, now_ms: u64) -> Option<u64> {
         let check_day = days_since_epoch + carry_d;
 
         // Derive month/day from check_day (rough — good enough for scheduling)
-        if minutes.contains(&(check_min as u32))
-            && hours.contains(&(check_hour as u32))
-        {
+        if minutes.contains(&(check_min as u32)) && hours.contains(&(check_hour as u32)) {
             let ms = (check_day * 86400 + check_hour * 3600 + check_min * 60) * 1000;
             if ms > now_ms {
                 return Some(ms);

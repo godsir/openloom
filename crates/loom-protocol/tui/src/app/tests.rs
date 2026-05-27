@@ -30,6 +30,9 @@ use crate::legacy_core::config::ConfigBuilder;
 use crate::legacy_core::config::ConfigOverrides;
 use crate::legacy_core::config::PermissionProfileSnapshot;
 use crate::legacy_core::config::TerminalResizeReflowMaxRows;
+use crossterm::event::KeyModifiers;
+use insta::assert_snapshot;
+use loom_absolute_path::AbsolutePathBuf;
 use loom_app_server_protocol::AdditionalFileSystemPermissions;
 use loom_app_server_protocol::AdditionalNetworkPermissions;
 use loom_app_server_protocol::AdditionalPermissionProfile;
@@ -89,9 +92,6 @@ use loom_protocol::models::NetworkPermissions;
 use loom_protocol::models::PermissionProfile;
 use loom_protocol::request_permissions::RequestPermissionProfile;
 use loom_protocol::user_input::TextElement;
-use loom_absolute_path::AbsolutePathBuf;
-use crossterm::event::KeyModifiers;
-use insta::assert_snapshot;
 use pretty_assertions::assert_eq;
 use ratatui::prelude::Line;
 use std::path::Path;
@@ -4787,8 +4787,7 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
                         item: ThreadItem::CollabAgentToolCall {
                             id: "wait-1".to_string(),
                             tool: loom_app_server_protocol::CollabAgentTool::Wait,
-                            status:
-                                loom_app_server_protocol::CollabAgentToolCallStatus::InProgress,
+                            status: loom_app_server_protocol::CollabAgentToolCallStatus::InProgress,
                             sender_thread_id: ThreadId::new().to_string(),
                             receiver_thread_ids: vec![receiver_thread_id.to_string()],
                             prompt: None,

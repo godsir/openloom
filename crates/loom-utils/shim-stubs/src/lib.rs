@@ -24,10 +24,7 @@ pub async fn apply_patch<F: ?Sized>(
 }
 
 /// Stub: no-op Unix shell escalation wrapper.
-pub fn run_shell_escalation_execve_wrapper(
-    _file: &std::path::Path,
-    _argv: &[String],
-) -> ! {
+pub fn run_shell_escalation_execve_wrapper(_file: &std::path::Path, _argv: &[String]) -> ! {
     std::process::exit(1)
 }
 

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::cron_store::{AutomationExecutor, CronJob, CronStore, NotificationStore, ScheduleType};
 use crate::{Skill, SkillManifest, SkillPermissions};
@@ -113,7 +113,7 @@ impl AutomationSkill {
             other => {
                 return Ok(json!({
                     "error": format!("Unknown schedule_type '{}'. Use: at, every, cron", other)
-                }))
+                }));
             }
         };
 
@@ -195,10 +195,7 @@ impl AutomationSkill {
     }
 
     fn remove(&self, params: &Value) -> Result<Value> {
-        let id = params
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
 
         if id.is_empty() {
             return Ok(json!({"error": "'id' is required. Use 'list' to see job IDs."}));
@@ -212,10 +209,7 @@ impl AutomationSkill {
     }
 
     fn toggle(&self, params: &Value) -> Result<Value> {
-        let id = params
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
 
         if id.is_empty() {
             return Ok(json!({"error": "'id' is required. Use 'list' to see job IDs."}));

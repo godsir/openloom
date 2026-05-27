@@ -38,7 +38,11 @@ impl Engine {
                 .get("tools")
                 .and_then(|t| t.get("disabled"))
                 .and_then(|d| d.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             tracing::info!(?names, "Applying tool disabled list from config");
             self.skills.set_disabled(names);
@@ -75,7 +79,10 @@ impl Engine {
                             // Replace api_key with api_key_env reference
                             if let Some(obj) = prov_val.as_object_mut() {
                                 obj.remove("api_key");
-                                obj.insert("api_key_env".into(), serde_json::Value::String(env_var));
+                                obj.insert(
+                                    "api_key_env".into(),
+                                    serde_json::Value::String(env_var),
+                                );
                                 obj.insert("has_api_key".into(), serde_json::Value::Bool(true));
                             }
                         }

@@ -12,10 +12,10 @@
 //! next shortcut moves to the nearest supported effort in the requested
 //! direction.
 
+use crossterm::event::KeyEvent;
 use loom_protocol::config_types::ModeKind;
 use loom_protocol::openai_models::ModelPreset;
 use loom_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
-use crossterm::event::KeyEvent;
 use strum::IntoEnumIterator;
 
 use super::ChatWidget;

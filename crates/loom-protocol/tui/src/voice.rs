@@ -1,9 +1,9 @@
 use crate::app_event_sender::AppEventSender;
 use crate::legacy_core::config::Config;
 use base64::Engine;
-use loom_app_server_protocol::ThreadRealtimeAudioChunk;
 use cpal::traits::DeviceTrait;
 use cpal::traits::StreamTrait;
+use loom_app_server_protocol::ThreadRealtimeAudioChunk;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;

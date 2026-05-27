@@ -1,7 +1,7 @@
 //! Resolve plugin namespace from skill file paths by walking ancestors for `plugin.json`.
 
-use loom_exec_server::ExecutorFileSystem;
 use loom_absolute_path::AbsolutePathBuf;
+use loom_exec_server::ExecutorFileSystem;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -71,8 +71,8 @@ pub async fn plugin_namespace_for_skill_path(
 mod tests {
     use super::find_plugin_manifest_path;
     use super::plugin_namespace_for_skill_path;
-    use loom_exec_server::LOCAL_FS;
     use loom_absolute_path::test_support::PathBufExt;
+    use loom_exec_server::LOCAL_FS;
     use std::fs;
     use tempfile::tempdir;
 

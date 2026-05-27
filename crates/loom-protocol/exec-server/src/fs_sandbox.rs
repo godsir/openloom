@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use loom_absolute_path::AbsolutePathBuf;
+use loom_absolute_path::canonicalize_preserving_symlinks;
 use loom_app_server_protocol::JSONRPCErrorError;
 use loom_protocol::models::PermissionProfile;
 use loom_protocol::permissions::FileSystemAccessMode;
@@ -13,8 +15,6 @@ use loom_sandboxing::SandboxExecRequest;
 use loom_sandboxing::SandboxManager;
 use loom_sandboxing::SandboxTransformRequest;
 use loom_sandboxing::SandboxablePreference;
-use loom_absolute_path::AbsolutePathBuf;
-use loom_absolute_path::canonicalize_preserving_symlinks;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
@@ -316,6 +316,7 @@ mod tests {
     use std::collections::HashMap;
     use std::ffi::OsString;
 
+    use loom_absolute_path::AbsolutePathBuf;
     use loom_protocol::models::PermissionProfile;
     use loom_protocol::permissions::FileSystemAccessMode;
     use loom_protocol::permissions::FileSystemPath;
@@ -323,7 +324,6 @@ mod tests {
     use loom_protocol::permissions::FileSystemSandboxPolicy;
     use loom_protocol::permissions::FileSystemSpecialPath;
     use loom_protocol::permissions::NetworkSandboxPolicy;
-    use loom_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
 
     use crate::ExecServerRuntimePaths;

@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use crate::FileSystemSandboxContext;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use loom_protocol::config_types::ShellEnvironmentPolicyInherit;
 use loom_absolute_path::AbsolutePathBuf;
+use loom_protocol::config_types::ShellEnvironmentPolicyInherit;
 use serde::Deserialize;
 use serde::Serialize;
 

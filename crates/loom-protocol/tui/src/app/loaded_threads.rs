@@ -107,12 +107,12 @@ fn thread_spawn_parent_thread_id(
 mod tests {
     use super::LoadedSubagentThread;
     use super::find_loaded_subagent_threads_for_primary;
+    use loom_absolute_path::test_support::PathBufExt;
+    use loom_absolute_path::test_support::test_path_buf;
     use loom_app_server_protocol::SessionSource;
     use loom_app_server_protocol::Thread;
     use loom_app_server_protocol::ThreadStatus;
     use loom_protocol::ThreadId;
-    use loom_absolute_path::test_support::PathBufExt;
-    use loom_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
 
     fn test_thread(thread_id: ThreadId, source: SessionSource) -> Thread {

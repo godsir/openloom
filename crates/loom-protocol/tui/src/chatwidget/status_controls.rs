@@ -306,8 +306,7 @@ impl ChatWidget {
         );
 
         if self.rate_limit_snapshots_by_limit_id.contains_key("codex") {
-            for item in [
-            ] {
+            for item in [] {
                 if self.status_surface_preview_value_for_item(item).is_none() {
                     preview_data.suppress_placeholder(item);
                 }

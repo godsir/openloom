@@ -2550,11 +2550,13 @@ async fn feedback_upload_consent_popup_snapshot() {
         crate::app_event::FeedbackCategory::Bug,
         chat.current_rollout_path.clone(),
         Some("auto-review-rollout-thread-1.jsonl".to_string()),
-        &loom_tui_stubs::feedback::FeedbackDiagnostics::new(vec![loom_tui_stubs::feedback::FeedbackDiagnostic {
-            headline: "Proxy environment variables are set and may affect connectivity."
-                .to_string(),
-            details: vec!["HTTPS_PROXY = hello".to_string()],
-        }]),
+        &loom_tui_stubs::feedback::FeedbackDiagnostics::new(vec![
+            loom_tui_stubs::feedback::FeedbackDiagnostic {
+                headline: "Proxy environment variables are set and may affect connectivity."
+                    .to_string(),
+                details: vec!["HTTPS_PROXY = hello".to_string()],
+            },
+        ]),
     ));
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);
@@ -2570,11 +2572,13 @@ async fn feedback_good_result_consent_popup_includes_connectivity_diagnostics_fi
         crate::app_event::FeedbackCategory::GoodResult,
         chat.current_rollout_path.clone(),
         Some("auto-review-rollout-thread-1.jsonl".to_string()),
-        &loom_tui_stubs::feedback::FeedbackDiagnostics::new(vec![loom_tui_stubs::feedback::FeedbackDiagnostic {
-            headline: "Proxy environment variables are set and may affect connectivity."
-                .to_string(),
-            details: vec!["HTTPS_PROXY = hello".to_string()],
-        }]),
+        &loom_tui_stubs::feedback::FeedbackDiagnostics::new(vec![
+            loom_tui_stubs::feedback::FeedbackDiagnostic {
+                headline: "Proxy environment variables are set and may affect connectivity."
+                    .to_string(),
+                details: vec!["HTTPS_PROXY = hello".to_string()],
+            },
+        ]),
     ));
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);

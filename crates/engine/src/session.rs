@@ -76,9 +76,7 @@ pub(crate) fn spawn_session_thread(db_path: PathBuf) -> std::sync::mpsc::Sender<
         }
 
         // Migration: add title column if missing (for DBs created before V6)
-        let has_title: bool = conn
-            .prepare("SELECT title FROM sessions LIMIT 0")
-            .is_ok();
+        let has_title: bool = conn.prepare("SELECT title FROM sessions LIMIT 0").is_ok();
         if !has_title {
             let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN title TEXT;");
         }
@@ -143,7 +141,10 @@ pub(crate) fn spawn_session_thread(db_path: PathBuf) -> std::sync::mpsc::Sender<
                     let ok = store.restore(&id).is_ok();
                     let _ = reply.send(ok);
                 }
-                SessionCommand::Cleanup { max_age_days, reply } => {
+                SessionCommand::Cleanup {
+                    max_age_days,
+                    reply,
+                } => {
                     let deleted = store.cleanup_archived(max_age_days).unwrap_or(0);
                     let _ = reply.send(deleted);
                 }
@@ -151,7 +152,11 @@ pub(crate) fn spawn_session_thread(db_path: PathBuf) -> std::sync::mpsc::Sender<
                     let ok = store.rename(&id, &title).is_ok();
                     let _ = reply.send(ok);
                 }
-                SessionCommand::Pin { id, pinned_at, reply } => {
+                SessionCommand::Pin {
+                    id,
+                    pinned_at,
+                    reply,
+                } => {
                     let ok = store.pin(&id, pinned_at.as_deref()).is_ok();
                     let _ = reply.send(ok);
                 }

@@ -2,9 +2,9 @@ use std::fmt;
 use std::io;
 use std::io::stdout;
 
+use crossterm::Command;
 use loom_terminal_detection::Multiplexer;
 use loom_terminal_detection::terminal_info;
-use crossterm::Command;
 use ratatui::crossterm::execute;
 
 #[derive(Debug)]

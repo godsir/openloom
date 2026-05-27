@@ -56,7 +56,13 @@ fn slugify(value: &str) -> String {
     let s = value
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect::<String>();
     let trimmed = s.trim_matches('-');
     if trimmed.is_empty() || trimmed.len() > 56 {
@@ -104,11 +110,7 @@ pub fn list_bundles(data_dir: &Path) -> Vec<SkillBundle> {
     load_store(data_dir).bundles
 }
 
-pub fn create_bundle(
-    data_dir: &Path,
-    name: &str,
-    skill_names: Vec<String>,
-) -> Result<SkillBundle> {
+pub fn create_bundle(data_dir: &Path, name: &str, skill_names: Vec<String>) -> Result<SkillBundle> {
     let mut store = load_store(data_dir);
     let id = format!("{}-{}", slugify(name), random_suffix());
     let now = now_iso();
@@ -215,11 +217,7 @@ pub fn get_bundle_enabled(data_dir: &Path, id: &str, agent_id: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub fn export_bundle(
-    data_dir: &Path,
-    skills_dir: &Path,
-    id: &str,
-) -> Result<ExportResult> {
+pub fn export_bundle(data_dir: &Path, skills_dir: &Path, id: &str) -> Result<ExportResult> {
     let store = load_store(data_dir);
     let bundle = store
         .bundles
@@ -233,7 +231,10 @@ pub fn export_bundle(
 
     // Build temp export directory
     let token = format!("{}-{}", std::process::id(), random_suffix());
-    let tmp_root = data_dir.join(".ephemeral").join("skill-bundle-exports").join(&token);
+    let tmp_root = data_dir
+        .join(".ephemeral")
+        .join("skill-bundle-exports")
+        .join(&token);
     let pkg_root = tmp_root.join("package");
     let pkg_skills = pkg_root.join("skills");
     std::fs::create_dir_all(&pkg_skills)?;
@@ -343,7 +344,13 @@ fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
 
 fn sanitize_name(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 

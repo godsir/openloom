@@ -266,13 +266,13 @@ mod tests {
     use crate::render::renderable::Renderable;
     use crate::test_support::PathBufExt;
     use crate::test_support::test_path_buf;
+    use insta::assert_snapshot;
     use loom_app_server_protocol::HookEventName;
     use loom_app_server_protocol::HookHandlerType;
     use loom_app_server_protocol::HookMetadata;
     use loom_app_server_protocol::HookSource;
     use loom_app_server_protocol::HookTrustStatus;
     use loom_app_server_protocol::HooksListEntry;
-    use insta::assert_snapshot;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     use tokio::sync::mpsc::unbounded_channel;

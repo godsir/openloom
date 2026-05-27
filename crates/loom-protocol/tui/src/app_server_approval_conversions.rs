@@ -54,10 +54,10 @@ mod tests {
     use super::file_update_changes_to_display;
     use super::granted_permission_profile_from_request;
     use crate::diff_model::FileChange;
+    use loom_absolute_path::AbsolutePathBuf;
     use loom_app_server_protocol::FileUpdateChange;
     use loom_app_server_protocol::PatchChangeKind;
     use loom_protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
-    use loom_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
     use std::path::PathBuf;

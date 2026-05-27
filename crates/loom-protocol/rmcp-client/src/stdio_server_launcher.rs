@@ -29,6 +29,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use anyhow::anyhow;
+use futures::FutureExt;
+use futures::future::BoxFuture;
 use loom_config::types::McpServerEnvVar;
 use loom_exec_server::ExecBackend;
 use loom_exec_server::ExecEnvPolicy;
@@ -39,8 +41,6 @@ use loom_protocol::config_types::ShellEnvironmentPolicyInherit;
 use loom_shim_stubs::utils_pty::process_group::kill_process_group;
 #[cfg(unix)]
 use loom_shim_stubs::utils_pty::process_group::terminate_process_group;
-use futures::FutureExt;
-use futures::future::BoxFuture;
 use rmcp::service::RoleClient;
 use rmcp::service::RxJsonRpcMessage;
 use rmcp::service::TxJsonRpcMessage;

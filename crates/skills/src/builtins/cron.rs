@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::cron_store::{CronJob, CronStore, ScheduleType};
 use crate::{Skill, SkillManifest, SkillPermissions};
@@ -105,7 +105,7 @@ impl CronSkill {
             other => {
                 return Ok(json!({
                     "error": format!("Unknown schedule_type '{}'. Use: at, every, cron", other)
-                }))
+                }));
             }
         };
 
@@ -116,7 +116,9 @@ impl CronSkill {
             .to_string();
 
         if schedule.is_empty() {
-            return Ok(json!({"error": "'schedule' is required. Examples: '2026-06-01T09:00:00' for at, '60' for every (minutes), '0 9 * * *' for cron"}));
+            return Ok(
+                json!({"error": "'schedule' is required. Examples: '2026-06-01T09:00:00' for at, '60' for every (minutes), '0 9 * * *' for cron"}),
+            );
         }
 
         let prompt = params
@@ -126,7 +128,9 @@ impl CronSkill {
             .to_string();
 
         if prompt.is_empty() {
-            return Ok(json!({"error": "'prompt' is required — what should the agent do when the job fires?"}));
+            return Ok(
+                json!({"error": "'prompt' is required — what should the agent do when the job fires?"}),
+            );
         }
 
         let label = params
@@ -176,10 +180,7 @@ impl CronSkill {
     }
 
     fn remove(&self, params: &Value) -> Result<Value> {
-        let id = params
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
 
         if id.is_empty() {
             return Ok(json!({"error": "'id' is required. Use 'list' to see job IDs."}));
@@ -193,10 +194,7 @@ impl CronSkill {
     }
 
     fn toggle(&self, params: &Value) -> Result<Value> {
-        let id = params
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
 
         if id.is_empty() {
             return Ok(json!({"error": "'id' is required. Use 'list' to see job IDs."}));

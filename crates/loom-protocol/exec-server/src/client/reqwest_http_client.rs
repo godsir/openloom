@@ -7,11 +7,11 @@
 
 use std::time::Duration;
 
-use loom_app_server_protocol::JSONRPCErrorError;
-use loom_shim_stubs::build_reqwest_client_with_custom_ca;
 use futures::FutureExt;
 use futures::StreamExt;
 use futures::future::BoxFuture;
+use loom_app_server_protocol::JSONRPCErrorError;
+use loom_shim_stubs::build_reqwest_client_with_custom_ca;
 use reqwest::Method;
 use reqwest::Url;
 use reqwest::header::HeaderMap;

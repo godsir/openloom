@@ -38,6 +38,11 @@ use crate::keymap::primary_binding;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
+use crossterm::event::KeyCode;
+use crossterm::event::KeyEvent;
+use crossterm::event::KeyEventKind;
+use crossterm::event::KeyModifiers;
+use loom_absolute_path::AbsolutePathBuf;
 use loom_app_server_protocol::AdditionalPermissionProfile;
 use loom_app_server_protocol::CommandExecutionApprovalDecision;
 use loom_app_server_protocol::FileChangeApprovalDecision;
@@ -54,11 +59,6 @@ use loom_features::Features;
 use loom_protocol::ThreadId;
 use loom_protocol::request_permissions::PermissionGrantScope;
 use loom_protocol::request_permissions::RequestPermissionProfile;
-use loom_absolute_path::AbsolutePathBuf;
-use crossterm::event::KeyCode;
-use crossterm::event::KeyEvent;
-use crossterm::event::KeyEventKind;
-use crossterm::event::KeyModifiers;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;
@@ -1116,6 +1116,9 @@ fn elicitation_options(keymap: &ApprovalKeymap) -> Vec<ApprovalOption> {
 mod tests {
     use super::*;
     use crate::app_event::AppEvent;
+    use crossterm::event::KeyModifiers;
+    use insta::assert_snapshot;
+    use loom_absolute_path::AbsolutePathBuf;
     use loom_app_server_protocol::AdditionalFileSystemPermissions;
     use loom_app_server_protocol::AdditionalNetworkPermissions;
     use loom_app_server_protocol::ExecPolicyAmendment;
@@ -1123,9 +1126,6 @@ mod tests {
     use loom_app_server_protocol::NetworkPolicyAmendment;
     use loom_protocol::models::FileSystemPermissions;
     use loom_protocol::models::NetworkPermissions;
-    use loom_absolute_path::AbsolutePathBuf;
-    use crossterm::event::KeyModifiers;
-    use insta::assert_snapshot;
     use pretty_assertions::assert_eq;
     use tokio::sync::mpsc::unbounded_channel;
 

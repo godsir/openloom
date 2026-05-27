@@ -55,7 +55,10 @@ impl MarketplaceCli {
     }
 }
 
-pub async fn run_plugin_add(_overrides: Vec<(String, toml::Value)>, _args: AddPluginArgs) -> Result<()> {
+pub async fn run_plugin_add(
+    _overrides: Vec<(String, toml::Value)>,
+    _args: AddPluginArgs,
+) -> Result<()> {
     println!("Plugin add not yet implemented in openLoom.");
     Ok(())
 }
@@ -65,7 +68,10 @@ pub async fn run_plugin_list(_overrides: Vec<(String, toml::Value)>) -> Result<(
     Ok(())
 }
 
-pub async fn run_plugin_remove(_overrides: Vec<(String, toml::Value)>, _args: RemovePluginArgs) -> Result<()> {
+pub async fn run_plugin_remove(
+    _overrides: Vec<(String, toml::Value)>,
+    _args: RemovePluginArgs,
+) -> Result<()> {
     println!("Plugin remove not yet implemented in openLoom.");
     Ok(())
 }

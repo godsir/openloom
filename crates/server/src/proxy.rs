@@ -46,7 +46,10 @@ fn parse_proxy_url(raw: &str) -> Option<String> {
 /// Returns None if no proxy should be used (direct mode).
 pub fn build_reqwest_proxy(engine: &Engine) -> Option<reqwest::Proxy> {
     let settings = engine.read_settings();
-    let config = match settings.get("network_proxy").and_then(|v| serde_json::from_value::<NetworkProxyConfig>(v.clone()).ok()) {
+    let config = match settings
+        .get("network_proxy")
+        .and_then(|v| serde_json::from_value::<NetworkProxyConfig>(v.clone()).ok())
+    {
         Some(c) => c,
         None => return None,
     };

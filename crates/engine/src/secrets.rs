@@ -13,7 +13,12 @@ fn secrets_path(data_dir: &Path) -> PathBuf {
 
 /// Generate a conventional env var name for a provider: `LOOM_{NAME}_API_KEY`.
 pub fn env_var_name(provider: &str) -> String {
-    format!("LOOM_{}_API_KEY", provider.to_uppercase().replace(|c: char| !c.is_alphanumeric(), "_"))
+    format!(
+        "LOOM_{}_API_KEY",
+        provider
+            .to_uppercase()
+            .replace(|c: char| !c.is_alphanumeric(), "_")
+    )
 }
 
 /// Load secrets from disk and inject into process environment.
@@ -29,7 +34,9 @@ pub fn load(data_dir: &Path) {
                     for (provider, key) in &map {
                         let var = env_var_name(provider);
                         // SAFETY: Setting env vars at startup is safe; we own these LOOM_* keys.
-                        unsafe { std::env::set_var(&var, key); }
+                        unsafe {
+                            std::env::set_var(&var, key);
+                        }
                     }
                     tracing::info!(count = map.len(), "Loaded secrets into environment");
                 }
@@ -72,7 +79,9 @@ pub fn set(data_dir: &Path, provider: &str, api_key: &str) -> anyhow::Result<Str
 
     let var = env_var_name(provider);
     // SAFETY: We own these LOOM_* env vars; setting them is safe.
-    unsafe { std::env::set_var(&var, api_key); }
+    unsafe {
+        std::env::set_var(&var, api_key);
+    }
     tracing::info!(provider, var = %var, "Saved API key to secrets");
     Ok(var)
 }
@@ -89,7 +98,11 @@ pub fn get_masked(provider: &str) -> Option<String> {
     if key.len() <= 4 {
         Some("*".repeat(key.len()))
     } else {
-        Some(format!("{}{}", "*".repeat(key.len() - 4), &key[key.len() - 4..]))
+        Some(format!(
+            "{}{}",
+            "*".repeat(key.len() - 4),
+            &key[key.len() - 4..]
+        ))
     }
 }
 
@@ -100,7 +113,9 @@ pub fn delete(data_dir: &Path, provider: &str) -> anyhow::Result<()> {
         write_map(data_dir, &map)?;
         let var = env_var_name(provider);
         // SAFETY: We own these LOOM_* env vars; removing them is safe.
-        unsafe { std::env::remove_var(&var); }
+        unsafe {
+            std::env::remove_var(&var);
+        }
         tracing::info!(provider, "Deleted API key from secrets");
     }
     Ok(())

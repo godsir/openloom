@@ -44,7 +44,12 @@ pub trait KeyringStore: Send + Sync {
     fn load(&self, _service: &str, _account: &str) -> Result<Option<String>, CredentialStoreError> {
         Ok(None)
     }
-    fn save(&self, _service: &str, _account: &str, _value: &str) -> Result<(), CredentialStoreError> {
+    fn save(
+        &self,
+        _service: &str,
+        _account: &str,
+        _value: &str,
+    ) -> Result<(), CredentialStoreError> {
         Ok(())
     }
     fn delete(&self, _service: &str, _account: &str) -> Result<bool, CredentialStoreError> {
@@ -81,10 +86,19 @@ pub mod tests {
     }
 
     impl KeyringStore for MockKeyringStore {
-        fn load(&self, _service: &str, _account: &str) -> Result<Option<String>, CredentialStoreError> {
+        fn load(
+            &self,
+            _service: &str,
+            _account: &str,
+        ) -> Result<Option<String>, CredentialStoreError> {
             Ok(None)
         }
-        fn save(&self, _service: &str, _account: &str, _value: &str) -> Result<(), CredentialStoreError> {
+        fn save(
+            &self,
+            _service: &str,
+            _account: &str,
+            _value: &str,
+        ) -> Result<(), CredentialStoreError> {
             Ok(())
         }
         fn delete(&self, _service: &str, _account: &str) -> Result<bool, CredentialStoreError> {

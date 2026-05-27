@@ -243,9 +243,9 @@ fn preview_error_body(body: &str) -> Option<String> {
 mod tests {
     use std::sync::Arc;
 
-    use loom_shim_stubs::AuthProvider;
     use http::HeaderMap;
     use http::HeaderValue;
+    use loom_shim_stubs::AuthProvider;
     use pretty_assertions::assert_eq;
     use wiremock::Mock;
     use wiremock::MockServer;

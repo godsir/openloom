@@ -251,9 +251,16 @@ impl ManagedHooksRequirementsToml {
 /// Source of a config requirement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequirementSource {
-    SystemRequirementsToml { file: loom_absolute_path::AbsolutePathBuf },
-    LegacyManagedConfigTomlFromFile { file: loom_absolute_path::AbsolutePathBuf },
-    MdmManagedPreferences { domain: String, key: String },
+    SystemRequirementsToml {
+        file: loom_absolute_path::AbsolutePathBuf,
+    },
+    LegacyManagedConfigTomlFromFile {
+        file: loom_absolute_path::AbsolutePathBuf,
+    },
+    MdmManagedPreferences {
+        domain: String,
+        key: String,
+    },
     CloudRequirements,
     LegacyManagedConfigTomlFromMdm,
     Unknown,
@@ -327,13 +334,8 @@ pub use types::PluginConfig;
 
 #[derive(Debug, Clone)]
 pub enum PluginConfigEdit {
-    SetEnabled {
-        plugin_key: String,
-        enabled: bool,
-    },
-    Clear {
-        plugin_key: String,
-    },
+    SetEnabled { plugin_key: String, enabled: bool },
+    Clear { plugin_key: String },
 }
 
 /// Apply a batch of plugin config edits to the user config file.

@@ -82,6 +82,13 @@ use crate::update_action::UpdateAction;
 use crate::version::CODEX_CLI_VERSION;
 use crate::workspace_command::AppServerWorkspaceCommandRunner;
 use crate::workspace_command::WorkspaceCommandRunner;
+use color_eyre::eyre::Result;
+use color_eyre::eyre::WrapErr;
+use crossterm::event::KeyCode;
+use crossterm::event::KeyEvent;
+use crossterm::event::KeyEventKind;
+use crossterm::event::KeyModifiers;
+use loom_absolute_path::AbsolutePathBuf;
 use loom_ansi_escape::ansi_escape_line;
 use loom_app_server_client::AppServerRequestHandle;
 use loom_app_server_client::TypedRequestError;
@@ -130,6 +137,7 @@ use loom_app_server_protocol::Turn;
 use loom_app_server_protocol::TurnError as AppServerTurnError;
 use loom_app_server_protocol::TurnStatus;
 use loom_app_server_protocol::WriteStatus;
+use loom_approval_presets::builtin_permission_profile_for_active_permission_profile;
 use loom_config::ConfigLayerStackOrdering;
 use loom_config::LoaderOverrides;
 use loom_config::types::ApprovalsReviewer;
@@ -140,10 +148,6 @@ use loom_config::types::WindowsToml;
 use loom_exec_server::EnvironmentManager;
 use loom_features::Feature;
 use loom_features::FeaturesToml;
-use loom_tui_stubs::model_provider::create_model_provider;
-use loom_tui_stubs::model_provider_info::ModelProviderInfo;
-use loom_tui_stubs::models_manager::model_presets::HIDE_GPT_5_1_CODEX_MAX_MIGRATION_PROMPT_CONFIG;
-use loom_tui_stubs::models_manager::model_presets::HIDE_GPT5_1_MIGRATION_PROMPT_CONFIG;
 use loom_otel_stub::SessionTelemetry;
 use loom_protocol::ThreadId;
 use loom_protocol::config_types::Personality;
@@ -158,16 +162,12 @@ use loom_protocol::openai_models::ModelUpgrade;
 use loom_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 #[cfg(target_os = "windows")]
 use loom_protocol::permissions::FileSystemSandboxKind;
-use loom_tui_stubs::rollout::StateDbHandle;
 use loom_terminal_detection::user_agent;
-use loom_absolute_path::AbsolutePathBuf;
-use loom_approval_presets::builtin_permission_profile_for_active_permission_profile;
-use color_eyre::eyre::Result;
-use color_eyre::eyre::WrapErr;
-use crossterm::event::KeyCode;
-use crossterm::event::KeyEvent;
-use crossterm::event::KeyEventKind;
-use crossterm::event::KeyModifiers;
+use loom_tui_stubs::model_provider::create_model_provider;
+use loom_tui_stubs::model_provider_info::ModelProviderInfo;
+use loom_tui_stubs::models_manager::model_presets::HIDE_GPT_5_1_CODEX_MAX_MIGRATION_PROMPT_CONFIG;
+use loom_tui_stubs::models_manager::model_presets::HIDE_GPT5_1_MIGRATION_PROMPT_CONFIG;
+use loom_tui_stubs::rollout::StateDbHandle;
 use ratatui::backend::Backend;
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;
@@ -289,9 +289,7 @@ fn collab_receiver_is_not_found(
 fn default_exec_approval_decisions(
     network_approval_context: Option<&loom_app_server_protocol::NetworkApprovalContext>,
     proposed_execpolicy_amendment: Option<&loom_app_server_protocol::ExecPolicyAmendment>,
-    proposed_network_policy_amendments: Option<
-        &[loom_app_server_protocol::NetworkPolicyAmendment],
-    >,
+    proposed_network_policy_amendments: Option<&[loom_app_server_protocol::NetworkPolicyAmendment]>,
     additional_permissions: Option<&loom_app_server_protocol::AdditionalPermissionProfile>,
 ) -> Vec<loom_app_server_protocol::CommandExecutionApprovalDecision> {
     use loom_app_server_protocol::CommandExecutionApprovalDecision;

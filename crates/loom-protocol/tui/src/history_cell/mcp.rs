@@ -545,7 +545,10 @@ pub(crate) fn new_mcp_tools_output_from_statuses(
     }
 
     for server in server_names {
-        let _server_in_config = config.mcp_servers.iter().any(|s| s.as_str() == server.as_str());
+        let _server_in_config = config
+            .mcp_servers
+            .iter()
+            .any(|s| s.as_str() == server.as_str());
         // Stub: mcp_servers is Vec<String> with no per-server config details.
         let status = statuses_by_name.get(server.as_str()).copied();
         let header: Vec<Span<'static>> = vec!["  • ".into(), server.clone().into()];

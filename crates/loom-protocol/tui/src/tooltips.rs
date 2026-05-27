@@ -1,6 +1,6 @@
+use lazy_static::lazy_static;
 use loom_features::FEATURES;
 use loom_protocol::account::PlanType;
-use lazy_static::lazy_static;
 use rand::Rng;
 
 const ANNOUNCEMENT_TIP_URL: &str =

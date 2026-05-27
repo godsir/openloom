@@ -61,8 +61,7 @@ impl ChatWidget {
             .set_permission_profile_from_session_snapshot(permission_snapshot.clone());
         if let Err(err) = permission_sync {
             tracing::warn!(%err, "failed to sync permissions from SessionConfigured");
-            self
-                .config
+            self.config
                 .permissions
                 .replace_permission_profile_from_session_snapshot(&permission_snapshot);
         }

@@ -398,6 +398,7 @@ mod tests {
     use super::PendingAppServerRequests;
     use super::ResolvedAppServerRequest;
     use crate::app_command::AppCommand as Op;
+    use loom_absolute_path::AbsolutePathBuf;
     use loom_app_server_protocol::AdditionalFileSystemPermissions;
     use loom_app_server_protocol::AdditionalNetworkPermissions;
     use loom_app_server_protocol::CommandExecutionApprovalDecision;
@@ -420,7 +421,6 @@ mod tests {
     use loom_protocol::models::FileSystemPermissions;
     use loom_protocol::models::NetworkPermissions;
     use loom_protocol::request_permissions::RequestPermissionProfile;
-    use loom_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use std::collections::BTreeMap;

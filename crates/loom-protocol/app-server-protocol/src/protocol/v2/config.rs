@@ -2,6 +2,7 @@ use super::ApprovalsReviewer;
 use super::AskForApproval;
 use super::SandboxMode;
 use super::shared::default_enabled;
+use loom_absolute_path::AbsolutePathBuf;
 use loom_protocol::config_types::AutoCompactTokenLimitScope;
 use loom_protocol::config_types::ForcedLoginMethod;
 use loom_protocol::config_types::ReasoningSummary;
@@ -9,7 +10,6 @@ use loom_protocol::config_types::Verbosity;
 use loom_protocol::config_types::WebSearchMode;
 use loom_protocol::config_types::WebSearchToolConfig;
 use loom_protocol::openai_models::ReasoningEffort;
-use loom_absolute_path::AbsolutePathBuf;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -745,7 +745,11 @@ pub struct ConfigWarningNotification {
 
 impl crate::experimental_api::ExperimentalApi for ProfileV2 {
     fn experimental_reason(&self) -> Option<&'static str> {
-        if let Some(reason) = self.approval_policy.as_ref().and_then(crate::experimental_api::ExperimentalApi::experimental_reason) {
+        if let Some(reason) = self
+            .approval_policy
+            .as_ref()
+            .and_then(crate::experimental_api::ExperimentalApi::experimental_reason)
+        {
             return Some(reason);
         }
         if self.approvals_reviewer.is_some() {
@@ -757,7 +761,11 @@ impl crate::experimental_api::ExperimentalApi for ProfileV2 {
 
 impl crate::experimental_api::ExperimentalApi for Config {
     fn experimental_reason(&self) -> Option<&'static str> {
-        if let Some(reason) = self.approval_policy.as_ref().and_then(crate::experimental_api::ExperimentalApi::experimental_reason) {
+        if let Some(reason) = self
+            .approval_policy
+            .as_ref()
+            .and_then(crate::experimental_api::ExperimentalApi::experimental_reason)
+        {
             return Some(reason);
         }
         if self.approvals_reviewer.is_some() {
@@ -805,6 +813,8 @@ impl crate::experimental_api::ExperimentalApi for ConfigRequirements {
 
 impl crate::experimental_api::ExperimentalApi for ConfigRequirementsReadResponse {
     fn experimental_reason(&self) -> Option<&'static str> {
-        self.requirements.as_ref().and_then(crate::experimental_api::ExperimentalApi::experimental_reason)
+        self.requirements
+            .as_ref()
+            .and_then(crate::experimental_api::ExperimentalApi::experimental_reason)
     }
 }

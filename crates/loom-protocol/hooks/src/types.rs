@@ -3,9 +3,9 @@ use std::sync::Arc;
 use chrono::DateTime;
 use chrono::SecondsFormat;
 use chrono::Utc;
-use loom_protocol::ThreadId;
-use loom_absolute_path::AbsolutePathBuf;
 use futures::future::BoxFuture;
+use loom_absolute_path::AbsolutePathBuf;
+use loom_protocol::ThreadId;
 use serde::Serialize;
 use serde::Serializer;
 
@@ -100,9 +100,9 @@ pub enum HookEvent {
 mod tests {
     use chrono::TimeZone;
     use chrono::Utc;
-    use loom_protocol::ThreadId;
     use loom_absolute_path::test_support::PathBufExt;
     use loom_absolute_path::test_support::test_path_buf;
+    use loom_protocol::ThreadId;
     use pretty_assertions::assert_eq;
     use serde_json::json;
 

@@ -16,11 +16,8 @@ use loom_app_server_protocol::ServerRequest;
 
 impl App {
     fn refresh_mcp_startup_expected_servers_from_config(&mut self) {
-        let enabled_config_mcp_servers: Vec<String> = self
-            .chat_widget
-            .config_ref()
-            .mcp_servers
-            .clone();
+        let enabled_config_mcp_servers: Vec<String> =
+            self.chat_widget.config_ref().mcp_servers.clone();
         self.chat_widget
             .set_mcp_startup_expected_servers(enabled_config_mcp_servers);
     }

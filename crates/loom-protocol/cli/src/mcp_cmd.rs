@@ -28,10 +28,14 @@ impl McpCli {
     pub async fn run(self, _loader_overrides: LoaderOverrides) -> Result<()> {
         match self.subcommand {
             McpSubcommand::List => {
-                println!("No MCP servers configured. MCP management not yet implemented in openLoom.");
+                println!(
+                    "No MCP servers configured. MCP management not yet implemented in openLoom."
+                );
             }
             _ => {
-                println!("MCP management not yet implemented in openLoom. Use config.toml directly.");
+                println!(
+                    "MCP management not yet implemented in openLoom. Use config.toml directly."
+                );
             }
         }
         Ok(())

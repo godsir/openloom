@@ -1,9 +1,9 @@
-use loom_tui_stubs::feedback::DOCTOR_REPORT_ATTACHMENT_FILENAME;
-use loom_tui_stubs::feedback::FEEDBACK_DIAGNOSTICS_ATTACHMENT_FILENAME;
-use loom_tui_stubs::feedback::FeedbackDiagnostics;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
+use loom_tui_stubs::feedback::DOCTOR_REPORT_ATTACHMENT_FILENAME;
+use loom_tui_stubs::feedback::FEEDBACK_DIAGNOSTICS_ATTACHMENT_FILENAME;
+use loom_tui_stubs::feedback::FeedbackDiagnostics;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;

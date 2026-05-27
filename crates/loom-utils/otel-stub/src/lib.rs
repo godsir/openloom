@@ -24,7 +24,9 @@ impl SessionTelemetry {
         _terminal_type: String,
         _session_source: S,
     ) -> SessionTelemetry {
-        Self { log_user_prompt: false }
+        Self {
+            log_user_prompt: false,
+        }
     }
 
     pub fn counter(&self, _name: &str, _inc: u64, _attrs: &[(&str, &str)]) {
@@ -39,7 +41,12 @@ impl SessionTelemetry {
         // no-op stub
     }
 
-    pub fn record_duration(&self, _name: &str, _duration: std::time::Duration, _tags: &[(&str, &str)]) {
+    pub fn record_duration(
+        &self,
+        _name: &str,
+        _duration: std::time::Duration,
+        _tags: &[(&str, &str)],
+    ) {
         // no-op stub
     }
 

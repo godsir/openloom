@@ -207,11 +207,7 @@ async fn status_surface_preview_lines_rate_limits_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     cache_rate_limit_snapshot(&mut chat);
 
-    let snapshot = combined_preview_snapshot(
-        &mut chat,
-        &[
-        ],
-    );
+    let snapshot = combined_preview_snapshot(&mut chat, &[]);
 
     assert_chatwidget_snapshot!("status_surface_previews_rate_limits", snapshot);
 }
@@ -234,31 +230,16 @@ async fn status_surface_preview_omits_unavailable_rate_limit_items() {
         rate_limit_reached_type: None,
     }));
 
-    assert_eq!(
-        None
-    );
-    assert_eq!(
-        status_preview_line(
-            &mut chat,
-        ),
-        "weekly 91%"
-    );
-    assert_eq!(
-        title_preview_line(
-            &mut chat,
-            &[
-            ],
-        ),
-        "weekly 91%"
-    );
+    assert_eq!(None);
+    assert_eq!(status_preview_line(&mut chat,), "weekly 91%");
+    assert_eq!(title_preview_line(&mut chat, &[],), "weekly 91%");
 }
 
 #[tokio::test]
 async fn status_line_setup_popup_rate_limits_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     cache_rate_limit_snapshot(&mut chat);
-    chat.config.tui_status_line = Some(vec![
-    ]);
+    chat.config.tui_status_line = Some(vec![]);
 
     assert_chatwidget_snapshot!(
         "status_line_setup_popup_rate_limits",
@@ -338,8 +319,7 @@ async fn terminal_title_setup_popup_mixed_snapshot() {
 async fn terminal_title_setup_popup_rate_limits_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     cache_rate_limit_snapshot(&mut chat);
-    chat.config.tui_terminal_title = Some(vec![
-    ]);
+    chat.config.tui_terminal_title = Some(vec![]);
 
     assert_chatwidget_snapshot!(
         "terminal_title_setup_popup_rate_limits",

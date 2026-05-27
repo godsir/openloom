@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
-use async_trait::async_trait;
-use loom_app_server_protocol::ConfigLayerSource;
 use crate::model_info::ModelProviderInfo;
+use async_trait::async_trait;
 use loom_absolute_path::AbsolutePathBuf;
+use loom_app_server_protocol::ConfigLayerSource;
 use thiserror::Error;
 use toml::Value as TomlValue;
 

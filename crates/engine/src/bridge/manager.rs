@@ -75,10 +75,7 @@ impl BridgeManager {
     /// Get health status for all registered adapters
     pub async fn health_status(&self) -> HashMap<Platform, AdapterHealth> {
         let adapters = self.adapters.lock().await;
-        adapters
-            .iter()
-            .map(|(p, a)| (*p, a.health()))
-            .collect()
+        adapters.iter().map(|(p, a)| (*p, a.health())).collect()
     }
 
     /// Get a clone of the inbound message sender (for adapters to push messages)

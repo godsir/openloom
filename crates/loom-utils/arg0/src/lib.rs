@@ -3,10 +3,10 @@ use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
 
-use loom_shim_stubs::CODEX_CORE_APPLY_PATCH_ARG1;
 use loom_exec_server::CODEX_FS_HELPER_ARG1;
-use loom_sandboxing::landlock::CODEX_LINUX_SANDBOX_ARG0;
 use loom_home_dir::find_codex_home;
+use loom_sandboxing::landlock::CODEX_LINUX_SANDBOX_ARG0;
+use loom_shim_stubs::CODEX_CORE_APPLY_PATCH_ARG1;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 use tempfile::TempDir;
@@ -77,9 +77,9 @@ pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
             Ok(runtime) => runtime,
             Err(_) => std::process::exit(1),
         };
-        let exit_code = runtime.block_on(
-            loom_shim_stubs::run_shell_escalation_execve_wrapper(file, argv),
-        );
+        let exit_code = runtime.block_on(loom_shim_stubs::run_shell_escalation_execve_wrapper(
+            file, argv,
+        ));
         match exit_code {
             Ok(exit_code) => std::process::exit(exit_code),
             Err(_) => std::process::exit(1),

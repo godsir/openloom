@@ -57,16 +57,26 @@ pub struct InProcessAppServerClient {
 
 impl InProcessAppServerClient {
     pub async fn start(_args: InProcessClientStartArgs) -> std::io::Result<Self> {
-        let inner = LoomAppServerClient::from_config().await
+        let inner = LoomAppServerClient::from_config()
+            .await
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         let engine = Arc::clone(&inner.engine);
         let event_tx = inner.event_tx.clone();
         let current_mode = inner.current_mode.clone();
         let model_preference = inner.model_preference.clone();
-        Ok(Self { inner, engine, event_tx, current_mode, model_preference })
+        Ok(Self {
+            inner,
+            engine,
+            event_tx,
+            current_mode,
+            model_preference,
+        })
     }
     pub async fn shutdown(self) -> std::io::Result<()> {
-        self.inner.shutdown().await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        self.inner
+            .shutdown()
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     }
     pub fn next_event(&mut self) -> Option<AppServerEvent> {
         self.inner.next_event()
@@ -311,7 +321,9 @@ impl LoomAppServerClient {
             event_rx,
             event_tx,
             current_mode: Arc::new(std::sync::Mutex::new(openloom_models::Mode::Chat)),
-            model_preference: Arc::new(std::sync::Mutex::new(openloom_models::ModelPreference::Auto)),
+            model_preference: Arc::new(std::sync::Mutex::new(
+                openloom_models::ModelPreference::Auto,
+            )),
         }
     }
 
@@ -329,7 +341,9 @@ impl LoomAppServerClient {
             event_rx,
             event_tx,
             current_mode: Arc::new(std::sync::Mutex::new(openloom_models::Mode::Chat)),
-            model_preference: Arc::new(std::sync::Mutex::new(openloom_models::ModelPreference::Auto)),
+            model_preference: Arc::new(std::sync::Mutex::new(
+                openloom_models::ModelPreference::Auto,
+            )),
         })
     }
 
@@ -338,7 +352,9 @@ impl LoomAppServerClient {
         let data_dir = loom_home_dir::find_loom_home()
             .map(|p| p.as_path().to_path_buf())
             .unwrap_or_else(|_| {
-                dirs::data_dir().map(|d| d.join("openLoom")).unwrap_or_default()
+                dirs::data_dir()
+                    .map(|d| d.join("openLoom"))
+                    .unwrap_or_default()
             });
 
         let (cloud_config, local_config) = load_model_configs(&data_dir);
@@ -356,14 +372,25 @@ impl LoomAppServerClient {
             skip_permissions: true,
         };
 
-        let engine = openloom_engine::Engine::new(config)
-            .or_else(|_| openloom_engine::Engine::new_test(
-                dirs::data_dir().map(|d| d.join("openLoom").join("data").join("test.db")).unwrap_or_default()
-            ))?;
+        let engine = openloom_engine::Engine::new(config).or_else(|_| {
+            openloom_engine::Engine::new_test(
+                dirs::data_dir()
+                    .map(|d| d.join("openLoom").join("data").join("test.db"))
+                    .unwrap_or_default(),
+            )
+        })?;
         let engine = Arc::new(engine);
         engine.start_cron_scheduler();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
-        Ok(Self { engine, event_rx, event_tx, current_mode: Arc::new(std::sync::Mutex::new(openloom_models::Mode::Chat)), model_preference: Arc::new(std::sync::Mutex::new(openloom_models::ModelPreference::Auto)) })
+        Ok(Self {
+            engine,
+            event_rx,
+            event_tx,
+            current_mode: Arc::new(std::sync::Mutex::new(openloom_models::Mode::Chat)),
+            model_preference: Arc::new(std::sync::Mutex::new(
+                openloom_models::ModelPreference::Auto,
+            )),
+        })
     }
 
     /// Sends a typed client request and returns a deserialized response body.
@@ -371,7 +398,14 @@ impl LoomAppServerClient {
         &self,
         req: ClientRequest,
     ) -> Result<T, TypedRequestError> {
-        dispatch_request::<T>(Arc::clone(&self.engine), self.event_tx.clone(), req, self.current_mode.clone(), self.model_preference.clone()).await
+        dispatch_request::<T>(
+            Arc::clone(&self.engine),
+            self.event_tx.clone(),
+            req,
+            self.current_mode.clone(),
+            self.model_preference.clone(),
+        )
+        .await
     }
 
     /// Returns a handle that can be cloned and used concurrently for
@@ -486,7 +520,9 @@ impl LoomAppServerRequestHandle {
             self.event_tx.clone(),
             req,
             Arc::new(std::sync::Mutex::new(openloom_models::Mode::Code)),
-            Arc::new(std::sync::Mutex::new(openloom_models::ModelPreference::Auto)),
+            Arc::new(std::sync::Mutex::new(
+                openloom_models::ModelPreference::Auto,
+            )),
         )
         .await
     }
@@ -516,13 +552,13 @@ impl AppServerRequestHandle {
     pub fn request_typed<T: DeserializeOwned + 'static>(
         &self,
         request: ClientRequest,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, TypedRequestError>> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<T, TypedRequestError>> + Send + '_>,
+    > {
         match self {
             Self::Loom(handle) => Box::pin(handle.request_typed(request)),
             Self::Remote(handle) => Box::pin(handle.request_typed(request)),
-            Self::InProcess(_handle) => {
-                Box::pin(async { Err(TypedRequestError::MethodNotFound) })
-            }
+            Self::InProcess(_handle) => Box::pin(async { Err(TypedRequestError::MethodNotFound) }),
         }
     }
 }
@@ -561,7 +597,9 @@ impl AppServerClient {
     pub fn request_typed<T: DeserializeOwned + 'static>(
         &self,
         request: ClientRequest,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, TypedRequestError>> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<T, TypedRequestError>> + Send + '_>,
+    > {
         match self {
             Self::Loom(client) => Box::pin(client.request_typed(request)),
             Self::Remote(client) => Box::pin(client.request_typed(request)),
@@ -627,12 +665,10 @@ impl AppServerClient {
         match self {
             Self::Loom(client) => AppServerRequestHandle::Loom(client.request_handle()),
             Self::Remote(client) => AppServerRequestHandle::Remote(client.request_handle()),
-            Self::InProcess(client) => {
-                AppServerRequestHandle::Loom(LoomAppServerRequestHandle {
-                    engine: Arc::clone(&client.engine),
-                    event_tx: client.event_tx.clone()
-                })
-            }
+            Self::InProcess(client) => AppServerRequestHandle::Loom(LoomAppServerRequestHandle {
+                engine: Arc::clone(&client.engine),
+                event_tx: client.event_tx.clone(),
+            }),
         }
     }
 
@@ -692,7 +728,12 @@ impl LoomAppServerClient {
 
 /// Load models from openLoom config.toml into Loom-format Model entries.
 /// Load model configs from config.toml, separated into cloud and local.
-fn load_model_configs(data_dir: &std::path::Path) -> (Option<openloom_models::ModelConfig>, Option<openloom_models::ModelConfig>) {
+fn load_model_configs(
+    data_dir: &std::path::Path,
+) -> (
+    Option<openloom_models::ModelConfig>,
+    Option<openloom_models::ModelConfig>,
+) {
     let config_path = data_dir.join("config.toml");
     let mut cloud: Option<openloom_models::ModelConfig> = None;
     let mut local: Option<openloom_models::ModelConfig> = None;
@@ -703,10 +744,20 @@ fn load_model_configs(data_dir: &std::path::Path) -> (Option<openloom_models::Mo
                 if let Some(arr) = models_section.as_array() {
                     for entry in arr {
                         let t = entry.as_table();
-                        let backend = t.and_then(|t| t.get("backend")).and_then(|v| v.as_str()).unwrap_or("");
+                        let backend = t
+                            .and_then(|t| t.get("backend"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
                         let cfg = openloom_models::ModelConfig {
-                            name: t.and_then(|t| t.get("name")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                            model: t.and_then(|t| t.get("model")).and_then(|v| v.as_str()).map(|s| s.to_string()),
+                            name: t
+                                .and_then(|t| t.get("name"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            model: t
+                                .and_then(|t| t.get("model"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
                             model_type: openloom_models::ModelType::Reasoning,
                             backend: match backend.to_lowercase().as_str() {
                                 "anthropic" => openloom_models::ModelBackend::Anthropic,
@@ -716,20 +767,36 @@ fn load_model_configs(data_dir: &std::path::Path) -> (Option<openloom_models::Mo
                                 _ => openloom_models::ModelBackend::LmStudio,
                             },
                             path: None,
-                            context_size: t.and_then(|t| t.get("context_size")).and_then(|v| v.as_integer()).unwrap_or(4096) as usize,
-                            max_output_tokens: t.and_then(|t| t.get("max_output_tokens")).and_then(|v| v.as_integer()).map(|v| v as usize),
+                            context_size: t
+                                .and_then(|t| t.get("context_size"))
+                                .and_then(|v| v.as_integer())
+                                .unwrap_or(4096) as usize,
+                            max_output_tokens: t
+                                .and_then(|t| t.get("max_output_tokens"))
+                                .and_then(|v| v.as_integer())
+                                .map(|v| v as usize),
                             n_gpu_layers: 0,
-                            api_key_env: t.and_then(|t| t.get("api_key_env")).and_then(|v| v.as_str()).map(|s| s.to_string()),
-                            base_url: t.and_then(|t| t.get("base_url")).and_then(|v| v.as_str()).map(|s| s.to_string()),
+                            api_key_env: t
+                                .and_then(|t| t.get("api_key_env"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                            base_url: t
+                                .and_then(|t| t.get("base_url"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
                         };
                         match cfg.backend {
                             openloom_models::ModelBackend::Anthropic
                             | openloom_models::ModelBackend::OpenAI
                             | openloom_models::ModelBackend::DeepSeek => {
-                                if cloud.is_none() { cloud = Some(cfg); }
+                                if cloud.is_none() {
+                                    cloud = Some(cfg);
+                                }
                             }
                             _ => {
-                                if local.is_none() { local = Some(cfg); }
+                                if local.is_none() {
+                                    local = Some(cfg);
+                                }
                             }
                         }
                     }
@@ -743,7 +810,11 @@ fn load_model_configs(data_dir: &std::path::Path) -> (Option<openloom_models::Mo
 fn load_model_list() -> Vec<loom_app_server_protocol::Model> {
     let mut models = Vec::new();
     let config_paths = [
-        std::env::var("APPDATA").ok().map(|d| std::path::PathBuf::from(d).join("openLoom").join("config.toml")),
+        std::env::var("APPDATA").ok().map(|d| {
+            std::path::PathBuf::from(d)
+                .join("openLoom")
+                .join("config.toml")
+        }),
         dirs::data_dir().map(|d| d.join("openLoom").join("config.toml")),
     ];
     for path_opt in &config_paths {
@@ -753,20 +824,34 @@ fn load_model_list() -> Vec<loom_app_server_protocol::Model> {
                     if let Some(arr) = config.get("models").and_then(|v| v.as_array()) {
                         for entry in arr {
                             let t = entry.as_table();
-                            let name = t.and_then(|t| t.get("name")).and_then(|v| v.as_str()).unwrap_or("unknown");
-                            let model = t.and_then(|t| t.get("model")).and_then(|v| v.as_str()).unwrap_or(name);
-                            let backend = t.and_then(|t| t.get("backend")).and_then(|v| v.as_str()).unwrap_or("local");
+                            let name = t
+                                .and_then(|t| t.get("name"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            let model = t
+                                .and_then(|t| t.get("model"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(name);
+                            let backend = t
+                                .and_then(|t| t.get("backend"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("local");
                             models.push(loom_app_server_protocol::Model {
                                 id: name.to_string(),
                                 model: model.to_string(),
-                                upgrade: None, upgrade_info: None, availability_nux: None,
+                                upgrade: None,
+                                upgrade_info: None,
+                                availability_nux: None,
                                 display_name: format!("{} ({})", name, backend),
                                 description: format!("{} backend", backend),
                                 hidden: false,
                                 supported_reasoning_efforts: vec![],
-                                default_reasoning_effort: loom_protocol::openai_models::ReasoningEffort::Medium,
-                                input_modalities: vec![], supports_personality: false,
-                                additional_speed_tiers: vec![], service_tiers: vec![],
+                                default_reasoning_effort:
+                                    loom_protocol::openai_models::ReasoningEffort::Medium,
+                                input_modalities: vec![],
+                                supports_personality: false,
+                                additional_speed_tiers: vec![],
+                                service_tiers: vec![],
                                 default_service_tier: None,
                                 is_default: models.is_empty(),
                             });
@@ -801,8 +886,8 @@ async fn dispatch_request<T: DeserializeOwned>(
                 role: "user".into(),
                 content: text,
                 timestamp: chrono::Utc::now(),
-            id: None,
-            seq: None,
+                id: None,
+                seq: None,
                 metadata: None,
             };
 
@@ -852,7 +937,11 @@ async fn dispatch_request<T: DeserializeOwned>(
                 let fwd_item = spawned_item_id;
                 let forward_handle = tokio::spawn(async move {
                     // track pending tool call items waiting for a RESULT
-                    let mut pending_call: Option<(String /*item_id*/, String /*tool*/, serde_json::Value /*args*/)> = None;
+                    let mut pending_call: Option<(
+                        String,            /*item_id*/
+                        String,            /*tool*/
+                        serde_json::Value, /*args*/
+                    )> = None;
 
                     while let Some(token) = token_rx.recv().await {
                         // ─── REASONING marker (DeepSeek-R1 / o1 thinking) ─────────────────────
@@ -874,14 +963,11 @@ async fn dispatch_request<T: DeserializeOwned>(
                         // ─── CALL marker ──────────────────────────────────────────────────────
                         if let Some(call_json) = token.strip_prefix("\x01CALL\x02") {
                             // Parse ToolCall JSON from engine
-                            let parsed: serde_json::Value = serde_json::from_str(call_json)
-                                .unwrap_or(serde_json::Value::Null);
-                            let tc_id = parsed["id"].as_str()
-                                .unwrap_or("tool-call")
-                                .to_string();
-                            let tool_name = parsed["name"].as_str()
-                                .unwrap_or("unknown")
-                                .to_string();
+                            let parsed: serde_json::Value =
+                                serde_json::from_str(call_json).unwrap_or(serde_json::Value::Null);
+                            let tc_id = parsed["id"].as_str().unwrap_or("tool-call").to_string();
+                            let tool_name =
+                                parsed["name"].as_str().unwrap_or("unknown").to_string();
                             let args = parsed["arguments"].clone();
 
                             let item_id = tc_id.clone();
@@ -920,7 +1006,8 @@ async fn dispatch_request<T: DeserializeOwned>(
                                 let now_ms = std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap_or_default()
-                                    .as_millis() as i64;
+                                    .as_millis()
+                                    as i64;
                                 let output = loom_app_server_protocol::DynamicToolCallOutputContentItem::InputText {
                                     text: result_text.to_string(),
                                 };
@@ -1302,20 +1389,23 @@ async fn dispatch_request<T: DeserializeOwned>(
         ),
 
         // ─── Batch: return stubs for lifecycle methods the TUI calls ───
-        ClientRequest::ThreadUnsubscribe { .. } => {
-            respond(&method, loom_app_server_protocol::ThreadUnsubscribeResponse {
+        ClientRequest::ThreadUnsubscribe { .. } => respond(
+            &method,
+            loom_app_server_protocol::ThreadUnsubscribeResponse {
                 status: loom_app_server_protocol::ThreadUnsubscribeStatus::Unsubscribed,
-            })
-        }
+            },
+        ),
         ClientRequest::ThreadArchive { .. } => {
             respond(&method, loom_app_server_protocol::ThreadArchiveResponse {})
         }
-        ClientRequest::ThreadCompactStart { .. } => {
-            respond(&method, loom_app_server_protocol::ThreadCompactStartResponse {})
-        }
-        ClientRequest::ThreadMemoryModeSet { .. } => {
-            respond(&method, loom_app_server_protocol::ThreadMemoryModeSetResponse {})
-        }
+        ClientRequest::ThreadCompactStart { .. } => respond(
+            &method,
+            loom_app_server_protocol::ThreadCompactStartResponse {},
+        ),
+        ClientRequest::ThreadMemoryModeSet { .. } => respond(
+            &method,
+            loom_app_server_protocol::ThreadMemoryModeSetResponse {},
+        ),
 
         // ─── Catch-all: not yet mapped ───
         _ => Err(TypedRequestError::MethodNotFound),

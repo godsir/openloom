@@ -54,10 +54,20 @@ fn session_all_proxy_url(http_addr: &str, socks_addr: &str, socks_enabled: bool)
     }
 }
 
-fn render_debug_config_lines(_stack: &loom_tui_stubs::config::ConfigLayerStackStub) -> Vec<Line<'static>> {
+fn render_debug_config_lines(
+    _stack: &loom_tui_stubs::config::ConfigLayerStackStub,
+) -> Vec<Line<'static>> {
     let mut lines = vec!["/debug-config".magenta().into(), "".into()];
-    lines.push("Config layer stack (debug info not available in stub build):".bold().into());
-    lines.push("  <stub - requires full loom_config::ConfigLayerStack>".dim().into());
+    lines.push(
+        "Config layer stack (debug info not available in stub build):"
+            .bold()
+            .into(),
+    );
+    lines.push(
+        "  <stub - requires full loom_config::ConfigLayerStack>"
+            .dim()
+            .into(),
+    );
     lines
 }
 
@@ -324,6 +334,7 @@ mod tests {
     use super::render_debug_config_lines;
     use super::session_all_proxy_url;
     use crate::legacy_core::config::Constrained;
+    use loom_absolute_path::AbsolutePathBuf;
     use loom_app_server_protocol::AskForApproval;
     use loom_app_server_protocol::ConfigLayerSource;
     use loom_config::ConfigLayerEntry;
@@ -352,7 +363,6 @@ mod tests {
     use loom_protocol::config_types::ApprovalsReviewer;
     use loom_protocol::config_types::WebSearchMode;
     use loom_protocol::models::PermissionProfile;
-    use loom_absolute_path::AbsolutePathBuf;
     use ratatui::text::Line;
     use std::collections::BTreeMap;
     use toml::Value as TomlValue;

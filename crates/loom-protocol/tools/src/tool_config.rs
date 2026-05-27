@@ -1,10 +1,10 @@
+use loom_absolute_path::AbsolutePathBuf;
 use loom_features::Feature;
 use loom_features::Features;
 use loom_protocol::config_types::ModeKind;
 use loom_protocol::config_types::TUI_VISIBLE_COLLABORATION_MODES;
 use loom_protocol::openai_models::ConfigShellToolType;
 use loom_protocol::openai_models::ModelInfo;
-use loom_absolute_path::AbsolutePathBuf;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

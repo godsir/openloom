@@ -63,8 +63,8 @@ use openloom_memory::persona::CognitionsPersonaProvider;
 use openloom_memory::store::MessageStore;
 use openloom_models::*;
 use openloom_router::SmartRouter;
-use openloom_skills::{Skill, SkillInfo, SkillRegistry, builtins};
 use openloom_skills::cron_store::{CronStore, NotificationStore};
+use openloom_skills::{Skill, SkillInfo, SkillRegistry, builtins};
 use openloom_weaver::ContextWeaver;
 use std::sync::Mutex;
 use std::sync::{
@@ -328,7 +328,10 @@ impl Engine {
     /// Build the system instruction with the user-configured workspace directory.
     /// Falls back to process cwd when no workspace is set.
     pub(crate) fn system_instruction(&self) -> String {
-        let resolved_cwd = self.active_cwd.read().unwrap()
+        let resolved_cwd = self
+            .active_cwd
+            .read()
+            .unwrap()
             .clone()
             .or_else(|| std::env::current_dir().ok());
         let cwd_path = resolved_cwd.as_deref().unwrap_or(std::path::Path::new("."));
@@ -471,7 +474,12 @@ impl Engine {
         let mut skills = SkillRegistry::new();
         let cron_store = Arc::new(CronStore::new(&config.data_dir));
         let notification_store = Arc::new(NotificationStore::new(&config.data_dir));
-        builtins::register_all(&mut skills, app_config.clone(), &config.data_dir, cron_store.clone());
+        builtins::register_all(
+            &mut skills,
+            app_config.clone(),
+            &config.data_dir,
+            cron_store.clone(),
+        );
         for skill in skills.all_skills() {
             let manifest = skill.manifest();
             router.register_skill_triggers(skill.name(), manifest.triggers.clone());
@@ -484,7 +492,11 @@ impl Engine {
                 .get("tools")
                 .and_then(|t| t.get("disabled"))
                 .and_then(|d| d.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             if !names.is_empty() {
                 tracing::info!(?names, "Applying tool disabled list from config");
@@ -602,9 +614,9 @@ impl Engine {
             default_permission_mode: Arc::new(Mutex::new("ask".to_string())),
             cron_store: cron_store.clone(),
             notification_store,
-            checkpoint_store: Arc::new(std::sync::Mutex::new(
-                checkpoint::CheckpointStore::new(&config.data_dir),
-            )),
+            checkpoint_store: Arc::new(std::sync::Mutex::new(checkpoint::CheckpointStore::new(
+                &config.data_dir,
+            ))),
         };
 
         // Spawn persona watcher (from persona_watcher module)
@@ -624,10 +636,7 @@ impl Engine {
     }
 
     /// Process a message from a bridge platform and return the Agent's reply text.
-    pub async fn handle_bridge_message(
-        &self,
-        msg: crate::bridge::BridgeMessage,
-    ) -> Result<String> {
+    pub async fn handle_bridge_message(&self, msg: crate::bridge::BridgeMessage) -> Result<String> {
         let _session_id = format!("bridge:{}:{}", msg.platform.name(), msg.chat_id);
         let system = self.bridge_system_instruction(&msg.platform, &msg.sender_name);
 
@@ -733,9 +742,15 @@ impl Engine {
 
         // Auto-compact: if history exceeds 80% of context window, summarize the older half.
         // Only affects this LLM call — stored history is NOT modified.
-        let history_chars: usize = working_memory.iter().map(|m| m.content.chars().count()).sum();
+        let history_chars: usize = working_memory
+            .iter()
+            .map(|m| m.content.chars().count())
+            .sum();
         let compact_threshold = (self.context_max_chars as f64 * 0.8) as usize;
-        if history_chars > compact_threshold && self.context_max_chars > 0 && working_memory.len() > 4 {
+        if history_chars > compact_threshold
+            && self.context_max_chars > 0
+            && working_memory.len() > 4
+        {
             let split = working_memory.len() / 2;
             let older_text: String = working_memory[..split]
                 .iter()
@@ -815,9 +830,14 @@ impl Engine {
                     drop(config);
                     if let Some(active) = active {
                         let mid = active.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                        let prov = active.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+                        let prov = active
+                            .get("provider")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
                         if !mid.is_empty() && !prov.is_empty() {
-                            self.complete_with_model(session_id, &assembled.prompt, mid, prov).await.unwrap_or_else(|_| Self::NO_MODEL_RESPONSE.to_string())
+                            self.complete_with_model(session_id, &assembled.prompt, mid, prov)
+                                .await
+                                .unwrap_or_else(|_| Self::NO_MODEL_RESPONSE.to_string())
                         } else {
                             Self::NO_MODEL_RESPONSE.to_string()
                         }
@@ -850,9 +870,14 @@ impl Engine {
                     drop(config);
                     if let Some(active) = active {
                         let mid = active.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                        let prov = active.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+                        let prov = active
+                            .get("provider")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
                         if !mid.is_empty() && !prov.is_empty() {
-                            self.complete_with_model(session_id, &assembled.prompt, mid, prov).await.unwrap_or_else(|_| Self::NO_MODEL_RESPONSE.to_string())
+                            self.complete_with_model(session_id, &assembled.prompt, mid, prov)
+                                .await
+                                .unwrap_or_else(|_| Self::NO_MODEL_RESPONSE.to_string())
                         } else {
                             Self::NO_MODEL_RESPONSE.to_string()
                         }
@@ -925,7 +950,13 @@ impl Engine {
         let _ = conn.execute_batch("ALTER TABLE message_history ADD COLUMN metadata TEXT;");
         let store = MessageStore::new(&conn);
         let next_seq = store.max_seq(session_id).unwrap_or(0) + 1;
-        let _ = store.insert_with_metadata(session_id, next_seq, "user", &user_msg.content, user_msg.metadata.as_deref());
+        let _ = store.insert_with_metadata(
+            session_id,
+            next_seq,
+            "user",
+            &user_msg.content,
+            user_msg.metadata.as_deref(),
+        );
         let _ = store.insert(session_id, next_seq + 1, "assistant", assistant_response);
         let _ = self.session_tx.send(SessionCommand::UpdateCount {
             id: session_id.to_string(),
@@ -951,7 +982,13 @@ impl Engine {
         let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
         let store = MessageStore::new(&conn);
         let mut seq = store.max_seq(session_id).unwrap_or(0) + 1;
-        let _ = store.insert_with_metadata(session_id, seq, "user", &user_msg.content, user_msg.metadata.as_deref());
+        let _ = store.insert_with_metadata(
+            session_id,
+            seq,
+            "user",
+            &user_msg.content,
+            user_msg.metadata.as_deref(),
+        );
         seq += 1;
         for msg in tool_msgs {
             let _ = store.insert(session_id, seq, &msg.role, &msg.content);
@@ -1053,12 +1090,15 @@ impl Engine {
         };
 
         // Step 1: Try typed config.models
-        let typed_cfg = config.models.iter().find(|m| {
-            let m_id = m.model.as_deref().unwrap_or(&m.name);
-            m_id == model_id
-                && (m.backend == backend
-                    || m.backend.name().eq_ignore_ascii_case(provider))
-        }).cloned();
+        let typed_cfg = config
+            .models
+            .iter()
+            .find(|m| {
+                let m_id = m.model.as_deref().unwrap_or(&m.name);
+                m_id == model_id
+                    && (m.backend == backend || m.backend.name().eq_ignore_ascii_case(provider))
+            })
+            .cloned();
 
         // Step 2: If not found, try settings.providers
         let settings_cfg = if typed_cfg.is_none() {
@@ -1076,7 +1116,8 @@ impl Engine {
 
         // For LM Studio: proactively load the model before sending the request.
         if backend == openloom_models::ModelBackend::LmStudio {
-            let lm_base = typed_cfg.as_ref()
+            let lm_base = typed_cfg
+                .as_ref()
                 .and_then(|c| c.base_url.clone())
                 .unwrap_or_else(|| "http://localhost:1234/v1".to_string());
             let ctx = typed_cfg.as_ref().map(|c| c.context_size).unwrap_or(32000);
@@ -1086,7 +1127,10 @@ impl Engine {
         // Try typed config first
         if let Some(cfg) = typed_cfg {
             if cfg.backend == openloom_models::ModelBackend::LmStudio {
-                let lm_base = cfg.base_url.clone().unwrap_or_else(|| "http://localhost:1234/v1".to_string());
+                let lm_base = cfg
+                    .base_url
+                    .clone()
+                    .unwrap_or_else(|| "http://localhost:1234/v1".to_string());
                 let ctx = cfg.context_size;
                 let _ = openloom_inference::ensure_lm_studio_model(&lm_base, model_id, ctx).await;
             }
@@ -1104,7 +1148,10 @@ impl Engine {
         // Try settings-based config
         if let Some(cfg) = settings_cfg {
             if cfg.backend == openloom_models::ModelBackend::LmStudio {
-                let lm_base = cfg.base_url.clone().unwrap_or_else(|| "http://localhost:1234/v1".to_string());
+                let lm_base = cfg
+                    .base_url
+                    .clone()
+                    .unwrap_or_else(|| "http://localhost:1234/v1".to_string());
                 let ctx = cfg.context_size;
                 let _ = openloom_inference::ensure_lm_studio_model(&lm_base, model_id, ctx).await;
             }
@@ -1114,7 +1161,9 @@ impl Engine {
                     return Ok(resp.text);
                 }
                 Err(e) => {
-                    tracing::warn!("create_cloud_client from settings for {model_id}: {e}, falling back");
+                    tracing::warn!(
+                        "create_cloud_client from settings for {model_id}: {e}, falling back"
+                    );
                 }
             }
         }
@@ -1155,7 +1204,16 @@ impl Engine {
         model_id: &str,
         provider: &str,
     ) -> Result<()> {
-        self.complete_with_model_streaming_meta(session_id, prompt, images, None, model_id, provider, openloom_models::Mode::Code).await
+        self.complete_with_model_streaming_meta(
+            session_id,
+            prompt,
+            images,
+            None,
+            model_id,
+            provider,
+            openloom_models::Mode::Code,
+        )
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1176,36 +1234,52 @@ impl Engine {
         // Read current permission mode for this session and translate to a directive
         let permission_mode = self.permission_mode(session_id);
         let permission_directive = match permission_mode.as_str() {
-            "read_only" => "## Permission Mode: READ-ONLY\n\
+            "read_only" => {
+                "## Permission Mode: READ-ONLY\n\
 You are operating in READ-ONLY mode. You may read, analyze, summarize, and answer questions, \
 but you MUST NOT propose any actions that would modify files, run mutating shell commands, \
 change configuration, install software, or alter any system state. If the user asks for such \
 an action, politely refuse and explain that read-only mode is active. Suggest they switch to \
-\"ask\" or \"operate\" mode if mutation is required.",
-            "ask" => "## Permission Mode: ASK-BEFORE-ACTING\n\
+\"ask\" or \"operate\" mode if mutation is required."
+            }
+            "ask" => {
+                "## Permission Mode: ASK-BEFORE-ACTING\n\
 You are operating in ASK mode. Before suggesting any action that would modify files, run \
 mutating shell commands, change configuration, install software, or alter system state, \
 explicitly state what you intend to do and ask the user to confirm. Do not assume permission \
 even if the user seemed to grant it earlier in the conversation — re-confirm for each \
-new mutating action.",
-            _ => "## Permission Mode: AUTO-OPERATE\n\
+new mutating action."
+            }
+            _ => {
+                "## Permission Mode: AUTO-OPERATE\n\
 You are operating in AUTO-OPERATE mode. You may proceed with reasonable actions without \
 asking for confirmation each time, but still warn the user about destructive or irreversible \
-operations (e.g. force-delete, force-push, dropping databases) before performing them.",
+operations (e.g. force-delete, force-push, dropping databases) before performing them."
+            }
         };
         // Read agent identity/ishiki from saved settings
         let agent_system = {
             let cfg = self.config.read().await;
             let settings = &cfg.settings;
             let identity = settings
-                .get("identity").and_then(|v| v.as_str()).unwrap_or("");
+                .get("identity")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let ishiki = settings
-                .get("ishiki").and_then(|v| v.as_str()).unwrap_or("");
+                .get("ishiki")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let mut parts = vec![base_system.clone()];
             parts.push(permission_directive.to_string());
-            if !persona_summary.is_empty() { parts.push(persona_summary.clone()); }
-            if !identity.is_empty() { parts.push(format!("## Identity\n{}", identity)); }
-            if !ishiki.is_empty() { parts.push(format!("## Consciousness\n{}", ishiki)); }
+            if !persona_summary.is_empty() {
+                parts.push(persona_summary.clone());
+            }
+            if !identity.is_empty() {
+                parts.push(format!("## Identity\n{}", identity));
+            }
+            if !ishiki.is_empty() {
+                parts.push(format!("## Consciousness\n{}", ishiki));
+            }
             parts.join("\n\n")
         };
 
@@ -1234,12 +1308,15 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
                 "ollama" => openloom_models::ModelBackend::Ollama,
                 _ => openloom_models::ModelBackend::OpenAI,
             };
-            let typed_cfg = config.models.iter().find(|m| {
-                let m_id = m.model.as_deref().unwrap_or(&m.name);
-                m_id == model_id
-                    && (m.backend == backend
-                        || m.backend.name().eq_ignore_ascii_case(provider))
-            }).cloned();
+            let typed_cfg = config
+                .models
+                .iter()
+                .find(|m| {
+                    let m_id = m.model.as_deref().unwrap_or(&m.name);
+                    m_id == model_id
+                        && (m.backend == backend || m.backend.name().eq_ignore_ascii_case(provider))
+                })
+                .cloned();
             let snapshot = config.settings.clone();
             (backend, typed_cfg, snapshot)
         }; // config lock released
@@ -1251,7 +1328,10 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
         let vision_text = if use_auxiliary {
             match vision::prepare_vision_context(&settings_snapshot, prompt, images).await {
                 Ok(Some(text)) => {
-                    tracing::info!(image_count = images.len(), "vision auxiliary analysis complete");
+                    tracing::info!(
+                        image_count = images.len(),
+                        "vision auxiliary analysis complete"
+                    );
                     Some(text)
                 }
                 Ok(None) => {
@@ -1272,12 +1352,15 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
         let typed_cfg = if typed_cfg_pre.is_some() {
             typed_cfg_pre
         } else {
-            config.models.iter().find(|m| {
-                let m_id = m.model.as_deref().unwrap_or(&m.name);
-                m_id == model_id
-                    && (m.backend == backend
-                        || m.backend.name().eq_ignore_ascii_case(provider))
-            }).cloned()
+            config
+                .models
+                .iter()
+                .find(|m| {
+                    let m_id = m.model.as_deref().unwrap_or(&m.name);
+                    m_id == model_id
+                        && (m.backend == backend || m.backend.name().eq_ignore_ascii_case(provider))
+                })
+                .cloned()
         };
 
         let settings_cfg = if typed_cfg.is_none() {
@@ -1295,21 +1378,30 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
         let model_client: Option<std::sync::Arc<dyn openloom_inference::CloudClient>> = {
             // For LM Studio: proactively load the model
             if backend == openloom_models::ModelBackend::LmStudio {
-                let lm_base = typed_cfg.as_ref()
+                let lm_base = typed_cfg
+                    .as_ref()
                     .and_then(|c| c.base_url.clone())
                     .unwrap_or_else(|| "http://localhost:1234/v1".to_string());
                 let ctx = typed_cfg.as_ref().map(|c| c.context_size).unwrap_or(32000);
                 let _ = openloom_inference::ensure_lm_studio_model(&lm_base, model_id, ctx).await;
             }
             if let Some(ref cfg) = typed_cfg {
-                openloom_inference::create_cloud_client(cfg).ok().map(std::sync::Arc::from)
+                openloom_inference::create_cloud_client(cfg)
+                    .ok()
+                    .map(std::sync::Arc::from)
             } else if let Some(ref cfg) = settings_cfg {
                 if backend == openloom_models::ModelBackend::LmStudio {
-                    let lm_base = cfg.base_url.clone().unwrap_or_else(|| "http://localhost:1234/v1".to_string());
+                    let lm_base = cfg
+                        .base_url
+                        .clone()
+                        .unwrap_or_else(|| "http://localhost:1234/v1".to_string());
                     let ctx = cfg.context_size;
-                    let _ = openloom_inference::ensure_lm_studio_model(&lm_base, model_id, ctx).await;
+                    let _ =
+                        openloom_inference::ensure_lm_studio_model(&lm_base, model_id, ctx).await;
                 }
-                openloom_inference::create_cloud_client(cfg).ok().map(std::sync::Arc::from)
+                openloom_inference::create_cloud_client(cfg)
+                    .ok()
+                    .map(std::sync::Arc::from)
             } else {
                 None
             }
@@ -1359,15 +1451,17 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
 
             let model_pref = openloom_models::ModelPreference::Auto;
 
-            let result = self.agent_loop_inner(
-                &user_msg,
-                &sid,
-                sink,
-                Some(agent_system),
-                model_client,
-                mode,
-                model_pref,
-            ).await;
+            let result = self
+                .agent_loop_inner(
+                    &user_msg,
+                    &sid,
+                    sink,
+                    Some(agent_system),
+                    model_client,
+                    mode,
+                    model_pref,
+                )
+                .await;
 
             // Clean up abort flag
             self.remove_abort_flag(&sid);
@@ -1396,25 +1490,25 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
 
             // Build messages manually for a simple completion (no tools)
             let simple_messages: Vec<Message> = std::iter::once(Message {
-                    role: Role::System,
-                    content: vec![openloom_models::ContentPart::Text { text: agent_system.clone() }],
-                    timestamp: chrono::Utc::now(),
-                })
-                .chain(history.iter().map(|m| {
-                    if m.role == "user" {
-                        Message::user(&m.content)
-                    } else {
-                        Message::assistant(&m.content)
-                    }
-                }))
-                .chain(std::iter::once(
-                    if images.is_empty() {
-                        Message::user(&user_content)
-                    } else {
-                        Message::user_with_images(&user_content, images)
-                    }
-                ))
-                .collect();
+                role: Role::System,
+                content: vec![openloom_models::ContentPart::Text {
+                    text: agent_system.clone(),
+                }],
+                timestamp: chrono::Utc::now(),
+            })
+            .chain(history.iter().map(|m| {
+                if m.role == "user" {
+                    Message::user(&m.content)
+                } else {
+                    Message::assistant(&m.content)
+                }
+            }))
+            .chain(std::iter::once(if images.is_empty() {
+                Message::user(&user_content)
+            } else {
+                Message::user_with_images(&user_content, images)
+            }))
+            .collect();
 
             let req = CompletionRequest {
                 messages: simple_messages,
@@ -1433,11 +1527,14 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
                 let mut full = String::new();
                 let mut in_thinking = false;
                 while let Some(token) = token_rx.recv().await {
-                    if token.starts_with('\x00') { continue; }
+                    if token.starts_with('\x00') {
+                        continue;
+                    }
                     // Reasoning/thinking tokens: emit as ThinkingDelta events
                     if token.starts_with('\x02') {
                         let reasoning = token.strip_prefix('\x02').unwrap_or("");
-                        let reasoning = reasoning.strip_prefix("REASONING\x02").unwrap_or(reasoning);
+                        let reasoning =
+                            reasoning.strip_prefix("REASONING\x02").unwrap_or(reasoning);
                         if !reasoning.is_empty() {
                             if !in_thinking {
                                 in_thinking = true;
@@ -1474,17 +1571,27 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
             let stream_result = if let Some(ref client) = model_client {
                 client.complete_stream(req, token_tx).await
             } else if let Some(ref cloud) = self.cloud {
-                cloud.complete_stream(CompletionRequest {
-                    prompt: user_content.clone(),
-                    stream: true,
-                    ..Default::default()
-                }, token_tx).await
+                cloud
+                    .complete_stream(
+                        CompletionRequest {
+                            prompt: user_content.clone(),
+                            stream: true,
+                            ..Default::default()
+                        },
+                        token_tx,
+                    )
+                    .await
             } else if let Some(ref local) = self.local_client {
-                local.complete_stream(CompletionRequest {
-                    prompt: user_content.clone(),
-                    stream: true,
-                    ..Default::default()
-                }, token_tx).await
+                local
+                    .complete_stream(
+                        CompletionRequest {
+                            prompt: user_content.clone(),
+                            stream: true,
+                            ..Default::default()
+                        },
+                        token_tx,
+                    )
+                    .await
             } else {
                 Err(anyhow::anyhow!("no model client available"))
             };
@@ -1620,12 +1727,15 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
         };
 
         // Step 1: Try typed config.models
-        let typed_cfg = config.models.iter().find(|m| {
-            let m_id = m.model.as_deref().unwrap_or(&m.name);
-            m_id == model_id
-                && (m.backend == backend
-                    || m.backend.name().eq_ignore_ascii_case(provider))
-        }).cloned();
+        let typed_cfg = config
+            .models
+            .iter()
+            .find(|m| {
+                let m_id = m.model.as_deref().unwrap_or(&m.name);
+                m_id == model_id
+                    && (m.backend == backend || m.backend.name().eq_ignore_ascii_case(provider))
+            })
+            .cloned();
 
         // Step 2: Try settings.providers
         let settings_cfg = if typed_cfg.is_none() {
@@ -1640,7 +1750,11 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
         let messages: Vec<Message> = history
             .iter()
             .map(|m| {
-                if m.role == "user" { Message::user(&m.content) } else { Message::assistant(&m.content) }
+                if m.role == "user" {
+                    Message::user(&m.content)
+                } else {
+                    Message::assistant(&m.content)
+                }
             })
             .chain(std::iter::once(Message::user(prompt)))
             .collect();
@@ -1663,7 +1777,9 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
         }
 
         // Fallback: non-streaming complete, send as single chunk
-        let response = self.complete_with_model(session_id, prompt, model_id, provider).await?;
+        let response = self
+            .complete_with_model(session_id, prompt, model_id, provider)
+            .await?;
         let _ = token_tx.send(response).await;
         Ok(())
     }
@@ -1700,7 +1816,10 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     pub async fn archive_session(&self, session_id: &str) -> Result<bool> {
         let (tx, rx) = oneshot::channel();
         self.session_tx
-            .send(SessionCommand::Archive { id: session_id.to_string(), reply: tx })
+            .send(SessionCommand::Archive {
+                id: session_id.to_string(),
+                reply: tx,
+            })
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         rx.await.map_err(|e| anyhow::anyhow!("{}", e))
     }
@@ -1708,7 +1827,10 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     pub async fn delete_session(&self, session_id: &str) -> Result<bool> {
         let (tx, rx) = oneshot::channel();
         self.session_tx
-            .send(SessionCommand::Delete { id: session_id.to_string(), reply: tx })
+            .send(SessionCommand::Delete {
+                id: session_id.to_string(),
+                reply: tx,
+            })
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         rx.await.map_err(|e| anyhow::anyhow!("{}", e))
     }
@@ -1730,7 +1852,10 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     pub async fn restore_session(&self, session_id: &str) -> Result<bool> {
         let (tx, rx) = oneshot::channel();
         self.session_tx
-            .send(SessionCommand::Restore { id: session_id.to_string(), reply: tx })
+            .send(SessionCommand::Restore {
+                id: session_id.to_string(),
+                reply: tx,
+            })
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         rx.await.map_err(|e| anyhow::anyhow!("{}", e))
     }
@@ -1738,7 +1863,10 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     pub async fn delete_archived_session(&self, session_id: &str) -> Result<bool> {
         let (tx, rx) = oneshot::channel();
         self.session_tx
-            .send(SessionCommand::DeleteArchived { id: session_id.to_string(), reply: tx })
+            .send(SessionCommand::DeleteArchived {
+                id: session_id.to_string(),
+                reply: tx,
+            })
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         rx.await.map_err(|e| anyhow::anyhow!("{}", e))
     }
@@ -1746,7 +1874,10 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     pub async fn cleanup_archived_sessions(&self, max_age_days: u32) -> Result<usize> {
         let (tx, rx) = oneshot::channel();
         self.session_tx
-            .send(SessionCommand::Cleanup { max_age_days, reply: tx })
+            .send(SessionCommand::Cleanup {
+                max_age_days,
+                reply: tx,
+            })
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         rx.await.map_err(|e| anyhow::anyhow!("{}", e))
     }
@@ -1754,16 +1885,28 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     pub async fn rename_session(&self, session_id: &str, title: &str) -> Result<bool> {
         let (tx, rx) = oneshot::channel();
         self.session_tx
-            .send(SessionCommand::Rename { id: session_id.to_string(), title: title.to_string(), reply: tx })
+            .send(SessionCommand::Rename {
+                id: session_id.to_string(),
+                title: title.to_string(),
+                reply: tx,
+            })
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         rx.await.map_err(|e| anyhow::anyhow!("{}", e))
     }
 
     pub async fn pin_session(&self, session_id: &str, pinned: bool) -> Result<bool> {
         let (tx, rx) = oneshot::channel();
-        let pinned_at = if pinned { Some(chrono::Utc::now().to_rfc3339()) } else { None };
+        let pinned_at = if pinned {
+            Some(chrono::Utc::now().to_rfc3339())
+        } else {
+            None
+        };
         self.session_tx
-            .send(SessionCommand::Pin { id: session_id.to_string(), pinned_at, reply: tx })
+            .send(SessionCommand::Pin {
+                id: session_id.to_string(),
+                pinned_at,
+                reply: tx,
+            })
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         rx.await.map_err(|e| anyhow::anyhow!("{}", e))
     }
@@ -1853,16 +1996,30 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     /// Use the configured utility model to extract cognitions, scoped to a session.
     /// Reads the user's 小工具模型 (settings.models.models.utility) from config.
     /// Returns the number of cognitions extracted.
-    pub async fn extract_cognitions_with_local_model(&self, text: &str, scope: &str) -> Result<usize> {
+    pub async fn extract_cognitions_with_local_model(
+        &self,
+        text: &str,
+        scope: &str,
+    ) -> Result<usize> {
         let config = self.config.read().await;
         // Read the user's configured 小工具模型: settings.models.models.utility
-        let utility = config.settings
-            .get("models").and_then(|m| m.get("models")).and_then(|m| m.get("utility"));
+        let utility = config
+            .settings
+            .get("models")
+            .and_then(|m| m.get("models"))
+            .and_then(|m| m.get("utility"));
         let utility_id = utility.and_then(|u| u.get("id")).and_then(|v| v.as_str());
-        let utility_provider = utility.and_then(|u| u.get("provider")).and_then(|v| v.as_str());
+        let utility_provider = utility
+            .and_then(|u| u.get("provider"))
+            .and_then(|v| v.as_str());
 
-        let local_model = utility_id
-            .and_then(|id| Self::find_model_in_settings(&config.settings, id, utility_provider.unwrap_or("lmstudio")));
+        let local_model = utility_id.and_then(|id| {
+            Self::find_model_in_settings(
+                &config.settings,
+                id,
+                utility_provider.unwrap_or("lmstudio"),
+            )
+        });
         drop(config);
 
         let model_cfg = match local_model {
@@ -1871,7 +2028,9 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
                 cfg
             }
             None => {
-                tracing::info!("no local model configured, using rule-based pipeline for manual record");
+                tracing::info!(
+                    "no local model configured, using rule-based pipeline for manual record"
+                );
                 self.feed_memory_pipeline(scope, text, "manual_record");
                 return Ok(0);
             }
@@ -1881,8 +2040,16 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
 
         // Auto-load the model in LM Studio before sending the request
         if model_cfg.backend == openloom_models::ModelBackend::LmStudio {
-            let base_url = model_cfg.base_url.as_deref().unwrap_or("http://localhost:1234/v1");
-            let _ = openloom_inference::ensure_lm_studio_model(base_url, model_id, model_cfg.context_size).await;
+            let base_url = model_cfg
+                .base_url
+                .as_deref()
+                .unwrap_or("http://localhost:1234/v1");
+            let _ = openloom_inference::ensure_lm_studio_model(
+                base_url,
+                model_id,
+                model_cfg.context_size,
+            )
+            .await;
         }
 
         let prompt = format!(
@@ -1905,7 +2072,10 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
         let resp_text = match openloom_inference::create_cloud_client(&model_cfg) {
             Ok(client) => match client.complete(req).await {
                 Ok(resp) => {
-                    tracing::info!(len = resp.text.len(), "local model returned response for cognition extraction");
+                    tracing::info!(
+                        len = resp.text.len(),
+                        "local model returned response for cognition extraction"
+                    );
                     resp.text
                 }
                 Err(e) => {
@@ -1921,7 +2091,11 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
             }
         };
 
-        tracing::info!(lines = resp_text.lines().count(), scope, "parsing cognition extraction response");
+        tracing::info!(
+            lines = resp_text.lines().count(),
+            scope,
+            "parsing cognition extraction response"
+        );
 
         let mut count = 0;
         let conn = rusqlite::Connection::open(&self.db_path)?;
@@ -1929,12 +2103,16 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
 
         for line in resp_text.lines() {
             let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed == "NONE" { continue; }
+            if trimmed.is_empty() || trimmed == "NONE" {
+                continue;
+            }
 
             // Parse format: trait: value (confidence: 0.XX)
             if let Some((trait_name, rest)) = trimmed.split_once(':') {
                 let trait_name = trait_name.trim().to_lowercase().replace(' ', "_");
-                if trait_name.is_empty() { continue; }
+                if trait_name.is_empty() {
+                    continue;
+                }
 
                 let (value, confidence) = if let Some(conf_start) = rest.find("(confidence:") {
                     let value = rest[..conf_start].trim();
@@ -1947,7 +2125,8 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
                 };
 
                 if !value.is_empty() {
-                    if let Err(e) = store.insert("USER", &trait_name, &value, confidence, 1, scope) {
+                    if let Err(e) = store.insert("USER", &trait_name, &value, confidence, 1, scope)
+                    {
                         tracing::warn!(error = %e, trait_name, scope, "failed to insert cognition");
                     } else {
                         count += 1;
@@ -1960,9 +2139,18 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
             if trimmed.starts_with('{')
                 && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed)
             {
-                let trait_name = parsed.get("trait").and_then(|v| v.as_str()).unwrap_or("general");
-                let value = parsed.get("value").and_then(|v| v.as_str()).unwrap_or(trimmed);
-                let confidence = parsed.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.7);
+                let trait_name = parsed
+                    .get("trait")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("general");
+                let value = parsed
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(trimmed);
+                let confidence = parsed
+                    .get("confidence")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.7);
                 if let Err(e) = store.insert("USER", trait_name, value, confidence, 1, scope) {
                     tracing::warn!(error = %e, trait_name, scope, "failed to insert cognition");
                 } else {
@@ -1985,13 +2173,15 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
         }
 
         // Build a conversation transcript
-        let transcript: String = history.iter()
+        let transcript: String = history
+            .iter()
             .map(|m| format!("[{}]: {}", m.role, m.content))
             .collect::<Vec<_>>()
             .join("\n");
 
         // Reuse the same extraction flow, scoped to this session
-        self.extract_cognitions_with_local_model(&transcript, session_id).await
+        self.extract_cognitions_with_local_model(&transcript, session_id)
+            .await
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<EngineEvent> {
@@ -2161,17 +2351,16 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
             .unwrap_or_default();
 
         let home = dirs::home_dir().unwrap_or_default();
-        let discovered: Vec<serde_json::Value> =
-            crate::skill_fs::discover_external_paths(&home)
-                .iter()
-                .map(|d| {
-                    serde_json::json!({
-                        "dirPath": d.dir_path,
-                        "label": d.label,
-                        "exists": d.exists,
-                    })
+        let discovered: Vec<serde_json::Value> = crate::skill_fs::discover_external_paths(&home)
+            .iter()
+            .map(|d| {
+                serde_json::json!({
+                    "dirPath": d.dir_path,
+                    "label": d.label,
+                    "exists": d.exists,
                 })
-                .collect();
+            })
+            .collect();
 
         serde_json::json!({
             "configured": configured,
@@ -2180,20 +2369,14 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     }
 
     /// Set external skill paths.
-    pub async fn set_external_skill_paths(
-        &self,
-        paths: Vec<String>,
-    ) -> Result<()> {
+    pub async fn set_external_skill_paths(&self, paths: Vec<String>) -> Result<()> {
         let value = serde_json::json!(paths);
         self.set_config("settings.skills.external_paths", value)
             .await
     }
 
     /// Install a skill from a file path.
-    pub fn install_user_skill(
-        &self,
-        source_path: &str,
-    ) -> Result<serde_json::Value> {
+    pub fn install_user_skill(&self, source_path: &str) -> Result<serde_json::Value> {
         let source = std::path::Path::new(source_path);
         let skills_dir = self.data_dir.join("skills");
         std::fs::create_dir_all(&skills_dir)?;
@@ -2215,12 +2398,7 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     }
 
     /// Toggle a skill's enabled state for an agent.
-    pub async fn toggle_user_skill(
-        &self,
-        agent_id: &str,
-        name: &str,
-        enabled: bool,
-    ) -> Result<()> {
+    pub async fn toggle_user_skill(&self, agent_id: &str, name: &str, enabled: bool) -> Result<()> {
         let key = format!("settings.agent.{}.skills.enabled", agent_id);
         let current = self.get_config(Some(&key)).await;
         let mut names: Vec<String> = current
@@ -2247,22 +2425,21 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
 
     /// List all skill bundles with per-agent enabled state.
     pub fn list_skill_bundles(&self, _agent_id: &str) -> serde_json::Value {
-        let bundles: Vec<serde_json::Value> =
-            crate::skill_bundles::list_bundles(&self.data_dir)
-                .iter()
-                .map(|b| {
-                    serde_json::json!({
-                        "id": b.id,
-                        "name": b.name,
-                        "skillNames": b.skill_names,
-                        "source": b.source,
-                        "agentId": b.agent_id,
-                        "sourcePackage": b.source_package,
-                        "createdAt": b.created_at,
-                        "updatedAt": b.updated_at,
-                    })
+        let bundles: Vec<serde_json::Value> = crate::skill_bundles::list_bundles(&self.data_dir)
+            .iter()
+            .map(|b| {
+                serde_json::json!({
+                    "id": b.id,
+                    "name": b.name,
+                    "skillNames": b.skill_names,
+                    "source": b.source,
+                    "agentId": b.agent_id,
+                    "sourcePackage": b.source_package,
+                    "createdAt": b.created_at,
+                    "updatedAt": b.updated_at,
                 })
-                .collect();
+            })
+            .collect();
         serde_json::json!({ "bundles": bundles })
     }
 
@@ -2272,8 +2449,7 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
         name: &str,
         skill_names: Vec<String>,
     ) -> Result<serde_json::Value> {
-        let bundle =
-            crate::skill_bundles::create_bundle(&self.data_dir, name, skill_names)?;
+        let bundle = crate::skill_bundles::create_bundle(&self.data_dir, name, skill_names)?;
         Ok(serde_json::json!({
             "bundle": {
                 "id": bundle.id,
@@ -2290,12 +2466,7 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
         name: Option<&str>,
         skill_names: Option<Vec<String>>,
     ) -> Result<serde_json::Value> {
-        let bundle = crate::skill_bundles::update_bundle(
-            &self.data_dir,
-            id,
-            name,
-            skill_names,
-        )?;
+        let bundle = crate::skill_bundles::update_bundle(&self.data_dir, id, name, skill_names)?;
         Ok(serde_json::json!({
             "bundle": {
                 "id": bundle.id,
@@ -2311,10 +2482,7 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     }
 
     /// Reorder skill bundles.
-    pub fn reorder_skill_bundles(
-        &self,
-        bundle_ids: &[String],
-    ) -> Result<serde_json::Value> {
+    pub fn reorder_skill_bundles(&self, bundle_ids: &[String]) -> Result<serde_json::Value> {
         let bundles = crate::skill_bundles::reorder_bundles(&self.data_dir, bundle_ids)?;
         let result: Vec<serde_json::Value> = bundles
             .iter()
@@ -2330,23 +2498,14 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     }
 
     /// Toggle a bundle's enabled state for an agent.
-    pub fn toggle_skill_bundle(
-        &self,
-        id: &str,
-        agent_id: &str,
-        enabled: bool,
-    ) -> Result<()> {
+    pub fn toggle_skill_bundle(&self, id: &str, agent_id: &str, enabled: bool) -> Result<()> {
         crate::skill_bundles::set_bundle_enabled(&self.data_dir, id, agent_id, enabled)
     }
 
     /// Export a skill bundle as zip.
-    pub fn export_skill_bundle(
-        &self,
-        id: &str,
-    ) -> Result<serde_json::Value> {
+    pub fn export_skill_bundle(&self, id: &str) -> Result<serde_json::Value> {
         let skills_dir = self.data_dir.join("skills");
-        let result =
-            crate::skill_bundles::export_bundle(&self.data_dir, &skills_dir, id)?;
+        let result = crate::skill_bundles::export_bundle(&self.data_dir, &skills_dir, id)?;
         Ok(serde_json::json!({
             "filePath": result.file_path,
             "fileName": result.file_name,
@@ -2465,9 +2624,7 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
 
     /// Get plugin settings (global).
     pub async fn get_plugin_settings(&self) -> serde_json::Value {
-        let config = self
-            .get_config(Some("settings.plugins"))
-            .await;
+        let config = self.get_config(Some("settings.plugins")).await;
         let allow_full = config
             .get("allow_full_access")
             .and_then(|v| v.as_bool())
@@ -2490,10 +2647,7 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     }
 
     /// Update plugin settings (global).
-    pub async fn set_plugin_settings(
-        &self,
-        settings: serde_json::Value,
-    ) -> Result<()> {
+    pub async fn set_plugin_settings(&self, settings: serde_json::Value) -> Result<()> {
         // Merge with existing
         let mut existing = self.get_config(Some("settings.plugins")).await;
         if let Some(obj) = existing.as_object_mut() {
@@ -2531,11 +2685,7 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     }
 
     /// Enable or disable a plugin.
-    pub async fn set_plugin_enabled(
-        &self,
-        id: &str,
-        enabled: bool,
-    ) -> Result<()> {
+    pub async fn set_plugin_enabled(&self, id: &str, enabled: bool) -> Result<()> {
         let key = "settings.plugins.disabled";
         let current = self.get_config(Some(key)).await;
         let mut disabled: Vec<String> = current
@@ -2563,16 +2713,21 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
         let config = self
             .get_config(Some("settings.plugins.marketplace_sources"))
             .await;
-        let sources: Vec<serde_json::Value> = config
-            .as_array().cloned()
-            .unwrap_or_default();
+        let sources: Vec<serde_json::Value> = config.as_array().cloned().unwrap_or_default();
 
         if sources.is_empty() {
             // Default: check if marketplace dir has content
             let mp_dir = crate::plugin_fs::marketplace_dir(&self.data_dir);
             if mp_dir.exists() {
                 let has_content = std::fs::read_dir(&mp_dir)
-                    .map(|mut entries| entries.any(|e| e.ok().is_some_and(|e| e.path().is_dir() && !e.file_name().to_string_lossy().starts_with('.'))))
+                    .map(|mut entries| {
+                        entries.any(|e| {
+                            e.ok().is_some_and(|e| {
+                                e.path().is_dir()
+                                    && !e.file_name().to_string_lossy().starts_with('.')
+                            })
+                        })
+                    })
                     .unwrap_or(false);
                 if has_content {
                     return vec![crate::plugin_fs::MarketplaceSource {
@@ -2608,50 +2763,49 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     }
 
     /// Add a marketplace source (Git URL or local path). Clones Git repos.
-    pub async fn add_marketplace_source(
-        &self,
-        url: &str,
-        name: &str,
-    ) -> Result<serde_json::Value> {
+    pub async fn add_marketplace_source(&self, url: &str, name: &str) -> Result<serde_json::Value> {
         let mp_dir = crate::plugin_fs::marketplace_dir(&self.data_dir);
         std::fs::create_dir_all(&mp_dir)?;
 
-        let source_dir = if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("git@") {
-            // Git clone
-            let target = mp_dir.join(slugify_str(name));
-            if target.exists() {
-                // git pull
-                let output = std::process::Command::new("git")
-                    .args(["-C", &target.to_string_lossy(), "pull", "--ff-only"])
-                    .output();
-                if let Err(e) = output {
-                    tracing::warn!(error = %e, "git pull failed for marketplace source");
+        let source_dir =
+            if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("git@")
+            {
+                // Git clone
+                let target = mp_dir.join(slugify_str(name));
+                if target.exists() {
+                    // git pull
+                    let output = std::process::Command::new("git")
+                        .args(["-C", &target.to_string_lossy(), "pull", "--ff-only"])
+                        .output();
+                    if let Err(e) = output {
+                        tracing::warn!(error = %e, "git pull failed for marketplace source");
+                    }
+                } else {
+                    let output = std::process::Command::new("git")
+                        .args(["clone", url, &target.to_string_lossy()])
+                        .output()
+                        .map_err(|e| anyhow::anyhow!("git clone failed: {}", e))?;
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        anyhow::bail!("git clone failed: {}", stderr);
+                    }
                 }
+                target
             } else {
-                let output = std::process::Command::new("git")
-                    .args(["clone", url, &target.to_string_lossy()])
-                    .output()
-                    .map_err(|e| anyhow::anyhow!("git clone failed: {}", e))?;
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    anyhow::bail!("git clone failed: {}", stderr);
+                // Local path
+                let p = std::path::Path::new(url);
+                if !p.exists() {
+                    anyhow::bail!("local path does not exist: {}", url);
                 }
-            }
-            target
-        } else {
-            // Local path
-            let p = std::path::Path::new(url);
-            if !p.exists() {
-                anyhow::bail!("local path does not exist: {}", url);
-            }
-            p.to_path_buf()
-        };
+                p.to_path_buf()
+            };
 
         // Save source to config
         let mut existing: Vec<serde_json::Value> = self
             .get_config(Some("settings.plugins.marketplace_sources"))
             .await
-            .as_array().cloned()
+            .as_array()
+            .cloned()
             .unwrap_or_default();
 
         // Remove existing entry with same name
@@ -2664,8 +2818,11 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
             "path": source_dir.to_string_lossy().to_string(),
         }));
 
-        self.set_config("settings.plugins.marketplace_sources", serde_json::json!(existing))
-            .await?;
+        self.set_config(
+            "settings.plugins.marketplace_sources",
+            serde_json::json!(existing),
+        )
+        .await?;
 
         Ok(serde_json::json!({
             "name": name,
@@ -2678,12 +2835,16 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
         let mut existing: Vec<serde_json::Value> = self
             .get_config(Some("settings.plugins.marketplace_sources"))
             .await
-            .as_array().cloned()
+            .as_array()
+            .cloned()
             .unwrap_or_default();
 
         existing.retain(|s| s.get("name").and_then(|v| v.as_str()) != Some(name));
-        self.set_config("settings.plugins.marketplace_sources", serde_json::json!(existing))
-            .await?;
+        self.set_config(
+            "settings.plugins.marketplace_sources",
+            serde_json::json!(existing),
+        )
+        .await?;
 
         // Remove cloned directory
         let mp_dir = crate::plugin_fs::marketplace_dir(&self.data_dir);
@@ -2695,12 +2856,12 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     }
 
     /// Set/replace all marketplace sources.
-    pub async fn set_marketplace_sources(
-        &self,
-        sources: Vec<serde_json::Value>,
-    ) -> Result<()> {
-        self.set_config("settings.plugins.marketplace_sources", serde_json::json!(sources))
-            .await
+    pub async fn set_marketplace_sources(&self, sources: Vec<serde_json::Value>) -> Result<()> {
+        self.set_config(
+            "settings.plugins.marketplace_sources",
+            serde_json::json!(sources),
+        )
+        .await
     }
 
     /// Refresh marketplace sources (git pull all).
@@ -2710,24 +2871,24 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
             if source.kind == "git"
                 && let Some(ref path_str) = source.path
             {
-                    let target = std::path::Path::new(path_str);
-                    if target.join(".git").exists() {
-                        let output = std::process::Command::new("git")
-                            .args(["-C", path_str, "pull", "--ff-only"])
-                            .output();
-                        match output {
-                            Ok(o) if o.status.success() => {
-                                tracing::info!(source = %source.name, "marketplace source refreshed");
-                            }
-                            Ok(o) => {
-                                tracing::warn!(source = %source.name, stderr = %String::from_utf8_lossy(&o.stderr), "git pull failed");
-                            }
-                            Err(e) => {
-                                tracing::warn!(source = %source.name, error = %e, "git pull error");
-                            }
+                let target = std::path::Path::new(path_str);
+                if target.join(".git").exists() {
+                    let output = std::process::Command::new("git")
+                        .args(["-C", path_str, "pull", "--ff-only"])
+                        .output();
+                    match output {
+                        Ok(o) if o.status.success() => {
+                            tracing::info!(source = %source.name, "marketplace source refreshed");
+                        }
+                        Ok(o) => {
+                            tracing::warn!(source = %source.name, stderr = %String::from_utf8_lossy(&o.stderr), "git pull failed");
+                        }
+                        Err(e) => {
+                            tracing::warn!(source = %source.name, error = %e, "git pull error");
                         }
                     }
                 }
+            }
         }
         Ok(())
     }
@@ -2736,9 +2897,7 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
 
     /// Get computer use status and settings.
     pub async fn get_computer_use_status(&self) -> serde_json::Value {
-        let settings = self
-            .get_config(Some("settings.computer-use"))
-            .await;
+        let settings = self.get_config(Some("settings.computer-use")).await;
         let enabled = settings
             .get("enabled")
             .and_then(|v| v.as_bool())
@@ -2895,22 +3054,37 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
         {
             for entry in entries.flatten() {
                 let source_dir = entry.path();
-                if !source_dir.is_dir() { continue; }
-                let dir_name = source_dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                if dir_name.starts_with('.') { continue; }
-                if crate::plugin_fs::find_manifest_in_dir(&source_dir).is_some() { continue; }
+                if !source_dir.is_dir() {
+                    continue;
+                }
+                let dir_name = source_dir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if dir_name.starts_with('.') {
+                    continue;
+                }
+                if crate::plugin_fs::find_manifest_in_dir(&source_dir).is_some() {
+                    continue;
+                }
 
                 // 1) Try marketplace.json first (primary listing format)
                 let marketplace_json = source_dir.join(".claude-plugin").join("marketplace.json");
                 if marketplace_json.exists() {
-                    match crate::plugin_fs::parse_marketplace_listing(&marketplace_json, &source_dir) {
+                    match crate::plugin_fs::parse_marketplace_listing(
+                        &marketplace_json,
+                        &source_dir,
+                    ) {
                         Ok(listed) => {
                             tracing::info!(source = %dir_name, count = listed.len(), "loaded marketplace.json");
                             plugins.extend(listed);
                             continue;
                         }
                         Err(e) => {
-                            warnings.push(format!("源「{}」marketplace.json 解析失败: {}", dir_name, e));
+                            warnings.push(format!(
+                                "源「{}」marketplace.json 解析失败: {}",
+                                dir_name, e
+                            ));
                         }
                     }
                 }
@@ -2930,20 +3104,54 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
                     if let Ok(sub_entries) = std::fs::read_dir(&source_dir) {
                         for sub_entry in sub_entries.flatten() {
                             let sub_path = sub_entry.path();
-                            if !sub_path.is_dir() { continue; }
-                            let sn = sub_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                            if sn.starts_with('.') || sn == "plugins" || sn == "external_plugins" || sn == "scripts" || sn == "tests" || sn == ".github" { continue; }
+                            if !sub_path.is_dir() {
+                                continue;
+                            }
+                            let sn = sub_path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_default();
+                            if sn.starts_with('.')
+                                || sn == "plugins"
+                                || sn == "external_plugins"
+                                || sn == "scripts"
+                                || sn == "tests"
+                                || sn == ".github"
+                            {
+                                continue;
+                            }
                             if crate::plugin_fs::find_manifest_in_dir(&sub_path).is_some() {
                                 if let Ok(entry) = crate::plugin_fs::load_plugin(&sub_path) {
                                     let ver = entry.version.clone();
                                     plugins.push(crate::plugin_fs::MarketplacePlugin {
-                                        id: entry.id.clone(), name: entry.name, publisher: entry.author,
-                                        version: Some(ver.clone()), description: if entry.description.is_empty() { None } else { Some(entry.description) },
-                                        trust: entry.trust, contributions: entry.contributions, repository: entry.repository,
-                                        compatibility: crate::plugin_fs::MarketplaceCompatibility { min_app_version: None },
-                                        distribution: Some(crate::plugin_fs::MarketplaceDistribution { kind: "source".to_string(), path: sub_path.to_string_lossy().to_string() }),
-                                        installed: false, installed_version: None, latest_version: Some(ver),
-                                        update_available: false, can_install: true, install_action: "install".to_string(), compatible: true,
+                                        id: entry.id.clone(),
+                                        name: entry.name,
+                                        publisher: entry.author,
+                                        version: Some(ver.clone()),
+                                        description: if entry.description.is_empty() {
+                                            None
+                                        } else {
+                                            Some(entry.description)
+                                        },
+                                        trust: entry.trust,
+                                        contributions: entry.contributions,
+                                        repository: entry.repository,
+                                        compatibility: crate::plugin_fs::MarketplaceCompatibility {
+                                            min_app_version: None,
+                                        },
+                                        distribution: Some(
+                                            crate::plugin_fs::MarketplaceDistribution {
+                                                kind: "source".to_string(),
+                                                path: sub_path.to_string_lossy().to_string(),
+                                            },
+                                        ),
+                                        installed: false,
+                                        installed_version: None,
+                                        latest_version: Some(ver),
+                                        update_available: false,
+                                        can_install: true,
+                                        install_action: "install".to_string(),
+                                        compatible: true,
                                     });
                                     found = true;
                                 }
@@ -2955,7 +3163,11 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
                         }
                     }
                 }
-                if !found && sources.iter().any(|s| s.path.as_deref() == Some(source_dir.to_string_lossy().as_ref())) {
+                if !found
+                    && sources
+                        .iter()
+                        .any(|s| s.path.as_deref() == Some(source_dir.to_string_lossy().as_ref()))
+                {
                     warnings.push(format!("源「{}」未发现插件或 marketplace.json", dir_name));
                 }
             }
@@ -2966,7 +3178,10 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
             if let Some(ref path_str) = source.path {
                 let p = std::path::Path::new(path_str);
                 if !p.exists() {
-                    warnings.push(format!("源「{}」路径不存在（clone 可能失败，请检查URL是否正确）: {}", source.name, path_str));
+                    warnings.push(format!(
+                        "源「{}」路径不存在（clone 可能失败，请检查URL是否正确）: {}",
+                        source.name, path_str
+                    ));
                 }
             }
         }
@@ -3053,21 +3268,17 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     /// Uses the same comprehensive scan as list_marketplace_plugins so
     /// plugins discovered via marketplace.json or nested repo subdirectories
     /// can also be installed.
-    pub async fn install_marketplace_plugin(
-        &self,
-        id: &str,
-    ) -> Result<serde_json::Value> {
+    pub async fn install_marketplace_plugin(&self, id: &str) -> Result<serde_json::Value> {
         let mp_dir = crate::plugin_fs::marketplace_dir(&self.data_dir);
 
         // ── Step 1: Try listing JSON to find the plugin ──
         let listing = self.list_marketplace_plugins().await;
-        let plugins_json = listing
-            .get("plugins")
-            .and_then(|p| p.as_array());
+        let plugins_json = listing.get("plugins").and_then(|p| p.as_array());
 
         let dist_path = plugins_json
             .and_then(|arr| {
-                arr.iter().find(|p| p.get("id").and_then(|v| v.as_str()) == Some(id))
+                arr.iter()
+                    .find(|p| p.get("id").and_then(|v| v.as_str()) == Some(id))
             })
             .and_then(|p| {
                 p.get("distribution")
@@ -3093,14 +3304,25 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
                 if let Ok(entries) = std::fs::read_dir(&mp_dir) {
                     for entry in entries.flatten() {
                         let source_dir = entry.path();
-                        if !source_dir.is_dir() { continue; }
-                        let dn = source_dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                        if dn.starts_with('.') { continue; }
-                        if crate::plugin_fs::find_manifest_in_dir(&source_dir).is_some() { continue; }
+                        if !source_dir.is_dir() {
+                            continue;
+                        }
+                        let dn = source_dir
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        if dn.starts_with('.') {
+                            continue;
+                        }
+                        if crate::plugin_fs::find_manifest_in_dir(&source_dir).is_some() {
+                            continue;
+                        }
 
                         let mj = source_dir.join(".claude-plugin").join("marketplace.json");
                         if mj.exists() {
-                            if let Ok(listed) = crate::plugin_fs::parse_marketplace_listing(&mj, &source_dir) {
+                            if let Ok(listed) =
+                                crate::plugin_fs::parse_marketplace_listing(&mj, &source_dir)
+                            {
                                 all.extend(listed);
                                 continue;
                             }
@@ -3114,10 +3336,22 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
                         if let Ok(sub_entries) = std::fs::read_dir(&source_dir) {
                             for sub_entry in sub_entries.flatten() {
                                 let sp = sub_entry.path();
-                                if !sp.is_dir() { continue; }
-                                let sn = sp.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                                if sn.starts_with('.') || sn == "plugins" || sn == "external_plugins"
-                                    || sn == "scripts" || sn == "tests" || sn == ".github" { continue; }
+                                if !sp.is_dir() {
+                                    continue;
+                                }
+                                let sn = sp
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_default();
+                                if sn.starts_with('.')
+                                    || sn == "plugins"
+                                    || sn == "external_plugins"
+                                    || sn == "scripts"
+                                    || sn == "tests"
+                                    || sn == ".github"
+                                {
+                                    continue;
+                                }
                                 if crate::plugin_fs::find_manifest_in_dir(&sp).is_some() {
                                     if let Ok(entry) = crate::plugin_fs::load_plugin(&sp) {
                                         all.push(crate::plugin_fs::MarketplacePlugin {
@@ -3125,15 +3359,24 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
                                             name: entry.name,
                                             publisher: entry.author,
                                             version: Some(entry.version.clone()),
-                                            description: if entry.description.is_empty() { None } else { Some(entry.description) },
+                                            description: if entry.description.is_empty() {
+                                                None
+                                            } else {
+                                                Some(entry.description)
+                                            },
                                             trust: entry.trust,
                                             contributions: entry.contributions,
                                             repository: entry.repository,
-                                            compatibility: crate::plugin_fs::MarketplaceCompatibility { min_app_version: None },
-                                            distribution: Some(crate::plugin_fs::MarketplaceDistribution {
-                                                kind: "source".to_string(),
-                                                path: sp.to_string_lossy().to_string(),
-                                            }),
+                                            compatibility:
+                                                crate::plugin_fs::MarketplaceCompatibility {
+                                                    min_app_version: None,
+                                                },
+                                            distribution: Some(
+                                                crate::plugin_fs::MarketplaceDistribution {
+                                                    kind: "source".to_string(),
+                                                    path: sp.to_string_lossy().to_string(),
+                                                },
+                                            ),
                                             installed: false,
                                             installed_version: None,
                                             latest_version: Some(entry.version),
@@ -3160,10 +3403,8 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
 
         let plugins_dir = self.data_dir.join("plugins");
         std::fs::create_dir_all(&plugins_dir)?;
-        let entry = crate::plugin_fs::install_plugin(
-            std::path::Path::new(&dist_path),
-            &plugins_dir,
-        )?;
+        let entry =
+            crate::plugin_fs::install_plugin(std::path::Path::new(&dist_path), &plugins_dir)?;
 
         Ok(serde_json::json!({
             "name": entry.name,
@@ -3181,7 +3422,10 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
             // 1) Check settings.active_model
             if let Some(active) = config.settings.get("active_model") {
                 let id = active.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                let prov = active.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+                let prov = active
+                    .get("provider")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 if !id.is_empty() && !prov.is_empty() {
                     (id.to_string(), prov.to_string())
                 } else {
@@ -3198,28 +3442,38 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
         } else {
             // 2) Fall back: scan config.models + settings.providers
             let config = self.config.read().await;
-            let found = config.models.iter().find_map(|m| {
-                let id = m.model.as_deref().unwrap_or(&m.name);
-                if id.is_empty() { return None; }
-                Some((id.to_string(), m.backend.name().to_string()))
-            }).or_else(|| {
-                config.settings.get("providers").and_then(|providers| {
-                    providers.as_object().and_then(|obj| {
-                        obj.iter().find_map(|(name, prov)| {
-                            let models = prov.get("models").and_then(|v| v.as_array())?;
-                            let first = models.first()?;
-                            let id = if let Some(s) = first.as_str() { s } else {
-                                first.get("id")?.as_str()?
-                            };
-                            Some((id.to_string(), name.clone()))
+            let found = config
+                .models
+                .iter()
+                .find_map(|m| {
+                    let id = m.model.as_deref().unwrap_or(&m.name);
+                    if id.is_empty() {
+                        return None;
+                    }
+                    Some((id.to_string(), m.backend.name().to_string()))
+                })
+                .or_else(|| {
+                    config.settings.get("providers").and_then(|providers| {
+                        providers.as_object().and_then(|obj| {
+                            obj.iter().find_map(|(name, prov)| {
+                                let models = prov.get("models").and_then(|v| v.as_array())?;
+                                let first = models.first()?;
+                                let id = if let Some(s) = first.as_str() {
+                                    s
+                                } else {
+                                    first.get("id")?.as_str()?
+                                };
+                                Some((id.to_string(), name.clone()))
+                            })
                         })
                     })
-                })
-            });
+                });
             drop(config);
-            found.ok_or_else(|| anyhow::anyhow!(
-                "No model configured. Please add a model in Settings → Providers first."
-            ))?
+            found.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No model configured. Please add a model in Settings → Providers first."
+                )
+            })?
         };
 
         let prompt = format!(
@@ -3311,7 +3565,14 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
             Err(e) => {
                 tracing::warn!(error = %e, "Compaction summarization failed, using heuristic truncation");
                 // Fallback: keep last 500 chars
-                let fallback: String = text.chars().rev().take(500).collect::<Vec<_>>().into_iter().rev().collect();
+                let fallback: String = text
+                    .chars()
+                    .rev()
+                    .take(500)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
                 format!("[Compacted context]\n\n...{}", fallback)
             }
         };
@@ -3343,7 +3604,8 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
     /// Get or create the abort flag for a session. The flag is removed when streaming ends.
     fn session_abort_flag(&self, session_id: &str) -> Arc<AtomicBool> {
         let mut flags = self.abort_flags.lock().unwrap();
-        flags.entry(session_id.to_string())
+        flags
+            .entry(session_id.to_string())
             .or_insert_with(|| Arc::new(AtomicBool::new(false)))
             .clone()
     }
@@ -3366,7 +3628,12 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
 
     /// Set the permission mode for a specific session, or set the default for new sessions.
     /// Valid modes: "operate", "ask", "read_only". Other values default to "ask".
-    pub fn set_permission_mode(&self, session_id: &str, mode: &str, pending_new_session: bool) -> String {
+    pub fn set_permission_mode(
+        &self,
+        session_id: &str,
+        mode: &str,
+        pending_new_session: bool,
+    ) -> String {
         let normalized = match mode {
             "operate" | "ask" | "read_only" => mode.to_string(),
             _ => "ask".to_string(),
@@ -3487,12 +3754,14 @@ operations (e.g. force-delete, force-push, dropping databases) before performing
             let config = self.config.read().await;
             // Prefer the user's saved active model from settings, falling back to
             // the first cloud-capable (or local) model in the config list.
-            let active = resolve_active_model(&config.models, &config.settings)
-                .or_else(|| {
-                    let cloud = config.models.iter().find(|m| m.backend.is_cloud_capable());
-                    let local = config.models.iter().find(|m| m.backend.is_local_inference());
-                    cloud.or(local)
-                });
+            let active = resolve_active_model(&config.models, &config.settings).or_else(|| {
+                let cloud = config.models.iter().find(|m| m.backend.is_cloud_capable());
+                let local = config
+                    .models
+                    .iter()
+                    .find(|m| m.backend.is_local_inference());
+                cloud.or(local)
+            });
             (
                 active.and_then(|c| c.model.clone()).unwrap_or_default(),
                 active
@@ -3541,7 +3810,10 @@ fn resolve_active_model<'a>(
 ) -> Option<&'a openloom_models::ModelConfig> {
     let active = settings.get("active_model")?;
     let id = active.get("id")?.as_str()?;
-    let provider = active.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+    let provider = active
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     models.iter().find(|m| {
         let m_id = m.model.as_deref().unwrap_or("");
         m_id == id && m.backend.name().eq_ignore_ascii_case(provider)
@@ -3552,7 +3824,13 @@ fn slugify_str(value: &str) -> String {
     value
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_string()
@@ -3616,7 +3894,15 @@ mod tests {
             seq: None,
         };
         let sid = engine.create_session().await.unwrap().id;
-        let resp = engine.handle_message(msg, &sid, Mode::Code, openloom_models::ModelPreference::default()).await.unwrap();
+        let resp = engine
+            .handle_message(
+                msg,
+                &sid,
+                Mode::Code,
+                openloom_models::ModelPreference::default(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.session_id, sid);
     }
 
@@ -3643,7 +3929,15 @@ mod tests {
             seq: None,
         };
         let sid = engine.create_session().await.unwrap().id;
-        engine.handle_message(msg, &sid, Mode::Code, openloom_models::ModelPreference::default()).await.unwrap();
+        engine
+            .handle_message(
+                msg,
+                &sid,
+                Mode::Code,
+                openloom_models::ModelPreference::default(),
+            )
+            .await
+            .unwrap();
         let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await;
         assert!(event.is_ok(), "should receive TokenUsage event");
     }
@@ -3660,7 +3954,15 @@ mod tests {
             seq: None,
         };
         let sid = engine.create_session().await.unwrap().id;
-        let resp = engine.handle_message(msg, &sid, Mode::Code, openloom_models::ModelPreference::default()).await.unwrap();
+        let resp = engine
+            .handle_message(
+                msg,
+                &sid,
+                Mode::Code,
+                openloom_models::ModelPreference::default(),
+            )
+            .await
+            .unwrap();
         assert!(!resp.session_id.is_empty());
     }
 
@@ -3693,7 +3995,14 @@ mod tests {
             seq: None,
         };
         let sid = engine.create_session().await.unwrap().id;
-        let resp = engine.handle_message(msg, &sid, Mode::Code, openloom_models::ModelPreference::default()).await;
+        let resp = engine
+            .handle_message(
+                msg,
+                &sid,
+                Mode::Code,
+                openloom_models::ModelPreference::default(),
+            )
+            .await;
         // First request must pass rate limiter (interval=100ms, elapsed=0 but check resets)
         assert!(
             resp.is_ok(),

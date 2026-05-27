@@ -5,13 +5,13 @@
 
 use std::path::PathBuf;
 
+use loom_absolute_path::AbsolutePathBuf;
 use loom_app_server_protocol::AskForApproval;
 use loom_protocol::ThreadId;
 use loom_protocol::config_types::CollaborationMode;
 use loom_protocol::config_types::Personality;
 use loom_protocol::models::ActivePermissionProfile;
 use loom_protocol::models::PermissionProfile;
-use loom_absolute_path::AbsolutePathBuf;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SessionNetworkProxyRuntime {

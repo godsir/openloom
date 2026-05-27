@@ -2,10 +2,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 use reqwest::Client;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 use super::adapter::ChannelAdapter;
 use super::types::*;
@@ -27,10 +27,12 @@ impl FeishuAdapter {
     pub fn new(app_id: String, app_secret: String) -> Self {
         let (tx, rx) = mpsc::channel(256);
         Self {
-            app_id, app_secret,
+            app_id,
+            app_secret,
             client: Client::new(),
             health: AdapterHealth::Disconnected,
-            rx, tx,
+            rx,
+            tx,
             abort: Arc::new(AtomicBool::new(false)),
             ws_handle: None,
             tenant_access_token: None,
@@ -38,15 +40,18 @@ impl FeishuAdapter {
     }
 
     async fn refresh_token(&mut self) -> Result<String> {
-        let resp = self.client
+        let resp = self
+            .client
             .post("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal")
             .json(&serde_json::json!({
                 "app_id": self.app_id,
                 "app_secret": self.app_secret,
             }))
-            .send().await?;
+            .send()
+            .await?;
         let body: serde_json::Value = resp.json().await?;
-        let token = body["tenant_access_token"].as_str()
+        let token = body["tenant_access_token"]
+            .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing tenant_access_token"))?
             .to_string();
         self.tenant_access_token = Some(token.clone());
@@ -58,8 +63,14 @@ impl FeishuAdapter {
     fn parse_event(event: &serde_json::Value) -> Option<BridgeMessage> {
         let msg = event.get("message")?;
         let chat_id = msg.get("chat_id")?.as_str()?.to_string();
-        let sender = event.get("sender")?.get("sender_id")?.get("open_id")?.as_str()?.to_string();
-        let sender_name = event.get("sender")
+        let sender = event
+            .get("sender")?
+            .get("sender_id")?
+            .get("open_id")?
+            .as_str()?
+            .to_string();
+        let sender_name = event
+            .get("sender")
             .and_then(|s| s.get("sender_id"))
             .and_then(|s| s.get("union_id"))
             .and_then(|v| v.as_str())
@@ -87,8 +98,11 @@ impl FeishuAdapter {
 
         Some(BridgeMessage {
             platform: Platform::Feishu,
-            chat_id, sender_id: sender, sender_name,
-            content, reply_to: None,
+            chat_id,
+            sender_id: sender,
+            sender_name,
+            content,
+            reply_to: None,
             external_message_id: message_id,
             timestamp: Utc::now(),
         })
@@ -97,7 +111,9 @@ impl FeishuAdapter {
 
 #[async_trait]
 impl ChannelAdapter for FeishuAdapter {
-    fn platform(&self) -> Platform { Platform::Feishu }
+    fn platform(&self) -> Platform {
+        Platform::Feishu
+    }
 
     async fn connect(&mut self) -> Result<()> {
         self.health = AdapterHealth::Connecting;
@@ -109,26 +125,33 @@ impl ChannelAdapter for FeishuAdapter {
 
     async fn disconnect(&mut self) -> Result<()> {
         self.abort.store(true, Ordering::SeqCst);
-        if let Some(h) = self.ws_handle.take() { h.abort(); }
+        if let Some(h) = self.ws_handle.take() {
+            h.abort();
+        }
         self.health = AdapterHealth::Disconnected;
         Ok(())
     }
 
     async fn send(&self, chat_id: &str, content: MessageContent) -> Result<String> {
-        let token = self.tenant_access_token.as_ref()
+        let token = self
+            .tenant_access_token
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("no access token"))?;
 
         let (msg_type, msg_content) = match &content {
-            MessageContent::Text(text) => {
-                ("text".to_string(), serde_json::json!({"text": text}).to_string())
-            }
-            MessageContent::Image { url, .. } => {
-                ("image".to_string(), serde_json::json!({"image_key": url}).to_string())
-            }
+            MessageContent::Text(text) => (
+                "text".to_string(),
+                serde_json::json!({"text": text}).to_string(),
+            ),
+            MessageContent::Image { url, .. } => (
+                "image".to_string(),
+                serde_json::json!({"image_key": url}).to_string(),
+            ),
             _ => anyhow::bail!("unsupported content type for feishu"),
         };
 
-        let resp = self.client
+        let resp = self
+            .client
             .post("https://open.feishu.cn/open-apis/im/v1/messages")
             .header("Authorization", format!("Bearer {token}"))
             .json(&serde_json::json!({
@@ -136,14 +159,22 @@ impl ChannelAdapter for FeishuAdapter {
                 "msg_type": msg_type,
                 "content": msg_content,
             }))
-            .send().await?;
+            .send()
+            .await?;
 
         let body: serde_json::Value = resp.json().await?;
-        Ok(body["data"]["message_id"].as_str().unwrap_or("").to_string())
+        Ok(body["data"]["message_id"]
+            .as_str()
+            .unwrap_or("")
+            .to_string())
     }
 
-    fn receive_rx(&mut self) -> &mut mpsc::Receiver<BridgeMessage> { &mut self.rx }
-    fn health(&self) -> AdapterHealth { self.health.clone() }
+    fn receive_rx(&mut self) -> &mut mpsc::Receiver<BridgeMessage> {
+        &mut self.rx
+    }
+    fn health(&self) -> AdapterHealth {
+        self.health.clone()
+    }
 }
 
 #[cfg(test)]

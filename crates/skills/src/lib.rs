@@ -58,7 +58,10 @@ pub struct SkillRegistry {
 
 impl SkillRegistry {
     pub fn new() -> Self {
-        Self { skills: Vec::new(), disabled: RwLock::new(HashSet::new()) }
+        Self {
+            skills: Vec::new(),
+            disabled: RwLock::new(HashSet::new()),
+        }
     }
 
     pub fn register(&mut self, skill: Box<dyn Skill>) {

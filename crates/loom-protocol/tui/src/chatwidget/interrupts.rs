@@ -138,10 +138,10 @@ impl QueuedInterrupt {
 #[cfg(test)]
 mod tests {
     use crate::approval_events::ExecApprovalRequestEvent;
+    use loom_absolute_path::AbsolutePathBuf;
     use loom_app_server_protocol::CommandExecutionSource;
     use loom_app_server_protocol::CommandExecutionStatus;
     use loom_app_server_protocol::ThreadItem;
-    use loom_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
 
     use super::*;

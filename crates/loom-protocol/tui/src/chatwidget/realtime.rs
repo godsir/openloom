@@ -11,9 +11,9 @@ use loom_tui_stubs::realtime_webrtc::RealtimeWebrtcEvent;
 use loom_tui_stubs::realtime_webrtc::RealtimeWebrtcSession;
 use loom_tui_stubs::realtime_webrtc::RealtimeWebrtcSessionHandle;
 #[cfg(not(target_os = "linux"))]
-use std::sync::atomic::AtomicU16;
-#[cfg(not(target_os = "linux"))]
 use std::sync::Arc;
+#[cfg(not(target_os = "linux"))]
+use std::sync::atomic::AtomicU16;
 #[cfg(not(target_os = "linux"))]
 use std::time::Duration;
 
@@ -94,7 +94,12 @@ impl ChatWidget {
         self.realtime_conversation.requested_close = false;
         self.realtime_conversation.realtime_session_id = None;
         self.set_footer_hint_override(Some(Self::realtime_footer_hint_items()));
-        match self.config.realtime.as_ref().and_then(|r| r.transport.as_ref()) {
+        match self
+            .config
+            .realtime
+            .as_ref()
+            .and_then(|r| r.transport.as_ref())
+        {
             Some(RealtimeTransport::Websocket) => {
                 self.realtime_conversation.transport = RealtimeConversationUiTransport::Websocket;
                 self.submit_realtime_conversation_start(/*transport*/ None);

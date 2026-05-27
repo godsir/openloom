@@ -11,6 +11,10 @@
 //! editing a non-empty API-key field, while control/alt chords remain available
 //! as explicit exit shortcuts.
 
+use crossterm::event::KeyCode;
+use crossterm::event::KeyEvent;
+use crossterm::event::KeyEventKind;
+use crossterm::event::KeyModifiers;
 use loom_app_server_client::AppServerEvent;
 use loom_app_server_client::AppServerRequestHandle;
 use loom_app_server_protocol::ServerNotification;
@@ -18,10 +22,6 @@ use loom_exec_server::LOCAL_FS;
 use loom_git_utils::resolve_root_git_project_for_trust;
 #[cfg(target_os = "windows")]
 use loom_protocol::config_types::WindowsSandboxLevel;
-use crossterm::event::KeyCode;
-use crossterm::event::KeyEvent;
-use crossterm::event::KeyEventKind;
-use crossterm::event::KeyModifiers;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::prelude::Widget;

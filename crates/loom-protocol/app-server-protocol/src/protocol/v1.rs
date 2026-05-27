@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use loom_absolute_path::AbsolutePathBuf;
 use loom_protocol::ThreadId;
 use loom_protocol::config_types::ForcedLoginMethod;
 use loom_protocol::config_types::ReasoningSummary;
@@ -15,7 +16,6 @@ use loom_protocol::protocol::ReviewDecision;
 use loom_protocol::protocol::SandboxPolicy;
 use loom_protocol::protocol::SessionSource;
 use loom_protocol::protocol::TurnAbortReason;
-use loom_absolute_path::AbsolutePathBuf;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;

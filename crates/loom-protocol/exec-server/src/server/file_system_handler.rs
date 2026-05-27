@@ -173,9 +173,9 @@ fn map_fs_error(err: io::Error) -> JSONRPCErrorError {
 
 #[cfg(test)]
 mod tests {
+    use loom_absolute_path::AbsolutePathBuf;
     use loom_protocol::protocol::NetworkAccess;
     use loom_protocol::protocol::SandboxPolicy;
-    use loom_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
 
     use super::*;

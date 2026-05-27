@@ -1,9 +1,9 @@
+use loom_absolute_path::AbsolutePathBuf;
 use loom_protocol::config_types::ApprovalsReviewer;
 use loom_protocol::config_types::SandboxMode;
 use loom_protocol::config_types::WebSearchMode;
 use loom_protocol::models::PermissionProfile;
 use loom_protocol::protocol::AskForApproval;
-use loom_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 use serde::Serialize;
 use serde::de::Error as _;
@@ -1333,12 +1333,12 @@ mod tests {
     use super::*;
     use crate::HookEventsToml;
     use anyhow::Result;
+    use loom_absolute_path::AbsolutePathBuf;
+    use loom_absolute_path::AbsolutePathBufGuard;
     use loom_execpolicy::Decision;
     use loom_execpolicy::Evaluation;
     use loom_execpolicy::RuleMatch;
     use loom_protocol::permissions::NetworkSandboxPolicy;
-    use loom_absolute_path::AbsolutePathBuf;
-    use loom_absolute_path::AbsolutePathBufGuard;
     use pretty_assertions::assert_eq;
     use toml::from_str;
 

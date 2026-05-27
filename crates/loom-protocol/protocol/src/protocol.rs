@@ -2805,9 +2805,7 @@ impl TruncationPolicy {
     pub fn byte_budget(&self) -> usize {
         match self {
             TruncationPolicy::Bytes(bytes) => *bytes,
-            TruncationPolicy::Tokens(tokens) => {
-                loom_string::approx_bytes_for_tokens(*tokens)
-            }
+            TruncationPolicy::Tokens(tokens) => loom_string::approx_bytes_for_tokens(*tokens),
         }
     }
 }

@@ -13,10 +13,17 @@ pub struct LocalStateDbStartupError {
 
 impl LocalStateDbStartupError {
     pub fn new(state_db_path: PathBuf, detail: String) -> Self {
-        Self { state_db_path, detail }
+        Self {
+            state_db_path,
+            detail,
+        }
     }
-    pub fn state_db_path(&self) -> &PathBuf { &self.state_db_path }
-    pub fn detail(&self) -> &str { &self.detail }
+    pub fn state_db_path(&self) -> &PathBuf {
+        &self.state_db_path
+    }
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
 }
 
 impl std::fmt::Display for LocalStateDbStartupError {
@@ -50,10 +57,16 @@ pub(crate) fn print_repair_backups(_backups: &[PathBuf]) {}
 
 pub(crate) fn print_diagnostic_guidance(startup_error: &LocalStateDbStartupError) {
     eprintln!("Loom couldn't start because its local database appears to be damaged.");
-    eprintln!("Technical details: {}", startup_error.state_db_path().display());
+    eprintln!(
+        "Technical details: {}",
+        startup_error.state_db_path().display()
+    );
 }
 
 pub(crate) fn print_locked_guidance(startup_error: &LocalStateDbStartupError) {
     eprintln!("Loom couldn't start because another process is using its local data.");
-    eprintln!("Technical details: {}", startup_error.state_db_path().display());
+    eprintln!(
+        "Technical details: {}",
+        startup_error.state_db_path().display()
+    );
 }

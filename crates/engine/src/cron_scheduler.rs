@@ -32,9 +32,12 @@ pub fn spawn_cron_scheduler(
             let due = cron_store.get_due_jobs(now_ms);
             for job in &due {
                 match &job.executor {
-                    Some(AutomationExecutor::DirectAction { action, title, body, .. })
-                        if action == "notify" =>
-                    {
+                    Some(AutomationExecutor::DirectAction {
+                        action,
+                        title,
+                        body,
+                        ..
+                    }) if action == "notify" => {
                         // Direct notification — no agent needed
                         let t = title.as_deref().unwrap_or(&job.label);
                         let b = body.as_deref().unwrap_or("");
@@ -65,13 +68,10 @@ pub fn spawn_cron_scheduler(
 
                         let msg = ChatMessage {
                             role: "user".into(),
-                            content: format!(
-                                "[定时任务: {}]\n\n{}",
-                                job.label, job.prompt
-                            ),
+                            content: format!("[定时任务: {}]\n\n{}", job.label, job.prompt),
                             timestamp: chrono::Utc::now(),
-            id: None,
-            seq: None,
+                            id: None,
+                            seq: None,
                             metadata: None,
                         };
 

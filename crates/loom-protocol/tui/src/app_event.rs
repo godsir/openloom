@@ -11,6 +11,7 @@
 
 use std::path::PathBuf;
 
+use loom_absolute_path::AbsolutePathBuf;
 use loom_app_server_protocol::AddCreditsNudgeCreditType;
 use loom_app_server_protocol::AddCreditsNudgeEmailStatus;
 use loom_app_server_protocol::AppInfo;
@@ -27,11 +28,10 @@ use loom_app_server_protocol::PluginUninstallResponse;
 use loom_app_server_protocol::RateLimitSnapshot;
 use loom_app_server_protocol::SkillsListResponse;
 use loom_app_server_protocol::ThreadGoalStatus;
+use loom_approval_presets::ApprovalPreset;
 use loom_file_search::FileMatch;
 use loom_protocol::ThreadId;
 use loom_protocol::openai_models::ModelPreset;
-use loom_absolute_path::AbsolutePathBuf;
-use loom_approval_presets::ApprovalPreset;
 
 use crate::app_command::AppCommand;
 use crate::app_server_session::AppServerStartedThread;
@@ -39,15 +39,15 @@ use crate::bottom_pane::ApprovalRequest;
 use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::chatwidget::UserMessage;
-use loom_app_server_protocol::AskForApproval;
 pub use loom_app_server_client::ModelPreference;
+use loom_app_server_protocol::AskForApproval;
 use loom_config::types::ApprovalsReviewer;
 use loom_features::Feature;
-use loom_tui_stubs::plugin::PluginCapabilitySummary;
 use loom_protocol::config_types::CollaborationModeMask;
 use loom_protocol::config_types::Personality;
 use loom_protocol::models::ActivePermissionProfile;
 use loom_protocol::openai_models::ReasoningEffort;
+use loom_tui_stubs::plugin::PluginCapabilitySummary;
 use loom_tui_stubs::realtime_webrtc::RealtimeWebrtcEvent;
 use loom_tui_stubs::realtime_webrtc::RealtimeWebrtcSessionHandle;
 

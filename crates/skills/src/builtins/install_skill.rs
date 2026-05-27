@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::{Skill, SkillManifest, SkillPermissions};
 
@@ -38,7 +38,10 @@ impl Skill for InstallSkillSkill {
 
     async fn invoke(&self, params: Value) -> Result<Value> {
         let has_github = params.get("github_url").and_then(|v| v.as_str()).is_some();
-        let has_content = params.get("skill_content").and_then(|v| v.as_str()).is_some();
+        let has_content = params
+            .get("skill_content")
+            .and_then(|v| v.as_str())
+            .is_some();
 
         if has_github {
             return self.install_from_github(&params).await;
@@ -81,13 +84,7 @@ impl InstallSkillSkill {
             .get("skill_name")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                subpath
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(&repo)
-                    .to_string()
-            });
+            .unwrap_or_else(|| subpath.rsplit('/').next().unwrap_or(&repo).to_string());
 
         if let Err(e) = validate_skill_name(&skill_name) {
             return Ok(json!({"error": e}));
@@ -235,9 +232,8 @@ mod tests {
 
     #[test]
     fn test_parse_github_url_with_tree_path() {
-        let result = parse_github_url(
-            "https://github.com/anthropics/skills/tree/main/skills/my-skill",
-        );
+        let result =
+            parse_github_url("https://github.com/anthropics/skills/tree/main/skills/my-skill");
         assert!(result.is_some());
         let (owner, repo, path) = result.unwrap();
         assert_eq!(owner, "anthropics");

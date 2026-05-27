@@ -4,8 +4,8 @@ use crate::status::StatusAccountDisplay;
 use crate::text_formatting;
 use chrono::DateTime;
 use chrono::Local;
-use loom_protocol::account::PlanType;
 use loom_absolute_path::AbsolutePathBuf;
+use loom_protocol::account::PlanType;
 use std::path::Path;
 use unicode_width::UnicodeWidthStr;
 

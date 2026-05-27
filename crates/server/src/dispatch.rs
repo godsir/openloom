@@ -20,7 +20,11 @@ fn lookup_model_reasoning(config: &Value, model_id: &str, provider: &str) -> Opt
 
 fn list_desk_files(dir: &str, subdir: &str) -> Result<Value, JsonRpcError> {
     let base = Path::new(dir);
-    let target = if subdir.is_empty() { base.to_path_buf() } else { base.join(subdir) };
+    let target = if subdir.is_empty() {
+        base.to_path_buf()
+    } else {
+        base.join(subdir)
+    };
     if !target.exists() {
         return Ok(serde_json::json!({"files": [], "basePath": dir}));
     }
@@ -29,7 +33,9 @@ fn list_desk_files(dir: &str, subdir: &str) -> Result<Value, JsonRpcError> {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             // Skip hidden files/dirs
-            if name.starts_with('.') { continue; }
+            if name.starts_with('.') {
+                continue;
+            }
             let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
             let (size, mtime): (Option<u64>, Option<String>) = if is_dir {
                 (None, None)
@@ -54,7 +60,10 @@ fn list_desk_files(dir: &str, subdir: &str) -> Result<Value, JsonRpcError> {
         let a_dir = a["isDir"].as_bool().unwrap_or(false);
         let b_dir = b["isDir"].as_bool().unwrap_or(false);
         b_dir.cmp(&a_dir).then_with(|| {
-            a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
+            a["name"]
+                .as_str()
+                .unwrap_or("")
+                .cmp(b["name"].as_str().unwrap_or(""))
         })
     });
     Ok(serde_json::json!({"files": files, "basePath": dir}))
@@ -92,14 +101,8 @@ pub async fn dispatch_method(
                 .and_then(|v| v.as_str())
                 .unwrap_or("default")
                 .to_string();
-            let model_id = p
-                .get("model_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let provider = p
-                .get("provider")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let model_id = p.get("model_id").and_then(|v| v.as_str()).unwrap_or("");
+            let provider = p.get("provider").and_then(|v| v.as_str()).unwrap_or("");
 
             // agent_loop_inner fires its own AgentStateChanged events;
             // no need to emit them here — avoids duplicate state transitions.
@@ -109,21 +112,23 @@ pub async fn dispatch_method(
                 .get("images")
                 .and_then(|v| v.as_array())
                 .map(|arr| {
-                    arr.iter().filter_map(|img| {
-                        let raw_data = img.get("data")?.as_str()?.to_string();
-                        let mime_type = img.get("mime_type")?.as_str()?.to_string();
-                        // Strip "data:<mime>;base64," prefix if present — engine will re-add it
-                        let data = if let Some(comma_pos) = raw_data.find(',') {
-                            if raw_data[..comma_pos].contains("base64") {
-                                raw_data[comma_pos + 1..].to_string()
+                    arr.iter()
+                        .filter_map(|img| {
+                            let raw_data = img.get("data")?.as_str()?.to_string();
+                            let mime_type = img.get("mime_type")?.as_str()?.to_string();
+                            // Strip "data:<mime>;base64," prefix if present — engine will re-add it
+                            let data = if let Some(comma_pos) = raw_data.find(',') {
+                                if raw_data[..comma_pos].contains("base64") {
+                                    raw_data[comma_pos + 1..].to_string()
+                                } else {
+                                    raw_data
+                                }
                             } else {
                                 raw_data
-                            }
-                        } else {
-                            raw_data
-                        };
-                        Some(openloom_models::ImagePart { data, mime_type })
-                    }).collect()
+                            };
+                            Some(openloom_models::ImagePart { data, mime_type })
+                        })
+                        .collect()
                 })
                 .unwrap_or_default();
 
@@ -140,13 +145,31 @@ pub async fn dispatch_method(
                     .unwrap_or(openloom_models::Mode::Code);
 
                 let metadata = if !images.is_empty() {
-                    let imgs: Vec<Value> = images.iter().map(|img| serde_json::json!({
-                        "data": img.data,
-                        "mimeType": img.mime_type,
-                    })).collect();
+                    let imgs: Vec<Value> = images
+                        .iter()
+                        .map(|img| {
+                            serde_json::json!({
+                                "data": img.data,
+                                "mimeType": img.mime_type,
+                            })
+                        })
+                        .collect();
                     Some(serde_json::json!({"images": imgs}).to_string())
-                } else { None };
-                match engine.complete_with_model_streaming_meta(&session_id, content, &images, metadata.as_deref(), model_id, provider, mode).await {
+                } else {
+                    None
+                };
+                match engine
+                    .complete_with_model_streaming_meta(
+                        &session_id,
+                        content,
+                        &images,
+                        metadata.as_deref(),
+                        model_id,
+                        provider,
+                        mode,
+                    )
+                    .await
+                {
                     Ok(()) => {
                         // Background: run LLM extraction every 5 user messages (fallback to rule-based)
                         let bg_engine = engine.clone();
@@ -156,21 +179,27 @@ pub async fn dispatch_method(
                             let user_count = working.iter().filter(|m| m.role == "user").count();
                             if user_count > 0 && user_count % 5 == 0 {
                                 match bg_engine.extract_cognitions_from_session(&bg_sid).await {
-                                    Ok(n) if n > 0 => tracing::info!(n, session_id = %bg_sid, "bg cognition extraction: {} new traits", n),
-                                    Ok(_) => tracing::debug!(session_id = %bg_sid, "bg extraction: no new cognitions"),
-                                    Err(e) => tracing::warn!(error = %e, session_id = %bg_sid, "bg extraction failed"),
+                                    Ok(n) if n > 0 => {
+                                        tracing::info!(n, session_id = %bg_sid, "bg cognition extraction: {} new traits", n)
+                                    }
+                                    Ok(_) => {
+                                        tracing::debug!(session_id = %bg_sid, "bg extraction: no new cognitions")
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(error = %e, session_id = %bg_sid, "bg extraction failed")
+                                    }
                                 }
                             }
                         });
-                        Ok(serde_json::json!({"ok": true, "streaming": true, "session_id": session_id}))
+                        Ok(
+                            serde_json::json!({"ok": true, "streaming": true, "session_id": session_id}),
+                        )
                     }
-                    Err(e) => {
-                        Err(JsonRpcError {
-                            code: ErrorCode::InternalError,
-                            message: e.to_string(),
-                            data: None,
-                        })
-                    }
+                    Err(e) => Err(JsonRpcError {
+                        code: ErrorCode::InternalError,
+                        message: e.to_string(),
+                        data: None,
+                    }),
                 }
             } else {
                 // Fallback: use the router
@@ -178,8 +207,8 @@ pub async fn dispatch_method(
                     role: "user".into(),
                     content: content.to_string(),
                     timestamp: chrono::Utc::now(),
-            id: None,
-            seq: None,
+                    id: None,
+                    seq: None,
                     metadata: None,
                 };
                 let mode = p
@@ -204,9 +233,15 @@ pub async fn dispatch_method(
                     let user_count = working.iter().filter(|m| m.role == "user").count();
                     if user_count > 0 && user_count % 5 == 0 {
                         match fb_engine.extract_cognitions_from_session(&fb_sid).await {
-                            Ok(n) if n > 0 => tracing::info!(n, session_id = %fb_sid, "fallback cognition extraction: {} new traits", n),
-                            Ok(_) => tracing::debug!(session_id = %fb_sid, "fallback extraction: no new cognitions"),
-                            Err(e) => tracing::warn!(error = %e, session_id = %fb_sid, "fallback extraction failed"),
+                            Ok(n) if n > 0 => {
+                                tracing::info!(n, session_id = %fb_sid, "fallback cognition extraction: {} new traits", n)
+                            }
+                            Ok(_) => {
+                                tracing::debug!(session_id = %fb_sid, "fallback extraction: no new cognitions")
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, session_id = %fb_sid, "fallback extraction failed")
+                            }
                         }
                     }
                 });
@@ -275,20 +310,23 @@ pub async fn dispatch_method(
                 message: e.to_string(),
                 data: None,
             })?;
-            let mapped: Vec<serde_json::Value> = sessions.iter().map(|s| {
-                serde_json::json!({
-                    "path": s.id,
-                    "title": s.title,
-                    "firstMessage": "",
-                    "modified": s.created_at,
-                    "messageCount": s.message_count,
-                    "agentId": null,
-                    "agentName": null,
-                    "cwd": null,
-                    "permissionMode": null,
-                    "pinnedAt": s.pinned_at,
+            let mapped: Vec<serde_json::Value> = sessions
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "path": s.id,
+                        "title": s.title,
+                        "firstMessage": "",
+                        "modified": s.created_at,
+                        "messageCount": s.message_count,
+                        "agentId": null,
+                        "agentName": null,
+                        "cwd": null,
+                        "permissionMode": null,
+                        "pinnedAt": s.pinned_at,
+                    })
                 })
-            }).collect();
+                .collect();
             Ok(serde_json::json!({"sessions": mapped}))
         }
         "session.create" => {
@@ -309,7 +347,9 @@ pub async fn dispatch_method(
             // Prefer the agent's configured chat model, falling back to the
             // globally-connected model. This ensures per-agent model config
             // (set in AgentTab) is reflected in the chat page's ModelSelector.
-            let agent_config = engine.get_config(Some("settings.agent.default.config")).await;
+            let agent_config = engine
+                .get_config(Some("settings.agent.default.config"))
+                .await;
 
             // If no cwd was provided and active_cwd is still unset, fall back
             // to the agent's configured desk.home_folder so the LLM sees the
@@ -321,8 +361,7 @@ pub async fn dispatch_method(
                     .and_then(|h| h.as_str())
                 {
                     if !home.is_empty() {
-                        *engine.active_cwd.write().unwrap() =
-                            Some(std::path::PathBuf::from(home));
+                        *engine.active_cwd.write().unwrap() = Some(std::path::PathBuf::from(home));
                     }
                 }
             }
@@ -330,12 +369,25 @@ pub async fn dispatch_method(
             let agent_chat = agent_config
                 .get("models")
                 .and_then(|m| m.get("chat"))
-                .filter(|v| v.get("id").and_then(|i| i.as_str()).is_some_and(|s| !s.is_empty()));
+                .filter(|v| {
+                    v.get("id")
+                        .and_then(|i| i.as_str())
+                        .is_some_and(|s| !s.is_empty())
+                });
             let (model_id, model_provider, model_name) = if let Some(chat) = agent_chat {
                 (
-                    chat.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    chat.get("provider").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    chat.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    chat.get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    chat.get("provider")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    chat.get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                 )
             } else {
                 let info = engine.model_info().await;
@@ -389,7 +441,9 @@ pub async fn dispatch_method(
             };
             // Prefer the agent's configured chat model, falling back to the
             // globally-connected model.
-            let agent_config = engine.get_config(Some("settings.agent.default.config")).await;
+            let agent_config = engine
+                .get_config(Some("settings.agent.default.config"))
+                .await;
 
             // If active_cwd is unset, fall back to desk.home_folder
             if engine.active_cwd.read().unwrap().is_none() {
@@ -399,8 +453,7 @@ pub async fn dispatch_method(
                     .and_then(|h| h.as_str())
                 {
                     if !home.is_empty() {
-                        *engine.active_cwd.write().unwrap() =
-                            Some(std::path::PathBuf::from(home));
+                        *engine.active_cwd.write().unwrap() = Some(std::path::PathBuf::from(home));
                     }
                 }
             }
@@ -408,12 +461,25 @@ pub async fn dispatch_method(
             let agent_chat = agent_config
                 .get("models")
                 .and_then(|m| m.get("chat"))
-                .filter(|v| v.get("id").and_then(|i| i.as_str()).is_some_and(|s| !s.is_empty()));
+                .filter(|v| {
+                    v.get("id")
+                        .and_then(|i| i.as_str())
+                        .is_some_and(|s| !s.is_empty())
+                });
             let (model_id, model_provider, model_name) = if let Some(chat) = agent_chat {
                 (
-                    chat.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    chat.get("provider").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    chat.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    chat.get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    chat.get("provider")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    chat.get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                 )
             } else {
                 let info = engine.model_info().await;
@@ -461,7 +527,8 @@ pub async fn dispatch_method(
                 .and_then(|p| p.get("offset"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as usize;
-            let total = engine
+            let total =
+                engine
                     .count_cognitions(subject, scope)
                     .await
                     .map_err(|e| JsonRpcError {
@@ -469,17 +536,17 @@ pub async fn dispatch_method(
                         message: e.to_string(),
                         data: None,
                     })?;
-            let cognitions =
-                engine
-                    .list_cognitions(subject, scope, limit, offset)
-                    .await
-                    .map_err(|e| JsonRpcError {
-                        code: ErrorCode::InternalError,
-                        message: e.to_string(),
-                        data: None,
-                    })?;
+            let cognitions = engine
+                .list_cognitions(subject, scope, limit, offset)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             let rows: Vec<serde_json::Value> = cognitions
-                .into_iter().map(|c| {
+                .into_iter()
+                .map(|c| {
                     serde_json::json!({
                         "id": c.id,
                         "trait": c.trait_name,
@@ -493,15 +560,26 @@ pub async fn dispatch_method(
             Ok(serde_json::json!({"cognitions": rows, "total": total}))
         }
         "memory.cognition_delete" => {
-            let id = params.as_ref().and_then(|p| p.get("id")).and_then(|v| v.as_i64()).unwrap_or(0);
+            let id = params
+                .as_ref()
+                .and_then(|p| p.get("id"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
             if id == 0 {
-                return Err(JsonRpcError { code: ErrorCode::InvalidRequest, message: "id required".into(), data: None });
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "id required".into(),
+                    data: None,
+                });
             }
-            engine.delete_cognition(id).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            engine
+                .delete_cognition(id)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": true}))
         }
         "memory.persona" => {
@@ -530,25 +608,47 @@ pub async fn dispatch_method(
             Ok(serde_json::json!({"events": events, "cognitions": []}))
         }
         "memory.record" => {
-            let text = params.as_ref().and_then(|p| p.get("text")).and_then(|v| v.as_str()).unwrap_or("");
-            let scope = params.as_ref().and_then(|p| p.get("session_id")).and_then(|v| v.as_str()).unwrap_or("_manual");
+            let text = params
+                .as_ref()
+                .and_then(|p| p.get("text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let scope = params
+                .as_ref()
+                .and_then(|p| p.get("session_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("_manual");
             if text.is_empty() {
-                return Err(JsonRpcError { code: ErrorCode::InvalidRequest, message: "text required".into(), data: None });
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "text required".into(),
+                    data: None,
+                });
             }
-            let count = engine.extract_cognitions_with_local_model(text, scope).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            let count = engine
+                .extract_cognitions_with_local_model(text, scope)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": true, "cognitions": count}))
         }
         "memory.record_from_session" => {
-            let session_id = params.as_ref().and_then(|p| p.get("session_id")).and_then(|v| v.as_str()).unwrap_or("default");
-            let count = engine.extract_cognitions_from_session(session_id).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            let session_id = params
+                .as_ref()
+                .and_then(|p| p.get("session_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            let count = engine
+                .extract_cognitions_from_session(session_id)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": true, "cognitions": count}))
         }
         "agent.status" => {
@@ -608,8 +708,7 @@ pub async fn dispatch_method(
                     .and_then(|h| h.as_str())
                 {
                     if !home.is_empty() {
-                        *engine.active_cwd.write().unwrap() =
-                            Some(std::path::PathBuf::from(home));
+                        *engine.active_cwd.write().unwrap() = Some(std::path::PathBuf::from(home));
                     }
                 }
             }
@@ -654,16 +753,29 @@ pub async fn dispatch_method(
         }
         // ── Session lifecycle ───────────────────────────────────────
         "session.archive" => {
-            let sid = params.as_ref().and_then(|p| p.get("session_id")).or_else(|| params.as_ref().and_then(|p| p.get("path"))).and_then(|v| v.as_str()).unwrap_or("");
-            engine.archive_session(sid).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            let sid = params
+                .as_ref()
+                .and_then(|p| p.get("session_id"))
+                .or_else(|| params.as_ref().and_then(|p| p.get("path")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            engine
+                .archive_session(sid)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": true, "session_id": sid}))
         }
         "session.delete" => {
-            let sid = params.as_ref().and_then(|p| p.get("session_id")).or_else(|| params.as_ref().and_then(|p| p.get("path"))).and_then(|v| v.as_str()).unwrap_or("");
+            let sid = params
+                .as_ref()
+                .and_then(|p| p.get("session_id"))
+                .or_else(|| params.as_ref().and_then(|p| p.get("path")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             engine.delete_session(sid).await.map_err(|e| JsonRpcError {
                 code: ErrorCode::InternalError,
                 message: e.to_string(),
@@ -672,104 +784,173 @@ pub async fn dispatch_method(
             Ok(serde_json::json!({"ok": true, "session_id": sid}))
         }
         "session.rename" => {
-            let sid = params.as_ref().and_then(|p| p.get("session_id")).or_else(|| params.as_ref().and_then(|p| p.get("path"))).and_then(|v| v.as_str()).unwrap_or("");
-            let title = params.as_ref().and_then(|p| p.get("title")).and_then(|v| v.as_str()).unwrap_or("");
-            engine.rename_session(sid, title).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            let sid = params
+                .as_ref()
+                .and_then(|p| p.get("session_id"))
+                .or_else(|| params.as_ref().and_then(|p| p.get("path")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let title = params
+                .as_ref()
+                .and_then(|p| p.get("title"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            engine
+                .rename_session(sid, title)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": true, "session_id": sid}))
         }
         "session.pin" => {
-            let sid = params.as_ref().and_then(|p| p.get("session_id")).or_else(|| params.as_ref().and_then(|p| p.get("path"))).and_then(|v| v.as_str()).unwrap_or("");
-            let pinned = params.as_ref().and_then(|p| p.get("pinned")).and_then(|v| v.as_bool()).unwrap_or(true);
-            engine.pin_session(sid, pinned).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            let sid = params
+                .as_ref()
+                .and_then(|p| p.get("session_id"))
+                .or_else(|| params.as_ref().and_then(|p| p.get("path")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let pinned = params
+                .as_ref()
+                .and_then(|p| p.get("pinned"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            engine
+                .pin_session(sid, pinned)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             let pinned_at = if pinned {
                 serde_json::Value::String(chrono::Utc::now().to_rfc3339())
             } else {
                 serde_json::Value::Null
             };
-            Ok(serde_json::json!({"ok": true, "session_id": sid, "pinned": pinned, "pinnedAt": pinned_at}))
+            Ok(
+                serde_json::json!({"ok": true, "session_id": sid, "pinned": pinned, "pinnedAt": pinned_at}),
+            )
         }
         "session.archived_list" => {
-            let sessions = engine.list_archived_sessions().await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
-            let archived: Vec<Value> = sessions.iter().map(|s| {
-                serde_json::json!({
-                    "path": s.id,
-                    "title": s.title,
-                    "archivedAt": s.archived_at,
-                    "sizeBytes": 0,
-                    "agentId": null,
-                    "agentName": null,
+            let sessions = engine
+                .list_archived_sessions()
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
+            let archived: Vec<Value> = sessions
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "path": s.id,
+                        "title": s.title,
+                        "archivedAt": s.archived_at,
+                        "sizeBytes": 0,
+                        "agentId": null,
+                        "agentName": null,
+                    })
                 })
-            }).collect();
+                .collect();
             Ok(serde_json::json!({"archived": archived}))
         }
         "session.restore" => {
-            let sid = params.as_ref().and_then(|p| p.get("session_id")).or_else(|| params.as_ref().and_then(|p| p.get("path"))).and_then(|v| v.as_str()).unwrap_or("");
-            let ok = engine.restore_session(sid).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            let sid = params
+                .as_ref()
+                .and_then(|p| p.get("session_id"))
+                .or_else(|| params.as_ref().and_then(|p| p.get("path")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let ok = engine
+                .restore_session(sid)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": ok, "session_id": sid}))
         }
         "session.delete_archived" => {
-            let sid = params.as_ref().and_then(|p| p.get("session_id")).or_else(|| params.as_ref().and_then(|p| p.get("path"))).and_then(|v| v.as_str()).unwrap_or("");
-            let ok = engine.delete_archived_session(sid).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            let sid = params
+                .as_ref()
+                .and_then(|p| p.get("session_id"))
+                .or_else(|| params.as_ref().and_then(|p| p.get("path")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let ok = engine
+                .delete_archived_session(sid)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": ok, "session_id": sid}))
         }
         "session.cleanup" => {
-            let days = params.as_ref().and_then(|p| p.get("maxAgeDays")).and_then(|v| v.as_u64()).unwrap_or(30) as u32;
-            let deleted = engine.cleanup_archived_sessions(days).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            let days = params
+                .as_ref()
+                .and_then(|p| p.get("maxAgeDays"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(30) as u32;
+            let deleted =
+                engine
+                    .cleanup_archived_sessions(days)
+                    .await
+                    .map_err(|e| JsonRpcError {
+                        code: ErrorCode::InternalError,
+                        message: e.to_string(),
+                        data: None,
+                    })?;
             Ok(serde_json::json!({"deleted": deleted}))
         }
         "session.messages" => {
-            let sid = params.as_ref().and_then(|p| p.get("session_id")).or_else(|| params.as_ref().and_then(|p| p.get("path"))).and_then(|v| v.as_str()).unwrap_or("default");
+            let sid = params
+                .as_ref()
+                .and_then(|p| p.get("session_id"))
+                .or_else(|| params.as_ref().and_then(|p| p.get("path")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
             let messages = engine.get_working_memory(sid).unwrap_or_default();
-            let msg_values: Vec<Value> = messages.iter().map(|m| {
-                let mut msg = serde_json::json!({
-                    "id": format!("hist-{}-{}", sid, m.timestamp.timestamp_millis()),
-                    "role": m.role,
-                    "content": m.content,
-                    "timestamp": m.timestamp.timestamp_millis(),
-                });
-                if let Some(db_id) = m.id {
-                    msg["dbId"] = serde_json::json!(db_id);
-                }
-                if let Some(seq) = m.seq {
-                    msg["seq"] = serde_json::json!(seq);
-                }
-                if let Some(ref meta) = m.metadata
-                    && let Ok(parsed) = serde_json::from_str::<Value>(meta)
-                    && let Some(images) = parsed.get("images").and_then(|f| f.as_array())
-                {
-                    msg["images"] = serde_json::json!(images);
-                }
-                msg
-            }).collect();
-            Ok(serde_json::json!({"messages": msg_values, "items": [], "hasMore": false, "sessionFiles": [], "todos": []}))
+            let msg_values: Vec<Value> = messages
+                .iter()
+                .map(|m| {
+                    let mut msg = serde_json::json!({
+                        "id": format!("hist-{}-{}", sid, m.timestamp.timestamp_millis()),
+                        "role": m.role,
+                        "content": m.content,
+                        "timestamp": m.timestamp.timestamp_millis(),
+                    });
+                    if let Some(db_id) = m.id {
+                        msg["dbId"] = serde_json::json!(db_id);
+                    }
+                    if let Some(seq) = m.seq {
+                        msg["seq"] = serde_json::json!(seq);
+                    }
+                    if let Some(ref meta) = m.metadata
+                        && let Ok(parsed) = serde_json::from_str::<Value>(meta)
+                        && let Some(images) = parsed.get("images").and_then(|f| f.as_array())
+                    {
+                        msg["images"] = serde_json::json!(images);
+                    }
+                    msg
+                })
+                .collect();
+            Ok(
+                serde_json::json!({"messages": msg_values, "items": [], "hasMore": false, "sessionFiles": [], "todos": []}),
+            )
         }
         "session.delete_message" => {
             let p = params.unwrap_or_default();
-            let sid = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("default");
+            let sid = p
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
             let msg_id = p.get("msg_id").and_then(|v| v.as_i64()).unwrap_or(0);
             if msg_id == 0 {
                 return Err(JsonRpcError {
@@ -778,11 +959,13 @@ pub async fn dispatch_method(
                     data: None,
                 });
             }
-            let deleted = engine.delete_message(sid, msg_id).map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            let deleted = engine
+                .delete_message(sid, msg_id)
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": deleted}))
         }
         "session.permission_mode" => {
@@ -800,7 +983,10 @@ pub async fn dispatch_method(
             let p = params.unwrap_or_default();
             let session_id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
             let mode = p.get("mode").and_then(|v| v.as_str()).unwrap_or("ask");
-            let pending_new_session = p.get("pending_new_session").and_then(|v| v.as_bool()).unwrap_or(false);
+            let pending_new_session = p
+                .get("pending_new_session")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let normalized = engine.set_permission_mode(session_id, mode, pending_new_session);
             tracing::info!(session_id, %normalized, pending_new_session, "permission mode updated");
             Ok(serde_json::json!({
@@ -851,19 +1037,31 @@ pub async fn dispatch_method(
                 let mut result = Vec::new();
                 for entry in &agent_entries {
                     let id = entry.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                    if id.is_empty() { continue; }
-                    let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("Agent");
+                    if id.is_empty() {
+                        continue;
+                    }
+                    let name = entry
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Agent");
                     let yuan = entry.get("yuan").and_then(|v| v.as_str()).unwrap_or("loom");
-                    let is_primary = entry.get("isPrimary").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let is_primary = entry
+                        .get("isPrimary")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
 
                     // Read per-agent chat model
-                    let agent_config = engine.get_config(
-                        Some(&format!("settings.agent.{}.config", id))
-                    ).await;
+                    let agent_config = engine
+                        .get_config(Some(&format!("settings.agent.{}.config", id)))
+                        .await;
                     let chat_model = agent_config
                         .get("models")
                         .and_then(|m| m.get("chat"))
-                        .filter(|v| v.get("id").and_then(|i| i.as_str()).is_some_and(|s| !s.is_empty()));
+                        .filter(|v| {
+                            v.get("id")
+                                .and_then(|i| i.as_str())
+                                .is_some_and(|s| !s.is_empty())
+                        });
                     let chat_model_val = match chat_model {
                         Some(m) => serde_json::json!({
                             "id": m.get("id").and_then(|v| v.as_str()).unwrap_or(""),
@@ -879,13 +1077,17 @@ pub async fn dispatch_method(
                         }
                     };
 
-                    let has_avatar = engine.get_config(
-                        Some(&format!("settings.agent.{}.hasAvatar", id))
-                    ).await.as_bool().unwrap_or(false);
+                    let has_avatar = engine
+                        .get_config(Some(&format!("settings.agent.{}.hasAvatar", id)))
+                        .await
+                        .as_bool()
+                        .unwrap_or(false);
 
-                    let memory_enabled = engine.get_config(
-                        Some(&format!("settings.agent.{}.memoryMasterEnabled", id))
-                    ).await.as_bool().unwrap_or(false);
+                    let memory_enabled = engine
+                        .get_config(Some(&format!("settings.agent.{}.memoryMasterEnabled", id)))
+                        .await
+                        .as_bool()
+                        .unwrap_or(false);
 
                     result.push(serde_json::json!({
                         "id": id,
@@ -904,20 +1106,39 @@ pub async fn dispatch_method(
             Ok(serde_json::json!({ "agents": agents }))
         }
         "agent.switch" => {
-            let agent_id = params.as_ref().and_then(|p| p.get("agent_id")).and_then(|v| v.as_str()).unwrap_or("default");
+            let agent_id = params
+                .as_ref()
+                .and_then(|p| p.get("agent_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
             // Persist active agent ID
-            let _ = engine.set_config("settings.currentAgentId", serde_json::Value::String(agent_id.to_string())).await;
+            let _ = engine
+                .set_config(
+                    "settings.currentAgentId",
+                    serde_json::Value::String(agent_id.to_string()),
+                )
+                .await;
             // Read agent name/yuan/homeFolder
-            let name = engine.get_config(Some(&format!("settings.agent.{}.name", agent_id))).await;
-            let yuan = engine.get_config(Some(&format!("settings.agent.{}.yuan", agent_id))).await;
+            let name = engine
+                .get_config(Some(&format!("settings.agent.{}.name", agent_id)))
+                .await;
+            let yuan = engine
+                .get_config(Some(&format!("settings.agent.{}.yuan", agent_id)))
+                .await;
             let agent_name = name.as_str().unwrap_or("Loom");
             let agent_yuan = yuan.as_str().unwrap_or("loom");
             // Read per-agent model and switch engine to it
-            let agent_config = engine.get_config(Some(&format!("settings.agent.{}.config", agent_id))).await;
+            let agent_config = engine
+                .get_config(Some(&format!("settings.agent.{}.config", agent_id)))
+                .await;
             let chat_model = agent_config
                 .get("models")
                 .and_then(|m| m.get("chat"))
-                .filter(|v| v.get("id").and_then(|i| i.as_str()).is_some_and(|s| !s.is_empty()));
+                .filter(|v| {
+                    v.get("id")
+                        .and_then(|i| i.as_str())
+                        .is_some_and(|s| !s.is_empty())
+                });
             if let Some(m) = chat_model {
                 let model_id = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
                 let provider = m.get("provider").and_then(|v| v.as_str()).unwrap_or("");
@@ -944,13 +1165,16 @@ pub async fn dispatch_method(
         // ── Commands ─────────────────────────────────────────────────
         "command.list" => {
             let skills = engine.list_skills();
-            let commands: Vec<Value> = skills.iter().map(|s| {
-                serde_json::json!({
-                    "name": format!("/{}", s.name),
-                    "description": s.description,
-                    "category": "skill",
+            let commands: Vec<Value> = skills
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "name": format!("/{}", s.name),
+                        "description": s.description,
+                        "category": "skill",
+                    })
                 })
-            }).collect();
+                .collect();
             Ok(serde_json::json!({"commands": commands}))
         }
 
@@ -959,31 +1183,43 @@ pub async fn dispatch_method(
             let config_val = engine.get_config(None).await;
             let models_arr = config_val.get("models").and_then(|m| m.as_array());
             let mut models: Vec<Value> = if let Some(arr) = models_arr {
-                arr.iter().map(|m| {
-                    let id = m.get("model").and_then(|v| v.as_str()).unwrap_or("");
-                    let name = m.get("name").and_then(|v| v.as_str()).unwrap_or(id);
-                    let provider = m.get("backend").and_then(|v| v.as_str()).unwrap_or("unknown");
-                    let context_size = m.get("context_size").and_then(|v| v.as_u64()).unwrap_or(4096);
-                    let image = m.get("image").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let video = m.get("video").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let reasoning = m.get("reasoning").and_then(|v| v.as_bool());
-                    let mut input = vec!["text"];
-                    if image { input.push("image"); }
-                    if video { input.push("video"); }
-                    let mut model_obj = serde_json::json!({
-                        "id": id,
-                        "name": name,
-                        "provider": provider,
-                        "context_size": context_size,
-                        "image": image,
-                        "video": video,
-                        "input": input,
-                    });
-                    if let Some(r) = reasoning {
-                        model_obj["reasoning"] = serde_json::json!(r);
-                    }
-                    model_obj
-                }).collect()
+                arr.iter()
+                    .map(|m| {
+                        let id = m.get("model").and_then(|v| v.as_str()).unwrap_or("");
+                        let name = m.get("name").and_then(|v| v.as_str()).unwrap_or(id);
+                        let provider = m
+                            .get("backend")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown");
+                        let context_size = m
+                            .get("context_size")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(4096);
+                        let image = m.get("image").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let video = m.get("video").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let reasoning = m.get("reasoning").and_then(|v| v.as_bool());
+                        let mut input = vec!["text"];
+                        if image {
+                            input.push("image");
+                        }
+                        if video {
+                            input.push("video");
+                        }
+                        let mut model_obj = serde_json::json!({
+                            "id": id,
+                            "name": name,
+                            "provider": provider,
+                            "context_size": context_size,
+                            "image": image,
+                            "video": video,
+                            "input": input,
+                        });
+                        if let Some(r) = reasoning {
+                            model_obj["reasoning"] = serde_json::json!(r);
+                        }
+                        model_obj
+                    })
+                    .collect()
             } else {
                 // Fallback: single active model
                 let info = engine.model_info().await;
@@ -999,11 +1235,13 @@ pub async fn dispatch_method(
 
             // Also include models from settings providers (custom providers)
             let settings_providers = config_val
-                .get("settings").and_then(|s| s.get("providers"))
+                .get("settings")
+                .and_then(|s| s.get("providers"))
                 .and_then(|p| p.as_object())
                 .or_else(|| {
                     config_val
-                        .get("settings").and_then(|s| s.get("general"))
+                        .get("settings")
+                        .and_then(|s| s.get("general"))
                         .and_then(|g| g.get("providers"))
                         .and_then(|p| p.as_object())
                 });
@@ -1013,25 +1251,39 @@ pub async fn dispatch_method(
                     .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(String::from))
                     .collect();
                 for (prov_name, prov_val) in providers {
-                    if prov_val.is_null() { continue; }
+                    if prov_val.is_null() {
+                        continue;
+                    }
                     let prov_models = prov_val.get("models").and_then(|v| v.as_array());
                     if let Some(arr) = prov_models {
                         for m in arr {
                             let model_id = if m.is_string() {
                                 m.as_str().unwrap_or("").to_string()
                             } else if m.is_object() {
-                                m.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string()
+                                m.get("id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string()
                             } else {
                                 continue;
                             };
-                            if model_id.is_empty() || existing_ids.contains(&model_id) { continue; }
+                            if model_id.is_empty() || existing_ids.contains(&model_id) {
+                                continue;
+                            }
                             let image = m.get("image").and_then(|v| v.as_bool()).unwrap_or(false);
                             let video = m.get("video").and_then(|v| v.as_bool()).unwrap_or(false);
-                            let reasoning = m.get("reasoning").and_then(|v| v.as_bool()).unwrap_or(false);
+                            let reasoning = m
+                                .get("reasoning")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
                             let name = m.get("name").and_then(|v| v.as_str()).unwrap_or(&model_id);
                             let mut input = vec!["text"];
-                            if image { input.push("image"); }
-                            if video { input.push("video"); }
+                            if image {
+                                input.push("image");
+                            }
+                            if video {
+                                input.push("video");
+                            }
                             models.push(serde_json::json!({
                                 "id": model_id,
                                 "name": name,
@@ -1051,24 +1303,33 @@ pub async fn dispatch_method(
             // 2. Current agent's chat model from settings.agent.{id}.config
             // 3. First model in the global models array (fallback)
             let current_agent_id = config_val
-                .get("settings").and_then(|s| s.get("currentAgentId"))
+                .get("settings")
+                .and_then(|s| s.get("currentAgentId"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("default");
             let agent_chat_fallback = || {
                 config_val
-                    .get("settings").and_then(|s| s.get("agent"))
+                    .get("settings")
+                    .and_then(|s| s.get("agent"))
                     .and_then(|a| a.get(current_agent_id))
                     .and_then(|d| d.get("config"))
                     .and_then(|c| c.get("models"))
                     .and_then(|m| m.get("chat"))
-                    .filter(|v| v.get("id").and_then(|i| i.as_str()).is_some_and(|s| !s.is_empty()))
-                    .map(|chat| serde_json::json!({
-                        "id": chat.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-                        "provider": chat.get("provider").and_then(|v| v.as_str()),
-                    }))
+                    .filter(|v| {
+                        v.get("id")
+                            .and_then(|i| i.as_str())
+                            .is_some_and(|s| !s.is_empty())
+                    })
+                    .map(|chat| {
+                        serde_json::json!({
+                            "id": chat.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                            "provider": chat.get("provider").and_then(|v| v.as_str()),
+                        })
+                    })
             };
             let active_model = config_val
-                .get("settings").and_then(|s| s.get("active_model"))
+                .get("settings")
+                .and_then(|s| s.get("active_model"))
                 .cloned()
                 .or_else(agent_chat_fallback)
                 .or_else(|| {
@@ -1085,11 +1346,18 @@ pub async fn dispatch_method(
         }
         "model.switch" => {
             let p = params.unwrap_or_default();
-            let model_id = p.get("model_id").or_else(|| p.get("id"))
-                .and_then(|v| v.as_str()).unwrap_or("");
+            let model_id = p
+                .get("model_id")
+                .or_else(|| p.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let provider = p.get("provider").and_then(|v| v.as_str()).unwrap_or("");
             if model_id.is_empty() {
-                return Err(JsonRpcError { code: ErrorCode::InvalidRequest, message: "model_id required".into(), data: None });
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "model_id required".into(),
+                    data: None,
+                });
             }
             // Persist the selected model as active model in settings
             let active = serde_json::json!({
@@ -1129,14 +1397,21 @@ pub async fn dispatch_method(
             // ── 1. Read from typed config.models (Vec<ModelConfig>) ──
             if let Some(arr) = models_arr {
                 for m in arr {
-                    let backend = m.get("backend").and_then(|v| v.as_str()).unwrap_or("unknown");
-                    let is_local = m.get("backend")
+                    let backend = m
+                        .get("backend")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let is_local = m
+                        .get("backend")
                         .and_then(|v| v.as_str())
                         .map(|b| b == "LmStudio" || b == "Ollama")
                         .unwrap_or(false);
                     let model_id = m.get("model").and_then(|v| v.as_str()).unwrap_or("");
                     let model_name = m.get("name").and_then(|v| v.as_str()).unwrap_or(model_id);
-                    let context_size = m.get("context_size").and_then(|v| v.as_u64()).unwrap_or(4096);
+                    let context_size = m
+                        .get("context_size")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(4096);
                     let api_key_env = m.get("api_key_env").and_then(|v| v.as_str()).unwrap_or("");
                     let has_credentials = if api_key_env.is_empty() {
                         is_local
@@ -1157,7 +1432,9 @@ pub async fn dispatch_method(
                         })
                     });
                     if let Some(obj) = entry.as_object_mut() {
-                        if let Some(models_list) = obj.get_mut("models").and_then(|v| v.as_array_mut()) {
+                        if let Some(models_list) =
+                            obj.get_mut("models").and_then(|v| v.as_array_mut())
+                        {
                             let reasoning = m.get("reasoning").and_then(|v| v.as_bool());
                             let image = m.get("image").and_then(|v| v.as_bool()).unwrap_or(false);
                             let video = m.get("video").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -1187,11 +1464,13 @@ pub async fn dispatch_method(
             // set_nested merges value's top-level keys into settings, so providers ends up
             // at settings.providers (not settings.general.providers).
             let settings_providers = config_val
-                .get("settings").and_then(|s| s.get("providers"))
+                .get("settings")
+                .and_then(|s| s.get("providers"))
                 .and_then(|p| p.as_object())
                 .or_else(|| {
                     config_val
-                        .get("settings").and_then(|s| s.get("general"))
+                        .get("settings")
+                        .and_then(|s| s.get("general"))
                         .and_then(|g| g.get("providers"))
                         .and_then(|p| p.as_object())
                 });
@@ -1216,14 +1495,23 @@ pub async fn dispatch_method(
                     });
                     if let Some(obj) = entry.as_object_mut() {
                         if let Some(base_url) = prov_val.get("base_url").and_then(|v| v.as_str()) {
-                            obj.insert("base_url".into(), serde_json::Value::String(base_url.to_string()));
+                            obj.insert(
+                                "base_url".into(),
+                                serde_json::Value::String(base_url.to_string()),
+                            );
                         }
                         if let Some(api) = prov_val.get("api").and_then(|v| v.as_str()) {
                             obj.insert("api".into(), serde_json::Value::String(api.to_string()));
                         }
                         // Check for api_key in secrets (api_key_env or has_api_key in settings)
-                        let has_key = prov_val.get("has_api_key").and_then(|v| v.as_bool()).unwrap_or(false)
-                            || prov_val.get("api_key_env").and_then(|v| v.as_str()).is_some();
+                        let has_key = prov_val
+                            .get("has_api_key")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
+                            || prov_val
+                                .get("api_key_env")
+                                .and_then(|v| v.as_str())
+                                .is_some();
                         if has_key {
                             if let Some(masked) = openloom_engine::secrets::get_masked(prov_name) {
                                 obj.insert("api_key".into(), serde_json::Value::String(masked));
@@ -1232,43 +1520,93 @@ pub async fn dispatch_method(
                         }
                         // Merge models from settings provider into existing list
                         #[allow(clippy::collapsible_if)]
-                        if let Some(settings_models) = prov_val.get("models").and_then(|v| v.as_array()) {
-                            if let Some(existing_models) = obj.get_mut("models").and_then(|v| v.as_array_mut()) {
+                        if let Some(settings_models) =
+                            prov_val.get("models").and_then(|v| v.as_array())
+                        {
+                            if let Some(existing_models) =
+                                obj.get_mut("models").and_then(|v| v.as_array_mut())
+                            {
                                 for sm in settings_models {
                                     let (model_id, model_obj) = if sm.is_string() {
-                                        (sm.as_str().unwrap_or("").to_string(), serde_json::json!({}))
+                                        (
+                                            sm.as_str().unwrap_or("").to_string(),
+                                            serde_json::json!({}),
+                                        )
                                     } else if sm.is_object() {
-                                        let id = sm.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                        let id = sm
+                                            .get("id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
                                         (id, sm.clone())
                                     } else {
                                         continue;
                                     };
-                                    let img = model_obj.get("image").and_then(|v| v.as_bool()).unwrap_or(false);
-                                    let vid = model_obj.get("video").and_then(|v| v.as_bool()).unwrap_or(false);
+                                    let img = model_obj
+                                        .get("image")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false);
+                                    let vid = model_obj
+                                        .get("video")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false);
                                     let mut input = vec!["text"];
-                                    if img { input.push("image"); }
-                                    if vid { input.push("video"); }
+                                    if img {
+                                        input.push("image");
+                                    }
+                                    if vid {
+                                        input.push("video");
+                                    }
                                     // Check if model already exists in the list
-                                    if let Some(existing) = existing_models.iter_mut().find(|m| m.get("id").and_then(|v| v.as_str()) == Some(&model_id)) {
+                                    if let Some(existing) = existing_models.iter_mut().find(|m| {
+                                        m.get("id").and_then(|v| v.as_str()) == Some(&model_id)
+                                    }) {
                                         // Merge capabilities from settings into existing entry
                                         if let Some(obj) = existing.as_object_mut() {
-                                            if let Some(v) = model_obj.get("image").and_then(|v| v.as_bool()) {
-                                                obj.insert("image".into(), serde_json::Value::Bool(v));
+                                            if let Some(v) =
+                                                model_obj.get("image").and_then(|v| v.as_bool())
+                                            {
+                                                obj.insert(
+                                                    "image".into(),
+                                                    serde_json::Value::Bool(v),
+                                                );
                                             }
-                                            if let Some(v) = model_obj.get("video").and_then(|v| v.as_bool()) {
-                                                obj.insert("video".into(), serde_json::Value::Bool(v));
+                                            if let Some(v) =
+                                                model_obj.get("video").and_then(|v| v.as_bool())
+                                            {
+                                                obj.insert(
+                                                    "video".into(),
+                                                    serde_json::Value::Bool(v),
+                                                );
                                             }
-                                            if let Some(v) = model_obj.get("reasoning").and_then(|v| v.as_bool()) {
-                                                obj.insert("reasoning".into(), serde_json::Value::Bool(v));
+                                            if let Some(v) =
+                                                model_obj.get("reasoning").and_then(|v| v.as_bool())
+                                            {
+                                                obj.insert(
+                                                    "reasoning".into(),
+                                                    serde_json::Value::Bool(v),
+                                                );
                                             }
-                                            if let Some(v) = model_obj.get("name").and_then(|v| v.as_str()) {
-                                                obj.insert("name".into(), serde_json::Value::String(v.to_string()));
+                                            if let Some(v) =
+                                                model_obj.get("name").and_then(|v| v.as_str())
+                                            {
+                                                obj.insert(
+                                                    "name".into(),
+                                                    serde_json::Value::String(v.to_string()),
+                                                );
                                             }
-                                            if let Some(v) = model_obj.get("context").and_then(|v| v.as_u64()) {
+                                            if let Some(v) =
+                                                model_obj.get("context").and_then(|v| v.as_u64())
+                                            {
                                                 obj.insert("context".into(), serde_json::json!(v));
                                             }
-                                            if let Some(v) = model_obj.get("maxOutput").and_then(|v| v.as_u64()) {
-                                                obj.insert("maxOutput".into(), serde_json::json!(v));
+                                            if let Some(v) =
+                                                model_obj.get("maxOutput").and_then(|v| v.as_u64())
+                                            {
+                                                obj.insert(
+                                                    "maxOutput".into(),
+                                                    serde_json::json!(v),
+                                                );
                                             }
                                             obj.insert("input".into(), serde_json::json!(input));
                                         }
@@ -1296,7 +1634,10 @@ pub async fn dispatch_method(
             // ── 3. Check api_key_env for any provider that has it ──
             for (_key, entry) in providers.iter_mut() {
                 if let Some(obj) = entry.as_object_mut() {
-                    let has_existing = obj.get("has_credentials").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let has_existing = obj
+                        .get("has_credentials")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
                     if !has_existing {
                         // Check if env var exists for common provider names
                         let env_var = match _key.as_str() {
@@ -1332,7 +1673,8 @@ pub async fn dispatch_method(
             let effective_url = if base_url.is_empty() {
                 let config_val = engine.get_config(None).await;
                 config_val
-                    .get("settings").and_then(|s| s.get("providers"))
+                    .get("settings")
+                    .and_then(|s| s.get("providers"))
                     .and_then(|p| p.get(name))
                     .and_then(|v| v.get("base_url"))
                     .and_then(|v| v.as_str())
@@ -1361,28 +1703,35 @@ pub async fn dispatch_method(
             }
 
             match req.timeout(std::time::Duration::from_secs(10)).send().await {
-                Ok(resp) => {
-                    match resp.json::<serde_json::Value>().await {
-                        Ok(body) => {
-                            let models = body.get("data")
-                                .and_then(|d| d.as_array())
-                                .map(|arr| {
-                                    arr.iter().filter_map(|m| {
+                Ok(resp) => match resp.json::<serde_json::Value>().await {
+                    Ok(body) => {
+                        let models = body
+                            .get("data")
+                            .and_then(|d| d.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|m| {
                                         let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                                        if id.is_empty() { return None; }
+                                        if id.is_empty() {
+                                            return None;
+                                        }
                                         Some(serde_json::json!({
                                             "id": id,
                                             "name": id,
                                         }))
-                                    }).collect::<Vec<_>>()
-                                })
-                                .unwrap_or_default();
-                            Ok(serde_json::json!({"models": models}))
-                        }
-                        Err(e) => Ok(serde_json::json!({"models": [], "error": format!("Parse error: {}", e)})),
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+                        Ok(serde_json::json!({"models": models}))
                     }
+                    Err(e) => Ok(
+                        serde_json::json!({"models": [], "error": format!("Parse error: {}", e)}),
+                    ),
+                },
+                Err(e) => {
+                    Ok(serde_json::json!({"models": [], "error": format!("Request failed: {}", e)}))
                 }
-                Err(e) => Ok(serde_json::json!({"models": [], "error": format!("Request failed: {}", e)})),
             }
         }
         "providers.test" => {
@@ -1401,7 +1750,8 @@ pub async fn dispatch_method(
             let effective_url = if base_url.is_empty() {
                 let config_val = engine.get_config(None).await;
                 config_val
-                    .get("settings").and_then(|s| s.get("providers"))
+                    .get("settings")
+                    .and_then(|s| s.get("providers"))
                     .and_then(|p| p.get(name))
                     .and_then(|v| v.get("base_url"))
                     .and_then(|v| v.as_str())
@@ -1424,14 +1774,22 @@ pub async fn dispatch_method(
 
             match req.timeout(std::time::Duration::from_secs(10)).send().await {
                 Ok(resp) if resp.status().is_success() => Ok(serde_json::json!({"ok": true})),
-                Ok(resp) => Ok(serde_json::json!({"ok": false, "error": format!("HTTP {}", resp.status())})),
-                Err(e) => Ok(serde_json::json!({"ok": false, "error": format!("Connection failed: {}", e)})),
+                Ok(resp) => {
+                    Ok(serde_json::json!({"ok": false, "error": format!("HTTP {}", resp.status())}))
+                }
+                Err(e) => Ok(
+                    serde_json::json!({"ok": false, "error": format!("Connection failed: {}", e)}),
+                ),
             }
         }
 
         // ── Provider API key (masked) ──────────────────────────────────
         "providers.get_api_key" => {
-            let name = params.as_ref().and_then(|p| p.get("name")).and_then(|v| v.as_str()).unwrap_or("");
+            let name = params
+                .as_ref()
+                .and_then(|p| p.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let masked = openloom_engine::secrets::get_masked(name);
             Ok(serde_json::json!({
                 "api_key": masked,
@@ -1452,14 +1810,26 @@ pub async fn dispatch_method(
 
         // ── Chat replay ──────────────────────────────────────────────
         "chat.replay" => {
-            let _sid = params.as_ref().and_then(|p| p.get("session_id")).and_then(|v| v.as_str()).unwrap_or("");
+            let _sid = params
+                .as_ref()
+                .and_then(|p| p.get("session_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             Ok(serde_json::json!({"ok": true}))
         }
 
         // ── Desk (Phase E) ────────────────────────────────────────────
         "desk.list" => {
-            let dir = params.as_ref().and_then(|p| p.get("dir")).and_then(|v| v.as_str()).unwrap_or("");
-            let subdir = params.as_ref().and_then(|p| p.get("subdir")).and_then(|v| v.as_str()).unwrap_or("");
+            let dir = params
+                .as_ref()
+                .and_then(|p| p.get("dir"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let subdir = params
+                .as_ref()
+                .and_then(|p| p.get("subdir"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             list_desk_files(dir, subdir)
         }
         "desk.create_file" => Ok(serde_json::json!({"ok": true, "files": []})),
@@ -1478,17 +1848,36 @@ pub async fn dispatch_method(
             "total_events": 0, "total_cognitions": 0, "db_size_bytes": 0
         })),
         "memory.recent_events" => {
-            let _limit = params.as_ref().and_then(|p| p.get("limit")).and_then(|v| v.as_u64()).unwrap_or(20);
+            let _limit = params
+                .as_ref()
+                .and_then(|p| p.get("limit"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(20);
             Ok(serde_json::json!({"events": []}))
-        },
+        }
         "memory.graph_snapshot" => Ok(serde_json::json!({"nodes": [], "edges": []})),
 
         // ── Agent CRUD ─────────────────────────────────────────────────
         "agent.create" => {
-            let name = params.as_ref().and_then(|p| p.get("name")).and_then(|v| v.as_str()).unwrap_or("New Agent");
-            let yuan = params.as_ref().and_then(|p| p.get("yuan")).and_then(|v| v.as_str()).unwrap_or("loom");
+            let name = params
+                .as_ref()
+                .and_then(|p| p.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("New Agent");
+            let yuan = params
+                .as_ref()
+                .and_then(|p| p.get("yuan"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("loom");
             // Generate a short ID
-            let id = format!("agent-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or("00000000"));
+            let id = format!(
+                "agent-{}",
+                uuid::Uuid::new_v4()
+                    .to_string()
+                    .split('-')
+                    .next()
+                    .unwrap_or("00000000")
+            );
             // Read existing agents list
             let agents_val = engine.get_config(Some("settings.agents")).await;
             let mut agents: Vec<Value> = agents_val.as_array().cloned().unwrap_or_default();
@@ -1505,8 +1894,18 @@ pub async fn dispatch_method(
             let is_primary = false; // New agents are not primary by default
             let created_at = chrono::Utc::now().to_rfc3339();
             // Persist basic agent info
-            let _ = engine.set_config(&format!("settings.agent.{}.name", id), serde_json::Value::String(name.to_string())).await;
-            let _ = engine.set_config(&format!("settings.agent.{}.yuan", id), serde_json::Value::String(yuan.to_string())).await;
+            let _ = engine
+                .set_config(
+                    &format!("settings.agent.{}.name", id),
+                    serde_json::Value::String(name.to_string()),
+                )
+                .await;
+            let _ = engine
+                .set_config(
+                    &format!("settings.agent.{}.yuan", id),
+                    serde_json::Value::String(yuan.to_string()),
+                )
+                .await;
             // Add to agent list
             agents.push(serde_json::json!({
                 "id": id,
@@ -1515,11 +1914,17 @@ pub async fn dispatch_method(
                 "isPrimary": is_primary,
                 "createdAt": created_at,
             }));
-            let _ = engine.set_config("settings.agents", serde_json::Value::Array(agents)).await;
+            let _ = engine
+                .set_config("settings.agents", serde_json::Value::Array(agents))
+                .await;
             Ok(serde_json::json!({"id": id, "name": name, "yuan": yuan, "isPrimary": is_primary}))
-        },
+        }
         "agent.setPrimary" => {
-            let agent_id = params.as_ref().and_then(|p| p.get("id")).and_then(|v| v.as_str()).unwrap_or("default");
+            let agent_id = params
+                .as_ref()
+                .and_then(|p| p.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
             let agents_val = engine.get_config(Some("settings.agents")).await;
             let mut agents: Vec<Value> = agents_val.as_array().cloned().unwrap_or_default();
             for agent in &mut agents {
@@ -1528,18 +1933,31 @@ pub async fn dispatch_method(
                     obj.insert("isPrimary".to_string(), serde_json::Value::Bool(is_target));
                 }
             }
-            let _ = engine.set_config("settings.agents", serde_json::Value::Array(agents)).await;
+            let _ = engine
+                .set_config("settings.agents", serde_json::Value::Array(agents))
+                .await;
             Ok(serde_json::json!({"ok": true}))
-        },
+        }
         "agent.delete" => {
-            let agent_id = params.as_ref().and_then(|p| p.get("id")).and_then(|v| v.as_str()).unwrap_or("");
+            let agent_id = params
+                .as_ref()
+                .and_then(|p| p.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if agent_id.is_empty() || agent_id == "default" {
-                return Ok(serde_json::json!({"ok": false, "error": "Cannot delete the default agent"}));
+                return Ok(
+                    serde_json::json!({"ok": false, "error": "Cannot delete the default agent"}),
+                );
             }
             // Remove from agents list
             let agents_val = engine.get_config(Some("settings.agents")).await;
             let mut agents: Vec<Value> = agents_val.as_array().cloned().unwrap_or_default();
-            let deleted_was_primary = agents.iter().any(|a| a.get("id").and_then(|v| v.as_str()) == Some(agent_id) && a.get("isPrimary").and_then(|v| v.as_bool()).unwrap_or(false));
+            let deleted_was_primary = agents.iter().any(|a| {
+                a.get("id").and_then(|v| v.as_str()) == Some(agent_id)
+                    && a.get("isPrimary")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+            });
             agents.retain(|a| a.get("id").and_then(|v| v.as_str()) != Some(agent_id));
             // If deleted agent was primary, make the first remaining agent primary
             if deleted_was_primary && !agents.is_empty() {
@@ -1551,31 +1969,42 @@ pub async fn dispatch_method(
                     };
                 }
             }
-            let _ = engine.set_config("settings.agents", serde_json::Value::Array(agents)).await;
+            let _ = engine
+                .set_config("settings.agents", serde_json::Value::Array(agents))
+                .await;
             // Clean up agent config keys
-            let _ = engine.set_config(&format!("settings.agent.{}", agent_id), serde_json::Value::Null).await;
+            let _ = engine
+                .set_config(
+                    &format!("settings.agent.{}", agent_id),
+                    serde_json::Value::Null,
+                )
+                .await;
             Ok(serde_json::json!({"ok": true}))
-        },
+        }
         "agent.configure" => {
-            let agent_id = params.as_ref().and_then(|p| p.get("id")).and_then(|v| v.as_str()).unwrap_or("default");
+            let agent_id = params
+                .as_ref()
+                .and_then(|p| p.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
             // Write the provided fields into settings.agent.{id}
             if let Some(obj) = params.as_ref().and_then(|p| p.as_object()) {
                 for (key, value) in obj {
-                    if key == "id" { continue; }
+                    if key == "id" {
+                        continue;
+                    }
                     let config_key = format!("settings.agent.{}.{}", agent_id, key);
                     let _ = engine.set_config(&config_key, value.clone()).await;
                 }
             }
             Ok(serde_json::json!({"ok": true}))
-        },
+        }
         "agent.activity_log" => Ok(serde_json::json!({"entries": []})),
         "agent.tool_policy.get" => Ok(serde_json::json!({"policies": {}})),
         "agent.tool_policy.set" => Ok(serde_json::json!({"ok": true})),
 
         // ── Plugin management ───────────────────────────────────────────
-        "plugins.list" => {
-            Ok(engine.list_plugins())
-        }
+        "plugins.list" => Ok(engine.list_plugins()),
         "plugins.get_config" => {
             let id = params
                 .as_ref()
@@ -1595,26 +2024,28 @@ pub async fn dispatch_method(
                     data: None,
                 });
             }
-            engine.set_plugin_config(id, config).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            engine
+                .set_plugin_config(id, config)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": true}))
         }
-        "plugins.diagnostics" => {
-            Ok(engine.get_plugin_diagnostics())
-        }
-        "plugins.settings.get" => {
-            Ok(engine.get_plugin_settings().await)
-        }
+        "plugins.diagnostics" => Ok(engine.get_plugin_diagnostics()),
+        "plugins.settings.get" => Ok(engine.get_plugin_settings().await),
         "plugins.settings.set" => {
             let settings = params.unwrap_or_default();
-            engine.set_plugin_settings(settings).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            engine
+                .set_plugin_settings(settings)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": true}))
         }
         "plugins.install" => {
@@ -1667,16 +2098,17 @@ pub async fn dispatch_method(
                     data: None,
                 });
             }
-            engine.set_plugin_enabled(id, enabled).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            engine
+                .set_plugin_enabled(id, enabled)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": true}))
         }
-        "plugins.marketplace.list" => {
-            Ok(engine.list_marketplace_plugins().await)
-        }
+        "plugins.marketplace.list" => Ok(engine.list_marketplace_plugins().await),
         "plugins.marketplace.readme" => {
             let id = params
                 .as_ref()
@@ -1698,22 +2130,29 @@ pub async fn dispatch_method(
                     data: None,
                 });
             }
-            engine.install_marketplace_plugin(id).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })
+            engine
+                .install_marketplace_plugin(id)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })
         }
         "plugins.marketplace.sources.get" => {
-            let sources: Vec<serde_json::Value> = engine.get_marketplace_sources().await
+            let sources: Vec<serde_json::Value> = engine
+                .get_marketplace_sources()
+                .await
                 .iter()
-                .map(|s| serde_json::json!({
-                    "kind": s.kind,
-                    "name": s.name,
-                    "url": s.url,
-                    "path": s.path,
-                    "configured": s.configured,
-                }))
+                .map(|s| {
+                    serde_json::json!({
+                        "kind": s.kind,
+                        "name": s.name,
+                        "url": s.url,
+                        "path": s.path,
+                        "configured": s.configured,
+                    })
+                })
                 .collect();
             Ok(serde_json::json!({ "sources": sources }))
         }
@@ -1721,19 +2160,26 @@ pub async fn dispatch_method(
             let sources: Vec<serde_json::Value> = params
                 .as_ref()
                 .and_then(|p| p.get("sources"))
-                .and_then(|v| v.as_array()).cloned()
+                .and_then(|v| v.as_array())
+                .cloned()
                 .unwrap_or_default();
-            engine.set_marketplace_sources(sources).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            engine
+                .set_marketplace_sources(sources)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": true}))
         }
         "plugins.marketplace.add_source" => {
             let p = params.unwrap_or_default();
             let url = p.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("Marketplace");
+            let name = p
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Marketplace");
             if url.is_empty() {
                 return Err(JsonRpcError {
                     code: ErrorCode::InvalidRequest,
@@ -1741,11 +2187,14 @@ pub async fn dispatch_method(
                     data: None,
                 });
             }
-            engine.add_marketplace_source(url, name).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })
+            engine
+                .add_marketplace_source(url, name)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })
         }
         "plugins.marketplace.remove_source" => {
             let name = params
@@ -1760,19 +2209,25 @@ pub async fn dispatch_method(
                     data: None,
                 });
             }
-            engine.remove_marketplace_source(name).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            engine
+                .remove_marketplace_source(name)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": true}))
         }
         "plugins.marketplace.refresh" => {
-            engine.refresh_marketplace().await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            engine
+                .refresh_marketplace()
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": true}))
         }
 
@@ -1780,9 +2235,15 @@ pub async fn dispatch_method(
         "skill.enable" => Ok(serde_json::json!({"ok": true})),
         "skill.disable" => Ok(serde_json::json!({"ok": true})),
         "skill.info" => {
-            let _name = params.as_ref().and_then(|p| p.get("name")).and_then(|v| v.as_str()).unwrap_or("");
-            Ok(serde_json::json!({"name": _name, "description": "", "triggers": [], "enabled": true}))
-        },
+            let _name = params
+                .as_ref()
+                .and_then(|p| p.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Ok(
+                serde_json::json!({"name": _name, "description": "", "triggers": [], "enabled": true}),
+            )
+        }
 
         // ── User skill management (filesystem-based) ───────────────────
         "skills.list" => {
@@ -1834,7 +2295,10 @@ pub async fn dispatch_method(
         }
         "skills.toggle" => {
             let p = params.unwrap_or_default();
-            let agent_id = p.get("agent_id").and_then(|v| v.as_str()).unwrap_or("default");
+            let agent_id = p
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
             let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let enabled = p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
             if name.is_empty() {
@@ -1844,11 +2308,14 @@ pub async fn dispatch_method(
                     data: None,
                 });
             }
-            engine.toggle_user_skill(agent_id, name, enabled).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            engine
+                .toggle_user_skill(agent_id, name, enabled)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": true}))
         }
         "skills.translate" => {
@@ -1858,9 +2325,7 @@ pub async fn dispatch_method(
             // Translation is a no-op for now (only zh-CN supported)
             Ok(serde_json::json!({}))
         }
-        "skills.external_paths.get" => {
-            Ok(engine.get_external_paths_info().await)
-        }
+        "skills.external_paths.get" => Ok(engine.get_external_paths_info().await),
         "skills.external_paths.set" => {
             let paths: Vec<String> = params
                 .as_ref()
@@ -1872,11 +2337,14 @@ pub async fn dispatch_method(
                         .collect()
                 })
                 .unwrap_or_default();
-            engine.set_external_skill_paths(paths).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            engine
+                .set_external_skill_paths(paths)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": true}))
         }
 
@@ -1891,17 +2359,26 @@ pub async fn dispatch_method(
         }
         "skills.bundles.create" => {
             let p = params.unwrap_or_default();
-            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("New Bundle");
+            let name = p
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("New Bundle");
             let skill_names: Vec<String> = p
                 .get("skillNames")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
-            engine.create_skill_bundle(name, skill_names).map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })
+            engine
+                .create_skill_bundle(name, skill_names)
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })
         }
         "skills.bundles.update" => {
             let p = params.unwrap_or_default();
@@ -1914,15 +2391,19 @@ pub async fn dispatch_method(
                 });
             }
             let name = p.get("name").and_then(|v| v.as_str());
-            let skill_names: Option<Vec<String>> = p
-                .get("skillNames")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
-            engine.update_skill_bundle(id, name, skill_names).map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })
+            let skill_names: Option<Vec<String>> =
+                p.get("skillNames").and_then(|v| v.as_array()).map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                });
+            engine
+                .update_skill_bundle(id, name, skill_names)
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })
         }
         "skills.bundles.delete" => {
             let id = params
@@ -1949,18 +2430,27 @@ pub async fn dispatch_method(
                 .as_ref()
                 .and_then(|p| p.get("bundleIds"))
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
-            engine.reorder_skill_bundles(&bundle_ids).map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })
+            engine
+                .reorder_skill_bundles(&bundle_ids)
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })
         }
         "skills.bundles.toggle" => {
             let p = params.unwrap_or_default();
             let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
-            let agent_id = p.get("agent_id").and_then(|v| v.as_str()).unwrap_or("default");
+            let agent_id = p
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
             let enabled = p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
             if id.is_empty() {
                 return Err(JsonRpcError {
@@ -1969,11 +2459,13 @@ pub async fn dispatch_method(
                     data: None,
                 });
             }
-            engine.toggle_skill_bundle(id, agent_id, enabled).map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            engine
+                .toggle_skill_bundle(id, agent_id, enabled)
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": true}))
         }
         "skills.bundles.export" => {
@@ -2006,33 +2498,33 @@ pub async fn dispatch_method(
         "session.thinking_level.set" => Ok(serde_json::json!({"ok": true})),
 
         // ── Computer Use ──────────────────────────────────────────────
-        "computer_use.status" => {
-            Ok(engine.get_computer_use_status().await)
-        }
-        "computer_use.list_apps" => {
-            engine.list_computer_use_apps().map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })
-        }
+        "computer_use.status" => Ok(engine.get_computer_use_status().await),
+        "computer_use.list_apps" => engine.list_computer_use_apps().map_err(|e| JsonRpcError {
+            code: ErrorCode::InternalError,
+            message: e.to_string(),
+            data: None,
+        }),
         "computer_use.get_state" => {
             let target = params.unwrap_or_default();
-            engine.get_computer_use_app_state(target).map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })
+            engine
+                .get_computer_use_app_state(target)
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })
         }
         "computer_use.perform_action" => {
             let p = params.unwrap_or_default();
             let target = p.get("target").cloned().unwrap_or(serde_json::json!({}));
             let action = p.get("action").cloned().unwrap_or(serde_json::json!({}));
-            engine.perform_computer_use_action(target, action).map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })
+            engine
+                .perform_computer_use_action(target, action)
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })
         }
 
         // ── Bridge ─────────────────────────────────────────────────────
@@ -2047,7 +2539,10 @@ pub async fn dispatch_method(
         "bridge.test" => {
             let p = params.unwrap_or_default();
             let platform = p.get("platform").and_then(|v| v.as_str()).unwrap_or("");
-            let credentials = p.get("credentials").cloned().unwrap_or(serde_json::json!({}));
+            let credentials = p
+                .get("credentials")
+                .cloned()
+                .unwrap_or(serde_json::json!({}));
             if platform.is_empty() {
                 return Err(JsonRpcError {
                     code: ErrorCode::InvalidRequest,
@@ -2055,11 +2550,14 @@ pub async fn dispatch_method(
                     data: None,
                 });
             }
-            engine.test_bridge_platform(platform, credentials).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })
+            engine
+                .test_bridge_platform(platform, credentials)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })
         }
 
         "bridge.sessions" => {
@@ -2122,11 +2620,13 @@ pub async fn dispatch_method(
                 data: None,
             })?;
             let store = openloom_engine::bridge::BridgeStore::new(&conn);
-            let messages = store.list_messages(session_id, limit, offset).map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            let messages = store
+                .list_messages(session_id, limit, offset)
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
 
             let mapped: Vec<serde_json::Value> = messages
                 .iter()
@@ -2193,11 +2693,13 @@ pub async fn dispatch_method(
                 });
             }
 
-            let platform = openloom_engine::bridge::Platform::from_str(platform_str)
-                .ok_or_else(|| JsonRpcError {
-                    code: ErrorCode::InvalidRequest,
-                    message: format!("unknown platform: {platform_str}"),
-                    data: None,
+            let platform =
+                openloom_engine::bridge::Platform::from_str(platform_str).ok_or_else(|| {
+                    JsonRpcError {
+                        code: ErrorCode::InvalidRequest,
+                        message: format!("unknown platform: {platform_str}"),
+                        data: None,
+                    }
                 })?;
 
             // TODO: route through BridgeManager once it's initialized on the Engine
@@ -2245,18 +2747,24 @@ pub async fn dispatch_method(
                 .and_then(|p| p.get("session_id"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("default");
-            let count = engine.compact_session(session_id).await.map_err(|e| JsonRpcError {
-                code: ErrorCode::InternalError,
-                message: e.to_string(),
-                data: None,
-            })?;
+            let count = engine
+                .compact_session(session_id)
+                .await
+                .map_err(|e| JsonRpcError {
+                    code: ErrorCode::InternalError,
+                    message: e.to_string(),
+                    data: None,
+                })?;
             Ok(serde_json::json!({"ok": true, "messages_replaced": count}))
         }
 
         // ── Chat abort ───────────────────────────────────────────────
         "chat.abort" => {
             let p = params.unwrap_or_default();
-            let session_id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("default");
+            let session_id = p
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
             let aborted = engine.abort_session(session_id);
             // Fire agent state changed so frontend clears isStreaming
             let _ = engine.event_bus().send(EngineEvent::AgentStateChanged {
@@ -2306,11 +2814,25 @@ pub async fn dispatch_method(
             Ok(serde_json::json!({"ok": true, "role": role}))
         }
         "avatar.get" => {
-            let role = params.as_ref().and_then(|p| p.get("role")).and_then(|v| v.as_str()).unwrap_or("user");
-            if !role.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-                return Err(JsonRpcError { code: ErrorCode::InvalidRequest, message: "invalid role".into(), data: None });
+            let role = params
+                .as_ref()
+                .and_then(|p| p.get("role"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("user");
+            if !role
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                return Err(JsonRpcError {
+                    code: ErrorCode::InvalidRequest,
+                    message: "invalid role".into(),
+                    data: None,
+                });
             }
-            let path = engine.data_dir().join("avatars").join(format!("{}.png", role));
+            let path = engine
+                .data_dir()
+                .join("avatars")
+                .join(format!("{}.png", role));
             match std::fs::read(&path) {
                 Ok(bytes) => {
                     use base64::Engine as _;
@@ -2326,7 +2848,10 @@ pub async fn dispatch_method(
             let p = params.unwrap_or_default();
             let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("upload");
             let base64_data = p.get("base64Data").and_then(|v| v.as_str()).unwrap_or("");
-            let mime_type = p.get("mimeType").and_then(|v| v.as_str()).unwrap_or("application/octet-stream");
+            let mime_type = p
+                .get("mimeType")
+                .and_then(|v| v.as_str())
+                .unwrap_or("application/octet-stream");
             let _session_path = p.get("sessionPath").and_then(|v| v.as_str()).unwrap_or("");
 
             if base64_data.is_empty() {
@@ -2366,7 +2891,13 @@ pub async fn dispatch_method(
             // Sanitize file name: keep extension, replace unsafe chars
             let safe_name = name
                 .chars()
-                .map(|c| if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+                .map(|c| {
+                    if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
                 .collect::<String>();
             let dest_name = format!("{}_{}", &file_id[..8], safe_name);
             let dest_path = uploads_dir.join(&dest_name);
@@ -2395,16 +2926,19 @@ pub async fn dispatch_method(
         "checkpoint.list" => {
             let store = engine.checkpoint_store.lock().unwrap();
             let list = store.list();
-            let checkpoints: Vec<Value> = list.iter().map(|c| {
-                serde_json::json!({
-                    "id": c.id,
-                    "ts": c.ts,
-                    "tool": c.tool,
-                    "path": c.path,
-                    "size": c.size,
-                    "sessionPath": c.session_path,
+            let checkpoints: Vec<Value> = list
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "id": c.id,
+                        "ts": c.ts,
+                        "tool": c.tool,
+                        "path": c.path,
+                        "size": c.size,
+                        "sessionPath": c.session_path,
+                    })
                 })
-            }).collect();
+                .collect();
             Ok(serde_json::json!({"checkpoints": checkpoints}))
         }
         "checkpoint.restore" => {
@@ -2434,7 +2968,10 @@ pub async fn dispatch_method(
         }
         "checkpoint.cleanup" => {
             let p = params.unwrap_or_default();
-            let days = p.get("retention_days").and_then(|v| v.as_u64()).unwrap_or(7) as u32;
+            let days = p
+                .get("retention_days")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(7) as u32;
             let store = engine.checkpoint_store.lock().unwrap();
             let deleted = store.cleanup(days);
             Ok(serde_json::json!({"deleted": deleted}))

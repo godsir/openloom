@@ -155,10 +155,10 @@ fn scope_for_event(event_name: HookEventName) -> HookScope {
 
 #[cfg(test)]
 mod tests {
-    use loom_protocol::protocol::HookEventName;
-    use loom_protocol::protocol::HookSource;
     use loom_absolute_path::test_support::PathBufExt;
     use loom_absolute_path::test_support::test_path_buf;
+    use loom_protocol::protocol::HookEventName;
+    use loom_protocol::protocol::HookSource;
 
     use super::ConfiguredHandler;
     use super::select_handlers;

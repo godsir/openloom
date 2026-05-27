@@ -584,9 +584,7 @@ async fn status_line_uses_secondary_fallback_for_unsupported_window() {
         rate_limit_reached_type: None,
     }));
 
-    assert_eq!(
-        Some("secondary usage 50%".to_string())
-    );
+    assert_eq!(Some("secondary usage 50%".to_string()));
 }
 
 #[tokio::test]
@@ -611,12 +609,8 @@ async fn status_line_legacy_limit_items_prefer_matching_windows() {
         rate_limit_reached_type: None,
     }));
 
-    assert_eq!(
-        Some("5h 60%".to_string())
-    );
-    assert_eq!(
-        Some("weekly 6%".to_string())
-    );
+    assert_eq!(Some("5h 60%".to_string()));
+    assert_eq!(Some("weekly 6%".to_string()));
 }
 
 #[tokio::test]
@@ -641,12 +635,8 @@ async fn status_line_shows_secondary_non_weekly_when_primary_is_weekly() {
         rate_limit_reached_type: None,
     }));
 
-    assert_eq!(
-        Some("monthly 65%".to_string())
-    );
-    assert_eq!(
-        Some("weekly 6%".to_string())
-    );
+    assert_eq!(Some("monthly 65%".to_string()));
+    assert_eq!(Some("weekly 6%".to_string()));
 }
 
 #[tokio::test]
@@ -667,12 +657,8 @@ async fn status_line_five_hour_item_omits_weekly_only_limit() {
         rate_limit_reached_type: None,
     }));
 
-    assert_eq!(
-        None
-    );
-    assert_eq!(
-        Some("weekly 91%".to_string())
-    );
+    assert_eq!(None);
+    assert_eq!(Some("weekly 91%".to_string()));
 }
 
 #[tokio::test]
@@ -693,12 +679,8 @@ async fn status_line_single_monthly_primary_omits_weekly_limit_item() {
         rate_limit_reached_type: None,
     }));
 
-    assert_eq!(
-        Some("monthly 65%".to_string())
-    );
-    assert_eq!(
-        None
-    );
+    assert_eq!(Some("monthly 65%".to_string()));
+    assert_eq!(None);
 }
 
 #[tokio::test]
@@ -719,12 +701,8 @@ async fn status_line_secondary_only_non_weekly_limit_omits_primary_limit_item() 
         rate_limit_reached_type: None,
     }));
 
-    assert_eq!(
-        None
-    );
-    assert_eq!(
-        Some("monthly 65%".to_string())
-    );
+    assert_eq!(None);
+    assert_eq!(Some("monthly 65%".to_string()));
 }
 
 #[tokio::test]

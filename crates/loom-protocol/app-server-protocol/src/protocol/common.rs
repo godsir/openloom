@@ -1547,6 +1547,9 @@ client_notification_definitions! {
 mod tests {
     use super::*;
     use anyhow::Result;
+    use loom_absolute_path::AbsolutePathBuf;
+    use loom_absolute_path::test_support::PathBufExt;
+    use loom_absolute_path::test_support::test_path_buf;
     use loom_protocol::ThreadId;
     use loom_protocol::account::PlanType;
     use loom_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
@@ -1554,9 +1557,6 @@ mod tests {
     use loom_protocol::protocol::RealtimeConversationVersion;
     use loom_protocol::protocol::RealtimeOutputModality;
     use loom_protocol::protocol::RealtimeVoice;
-    use loom_absolute_path::AbsolutePathBuf;
-    use loom_absolute_path::test_support::PathBufExt;
-    use loom_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use std::path::PathBuf;

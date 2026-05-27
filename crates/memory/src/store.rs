@@ -412,25 +412,32 @@ impl<'a> CognitionStore<'a> {
         };
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt
-            .query_map(rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())), |row| {
-                Ok(CognitionRow {
-                    id: row.get(0)?,
-                    subject: row.get(1)?,
-                    trait_name: row.get(2)?,
-                    value: row.get(3)?,
-                    confidence: row.get(4)?,
-                    evidence_count: row.get(5)?,
-                    first_seen: row.get(6)?,
-                    last_updated: row.get(7)?,
-                    version: row.get(8)?,
-                    scope: row.get(9)?,
-                })
-            })?
+            .query_map(
+                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+                |row| {
+                    Ok(CognitionRow {
+                        id: row.get(0)?,
+                        subject: row.get(1)?,
+                        trait_name: row.get(2)?,
+                        value: row.get(3)?,
+                        confidence: row.get(4)?,
+                        evidence_count: row.get(5)?,
+                        first_seen: row.get(6)?,
+                        last_updated: row.get(7)?,
+                        version: row.get(8)?,
+                        scope: row.get(9)?,
+                    })
+                },
+            )?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
-    pub fn count_by_subject_and_scope(&self, subject: &str, scope: Option<&str>) -> anyhow::Result<usize> {
+    pub fn count_by_subject_and_scope(
+        &self,
+        subject: &str,
+        scope: Option<&str>,
+    ) -> anyhow::Result<usize> {
         let count: i64 = if let Some(s) = scope {
             self.conn.query_row(
                 "SELECT COUNT(*) FROM cognitions WHERE subject = ?1 AND scope = ?2",
@@ -448,7 +455,10 @@ impl<'a> CognitionStore<'a> {
     }
 
     pub fn delete(&self, id: i64) -> anyhow::Result<()> {
-        self.conn.execute("DELETE FROM cognitions WHERE id = ?1", rusqlite::params![id])?;
+        self.conn.execute(
+            "DELETE FROM cognitions WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
         Ok(())
     }
 
@@ -596,10 +606,8 @@ impl<'a> SessionStore<'a> {
     }
 
     pub fn delete(&self, id: &str) -> anyhow::Result<()> {
-        self.conn.execute(
-            "DELETE FROM sessions WHERE id = ?1",
-            rusqlite::params![id],
-        )?;
+        self.conn
+            .execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])?;
         Ok(())
     }
 }
@@ -781,7 +789,14 @@ impl<'a> MessageStore<'a> {
         self.conn.execute(
             "INSERT INTO message_history (session_id, seq, role, content, timestamp, metadata)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![session_id, seq, role, content, Utc::now().to_rfc3339(), metadata],
+            rusqlite::params![
+                session_id,
+                seq,
+                role,
+                content,
+                Utc::now().to_rfc3339(),
+                metadata
+            ],
         )?;
         Ok(self.conn.last_insert_rowid())
     }

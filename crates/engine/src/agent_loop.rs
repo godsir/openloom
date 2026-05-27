@@ -104,8 +104,8 @@ impl Engine {
         let (max_iterations, timeout_secs) = {
             let cfg = self.config.read().await;
             (
-                cfg.agent.max_iterations.max(10),   // at least 10 tool-call rounds
-                cfg.agent.timeout_secs.max(120),    // at least 2 minutes
+                cfg.agent.max_iterations.max(10), // at least 10 tool-call rounds
+                cfg.agent.timeout_secs.max(120),  // at least 2 minutes
             )
         };
 
@@ -213,10 +213,18 @@ impl Engine {
                 // tool calls properly, so we no longer need non-streaming fallback.
                 let response = match &sink {
                     OutputSink::Tui(stream_tx) => {
-                        self.invoke_model_streaming(completion_req, stream_tx.clone(), model_override.clone(), model_pref)
-                            .await?
+                        self.invoke_model_streaming(
+                            completion_req,
+                            stream_tx.clone(),
+                            model_override.clone(),
+                            model_pref,
+                        )
+                        .await?
                     }
-                    OutputSink::Electron { event_bus, session_id: sid } => {
+                    OutputSink::Electron {
+                        event_bus,
+                        session_id: sid,
+                    } => {
                         let (stream_tx, mut stream_rx) = mpsc::channel::<String>(256);
                         let event_bus_clone = event_bus.clone();
                         let sid_clone = sid.clone();
@@ -230,19 +238,26 @@ impl Engine {
                             }
                         });
 
-                        let result = self.invoke_model_streaming(
-                            completion_req,
-                            stream_tx,
-                            model_override.clone(),
-                            model_pref,
-                        ).await;
+                        let result = self
+                            .invoke_model_streaming(
+                                completion_req,
+                                stream_tx,
+                                model_override.clone(),
+                                model_pref,
+                            )
+                            .await;
 
                         let _ = forwarder.await;
 
                         result?
                     }
                     OutputSink::None => {
-                        self.invoke_model_native(&completion_req, model_override.clone(), model_pref).await?
+                        self.invoke_model_native(
+                            &completion_req,
+                            model_override.clone(),
+                            model_pref,
+                        )
+                        .await?
                     }
                 };
                 total_prompt_tokens += response.prompt_tokens;
@@ -251,7 +266,10 @@ impl Engine {
                 // Emit thinking/reasoning content before any tool calls or text
                 if let Some(ref thinking) = response.thinking
                     && !thinking.is_empty()
-                    && let OutputSink::Electron { event_bus, session_id: sid } = &sink
+                    && let OutputSink::Electron {
+                        event_bus,
+                        session_id: sid,
+                    } = &sink
                 {
                     // Chunk thinking into ~100 char pieces for smooth UI animation
                     let chunks: Vec<&str> = thinking
@@ -412,8 +430,8 @@ impl Engine {
                 // Force text-only response: omit tools, set tool_choice=none
                 let completion_req = CompletionRequest {
                     messages,
-                    tools: vec![],                              // ← no tools
-                    tool_choice: Some(ToolChoice::None),        // ← force text
+                    tools: vec![],                       // ← no tools
+                    tool_choice: Some(ToolChoice::None), // ← force text
                     prompt: String::new(),
                     max_tokens: self.max_output_tokens,
                     temperature: 0.0,
@@ -422,9 +440,18 @@ impl Engine {
                 // Use streaming for the forced text response
                 let post_loop_result = match &sink {
                     OutputSink::Tui(stream_tx) => {
-                        self.invoke_model_streaming(completion_req, stream_tx.clone(), model_override.clone(), model_pref).await
+                        self.invoke_model_streaming(
+                            completion_req,
+                            stream_tx.clone(),
+                            model_override.clone(),
+                            model_pref,
+                        )
+                        .await
                     }
-                    OutputSink::Electron { event_bus, session_id: sid } => {
+                    OutputSink::Electron {
+                        event_bus,
+                        session_id: sid,
+                    } => {
                         let (stream_tx, mut stream_rx) = mpsc::channel::<String>(256);
                         let event_bus_clone = event_bus.clone();
                         let sid_clone = sid.clone();
@@ -436,17 +463,24 @@ impl Engine {
                                 });
                             }
                         });
-                        let result = self.invoke_model_streaming(
-                            completion_req,
-                            stream_tx,
-                            model_override.clone(),
-                            model_pref,
-                        ).await;
+                        let result = self
+                            .invoke_model_streaming(
+                                completion_req,
+                                stream_tx,
+                                model_override.clone(),
+                                model_pref,
+                            )
+                            .await;
                         let _ = forwarder.await;
                         result
                     }
                     OutputSink::None => {
-                        self.invoke_model_native(&completion_req, model_override.clone(), model_pref).await
+                        self.invoke_model_native(
+                            &completion_req,
+                            model_override.clone(),
+                            model_pref,
+                        )
+                        .await
                     }
                 };
                 match post_loop_result {
@@ -477,7 +511,10 @@ impl Engine {
                                 OutputSink::Tui(stream_tx) => {
                                     let _ = stream_tx.send(summary).await;
                                 }
-                                OutputSink::Electron { event_bus, session_id } => {
+                                OutputSink::Electron {
+                                    event_bus,
+                                    session_id,
+                                } => {
                                     let _ = event_bus.send(EngineEvent::StreamDelta {
                                         session_id: session_id.clone(),
                                         delta: summary,
@@ -654,9 +691,8 @@ impl Engine {
         if has_tools {
             let (first, second) = match model_pref {
                 openloom_models::ModelPreference::Local => (&self.local_client, &self.cloud),
-                openloom_models::ModelPreference::Cloud | openloom_models::ModelPreference::Auto => {
-                    (&self.cloud, &self.local_client)
-                }
+                openloom_models::ModelPreference::Cloud
+                | openloom_models::ModelPreference::Auto => (&self.cloud, &self.local_client),
             };
 
             let (delta_tx, mut delta_rx) = mpsc::channel::<StreamDelta>(256);
@@ -691,7 +727,11 @@ impl Engine {
                                 entry.2.push_str(&chunk);
                             }
                         }
-                        StreamDelta::Usage { prompt_tokens, completion_tokens, cached_tokens } => {
+                        StreamDelta::Usage {
+                            prompt_tokens,
+                            completion_tokens,
+                            cached_tokens,
+                        } => {
                             usage = Some((
                                 prompt_tokens as usize,
                                 completion_tokens as usize,
@@ -705,13 +745,21 @@ impl Engine {
                     .into_iter()
                     .filter(|(_, name, _)| !name.is_empty())
                     .map(|(id, name, args)| {
-                        let arguments = serde_json::from_str(&args)
-                            .unwrap_or(serde_json::Value::String(args));
-                        openloom_models::ToolCall { id, name, arguments }
+                        let arguments =
+                            serde_json::from_str(&args).unwrap_or(serde_json::Value::String(args));
+                        openloom_models::ToolCall {
+                            id,
+                            name,
+                            arguments,
+                        }
                     })
                     .collect();
 
-                let thinking = if thinking_text.is_empty() { None } else { Some(thinking_text) };
+                let thinking = if thinking_text.is_empty() {
+                    None
+                } else {
+                    Some(thinking_text)
+                };
                 (full_text, tool_calls, usage, thinking)
             });
 
@@ -725,13 +773,23 @@ impl Engine {
                     )
                     .await;
                 }
-                if preferred.complete_stream_structured(req.clone(), delta_tx.clone()).await.is_ok() {
+                if preferred
+                    .complete_stream_structured(req.clone(), delta_tx.clone())
+                    .await
+                    .is_ok()
+                {
                     stream_ok = true;
                 } else if let Some(fallback) = second {
-                    stream_ok = fallback.complete_stream_structured(req.clone(), delta_tx.clone()).await.is_ok();
+                    stream_ok = fallback
+                        .complete_stream_structured(req.clone(), delta_tx.clone())
+                        .await
+                        .is_ok();
                 }
             } else if let Some(fallback) = second {
-                stream_ok = fallback.complete_stream_structured(req.clone(), delta_tx.clone()).await.is_ok();
+                stream_ok = fallback
+                    .complete_stream_structured(req.clone(), delta_tx.clone())
+                    .await
+                    .is_ok();
             }
 
             drop(delta_tx);
@@ -804,13 +862,23 @@ impl Engine {
                 )
                 .await;
             }
-            if preferred.complete_stream(req.clone(), collect_tx.clone()).await.is_ok() {
+            if preferred
+                .complete_stream(req.clone(), collect_tx.clone())
+                .await
+                .is_ok()
+            {
                 stream_ok = true;
             } else if let Some(fallback) = second {
-                stream_ok = fallback.complete_stream(req.clone(), collect_tx.clone()).await.is_ok();
+                stream_ok = fallback
+                    .complete_stream(req.clone(), collect_tx.clone())
+                    .await
+                    .is_ok();
             }
         } else if let Some(fallback) = second {
-            stream_ok = fallback.complete_stream(req.clone(), collect_tx.clone()).await.is_ok();
+            stream_ok = fallback
+                .complete_stream(req.clone(), collect_tx.clone())
+                .await
+                .is_ok();
         }
 
         drop(collect_tx);
@@ -820,8 +888,7 @@ impl Engine {
             anyhow::bail!("all model backends failed for streaming request");
         }
 
-        let (prompt_tokens, completion_tokens, cached_tokens) =
-            stream_usage.unwrap_or((0, 0, 0));
+        let (prompt_tokens, completion_tokens, cached_tokens) = stream_usage.unwrap_or((0, 0, 0));
 
         Ok(CompletionResponse {
             text: full_text,

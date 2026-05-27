@@ -7,6 +7,10 @@
 
 #![allow(clippy::unwrap_used)]
 
+use crossterm::event::KeyCode;
+use crossterm::event::KeyEvent;
+use crossterm::event::KeyEventKind;
+use crossterm::event::KeyModifiers;
 use loom_app_server_client::AppServerRequestHandle;
 use loom_app_server_protocol::AccountLoginCompletedNotification;
 use loom_app_server_protocol::AccountUpdatedNotification;
@@ -16,10 +20,6 @@ use loom_app_server_protocol::ClientRequest;
 use loom_app_server_protocol::LoginAccountParams;
 use loom_app_server_protocol::LoginAccountResponse;
 use loom_tui_stubs::login::read_openai_api_key_from_env;
-use crossterm::event::KeyCode;
-use crossterm::event::KeyEvent;
-use crossterm::event::KeyEventKind;
-use crossterm::event::KeyModifiers;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
 use ratatui::layout::Layout;
@@ -1036,8 +1036,8 @@ mod tests {
     use loom_app_server_client::InProcessAppServerClient;
     use loom_app_server_client::InProcessClientStartArgs;
     use loom_arg0::Arg0DispatchPaths;
-    use loom_tui_stubs::cloud_requirements::cloud_requirements_loader_for_storage;
     use loom_config::types::AuthCredentialsStoreMode;
+    use loom_tui_stubs::cloud_requirements::cloud_requirements_loader_for_storage;
 
     use pretty_assertions::assert_eq;
     use std::sync::Arc;

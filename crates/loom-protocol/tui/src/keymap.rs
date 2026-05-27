@@ -20,10 +20,10 @@
 
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
-use loom_config::types::KeybindingsSpec;
-use loom_config::types::TuiKeymap;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyModifiers;
+use loom_config::types::KeybindingsSpec;
+use loom_config::types::TuiKeymap;
 use std::collections::HashMap;
 
 /// Runtime keymap used by TUI input handlers.

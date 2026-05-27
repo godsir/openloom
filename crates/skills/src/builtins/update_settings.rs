@@ -2,13 +2,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
 use openloom_models::AppConfig;
 
+use crate::settings_registry::{SettingType, settings_registry};
 use crate::{Skill, SkillManifest, SkillPermissions};
-use crate::settings_registry::{settings_registry, SettingType};
 
 pub struct UpdateSettingsSkill {
     config: Arc<RwLock<AppConfig>>,
@@ -111,10 +111,7 @@ impl UpdateSettingsSkill {
     }
 
     async fn apply(&self, params: Value) -> Result<Value> {
-        let key = params
-            .get("key")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("");
 
         let value = params.get("value").cloned().unwrap_or(Value::Null);
 
@@ -163,13 +160,11 @@ fn setting_type_str(t: SettingType) -> &'static str {
 
 fn validate_value(st: SettingType, value: &Value) -> Option<String> {
     match st {
-        SettingType::Toggle => {
-            match value {
-                Value::Bool(_) => None,
-                Value::String(s) if s == "true" || s == "false" => None,
-                _ => Some(format!("Expected 'true' or 'false', got: {}", value)),
-            }
-        }
+        SettingType::Toggle => match value {
+            Value::Bool(_) => None,
+            Value::String(s) if s == "true" || s == "false" => None,
+            _ => Some(format!("Expected 'true' or 'false', got: {}", value)),
+        },
         SettingType::List(options) => {
             if let Value::String(s) = value {
                 if options.contains(&s.as_str()) {

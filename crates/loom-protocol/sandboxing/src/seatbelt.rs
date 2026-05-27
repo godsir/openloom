@@ -1,3 +1,4 @@
+use loom_absolute_path::AbsolutePathBuf;
 use loom_network_proxy::NetworkProxy;
 use loom_network_proxy::PROXY_URL_ENV_KEYS;
 use loom_network_proxy::has_proxy_url_env_vars;
@@ -7,7 +8,6 @@ use loom_protocol::permissions::NetworkSandboxPolicy;
 use loom_protocol::permissions::PROTECTED_METADATA_PATH_NAMES;
 use loom_protocol::protocol::SandboxPolicy;
 use loom_protocol::protocol::WritableRoot;
-use loom_absolute_path::AbsolutePathBuf;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;

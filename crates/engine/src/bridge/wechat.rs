@@ -2,10 +2,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 use reqwest::Client;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 use super::adapter::ChannelAdapter;
 use super::types::*;
@@ -30,7 +30,8 @@ impl WechatAdapter {
             api_key,
             client: Client::new(),
             health: AdapterHealth::Disconnected,
-            rx, tx,
+            rx,
+            tx,
             abort: Arc::new(AtomicBool::new(false)),
             poll_handle: None,
         }
@@ -43,7 +44,8 @@ impl WechatAdapter {
     fn parse_ilink_message(msg: &serde_json::Value) -> Option<BridgeMessage> {
         let chat_id = msg.get("chat_id")?.as_str()?.to_string();
         let sender_id = msg.get("sender_id")?.as_str()?.to_string();
-        let sender_name = msg.get("sender_name")
+        let sender_name = msg
+            .get("sender_name")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
@@ -52,7 +54,9 @@ impl WechatAdapter {
 
         Some(BridgeMessage {
             platform: Platform::Wechat,
-            chat_id, sender_id, sender_name,
+            chat_id,
+            sender_id,
+            sender_name,
             content: MessageContent::Text(text),
             reply_to: None,
             external_message_id: message_id,
@@ -63,7 +67,9 @@ impl WechatAdapter {
 
 #[async_trait]
 impl ChannelAdapter for WechatAdapter {
-    fn platform(&self) -> Platform { Platform::Wechat }
+    fn platform(&self) -> Platform {
+        Platform::Wechat
+    }
 
     async fn connect(&mut self) -> Result<()> {
         self.health = AdapterHealth::Connecting;
@@ -77,7 +83,9 @@ impl ChannelAdapter for WechatAdapter {
         let handle = tokio::spawn(async move {
             let mut since_id: Option<String> = None;
             loop {
-                if abort.load(Ordering::SeqCst) { break; }
+                if abort.load(Ordering::SeqCst) {
+                    break;
+                }
 
                 let mut url = format!("{ILINK_BASE}/messages/poll");
                 if let Some(ref sid) = since_id {
@@ -87,13 +95,17 @@ impl ChannelAdapter for WechatAdapter {
                 match client.get(&url).header("Authorization", &auth).send().await {
                     Ok(resp) => {
                         if let Ok(body) = resp.json::<serde_json::Value>().await {
-                            if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
+                            if let Some(messages) = body.get("messages").and_then(|m| m.as_array())
+                            {
                                 for msg in messages {
-                                    if let Some(id) = msg.get("message_id").and_then(|v| v.as_str()) {
+                                    if let Some(id) = msg.get("message_id").and_then(|v| v.as_str())
+                                    {
                                         since_id = Some(id.to_string());
                                     }
                                     if let Some(bridge_msg) = Self::parse_ilink_message(msg) {
-                                        if tx.send(bridge_msg).await.is_err() { return; }
+                                        if tx.send(bridge_msg).await.is_err() {
+                                            return;
+                                        }
                                     }
                                 }
                             }
@@ -115,7 +127,9 @@ impl ChannelAdapter for WechatAdapter {
 
     async fn disconnect(&mut self) -> Result<()> {
         self.abort.store(true, Ordering::SeqCst);
-        if let Some(h) = self.poll_handle.take() { h.abort(); }
+        if let Some(h) = self.poll_handle.take() {
+            h.abort();
+        }
         self.health = AdapterHealth::Disconnected;
         Ok(())
     }
@@ -129,21 +143,27 @@ impl ChannelAdapter for WechatAdapter {
             _ => anyhow::bail!("unsupported content type for wechat"),
         };
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(&format!("{ILINK_BASE}/messages/send"))
             .header("Authorization", self.auth_header())
             .json(&serde_json::json!({
                 "chat_id": chat_id,
                 "content": text,
             }))
-            .send().await?;
+            .send()
+            .await?;
 
         let body: serde_json::Value = resp.json().await?;
         Ok(body["message_id"].as_str().unwrap_or("").to_string())
     }
 
-    fn receive_rx(&mut self) -> &mut mpsc::Receiver<BridgeMessage> { &mut self.rx }
-    fn health(&self) -> AdapterHealth { self.health.clone() }
+    fn receive_rx(&mut self) -> &mut mpsc::Receiver<BridgeMessage> {
+        &mut self.rx
+    }
+    fn health(&self) -> AdapterHealth {
+        self.health.clone()
+    }
 }
 
 #[cfg(test)]

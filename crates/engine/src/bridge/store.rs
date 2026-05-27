@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 use super::types::*;
 
@@ -71,7 +71,8 @@ impl<'a> BridgeStore<'a> {
                 "UPDATE bridge_sessions SET last_message_at = ?1, external_user_id = COALESCE(?2, external_user_id), user_name = COALESCE(?3, user_name) WHERE id = ?4",
                 params![now, external_user_id, user_name, session_id],
             )?;
-            return self.get_session(&session_id)
+            return self
+                .get_session(&session_id)
                 .and_then(|s| s.ok_or_else(|| anyhow::anyhow!("session vanished")));
         }
 
@@ -195,7 +196,8 @@ impl<'a> BridgeStore<'a> {
             Ok(BridgeMessageRow {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
-                direction: MessageDirection::from_str(&dir_str).unwrap_or(MessageDirection::Inbound),
+                direction: MessageDirection::from_str(&dir_str)
+                    .unwrap_or(MessageDirection::Inbound),
                 content: row.get(3)?,
                 media_type: row.get(4)?,
                 media_url: row.get(5)?,
@@ -319,7 +321,12 @@ mod tests {
         let store = BridgeStore::new(&conn);
 
         let session = store
-            .find_or_create_session(Platform::Telegram, "chat_123", Some("user_1"), Some("Alice"))
+            .find_or_create_session(
+                Platform::Telegram,
+                "chat_123",
+                Some("user_1"),
+                Some("Alice"),
+            )
             .unwrap();
 
         assert_eq!(session.id, "telegram:chat_123");
@@ -336,10 +343,20 @@ mod tests {
         let store = BridgeStore::new(&conn);
 
         let s1 = store
-            .find_or_create_session(Platform::Telegram, "chat_123", Some("user_1"), Some("Alice"))
+            .find_or_create_session(
+                Platform::Telegram,
+                "chat_123",
+                Some("user_1"),
+                Some("Alice"),
+            )
             .unwrap();
         let s2 = store
-            .find_or_create_session(Platform::Telegram, "chat_123", Some("user_1"), Some("Alice"))
+            .find_or_create_session(
+                Platform::Telegram,
+                "chat_123",
+                Some("user_1"),
+                Some("Alice"),
+            )
             .unwrap();
 
         assert_eq!(s1.id, s2.id);
@@ -419,9 +436,15 @@ mod tests {
         let conn = setup_test_db();
         let store = BridgeStore::new(&conn);
 
-        store.find_or_create_session(Platform::Telegram, "c1", None, None).unwrap();
-        store.find_or_create_session(Platform::Feishu, "c2", None, None).unwrap();
-        store.find_or_create_session(Platform::Telegram, "c3", None, None).unwrap();
+        store
+            .find_or_create_session(Platform::Telegram, "c1", None, None)
+            .unwrap();
+        store
+            .find_or_create_session(Platform::Feishu, "c2", None, None)
+            .unwrap();
+        store
+            .find_or_create_session(Platform::Telegram, "c3", None, None)
+            .unwrap();
 
         let tg = store.list_sessions(Some(Platform::Telegram)).unwrap();
         assert_eq!(tg.len(), 2);
@@ -435,7 +458,9 @@ mod tests {
         let conn = setup_test_db();
         let store = BridgeStore::new(&conn);
 
-        store.find_or_create_session(Platform::Telegram, "c1", None, None).unwrap();
+        store
+            .find_or_create_session(Platform::Telegram, "c1", None, None)
+            .unwrap();
         assert!(store.delete_session("telegram:c1").unwrap());
         assert!(!store.delete_session("telegram:c1").unwrap());
 
@@ -448,9 +473,29 @@ mod tests {
         let conn = setup_test_db();
         let store = BridgeStore::new(&conn);
 
-        store.find_or_create_session(Platform::QQ, "q1", None, None).unwrap();
-        store.record_message("qq:q1", MessageDirection::Inbound, Some("a"), "text", None, None).unwrap();
-        store.record_message("qq:q1", MessageDirection::Outbound, Some("b"), "text", None, None).unwrap();
+        store
+            .find_or_create_session(Platform::QQ, "q1", None, None)
+            .unwrap();
+        store
+            .record_message(
+                "qq:q1",
+                MessageDirection::Inbound,
+                Some("a"),
+                "text",
+                None,
+                None,
+            )
+            .unwrap();
+        store
+            .record_message(
+                "qq:q1",
+                MessageDirection::Outbound,
+                Some("b"),
+                "text",
+                None,
+                None,
+            )
+            .unwrap();
 
         let session = store.get_session("qq:q1").unwrap().unwrap();
         assert_eq!(session.message_count, 2);

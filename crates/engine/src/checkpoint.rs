@@ -3,10 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 const SKIP_EXTENSIONS: &[&str] = &[
-    "7z", "apk", "app", "avi", "bin", "bmp", "bz2", "dmg", "doc", "docx",
-    "ear", "elf", "exe", "gif", "gz", "ico", "iso", "jar", "jpeg", "jpg",
-    "m4a", "mov", "mp3", "mp4", "mpeg", "mpg", "o", "obj", "odp", "ods",
-    "odt", "otf", "pdf", "pkg", "png", "rar", "rpm", "so", "svg", "tar",
+    "7z", "apk", "app", "avi", "bin", "bmp", "bz2", "dmg", "doc", "docx", "ear", "elf", "exe",
+    "gif", "gz", "ico", "iso", "jar", "jpeg", "jpg", "m4a", "mov", "mp3", "mp4", "mpeg", "mpg",
+    "o", "obj", "odp", "ods", "odt", "otf", "pdf", "pkg", "png", "rar", "rpm", "so", "svg", "tar",
     "ttf", "war", "webp", "wmv", "woff", "woff2", "xz", "zip",
 ];
 
@@ -51,7 +50,10 @@ impl CheckpointStore {
     pub fn new(data_dir: &Path) -> Self {
         let dir = data_dir.join("checkpoints");
         let _ = std::fs::create_dir_all(&dir);
-        Self { dir, lock: Mutex::new(()) }
+        Self {
+            dir,
+            lock: Mutex::new(()),
+        }
     }
 
     pub fn save(
@@ -155,19 +157,17 @@ impl CheckpointStore {
     pub fn restore(&self, id: &str) -> Result<CheckpointRestore, String> {
         let _guard = self.lock.lock().unwrap();
         let file_path = self.dir.join(format!("{}.json", id));
-        let content = std::fs::read_to_string(&file_path)
-            .map_err(|e| format!("read failed: {}", e))?;
-        let entry: CheckpointEntry = serde_json::from_str(&content)
-            .map_err(|e| format!("parse failed: {}", e))?;
+        let content =
+            std::fs::read_to_string(&file_path).map_err(|e| format!("read failed: {}", e))?;
+        let entry: CheckpointEntry =
+            serde_json::from_str(&content).map_err(|e| format!("parse failed: {}", e))?;
 
         // Create parent directories and write content back
         let target = Path::new(&entry.path);
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("mkdir failed: {}", e))?;
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {}", e))?;
         }
-        std::fs::write(&entry.path, &entry.content)
-            .map_err(|e| format!("write failed: {}", e))?;
+        std::fs::write(&entry.path, &entry.content).map_err(|e| format!("write failed: {}", e))?;
 
         Ok(CheckpointRestore {
             path: entry.path,

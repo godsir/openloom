@@ -40,7 +40,8 @@ pub fn augment_tool_spec_for_code_mode(spec: ToolSpec) -> ToolSpec {
                             output_schema: tool.output_schema.clone(),
                         };
                         tool.description =
-                            loom_shim_stubs::code_mode::augment_tool_definition(definition).description;
+                            loom_shim_stubs::code_mode::augment_tool_definition(definition)
+                                .description;
                     }
                 }
             }

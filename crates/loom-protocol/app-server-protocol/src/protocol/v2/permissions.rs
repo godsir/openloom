@@ -1,4 +1,5 @@
 use super::shared::v2_enum_from_core;
+use loom_absolute_path::AbsolutePathBuf;
 use loom_protocol::approvals::ExecPolicyAmendment as CoreExecPolicyAmendment;
 use loom_protocol::approvals::NetworkApprovalContext as CoreNetworkApprovalContext;
 use loom_protocol::approvals::NetworkApprovalProtocol as CoreNetworkApprovalProtocol;
@@ -15,7 +16,6 @@ use loom_protocol::permissions::FileSystemSpecialPath as CoreFileSystemSpecialPa
 use loom_protocol::protocol::NetworkAccess as CoreNetworkAccess;
 use loom_protocol::request_permissions::PermissionGrantScope as CorePermissionGrantScope;
 use loom_protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
-use loom_absolute_path::AbsolutePathBuf;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;

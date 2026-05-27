@@ -7,8 +7,8 @@
 
 use super::goal_validation::GoalObjectiveValidationSource;
 use super::*;
-use crate::app_event::ThreadGoalSetMode;
 use crate::app_event::ModelPreference;
+use crate::app_event::ThreadGoalSetMode;
 use crate::bottom_pane::prompt_args::parse_slash_name;
 use crate::bottom_pane::slash_commands::BuiltinCommandFlags;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
@@ -227,8 +227,7 @@ impl ChatWidget {
                 self.apply_plan_slash_command();
             }
             SlashCommand::Code => {
-                self.app_event_tx
-                    .send(AppEvent::SetCodeMode);
+                self.app_event_tx.send(AppEvent::SetCodeMode);
             }
             SlashCommand::Mode => {
                 // /mode without arg cycles through modes
@@ -801,45 +800,38 @@ impl ChatWidget {
             SlashCommand::Pets if !trimmed.is_empty() => {
                 self.select_pet_by_id(args);
             }
-            SlashCommand::Mode => {
-                match trimmed.to_ascii_lowercase().as_str() {
-                    "chat" => {
-                        self.app_event_tx.send(AppEvent::SetChatMode);
-                    }
-                    "plan" => {
-                        self.apply_plan_slash_command();
-                    }
-                    "code" => {
-                        self.app_event_tx.send(AppEvent::SetCodeMode);
-                    }
-                    "assistant" | "asst" => {
-                        self.app_event_tx.send(AppEvent::SetAssistantMode);
-                    }
-                    _ => {
-                        self.app_event_tx.send(AppEvent::CycleMode);
-                    }
+            SlashCommand::Mode => match trimmed.to_ascii_lowercase().as_str() {
+                "chat" => {
+                    self.app_event_tx.send(AppEvent::SetChatMode);
                 }
-            }
-            SlashCommand::Model => {
-                match trimmed.to_ascii_lowercase().as_str() {
-                    "use local" => {
-                        self.app_event_tx.send(AppEvent::SetModelPreference(
-                            ModelPreference::Local,
-                        ));
-                    }
-                    "use cloud" => {
-                        self.app_event_tx.send(AppEvent::SetModelPreference(
-                            ModelPreference::Cloud,
-                        ));
-                    }
-                    "use auto" => {
-                        self.app_event_tx.send(AppEvent::SetModelPreference(
-                            ModelPreference::Auto,
-                        ));
-                    }
-                    _ => self.open_model_popup(),
+                "plan" => {
+                    self.apply_plan_slash_command();
                 }
-            }
+                "code" => {
+                    self.app_event_tx.send(AppEvent::SetCodeMode);
+                }
+                "assistant" | "asst" => {
+                    self.app_event_tx.send(AppEvent::SetAssistantMode);
+                }
+                _ => {
+                    self.app_event_tx.send(AppEvent::CycleMode);
+                }
+            },
+            SlashCommand::Model => match trimmed.to_ascii_lowercase().as_str() {
+                "use local" => {
+                    self.app_event_tx
+                        .send(AppEvent::SetModelPreference(ModelPreference::Local));
+                }
+                "use cloud" => {
+                    self.app_event_tx
+                        .send(AppEvent::SetModelPreference(ModelPreference::Cloud));
+                }
+                "use auto" => {
+                    self.app_event_tx
+                        .send(AppEvent::SetModelPreference(ModelPreference::Auto));
+                }
+                _ => self.open_model_popup(),
+            },
             _ => self.dispatch_command(cmd),
         }
         if source == SlashCommandDispatchSource::Live && cmd != SlashCommand::Goal {
