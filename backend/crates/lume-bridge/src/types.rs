@@ -35,17 +35,35 @@ impl std::fmt::Display for Platform {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MessageContent {
     Text(String),
-    Image { url: String, caption: Option<String> },
-    File { url: String, name: String, size: u64 },
-    Audio { url: String, duration_secs: u32 },
+    Image {
+        url: String,
+        caption: Option<String>,
+    },
+    File {
+        url: String,
+        name: String,
+        size: u64,
+    },
+    Audio {
+        url: String,
+        duration_secs: u32,
+    },
 }
 
 impl MessageContent {
     pub fn media_type(&self) -> &'static str {
-        match self { Self::Text(_) => "text", Self::Image { .. } => "image", Self::File { .. } => "file", Self::Audio { .. } => "audio" }
+        match self {
+            Self::Text(_) => "text",
+            Self::Image { .. } => "image",
+            Self::File { .. } => "file",
+            Self::Audio { .. } => "audio",
+        }
     }
     pub fn text_content(&self) -> Option<&str> {
-        match self { Self::Text(t) => Some(t), _ => None }
+        match self {
+            Self::Text(t) => Some(t),
+            _ => None,
+        }
     }
 }
 
@@ -63,19 +81,36 @@ pub struct BridgeMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum AdapterHealth { Connected, Connecting, Disconnected, Error(String) }
+pub enum AdapterHealth {
+    Connected,
+    Connecting,
+    Disconnected,
+    Error(String),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum MessageDirection { Inbound, Outbound }
+pub enum MessageDirection {
+    Inbound,
+    Outbound,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum AccessState { Active, Blocked, Pending }
+pub enum AccessState {
+    Active,
+    Blocked,
+    Pending,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
-pub enum AccessMode { #[default] Open, Pairing, Allowlist }
+pub enum AccessMode {
+    #[default]
+    Open,
+    Pairing,
+    Allowlist,
+}
 
 #[async_trait]
 pub trait ChannelAdapter: Send + Sync {

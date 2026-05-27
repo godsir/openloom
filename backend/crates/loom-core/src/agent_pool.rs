@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
-use loom_types::{AgentId, AgentConfig, SessionId};
+use anyhow::{Result, anyhow};
+use loom_types::{AgentConfig, AgentId, SessionId};
 use tokio::sync::RwLock;
 
 use crate::agent::{Agent, AgentStatus};
@@ -33,7 +33,11 @@ pub struct AgentPool {
 }
 
 impl AgentPool {
-    pub fn new(max_depth: usize, _default_max_iterations: usize, _default_timeout_secs: u64) -> Self {
+    pub fn new(
+        max_depth: usize,
+        _default_max_iterations: usize,
+        _default_timeout_secs: u64,
+    ) -> Self {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
             event_bus: EventBus::new(256),
@@ -52,7 +56,10 @@ impl AgentPool {
         if let Some(ref parent_id) = agent.parent_id {
             let depth = self.compute_depth(parent_id).await;
             if depth >= self.max_depth {
-                return Err(anyhow!("max agent nesting depth ({}) exceeded", self.max_depth));
+                return Err(anyhow!(
+                    "max agent nesting depth ({}) exceeded",
+                    self.max_depth
+                ));
             }
         }
 
@@ -96,7 +103,9 @@ impl AgentPool {
     /// Get a read-only snapshot of an agent's summary.
     pub async fn summary(&self, agent_id: &AgentId) -> Result<AgentSummary> {
         let agents = self.agents.read().await;
-        let agent = agents.get(agent_id).ok_or_else(|| anyhow!("agent not found: {}", agent_id))?;
+        let agent = agents
+            .get(agent_id)
+            .ok_or_else(|| anyhow!("agent not found: {}", agent_id))?;
         Ok(AgentSummary {
             id: agent.id.clone(),
             name: agent.config.name.clone(),
@@ -110,21 +119,33 @@ impl AgentPool {
 
     /// List all agents in the pool.
     pub async fn list(&self) -> Vec<AgentSummary> {
-        self.agents.read().await.values().map(|a| AgentSummary {
-            id: a.id.clone(),
-            name: a.config.name.clone(),
-            status: a.status.clone(),
-            session_id: a.session_id.to_string(),
-            iteration: a.iteration,
-            parent_id: a.parent_id.clone(),
-            child_count: a.children.len(),
-        }).collect()
+        self.agents
+            .read()
+            .await
+            .values()
+            .map(|a| AgentSummary {
+                id: a.id.clone(),
+                name: a.config.name.clone(),
+                status: a.status.clone(),
+                session_id: a.session_id.to_string(),
+                iteration: a.iteration,
+                parent_id: a.parent_id.clone(),
+                child_count: a.children.len(),
+            })
+            .collect()
     }
 
     /// Transition an agent to a new status.
-    pub async fn transition(&self, agent_id: &AgentId, new_status: AgentStatus, msg: Option<String>) -> Result<()> {
+    pub async fn transition(
+        &self,
+        agent_id: &AgentId,
+        new_status: AgentStatus,
+        msg: Option<String>,
+    ) -> Result<()> {
         let mut agents = self.agents.write().await;
-        let agent = agents.get_mut(agent_id).ok_or_else(|| anyhow!("agent not found: {}", agent_id))?;
+        let agent = agents
+            .get_mut(agent_id)
+            .ok_or_else(|| anyhow!("agent not found: {}", agent_id))?;
         if let Some(event) = agent.transition(new_status, msg) {
             self.event_bus.publish(event);
         }
@@ -134,7 +155,9 @@ impl AgentPool {
     /// Kill an agent immediately.
     pub async fn kill(&self, agent_id: &AgentId) -> Result<()> {
         let mut agents = self.agents.write().await;
-        let agent = agents.get_mut(agent_id).ok_or_else(|| anyhow!("agent not found: {}", agent_id))?;
+        let agent = agents
+            .get_mut(agent_id)
+            .ok_or_else(|| anyhow!("agent not found: {}", agent_id))?;
         agent.cancel_token.cancel();
         if let Some(event) = agent.transition(AgentStatus::Killed, Some("killed by user".into())) {
             drop(agents);
@@ -150,7 +173,8 @@ impl AgentPool {
         if let Some(agent) = agents.remove(agent_id) {
             // Remove from parent's children list
             if let Some(ref pid) = agent.parent_id
-                && let Some(parent) = agents.get_mut(pid) {
+                && let Some(parent) = agents.get_mut(pid)
+            {
                 parent.remove_child(agent_id);
             }
         }
@@ -174,7 +198,12 @@ impl AgentPool {
     }
 
     /// Notify that a subagent completed and transition parent back to Thinking.
-    pub async fn subagent_completed(&self, parent_id: &AgentId, child_id: &AgentId, result: String) -> Result<()> {
+    pub async fn subagent_completed(
+        &self,
+        parent_id: &AgentId,
+        child_id: &AgentId,
+        result: String,
+    ) -> Result<()> {
         self.event_bus.publish(AgentEvent::SubagentCompleted {
             parent_id: parent_id.clone(),
             child_id: child_id.clone(),
@@ -182,9 +211,13 @@ impl AgentPool {
         });
 
         let mut agents = self.agents.write().await;
-        let parent = agents.get_mut(parent_id).ok_or_else(|| anyhow!("parent agent not found: {}", parent_id))?;
+        let parent = agents
+            .get_mut(parent_id)
+            .ok_or_else(|| anyhow!("parent agent not found: {}", parent_id))?;
         parent.remove_child(child_id);
-        parent.push_history(loom_types::Message::assistant(format!("[subagent result] {result}")));
+        parent.push_history(loom_types::Message::assistant(format!(
+            "[subagent result] {result}"
+        )));
         parent.transition(AgentStatus::Thinking, None);
         Ok(())
     }

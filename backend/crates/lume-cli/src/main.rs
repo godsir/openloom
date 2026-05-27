@@ -143,13 +143,24 @@ async fn main() -> anyhow::Result<()> {
                 Ok(store) => {
                     orchestrator.set_memory_store(Box::new(store)).await;
                     let _ = orchestrator.load_agent_configs().await;
+                    let _ = orchestrator.load_model_configs().await;
                     println!("[server] memory store: {}", db_path.display());
                 }
                 Err(e) => println!("[server] memory unavailable: {}", e),
             }
             loom_server::serve(&host, port, orchestrator).await?;
         }
-        Command::Chat { model, api_key, api_key_env, provider, base_url, mcp_args, no_mcp_config, resume, r#continue } => {
+        Command::Chat {
+            model,
+            api_key,
+            api_key_env,
+            provider,
+            base_url,
+            mcp_args,
+            no_mcp_config,
+            resume,
+            r#continue,
+        } => {
             // --resume <name>: resume named session | -c: continue "default" session
             // neither: fresh session with unique ID (no history loaded)
             let (session, is_new) = if let Some(name) = resume {
@@ -159,11 +170,36 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 (format!("session-{}", chrono::Utc::now().timestamp()), true)
             };
-            run_chat_demo(&model, api_key.as_deref(), api_key_env.as_deref(), &provider, base_url.as_deref(), mcp_args.as_deref(), !no_mcp_config, &session, is_new).await?;
+            run_chat_demo(
+                &model,
+                api_key.as_deref(),
+                api_key_env.as_deref(),
+                &provider,
+                base_url.as_deref(),
+                mcp_args.as_deref(),
+                !no_mcp_config,
+                &session,
+                is_new,
+            )
+            .await?;
         }
         Command::Mcp { action } => match action {
-            McpAction::Add { name, transport, url, command, args, headers } => {
-                mcp_add(&name, &transport, url.as_deref(), command.as_deref(), args.as_deref(), &headers)?;
+            McpAction::Add {
+                name,
+                transport,
+                url,
+                command,
+                args,
+                headers,
+            } => {
+                mcp_add(
+                    &name,
+                    &transport,
+                    url.as_deref(),
+                    command.as_deref(),
+                    args.as_deref(),
+                    &headers,
+                )?;
             }
             McpAction::List => {
                 mcp_list()?;
@@ -171,7 +207,13 @@ async fn main() -> anyhow::Result<()> {
         },
         Command::Doctor => run_doctor().await,
         Command::Kg { action } => match action {
-            KgAction::Search { query, limit, expand, model, expand_url } => run_kg_search(&query, limit, expand, &model, &expand_url).await,
+            KgAction::Search {
+                query,
+                limit,
+                expand,
+                model,
+                expand_url,
+            } => run_kg_search(&query, limit, expand, &model, &expand_url).await,
             KgAction::Stats => run_kg_stats().await,
         },
     }
@@ -182,7 +224,14 @@ async fn main() -> anyhow::Result<()> {
 // MCP management
 // ============================================================================
 
-fn mcp_add(name: &str, transport: &str, url: Option<&str>, command: Option<&str>, args: Option<&str>, headers: &[String]) -> anyhow::Result<()> {
+fn mcp_add(
+    name: &str,
+    transport: &str,
+    url: Option<&str>,
+    command: Option<&str>,
+    args: Option<&str>,
+    headers: &[String],
+) -> anyhow::Result<()> {
     let dir = data_dir();
     std::fs::create_dir_all(&dir)?;
     let config_path = dir.join("mcp.json");
@@ -203,7 +252,9 @@ fn mcp_add(name: &str, transport: &str, url: Option<&str>, command: Option<&str>
     let entry = mcp_config::McpConfigEntry {
         transport: transport.to_string(),
         command: command.unwrap_or("").to_string(),
-        args: args.map(|a| a.split_whitespace().map(String::from).collect()).unwrap_or_default(),
+        args: args
+            .map(|a| a.split_whitespace().map(String::from).collect())
+            .unwrap_or_default(),
         url: url.map(String::from),
         headers: hdrs,
     };
@@ -218,18 +269,31 @@ fn mcp_list() -> anyhow::Result<()> {
     let dir = data_dir();
     let config_path = dir.join("mcp.json");
     if !config_path.exists() {
-        println!("No MCP config found at {}\n  Use 'lume mcp add' to add servers.", config_path.display());
+        println!(
+            "No MCP config found at {}\n  Use 'lume mcp add' to add servers.",
+            config_path.display()
+        );
         return Ok(());
     }
-    let config: mcp_config::McpConfigFile = serde_json::from_str(&std::fs::read_to_string(&config_path)?)?;
+    let config: mcp_config::McpConfigFile =
+        serde_json::from_str(&std::fs::read_to_string(&config_path)?)?;
     println!("MCP servers ({}):", config_path.display());
     for (name, entry) in &config.mcp_servers {
         match entry.transport.as_str() {
-            "streamableHttp" | "http" | "sse" => println!("  {} → HTTP {}", name, entry.url.as_deref().unwrap_or("?")),
-            _ => println!("  {} → stdio {} {}", name, entry.command, entry.args.join(" ")),
+            "streamableHttp" | "http" | "sse" => {
+                println!("  {} → HTTP {}", name, entry.url.as_deref().unwrap_or("?"))
+            }
+            _ => println!(
+                "  {} → stdio {} {}",
+                name,
+                entry.command,
+                entry.args.join(" ")
+            ),
         }
     }
-    if config.mcp_servers.is_empty() { println!("  (empty)"); }
+    if config.mcp_servers.is_empty() {
+        println!("  (empty)");
+    }
     Ok(())
 }
 
@@ -248,28 +312,56 @@ fn normalize_openai_url(url: &str) -> String {
 // Chat demo
 // ============================================================================
 
-async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&str>, provider: &str, base_url: Option<&str>, mcp_args: Option<&str>, load_config: bool, session: &str, is_new: bool) -> anyhow::Result<()> {
+async fn run_chat_demo(
+    model: &str,
+    api_key: Option<&str>,
+    api_key_env: Option<&str>,
+    provider: &str,
+    base_url: Option<&str>,
+    mcp_args: Option<&str>,
+    load_config: bool,
+    session: &str,
+    is_new: bool,
+) -> anyhow::Result<()> {
     use loom_core::MemoryStore;
-    use loom_inference::{AnthropicClient, InferenceEngine, OpenAIClient};
     use loom_inference::engine::CloudClient;
+    use loom_inference::{AnthropicClient, InferenceEngine, OpenAIClient};
 
     // Resolve API key
-    let api_key = if let Some(key) = api_key { key.to_string() }
-    else if let Some(env_name) = api_key_env {
+    let api_key = if let Some(key) = api_key {
+        key.to_string()
+    } else if let Some(env_name) = api_key_env {
         std::env::var(env_name).map_err(|_| anyhow::anyhow!("env '{}' not set", env_name))?
     } else {
-        let auto = match provider { "deepseek"=>"DEEPSEEK_API_KEY", "openai"=>"OPENAI_API_KEY", _=>"ANTHROPIC_API_KEY" };
-        std::env::var(auto).map_err(|_| anyhow::anyhow!("No API key. Set env {} or use --api-key", auto))?
+        let auto = match provider {
+            "deepseek" => "DEEPSEEK_API_KEY",
+            "openai" => "OPENAI_API_KEY",
+            _ => "ANTHROPIC_API_KEY",
+        };
+        std::env::var(auto)
+            .map_err(|_| anyhow::anyhow!("No API key. Set env {} or use --api-key", auto))?
     };
 
     let provider = if provider == "auto" {
-        if model.starts_with("claude") { "anthropic" } else if model.starts_with("deepseek") { "deepseek" } else if model.starts_with("gpt")||model.starts_with("o1")||model.starts_with("o3") { "openai" } else { "anthropic" }
-    } else { provider };
+        if model.starts_with("claude") {
+            "anthropic"
+        } else if model.starts_with("deepseek") {
+            "deepseek"
+        } else if model.starts_with("gpt") || model.starts_with("o1") || model.starts_with("o3") {
+            "openai"
+        } else {
+            "anthropic"
+        }
+    } else {
+        provider
+    };
 
     println!("openLoom v2 — Chat Demo (/exit to quit, Ctrl+C to exit)");
     println!("  session:  {}", session);
     println!("  model:    {}", model);
-    if let Some(url) = base_url { println!("  base_url: {}", url); }
+    if let Some(url) = base_url {
+        println!("  base_url: {}", url);
+    }
 
     let orchestrator = Arc::new(loom_core::Orchestrator::new(3, 20, 300));
     orchestrator.init_spawn_agent(3, 300).await;
@@ -287,19 +379,27 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
     // passed --provider anthropic (custom Anthropic-speaking proxy).
 
     // Snapshot explicit provider before auto-detection overwrites it.
-    let explicit_provider = if provider == "auto" { None } else { Some(provider.to_string()) };
+    let explicit_provider = if provider == "auto" {
+        None
+    } else {
+        Some(provider.to_string())
+    };
 
     let client: Box<dyn CloudClient> = if matches!(provider, "lmstudio" | "ollama") {
         // Explicit local provider → InferenceEngine with OpenAI-compatible endpoint
-        let url = base_url.map(String::from).unwrap_or_else(|| match provider {
-            "ollama" => "http://localhost:11434/v1".into(),
-            _ => "http://localhost:1234/v1".into(),
-        });
+        let url = base_url
+            .map(String::from)
+            .unwrap_or_else(|| match provider {
+                "ollama" => "http://localhost:11434/v1".into(),
+                _ => "http://localhost:1234/v1".into(),
+            });
         let engine = InferenceEngine::connect(&normalize_openai_url(&url), model, 8192).await?;
         Box::new(engine)
     } else if let Some(ref url) = base_url {
         let is_localhost = url.contains("localhost") || url.contains("127.0.0.1");
-        let explicit_anthropic = explicit_provider.as_deref().is_some_and(|p| p == "anthropic");
+        let explicit_anthropic = explicit_provider
+            .as_deref()
+            .is_some_and(|p| p == "anthropic");
         if is_localhost && !explicit_anthropic {
             // Localhost with auto-detected (or non-anthropic) provider → OpenAI format
             let engine = InferenceEngine::connect(&normalize_openai_url(url), model, 8192).await?;
@@ -307,16 +407,45 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
         } else {
             // Remote URL, or explicit anthropic → provider-specific client (no /v1 normalization)
             match provider {
-                "anthropic" => Box::new(AnthropicClient::new(api_key.clone(), model.to_string(), url.to_string())),
-                _ => Box::new(OpenAIClient::new(api_key.clone(), model.to_string(), url.to_string(), false)),
+                "anthropic" => Box::new(AnthropicClient::new(
+                    api_key.clone(),
+                    model.to_string(),
+                    url.to_string(),
+                )),
+                _ => Box::new(OpenAIClient::new(
+                    api_key.clone(),
+                    model.to_string(),
+                    url.to_string(),
+                    false,
+                )),
             }
         }
-    } else { match provider {
-        "anthropic" => Box::new(AnthropicClient::new(api_key.clone(), model.to_string(), "https://api.anthropic.com".into())),
-        "deepseek" => Box::new(OpenAIClient::new(api_key.clone(), model.to_string(), "https://api.deepseek.com/v1".into(), false)),
-        "openai" => Box::new(OpenAIClient::new(api_key.clone(), model.to_string(), "https://api.openai.com".into(), false)),
-        _ => Box::new(AnthropicClient::new(api_key, model.to_string(), "https://api.anthropic.com".into())),
-    }};
+    } else {
+        match provider {
+            "anthropic" => Box::new(AnthropicClient::new(
+                api_key.clone(),
+                model.to_string(),
+                "https://api.anthropic.com".into(),
+            )),
+            "deepseek" => Box::new(OpenAIClient::new(
+                api_key.clone(),
+                model.to_string(),
+                "https://api.deepseek.com/v1".into(),
+                false,
+            )),
+            "openai" => Box::new(OpenAIClient::new(
+                api_key.clone(),
+                model.to_string(),
+                "https://api.openai.com".into(),
+                false,
+            )),
+            _ => Box::new(AnthropicClient::new(
+                api_key,
+                model.to_string(),
+                "https://api.anthropic.com".into(),
+            )),
+        }
+    };
     orchestrator.set_cloud_client(client).await;
     println!("[model] {} ready", model);
 
@@ -344,12 +473,19 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
     // Ensure subdirectories
     let skills_dir = loom_dir.join("skills");
     let data_dir_path = loom_dir.join("data");
-    if !skills_dir.exists() { let _ = std::fs::create_dir(&skills_dir); }
-    if !data_dir_path.exists() { let _ = std::fs::create_dir(&data_dir_path); }
+    if !skills_dir.exists() {
+        let _ = std::fs::create_dir(&skills_dir);
+    }
+    if !data_dir_path.exists() {
+        let _ = std::fs::create_dir(&data_dir_path);
+    }
 
     // === Skills ===
     let mut skill_loader = lume_skills::SkillLoader::new();
-    if let Some(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok() {
+    if let Some(home) = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .ok()
+    {
         let home = std::path::PathBuf::from(&home);
         let search: &[(&str, std::path::PathBuf)] = &[
             ("~/.claude/skills", home.join(".claude").join("skills")),
@@ -364,24 +500,27 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
                 skill_loader.add_path(path.clone(), label);
             }
         }
-    match skill_loader.discover() {
-        Ok(skills) if !skills.is_empty() => {
-            // Names-only: save ~80% token overhead vs full descriptions.
-            // LLM calls use_skill(name) to fetch the full SKILL.md body on demand.
-            let ctx: String = skills.iter().map(|s| {
-                format!("- {}", s.manifest.name)
-            }).collect::<Vec<_>>().join("\n");
-            orchestrator.set_skill_context(ctx).await;
-            // Store full skill bodies for use_skill tool
-            let bodies: std::collections::HashMap<String, String> = skills.iter().map(|s| {
-                (s.manifest.name.clone(), s.body.clone())
-            }).collect();
-            orchestrator.set_skill_bodies(bodies).await;
-            println!("[skills] {} loaded", skills.len());
+        match skill_loader.discover() {
+            Ok(skills) if !skills.is_empty() => {
+                // Names-only: save ~80% token overhead vs full descriptions.
+                // LLM calls use_skill(name) to fetch the full SKILL.md body on demand.
+                let ctx: String = skills
+                    .iter()
+                    .map(|s| format!("- {}", s.manifest.name))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                orchestrator.set_skill_context(ctx).await;
+                // Store full skill bodies for use_skill tool
+                let bodies: std::collections::HashMap<String, String> = skills
+                    .iter()
+                    .map(|s| (s.manifest.name.clone(), s.body.clone()))
+                    .collect();
+                orchestrator.set_skill_bodies(bodies).await;
+                println!("[skills] {} loaded", skills.len());
+            }
+            Ok(_) => println!("[skills] 0 loaded (no SKILL.md found)"),
+            Err(e) => println!("[skills] error: {}", e),
         }
-        Ok(_) => println!("[skills] 0 loaded (no SKILL.md found)"),
-        Err(e) => println!("[skills] error: {}", e),
-    }
     } // close if let Some(home)
 
     // === Memory ===
@@ -396,17 +535,22 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
             orchestrator.set_memory_store(Box::new(store)).await;
             let _ = orchestrator.prune_memory().await;
             let _ = orchestrator.load_agent_configs().await;
+            let _ = orchestrator.load_model_configs().await;
             if !is_new {
                 let _ = orchestrator.load_history(session).await;
                 let history = orchestrator.session_history(session).await;
                 if !history.is_empty() {
-                    println!("\n--- session '{}' ({} messages) ---", session, history.len());
+                    println!(
+                        "\n--- session '{}' ({} messages) ---",
+                        session,
+                        history.len()
+                    );
                     for msg in &history {
                         let role = msg.role.as_str();
                         println!("[{}] {}", role, msg.text_content());
+                    }
+                    println!("--- end of history ---\n");
                 }
-                println!("--- end of history ---\n");
-            }
             }
             println!("[memory] store opened: {}", db_path.display());
         }
@@ -418,18 +562,29 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
         let dir = loom_dir.clone();
         match mcp_config::load_mcp_configs(&dir) {
             Ok((configs, sources)) => {
-                for src in &sources { println!("[mcp] config: {}", src); }
+                for src in &sources {
+                    println!("[mcp] config: {}", src);
+                }
                 for config in configs {
                     let name = config.name.clone();
                     println!("[mcp] connecting {} ({})...", name, config.transport);
                     match orchestrator.connect_mcp_server(config).await {
                         Ok(server_name) => {
-                            let tools = orchestrator.mcp_client().server_tools(&server_name).await.unwrap_or_default();
+                            let tools = orchestrator
+                                .mcp_client()
+                                .server_tools(&server_name)
+                                .await
+                                .unwrap_or_default();
                             println!("[mcp] '{}' connected — {} tools", server_name, tools.len());
                             for t in &tools {
                                 let desc = if t.description.chars().count() > 60 {
-                                    format!("{}...", t.description.chars().take(57).collect::<String>())
-                                } else { t.description.clone() };
+                                    format!(
+                                        "{}...",
+                                        t.description.chars().take(57).collect::<String>()
+                                    )
+                                } else {
+                                    t.description.clone()
+                                };
                                 println!("       - {}: {}", t.name, desc);
                             }
                         }
@@ -448,7 +603,11 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
                 println!("[mcp] quick-connect: {}...", config.name);
                 match orchestrator.connect_mcp_server(config).await {
                     Ok(name) => {
-                        let tools = orchestrator.mcp_client().server_tools(&name).await.unwrap_or_default();
+                        let tools = orchestrator
+                            .mcp_client()
+                            .server_tools(&name)
+                            .await
+                            .unwrap_or_default();
                         println!("[mcp] '{}' connected — {} tools", name, tools.len());
                     }
                     Err(e) => println!("[mcp] failed: {:.120}", e),
@@ -466,7 +625,16 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
         Ok(n) if n > 0 => {
             println!("[plugins] {} discovered:", n);
             for (name, desc, source) in plugin_manager.list() {
-                println!("  - {} [{}]: {}", name, source, if desc.is_empty() { "(no description)" } else { desc });
+                println!(
+                    "  - {} [{}]: {}",
+                    name,
+                    source,
+                    if desc.is_empty() {
+                        "(no description)"
+                    } else {
+                        desc
+                    }
+                );
             }
             // Load plugin skill paths into skill loader
             for path in plugin_manager.skill_paths() {
@@ -477,13 +645,16 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
             // Re-discover skills with plugin paths included
             match skill_loader.discover() {
                 Ok(new_skills) if !new_skills.is_empty() => {
-                    let ctx: String = new_skills.iter().map(|s| {
-                        format!("- {}", s.manifest.name)
-                    }).collect::<Vec<_>>().join("\n");
+                    let ctx: String = new_skills
+                        .iter()
+                        .map(|s| format!("- {}", s.manifest.name))
+                        .collect::<Vec<_>>()
+                        .join("\n");
                     orchestrator.set_skill_context(ctx).await;
-                    let bodies: std::collections::HashMap<String, String> = new_skills.iter().map(|s| {
-                        (s.manifest.name.clone(), s.body.clone())
-                    }).collect();
+                    let bodies: std::collections::HashMap<String, String> = new_skills
+                        .iter()
+                        .map(|s| (s.manifest.name.clone(), s.body.clone()))
+                        .collect();
                     orchestrator.set_skill_bodies(bodies).await;
                     println!("[plugins] {} skills loaded", new_skills.len());
                 }
@@ -557,16 +728,24 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
         } else {
             println!("\nPress Ctrl+C again to exit (or /exit to quit normally)");
         }
-    }).ok();
+    })
+    .ok();
 
     // Interactive loop
     use std::io::Write;
     loop {
-        print!("> "); std::io::stdout().flush().ok();
-        let mut line = String::new(); std::io::stdin().read_line(&mut line)?;
+        print!("> ");
+        std::io::stdout().flush().ok();
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
         let line = line.trim().to_string();
-        if line.is_empty() { continue; }
-        if line == "/exit" || line == "/quit" { println!("Goodbye!"); break; }
+        if line.is_empty() {
+            continue;
+        }
+        if line == "/exit" || line == "/quit" {
+            println!("Goodbye!");
+            break;
+        }
         if line == "/tools" {
             let r = orchestrator.tool_registry().await;
             println!("\n[tools] {}", r.list_names().join(", "));
@@ -588,7 +767,8 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
         let mut fut = std::pin::pin!(orchestrator.process_message_streaming(&line, tx, session));
         let mut tool_idx = 0usize;
         let mut think_buf = String::new();
-        let (mut prompt, mut completion, mut cache_read, mut cache_write) = (0u64, 0u64, 0u64, 0u64);
+        let (mut prompt, mut completion, mut cache_read, mut cache_write) =
+            (0u64, 0u64, 0u64, 0u64);
         println!();
         let result = loop {
             tokio::select! {
@@ -622,8 +802,16 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
         // Drain any remaining deltas
         while let Ok(delta) = rx.try_recv() {
             match delta {
-                StreamDelta::Text(t) => { print!("{}", t); std::io::stdout().flush().ok(); }
-                StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens } => {
+                StreamDelta::Text(t) => {
+                    print!("{}", t);
+                    std::io::stdout().flush().ok();
+                }
+                StreamDelta::Usage {
+                    prompt_tokens,
+                    completion_tokens,
+                    cache_read_tokens,
+                    cache_write_tokens,
+                } => {
                     prompt += prompt_tokens;
                     completion += completion_tokens;
                     cache_read += cache_read_tokens;
@@ -650,9 +838,15 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
                 } else if turn.cached_tokens > 0 {
                     parts.push(format!("cr ~{}", turn.cached_tokens));
                 }
-                if cache_write > 0 { parts.push(format!("cw {}", cache_write)); }
-                if turn.tool_calls_made > 0 { parts.push(format!("{} tools", turn.tool_calls_made)); }
-                if turn.iterations > 1 { parts.push(format!("{} iters", turn.iterations)); }
+                if cache_write > 0 {
+                    parts.push(format!("cw {}", cache_write));
+                }
+                if turn.tool_calls_made > 0 {
+                    parts.push(format!("{} tools", turn.tool_calls_made));
+                }
+                if turn.iterations > 1 {
+                    parts.push(format!("{} iters", turn.iterations));
+                }
                 println!("[{}]\n", parts.join(" | "));
             }
             Err(e) => println!("\n[error] {}\n", e),
@@ -683,7 +877,13 @@ async fn open_memory_store() -> Option<memory::LoomMemoryStore> {
     memory::LoomMemoryStore::open(&db_path).ok()
 }
 
-async fn run_kg_search(query: &str, limit: usize, expand: bool, expand_model: &str, expand_url: &str) {
+async fn run_kg_search(
+    query: &str,
+    limit: usize,
+    expand: bool,
+    expand_model: &str,
+    expand_url: &str,
+) {
     use loom_core::MemoryStore;
     let Some(store) = open_memory_store().await else {
         println!("Cannot open memory store. Run lume chat first to initialize.");
@@ -708,10 +908,16 @@ async fn run_kg_search(query: &str, limit: usize, expand: bool, expand_model: &s
     match store.search_knowledge(&search_query, limit).await {
         Ok(results) if results.is_empty() => println!("No results for '{}'", query),
         Ok(results) => {
-            println!("Knowledge Graph — {} results for '{}':\n", results.len(), query);
+            println!(
+                "Knowledge Graph — {} results for '{}':\n",
+                results.len(),
+                query
+            );
             for (i, (name, etype, desc, conf)) in results.iter().enumerate() {
                 println!("{}. {} [{}] (confidence: {:.2})", i + 1, name, etype, conf);
-                if !desc.is_empty() && desc != name { println!("   {}", desc); }
+                if !desc.is_empty() && desc != name {
+                    println!("   {}", desc);
+                }
                 println!();
             }
         }

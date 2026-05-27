@@ -25,10 +25,7 @@ pub enum EngineEvent {
         new_state: AgentState,
     },
     /// Streaming token delta from the LLM.
-    StreamDelta {
-        session_id: String,
-        delta: String,
-    },
+    StreamDelta { session_id: String, delta: String },
     /// Streaming response complete.
     StreamEnd {
         session_id: String,

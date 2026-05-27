@@ -2,13 +2,13 @@
 //!
 //! Supported: Telegram, Feishu, WeChat, QQ (Telegram implemented first).
 
-pub mod types;
 pub mod manager;
 pub mod store;
 pub mod telegram;
+pub mod types;
 pub mod wechat;
 
-pub use types::*;
 pub use manager::BridgeManager;
 pub use telegram::TelegramAdapter;
+pub use types::*;
 pub use wechat::WechatAdapter;

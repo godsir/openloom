@@ -26,7 +26,9 @@ impl CognitionsPersonaProvider {
 #[async_trait::async_trait]
 impl PersonaProvider for CognitionsPersonaProvider {
     async fn summarize(&self) -> Result<String> {
-        if self.rows.is_empty() { return Ok(String::new()); }
+        if self.rows.is_empty() {
+            return Ok(String::new());
+        }
 
         // Sort by confidence * evidence_count descending, take top_n
         let mut sorted: Vec<&CognitionRow> = self.rows.iter().collect();
@@ -43,15 +45,30 @@ impl PersonaProvider for CognitionsPersonaProvider {
 
         for r in &sorted {
             let entry = r.value.clone();
-            if r.trait_name.starts_with("uses_") { techs.push(entry); }
-            else if r.trait_name.starts_with("interest_") { interests.push(entry); }
-            else { others.push(format!("{}={}", r.trait_name, r.value)); }
+            if r.trait_name.starts_with("uses_") {
+                techs.push(entry);
+            } else if r.trait_name.starts_with("interest_") {
+                interests.push(entry);
+            } else {
+                others.push(format!("{}={}", r.trait_name, r.value));
+            }
         }
 
         let mut parts = Vec::new();
-        if !techs.is_empty() { techs.sort(); techs.dedup(); parts.push(format!("Uses: {}", techs.join(", "))); }
-        if !interests.is_empty() { interests.sort(); interests.dedup(); parts.push(format!("Interests: {}", interests.join(", "))); }
-        if !others.is_empty() { others.dedup(); parts.push(format!("Context: {}", others.join("; "))); }
+        if !techs.is_empty() {
+            techs.sort();
+            techs.dedup();
+            parts.push(format!("Uses: {}", techs.join(", ")));
+        }
+        if !interests.is_empty() {
+            interests.sort();
+            interests.dedup();
+            parts.push(format!("Interests: {}", interests.join(", ")));
+        }
+        if !others.is_empty() {
+            others.dedup();
+            parts.push(format!("Context: {}", others.join("; ")));
+        }
 
         Ok(format!("User profile — {}", parts.join(" | ")))
     }

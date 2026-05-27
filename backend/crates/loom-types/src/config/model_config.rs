@@ -68,7 +68,9 @@ pub struct ModelConfig {
     pub base_url: Option<String>,
 }
 
-fn default_context_size() -> usize { 4096 }
+fn default_context_size() -> usize {
+    4096
+}
 
 impl ModelConfig {
     pub fn effective_max_output(&self) -> usize {

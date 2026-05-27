@@ -5,8 +5,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::message::Message;
-use crate::tool::{ToolChoice, ToolDefinition};
 use crate::tool::ToolCall;
+use crate::tool::{ToolChoice, ToolDefinition};
 
 /// Token usage statistics for a completion.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -84,9 +84,21 @@ pub struct CompletionResponse {
 pub enum StreamDelta {
     Text(String),
     Reasoning(String),
-    ToolCallBegin { index: usize, id: String, name: String },
-    ToolCallArgsChunk { index: usize, chunk: String },
-    Usage { prompt_tokens: u64, completion_tokens: u64, cache_read_tokens: u64, cache_write_tokens: u64 },
+    ToolCallBegin {
+        index: usize,
+        id: String,
+        name: String,
+    },
+    ToolCallArgsChunk {
+        index: usize,
+        chunk: String,
+    },
+    Usage {
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        cache_read_tokens: u64,
+        cache_write_tokens: u64,
+    },
 }
 
 /// Engine health status response.

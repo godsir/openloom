@@ -13,8 +13,10 @@ pub mod orchestrator;
 pub mod tool_registry;
 
 pub use agent::{Agent, AgentConfig, AgentStatus};
-pub use agent_loop::{run_agent_turn, run_agent_turn_streaming, AgentLoopConfig, TurnResult};
+pub use agent_loop::{AgentLoopConfig, TurnResult, run_agent_turn, run_agent_turn_streaming};
 pub use agent_pool::AgentPool;
 pub use event_bus::{AgentEvent, EventBus};
 pub use orchestrator::{MemoryStore, Orchestrator};
-pub use tool_registry::{AgentTool, SpawnAgentTool, SpawnContext, ToolRegistry, ToolResult, ToolProvenance};
+pub use tool_registry::{
+    AgentTool, SpawnAgentTool, SpawnContext, ToolProvenance, ToolRegistry, ToolResult,
+};

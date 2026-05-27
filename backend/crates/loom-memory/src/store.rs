@@ -4,7 +4,7 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use refinery::embed_migrations;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -81,10 +81,14 @@ impl SqliteEventStore {
         let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
         conn.execute_batch(
             "PRAGMA journal_mode=DELETE;
-             PRAGMA foreign_keys=ON;"
+             PRAGMA foreign_keys=ON;",
         )?;
         migrations::runner().run(&mut conn)?;
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table'", [], |r| r.get(0))?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+            [],
+            |r| r.get(0),
+        )?;
         tracing::info!(table_count = count, "db opened");
         Ok(Self { conn })
     }
@@ -126,9 +130,14 @@ impl SqliteEventStore {
         )?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             Ok(EventRow {
-                id: row.get(0)?, timestamp: row.get(1)?, event_type: row.get(2)?,
-                action: row.get(3)?, context: row.get(4)?, confidence: row.get(5)?,
-                source_session: row.get(6)?, source_text: row.get(7)?,
+                id: row.get(0)?,
+                timestamp: row.get(1)?,
+                event_type: row.get(2)?,
+                action: row.get(3)?,
+                context: row.get(4)?,
+                confidence: row.get(5)?,
+                source_session: row.get(6)?,
+                source_text: row.get(7)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -145,9 +154,14 @@ impl SqliteEventStore {
         )?;
         let rows = stmt.query_map(params![query, limit as i64], |row| {
             Ok(EventRow {
-                id: row.get(0)?, timestamp: row.get(1)?, event_type: row.get(2)?,
-                action: row.get(3)?, context: row.get(4)?, confidence: row.get(5)?,
-                source_session: row.get(6)?, source_text: row.get(7)?,
+                id: row.get(0)?,
+                timestamp: row.get(1)?,
+                event_type: row.get(2)?,
+                action: row.get(3)?,
+                context: row.get(4)?,
+                confidence: row.get(5)?,
+                source_session: row.get(6)?,
+                source_text: row.get(7)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -156,7 +170,9 @@ impl SqliteEventStore {
     /// Count events by action type.
     pub fn count_by_action(&self, action: &str) -> Result<usize> {
         let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM events WHERE action = ?1", params![action], |row| row.get(0),
+            "SELECT COUNT(*) FROM events WHERE action = ?1",
+            params![action],
+            |row| row.get(0),
         )?;
         Ok(count as usize)
     }
@@ -190,8 +206,13 @@ impl<'a> CognitionStore<'a> {
     }
 
     pub fn insert(
-        &self, subject: &str, trait_name: &str, value: &str,
-        confidence: f64, evidence_count: usize, scope: &str,
+        &self,
+        subject: &str,
+        trait_name: &str,
+        value: &str,
+        confidence: f64,
+        evidence_count: usize,
+        scope: &str,
     ) -> Result<i64> {
         let now = Utc::now().timestamp();
         let existing: Option<(i64, i64)> = self.conn.query_row(
@@ -202,7 +223,9 @@ impl<'a> CognitionStore<'a> {
 
         if let Some((id, existing_version)) = existing {
             let old_value: String = self.conn.query_row(
-                "SELECT value FROM cognitions WHERE id = ?1", params![id], |row| row.get(0),
+                "SELECT value FROM cognitions WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
             )?;
             self.conn.execute(
                 "INSERT INTO cognition_snapshots (cognition_id, version, trait, value, confidence, evidence_count, snapshot_at)
@@ -224,16 +247,27 @@ impl<'a> CognitionStore<'a> {
         }
     }
 
-    pub fn query_by_subject(&self, subject: &str, limit: usize, offset: usize) -> Result<Vec<CognitionRow>> {
+    pub fn query_by_subject(
+        &self,
+        subject: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<CognitionRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, subject, trait, value, confidence, evidence_count, first_seen, last_updated, version, scope
              FROM cognitions WHERE subject = ?1 ORDER BY last_updated DESC LIMIT ?2 OFFSET ?3",
         )?;
         let rows = stmt.query_map(params![subject, limit as i64, offset as i64], |row| {
             Ok(CognitionRow {
-                id: row.get(0)?, subject: row.get(1)?, trait_name: row.get(2)?,
-                value: row.get(3)?, confidence: row.get(4)?, evidence_count: row.get(5)?,
-                first_seen: row.get(6)?, last_updated: row.get(7)?, version: row.get(8)?,
+                id: row.get(0)?,
+                subject: row.get(1)?,
+                trait_name: row.get(2)?,
+                value: row.get(3)?,
+                confidence: row.get(4)?,
+                evidence_count: row.get(5)?,
+                first_seen: row.get(6)?,
+                last_updated: row.get(7)?,
+                version: row.get(8)?,
                 scope: row.get(9)?,
             })
         })?;
@@ -241,7 +275,8 @@ impl<'a> CognitionStore<'a> {
     }
 
     pub fn delete(&self, id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM cognitions WHERE id = ?1", params![id])?;
+        self.conn
+            .execute("DELETE FROM cognitions WHERE id = ?1", params![id])?;
         Ok(())
     }
 
@@ -252,9 +287,14 @@ impl<'a> CognitionStore<'a> {
         )?;
         let rows = stmt.query_map(params![cognition_id], |row| {
             Ok(CognitionSnapshot {
-                id: row.get(0)?, cognition_id: row.get(1)?, version: row.get(2)?,
-                trait_name: row.get(3)?, value: row.get(4)?, confidence: row.get(5)?,
-                evidence_count: row.get(6)?, snapshot_at: row.get(7)?,
+                id: row.get(0)?,
+                cognition_id: row.get(1)?,
+                version: row.get(2)?,
+                trait_name: row.get(3)?,
+                value: row.get(4)?,
+                confidence: row.get(5)?,
+                evidence_count: row.get(6)?,
+                snapshot_at: row.get(7)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -313,27 +353,29 @@ impl<'a> AgentConfigStore<'a> {
                     is_primary, memory_enabled
              FROM agent_configs WHERE name = ?1",
         )?;
-        let row = stmt.query_row(params![name], |row| {
-            let allowed_s: Option<String> = row.get(8)?;
-            let disallowed_s: Option<String> = row.get(9)?;
-            Ok(loom_types::AgentConfig {
-                name: row.get(0)?,
-                avatar: row.get(1)?,
-                persona: row.get::<_, String>(2).unwrap_or_default(),
-                system_prompt_override: row.get(3)?,
-                model: row.get(4)?,
-                thinking_level: row.get(5)?,
-                temperature: row.get(6)?,
-                tool_scope: row.get(7)?,
-                allowed_tools: allowed_s.and_then(|s| serde_json::from_str(&s).ok()),
-                disallowed_tools: disallowed_s.and_then(|s| serde_json::from_str(&s).ok()),
-                max_iterations: row.get(10)?,
-                timeout_secs: row.get(11)?,
-                max_concurrent_subagents: row.get::<_, i64>(12).unwrap_or(5) as usize,
-                is_primary: row.get::<_, i64>(13).unwrap_or(0) != 0,
-                memory_enabled: row.get::<_, i64>(14).unwrap_or(0) != 0,
+        let row = stmt
+            .query_row(params![name], |row| {
+                let allowed_s: Option<String> = row.get(8)?;
+                let disallowed_s: Option<String> = row.get(9)?;
+                Ok(loom_types::AgentConfig {
+                    name: row.get(0)?,
+                    avatar: row.get(1)?,
+                    persona: row.get::<_, String>(2).unwrap_or_default(),
+                    system_prompt_override: row.get(3)?,
+                    model: row.get(4)?,
+                    thinking_level: row.get(5)?,
+                    temperature: row.get(6)?,
+                    tool_scope: row.get(7)?,
+                    allowed_tools: allowed_s.and_then(|s| serde_json::from_str(&s).ok()),
+                    disallowed_tools: disallowed_s.and_then(|s| serde_json::from_str(&s).ok()),
+                    max_iterations: row.get(10)?,
+                    timeout_secs: row.get(11)?,
+                    max_concurrent_subagents: row.get::<_, i64>(12).unwrap_or(5) as usize,
+                    is_primary: row.get::<_, i64>(13).unwrap_or(0) != 0,
+                    memory_enabled: row.get::<_, i64>(14).unwrap_or(0) != 0,
+                })
             })
-        }).ok();
+            .ok();
         Ok(row)
     }
 
@@ -370,7 +412,8 @@ impl<'a> AgentConfigStore<'a> {
     }
 
     pub fn delete(&self, name: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM agent_configs WHERE name = ?1", params![name])?;
+        self.conn
+            .execute("DELETE FROM agent_configs WHERE name = ?1", params![name])?;
         Ok(())
     }
 
@@ -387,11 +430,164 @@ impl<'a> AgentConfigStore<'a> {
     }
 
     pub fn get_session_binding(&self, session_id: &str) -> Result<Option<String>> {
-        let row: Option<String> = self.conn.query_row(
-            "SELECT agent_config_name FROM sessions WHERE id = ?1",
-            params![session_id],
-            |row| row.get(0),
-        ).ok();
+        let row: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT agent_config_name FROM sessions WHERE id = ?1",
+                params![session_id],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(row)
+    }
+}
+
+// ============================================================================
+// ModelConfigStore — named model profile CRUD
+// ============================================================================
+
+pub struct ModelConfigStore<'a> {
+    conn: &'a Connection,
+}
+
+impl<'a> ModelConfigStore<'a> {
+    pub fn new(conn: &'a Connection) -> Self {
+        Self { conn }
+    }
+
+    pub fn upsert(&self, config: &loom_types::ModelConfig) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO model_configs
+             (name, model, model_type, backend, base_url, api_key_env,
+              context_size, max_output_tokens, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now'))",
+            params![
+                config.name,
+                config.model,
+                serde_json::to_string(&config.model_type)
+                    .ok()
+                    .map(|s| s.trim_matches('"').to_string()),
+                serde_json::to_string(&config.backend)
+                    .ok()
+                    .map(|s| s.trim_matches('"').to_string()),
+                config.base_url,
+                config.api_key_env,
+                config.context_size as i64,
+                config.max_output_tokens.map(|v| v as i64),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get(&self, name: &str) -> Result<Option<loom_types::ModelConfig>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, model, model_type, backend, base_url, api_key_env,
+                    context_size, max_output_tokens, is_active
+             FROM model_configs WHERE name = ?1",
+        )?;
+        let row = stmt
+            .query_row(params![name], |row| {
+                let model_type_str: String = row.get::<_, String>(2).unwrap_or_default();
+                let backend_str: String = row.get::<_, String>(3).unwrap_or_default();
+                Ok(loom_types::ModelConfig {
+                    name: row.get(0)?,
+                    model: row.get(1)?,
+                    model_type: serde_json::from_str(&format!("\"{}\"", model_type_str))
+                        .unwrap_or_default(),
+                    backend: serde_json::from_str(&format!("\"{}\"", backend_str))
+                        .unwrap_or_default(),
+                    base_url: row.get(4)?,
+                    api_key_env: row.get(5)?,
+                    context_size: row.get::<_, i64>(6).unwrap_or(4096) as usize,
+                    max_output_tokens: row
+                        .get::<_, Option<i64>>(7)
+                        .ok()
+                        .flatten()
+                        .map(|v| v as usize),
+                    path: None,
+                    n_gpu_layers: 0,
+                })
+            })
+            .ok();
+        Ok(row)
+    }
+
+    pub fn list(&self) -> Result<Vec<loom_types::ModelConfig>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, model, model_type, backend, base_url, api_key_env,
+                    context_size, max_output_tokens, is_active
+             FROM model_configs ORDER BY name",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let model_type_str: String = row.get::<_, String>(2).unwrap_or_default();
+            let backend_str: String = row.get::<_, String>(3).unwrap_or_default();
+            Ok(loom_types::ModelConfig {
+                name: row.get(0)?,
+                model: row.get(1)?,
+                model_type: serde_json::from_str(&format!("\"{}\"", model_type_str))
+                    .unwrap_or_default(),
+                backend: serde_json::from_str(&format!("\"{}\"", backend_str)).unwrap_or_default(),
+                base_url: row.get(4)?,
+                api_key_env: row.get(5)?,
+                context_size: row.get::<_, i64>(6).unwrap_or(4096) as usize,
+                max_output_tokens: row
+                    .get::<_, Option<i64>>(7)
+                    .ok()
+                    .flatten()
+                    .map(|v| v as usize),
+                path: None,
+                n_gpu_layers: 0,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn delete(&self, name: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM model_configs WHERE name = ?1", params![name])?;
+        Ok(())
+    }
+
+    pub fn set_active(&self, name: &str) -> Result<()> {
+        self.conn
+            .execute("UPDATE model_configs SET is_active = 0", [])?;
+        self.conn.execute(
+            "UPDATE model_configs SET is_active = 1, updated_at = datetime('now') WHERE name = ?1",
+            params![name],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_active(&self) -> Result<Option<loom_types::ModelConfig>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, model, model_type, backend, base_url, api_key_env,
+                    context_size, max_output_tokens, is_active
+             FROM model_configs WHERE is_active = 1 LIMIT 1",
+        )?;
+        let row = stmt
+            .query_row([], |row| {
+                let model_type_str: String = row.get::<_, String>(2).unwrap_or_default();
+                let backend_str: String = row.get::<_, String>(3).unwrap_or_default();
+                Ok(loom_types::ModelConfig {
+                    name: row.get(0)?,
+                    model: row.get(1)?,
+                    model_type: serde_json::from_str(&format!("\"{}\"", model_type_str))
+                        .unwrap_or_default(),
+                    backend: serde_json::from_str(&format!("\"{}\"", backend_str))
+                        .unwrap_or_default(),
+                    base_url: row.get(4)?,
+                    api_key_env: row.get(5)?,
+                    context_size: row.get::<_, i64>(6).unwrap_or(4096) as usize,
+                    max_output_tokens: row
+                        .get::<_, Option<i64>>(7)
+                        .ok()
+                        .flatten()
+                        .map(|v| v as usize),
+                    path: None,
+                    n_gpu_layers: 0,
+                })
+            })
+            .ok();
         Ok(row)
     }
 }

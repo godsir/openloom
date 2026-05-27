@@ -4,10 +4,10 @@
 //! share a common prefix (system prompt + tool definitions). This module tracks
 //! prefix hashes and counts hits/misses — purely observational, no KV block I/O.
 
+use loom_types::Message;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Mutex;
-use loom_types::Message;
 
 #[derive(Debug, Clone, Default)]
 pub struct PrefixCacheStats {
@@ -45,19 +45,25 @@ impl PrefixCache {
         let hash = hash_prefix(prefix);
 
         // Estimate token count of this prefix (char/4)
-        let est_tokens: usize = prefix.iter()
+        let est_tokens: usize = prefix
+            .iter()
             .flat_map(|m| &m.content)
             .map(|p| match p {
                 loom_types::ContentPart::Text { text } => text.chars().count(),
                 _ => 0,
             })
-            .sum::<usize>() / 4;
+            .sum::<usize>()
+            / 4;
 
         let mut last = self.last_hash.lock().unwrap();
         let is_hit = last.is_some_and(|h| h == hash);
 
         let mut stats = self.stats.lock().unwrap();
-        if is_hit { stats.hits += 1; } else { stats.misses += 1; }
+        if is_hit {
+            stats.hits += 1;
+        } else {
+            stats.misses += 1;
+        }
 
         *last = Some(hash);
         *self.last_hit.lock().unwrap() = Some(is_hit);
@@ -108,12 +114,22 @@ fn hash_prefix(messages: &[Message]) -> u64 {
             std::mem::discriminant(part).hash(&mut hasher);
             match part {
                 loom_types::ContentPart::Text { text } => text.hash(&mut hasher),
-                loom_types::ContentPart::ToolCall { id, name, arguments } => {
-                    id.hash(&mut hasher); name.hash(&mut hasher);
+                loom_types::ContentPart::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                } => {
+                    id.hash(&mut hasher);
+                    name.hash(&mut hasher);
                     arguments.to_string().hash(&mut hasher);
                 }
-                loom_types::ContentPart::ToolResult { tool_call_id, result, .. } => {
-                    tool_call_id.hash(&mut hasher); result.hash(&mut hasher);
+                loom_types::ContentPart::ToolResult {
+                    tool_call_id,
+                    result,
+                    ..
+                } => {
+                    tool_call_id.hash(&mut hasher);
+                    result.hash(&mut hasher);
                 }
                 loom_types::ContentPart::Thinking { text } => text.hash(&mut hasher),
                 loom_types::ContentPart::Image { .. } => {}
@@ -149,8 +165,14 @@ mod tests {
     #[test]
     fn test_prefix_miss_different_messages() {
         let cache = PrefixCache::new(2);
-        cache.check(&vec![make_msg(Role::System, "sys A"), make_msg(Role::User, "hello")]);
-        let (hit, _) = cache.check(&vec![make_msg(Role::System, "sys B"), make_msg(Role::User, "hello")]);
+        cache.check(&vec![
+            make_msg(Role::System, "sys A"),
+            make_msg(Role::User, "hello"),
+        ]);
+        let (hit, _) = cache.check(&vec![
+            make_msg(Role::System, "sys B"),
+            make_msg(Role::User, "hello"),
+        ]);
         assert!(!hit);
     }
 

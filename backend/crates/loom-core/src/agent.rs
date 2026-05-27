@@ -6,8 +6,8 @@
 use chrono::{DateTime, Utc};
 use loom_types::{AgentConfig as AgentConfigType, AgentState, SessionId};
 use serde::{Deserialize, Serialize};
-use tokio_util::sync::CancellationToken;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use crate::event_bus::AgentEvent;
 
@@ -30,11 +30,17 @@ pub enum AgentStatus {
 
 impl AgentStatus {
     pub fn is_terminal(&self) -> bool {
-        matches!(self, AgentStatus::Completed | AgentStatus::Errored { .. } | AgentStatus::Killed)
+        matches!(
+            self,
+            AgentStatus::Completed | AgentStatus::Errored { .. } | AgentStatus::Killed
+        )
     }
 
     pub fn is_busy(&self) -> bool {
-        matches!(self, AgentStatus::Thinking | AgentStatus::Acting | AgentStatus::WaitingForSubagent)
+        matches!(
+            self,
+            AgentStatus::Thinking | AgentStatus::Acting | AgentStatus::WaitingForSubagent
+        )
     }
 
     pub fn to_loom_state(&self) -> AgentState {
@@ -96,7 +102,11 @@ pub struct AgentResult {
 
 impl Agent {
     /// Create a new agent from config, bound to a session.
-    pub fn new(config: AgentConfigType, session_id: SessionId, parent_id: Option<loom_types::AgentId>) -> Self {
+    pub fn new(
+        config: AgentConfigType,
+        session_id: SessionId,
+        parent_id: Option<loom_types::AgentId>,
+    ) -> Self {
         let id = loom_types::AgentId::new();
         let now = Utc::now();
         Self {
@@ -119,7 +129,11 @@ impl Agent {
     }
 
     /// Transition to a new status, emitting the change.
-    pub fn transition(&mut self, new_status: AgentStatus, msg: Option<String>) -> Option<AgentEvent> {
+    pub fn transition(
+        &mut self,
+        new_status: AgentStatus,
+        msg: Option<String>,
+    ) -> Option<AgentEvent> {
         let old_status = self.status.clone();
         if old_status == new_status {
             return None;

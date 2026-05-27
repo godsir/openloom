@@ -94,7 +94,9 @@ pub struct PluginMcpServer {
     pub headers: std::collections::HashMap<String, String>,
 }
 
-fn default_transport() -> String { "stdio".into() }
+fn default_transport() -> String {
+    "stdio".into()
+}
 
 /// A discovered plugin ready for activation.
 pub struct DiscoveredPlugin {
@@ -109,7 +111,11 @@ pub struct PluginManager {
 }
 
 impl PluginManager {
-    pub fn new() -> Self { Self { plugins: Vec::new() } }
+    pub fn new() -> Self {
+        Self {
+            plugins: Vec::new(),
+        }
+    }
 
     /// Scan all known plugin directories.
     pub fn discover(&mut self, home_dir: &std::path::Path) -> Result<usize> {
@@ -119,8 +125,7 @@ impl PluginManager {
             ("~/.loom/plugins", "loom"),
         ];
         for (label, source) in search {
-            let path = home_dir
-                .join(label.strip_prefix("~/").unwrap_or(label));
+            let path = home_dir.join(label.strip_prefix("~/").unwrap_or(label));
             let before = self.plugins.len();
             self.scan_dir(&path, source);
             let found = self.plugins.len() - before;
@@ -137,8 +142,12 @@ impl PluginManager {
     }
 
     fn scan_dir_depth(&mut self, dir: &std::path::Path, source: &str, depth: u32) {
-        if !dir.exists() || depth > 4 { return; }
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        if !dir.exists() || depth > 4 {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
         for entry in entries.flatten() {
             if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                 continue;
@@ -148,10 +157,13 @@ impl PluginManager {
 
             // Skip meta dirs
             let name = dir_name.to_lowercase();
-            if name == "node_modules" || name == ".git" || name.starts_with('.') { continue; }
+            if name == "node_modules" || name == ".git" || name.starts_with('.') {
+                continue;
+            }
 
             // Try loading a manifest at this level
-            if let Some(mut manifest) = self.try_load_toml(&plugin_dir)
+            if let Some(mut manifest) = self
+                .try_load_toml(&plugin_dir)
                 .or_else(|| self.try_load_json(&plugin_dir))
             {
                 if manifest.name.is_empty() {
@@ -170,7 +182,9 @@ impl PluginManager {
                 self.plugins.push(DiscoveredPlugin {
                     manifest: PluginManifest {
                         name: dir_name,
-                        skills: Some(PluginSkillsSection { paths: vec![".".into()] }),
+                        skills: Some(PluginSkillsSection {
+                            paths: vec![".".into()],
+                        }),
                         ..Default::default()
                     },
                     path: plugin_dir,
@@ -199,30 +213,45 @@ impl PluginManager {
     }
 
     fn try_load_json(&self, dir: &std::path::Path) -> Option<PluginManifest> {
-        let path = dir.join("manifest.json")
-            .exists().then(|| dir.join("manifest.json"))
-            .or_else(|| dir.join("package.json").exists().then(|| dir.join("package.json")))?;
+        let path = dir
+            .join("manifest.json")
+            .exists()
+            .then(|| dir.join("manifest.json"))
+            .or_else(|| {
+                dir.join("package.json")
+                    .exists()
+                    .then(|| dir.join("package.json"))
+            })?;
         let content = std::fs::read_to_string(&path).ok()?;
         let jm: JsonManifest = serde_json::from_str(&content).ok()?;
 
         // Convert OpenClaw-style skills to our format
         let skills = jm.skills.map(|entries| {
-            let paths: Vec<String> = entries.iter().map(|e| {
-                e.path.clone().unwrap_or_else(|| e.name.clone())
-            }).collect();
+            let paths: Vec<String> = entries
+                .iter()
+                .map(|e| e.path.clone().unwrap_or_else(|| e.name.clone()))
+                .collect();
             PluginSkillsSection { paths }
         });
 
         // Convert Claude Code-style mcpServers to our format
         let mcp_servers = jm.mcp_servers.map(|map| {
-            map.into_iter().map(|(name, entry)| PluginMcpServer {
-                name,
-                transport: entry.transport.unwrap_or_else(|| if entry.url.is_some() { "http".into() } else { "stdio".into() }),
-                command: entry.command,
-                args: entry.args,
-                url: entry.url,
-                headers: Default::default(),
-            }).collect()
+            map.into_iter()
+                .map(|(name, entry)| PluginMcpServer {
+                    name,
+                    transport: entry.transport.unwrap_or_else(|| {
+                        if entry.url.is_some() {
+                            "http".into()
+                        } else {
+                            "stdio".into()
+                        }
+                    }),
+                    command: entry.command,
+                    args: entry.args,
+                    url: entry.url,
+                    headers: Default::default(),
+                })
+                .collect()
         });
 
         Some(PluginManifest {
@@ -236,7 +265,9 @@ impl PluginManager {
 
     fn has_skill_md(&self, dir: &std::path::Path) -> bool {
         // Check if directory itself has SKILL.md
-        if dir.join("SKILL.md").exists() { return true; }
+        if dir.join("SKILL.md").exists() {
+            return true;
+        }
         // Check one level of subdirectories
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
@@ -252,9 +283,16 @@ impl PluginManager {
 
     /// List discovered plugins with source and description.
     pub fn list(&self) -> Vec<(&str, &str, &str)> {
-        self.plugins.iter().map(|p| {
-            (p.manifest.name.as_str(), p.manifest.description.as_str(), p.source.as_str())
-        }).collect()
+        self.plugins
+            .iter()
+            .map(|p| {
+                (
+                    p.manifest.name.as_str(),
+                    p.manifest.description.as_str(),
+                    p.source.as_str(),
+                )
+            })
+            .collect()
     }
 
     /// Collect all skill paths from plugins.

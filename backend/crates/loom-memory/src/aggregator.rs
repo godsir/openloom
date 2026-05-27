@@ -10,7 +10,10 @@ pub struct PatternAggregator {
 
 impl PatternAggregator {
     pub fn new(threshold: usize) -> Self {
-        Self { counts: HashMap::new(), threshold }
+        Self {
+            counts: HashMap::new(),
+            threshold,
+        }
     }
 
     /// Record an event action and return true if threshold is reached.

@@ -12,34 +12,34 @@
 //! 5. Every pub type has a doc comment listing its consumers
 //! 6. #[deprecated] over deletion for one version cycle
 
-pub mod id;
-pub mod role;
-pub mod message;
-pub mod tool;
-pub mod mcp;
-pub mod jsonrpc;
-pub mod event;
 pub mod config;
-pub mod session;
-pub mod mode;
-pub mod router;
+pub mod event;
+pub mod id;
 pub mod inference;
+pub mod jsonrpc;
+pub mod mcp;
+pub mod message;
+pub mod mode;
 pub mod permission;
 pub mod persona;
+pub mod role;
+pub mod router;
+pub mod session;
+pub mod tool;
 
 // Re-export all public types at crate root for ergonomic imports
-pub use id::*;
-pub use role::*;
-pub use message::*;
-pub use tool::*;
-pub use mcp::*;
-pub use jsonrpc::*;
-pub use event::*;
 pub use config::model_config::*;
 pub use config::*;
-pub use session::*;
-pub use mode::*;
-pub use router::*;
+pub use event::*;
+pub use id::*;
 pub use inference::*;
+pub use jsonrpc::*;
+pub use mcp::*;
+pub use message::*;
+pub use mode::*;
 pub use permission::*;
 pub use persona::*;
+pub use role::*;
+pub use router::*;
+pub use session::*;
+pub use tool::*;

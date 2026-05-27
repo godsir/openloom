@@ -5,12 +5,12 @@
 
 use std::sync::Arc;
 
-use axum::{extract::State, routing::get, Json, Router};
+use axum::{Json, Router, extract::State, routing::get};
 use loom_core::Orchestrator;
 
 mod dispatch;
-mod ws;
 mod routes;
+mod ws;
 
 pub use dispatch::SessionStore;
 pub use ws::ws_handler;
@@ -23,7 +23,10 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(orchestrator: Arc<Orchestrator>) -> Self {
-        Self { orchestrator, sessions: SessionStore::default() }
+        Self {
+            orchestrator,
+            sessions: SessionStore::default(),
+        }
     }
 }
 
@@ -50,7 +53,10 @@ pub async fn serve(host: &str, port: u16, orchestrator: Arc<Orchestrator>) -> an
     // Hydrate sessions from persisted store
     let sessions = state.orchestrator.list_persisted_sessions().await;
     for (id, created_at, message_count, title) in sessions {
-        state.sessions.restore(id, created_at, message_count, title).await;
+        state
+            .sessions
+            .restore(id, created_at, message_count, title)
+            .await;
     }
     let app = build_router(state);
     let addr = format!("{}:{}", host, port);

@@ -9,8 +9,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use loom_types::{ToolDefinition, ToolProgress};
-use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc::UnboundedSender;
 
 /// Result of executing a tool.
 #[derive(Debug, Clone)]
@@ -66,7 +66,9 @@ pub struct ToolRegistry {
 
 impl ToolRegistry {
     pub fn new() -> Self {
-        Self { tools: HashMap::new() }
+        Self {
+            tools: HashMap::new(),
+        }
     }
 
     /// Register a tool. Returns error if name collision.
@@ -116,7 +118,9 @@ impl ToolRegistry {
         arguments: serde_json::Value,
         progress: UnboundedSender<ToolProgress>,
     ) -> Result<ToolResult> {
-        let tool = self.find(name).ok_or_else(|| anyhow::anyhow!("unknown tool: {}", name))?;
+        let tool = self
+            .find(name)
+            .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", name))?;
         tool.execute(arguments, progress).await
     }
 
@@ -195,13 +199,20 @@ impl AgentTool for SpawnAgentTool {
         let description = arguments["description"].as_str().unwrap_or("subtask");
         let prompt = arguments["prompt"].as_str().unwrap_or("");
         if prompt.is_empty() {
-            return Ok(ToolResult { content: "No prompt provided.".into(), is_error: true, structured_content: None });
+            return Ok(ToolResult {
+                content: "No prompt provided.".into(),
+                is_error: true,
+                structured_content: None,
+            });
         }
 
         let config = self.context.loop_config.read().await;
         // Build a sub-agent agent loop config
         let sub_config = crate::agent_loop::AgentLoopConfig {
-            system_prompt: format!("You are a sub-agent. Task: {}\n\nInstructions:\n{}", description, prompt),
+            system_prompt: format!(
+                "You are a sub-agent. Task: {}\n\nInstructions:\n{}",
+                description, prompt
+            ),
             max_iterations: config.max_iterations.min(5),
             max_tokens: config.max_tokens,
             temperature: config.temperature,
@@ -214,41 +225,84 @@ impl AgentTool for SpawnAgentTool {
 
         // Spawn child agent in the pool
         let session_id = loom_types::SessionId::new();
-        let child_id = self.context.agent_pool.spawn(
-            loom_types::AgentConfig::default(), None, session_id.clone(),
-        ).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+        let child_id = self
+            .context
+            .agent_pool
+            .spawn(loom_types::AgentConfig::default(), None, session_id.clone())
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        let _ = self.context.agent_pool.transition(&child_id,
-            crate::agent::AgentStatus::Thinking, Some("sub-agent processing".into())).await;
+        let _ = self
+            .context
+            .agent_pool
+            .transition(
+                &child_id,
+                crate::agent::AgentStatus::Thinking,
+                Some("sub-agent processing".into()),
+            )
+            .await;
 
         // Run the agent loop
         let client_guard = self.context.cloud_client.read().await;
         let client = match &*client_guard {
             Some(c) => c,
-            None => return Ok(ToolResult { content: "No model configured.".into(), is_error: true, structured_content: None }),
+            None => {
+                return Ok(ToolResult {
+                    content: "No model configured.".into(),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
         };
         let registry = self.context.tool_registry.read().await;
 
         let result = crate::agent_loop::run_agent_turn(
-            client.as_ref(), &registry, &[], prompt, &sub_config,
-            &None, &None,
-        ).await;
+            client.as_ref(),
+            &registry,
+            &[],
+            prompt,
+            &sub_config,
+            &None,
+            &None,
+        )
+        .await;
 
-        drop(registry); drop(client_guard);
+        drop(registry);
+        drop(client_guard);
 
         match result {
             Ok(turn) => {
-                let _ = self.context.agent_pool.transition(&child_id,
-                    crate::agent::AgentStatus::Completed, None).await;
+                let _ = self
+                    .context
+                    .agent_pool
+                    .transition(&child_id, crate::agent::AgentStatus::Completed, None)
+                    .await;
                 let _ = self.context.agent_pool.remove(&child_id).await;
                 tracing::info!(%description, tokens = turn.prompt_tokens + turn.completion_tokens, "sub-agent done");
-                Ok(ToolResult { content: turn.response, is_error: false, structured_content: None })
+                Ok(ToolResult {
+                    content: turn.response,
+                    is_error: false,
+                    structured_content: None,
+                })
             }
             Err(e) => {
-                let _ = self.context.agent_pool.transition(&child_id,
-                    crate::agent::AgentStatus::Errored { message: e.to_string() }, None).await;
+                let _ = self
+                    .context
+                    .agent_pool
+                    .transition(
+                        &child_id,
+                        crate::agent::AgentStatus::Errored {
+                            message: e.to_string(),
+                        },
+                        None,
+                    )
+                    .await;
                 let _ = self.context.agent_pool.remove(&child_id).await;
-                Ok(ToolResult { content: format!("Sub-agent error: {}", e), is_error: true, structured_content: None })
+                Ok(ToolResult {
+                    content: format!("Sub-agent error: {}", e),
+                    is_error: true,
+                    structured_content: None,
+                })
             }
         }
     }

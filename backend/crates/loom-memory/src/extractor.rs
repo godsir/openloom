@@ -31,7 +31,11 @@ pub struct ExtractedRelationship {
 /// Trait for entity+relationship extraction from text.
 pub trait EntityExtractor: Send + Sync {
     fn extract_entities(&self, text: &str, context: &str) -> Result<Vec<ExtractedEntity>>;
-    fn extract_relationships(&self, text: &str, entities: &[ExtractedEntity]) -> Result<Vec<ExtractedRelationship>>;
+    fn extract_relationships(
+        &self,
+        text: &str,
+        entities: &[ExtractedEntity],
+    ) -> Result<Vec<ExtractedRelationship>>;
 }
 
 /// Rule-based extractor using keyword matching and simple patterns.
@@ -45,7 +49,11 @@ impl EntityExtractor for RuleBasedEntityExtractor {
         // Technology detection via common keywords
         let techs = [
             ("rust", "Technology", "Systems programming language"),
-            ("python", "Technology", "General-purpose programming language"),
+            (
+                "python",
+                "Technology",
+                "General-purpose programming language",
+            ),
             ("typescript", "Technology", "Typed JavaScript superset"),
             ("golang", "Technology", "Go programming language"),
             ("docker", "Technology", "Container platform"),
@@ -62,8 +70,11 @@ impl EntityExtractor for RuleBasedEntityExtractor {
         for (kw, etype, desc) in &techs {
             if lower.contains(kw) {
                 entities.push(ExtractedEntity {
-                    name: kw.to_string(), entity_type: etype.to_string(),
-                    description: desc.to_string(), confidence: 0.6, aliases: vec![],
+                    name: kw.to_string(),
+                    entity_type: etype.to_string(),
+                    description: desc.to_string(),
+                    confidence: 0.6,
+                    aliases: vec![],
                     scope: "global".into(),
                 });
             }
@@ -71,23 +82,31 @@ impl EntityExtractor for RuleBasedEntityExtractor {
         Ok(entities)
     }
 
-    fn extract_relationships(&self, text: &str, entities: &[ExtractedEntity]) -> Result<Vec<ExtractedRelationship>> {
+    fn extract_relationships(
+        &self,
+        text: &str,
+        entities: &[ExtractedEntity],
+    ) -> Result<Vec<ExtractedRelationship>> {
         let mut rels = Vec::new();
         let entity_names: Vec<&str> = entities.iter().map(|e| e.name.as_str()).collect();
 
         if entity_names.len() >= 2 {
             for i in 0..entity_names.len() {
-                for j in (i+1)..entity_names.len() {
+                for j in (i + 1)..entity_names.len() {
                     // Only create relationship if both appear near each other in text
                     let pos_i = text.to_lowercase().find(&entity_names[i].to_lowercase());
                     let pos_j = text.to_lowercase().find(&entity_names[j].to_lowercase());
                     if let (Some(pi), Some(pj)) = (pos_i, pos_j)
-                        && (pi as i64 - pj as i64).abs() < 200 {
+                        && (pi as i64 - pj as i64).abs() < 200
+                    {
                         rels.push(ExtractedRelationship {
                             source_name: "USER".into(),
                             target_name: entity_names[j].to_string(),
                             relation_type: "interested_in".into(),
-                            fact: format!("USER mentioned {} and {}", entity_names[i], entity_names[j]),
+                            fact: format!(
+                                "USER mentioned {} and {}",
+                                entity_names[i], entity_names[j]
+                            ),
                             confidence: 0.4,
                             scope: "global".into(),
                         });
@@ -139,7 +158,9 @@ Relation types: uses, works_on, knows, interested_in, dislikes, depends_on, part
 Conversation context:"#;
 
 /// Parse LLM response into extracted entities and relationships.
-pub fn parse_llm_extraction(response: &str) -> Result<(Vec<ExtractedEntity>, Vec<ExtractedRelationship>)> {
+pub fn parse_llm_extraction(
+    response: &str,
+) -> Result<(Vec<ExtractedEntity>, Vec<ExtractedRelationship>)> {
     // Extract JSON block from response (may be wrapped in markdown code fences)
     let json_str = if let Some(start) = response.find("```json") {
         let content = &response[start + 7..];
@@ -159,32 +180,48 @@ pub fn parse_llm_extraction(response: &str) -> Result<(Vec<ExtractedEntity>, Vec
 
     let entities: Vec<ExtractedEntity> = parsed["entities"]
         .as_array()
-        .map(|a| a.iter().filter_map(|e| {
-            Some(ExtractedEntity {
-                name: e["name"].as_str()?.to_string(),
-                entity_type: e["entity_type"].as_str().unwrap_or("Concept").to_string(),
-                description: e["description"].as_str().unwrap_or("").to_string(),
-                confidence: e["confidence"].as_f64().unwrap_or(0.5),
-                aliases: e["aliases"].as_array()
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                    .unwrap_or_default(),
-                scope: "global".to_string(),
-            })
-        }).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| {
+                    Some(ExtractedEntity {
+                        name: e["name"].as_str()?.to_string(),
+                        entity_type: e["entity_type"].as_str().unwrap_or("Concept").to_string(),
+                        description: e["description"].as_str().unwrap_or("").to_string(),
+                        confidence: e["confidence"].as_f64().unwrap_or(0.5),
+                        aliases: e["aliases"]
+                            .as_array()
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        scope: "global".to_string(),
+                    })
+                })
+                .collect()
+        })
         .unwrap_or_default();
 
     let relationships: Vec<ExtractedRelationship> = parsed["relationships"]
         .as_array()
-        .map(|a| a.iter().filter_map(|r| {
-            Some(ExtractedRelationship {
-                source_name: r["source_name"].as_str()?.to_string(),
-                target_name: r["target_name"].as_str()?.to_string(),
-                relation_type: r["relation_type"].as_str().unwrap_or("related_to").to_string(),
-                fact: r["fact"].as_str().unwrap_or("").to_string(),
-                confidence: r["confidence"].as_f64().unwrap_or(0.5),
-                scope: "global".to_string(),
-            })
-        }).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|r| {
+                    Some(ExtractedRelationship {
+                        source_name: r["source_name"].as_str()?.to_string(),
+                        target_name: r["target_name"].as_str()?.to_string(),
+                        relation_type: r["relation_type"]
+                            .as_str()
+                            .unwrap_or("related_to")
+                            .to_string(),
+                        fact: r["fact"].as_str().unwrap_or("").to_string(),
+                        confidence: r["confidence"].as_f64().unwrap_or(0.5),
+                        scope: "global".to_string(),
+                    })
+                })
+                .collect()
+        })
         .unwrap_or_default();
 
     Ok((entities, relationships))
@@ -209,7 +246,8 @@ mod tests {
 
     #[test]
     fn test_parse_llm_extraction_code_fence() {
-        let response = "Here are the results:\n```json\n{\"entities\": [], \"relationships\": []}\n```\nDone.";
+        let response =
+            "Here are the results:\n```json\n{\"entities\": [], \"relationships\": []}\n```\nDone.";
         let (entities, _) = parse_llm_extraction(response).unwrap();
         assert!(entities.is_empty());
     }

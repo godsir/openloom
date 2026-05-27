@@ -41,15 +41,11 @@ Update the summary above to incorporate the new messages. Keep the same format: 
         threshold: usize,
         min_new: usize,
     ) -> bool {
-        history_len >= threshold
-            && history_len.saturating_sub(last_summary_at_len) >= min_new
+        history_len >= threshold && history_len.saturating_sub(last_summary_at_len) >= min_new
     }
 
     /// Build the prompt string for summarization (initial or incremental).
-    pub fn build_prompt(
-        history: &[Message],
-        existing_summary: Option<&str>,
-    ) -> String {
+    pub fn build_prompt(history: &[Message], existing_summary: Option<&str>) -> String {
         let history_text = history
             .iter()
             .map(|m| format!("[{}]: {}", m.role.as_str(), m.text_content()))

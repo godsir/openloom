@@ -34,12 +34,28 @@ pub struct ChatMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContentPart {
-    Text { text: String },
-    Image { source_type: String, media_type: String, data: String },
-    ToolCall { id: String, name: String, arguments: serde_json::Value },
-    ToolResult { tool_call_id: String, name: String, result: String },
+    Text {
+        text: String,
+    },
+    Image {
+        source_type: String,
+        media_type: String,
+        data: String,
+    },
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
+    ToolResult {
+        tool_call_id: String,
+        name: String,
+        result: String,
+    },
     /// Anthropic extended thinking — must be passed back to the API verbatim.
-    Thinking { text: String },
+    Thinking {
+        text: String,
+    },
 }
 
 /// Structured message with rich content parts.
@@ -70,7 +86,11 @@ impl Message {
         }
     }
 
-    pub fn tool(tool_call_id: impl Into<String>, name: impl Into<String>, result: impl Into<String>) -> Self {
+    pub fn tool(
+        tool_call_id: impl Into<String>,
+        name: impl Into<String>,
+        result: impl Into<String>,
+    ) -> Self {
         Self {
             role: Role::Tool,
             content: vec![ContentPart::ToolResult {
@@ -97,9 +117,11 @@ impl Message {
         self.content
             .iter()
             .filter_map(|c| match c {
-                ContentPart::ToolCall { id, name, arguments } => {
-                    Some((id.clone(), name.clone(), arguments.clone()))
-                }
+                ContentPart::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                } => Some((id.clone(), name.clone(), arguments.clone())),
                 _ => None,
             })
             .collect()

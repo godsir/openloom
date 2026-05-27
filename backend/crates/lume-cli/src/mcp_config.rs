@@ -44,14 +44,18 @@ pub struct McpConfigEntry {
     pub headers: HashMap<String, String>,
 }
 
-fn default_mcp_type() -> String { "stdio".into() }
+fn default_mcp_type() -> String {
+    "stdio".into()
+}
 
 /// Load MCP servers from config files.
 ///
 /// Scans in priority order:
 /// 1. Project-level: `<cwd>/.lume/mcp.json`
 /// 2. User-level: `<data_dir>/mcp.json`
-pub fn load_mcp_configs(data_dir: &PathBuf) -> Result<(Vec<lume_mcp::McpServerConfig>, Vec<String>)> {
+pub fn load_mcp_configs(
+    data_dir: &PathBuf,
+) -> Result<(Vec<lume_mcp::McpServerConfig>, Vec<String>)> {
     let mut configs = Vec::new();
     let mut sources = Vec::new();
 
@@ -64,7 +68,9 @@ pub fn load_mcp_configs(data_dir: &PathBuf) -> Result<(Vec<lume_mcp::McpServerCo
                     configs.append(&mut cfgs);
                     sources.push(format!("project: {}", project_path.display()));
                 }
-                Err(e) => tracing::warn!(path=%project_path.display(), error=%e, "failed to load project MCP config"),
+                Err(e) => {
+                    tracing::warn!(path=%project_path.display(), error=%e, "failed to load project MCP config")
+                }
             }
         }
     }
@@ -77,7 +83,9 @@ pub fn load_mcp_configs(data_dir: &PathBuf) -> Result<(Vec<lume_mcp::McpServerCo
                 configs.append(&mut cfgs);
                 sources.push(format!("user: {}", user_path.display()));
             }
-            Err(e) => tracing::warn!(path=%user_path.display(), error=%e, "failed to load user MCP config"),
+            Err(e) => {
+                tracing::warn!(path=%user_path.display(), error=%e, "failed to load user MCP config")
+            }
         }
     }
 
@@ -117,7 +125,9 @@ fn load_config_file(path: &std::path::Path) -> Result<Vec<lume_mcp::McpServerCon
 /// Merge CLI mcp-args into the configs list.
 pub fn parse_mcp_args(args: &str) -> Result<lume_mcp::McpServerConfig> {
     let parts: Vec<&str> = args.split_whitespace().collect();
-    if parts.is_empty() { anyhow::bail!("empty mcp-args"); }
+    if parts.is_empty() {
+        anyhow::bail!("empty mcp-args");
+    }
 
     let first = parts[0];
     if first.starts_with("http://") || first.starts_with("https://") {
@@ -130,19 +140,37 @@ pub fn parse_mcp_args(args: &str) -> Result<lume_mcp::McpServerConfig> {
             }
         }
         Ok(lume_mcp::McpServerConfig {
-            name, transport: "http".into(), url: Some(url), headers,
-            command: String::new(), args: vec![], env: Default::default(), cwd: None,
-            startup_timeout_secs: 30, tool_timeout_secs: 60,
-            enabled_tools: None, disabled_tools: None,
+            name,
+            transport: "http".into(),
+            url: Some(url),
+            headers,
+            command: String::new(),
+            args: vec![],
+            env: Default::default(),
+            cwd: None,
+            startup_timeout_secs: 30,
+            tool_timeout_secs: 60,
+            enabled_tools: None,
+            disabled_tools: None,
         })
     } else if parts.len() >= 2 {
-        let name = parts.last().map(|s| s.rsplit(&['\\', '/']).next().unwrap_or(s)).unwrap_or("mcp");
+        let name = parts
+            .last()
+            .map(|s| s.rsplit(&['\\', '/']).next().unwrap_or(s))
+            .unwrap_or("mcp");
         Ok(lume_mcp::McpServerConfig {
-            name: name.to_string(), transport: "stdio".into(), command: parts[0].into(),
+            name: name.to_string(),
+            transport: "stdio".into(),
+            command: parts[0].into(),
             args: parts[1..].iter().map(|s| s.to_string()).collect(),
-            url: None, headers: Default::default(), env: Default::default(), cwd: None,
-            startup_timeout_secs: 30, tool_timeout_secs: 60,
-            enabled_tools: None, disabled_tools: None,
+            url: None,
+            headers: Default::default(),
+            env: Default::default(),
+            cwd: None,
+            startup_timeout_secs: 30,
+            tool_timeout_secs: 60,
+            enabled_tools: None,
+            disabled_tools: None,
         })
     } else {
         anyhow::bail!("usage: 'http://url header=val' or 'command args...'")

@@ -18,8 +18,12 @@ pub struct AgentPrefs {
     pub timeout_secs: u64,
 }
 
-fn default_max_iterations() -> usize { 20 }
-fn default_timeout_secs() -> u64 { 300 }
+fn default_max_iterations() -> usize {
+    20
+}
+fn default_timeout_secs() -> u64 {
+    300
+}
 
 impl Default for AgentPrefs {
     fn default() -> Self {
@@ -38,8 +42,12 @@ pub struct PersonaPrefs {
     pub recency_decay_days: u32,
 }
 
-fn default_top_n() -> usize { 5 }
-fn default_recency_decay() -> u32 { 30 }
+fn default_top_n() -> usize {
+    5
+}
+fn default_recency_decay() -> u32 {
+    30
+}
 
 impl Default for PersonaPrefs {
     fn default() -> Self {
@@ -58,8 +66,12 @@ pub struct RouterPrefs {
     pub fallback_threshold: f32,
 }
 
-fn default_keyword_threshold() -> f32 { 0.85 }
-fn default_fallback_threshold() -> f32 { 0.70 }
+fn default_keyword_threshold() -> f32 {
+    0.85
+}
+fn default_fallback_threshold() -> f32 {
+    0.70
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ServerPrefs {
@@ -69,8 +81,12 @@ pub struct ServerPrefs {
     pub port: u16,
 }
 
-fn default_host() -> String { "127.0.0.1".into() }
-fn default_port() -> u16 { 0 }
+fn default_host() -> String {
+    "127.0.0.1".into()
+}
+fn default_port() -> u16 {
+    0
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StoragePrefs {
@@ -85,7 +101,9 @@ pub struct LoggingPrefs {
     pub log_content: bool,
 }
 
-fn default_log_level() -> String { "info".into() }
+fn default_log_level() -> String {
+    "info".into()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachePrefs {
@@ -97,9 +115,15 @@ pub struct CachePrefs {
     pub total_budget_mb: usize,
 }
 
-fn default_block_size() -> usize { 1024 }
-fn default_max_blocks() -> usize { 32 }
-fn default_cache_budget_mb() -> usize { 256 }
+fn default_block_size() -> usize {
+    1024
+}
+fn default_max_blocks() -> usize {
+    32
+}
+fn default_cache_budget_mb() -> usize {
+    256
+}
 
 impl Default for CachePrefs {
     fn default() -> Self {
@@ -117,7 +141,9 @@ pub struct RateLimitConfig {
     pub min_interval_ms: u64,
 }
 
-fn default_min_interval() -> u64 { 100 }
+fn default_min_interval() -> u64 {
+    100
+}
 
 // === Root config ===
 
@@ -203,4 +229,6 @@ pub struct AgentConfig {
     pub memory_enabled: bool,
 }
 
-fn default_max_subagents() -> usize { 5 }
+fn default_max_subagents() -> usize {
+    5
+}

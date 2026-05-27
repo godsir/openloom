@@ -7,9 +7,9 @@
 use anyhow::Result;
 use loom_context::{AssembleOptions, ContextAssembler};
 use loom_inference::engine::CloudClient;
-use loom_types::{CompletionRequest, ContentPart, Message, Role, StreamDelta, ToolDefinition};
 use loom_security::check_permission;
 use loom_types::SkillPermissions;
+use loom_types::{CompletionRequest, ContentPart, Message, Role, StreamDelta, ToolDefinition};
 use tokio::sync::mpsc;
 use tracing::info;
 
@@ -87,13 +87,14 @@ fn request_tools_definition() -> ToolDefinition {
 /// Falls back to the built-in tools if nothing matches.
 fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
     let r = reason.to_lowercase();
-    let keywords: Vec<&str> = r.split_whitespace()
-        .filter(|w| w.len() >= 3)
-        .collect();
+    let keywords: Vec<&str> = r.split_whitespace().filter(|w| w.len() >= 3).collect();
 
-    let mut matched: Vec<ToolDefinition> = all.iter()
+    let mut matched: Vec<ToolDefinition> = all
+        .iter()
         .filter(|t| {
-            if t.name == "request_tools" { return false; }
+            if t.name == "request_tools" {
+                return false;
+            }
             let nl = t.name.to_lowercase();
             let dl = t.description.to_lowercase();
             keywords.iter().any(|kw| nl.contains(kw) || dl.contains(kw))
@@ -102,7 +103,15 @@ fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
         .collect();
 
     // Always include the essential built-in tools as a base
-    let builtins: &[&str] = &["shell", "file_read", "file_write", "file_list", "content_search", "file_delete", "use_skill"];
+    let builtins: &[&str] = &[
+        "shell",
+        "file_read",
+        "file_write",
+        "file_list",
+        "content_search",
+        "file_delete",
+        "use_skill",
+    ];
     for name in builtins {
         if !matched.iter().any(|t| t.name == *name) {
             if let Some(t) = all.iter().find(|t| t.name == *name) {
@@ -154,7 +163,12 @@ pub async fn run_agent_turn(
             thinking_budget: None,
         };
 
-        info!(iteration, tool_count = tools.len(), msg_count = messages.len(), "agent turn iteration");
+        info!(
+            iteration,
+            tool_count = tools.len(),
+            msg_count = messages.len(),
+            "agent turn iteration"
+        );
 
         let response = client.complete(request).await?;
         total_prompt += response.prompt_tokens;
@@ -187,7 +201,9 @@ pub async fn run_agent_turn(
             // Add assistant message with tool calls + thinking (if any)
             let mut assistant_content: Vec<ContentPart> = Vec::new();
             if let Some(ref thinking) = response.thinking {
-                assistant_content.push(ContentPart::Thinking { text: thinking.clone() });
+                assistant_content.push(ContentPart::Thinking {
+                    text: thinking.clone(),
+                });
             }
             for tc in &response.tool_calls {
                 assistant_content.push(ContentPart::ToolCall {
@@ -210,12 +226,19 @@ pub async fn run_agent_turn(
                 let perms = SkillPermissions::default();
                 let (allowed, risk) = check_permission(&tool_name, &perms);
                 if !allowed {
-                    messages.push(Message::tool(&tc.id, &tool_name, format!("Permission denied (risk: {:?})", risk)));
+                    messages.push(Message::tool(
+                        &tc.id,
+                        &tool_name,
+                        format!("Permission denied (risk: {:?})", risk),
+                    ));
                     continue;
                 }
 
                 let (progress_tx, _progress_rx) = mpsc::unbounded_channel();
-                match registry.execute(&tc.name, tc.arguments.clone(), progress_tx).await {
+                match registry
+                    .execute(&tc.name, tc.arguments.clone(), progress_tx)
+                    .await
+                {
                     Ok(result) => {
                         tool_calls_made += 1;
                         let content = if result.is_error {
@@ -368,13 +391,21 @@ pub async fn run_agent_turn_streaming(
             }
         }
 
-
         // Drain any remaining deltas after stream completes
         while let Ok(delta) = stream_rx.try_recv() {
             match delta {
-                StreamDelta::Text(t) => { this_text.push_str(&t); let _ = delta_tx.send(StreamDelta::Text(t)).await; }
-                StreamDelta::Reasoning(t) => { let _ = delta_tx.send(StreamDelta::Reasoning(t)).await; }
-                StreamDelta::Usage { prompt_tokens, completion_tokens, .. } => {
+                StreamDelta::Text(t) => {
+                    this_text.push_str(&t);
+                    let _ = delta_tx.send(StreamDelta::Text(t)).await;
+                }
+                StreamDelta::Reasoning(t) => {
+                    let _ = delta_tx.send(StreamDelta::Reasoning(t)).await;
+                }
+                StreamDelta::Usage {
+                    prompt_tokens,
+                    completion_tokens,
+                    ..
+                } => {
                     total_prompt += prompt_tokens as usize;
                     total_completion += completion_tokens as usize;
                 }
@@ -385,20 +416,29 @@ pub async fn run_agent_turn_streaming(
         if !pending_tool_calls.is_empty() {
             let mut assistant_content: Vec<ContentPart> = Vec::new();
             if !this_thinking.is_empty() {
-                assistant_content.push(ContentPart::Thinking { text: std::mem::take(&mut this_thinking) });
+                assistant_content.push(ContentPart::Thinking {
+                    text: std::mem::take(&mut this_thinking),
+                });
             }
             for (_, id, name, args) in &pending_tool_calls {
                 assistant_content.push(ContentPart::ToolCall {
-                    id: id.clone(), name: name.clone(),
-                    arguments: serde_json::from_str(args).unwrap_or(serde_json::Value::String(args.clone())),
+                    id: id.clone(),
+                    name: name.clone(),
+                    arguments: serde_json::from_str(args)
+                        .unwrap_or(serde_json::Value::String(args.clone())),
                 });
             }
-            messages.push(Message { role: Role::Assistant, content: assistant_content, timestamp: chrono::Utc::now() });
+            messages.push(Message {
+                role: Role::Assistant,
+                content: assistant_content,
+                timestamp: chrono::Utc::now(),
+            });
 
             for (_, tc_id, tc_name, tc_args) in &pending_tool_calls {
                 // Handle request_tools meta-tool: match and inject real tools
                 if config.lazy_tools && tc_name == "request_tools" {
-                    let args: serde_json::Value = serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}));
+                    let args: serde_json::Value =
+                        serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}));
                     let reason = args["reason"].as_str().unwrap_or("");
                     let matched = match_tools(reason, &all_tools);
                     let names: Vec<&str> = matched.iter().map(|t| t.name.as_str()).collect();
@@ -419,15 +459,25 @@ pub async fn run_agent_turn_streaming(
                 match registry.execute(tc_name, arguments, progress_tx).await {
                     Ok(result) => {
                         tool_calls_made += 1;
-                        let content = if result.is_error { format!("Error: {}", result.content) } else { result.content };
+                        let content = if result.is_error {
+                            format!("Error: {}", result.content)
+                        } else {
+                            result.content
+                        };
                         messages.push(Message::tool(tc_id, tc_name, &content));
                     }
                     Err(e) => {
-                        messages.push(Message::tool(tc_id, tc_name, format!("Tool execution failed: {}", e)));
+                        messages.push(Message::tool(
+                            tc_id,
+                            tc_name,
+                            format!("Tool execution failed: {}", e),
+                        ));
                     }
                 }
             }
-            if _iteration >= 7 { tools.clear(); }
+            if _iteration >= 7 {
+                tools.clear();
+            }
             continue;
         }
 
@@ -435,5 +485,13 @@ pub async fn run_agent_turn_streaming(
         break;
     }
 
-    Ok(TurnResult { response: final_text, tool_calls_made, iterations: 1, prompt_tokens: total_prompt, completion_tokens: total_completion, cached_tokens: client.estimated_cache_tokens(), kv_cache_hit: client.last_cache_hit() })
+    Ok(TurnResult {
+        response: final_text,
+        tool_calls_made,
+        iterations: 1,
+        prompt_tokens: total_prompt,
+        completion_tokens: total_completion,
+        cached_tokens: client.estimated_cache_tokens(),
+        kv_cache_hit: client.last_cache_hit(),
+    })
 }

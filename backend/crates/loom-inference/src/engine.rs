@@ -1,12 +1,15 @@
 //! InferenceEngine — local inference via OpenAI-compatible HTTP API (LM Studio / Ollama)
 //! and CloudClient trait for provider dispatch.
 
+use crate::cache::PrefixCache;
 use anyhow::Result;
 use async_trait::async_trait;
-use loom_types::{CompletionRequest, CompletionResponse, ContentPart, GpuInfo, Message, ModelBackend, StreamDelta, ToolCall};
+use loom_types::{
+    CompletionRequest, CompletionResponse, ContentPart, GpuInfo, Message, ModelBackend,
+    StreamDelta, ToolCall,
+};
 use reqwest::Client as HttpClient;
 use tokio::sync::mpsc;
-use crate::cache::PrefixCache;
 
 /// Local inference engine backed by an OpenAI-compatible HTTP endpoint.
 ///
@@ -53,22 +56,40 @@ impl InferenceEngine {
         }
 
         tracing::info!(%base, %model, "inference engine connected");
-        Ok(Self { base_url: base, model: model.to_string(), http, prefix_cache: PrefixCache::new(2) })
+        Ok(Self {
+            base_url: base,
+            model: model.to_string(),
+            http,
+            prefix_cache: PrefixCache::new(2),
+        })
     }
 
     /// Build an engine pointed at a known endpoint (no load trigger).
     pub fn new(base_url: String, model: String) -> Self {
-        Self { base_url, model, http: HttpClient::new(), prefix_cache: PrefixCache::new(2) }
+        Self {
+            base_url,
+            model,
+            http: HttpClient::new(),
+            prefix_cache: PrefixCache::new(2),
+        }
     }
 
     /// Dummy engine for tests — will fail at call time.
     pub fn dummy() -> Self {
-        Self { base_url: "http://localhost:1".into(), model: "dummy".into(), http: HttpClient::new(), prefix_cache: PrefixCache::new(2) }
+        Self {
+            base_url: "http://localhost:1".into(),
+            model: "dummy".into(),
+            http: HttpClient::new(),
+            prefix_cache: PrefixCache::new(2),
+        }
     }
 
     /// Blocking variant of `connect`.
     pub fn connect_blocking(base_url: &str, model: &str, context_size: usize) -> Result<Self> {
-        let rt = tokio::runtime::Builder::new_current_thread().enable_time().enable_io().build()?;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .enable_io()
+            .build()?;
         rt.block_on(Self::connect(base_url, model, context_size))
     }
 
@@ -79,8 +100,11 @@ impl InferenceEngine {
         let messages = lower_messages(&req.effective_messages());
         let eff = req.effective_messages();
         let (cache_hit, _) = self.prefix_cache.check(&eff);
-        if cache_hit { tracing::info!("KV cache hit — llama.cpp reuses prefix"); }
-        else { tracing::info!("KV cache miss — cold prefix"); }
+        if cache_hit {
+            tracing::info!("KV cache hit — llama.cpp reuses prefix");
+        } else {
+            tracing::info!("KV cache miss — cold prefix");
+        }
 
         let mut body = serde_json::json!({
             "model": self.model,
@@ -130,13 +154,20 @@ impl InferenceEngine {
             .unwrap_or_default();
 
         Ok(CompletionResponse {
-            text: if tool_calls.is_empty() { raw_text } else { String::new() },
+            text: if tool_calls.is_empty() {
+                raw_text
+            } else {
+                String::new()
+            },
             tool_calls,
             prompt_tokens: json["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as usize,
             completion_tokens: json["usage"]["completion_tokens"].as_u64().unwrap_or(0) as usize,
             cached_tokens: 0,
             latency_ms: 0,
-            thinking: choice["reasoning_content"].as_str().filter(|s| !s.is_empty()).map(String::from),
+            thinking: choice["reasoning_content"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(String::from),
         })
     }
 
@@ -149,8 +180,11 @@ impl InferenceEngine {
         let messages = lower_messages(&req.effective_messages());
         let eff = req.effective_messages();
         let (cache_hit, _) = self.prefix_cache.check(&eff);
-        if cache_hit { tracing::info!("KV cache hit (stream)"); }
-        else { tracing::info!("KV cache miss (stream)"); }
+        if cache_hit {
+            tracing::info!("KV cache hit (stream)");
+        } else {
+            tracing::info!("KV cache miss (stream)");
+        }
         let mut body = serde_json::json!({
             "model": self.model,
             "max_tokens": req.max_tokens,
@@ -197,12 +231,18 @@ impl InferenceEngine {
                         }
                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
                             let d = &val["choices"][0]["delta"];
-                            if let Some(r) = d["reasoning_content"].as_str().filter(|s| !s.is_empty())
-                                && token_tx.send(format!("\x02REASONING\x02{}", r)).await.is_err() {
+                            if let Some(r) =
+                                d["reasoning_content"].as_str().filter(|s| !s.is_empty())
+                                && token_tx
+                                    .send(format!("\x02REASONING\x02{}", r))
+                                    .await
+                                    .is_err()
+                            {
                                 return Ok(());
                             }
                             if let Some(t) = d["content"].as_str()
-                                && token_tx.send(t.to_string()).await.is_err() {
+                                && token_tx.send(t.to_string()).await.is_err()
+                            {
                                 return Ok(());
                             }
                             if let Some(u) = val.get("usage").filter(|u| u.is_object()) {
@@ -241,7 +281,10 @@ impl InferenceEngine {
             let info = String::from_utf8_lossy(&output.stdout);
             if let Some(line) = info.lines().next() {
                 let parts: Vec<&str> = line.split(',').collect();
-                let vendor = parts.first().map(|s| s.trim().to_string()).unwrap_or_default();
+                let vendor = parts
+                    .first()
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
                 let vram_mb = parts
                     .get(1)
                     .and_then(|s| s.trim().strip_suffix(" MiB"))
@@ -286,8 +329,11 @@ impl CloudClient for InferenceEngine {
         let messages = lower_messages(&req.effective_messages());
         let eff = req.effective_messages();
         let (cache_hit, _) = self.prefix_cache.check(&eff);
-        if cache_hit { tracing::info!("KV cache hit (structured stream)"); }
-        else { tracing::info!("KV cache miss (structured stream)"); }
+        if cache_hit {
+            tracing::info!("KV cache hit (structured stream)");
+        } else {
+            tracing::info!("KV cache miss (structured stream)");
+        }
 
         let mut body = serde_json::json!({
             "model": self.model,
@@ -337,7 +383,10 @@ impl CloudClient for InferenceEngine {
                             let d = &val["choices"][0]["delta"];
                             if let Some(r) = d["reasoning_content"].as_str()
                                 && !r.is_empty()
-                                && tx.send(StreamDelta::Reasoning(r.to_string())).await.is_err()
+                                && tx
+                                    .send(StreamDelta::Reasoning(r.to_string()))
+                                    .await
+                                    .is_err()
                             {
                                 return Ok(());
                             }
@@ -384,9 +433,10 @@ impl CloudClient for InferenceEngine {
                                         completion_tokens: u["completion_tokens"]
                                             .as_u64()
                                             .unwrap_or(0),
-                                        cache_read_tokens: u["prompt_tokens_details"]["cached_tokens"]
-                                            .as_u64()
-                                            .unwrap_or(0),
+                                        cache_read_tokens:
+                                            u["prompt_tokens_details"]["cached_tokens"]
+                                                .as_u64()
+                                                .unwrap_or(0),
                                         cache_write_tokens: 0,
                                     })
                                     .await
@@ -422,10 +472,16 @@ impl CloudClient for InferenceEngine {
         self.prefix_cache.last_check_was_hit()
     }
 
-    fn estimated_cache_tokens(&self) -> usize { self.prefix_cache.last_cached_tokens() }
+    fn estimated_cache_tokens(&self) -> usize {
+        self.prefix_cache.last_cached_tokens()
+    }
 
-    fn prefix_hash_snapshot(&self) -> Option<u64> { self.prefix_cache.snapshot_hash() }
-    fn prefix_hash_restore(&self, saved: Option<u64>) { self.prefix_cache.restore_hash(saved); }
+    fn prefix_hash_snapshot(&self) -> Option<u64> {
+        self.prefix_cache.snapshot_hash()
+    }
+    fn prefix_hash_restore(&self, saved: Option<u64>) {
+        self.prefix_cache.restore_hash(saved);
+    }
 }
 
 // ── CloudClient trait ───────────────────────────────────────────────
@@ -434,11 +490,8 @@ impl CloudClient for InferenceEngine {
 #[async_trait]
 pub trait CloudClient: Send + Sync {
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse>;
-    async fn complete_stream(
-        &self,
-        req: CompletionRequest,
-        tx: mpsc::Sender<String>,
-    ) -> Result<()>;
+    async fn complete_stream(&self, req: CompletionRequest, tx: mpsc::Sender<String>)
+    -> Result<()>;
     async fn complete_stream_structured(
         &self,
         req: CompletionRequest,
@@ -478,13 +531,21 @@ pub trait CloudClient: Send + Sync {
     /// Reset per-turn prefix cache state. Default: no-op.
     fn prefix_cache_reset(&self) {}
     /// Return prefix cache stats. Default: empty stats.
-    fn prefix_cache_stats(&self) -> crate::cache::PrefixCacheStats { crate::cache::PrefixCacheStats::default() }
+    fn prefix_cache_stats(&self) -> crate::cache::PrefixCacheStats {
+        crate::cache::PrefixCacheStats::default()
+    }
     /// Whether the most recent prefix check was a cache hit (None = not checked).
-    fn last_cache_hit(&self) -> Option<bool> { None }
+    fn last_cache_hit(&self) -> Option<bool> {
+        None
+    }
     /// Estimated token count saved by prefix cache hit (0 = no hit or not tracked).
-    fn estimated_cache_tokens(&self) -> usize { 0 }
+    fn estimated_cache_tokens(&self) -> usize {
+        0
+    }
     /// Snapshot prefix hash for save/restore around internal calls (e.g. summarization).
-    fn prefix_hash_snapshot(&self) -> Option<u64> { None }
+    fn prefix_hash_snapshot(&self) -> Option<u64> {
+        None
+    }
     /// Restore a previously-saved prefix hash.
     fn prefix_hash_restore(&self, _saved: Option<u64>) {}
 }
@@ -525,16 +586,18 @@ fn lower_messages(messages: &[Message]) -> Vec<serde_json::Value> {
                 .content
                 .iter()
                 .filter_map(|p| match p {
-                    ContentPart::ToolCall { id, name, arguments } => {
-                        Some(serde_json::json!({
-                            "id": id,
-                            "type": "function",
-                            "function": {
-                                "name": name,
-                                "arguments": serde_json::to_string(arguments).unwrap_or_default(),
-                            },
-                        }))
-                    }
+                    ContentPart::ToolCall {
+                        id,
+                        name,
+                        arguments,
+                    } => Some(serde_json::json!({
+                        "id": id,
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": serde_json::to_string(arguments).unwrap_or_default(),
+                        },
+                    })),
                     _ => None,
                 })
                 .collect();
@@ -556,17 +619,19 @@ fn lower_messages(messages: &[Message]) -> Vec<serde_json::Value> {
 }
 
 fn build_tools_json(tools: &[loom_types::ToolDefinition]) -> serde_json::Value {
-    serde_json::json!(tools
-        .iter()
-        .map(|t| serde_json::json!({
-            "type": "function",
-            "function": {
-                "name": t.name,
-                "description": t.description,
-                "parameters": t.input_schema,
-            },
-        }))
-        .collect::<Vec<_>>())
+    serde_json::json!(
+        tools
+            .iter()
+            .map(|t| serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.input_schema,
+                },
+            }))
+            .collect::<Vec<_>>()
+    )
 }
 
 // ── tests ───────────────────────────────────────────────────────────

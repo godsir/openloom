@@ -36,7 +36,10 @@ pub enum AgentState {
 
 impl AgentState {
     pub fn is_terminal(&self) -> bool {
-        matches!(self, AgentState::Completed | AgentState::Errored | AgentState::Killed)
+        matches!(
+            self,
+            AgentState::Completed | AgentState::Errored | AgentState::Killed
+        )
     }
 
     pub fn is_busy(&self) -> bool {

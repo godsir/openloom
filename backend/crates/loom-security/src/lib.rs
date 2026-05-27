@@ -4,10 +4,7 @@
 use loom_types::{RiskLevel, SkillPermissions};
 
 /// Check if a tool call is allowed under current permissions.
-pub fn check_permission(
-    tool_name: &str,
-    permissions: &SkillPermissions,
-) -> (bool, RiskLevel) {
+pub fn check_permission(tool_name: &str, permissions: &SkillPermissions) -> (bool, RiskLevel) {
     // Read-only tools are always Low risk
     let read_only = ["file_read", "file_search", "content_search"];
     if read_only.contains(&tool_name) {

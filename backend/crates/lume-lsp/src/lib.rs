@@ -3,7 +3,7 @@
 //! Manages language server processes via stdio JSON-RPC, supporting
 //! diagnostics, completion, hover, definition, references, and document symbols.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
@@ -29,7 +29,10 @@ struct LspConnection {
 
 impl LspConnection {
     fn new(process: Child) -> Self {
-        Self { process, next_id: AtomicU64::new(1) }
+        Self {
+            process,
+            next_id: AtomicU64::new(1),
+        }
     }
 
     async fn send_request(
@@ -39,7 +42,9 @@ impl LspConnection {
         method: &str,
         params: &Value,
     ) -> Result<Value> {
-        let id = self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let body = serde_json::to_string(&serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -64,32 +69,43 @@ impl LspConnection {
 
         let content_len = header
             .lines()
-            .find_map(|l| l.strip_prefix("Content-Length: ")?.trim().parse::<usize>().ok())
+            .find_map(|l| {
+                l.strip_prefix("Content-Length: ")?
+                    .trim()
+                    .parse::<usize>()
+                    .ok()
+            })
             .ok_or_else(|| anyhow!("LSP: missing Content-Length header"))?;
 
         if content_len > MAX_BODY_SIZE {
-            return Err(anyhow!("LSP: response body too large ({} bytes, max {})", content_len, MAX_BODY_SIZE));
+            return Err(anyhow!(
+                "LSP: response body too large ({} bytes, max {})",
+                content_len,
+                MAX_BODY_SIZE
+            ));
         }
 
         let mut body_bytes = vec![0u8; content_len];
         tokio::io::AsyncReadExt::read_exact(reader, &mut body_bytes).await?;
-        let resp: Value = serde_json::from_slice(&body_bytes)
-            .with_context(|| {
-                // Safe UTF-8 truncation at char boundary
-                let byte_limit = 200.min(content_len);
-                let mut end = byte_limit;
-                while end > 0 && end < content_len {
-                    if body_bytes[end] < 128 || body_bytes[end] & 0xC0 == 0xC0 {
-                        break;
-                    }
-                    end -= 1;
+        let resp: Value = serde_json::from_slice(&body_bytes).with_context(|| {
+            // Safe UTF-8 truncation at char boundary
+            let byte_limit = 200.min(content_len);
+            let mut end = byte_limit;
+            while end > 0 && end < content_len {
+                if body_bytes[end] < 128 || body_bytes[end] & 0xC0 == 0xC0 {
+                    break;
                 }
-                let preview = String::from_utf8_lossy(&body_bytes[..end]);
-                format!("LSP parse error: {}", preview)
-            })?;
+                end -= 1;
+            }
+            let preview = String::from_utf8_lossy(&body_bytes[..end]);
+            format!("LSP parse error: {}", preview)
+        })?;
 
         if let Some(err) = resp.get("error") {
-            return Err(anyhow!("LSP error: {}", err["message"].as_str().unwrap_or("unknown")));
+            return Err(anyhow!(
+                "LSP error: {}",
+                err["message"].as_str().unwrap_or("unknown")
+            ));
         }
         Ok(resp["result"].clone())
     }
@@ -126,19 +142,28 @@ struct ServerEntry {
 
 impl ServerEntry {
     async fn request(&self, method: &str, params: &Value) -> Result<Value> {
-        tokio::time::timeout(
-            Duration::from_secs(LSP_TIMEOUT_SECS),
-            async {
-                let mut stdin = self.stdin.lock().await;
-                let mut stdout = self.stdout.lock().await;
-                self.conn.send_request(&mut stdin, &mut stdout, method, params).await
-            }
-        ).await.map_err(|_| anyhow!("LSP request '{}' timed out after {}s", method, LSP_TIMEOUT_SECS))?
+        tokio::time::timeout(Duration::from_secs(LSP_TIMEOUT_SECS), async {
+            let mut stdin = self.stdin.lock().await;
+            let mut stdout = self.stdout.lock().await;
+            self.conn
+                .send_request(&mut stdin, &mut stdout, method, params)
+                .await
+        })
+        .await
+        .map_err(|_| {
+            anyhow!(
+                "LSP request '{}' timed out after {}s",
+                method,
+                LSP_TIMEOUT_SECS
+            )
+        })?
     }
 
     async fn notify(&self, method: &str, params: &Value) -> Result<()> {
         let mut stdin = self.stdin.lock().await;
-        self.conn.send_notification(&mut stdin, method, params).await
+        self.conn
+            .send_notification(&mut stdin, method, params)
+            .await
     }
 }
 
@@ -150,7 +175,9 @@ fn language_config(ext: &str) -> Option<(&'static str, &'static str, Vec<&'stati
     match ext {
         "rs" => Some(("rust", "rust-analyzer", vec![])),
         "ts" | "tsx" => Some(("typescript", "typescript-language-server", vec!["--stdio"])),
-        "js" | "jsx" | "mjs" | "cjs" => Some(("javascript", "typescript-language-server", vec!["--stdio"])),
+        "js" | "jsx" | "mjs" | "cjs" => {
+            Some(("javascript", "typescript-language-server", vec!["--stdio"]))
+        }
         "py" | "pyi" => Some(("python", "pylsp", vec![])),
         "go" => Some(("go", "gopls", vec![])),
         "c" | "h" => Some(("c", "clangd", vec![])),
@@ -166,7 +193,11 @@ fn language_config(ext: &str) -> Option<(&'static str, &'static str, Vec<&'stati
         "hs" => Some(("haskell", "haskell-language-server-wrapper", vec!["--lsp"])),
         "elm" => Some(("elm", "elm-language-server", vec![])),
         "dart" => Some(("dart", "dart", vec!["language-server"])),
-        "sql" => Some(("sql", "sql-language-server", vec!["up", "--method", "stdio"])),
+        "sql" => Some((
+            "sql",
+            "sql-language-server",
+            vec!["up", "--method", "stdio"],
+        )),
         "vue" => Some(("vue", "vue-language-server", vec!["--stdio"])),
         "svelte" => Some(("svelte", "svelteserver", vec!["--stdio"])),
         "astro" => Some(("astro", "astro-ls", vec!["--stdio"])),
@@ -182,7 +213,11 @@ fn language_config(ext: &str) -> Option<(&'static str, &'static str, Vec<&'stati
         "dockerfile" => Some(("dockerfile", "docker-langserver", vec!["--stdio"])),
         "cmake" => Some(("cmake", "cmake-language-server", vec![])),
         "proto" => Some(("proto", "protols", vec![])),
-        "graphql" | "gql" => Some(("graphql", "graphql-language-service-cli", vec!["server", "--method", "stream"])),
+        "graphql" | "gql" => Some((
+            "graphql",
+            "graphql-language-service-cli",
+            vec!["server", "--method", "stream"],
+        )),
         "prisma" => Some(("prisma", "prisma-language-server", vec!["--stdio"])),
         "wgsl" => Some(("wgsl", "wgsl-analyzer", vec![])),
         _ => None,
@@ -232,10 +267,14 @@ impl LspClient {
             return Ok(entry.clone());
         }
 
-        let file_dir = Path::new(file_path).parent()
+        let file_dir = Path::new(file_path)
+            .parent()
             .and_then(|p| p.to_str())
             .unwrap_or(".");
-        let root_uri = format!("file:///{}", file_dir.replace('\\', "/").trim_end_matches('/'));
+        let root_uri = format!(
+            "file:///{}",
+            file_dir.replace('\\', "/").trim_end_matches('/')
+        );
 
         let mut cmd = Command::new(command);
         cmd.args(args);
@@ -244,8 +283,12 @@ impl LspClient {
         cmd.stderr(std::process::Stdio::piped());
         cmd.kill_on_drop(true);
 
-        let mut process = cmd.spawn()
-            .with_context(|| format!("Failed to spawn '{}'. Install it to use .{} LSP features.", command, ext))?;
+        let mut process = cmd.spawn().with_context(|| {
+            format!(
+                "Failed to spawn '{}'. Install it to use .{} LSP features.",
+                command, ext
+            )
+        })?;
 
         // Drain stderr to prevent deadlock
         if let Some(stderr) = process.stderr.take() {
@@ -267,8 +310,18 @@ impl LspClient {
             });
         }
 
-        let stdin = BufWriter::new(process.stdin.take().ok_or_else(|| anyhow!("stdin unavailable"))?);
-        let stdout = BufReader::new(process.stdout.take().ok_or_else(|| anyhow!("stdout unavailable"))?);
+        let stdin = BufWriter::new(
+            process
+                .stdin
+                .take()
+                .ok_or_else(|| anyhow!("stdin unavailable"))?,
+        );
+        let stdout = BufReader::new(
+            process
+                .stdout
+                .take()
+                .ok_or_else(|| anyhow!("stdout unavailable"))?,
+        );
         let conn = Box::new(LspConnection::new(process));
 
         let entry = Arc::new(ServerEntry {
@@ -279,22 +332,27 @@ impl LspClient {
             doc_version: AtomicU64::new(1),
         });
 
-        let _result = entry.request("initialize", &serde_json::json!({
-            "processId": std::process::id(),
-            "rootUri": root_uri,
-            "workspaceFolders": [{"uri": root_uri, "name": "workspace"}],
-            "capabilities": {
-                "textDocument": {
-                    "diagnostic": { "dynamicRegistration": true },
-                    "completion": { "completionItem": { "snippetSupport": false } },
-                    "hover": { "contentFormat": ["markdown", "plaintext"] },
-                    "definition": { "linkSupport": true },
-                    "references": {},
-                    "documentSymbol": { "hierarchicalDocumentSymbolSupport": true }
-                }
-            },
-            "clientInfo": { "name": "openLoom", "version": "0.2.0" }
-        })).await?;
+        let _result = entry
+            .request(
+                "initialize",
+                &serde_json::json!({
+                    "processId": std::process::id(),
+                    "rootUri": root_uri,
+                    "workspaceFolders": [{"uri": root_uri, "name": "workspace"}],
+                    "capabilities": {
+                        "textDocument": {
+                            "diagnostic": { "dynamicRegistration": true },
+                            "completion": { "completionItem": { "snippetSupport": false } },
+                            "hover": { "contentFormat": ["markdown", "plaintext"] },
+                            "definition": { "linkSupport": true },
+                            "references": {},
+                            "documentSymbol": { "hierarchicalDocumentSymbolSupport": true }
+                        }
+                    },
+                    "clientInfo": { "name": "openLoom", "version": "0.2.0" }
+                }),
+            )
+            .await?;
 
         entry.notify("initialized", &serde_json::json!({})).await?;
         tracing::info!(lang=%lang_id, command=%command, "LSP connected");
@@ -313,25 +371,42 @@ impl LspClient {
         let needs_change = old_content.as_deref() != Some(content);
 
         if needs_open {
-            let version = entry.doc_version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            entry.notify("textDocument/didOpen", &serde_json::json!({
-                "textDocument": {
-                    "uri": uri,
-                    "languageId": entry.language_id,
-                    "version": version,
-                    "text": content,
-                }
-            })).await?;
+            let version = entry
+                .doc_version
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            entry
+                .notify(
+                    "textDocument/didOpen",
+                    &serde_json::json!({
+                        "textDocument": {
+                            "uri": uri,
+                            "languageId": entry.language_id,
+                            "version": version,
+                            "text": content,
+                        }
+                    }),
+                )
+                .await?;
         } else if needs_change {
-            let version = entry.doc_version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            entry.notify("textDocument/didChange", &serde_json::json!({
-                "textDocument": { "uri": uri, "version": version },
-                "contentChanges": [{ "text": content }]
-            })).await?;
+            let version = entry
+                .doc_version
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            entry
+                .notify(
+                    "textDocument/didChange",
+                    &serde_json::json!({
+                        "textDocument": { "uri": uri, "version": version },
+                        "contentChanges": [{ "text": content }]
+                    }),
+                )
+                .await?;
         }
 
         if needs_open || needs_change {
-            self.open_files.write().await.insert(uri, content.to_string());
+            self.open_files
+                .write()
+                .await
+                .insert(uri, content.to_string());
         }
 
         Ok(entry)
@@ -345,9 +420,14 @@ impl LspClient {
         let entry = self.ensure_open(file_path, &content).await?;
         let uri = file_uri(file_path);
 
-        let result = entry.request("textDocument/diagnostic", &serde_json::json!({
-            "textDocument": { "uri": uri }
-        })).await?;
+        let result = entry
+            .request(
+                "textDocument/diagnostic",
+                &serde_json::json!({
+                    "textDocument": { "uri": uri }
+                }),
+            )
+            .await?;
 
         Ok(result.get("items").cloned().unwrap_or(Value::Array(vec![])))
     }
@@ -358,10 +438,15 @@ impl LspClient {
         let entry = self.ensure_open(file_path, &content).await?;
         let uri = file_uri(file_path);
 
-        entry.request("textDocument/completion", &serde_json::json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": character }
-        })).await
+        entry
+            .request(
+                "textDocument/completion",
+                &serde_json::json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": character }
+                }),
+            )
+            .await
     }
 
     pub async fn hover(&self, file_path: &str, line: u32, character: u32) -> Result<Value> {
@@ -370,10 +455,15 @@ impl LspClient {
         let entry = self.ensure_open(file_path, &content).await?;
         let uri = file_uri(file_path);
 
-        entry.request("textDocument/hover", &serde_json::json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": character }
-        })).await
+        entry
+            .request(
+                "textDocument/hover",
+                &serde_json::json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": character }
+                }),
+            )
+            .await
     }
 
     pub async fn definition(&self, file_path: &str, line: u32, character: u32) -> Result<Value> {
@@ -382,23 +472,39 @@ impl LspClient {
         let entry = self.ensure_open(file_path, &content).await?;
         let uri = file_uri(file_path);
 
-        entry.request("textDocument/definition", &serde_json::json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": character }
-        })).await
+        entry
+            .request(
+                "textDocument/definition",
+                &serde_json::json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": character }
+                }),
+            )
+            .await
     }
 
-    pub async fn references(&self, file_path: &str, line: u32, character: u32, include_declaration: bool) -> Result<Value> {
+    pub async fn references(
+        &self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+        include_declaration: bool,
+    ) -> Result<Value> {
         let content = std::fs::read_to_string(file_path)
             .with_context(|| format!("Cannot read file: {}", file_path))?;
         let entry = self.ensure_open(file_path, &content).await?;
         let uri = file_uri(file_path);
 
-        entry.request("textDocument/references", &serde_json::json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": character },
-            "context": { "includeDeclaration": include_declaration }
-        })).await
+        entry
+            .request(
+                "textDocument/references",
+                &serde_json::json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": character },
+                    "context": { "includeDeclaration": include_declaration }
+                }),
+            )
+            .await
     }
 
     pub async fn document_symbols(&self, file_path: &str) -> Result<Value> {
@@ -407,9 +513,14 @@ impl LspClient {
         let entry = self.ensure_open(file_path, &content).await?;
         let uri = file_uri(file_path);
 
-        entry.request("textDocument/documentSymbol", &serde_json::json!({
-            "textDocument": { "uri": uri }
-        })).await
+        entry
+            .request(
+                "textDocument/documentSymbol",
+                &serde_json::json!({
+                    "textDocument": { "uri": uri }
+                }),
+            )
+            .await
     }
 
     pub async fn server_health(&self, language: &str) -> bool {
@@ -457,16 +568,17 @@ impl Default for LspClient {
 /// Handles Windows paths, spaces, non-ASCII characters (e.g. Chinese), and URI-reserved chars.
 fn file_uri(file_path: &str) -> String {
     let path = file_path.replace('\\', "/");
-    let encoded: String = path.chars().map(|c| {
-        match c {
+    let encoded: String = path
+        .chars()
+        .map(|c| match c {
             'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' | '/' | ':' => c.to_string(),
             _ => {
                 let mut buf = [0u8; 4];
                 let s = c.encode_utf8(&mut buf);
                 s.bytes().map(|b| format!("%{:02X}", b)).collect::<String>()
             }
-        }
-    }).collect();
+        })
+        .collect();
 
     if encoded.starts_with('/') {
         format!("file://{}", encoded)

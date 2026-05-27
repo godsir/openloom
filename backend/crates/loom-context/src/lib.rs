@@ -37,7 +37,10 @@ pub struct ContextAssembler {
 
 impl ContextAssembler {
     pub fn new(system_prompt: impl Into<String>, max_history_tokens: usize) -> Self {
-        Self { system_prompt: system_prompt.into(), max_history_tokens }
+        Self {
+            system_prompt: system_prompt.into(),
+            max_history_tokens,
+        }
     }
 
     /// Build the messages array for an LLM request.
@@ -96,7 +99,7 @@ impl ContextAssembler {
             let text = msg.text_content();
             let ascii = text.chars().filter(|c| c.is_ascii()).count();
             let non_ascii = text.chars().count() - ascii;
-            let msg_tokens = ascii / 4 + (non_ascii + 1) / 2;  // ceiling division for CJK
+            let msg_tokens = ascii / 4 + (non_ascii + 1) / 2; // ceiling division for CJK
             if token_count + msg_tokens > max_char_tokens {
                 break;
             }

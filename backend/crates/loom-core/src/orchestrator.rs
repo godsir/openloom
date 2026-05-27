@@ -5,15 +5,17 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use loom_inference::engine::CloudClient;
-use loom_types::{AgentConfig, SessionId, CompletionRequest, Message, StreamDelta};
-use lume_mcp::McpClient;
+use loom_memory::{
+    ExtractedEntity, ExtractedRelationship, LLM_EXTRACTION_PROMPT, parse_llm_extraction,
+};
+use loom_types::{AgentConfig, CompletionRequest, Message, SessionId, StreamDelta};
 use lume_lsp::LspClient;
-use loom_memory::{ExtractedEntity, ExtractedRelationship, LLM_EXTRACTION_PROMPT, parse_llm_extraction};
-use tokio::sync::{mpsc, RwLock};
+use lume_mcp::McpClient;
+use tokio::sync::{RwLock, mpsc};
 
-use crate::agent_loop::{run_agent_turn_streaming, AgentLoopConfig, TurnResult};
-use crate::agent_pool::{AgentPool, AgentSummary};
 use crate::agent::AgentStatus;
+use crate::agent_loop::{AgentLoopConfig, TurnResult, run_agent_turn_streaming};
+use crate::agent_pool::{AgentPool, AgentSummary};
 use crate::event_bus::{AgentEvent, EventBus};
 use crate::tool_registry::{AgentTool, SpawnAgentTool, SpawnContext, ToolRegistry};
 
@@ -31,25 +33,54 @@ pub struct Orchestrator {
     skill_bodies: Arc<RwLock<std::collections::HashMap<String, String>>>,
     memory_store: Arc<RwLock<Option<Box<dyn crate::MemoryStore>>>>,
     agent_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::AgentConfig>>>,
+    model_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::ModelConfig>>>,
+    active_model_name: Arc<RwLock<Option<String>>>,
 }
 
 /// Trait for memory backends (SqliteEventStore, etc.)
 #[async_trait::async_trait]
 pub trait MemoryStore: Send + Sync {
-    async fn save_turn(&self, session_id: &str, user_msg: &str, assistant_msg: &str, tools: usize, tokens: usize) -> Result<i64>;
+    async fn save_turn(
+        &self,
+        session_id: &str,
+        user_msg: &str,
+        assistant_msg: &str,
+        tools: usize,
+        tokens: usize,
+    ) -> Result<i64>;
     async fn load_history(&self, session_id: &str, limit: usize) -> Result<Vec<Message>>;
     async fn extract_cognitions(&self, session_id: &str, text: &str) -> Result<Vec<String>>;
     async fn get_persona(&self) -> Result<String>;
-    async fn feed_knowledge_graph(&self, entities: &[loom_memory::ExtractedEntity], relationships: &[loom_memory::ExtractedRelationship], source_event_id: i64) -> Result<(usize, usize)>;
-    async fn save_extracted_entities(&self, entities: &[loom_memory::ExtractedEntity], relationships: &[loom_memory::ExtractedRelationship]) -> Result<()>;
+    async fn feed_knowledge_graph(
+        &self,
+        entities: &[loom_memory::ExtractedEntity],
+        relationships: &[loom_memory::ExtractedRelationship],
+        source_event_id: i64,
+    ) -> Result<(usize, usize)>;
+    async fn save_extracted_entities(
+        &self,
+        entities: &[loom_memory::ExtractedEntity],
+        relationships: &[loom_memory::ExtractedRelationship],
+    ) -> Result<()>;
     // Agent config CRUD
     async fn save_agent_config(&self, config: &loom_types::AgentConfig) -> Result<()>;
     async fn get_agent_config(&self, name: &str) -> Result<Option<loom_types::AgentConfig>>;
     async fn list_agent_configs(&self) -> Result<Vec<loom_types::AgentConfig>>;
     async fn delete_agent_config(&self, name: &str) -> Result<()>;
     // Session-agent binding
-    async fn save_session_agent_name(&self, session_id: &str, agent_config_name: &str) -> Result<()>;
+    async fn save_session_agent_name(
+        &self,
+        session_id: &str,
+        agent_config_name: &str,
+    ) -> Result<()>;
     async fn get_session_agent_name(&self, session_id: &str) -> Result<Option<String>>;
+    // Model config CRUD
+    async fn save_model_config(&self, config: &loom_types::ModelConfig) -> Result<()>;
+    async fn get_model_config(&self, name: &str) -> Result<Option<loom_types::ModelConfig>>;
+    async fn list_model_configs(&self) -> Result<Vec<loom_types::ModelConfig>>;
+    async fn delete_model_config(&self, name: &str) -> Result<()>;
+    async fn set_active_model(&self, name: &str) -> Result<()>;
+    async fn get_active_model(&self) -> Result<Option<loom_types::ModelConfig>>;
     // Knowledge graph read
     async fn query_kg_context(&self, entity_names: &[&str], limit: usize) -> Result<String>;
     // Conversation summary (P0 memory optimization)
@@ -60,7 +91,11 @@ pub trait MemoryStore: Send + Sync {
     // Memory maintenance (P2)
     async fn prune_memory(&self) -> Result<usize>;
     // Cross-session knowledge search (P2)
-    async fn search_knowledge(&self, query: &str, limit: usize) -> Result<Vec<(String, String, String, f64)>>;
+    async fn search_knowledge(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<(String, String, String, f64)>>;
     async fn kg_node_count(&self) -> Result<usize>;
     // Session persistence
     async fn list_sessions(&self) -> Result<Vec<(String, String, usize, Option<String>)>>;
@@ -86,7 +121,9 @@ fn extract_entity_candidates(text: &str) -> Vec<String> {
 
     // Chinese: sliding window of 2-5 CJK characters on consecutive runs
     let chars: Vec<char> = text.chars().collect();
-    let cjk_indices: Vec<usize> = chars.iter().enumerate()
+    let cjk_indices: Vec<usize> = chars
+        .iter()
+        .enumerate()
         .filter(|(_, c)| is_cjk_char(**c))
         .map(|(i, _)| i)
         .collect();
@@ -95,19 +132,27 @@ fn extract_entity_candidates(text: &str) -> Vec<String> {
     while run_start < cjk_indices.len() {
         let mut run_end = run_start;
         while run_end + 1 < cjk_indices.len()
-            && cjk_indices[run_end + 1] == cjk_indices[run_end] + 1 {
+            && cjk_indices[run_end + 1] == cjk_indices[run_end] + 1
+        {
             run_end += 1;
         }
         let run_len = run_end - run_start + 1;
         if run_len >= 2 {
             // Whole run
             if run_len <= 5 {
-                candidates.push(chars[cjk_indices[run_start]..=cjk_indices[run_end]].iter().collect());
+                candidates.push(
+                    chars[cjk_indices[run_start]..=cjk_indices[run_end]]
+                        .iter()
+                        .collect(),
+                );
             }
             // Sub-ngrams (2-4 chars)
             for n in 2..=5.min(run_len) {
                 for i in 0..=(run_len - n) {
-                    let s: String = chars[cjk_indices[run_start + i]..=cjk_indices[run_start + i + n - 1]].iter().collect();
+                    let s: String = chars
+                        [cjk_indices[run_start + i]..=cjk_indices[run_start + i + n - 1]]
+                        .iter()
+                        .collect();
                     candidates.push(s);
                 }
             }
@@ -163,9 +208,12 @@ impl Orchestrator {
             persona_context: Arc::new(RwLock::new(String::new())),
             skill_bodies,
             memory_store: Arc::new(RwLock::new(None)),
-            agent_configs: Arc::new(RwLock::new(
-                std::collections::HashMap::from([("default".to_string(), loom_types::AgentConfig::default())]),
-            )),
+            agent_configs: Arc::new(RwLock::new(std::collections::HashMap::from([(
+                "default".to_string(),
+                loom_types::AgentConfig::default(),
+            )]))),
+            model_configs: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            active_model_name: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -177,9 +225,15 @@ impl Orchestrator {
             agent_pool: Arc::new(AgentPool::new(max_depth, 20, default_timeout_secs)),
             loop_config: self.loop_config.clone(),
         });
-        let _ = self.tool_registry.write().await.register(Arc::new(SpawnAgentTool {
-            max_depth, default_timeout_secs, context: ctx,
-        }));
+        let _ = self
+            .tool_registry
+            .write()
+            .await
+            .register(Arc::new(SpawnAgentTool {
+                max_depth,
+                default_timeout_secs,
+                context: ctx,
+            }));
     }
 
     // === Inference ===
@@ -191,12 +245,15 @@ impl Orchestrator {
 
     /// Get a reference to the cloud client for direct access.
     pub async fn with_cloud_client<F, R>(&self, f: F) -> Result<R>
-    where F: FnOnce(&dyn CloudClient) -> Result<R>,
+    where
+        F: FnOnce(&dyn CloudClient) -> Result<R>,
     {
         let guard = self.cloud_client.read().await;
         match &*guard {
             Some(client) => f(client.as_ref()),
-            None => Err(anyhow::anyhow!("No cloud client configured. Set up a model first.")),
+            None => Err(anyhow::anyhow!(
+                "No cloud client configured. Set up a model first."
+            )),
         }
     }
 
@@ -260,7 +317,10 @@ impl Orchestrator {
             op: McpMetaOp::ListPrompts,
             tool_definition: loom_types::ToolDefinition {
                 name: format!("mcp__{}__list_prompts", server),
-                description: format!("[MCP:{}] List available prompt templates from this server", server),
+                description: format!(
+                    "[MCP:{}] List available prompt templates from this server",
+                    server
+                ),
                 input_schema: serde_json::json!({"type":"object","properties":{},"required":[]}),
             },
             mcp_client: mcp_client.clone(),
@@ -360,7 +420,10 @@ impl Orchestrator {
         if let Some(ref s) = *store {
             let msgs = s.load_history(session_id, 50).await?;
             if !msgs.is_empty() {
-                self.session_histories.write().await.insert(session_id.to_string(), msgs);
+                self.session_histories
+                    .write()
+                    .await
+                    .insert(session_id.to_string(), msgs);
             }
         }
         Ok(())
@@ -368,12 +431,22 @@ impl Orchestrator {
 
     /// Get history for a session (empty if none).
     pub async fn session_history(&self, session_id: &str) -> Vec<Message> {
-        self.session_histories.read().await.get(session_id).cloned().unwrap_or_default()
+        self.session_histories
+            .read()
+            .await
+            .get(session_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Append a message to a session's history.
     pub async fn add_to_history(&self, session_id: &str, msg: Message) {
-        self.session_histories.write().await.entry(session_id.to_string()).or_default().push(msg);
+        self.session_histories
+            .write()
+            .await
+            .entry(session_id.to_string())
+            .or_default()
+            .push(msg);
     }
 
     /// List sessions from the memory store (or empty if no store).
@@ -414,7 +487,9 @@ impl Orchestrator {
                 cache.insert(c.name.clone(), c);
             }
             // Ensure default always exists
-            cache.entry("default".to_string()).or_insert_with(loom_types::AgentConfig::default);
+            cache
+                .entry("default".to_string())
+                .or_insert_with(loom_types::AgentConfig::default);
             tracing::info!(count = cache.len(), "agent configs loaded");
         }
         Ok(())
@@ -425,7 +500,9 @@ impl Orchestrator {
     }
 
     pub async fn agent_config_get(&self, name: &str) -> Result<loom_types::AgentConfig> {
-        self.agent_configs.read().await
+        self.agent_configs
+            .read()
+            .await
             .get(name)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("agent config '{}' not found", name))
@@ -484,10 +561,169 @@ impl Orchestrator {
             None
         };
         let name = config_name.unwrap_or_else(|| "default".to_string());
-        self.agent_configs.read().await
+        self.agent_configs
+            .read()
+            .await
             .get(&name)
             .cloned()
             .unwrap_or_default()
+    }
+
+    // === Model Config Management ===
+
+    /// Load model configs from the memory store into the in-memory cache.
+    pub async fn load_model_configs(&self) -> Result<()> {
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            let configs = s.list_model_configs().await?;
+            let mut cache = self.model_configs.write().await;
+            for c in configs {
+                cache.insert(c.name.clone(), c);
+            }
+            // Track the active model
+            if let Ok(Some(active)) = s.get_active_model().await {
+                *self.active_model_name.write().await = Some(active.name.clone());
+            }
+            tracing::info!(count = cache.len(), "model configs loaded");
+        }
+        Ok(())
+    }
+
+    pub async fn model_config_list(&self) -> Vec<loom_types::ModelConfig> {
+        self.model_configs.read().await.values().cloned().collect()
+    }
+
+    pub async fn model_config_get(&self, name: &str) -> Result<loom_types::ModelConfig> {
+        self.model_configs
+            .read()
+            .await
+            .get(name)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("model config '{}' not found", name))
+    }
+
+    pub async fn model_config_create(&self, config: loom_types::ModelConfig) -> Result<()> {
+        let name = config.name.clone();
+        {
+            let mut cache = self.model_configs.write().await;
+            cache.insert(name.clone(), config.clone());
+        }
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            s.save_model_config(&config).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn model_config_update(&self, config: loom_types::ModelConfig) -> Result<()> {
+        self.model_config_create(config).await
+    }
+
+    pub async fn model_config_delete(&self, name: &str) -> Result<()> {
+        // Prevent deleting the active model
+        let active = self.active_model_name.read().await;
+        if active.as_deref() == Some(name) {
+            return Err(anyhow::anyhow!("cannot delete the active model '{}'", name));
+        }
+        drop(active);
+        self.model_configs.write().await.remove(name);
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            s.delete_model_config(name).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn model_config_set_active(&self, name: &str) -> Result<()> {
+        // Verify the model config exists
+        let config = self.model_config_get(name).await?;
+        // Update DB
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            s.set_active_model(name).await?;
+        }
+        // Update in-memory
+        *self.active_model_name.write().await = Some(name.to_string());
+        // Try to rebuild cloud client
+        if let Some(model_id) = &config.model {
+            tracing::info!(name = name, model = %model_id, "switching active model");
+            drop(store);
+            self.try_build_cloud_client(&config).await;
+        }
+        Ok(())
+    }
+
+    pub async fn active_model_name(&self) -> Option<String> {
+        self.active_model_name.read().await.clone()
+    }
+
+    /// Try to build a new CloudClient from a ModelConfig.
+    /// Replaces the current cloud_client on success.
+    async fn try_build_cloud_client(&self, config: &loom_types::ModelConfig) {
+        let model = match &config.model {
+            Some(m) => m.clone(),
+            None => return,
+        };
+        let is_local = config.backend.is_local_inference();
+        let base_url = config
+            .base_url
+            .clone()
+            .unwrap_or_else(|| match config.backend {
+                loom_types::ModelBackend::LmStudio => "http://localhost:1234/v1".into(),
+                loom_types::ModelBackend::Ollama => "http://localhost:11434/v1".into(),
+                loom_types::ModelBackend::Anthropic => "https://api.anthropic.com".into(),
+                loom_types::ModelBackend::OpenAI => "https://api.openai.com".into(),
+                loom_types::ModelBackend::DeepSeek => "https://api.deepseek.com/v1".into(),
+            });
+
+        let client: Option<Box<dyn CloudClient>> = if is_local {
+            match loom_inference::InferenceEngine::connect(&base_url, &model, config.context_size)
+                .await
+            {
+                Ok(engine) => Some(Box::new(engine)),
+                Err(e) => {
+                    tracing::warn!(model = %model, error = %e, "failed to connect local inference engine");
+                    None
+                }
+            }
+        } else {
+            // Cloud provider — read API key from env
+            let api_key = config
+                .api_key_env
+                .as_deref()
+                .and_then(|env_name| std::env::var(env_name).ok())
+                .or_else(|| {
+                    let auto_env = match config.backend {
+                        loom_types::ModelBackend::DeepSeek => "DEEPSEEK_API_KEY",
+                        loom_types::ModelBackend::OpenAI => "OPENAI_API_KEY",
+                        _ => "ANTHROPIC_API_KEY",
+                    };
+                    std::env::var(auto_env).ok()
+                });
+            let model_id = model.clone();
+            match api_key {
+                Some(key) => match config.backend {
+                    loom_types::ModelBackend::Anthropic => Some(Box::new(
+                        loom_inference::AnthropicClient::new(key, model_id.clone(), base_url),
+                    )),
+                    loom_types::ModelBackend::DeepSeek => Some(Box::new(
+                        loom_inference::OpenAIClient::new(key, model_id.clone(), base_url, false),
+                    )),
+                    _ => Some(Box::new(loom_inference::OpenAIClient::new(
+                        key, model_id, base_url, false,
+                    ))),
+                },
+                None => {
+                    tracing::warn!(model = %model, "no API key found; model set but cloud client not created");
+                    None
+                }
+            }
+        };
+
+        if let Some(c) = client {
+            *self.cloud_client.write().await = Some(c);
+            tracing::info!(model = %model, "cloud client switched");
+        }
     }
 
     // === Agent Loop ===
@@ -495,7 +731,12 @@ impl Orchestrator {
     /// Process a user message through the agent loop and return the response.
     /// Backward-compatible: uses the default agent config and session "default".
     pub async fn process_message(&self, user_message: &str) -> Result<TurnResult> {
-        self.process_message_with_config(user_message, "default", &loom_types::AgentConfig::default()).await
+        self.process_message_with_config(
+            user_message,
+            "default",
+            &loom_types::AgentConfig::default(),
+        )
+        .await
     }
 
     /// Process a user message with a specific session and agent config.
@@ -507,12 +748,20 @@ impl Orchestrator {
         agent_config: &loom_types::AgentConfig,
     ) -> Result<TurnResult> {
         // Register agent in pool
-        let agent_id = self.pool.spawn(agent_config.clone(), None, SessionId::from(session_id.to_string())).await?;
+        let agent_id = self
+            .pool
+            .spawn(
+                agent_config.clone(),
+                None,
+                SessionId::from(session_id.to_string()),
+            )
+            .await?;
 
         // Build system prompt, applying agent config overrides
         let mut system_prompt = self.build_system_prompt().await;
         if let Some(ref override_prompt) = agent_config.system_prompt_override
-            && !override_prompt.is_empty() {
+            && !override_prompt.is_empty()
+        {
             system_prompt = override_prompt.clone();
         }
         if !agent_config.persona.is_empty() {
@@ -525,7 +774,9 @@ impl Orchestrator {
             if let Some(ref store) = *mem_guard {
                 let candidates = extract_entity_candidates(user_message);
                 let mut entities: Vec<&str> = vec!["USER"];
-                for c in &candidates { entities.push(c.as_str()); }
+                for c in &candidates {
+                    entities.push(c.as_str());
+                }
                 entities.truncate(6);
                 match store.query_kg_context(&entities, 5).await {
                     Ok(kg) if !kg.is_empty() => {
@@ -548,7 +799,10 @@ impl Orchestrator {
         let sid = session_id.to_string();
 
         // Transition: Idle → Thinking
-        let _ = self.pool.transition(&agent_id, AgentStatus::Thinking, Some("processing".into())).await;
+        let _ = self
+            .pool
+            .transition(&agent_id, AgentStatus::Thinking, Some("processing".into()))
+            .await;
 
         // Create streaming channel and forward deltas to event bus
         let (delta_tx, mut delta_rx) = tokio::sync::mpsc::channel::<StreamDelta>(256);
@@ -585,7 +839,11 @@ impl Orchestrator {
                         });
                     }
                     StreamDelta::ToolCallArgsChunk { .. } => {}
-                    StreamDelta::Usage { prompt_tokens, completion_tokens, .. } => {
+                    StreamDelta::Usage {
+                        prompt_tokens,
+                        completion_tokens,
+                        ..
+                    } => {
                         let _ = event_bus.publish(AgentEvent::TokenUsage {
                             agent_id: forward_agent_id.clone(),
                             session_id: forward_session_id.clone(),
@@ -635,7 +893,8 @@ impl Orchestrator {
                 delta_tx,
                 &allowed,
                 &disallowed,
-            ).await
+            )
+            .await
         };
 
         // Wait for forwarder to finish flushing
@@ -644,14 +903,27 @@ impl Orchestrator {
         let _ = forward_handle.await;
 
         if let Ok(ref turn) = result {
-            let _ = self.pool.transition(&agent_id, AgentStatus::Completed, None).await;
-            self.add_to_history(session_id, Message::user(user_message)).await;
-            self.add_to_history(session_id, Message::assistant(&turn.response)).await;
+            let _ = self
+                .pool
+                .transition(&agent_id, AgentStatus::Completed, None)
+                .await;
+            self.add_to_history(session_id, Message::user(user_message))
+                .await;
+            self.add_to_history(session_id, Message::assistant(&turn.response))
+                .await;
 
             // Persist to memory store
             let mem = self.memory_store.read().await;
             if let Some(ref store) = *mem {
-                let event_id = store.save_turn(session_id, user_message, &turn.response, turn.tool_calls_made, turn.prompt_tokens + turn.completion_tokens).await?;
+                let event_id = store
+                    .save_turn(
+                        session_id,
+                        user_message,
+                        &turn.response,
+                        turn.tool_calls_made,
+                        turn.prompt_tokens + turn.completion_tokens,
+                    )
+                    .await?;
 
                 // LLM-based entity extraction (synchronous, runs after response)
                 let msg = user_message.to_string();
@@ -659,14 +931,20 @@ impl Orchestrator {
                 if let Some(ref client) = *client_opt {
                     match llm_extract_entities(client.as_ref(), &msg).await {
                         Ok((entities, relationships)) => {
-                            if let Ok((n, e)) = store.feed_knowledge_graph(&entities, &relationships, event_id).await {
-                                let _ = store.save_extracted_entities(&entities, &relationships).await;
+                            if let Ok((n, e)) = store
+                                .feed_knowledge_graph(&entities, &relationships, event_id)
+                                .await
+                            {
+                                let _ = store
+                                    .save_extracted_entities(&entities, &relationships)
+                                    .await;
                                 if n > 0 || e > 0 {
                                     tracing::info!(n, e, "KG updated via LLM");
                                 }
                             }
                             if let Ok(persona) = store.get_persona().await
-                                && !persona.is_empty() {
+                                && !persona.is_empty()
+                            {
                                 *self.persona_context.write().await = persona;
                             }
                         }
@@ -676,7 +954,16 @@ impl Orchestrator {
                 drop(client_opt);
             }
         } else {
-            let _ = self.pool.transition(&agent_id, AgentStatus::Errored { message: "LLM error".into() }, None).await;
+            let _ = self
+                .pool
+                .transition(
+                    &agent_id,
+                    AgentStatus::Errored {
+                        message: "LLM error".into(),
+                    },
+                    None,
+                )
+                .await;
         }
 
         // Clean up agent from pool
@@ -693,13 +980,20 @@ impl Orchestrator {
         session_id: &str,
     ) -> Result<TurnResult> {
         // Register agent in pool
-        let agent_id = self.pool.spawn(AgentConfig::default(), None, SessionId::new()).await?;
+        let agent_id = self
+            .pool
+            .spawn(AgentConfig::default(), None, SessionId::new())
+            .await?;
 
         // Transition: Idle → Thinking
-        let _ = self.pool.transition(&agent_id, AgentStatus::Thinking, Some("processing".into())).await;
+        let _ = self
+            .pool
+            .transition(&agent_id, AgentStatus::Thinking, Some("processing".into()))
+            .await;
 
         let guard = self.cloud_client.read().await;
-        let client = guard.as_ref()
+        let client = guard
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No cloud client configured"))?;
         let registry = self.tool_registry.read().await;
         let history = self.session_history(session_id).await;
@@ -714,14 +1008,27 @@ impl Orchestrator {
                 let existing = store.get_summary(session_id).await.unwrap_or(None);
                 let last_at = store.get_summary_at_count(session_id).await.unwrap_or(0);
                 // Use DB message_count (not truncated history.len()) for accurate summary trigger
-                let total_msgs = store.get_message_count(session_id).await.unwrap_or(history.len());
-                let do_summarize = loom_memory::SummaryEngine::should_summarize(total_msgs, last_at, 12, 6);
+                let total_msgs = store
+                    .get_message_count(session_id)
+                    .await
+                    .unwrap_or(history.len());
+                let do_summarize =
+                    loom_memory::SummaryEngine::should_summarize(total_msgs, last_at, 12, 6);
                 let candidates = extract_entity_candidates(user_message);
                 let mut entities: Vec<&str> = vec!["USER"];
-                for c in &candidates { entities.push(c.as_str()); }
+                for c in &candidates {
+                    entities.push(c.as_str());
+                }
                 entities.truncate(6);
-                let kg = store.query_kg_context(&entities, 5).await.unwrap_or_default();
-                (existing, if kg.is_empty() { None } else { Some(kg) }, do_summarize)
+                let kg = store
+                    .query_kg_context(&entities, 5)
+                    .await
+                    .unwrap_or_default();
+                (
+                    existing,
+                    if kg.is_empty() { None } else { Some(kg) },
+                    do_summarize,
+                )
             } else {
                 (None, None, false)
             }
@@ -729,7 +1036,8 @@ impl Orchestrator {
 
         // Phase 2: call LLM for summary if needed (no lock held)
         let summary = if should_summarize {
-            let prompt = loom_memory::SummaryEngine::build_prompt(&history, existing_summary.as_deref());
+            let prompt =
+                loom_memory::SummaryEngine::build_prompt(&history, existing_summary.as_deref());
             let request = loom_memory::SummaryEngine::build_request(&prompt);
             let saved_hash = client.prefix_hash_snapshot();
             let result = client.complete(request).await;
@@ -768,19 +1076,33 @@ impl Orchestrator {
             delta_tx,
             &None,
             &None,
-        ).await;
+        )
+        .await;
 
         drop(registry);
 
         if let Ok(ref turn) = result {
-            let _ = self.pool.transition(&agent_id, AgentStatus::Completed, None).await;
-            self.add_to_history(session_id, Message::user(user_message)).await;
-            self.add_to_history(session_id, Message::assistant(&turn.response)).await;
+            let _ = self
+                .pool
+                .transition(&agent_id, AgentStatus::Completed, None)
+                .await;
+            self.add_to_history(session_id, Message::user(user_message))
+                .await;
+            self.add_to_history(session_id, Message::assistant(&turn.response))
+                .await;
 
             // Persist to memory store
             let mem = self.memory_store.read().await;
             if let Some(ref store) = *mem {
-                let event_id = store.save_turn(session_id, user_message, &turn.response, turn.tool_calls_made, turn.prompt_tokens + turn.completion_tokens).await?;
+                let event_id = store
+                    .save_turn(
+                        session_id,
+                        user_message,
+                        &turn.response,
+                        turn.tool_calls_made,
+                        turn.prompt_tokens + turn.completion_tokens,
+                    )
+                    .await?;
 
                 // LLM-based entity extraction (synchronous, runs after response)
                 let msg = user_message.to_string();
@@ -788,14 +1110,20 @@ impl Orchestrator {
                 if let Some(ref client) = *client_opt {
                     match llm_extract_entities(client.as_ref(), &msg).await {
                         Ok((entities, relationships)) => {
-                            if let Ok((n, e)) = store.feed_knowledge_graph(&entities, &relationships, event_id).await {
-                                let _ = store.save_extracted_entities(&entities, &relationships).await;
+                            if let Ok((n, e)) = store
+                                .feed_knowledge_graph(&entities, &relationships, event_id)
+                                .await
+                            {
+                                let _ = store
+                                    .save_extracted_entities(&entities, &relationships)
+                                    .await;
                                 if n > 0 || e > 0 {
                                     tracing::info!(n, e, "KG updated via LLM");
                                 }
                             }
                             if let Ok(persona) = store.get_persona().await
-                                && !persona.is_empty() {
+                                && !persona.is_empty()
+                            {
                                 *self.persona_context.write().await = persona;
                             }
                         }
@@ -805,7 +1133,16 @@ impl Orchestrator {
                 drop(client_opt);
             }
         } else {
-            let _ = self.pool.transition(&agent_id, AgentStatus::Errored { message: "LLM error".into() }, None).await;
+            let _ = self
+                .pool
+                .transition(
+                    &agent_id,
+                    AgentStatus::Errored {
+                        message: "LLM error".into(),
+                    },
+                    None,
+                )
+                .await;
         }
 
         // Clean up agent from pool
@@ -816,14 +1153,32 @@ impl Orchestrator {
 
     // === Agent Pool (delegated) ===
 
-    pub fn event_bus(&self) -> &EventBus { self.pool.event_bus() }
-    pub async fn spawn_agent(&self, config: AgentConfig, parent_id: Option<loom_types::AgentId>, session_id: SessionId) -> Result<loom_types::AgentId> {
+    pub fn event_bus(&self) -> &EventBus {
+        self.pool.event_bus()
+    }
+    pub async fn spawn_agent(
+        &self,
+        config: AgentConfig,
+        parent_id: Option<loom_types::AgentId>,
+        session_id: SessionId,
+    ) -> Result<loom_types::AgentId> {
         self.pool.spawn(config, parent_id, session_id).await
     }
-    pub async fn kill_agent(&self, agent_id: &loom_types::AgentId) -> Result<()> { self.pool.kill(agent_id).await }
-    pub async fn list_agents(&self) -> Vec<AgentSummary> { self.pool.list().await }
-    pub async fn agent_status(&self, agent_id: &loom_types::AgentId) -> Result<AgentSummary> { self.pool.summary(agent_id).await }
-    pub async fn set_agent_status(&self, agent_id: &loom_types::AgentId, status: AgentStatus, message: Option<String>) -> Result<()> {
+    pub async fn kill_agent(&self, agent_id: &loom_types::AgentId) -> Result<()> {
+        self.pool.kill(agent_id).await
+    }
+    pub async fn list_agents(&self) -> Vec<AgentSummary> {
+        self.pool.list().await
+    }
+    pub async fn agent_status(&self, agent_id: &loom_types::AgentId) -> Result<AgentSummary> {
+        self.pool.summary(agent_id).await
+    }
+    pub async fn set_agent_status(
+        &self,
+        agent_id: &loom_types::AgentId,
+        status: AgentStatus,
+        message: Option<String>,
+    ) -> Result<()> {
         self.pool.transition(agent_id, status, message).await
     }
 }
@@ -850,10 +1205,15 @@ impl AgentTool for McpAgentTool {
     }
 
     async fn execute(
-        &self, arguments: serde_json::Value,
+        &self,
+        arguments: serde_json::Value,
         _progress: tokio::sync::mpsc::UnboundedSender<loom_types::ToolProgress>,
     ) -> Result<crate::tool_registry::ToolResult> {
-        match self.mcp_client.call_tool(&self.server_name, &self.tool_name, arguments).await {
+        match self
+            .mcp_client
+            .call_tool(&self.server_name, &self.tool_name, arguments)
+            .await
+        {
             Ok(result) => Ok(crate::tool_registry::ToolResult {
                 content: serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".into()),
                 is_error: false,
@@ -868,7 +1228,9 @@ impl AgentTool for McpAgentTool {
     }
 
     fn provenance(&self) -> crate::tool_registry::ToolProvenance {
-        crate::tool_registry::ToolProvenance::Mcp { server: self.server_name.clone() }
+        crate::tool_registry::ToolProvenance::Mcp {
+            server: self.server_name.clone(),
+        }
     }
 }
 
@@ -901,7 +1263,8 @@ impl AgentTool for McpMetaTool {
     }
 
     async fn execute(
-        &self, arguments: serde_json::Value,
+        &self,
+        arguments: serde_json::Value,
         _progress: tokio::sync::mpsc::UnboundedSender<loom_types::ToolProgress>,
     ) -> Result<crate::tool_registry::ToolResult> {
         let result: Result<serde_json::Value> = match &self.op {
@@ -918,7 +1281,10 @@ impl AgentTool for McpMetaTool {
                         structured_content: None,
                     });
                 }
-                let contents = self.mcp_client.read_resource(&self.server_name, uri).await?;
+                let contents = self
+                    .mcp_client
+                    .read_resource(&self.server_name, uri)
+                    .await?;
                 Ok(serde_json::to_value(contents).unwrap_or_default())
             }
             McpMetaOp::ListPrompts => {
@@ -935,7 +1301,10 @@ impl AgentTool for McpMetaTool {
                     });
                 }
                 let args = arguments.get("arguments");
-                let prompt_result = self.mcp_client.get_prompt(&self.server_name, name, args).await?;
+                let prompt_result = self
+                    .mcp_client
+                    .get_prompt(&self.server_name, name, args)
+                    .await?;
                 Ok(serde_json::to_value(prompt_result).unwrap_or_default())
             }
         };
@@ -955,7 +1324,9 @@ impl AgentTool for McpMetaTool {
     }
 
     fn provenance(&self) -> crate::tool_registry::ToolProvenance {
-        crate::tool_registry::ToolProvenance::Mcp { server: self.server_name.clone() }
+        crate::tool_registry::ToolProvenance::Mcp {
+            server: self.server_name.clone(),
+        }
     }
 }
 
@@ -992,10 +1363,14 @@ impl AgentTool for LspTool {
     }
 
     async fn execute(
-        &self, arguments: serde_json::Value,
+        &self,
+        arguments: serde_json::Value,
         _progress: tokio::sync::mpsc::UnboundedSender<loom_types::ToolProgress>,
     ) -> Result<crate::tool_registry::ToolResult> {
-        let file_path = arguments.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+        let file_path = arguments
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         if file_path.is_empty() {
             return Ok(crate::tool_registry::ToolResult {
                 content: "Error: 'file_path' parameter is required".into(),
@@ -1005,33 +1380,46 @@ impl AgentTool for LspTool {
         }
 
         let result: Result<serde_json::Value> = match &self.op {
-            LspOp::Diagnostics => {
-                self.lsp_client.diagnostics(file_path).await
-            }
+            LspOp::Diagnostics => self.lsp_client.diagnostics(file_path).await,
             LspOp::Completion => {
                 let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                let character = arguments.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let character = arguments
+                    .get("character")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 self.lsp_client.completion(file_path, line, character).await
             }
             LspOp::Hover => {
                 let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                let character = arguments.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let character = arguments
+                    .get("character")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 self.lsp_client.hover(file_path, line, character).await
             }
             LspOp::Definition => {
                 let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                let character = arguments.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let character = arguments
+                    .get("character")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 self.lsp_client.definition(file_path, line, character).await
             }
             LspOp::References => {
                 let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                let character = arguments.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                let include_decl = arguments.get("include_declaration").and_then(|v| v.as_bool()).unwrap_or(true);
-                self.lsp_client.references(file_path, line, character, include_decl).await
+                let character = arguments
+                    .get("character")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+                let include_decl = arguments
+                    .get("include_declaration")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                self.lsp_client
+                    .references(file_path, line, character, include_decl)
+                    .await
             }
-            LspOp::DocumentSymbols => {
-                self.lsp_client.document_symbols(file_path).await
-            }
+            LspOp::DocumentSymbols => self.lsp_client.document_symbols(file_path).await,
         };
 
         match result {
@@ -1056,18 +1444,42 @@ impl AgentTool for LspTool {
 #[allow(dead_code)]
 fn register_lsp_tools(registry: &mut ToolRegistry, lsp_client: &Arc<LspClient>) {
     let tools: Vec<(LspOp, &str, &str, serde_json::Value)> = vec![
-        (LspOp::Diagnostics, "lsp_diagnostics", "Get LSP diagnostics (errors, warnings, hints) for a file",
-            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"}},"required":["file_path"]})),
-        (LspOp::Completion, "lsp_completion", "Get code completion suggestions at a position in a file",
-            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"},"line":{"type":"integer","description":"0-based line number"},"character":{"type":"integer","description":"0-based character offset"}},"required":["file_path","line","character"]})),
-        (LspOp::Hover, "lsp_hover", "Get type info and documentation for the symbol at a position",
-            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"},"line":{"type":"integer","description":"0-based line number"},"character":{"type":"integer","description":"0-based character offset"}},"required":["file_path","line","character"]})),
-        (LspOp::Definition, "lsp_definition", "Go to definition — find where a symbol is defined",
-            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"},"line":{"type":"integer","description":"0-based line number"},"character":{"type":"integer","description":"0-based character offset"}},"required":["file_path","line","character"]})),
-        (LspOp::References, "lsp_references", "Find all references to a symbol",
-            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"},"line":{"type":"integer","description":"0-based line number"},"character":{"type":"integer","description":"0-based character offset"},"include_declaration":{"type":"boolean","description":"Include the declaration in results (default: true)"}},"required":["file_path","line","character"]})),
-        (LspOp::DocumentSymbols, "lsp_symbols", "List all symbols (functions, classes, variables) in a file",
-            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"}},"required":["file_path"]})),
+        (
+            LspOp::Diagnostics,
+            "lsp_diagnostics",
+            "Get LSP diagnostics (errors, warnings, hints) for a file",
+            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"}},"required":["file_path"]}),
+        ),
+        (
+            LspOp::Completion,
+            "lsp_completion",
+            "Get code completion suggestions at a position in a file",
+            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"},"line":{"type":"integer","description":"0-based line number"},"character":{"type":"integer","description":"0-based character offset"}},"required":["file_path","line","character"]}),
+        ),
+        (
+            LspOp::Hover,
+            "lsp_hover",
+            "Get type info and documentation for the symbol at a position",
+            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"},"line":{"type":"integer","description":"0-based line number"},"character":{"type":"integer","description":"0-based character offset"}},"required":["file_path","line","character"]}),
+        ),
+        (
+            LspOp::Definition,
+            "lsp_definition",
+            "Go to definition — find where a symbol is defined",
+            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"},"line":{"type":"integer","description":"0-based line number"},"character":{"type":"integer","description":"0-based character offset"}},"required":["file_path","line","character"]}),
+        ),
+        (
+            LspOp::References,
+            "lsp_references",
+            "Find all references to a symbol",
+            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"},"line":{"type":"integer","description":"0-based line number"},"character":{"type":"integer","description":"0-based character offset"},"include_declaration":{"type":"boolean","description":"Include the declaration in results (default: true)"}},"required":["file_path","line","character"]}),
+        ),
+        (
+            LspOp::DocumentSymbols,
+            "lsp_symbols",
+            "List all symbols (functions, classes, variables) in a file",
+            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"}},"required":["file_path"]}),
+        ),
     ];
 
     for (op, name, desc, schema) in tools {
@@ -1111,13 +1523,19 @@ async fn llm_extract_entities(
 
     // Normalize: USER entity should always be "USER"
     for e in &mut entities {
-        if e.name.to_lowercase() == "user" { e.name = "USER".into(); e.entity_type = "Person".into(); }
+        if e.name.to_lowercase() == "user" {
+            e.name = "USER".into();
+            e.entity_type = "Person".into();
+        }
     }
     for r in &mut relationships {
-        if r.source_name.to_lowercase() == "user" { r.source_name = "USER".into(); }
-        if r.target_name.to_lowercase() == "user" { r.target_name = "USER".into(); }
+        if r.source_name.to_lowercase() == "user" {
+            r.source_name = "USER".into();
+        }
+        if r.target_name.to_lowercase() == "user" {
+            r.target_name = "USER".into();
+        }
     }
 
     Ok((entities, relationships))
 }
-

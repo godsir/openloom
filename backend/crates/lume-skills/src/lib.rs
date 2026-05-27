@@ -75,11 +75,18 @@ impl CanonicalSkillMetadata {
     pub fn validate_runtime(&self) -> Result<(), String> {
         // OS restriction: if set, current OS must be in the list
         if !self.os_restriction.is_empty() {
-            let current = if cfg!(windows) { "windows" }
-                else if cfg!(target_os = "macos") { "darwin" }
-                else { "linux" };
+            let current = if cfg!(windows) {
+                "windows"
+            } else if cfg!(target_os = "macos") {
+                "darwin"
+            } else {
+                "linux"
+            };
             if !self.os_restriction.iter().any(|o| o == current) {
-                return Err(format!("OS restriction: requires {:?}, running {}", self.os_restriction, current));
+                return Err(format!(
+                    "OS restriction: requires {:?}, running {}",
+                    self.os_restriction, current
+                ));
             }
         }
 
@@ -92,9 +99,15 @@ impl CanonicalSkillMetadata {
 
         // Required any bins: at least ONE must be in PATH
         if !self.requires_any_bins.is_empty() {
-            let found = self.requires_any_bins.iter().any(|b| which::which(b).is_ok());
+            let found = self
+                .requires_any_bins
+                .iter()
+                .any(|b| which::which(b).is_ok());
             if !found {
-                return Err(format!("Missing required binary (any of): {:?}", self.requires_any_bins));
+                return Err(format!(
+                    "Missing required binary (any of): {:?}",
+                    self.requires_any_bins
+                ));
             }
         }
 
@@ -128,9 +141,16 @@ pub struct LoadedSkill {
 
 #[derive(Debug, Clone)]
 pub enum SkillSource {
-    Project { cwd: std::path::PathBuf },
-    UserGlobal { data_dir: std::path::PathBuf },
-    Plugin { plugin_name: String, plugin_dir: std::path::PathBuf },
+    Project {
+        cwd: std::path::PathBuf,
+    },
+    UserGlobal {
+        data_dir: std::path::PathBuf,
+    },
+    Plugin {
+        plugin_name: String,
+        plugin_dir: std::path::PathBuf,
+    },
     Marketplace,
 }
 
@@ -144,7 +164,9 @@ pub struct SkillLoader {
 
 impl SkillLoader {
     pub fn new() -> Self {
-        Self { search_paths: Vec::new() }
+        Self {
+            search_paths: Vec::new(),
+        }
     }
 
     pub fn add_path(&mut self, path: std::path::PathBuf, label: &str) {
@@ -170,11 +192,15 @@ impl SkillLoader {
     pub fn discover(&self) -> Result<Vec<LoadedSkill>> {
         let mut skills = Vec::new();
         for (path, _label) in &self.search_paths {
-            if !path.exists() { continue; }
+            if !path.exists() {
+                continue;
+            }
             if let Ok(entries) = std::fs::read_dir(path) {
                 for entry in entries.flatten() {
                     let skill_dir = entry.path();
-                    if !skill_dir.is_dir() { continue; }
+                    if !skill_dir.is_dir() {
+                        continue;
+                    }
                     let skill_md = skill_dir.join("SKILL.md");
                     if skill_md.exists() {
                         match Self::parse_skill_file(&skill_md, &skill_dir) {
@@ -186,7 +212,9 @@ impl SkillLoader {
                                 }
                                 skills.push(skill);
                             }
-                            Err(e) => tracing::warn!(path = %skill_md.display(), error = %e, "failed to parse skill"),
+                            Err(e) => {
+                                tracing::warn!(path = %skill_md.display(), error = %e, "failed to parse skill")
+                            }
                         }
                     }
                 }
@@ -196,7 +224,10 @@ impl SkillLoader {
         Ok(skills)
     }
 
-    pub fn parse_skill_file(file_path: &std::path::Path, skill_root: &std::path::Path) -> Result<LoadedSkill> {
+    pub fn parse_skill_file(
+        file_path: &std::path::Path,
+        skill_root: &std::path::Path,
+    ) -> Result<LoadedSkill> {
         let content = std::fs::read_to_string(file_path)?;
         let (manifest, body) = Self::split_frontmatter(&content, file_path)?;
         Ok(LoadedSkill {
@@ -204,39 +235,82 @@ impl SkillLoader {
             body,
             source_path: file_path.to_path_buf(),
             skill_root: skill_root.to_path_buf(),
-            source: SkillSource::UserGlobal { data_dir: skill_root.to_path_buf() },
+            source: SkillSource::UserGlobal {
+                data_dir: skill_root.to_path_buf(),
+            },
         })
     }
 
-    pub fn split_frontmatter(content: &str, file_path: &std::path::Path) -> Result<(CanonicalSkillMetadata, String)> {
+    pub fn split_frontmatter(
+        content: &str,
+        file_path: &std::path::Path,
+    ) -> Result<(CanonicalSkillMetadata, String)> {
         let trimmed = content.trim();
         if !trimmed.starts_with("---") {
-            let name = file_path.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
-            return Ok((CanonicalSkillMetadata { name, description: trimmed.lines().next().unwrap_or("").to_string(), user_invocable: true, ..Default::default() }, trimmed.to_string()));
+            let name = file_path
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            return Ok((
+                CanonicalSkillMetadata {
+                    name,
+                    description: trimmed.lines().next().unwrap_or("").to_string(),
+                    user_invocable: true,
+                    ..Default::default()
+                },
+                trimmed.to_string(),
+            ));
         }
         let after_first = &trimmed[3..];
         if let Some(end) = after_first.find("\n---") {
             let yaml_str = after_first[..end].trim();
             let body = after_first[end + 4..].trim().to_string();
-            let mut manifest: CanonicalSkillMetadata = serde_yaml::from_str(yaml_str)
-                .map_err(|e| anyhow::anyhow!("YAML parse error in {}: {}", file_path.display(), e))?;
+            let mut manifest: CanonicalSkillMetadata =
+                serde_yaml::from_str(yaml_str).map_err(|e| {
+                    anyhow::anyhow!("YAML parse error in {}: {}", file_path.display(), e)
+                })?;
             if manifest.name.is_empty() {
-                manifest.name = file_path.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
+                manifest.name = file_path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
             }
             Ok((manifest, body))
         } else {
-            let name = file_path.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
-            Ok((CanonicalSkillMetadata { name, description: String::new(), user_invocable: true, ..Default::default() }, trimmed.to_string()))
+            let name = file_path
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            Ok((
+                CanonicalSkillMetadata {
+                    name,
+                    description: String::new(),
+                    user_invocable: true,
+                    ..Default::default()
+                },
+                trimmed.to_string(),
+            ))
         }
     }
 }
 
 impl Default for SkillLoader {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 fn dirs_home() -> Option<std::path::PathBuf> {
-    std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok().map(std::path::PathBuf::from)
+    std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .ok()
+        .map(std::path::PathBuf::from)
 }
 
 #[cfg(test)]

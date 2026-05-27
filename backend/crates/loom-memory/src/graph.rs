@@ -54,15 +54,22 @@ impl<'a> GraphStore<'a> {
 
     /// Upsert an entity node. Returns the node ID.
     pub fn upsert_node(
-        &self, name: &str, entity_type: &str, description: &str,
-        confidence: f64, scope: &str,
+        &self,
+        name: &str,
+        entity_type: &str,
+        description: &str,
+        confidence: f64,
+        scope: &str,
     ) -> Result<i64> {
         let now = Utc::now().timestamp();
-        let existing: Option<i64> = self.conn.query_row(
-            "SELECT id FROM kg_nodes WHERE name = ?1 AND scope = ?2",
-            rusqlite::params![name, scope],
-            |row| row.get(0),
-        ).ok();
+        let existing: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT id FROM kg_nodes WHERE name = ?1 AND scope = ?2",
+                rusqlite::params![name, scope],
+                |row| row.get(0),
+            )
+            .ok();
 
         if let Some(id) = existing {
             self.conn.execute(
@@ -84,8 +91,13 @@ impl<'a> GraphStore<'a> {
 
     /// Upsert an edge between two entities. Returns the edge ID.
     pub fn upsert_edge(
-        &self, source_id: i64, target_id: i64, relation_type: &str,
-        fact: &str, confidence: f64, scope: &str,
+        &self,
+        source_id: i64,
+        target_id: i64,
+        relation_type: &str,
+        fact: &str,
+        confidence: f64,
+        scope: &str,
     ) -> Result<i64> {
         let now = Utc::now().timestamp();
         let existing: Option<i64> = self.conn.query_row(
@@ -106,7 +118,15 @@ impl<'a> GraphStore<'a> {
                 "INSERT INTO kg_edges (source_id, target_id, relation_type, fact,
                  confidence, evidence_count, first_seen, last_updated, scope)
                  VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?6, ?7)",
-                rusqlite::params![source_id, target_id, relation_type, fact, confidence, now, scope],
+                rusqlite::params![
+                    source_id,
+                    target_id,
+                    relation_type,
+                    fact,
+                    confidence,
+                    now,
+                    scope
+                ],
             )?;
             Ok(self.conn.last_insert_rowid())
         }
@@ -154,11 +174,14 @@ impl<'a> GraphStore<'a> {
 
     /// Find the most recent event ID for a session.
     pub fn latest_event_id(&self, session_id: &str) -> Result<Option<i64>> {
-        Ok(self.conn.query_row(
-            "SELECT id FROM events WHERE source_session = ?1 ORDER BY id DESC LIMIT 1",
-            rusqlite::params![session_id],
-            |row| row.get(0),
-        ).ok())
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id FROM events WHERE source_session = ?1 ORDER BY id DESC LIMIT 1",
+                rusqlite::params![session_id],
+                |row| row.get(0),
+            )
+            .ok())
     }
 
     // ========================================================================
@@ -169,15 +192,21 @@ impl<'a> GraphStore<'a> {
     /// Automatically adds prefix matching (*) to bare ASCII terms.
     /// CJK terms are passed through as-is (FTS5 unicode61 tokenizes per-character).
     pub fn search_entities(&self, query: &str, limit: usize) -> Result<Vec<GraphRow>> {
-        let has_ops = query.contains('*') || query.contains("AND") || query.contains("OR")
-            || query.contains("NOT") || query.contains('"');
+        let has_ops = query.contains('*')
+            || query.contains("AND")
+            || query.contains("OR")
+            || query.contains("NOT")
+            || query.contains('"');
         let expanded = if has_ops {
             query.to_string()
         } else {
-            query.split_whitespace()
+            query
+                .split_whitespace()
                 .map(|t| {
                     // Only add prefix wildcard to ASCII terms; CJK chars don't benefit
-                    if t.chars().any(|c| c.is_ascii_alphabetic()) && !t.chars().any(|c| !c.is_ascii()) {
+                    if t.chars().any(|c| c.is_ascii_alphabetic())
+                        && !t.chars().any(|c| !c.is_ascii())
+                    {
                         format!("{}*", t)
                     } else {
                         t.to_string()
@@ -189,13 +218,17 @@ impl<'a> GraphStore<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT n.id, n.name, n.entity_type, n.description, n.confidence
              FROM kg_nodes_fts fts JOIN kg_nodes n ON n.id = fts.rowid
-             WHERE kg_nodes_fts MATCH ?1 ORDER BY rank LIMIT ?2"
+             WHERE kg_nodes_fts MATCH ?1 ORDER BY rank LIMIT ?2",
         )?;
         let rows = stmt.query_map(rusqlite::params![expanded, limit], |row| {
             Ok(GraphRow {
-                node_id: row.get(0)?, name: row.get(1)?, entity_type: row.get(2)?,
-                description: row.get(3)?, confidence: row.get(4)?,
-                relation_type: None, distance: None,
+                node_id: row.get(0)?,
+                name: row.get(1)?,
+                entity_type: row.get(2)?,
+                description: row.get(3)?,
+                confidence: row.get(4)?,
+                relation_type: None,
+                distance: None,
             })
         })?;
         let results: Vec<GraphRow> = rows.collect::<std::result::Result<Vec<_>, _>>()?;
@@ -207,14 +240,18 @@ impl<'a> GraphStore<'a> {
     pub fn resolve_node(&self, name: &str) -> Result<Option<i64>> {
         // Try exact match first
         if let Ok(Some(id)) = self.conn.query_row(
-            "SELECT id FROM kg_nodes WHERE name = ?1", rusqlite::params![name], |row| row.get(0)
+            "SELECT id FROM kg_nodes WHERE name = ?1",
+            rusqlite::params![name],
+            |row| row.get(0),
         ) {
             let _ = self.touch_node(id);
             return Ok(Some(id));
         }
         // Try alias
         let alias_result = self.conn.query_row(
-            "SELECT node_id FROM kg_aliases WHERE alias = ?1", rusqlite::params![name], |row| row.get(0)
+            "SELECT node_id FROM kg_aliases WHERE alias = ?1",
+            rusqlite::params![name],
+            |row| row.get(0),
         );
         if let Ok(id) = alias_result {
             let _ = self.touch_node(id);
@@ -228,7 +265,12 @@ impl<'a> GraphStore<'a> {
     // ========================================================================
 
     /// Get neighbors of an entity (1-hop connections).
-    pub fn neighbors(&self, node_name: &str, scope: Option<&str>, limit: usize) -> Result<Vec<GraphRow>> {
+    pub fn neighbors(
+        &self,
+        node_name: &str,
+        scope: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<GraphRow>> {
         // Touch the starting node first
         if let Ok(Some(id)) = self.resolve_node(node_name) {
             let _ = self.touch_node(id);
@@ -243,13 +285,17 @@ impl<'a> GraphStore<'a> {
                 (e.target_id = n.id AND e.source_id = src.id)
              )
              WHERE src.name = ?1 AND (e.scope = ?2 OR e.scope = 'global')
-             ORDER BY e.confidence DESC LIMIT ?3"
+             ORDER BY e.confidence DESC LIMIT ?3",
         )?;
         let rows = stmt.query_map(rusqlite::params![node_name, scope_filter, limit], |row| {
             Ok(GraphRow {
-                node_id: row.get(0)?, name: row.get(1)?, entity_type: row.get(2)?,
-                description: row.get(3)?, relation_type: Some(row.get(4)?),
-                confidence: row.get(5)?, distance: Some(1),
+                node_id: row.get(0)?,
+                name: row.get(1)?,
+                entity_type: row.get(2)?,
+                description: row.get(3)?,
+                relation_type: Some(row.get(4)?),
+                confidence: row.get(5)?,
+                distance: Some(1),
             })
         })?;
         let results: Vec<GraphRow> = rows.collect::<std::result::Result<Vec<_>, _>>()?;
@@ -258,7 +304,13 @@ impl<'a> GraphStore<'a> {
     }
 
     /// Get top-scored interests/connections for a subject with temporal decay.
-    pub fn top_interests(&self, subject: &str, scope: Option<&str>, now_ts: i64, limit: usize) -> Result<Vec<ScoredEntity>> {
+    pub fn top_interests(
+        &self,
+        subject: &str,
+        scope: Option<&str>,
+        now_ts: i64,
+        limit: usize,
+    ) -> Result<Vec<ScoredEntity>> {
         let scope_filter = scope.unwrap_or("global");
         let mut stmt = self.conn.prepare(
             "SELECT n.name, n.entity_type, e.relation_type, e.fact, e.confidence, e.evidence_count,
@@ -278,17 +330,30 @@ impl<'a> GraphStore<'a> {
                AND (e.scope = ?3 OR e.scope = 'global')
              ORDER BY score DESC LIMIT ?4"
         )?;
-        let rows = stmt.query_map(rusqlite::params![now_ts, subject, scope_filter, limit], |row| {
-            Ok(ScoredEntity {
-                name: row.get(0)?, entity_type: row.get(1)?, relation_type: row.get(2)?,
-                fact: row.get(3)?, confidence: row.get(4)?, score: row.get(5)?,
-            })
-        })?;
+        let rows = stmt.query_map(
+            rusqlite::params![now_ts, subject, scope_filter, limit],
+            |row| {
+                Ok(ScoredEntity {
+                    name: row.get(0)?,
+                    entity_type: row.get(1)?,
+                    relation_type: row.get(2)?,
+                    fact: row.get(3)?,
+                    confidence: row.get(4)?,
+                    score: row.get(5)?,
+                })
+            },
+        )?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     /// Walk up to N hops from a starting entity (breadth-first via recursive CTE).
-    pub fn walk(&self, start_name: &str, max_depth: u8, scope: Option<&str>, limit: usize) -> Result<Vec<GraphRow>> {
+    pub fn walk(
+        &self,
+        start_name: &str,
+        max_depth: u8,
+        scope: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<GraphRow>> {
         let scope_filter = scope.unwrap_or("global");
         let mut stmt = self.conn.prepare(
             "WITH RECURSIVE walk(id, name, entity_type, description, depth, visited) AS (
@@ -315,13 +380,20 @@ impl<'a> GraphStore<'a> {
             FROM walk WHERE depth > 0
             GROUP BY id ORDER BY MIN(depth) LIMIT ?4"
         )?;
-        let rows = stmt.query_map(rusqlite::params![start_name, scope_filter, max_depth, limit], |row| {
-            Ok(GraphRow {
-                node_id: row.get(0)?, name: row.get(1)?, entity_type: row.get(2)?,
-                description: row.get(3)?, confidence: 0.0, relation_type: None,
-                distance: Some(row.get(4)?),
-            })
-        })?;
+        let rows = stmt.query_map(
+            rusqlite::params![start_name, scope_filter, max_depth, limit],
+            |row| {
+                Ok(GraphRow {
+                    node_id: row.get(0)?,
+                    name: row.get(1)?,
+                    entity_type: row.get(2)?,
+                    description: row.get(3)?,
+                    confidence: 0.0,
+                    relation_type: None,
+                    distance: Some(row.get(4)?),
+                })
+            },
+        )?;
         let results: Vec<GraphRow> = rows.collect::<std::result::Result<Vec<_>, _>>()?;
         let _ = self.touch_rows(&results);
         Ok(results)
@@ -407,7 +479,7 @@ impl<'a> GraphStore<'a> {
                     OR target_id NOT IN (SELECT id FROM kg_nodes);
                  DELETE FROM kg_aliases WHERE node_id NOT IN (SELECT id FROM kg_nodes);
                  DELETE FROM kg_evidence WHERE node_id NOT IN (SELECT id FROM kg_nodes)
-                    AND edge_id NOT IN (SELECT id FROM kg_edges);"
+                    AND edge_id NOT IN (SELECT id FROM kg_edges);",
             )?;
         }
         Ok(deleted)
@@ -415,9 +487,11 @@ impl<'a> GraphStore<'a> {
 
     /// Total entity count (for pruning threshold check).
     pub fn node_count(&self) -> Result<usize> {
-        Ok(self.conn.query_row(
-            "SELECT COUNT(*) FROM kg_nodes", [], |row| row.get::<_, i64>(0)
-        )? as usize)
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*) FROM kg_nodes", [], |row| {
+                row.get::<_, i64>(0)
+            })? as usize)
     }
 }
 
@@ -427,9 +501,14 @@ mod tests {
 
     fn setup_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../../../migrations/V8__add_knowledge_graph.sql")).unwrap();
-        conn.execute_batch("ALTER TABLE kg_nodes ADD COLUMN access_count INTEGER DEFAULT 0;").unwrap();
-        conn.execute_batch("ALTER TABLE kg_nodes ADD COLUMN last_accessed INTEGER;").unwrap();
+        conn.execute_batch(include_str!(
+            "../../../../migrations/V8__add_knowledge_graph.sql"
+        ))
+        .unwrap();
+        conn.execute_batch("ALTER TABLE kg_nodes ADD COLUMN access_count INTEGER DEFAULT 0;")
+            .unwrap();
+        conn.execute_batch("ALTER TABLE kg_nodes ADD COLUMN last_accessed INTEGER;")
+            .unwrap();
         conn
     }
 
@@ -437,7 +516,15 @@ mod tests {
     fn test_upsert_and_resolve_node() {
         let conn = setup_db();
         let store = GraphStore::new(&conn);
-        let id = store.upsert_node("Rust", "Technology", "Systems programming language", 0.9, "global").unwrap();
+        let id = store
+            .upsert_node(
+                "Rust",
+                "Technology",
+                "Systems programming language",
+                0.9,
+                "global",
+            )
+            .unwrap();
         assert!(id > 0);
         assert_eq!(store.resolve_node("Rust").unwrap(), Some(id));
         assert!(store.resolve_node("Nonexistent").unwrap().is_none());
@@ -447,8 +534,24 @@ mod tests {
     fn test_search_entities() {
         let conn = setup_db();
         let store = GraphStore::new(&conn);
-        store.upsert_node("Rust", "Technology", "A programming language", 0.9, "global").unwrap();
-        store.upsert_node("Python", "Technology", "A scripting language", 0.85, "global").unwrap();
+        store
+            .upsert_node(
+                "Rust",
+                "Technology",
+                "A programming language",
+                0.9,
+                "global",
+            )
+            .unwrap();
+        store
+            .upsert_node(
+                "Python",
+                "Technology",
+                "A scripting language",
+                0.85,
+                "global",
+            )
+            .unwrap();
         // FTS5 needs content sync — use the node directly
         let results = store.walk("Rust", 1, None, 10).unwrap();
         assert!(results.is_empty()); // No edges yet
@@ -458,9 +561,22 @@ mod tests {
     fn test_neighbors() {
         let conn = setup_db();
         let store = GraphStore::new(&conn);
-        let rust_id = store.upsert_node("Rust", "Technology", "PL", 0.9, "global").unwrap();
-        let loom_id = store.upsert_node("openLoom", "Project", "AI kernel", 0.9, "global").unwrap();
-        store.upsert_edge(rust_id, loom_id, "uses", "openLoom uses Rust", 0.95, "global").unwrap();
+        let rust_id = store
+            .upsert_node("Rust", "Technology", "PL", 0.9, "global")
+            .unwrap();
+        let loom_id = store
+            .upsert_node("openLoom", "Project", "AI kernel", 0.9, "global")
+            .unwrap();
+        store
+            .upsert_edge(
+                rust_id,
+                loom_id,
+                "uses",
+                "openLoom uses Rust",
+                0.95,
+                "global",
+            )
+            .unwrap();
         let neighbors = store.neighbors("Rust", None, 10).unwrap();
         assert_eq!(neighbors.len(), 1);
         assert_eq!(neighbors[0].name, "openLoom");

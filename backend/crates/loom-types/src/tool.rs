@@ -61,8 +61,12 @@ impl ToolScope {
 const READ_ONLY_TOOLS: &[&str] = &["file_read", "file_search", "content_search", "web_browser"];
 
 const SELECTIVE_TOOLS: &[&str] = &[
-    "file_read", "file_search", "content_search", "web_browser",
-    "schedule_reminder", "file_edit",
+    "file_read",
+    "file_search",
+    "content_search",
+    "web_browser",
+    "schedule_reminder",
+    "file_edit",
 ];
 
 /// Intermediate progress reported by a tool/skill during execution.

@@ -1,10 +1,10 @@
 //! TelegramAdapter — long-polls the Bot API, converts updates to BridgeMessages.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -24,8 +24,13 @@ impl TelegramAdapter {
     pub fn new(bot_token: String) -> Self {
         let (tx, rx) = mpsc::channel(256);
         Self {
-            bot_token, client: reqwest::Client::new(), health: AdapterHealth::Disconnected,
-            rx, tx, abort: Arc::new(AtomicBool::new(false)), poll_handle: None,
+            bot_token,
+            client: reqwest::Client::new(),
+            health: AdapterHealth::Disconnected,
+            rx,
+            tx,
+            abort: Arc::new(AtomicBool::new(false)),
+            poll_handle: None,
         }
     }
 
@@ -35,14 +40,26 @@ impl TelegramAdapter {
 
     fn update_to_bridge_message(update: &TelegramUpdate) -> Option<BridgeMessage> {
         let msg = update.message.as_ref()?;
-        let content = msg.text.as_deref()
+        let content = msg
+            .text
+            .as_deref()
             .or(msg.caption.as_deref())
             .map(|t| MessageContent::Text(t.to_string()))?;
 
-        let reply_to = msg.reply_to_message.as_ref()
+        let reply_to = msg
+            .reply_to_message
+            .as_ref()
             .and_then(|m| m.message_id.map(|id| id.to_string()));
-        let sender_id = msg.from.as_ref().map(|u| u.id.to_string()).unwrap_or_default();
-        let sender_name = msg.from.as_ref().map(|u| u.first_name.clone()).unwrap_or_default();
+        let sender_id = msg
+            .from
+            .as_ref()
+            .map(|u| u.id.to_string())
+            .unwrap_or_default();
+        let sender_name = msg
+            .from
+            .as_ref()
+            .map(|u| u.first_name.clone())
+            .unwrap_or_default();
 
         Some(BridgeMessage {
             platform: Platform::Telegram,
@@ -59,7 +76,9 @@ impl TelegramAdapter {
 
 #[async_trait]
 impl ChannelAdapter for TelegramAdapter {
-    fn platform(&self) -> Platform { Platform::Telegram }
+    fn platform(&self) -> Platform {
+        Platform::Telegram
+    }
 
     async fn connect(&mut self) -> Result<()> {
         self.health = AdapterHealth::Connecting;
@@ -72,8 +91,13 @@ impl ChannelAdapter for TelegramAdapter {
         let handle = tokio::spawn(async move {
             let mut offset: i64 = 0;
             loop {
-                if abort.load(Ordering::SeqCst) { break; }
-                let url = format!("https://api.telegram.org/bot{}/getUpdates?timeout=30&offset={}", token, offset);
+                if abort.load(Ordering::SeqCst) {
+                    break;
+                }
+                let url = format!(
+                    "https://api.telegram.org/bot{}/getUpdates?timeout=30&offset={}",
+                    token, offset
+                );
                 match client.get(&url).send().await {
                     Ok(resp) => {
                         if let Ok(body) = resp.json::<TelegramResponse>().await {
@@ -85,7 +109,9 @@ impl ChannelAdapter for TelegramAdapter {
                             }
                         }
                     }
-                    Err(_) => { tokio::time::sleep(std::time::Duration::from_secs(3)).await; }
+                    Err(_) => {
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    }
                 }
             }
         });
@@ -98,7 +124,9 @@ impl ChannelAdapter for TelegramAdapter {
 
     async fn disconnect(&mut self) -> Result<()> {
         self.abort.store(true, Ordering::SeqCst);
-        if let Some(h) = self.poll_handle.take() { h.abort(); }
+        if let Some(h) = self.poll_handle.take() {
+            h.abort();
+        }
         self.health = AdapterHealth::Disconnected;
         tracing::info!("Telegram adapter disconnected");
         Ok(())
@@ -107,27 +135,42 @@ impl ChannelAdapter for TelegramAdapter {
     async fn send(&self, chat_id: &str, content: MessageContent) -> Result<String> {
         match &content {
             MessageContent::Text(text) => {
-                let resp = self.client.get(self.api_url("sendMessage"))
+                let resp = self
+                    .client
+                    .get(self.api_url("sendMessage"))
                     .query(&[("chat_id", chat_id), ("text", text.as_str())])
-                    .send().await?;
+                    .send()
+                    .await?;
                 let json: serde_json::Value = resp.json().await?;
-                json["result"]["message_id"].as_i64()
+                json["result"]["message_id"]
+                    .as_i64()
                     .map(|id| id.to_string())
                     .ok_or_else(|| anyhow::anyhow!("Telegram sendMessage failed: {:?}", json))
             }
-            _ => Err(anyhow::anyhow!("Telegram only supports text content for now")),
+            _ => Err(anyhow::anyhow!(
+                "Telegram only supports text content for now"
+            )),
         }
     }
 
-    fn receive_rx(&mut self) -> &mut mpsc::Receiver<BridgeMessage> { &mut self.rx }
-    fn health(&self) -> AdapterHealth { self.health.clone() }
+    fn receive_rx(&mut self) -> &mut mpsc::Receiver<BridgeMessage> {
+        &mut self.rx
+    }
+    fn health(&self) -> AdapterHealth {
+        self.health.clone()
+    }
 }
 
 #[derive(Debug, Deserialize)]
-struct TelegramResponse { result: Vec<TelegramUpdate> }
+struct TelegramResponse {
+    result: Vec<TelegramUpdate>,
+}
 
 #[derive(Debug, Deserialize)]
-struct TelegramUpdate { update_id: i64, message: Option<TelegramMessage> }
+struct TelegramUpdate {
+    update_id: i64,
+    message: Option<TelegramMessage>,
+}
 
 #[derive(Debug, Deserialize)]
 struct TelegramMessage {
@@ -140,7 +183,12 @@ struct TelegramMessage {
 }
 
 #[derive(Debug, Deserialize)]
-struct TelegramChat { id: i64 }
+struct TelegramChat {
+    id: i64,
+}
 
 #[derive(Debug, Deserialize)]
-struct TelegramUser { id: i64, first_name: String }
+struct TelegramUser {
+    id: i64,
+    first_name: String,
+}
