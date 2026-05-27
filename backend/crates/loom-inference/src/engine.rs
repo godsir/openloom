@@ -79,7 +79,8 @@ impl InferenceEngine {
         let messages = lower_messages(&req.effective_messages());
         let eff = req.effective_messages();
         let (cache_hit, _) = self.prefix_cache.check(&eff);
-        if cache_hit { tracing::debug!("KV cache hit — llama.cpp reuses prefix"); }
+        if cache_hit { tracing::info!("KV cache hit — llama.cpp reuses prefix"); }
+        else { tracing::info!("KV cache miss — cold prefix"); }
 
         let mut body = serde_json::json!({
             "model": self.model,
@@ -148,7 +149,8 @@ impl InferenceEngine {
         let messages = lower_messages(&req.effective_messages());
         let eff = req.effective_messages();
         let (cache_hit, _) = self.prefix_cache.check(&eff);
-        if cache_hit { tracing::debug!("KV cache hit (stream)"); }
+        if cache_hit { tracing::info!("KV cache hit (stream)"); }
+        else { tracing::info!("KV cache miss (stream)"); }
         let mut body = serde_json::json!({
             "model": self.model,
             "max_tokens": req.max_tokens,
@@ -195,15 +197,13 @@ impl InferenceEngine {
                         }
                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
                             let d = &val["choices"][0]["delta"];
-                            if let Some(r) = d["reasoning_content"].as_str().filter(|s| !s.is_empty()) {
-                                if token_tx.send(format!("\x02REASONING\x02{}", r)).await.is_err() {
-                                    return Ok(());
-                                }
+                            if let Some(r) = d["reasoning_content"].as_str().filter(|s| !s.is_empty())
+                                && token_tx.send(format!("\x02REASONING\x02{}", r)).await.is_err() {
+                                return Ok(());
                             }
-                            if let Some(t) = d["content"].as_str() {
-                                if token_tx.send(t.to_string()).await.is_err() {
-                                    return Ok(());
-                                }
+                            if let Some(t) = d["content"].as_str()
+                                && token_tx.send(t.to_string()).await.is_err() {
+                                return Ok(());
                             }
                             if let Some(u) = val.get("usage").filter(|u| u.is_object()) {
                                 let _ = token_tx
@@ -286,7 +286,8 @@ impl CloudClient for InferenceEngine {
         let messages = lower_messages(&req.effective_messages());
         let eff = req.effective_messages();
         let (cache_hit, _) = self.prefix_cache.check(&eff);
-        if cache_hit { tracing::debug!("KV cache hit (structured stream)"); }
+        if cache_hit { tracing::info!("KV cache hit (structured stream)"); }
+        else { tracing::info!("KV cache miss (structured stream)"); }
 
         let mut body = serde_json::json!({
             "model": self.model,
@@ -416,6 +417,15 @@ impl CloudClient for InferenceEngine {
     fn prefix_cache_stats(&self) -> crate::cache::PrefixCacheStats {
         self.prefix_cache.stats()
     }
+
+    fn last_cache_hit(&self) -> Option<bool> {
+        self.prefix_cache.last_check_was_hit()
+    }
+
+    fn estimated_cache_tokens(&self) -> usize { self.prefix_cache.last_cached_tokens() }
+
+    fn prefix_hash_snapshot(&self) -> Option<u64> { self.prefix_cache.snapshot_hash() }
+    fn prefix_hash_restore(&self, saved: Option<u64>) { self.prefix_cache.restore_hash(saved); }
 }
 
 // ── CloudClient trait ───────────────────────────────────────────────
@@ -469,6 +479,14 @@ pub trait CloudClient: Send + Sync {
     fn prefix_cache_reset(&self) {}
     /// Return prefix cache stats. Default: empty stats.
     fn prefix_cache_stats(&self) -> crate::cache::PrefixCacheStats { crate::cache::PrefixCacheStats::default() }
+    /// Whether the most recent prefix check was a cache hit (None = not checked).
+    fn last_cache_hit(&self) -> Option<bool> { None }
+    /// Estimated token count saved by prefix cache hit (0 = no hit or not tracked).
+    fn estimated_cache_tokens(&self) -> usize { 0 }
+    /// Snapshot prefix hash for save/restore around internal calls (e.g. summarization).
+    fn prefix_hash_snapshot(&self) -> Option<u64> { None }
+    /// Restore a previously-saved prefix hash.
+    fn prefix_hash_restore(&self, _saved: Option<u64>) {}
 }
 
 // ── helpers ─────────────────────────────────────────────────────────

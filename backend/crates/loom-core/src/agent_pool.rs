@@ -149,10 +149,9 @@ impl AgentPool {
         let mut agents = self.agents.write().await;
         if let Some(agent) = agents.remove(agent_id) {
             // Remove from parent's children list
-            if let Some(ref pid) = agent.parent_id {
-                if let Some(parent) = agents.get_mut(pid) {
-                    parent.remove_child(agent_id);
-                }
+            if let Some(ref pid) = agent.parent_id
+                && let Some(parent) = agents.get_mut(pid) {
+                parent.remove_child(agent_id);
             }
         }
         Ok(())

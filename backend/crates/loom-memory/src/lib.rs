@@ -9,9 +9,11 @@ pub mod extractor;
 pub mod aggregator;
 pub mod persona;
 pub mod graph;
+pub mod summary;
 
 pub use store::{AgentConfigStore, CognitionRow, CognitionSnapshot, CognitionStore, EventRow, NewEvent, SqliteEventStore};
 pub use pipeline::{MemoryPipeline, PipelineConfig};
 pub use graph::GraphStore;
 pub use extractor::{EntityExtractor, ExtractedEntity, ExtractedRelationship, LLM_EXTRACTION_PROMPT, RuleBasedEntityExtractor, parse_llm_extraction};
 pub use persona::CognitionsPersonaProvider;
+pub use summary::SummaryEngine;

@@ -1,6 +1,6 @@
 [package]
 name = "lume-cli"
-version = "0.2.0"
+version = "0.2.15"
 edition = "2024"
 description = "CLI entry point for openLoom v2 — serve, chat demo, doctor"
 

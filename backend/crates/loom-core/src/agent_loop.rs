@@ -5,9 +5,9 @@
 //! until the LLM produces a final text response or max iterations is hit.
 
 use anyhow::Result;
-use loom_context::ContextAssembler;
+use loom_context::{AssembleOptions, ContextAssembler};
 use loom_inference::engine::CloudClient;
-use loom_types::{CompletionRequest, ContentPart, Message, Role, StreamDelta};
+use loom_types::{CompletionRequest, ContentPart, Message, Role, StreamDelta, ToolDefinition};
 use loom_security::check_permission;
 use loom_types::SkillPermissions;
 use tokio::sync::mpsc;
@@ -23,8 +23,10 @@ pub struct TurnResult {
     pub iterations: usize,
     pub prompt_tokens: usize,
     pub completion_tokens: usize,
-    /// Number of KV cache hits during this turn (local models only).
-    pub cache_hits: u64,
+    /// Estimated cached tokens from prefix hit (client-side estimate, 0 if no hit).
+    pub cached_tokens: usize,
+    /// Whether the most recent prefix check was a cache hit (None = not checked).
+    pub kv_cache_hit: Option<bool>,
 }
 
 /// Configuration for the agent loop.
@@ -37,17 +39,79 @@ pub struct AgentLoopConfig {
     pub max_tokens: usize,
     /// Model temperature.
     pub temperature: f32,
+    /// If true, start with only request_tools and load real tools on demand.
+    pub lazy_tools: bool,
+    /// Persona text (injected into stable prefix).
+    pub persona: Option<String>,
+    /// Conversation summary (injected into stable prefix).
+    pub summary: Option<String>,
+    /// KG context text (injected into stable prefix).
+    pub kg_context: Option<String>,
 }
 
 impl Default for AgentLoopConfig {
     fn default() -> Self {
         Self {
-            system_prompt: "You are an AI assistant with REAL access to the user's Windows machine via tools (shell runs cmd /c, file_read/write use the real filesystem). You are NOT in a sandbox — when you call a tool, it actually executes on the computer. If a user asks to create files or run commands, use the tools directly. Never apologize or suggest manual alternatives — just do it. After creating files, use file_list to verify they exist.".into(),
+            system_prompt: "You are an AI assistant with real access to the user's machine. To use tools (file ops, shell, search, LSP, MCP), call request_tools first with what you need. Then use the loaded tools. For simple questions, just answer directly.".into(),
             max_iterations: 10,
             max_tokens: 4096,
             temperature: 0.0,
+            lazy_tools: true,
+            persona: None,
+            summary: None,
+            kg_context: None,
         }
     }
+}
+
+// ── On-demand tool loading ───────────────────────────────────────────────
+
+/// The single meta-tool sent on the first iteration. The LLM calls this
+/// when it actually needs tools, so pure Q&A turns never pay the token cost
+/// of full tool definitions.
+fn request_tools_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: "request_tools".into(),
+        description: "MUST call this first before any file/shell/search operation. Describe what you need to do (e.g. 'read a file', 'run a command', 'search code', 'check LSP diagnostics'). The matching tools will load and become available.".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "reason": {"type": "string", "description": "What do you need to do? Be specific."}
+            },
+            "required": ["reason"]
+        }),
+    }
+}
+
+/// Match tool names/descriptions against keywords in the reason string.
+/// Falls back to the built-in tools if nothing matches.
+fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
+    let r = reason.to_lowercase();
+    let keywords: Vec<&str> = r.split_whitespace()
+        .filter(|w| w.len() >= 3)
+        .collect();
+
+    let mut matched: Vec<ToolDefinition> = all.iter()
+        .filter(|t| {
+            if t.name == "request_tools" { return false; }
+            let nl = t.name.to_lowercase();
+            let dl = t.description.to_lowercase();
+            keywords.iter().any(|kw| nl.contains(kw) || dl.contains(kw))
+        })
+        .cloned()
+        .collect();
+
+    // Always include the essential built-in tools as a base
+    let builtins: &[&str] = &["shell", "file_read", "file_write", "file_list", "content_search", "file_delete", "use_skill"];
+    for name in builtins {
+        if !matched.iter().any(|t| t.name == *name) {
+            if let Some(t) = all.iter().find(|t| t.name == *name) {
+                matched.push(t.clone());
+            }
+        }
+    }
+
+    matched
 }
 
 /// Execute one agent turn: user message → LLM → tools → response.
@@ -63,7 +127,14 @@ pub async fn run_agent_turn(
     client.prefix_cache_reset();
     let mut tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
     let assembler = ContextAssembler::new(&config.system_prompt, 8192);
-    let mut messages = assembler.build(None, history, &tools)?;
+    let opts = AssembleOptions {
+        persona: config.persona.clone(),
+        summary: config.summary.clone(),
+        kg_context: config.kg_context.clone(),
+        tool_catalog: None,
+        history: history.to_vec(),
+    };
+    let mut messages = assembler.build(opts)?;
     messages.push(Message::user(user_message));
     let mut tool_calls_made = 0;
     let mut total_prompt = 0usize;
@@ -139,7 +210,7 @@ pub async fn run_agent_turn(
                 let perms = SkillPermissions::default();
                 let (allowed, risk) = check_permission(&tool_name, &perms);
                 if !allowed {
-                    messages.push(Message::tool(&tc.id, &tool_name, &format!("Permission denied (risk: {:?})", risk)));
+                    messages.push(Message::tool(&tc.id, &tool_name, format!("Permission denied (risk: {:?})", risk)));
                     continue;
                 }
 
@@ -171,30 +242,30 @@ pub async fn run_agent_turn(
         } else {
             response.text.clone()
         };
-
-        let cache_stats = client.prefix_cache_stats();
         return Ok(TurnResult {
             response: response_text,
             tool_calls_made,
             iterations: iteration + 1,
             prompt_tokens: total_prompt,
             completion_tokens: total_completion,
-            cache_hits: cache_stats.hits,
+            cached_tokens: client.estimated_cache_tokens(),
+            kv_cache_hit: client.last_cache_hit(),
         });
     }
 
-    let cache_stats = client.prefix_cache_stats();
     Ok(TurnResult {
         response: "Agent reached maximum iterations without resolving.".into(),
         tool_calls_made,
         iterations: config.max_iterations,
         prompt_tokens: total_prompt,
         completion_tokens: total_completion,
-        cache_hits: cache_stats.hits,
+        cached_tokens: client.estimated_cache_tokens(),
+        kv_cache_hit: client.last_cache_hit(),
     })
 }
 
 /// Streaming variant — yields StreamDelta events as they arrive.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_agent_turn_streaming(
     client: &dyn CloudClient,
     registry: &ToolRegistry,
@@ -206,9 +277,33 @@ pub async fn run_agent_turn_streaming(
     disallowed_tools: &Option<Vec<String>>,
 ) -> Result<TurnResult> {
     client.prefix_cache_reset();
-    let mut tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
+    let all_tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
+    let mut tools = if config.lazy_tools {
+        vec![request_tools_definition()]
+    } else {
+        all_tools.clone()
+    };
     let assembler = ContextAssembler::new(&config.system_prompt, 8192);
-    let mut messages = assembler.build(None, history, &tools)?;
+    let opts = AssembleOptions {
+        persona: config.persona.clone(),
+        summary: config.summary.clone(),
+        kg_context: config.kg_context.clone(),
+        tool_catalog: None,
+        history: history.to_vec(),
+    };
+    let mut messages = assembler.build(opts)?;
+    tracing::info!(
+        sys_chars = config.system_prompt.len(),
+        tool_count = tools.len(),
+        all_tool_count = all_tools.len(),
+        hist_msgs = history.len(),
+        lazy = config.lazy_tools,
+        "streaming turn — {} chars system prompt, {}/{} tools, {} history msgs",
+        config.system_prompt.len(),
+        tools.len(),
+        all_tools.len(),
+        history.len(),
+    );
     messages.push(Message::user(user_message));
     let mut tool_calls_made = 0;
     let mut total_prompt = 0usize;
@@ -301,6 +396,24 @@ pub async fn run_agent_turn_streaming(
             messages.push(Message { role: Role::Assistant, content: assistant_content, timestamp: chrono::Utc::now() });
 
             for (_, tc_id, tc_name, tc_args) in &pending_tool_calls {
+                // Handle request_tools meta-tool: match and inject real tools
+                if config.lazy_tools && tc_name == "request_tools" {
+                    let args: serde_json::Value = serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}));
+                    let reason = args["reason"].as_str().unwrap_or("");
+                    let matched = match_tools(reason, &all_tools);
+                    let names: Vec<&str> = matched.iter().map(|t| t.name.as_str()).collect();
+                    tracing::info!(%reason, ?names, "request_tools matched");
+                    let content = if matched.is_empty() {
+                        "No matching tools found. Try describing what you need differently.".into()
+                    } else {
+                        format!("Tools loaded: {}", names.join(", "))
+                    };
+                    messages.push(Message::tool(tc_id, tc_name, &content));
+                    tools = matched;
+                    tool_calls_made += 1;
+                    continue;
+                }
+
                 let arguments = serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}));
                 let (progress_tx, _) = mpsc::unbounded_channel();
                 match registry.execute(tc_name, arguments, progress_tx).await {
@@ -310,7 +423,7 @@ pub async fn run_agent_turn_streaming(
                         messages.push(Message::tool(tc_id, tc_name, &content));
                     }
                     Err(e) => {
-                        messages.push(Message::tool(tc_id, tc_name, &format!("Tool execution failed: {}", e)));
+                        messages.push(Message::tool(tc_id, tc_name, format!("Tool execution failed: {}", e)));
                     }
                 }
             }
@@ -322,6 +435,5 @@ pub async fn run_agent_turn_streaming(
         break;
     }
 
-    let cache_stats = client.prefix_cache_stats();
-    Ok(TurnResult { response: final_text, tool_calls_made, iterations: 1, prompt_tokens: total_prompt, completion_tokens: total_completion, cache_hits: cache_stats.hits })
+    Ok(TurnResult { response: final_text, tool_calls_made, iterations: 1, prompt_tokens: total_prompt, completion_tokens: total_completion, cached_tokens: client.estimated_cache_tokens(), kv_cache_hit: client.last_cache_hit() })
 }

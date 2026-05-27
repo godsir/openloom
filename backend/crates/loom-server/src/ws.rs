@@ -40,7 +40,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                                     id: req.id,
                                 };
                                 if let Ok(json) = serde_json::to_string(&resp) {
-                                    let _ = socket.send(Message::Text(json.into())).await;
+                                    let _ = socket.send(Message::Text(json)).await;
                                 }
                             }
                             Err(_) => {
@@ -68,7 +68,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                             "method": method,
                             "params": e,
                         })) {
-                            let _ = socket.send(Message::Text(json.into())).await;
+                            let _ = socket.send(Message::Text(json)).await;
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {

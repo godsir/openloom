@@ -68,8 +68,36 @@ enum Command {
         #[command(subcommand)]
         action: McpAction,
     },
+    /// Search and manage knowledge graph
+    Kg {
+        #[command(subcommand)]
+        action: KgAction,
+    },
     /// Diagnose the environment
     Doctor,
+}
+
+#[derive(Subcommand)]
+enum KgAction {
+    /// Full-text search the knowledge graph
+    Search {
+        /// Search query
+        query: String,
+        /// Max results (default 20)
+        #[arg(long, default_value = "20")]
+        limit: usize,
+        /// Expand query with LLM (requires --model and --base-url)
+        #[arg(long)]
+        expand: bool,
+        /// Model for query expansion
+        #[arg(long, default_value = "gemma-4-e4b")]
+        model: String,
+        /// LM Studio / Ollama endpoint for expansion
+        #[arg(long, default_value = "http://localhost:1234/v1")]
+        expand_url: String,
+    },
+    /// Show knowledge graph statistics
+    Stats,
 }
 
 #[derive(Subcommand)]
@@ -142,6 +170,10 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         Command::Doctor => run_doctor().await,
+        Command::Kg { action } => match action {
+            KgAction::Search { query, limit, expand, model, expand_url } => run_kg_search(&query, limit, expand, &model, &expand_url).await,
+            KgAction::Stats => run_kg_stats().await,
+        },
     }
     Ok(())
 }
@@ -201,13 +233,24 @@ fn mcp_list() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Ensure a base URL ends with `/v1` for OpenAI-compatible endpoints.
+/// Anthropic endpoints (`/messages`) do NOT use `/v1` — do not call this for them.
+fn normalize_openai_url(url: &str) -> String {
+    let trimmed = url.trim_end_matches('/');
+    if trimmed.ends_with("/v1") {
+        trimmed.to_string()
+    } else {
+        format!("{}/v1", trimmed)
+    }
+}
+
 // ============================================================================
 // Chat demo
 // ============================================================================
 
 async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&str>, provider: &str, base_url: Option<&str>, mcp_args: Option<&str>, load_config: bool, session: &str, is_new: bool) -> anyhow::Result<()> {
     use loom_core::MemoryStore;
-    use loom_inference::{AnthropicClient, OpenAIClient};
+    use loom_inference::{AnthropicClient, InferenceEngine, OpenAIClient};
     use loom_inference::engine::CloudClient;
 
     // Resolve API key
@@ -231,11 +274,42 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
     let orchestrator = Arc::new(loom_core::Orchestrator::new(3, 20, 300));
     orchestrator.init_spawn_agent(3, 300).await;
 
-    // Cloud client
-    let client: Box<dyn CloudClient> = if let Some(url) = base_url {
-        match provider {
-            "anthropic" => Box::new(AnthropicClient::new(api_key.clone(), model.to_string(), url.to_string())),
-            _ => Box::new(OpenAIClient::new(api_key.clone(), model.to_string(), url.to_string(), false)),
+    // Cloud client — route to InferenceEngine for local endpoints, or
+    // AnthropicClient/OpenAIClient for cloud endpoints.
+    //
+    // Key distinction:
+    //   InferenceEngine  → OpenAI-compatible (POST /v1/chat/completions) + PrefixCache
+    //   AnthropicClient  → Anthropic API     (POST /messages)
+    //   OpenAIClient     → OpenAI-compatible (POST /v1/chat/completions) + retry logic
+    //
+    // For localhost URLs, OpenAI format is always correct (LM Studio / Ollama both
+    // speak it). Only route to AnthropicClient for localhost when the user EXPLICITLY
+    // passed --provider anthropic (custom Anthropic-speaking proxy).
+
+    // Snapshot explicit provider before auto-detection overwrites it.
+    let explicit_provider = if provider == "auto" { None } else { Some(provider.to_string()) };
+
+    let client: Box<dyn CloudClient> = if matches!(provider, "lmstudio" | "ollama") {
+        // Explicit local provider → InferenceEngine with OpenAI-compatible endpoint
+        let url = base_url.map(String::from).unwrap_or_else(|| match provider {
+            "ollama" => "http://localhost:11434/v1".into(),
+            _ => "http://localhost:1234/v1".into(),
+        });
+        let engine = InferenceEngine::connect(&normalize_openai_url(&url), model, 8192).await?;
+        Box::new(engine)
+    } else if let Some(ref url) = base_url {
+        let is_localhost = url.contains("localhost") || url.contains("127.0.0.1");
+        let explicit_anthropic = explicit_provider.as_deref().is_some_and(|p| p == "anthropic");
+        if is_localhost && !explicit_anthropic {
+            // Localhost with auto-detected (or non-anthropic) provider → OpenAI format
+            let engine = InferenceEngine::connect(&normalize_openai_url(url), model, 8192).await?;
+            Box::new(engine)
+        } else {
+            // Remote URL, or explicit anthropic → provider-specific client (no /v1 normalization)
+            match provider {
+                "anthropic" => Box::new(AnthropicClient::new(api_key.clone(), model.to_string(), url.to_string())),
+                _ => Box::new(OpenAIClient::new(api_key.clone(), model.to_string(), url.to_string(), false)),
+            }
         }
     } else { match provider {
         "anthropic" => Box::new(AnthropicClient::new(api_key.clone(), model.to_string(), "https://api.anthropic.com".into())),
@@ -292,8 +366,10 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
         }
     match skill_loader.discover() {
         Ok(skills) if !skills.is_empty() => {
+            // Names-only: save ~80% token overhead vs full descriptions.
+            // LLM calls use_skill(name) to fetch the full SKILL.md body on demand.
             let ctx: String = skills.iter().map(|s| {
-                format!("- **{}**: {}", s.manifest.name, s.manifest.description)
+                format!("- {}", s.manifest.name)
             }).collect::<Vec<_>>().join("\n");
             orchestrator.set_skill_context(ctx).await;
             // Store full skill bodies for use_skill tool
@@ -318,6 +394,7 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
                 println!("[memory] persona loaded");
             }
             orchestrator.set_memory_store(Box::new(store)).await;
+            let _ = orchestrator.prune_memory().await;
             let _ = orchestrator.load_agent_configs().await;
             if !is_new {
                 let _ = orchestrator.load_history(session).await;
@@ -401,7 +478,7 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
             match skill_loader.discover() {
                 Ok(new_skills) if !new_skills.is_empty() => {
                     let ctx: String = new_skills.iter().map(|s| {
-                        format!("- **{}**: {}", s.manifest.name, s.manifest.description)
+                        format!("- {}", s.manifest.name)
                     }).collect::<Vec<_>>().join("\n");
                     orchestrator.set_skill_context(ctx).await;
                     let bodies: std::collections::HashMap<String, String> = new_skills.iter().map(|s| {
@@ -568,9 +645,12 @@ async fn run_chat_demo(model: &str, api_key: Option<&str>, api_key_env: Option<&
                 }
                 println!();
                 let mut parts = vec![format!("in {}", prompt), format!("out {}", completion)];
-                if cache_read > 0 { parts.push(format!("cr {}", cache_read)); }
+                if cache_read > 0 {
+                    parts.push(format!("cr {}", cache_read));
+                } else if turn.cached_tokens > 0 {
+                    parts.push(format!("cr ~{}", turn.cached_tokens));
+                }
                 if cache_write > 0 { parts.push(format!("cw {}", cache_write)); }
-                if turn.cache_hits > 0 { parts.push(format!("kv {}", turn.cache_hits)); }
                 if turn.tool_calls_made > 0 { parts.push(format!("{} tools", turn.tool_calls_made)); }
                 if turn.iterations > 1 { parts.push(format!("{} iters", turn.iterations)); }
                 println!("[{}]\n", parts.join(" | "));
@@ -592,4 +672,78 @@ async fn run_doctor() {
     println!("  lume-skills:     ok (SKILL.md parser)");
     println!("  loom-context:    ok");
     println!("  loom-security:   ok");
+}
+
+// ============================================================================
+// KG commands
+// ============================================================================
+
+async fn open_memory_store() -> Option<memory::LoomMemoryStore> {
+    let db_path = data_dir().join("data").join("memory.db");
+    memory::LoomMemoryStore::open(&db_path).ok()
+}
+
+async fn run_kg_search(query: &str, limit: usize, expand: bool, expand_model: &str, expand_url: &str) {
+    use loom_core::MemoryStore;
+    let Some(store) = open_memory_store().await else {
+        println!("Cannot open memory store. Run lume chat first to initialize.");
+        return;
+    };
+
+    let search_query = if expand {
+        match expand_query(query, expand_model, expand_url).await {
+            Ok(expanded) => {
+                println!("[expanded] {} → {}", query, expanded);
+                expanded
+            }
+            Err(e) => {
+                println!("[expansion failed: {}] falling back to raw query", e);
+                query.to_string()
+            }
+        }
+    } else {
+        query.to_string()
+    };
+
+    match store.search_knowledge(&search_query, limit).await {
+        Ok(results) if results.is_empty() => println!("No results for '{}'", query),
+        Ok(results) => {
+            println!("Knowledge Graph — {} results for '{}':\n", results.len(), query);
+            for (i, (name, etype, desc, conf)) in results.iter().enumerate() {
+                println!("{}. {} [{}] (confidence: {:.2})", i + 1, name, etype, conf);
+                if !desc.is_empty() && desc != name { println!("   {}", desc); }
+                println!();
+            }
+        }
+        Err(e) => println!("Search error: {}", e),
+    }
+}
+
+/// Use LLM to expand a search query with related terms in English + Chinese.
+async fn expand_query(query: &str, model: &str, base_url: &str) -> anyhow::Result<String> {
+    let engine = loom_inference::InferenceEngine::connect(base_url, model, 8192).await?;
+    let prompt = format!(
+        "Expand this search query into space-separated keywords in English and Chinese.\n\
+         Return ONLY the expanded keywords, nothing else.\n\nQuery: {query}"
+    );
+    let request = loom_types::CompletionRequest {
+        messages: vec![loom_types::Message::user(&prompt)],
+        max_tokens: 64,
+        temperature: 0.0,
+        ..Default::default()
+    };
+    let response = engine.complete(request).await?;
+    Ok(response.text.trim().to_string())
+}
+
+async fn run_kg_stats() {
+    use loom_core::MemoryStore;
+    let Some(store) = open_memory_store().await else {
+        println!("Cannot open memory store.");
+        return;
+    };
+    match store.kg_node_count().await {
+        Ok(n) => println!("Knowledge Graph Statistics\n  entities: {}", n),
+        Err(e) => println!("Stats error: {}", e),
+    }
 }

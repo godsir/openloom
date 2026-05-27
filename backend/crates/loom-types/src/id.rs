@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// Unique agent identifier.
 ///
 /// Consumers: loom-core (AgentPool), loom-server (dispatch), loom-cli (commands)
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct AgentId(pub String);
 
 impl AgentId {
@@ -50,7 +50,7 @@ impl From<&str> for AgentId {
 /// Unique session identifier.
 ///
 /// Consumers: loom-core (agent loop), loom-server (dispatch), loom-memory (store)
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct SessionId(pub String);
 
 impl SessionId {

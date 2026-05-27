@@ -21,6 +21,7 @@ Thumbs.db
 # Claude
 .claude/worktrees/
 .superpower/
+.superpowers/
 
 # Temp
 tempopencode/

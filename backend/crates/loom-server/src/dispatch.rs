@@ -52,9 +52,8 @@ impl SessionStore {
     }
 
     pub async fn get_or_create(&self, path: Option<&str>) -> SessionData {
-        if let Some(id) = path {
-            if let Some(s) = self.get(id).await { return s; }
-        }
+        if let Some(id) = path
+            && let Some(s) = self.get(id).await { return s; }
         self.create(path).await
     }
 
@@ -293,9 +292,116 @@ pub async fn dispatch_method(state: &AppState, req: &JsonRpcRequest) -> Result<V
             if server.is_empty() || uri.is_empty() {
                 return Err(err(ErrorCode::InvalidRequest, "server and uri required"));
             }
-            let content = state.orchestrator.mcp_client().read_resource(server, uri).await
+            let contents = state.orchestrator.mcp_client().read_resource(server, uri).await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
-            Ok(serde_json::to_value(content).unwrap_or_default())
+            Ok(serde_json::to_value(contents).unwrap_or_default())
+        }
+        "mcp.list_resource_templates" => {
+            let server = p.get("server").and_then(|v| v.as_str()).unwrap_or("");
+            if server.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "server required"));
+            }
+            let templates = state.orchestrator.mcp_client().list_resource_templates(server).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "templates": templates }))
+        }
+        "mcp.list_prompts" => {
+            let server = p.get("server").and_then(|v| v.as_str()).unwrap_or("");
+            if server.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "server required"));
+            }
+            let prompts = state.orchestrator.mcp_client().list_prompts(server).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "prompts": prompts }))
+        }
+        "mcp.get_prompt" => {
+            let server = p.get("server").and_then(|v| v.as_str()).unwrap_or("");
+            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if server.is_empty() || name.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "server and name required"));
+            }
+            let args = p.get("arguments");
+            let result = state.orchestrator.mcp_client().get_prompt(server, name, args).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(serde_json::to_value(result).unwrap_or_default())
+        }
+
+        // === LSP ===
+        "lsp.list_servers" => {
+            let servers = state.orchestrator.lsp_client().list_servers().await;
+            Ok(json!({ "servers": servers }))
+        }
+        "lsp.diagnostics" => {
+            let file_path = p.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+            if file_path.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "file_path required"));
+            }
+            let result = state.orchestrator.lsp_client().diagnostics(file_path).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(result)
+        }
+        "lsp.completion" => {
+            let file_path = p.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+            let line = p.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let character = p.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            if file_path.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "file_path required"));
+            }
+            let result = state.orchestrator.lsp_client().completion(file_path, line, character).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(result)
+        }
+        "lsp.hover" => {
+            let file_path = p.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+            let line = p.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let character = p.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            if file_path.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "file_path required"));
+            }
+            let result = state.orchestrator.lsp_client().hover(file_path, line, character).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(result)
+        }
+        "lsp.definition" => {
+            let file_path = p.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+            let line = p.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let character = p.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            if file_path.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "file_path required"));
+            }
+            let result = state.orchestrator.lsp_client().definition(file_path, line, character).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(result)
+        }
+        "lsp.references" => {
+            let file_path = p.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+            let line = p.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let character = p.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let include_decl = p.get("include_declaration").and_then(|v| v.as_bool()).unwrap_or(true);
+            if file_path.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "file_path required"));
+            }
+            let result = state.orchestrator.lsp_client().references(file_path, line, character, include_decl).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(result)
+        }
+        "lsp.symbols" => {
+            let file_path = p.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+            if file_path.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "file_path required"));
+            }
+            let result = state.orchestrator.lsp_client().document_symbols(file_path).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(result)
+        }
+        "lsp.shutdown" => {
+            let language = p.get("language").and_then(|v| v.as_str()).unwrap_or("");
+            if language.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "language required (e.g. 'rust', 'typescript')"));
+            }
+            state.orchestrator.lsp_client().shutdown(language).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "ok": true }))
         }
 
         // === Tools ===

@@ -6,6 +6,7 @@ use loom_types::{CompletionRequest, CompletionResponse, ContentPart, Message, Mo
 use reqwest::Client as HttpClient;
 use tokio::sync::mpsc;
 
+use crate::cache::PrefixCache;
 use crate::engine::CloudClient;
 
 pub struct AnthropicClient {
@@ -13,11 +14,12 @@ pub struct AnthropicClient {
     model: String,
     base_url: String,
     http: HttpClient,
+    prefix_cache: PrefixCache,
 }
 
 impl AnthropicClient {
     pub fn new(api_key: String, model: String, base_url: String) -> Self {
-        Self { api_key, model, base_url, http: HttpClient::new() }
+        Self { api_key, model, base_url, http: HttpClient::new(), prefix_cache: PrefixCache::new(2) }
     }
 
     async fn complete_with_retry(&self, req: &CompletionRequest, retries: usize) -> Result<CompletionResponse> {
@@ -36,7 +38,10 @@ impl AnthropicClient {
     }
 
     async fn try_complete(&self, req: &CompletionRequest) -> Result<CompletionResponse> {
-        let (system_prompt, messages) = self.lower_messages(&req.effective_messages());
+        let eff = req.effective_messages();
+        let (cache_hit, _) = self.prefix_cache.check(&eff);
+        if cache_hit { tracing::info!("KV cache hit"); } else { tracing::info!("KV cache miss"); }
+        let (system_prompt, messages) = self.lower_messages(&eff);
         let mut body = serde_json::json!({"model": self.model, "max_tokens": req.max_tokens, "messages": messages});
         if let Some(sys) = system_prompt {
             body["system"] = serde_json::json!(sys);
@@ -146,7 +151,10 @@ impl CloudClient for AnthropicClient {
     }
 
     async fn complete_stream(&self, req: CompletionRequest, tx: tokio::sync::mpsc::Sender<String>) -> Result<()> {
-        let (system_prompt, messages) = self.lower_messages(&req.effective_messages());
+        let eff = req.effective_messages();
+        let (cache_hit, _) = self.prefix_cache.check(&eff);
+        if cache_hit { tracing::info!("KV cache hit (stream)"); } else { tracing::info!("KV cache miss (stream)"); }
+        let (system_prompt, messages) = self.lower_messages(&eff);
         let mut body = serde_json::json!({"model": self.model, "max_tokens": req.max_tokens, "messages": messages, "stream": true});
         if let Some(sys) = system_prompt {
             body["system"] = serde_json::json!(sys);
@@ -210,7 +218,10 @@ impl CloudClient for AnthropicClient {
     async fn complete_stream_structured(&self, req: CompletionRequest, tx: mpsc::Sender<StreamDelta>) -> Result<()> {
         use futures::StreamExt;
 
-        let (system_prompt, messages) = self.lower_messages(&req.effective_messages());
+        let eff = req.effective_messages();
+        let (cache_hit, _) = self.prefix_cache.check(&eff);
+        if cache_hit { tracing::info!("KV cache hit (structured stream)"); } else { tracing::info!("KV cache miss (structured stream)"); }
+        let (system_prompt, messages) = self.lower_messages(&eff);
         let mut body = serde_json::json!({"model": self.model, "max_tokens": req.max_tokens, "messages": messages, "stream": true});
         if let Some(sys) = system_prompt {
             body["system"] = serde_json::json!(sys);
@@ -248,15 +259,14 @@ impl CloudClient for AnthropicClient {
                     if let Some(data) = line.strip_prefix("data: ") {
                         let Ok(val) = serde_json::from_str::<serde_json::Value>(data) else { continue };
                         match val["type"].as_str() {
-                            Some("content_block_start") => {
-                                if val["content_block"]["type"] == "tool_use" {
+                            Some("content_block_start")
+                                if val["content_block"]["type"] == "tool_use" => {
                                     let idx = val["index"].as_u64().unwrap_or(0) as usize;
                                     let id = val["content_block"]["id"].as_str().unwrap_or("?").to_string();
                                     let name = val["content_block"]["name"].as_str().unwrap_or("?").to_string();
                                     active_tool_index = Some(idx);
                                     let _ = tx.send(StreamDelta::ToolCallBegin { index: idx, id, name }).await;
                                 }
-                            }
                             Some("content_block_delta") => {
                                 match val["delta"]["type"].as_str() {
                                     Some("text_delta") => {
@@ -305,6 +315,13 @@ impl CloudClient for AnthropicClient {
 
     fn provider(&self) -> ModelBackend { ModelBackend::Anthropic }
     fn model_name(&self) -> &str { &self.model }
+
+    fn prefix_cache_reset(&self) { self.prefix_cache.reset_turn(); }
+    fn prefix_cache_stats(&self) -> crate::cache::PrefixCacheStats { self.prefix_cache.stats() }
+    fn last_cache_hit(&self) -> Option<bool> { self.prefix_cache.last_check_was_hit() }
+    fn estimated_cache_tokens(&self) -> usize { self.prefix_cache.last_cached_tokens() }
+    fn prefix_hash_snapshot(&self) -> Option<u64> { self.prefix_cache.snapshot_hash() }
+    fn prefix_hash_restore(&self, saved: Option<u64>) { self.prefix_cache.restore_hash(saved); }
 }
 
 #[cfg(test)]

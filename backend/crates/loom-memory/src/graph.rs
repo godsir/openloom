@@ -113,24 +113,94 @@ impl<'a> GraphStore<'a> {
     }
 
     // ========================================================================
+    // Access tracking & evidence
+    // ========================================================================
+
+    /// Record a node access (increment counter, update last_accessed).
+    fn touch_node(&self, node_id: i64) -> Result<()> {
+        let now = Utc::now().timestamp();
+        self.conn.execute(
+            "UPDATE kg_nodes SET access_count = access_count + 1, last_accessed = ?1 WHERE id = ?2",
+            rusqlite::params![now, node_id],
+        )?;
+        Ok(())
+    }
+
+    /// Touch all nodes returned by a query.
+    fn touch_rows(&self, rows: &[GraphRow]) -> Result<()> {
+        for r in rows {
+            let _ = self.touch_node(r.node_id);
+        }
+        Ok(())
+    }
+
+    /// Link a node to a source event in kg_evidence.
+    pub fn link_evidence_node(&self, node_id: i64, event_id: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO kg_evidence (node_id, event_id) VALUES (?1, ?2)",
+            rusqlite::params![node_id, event_id],
+        )?;
+        Ok(())
+    }
+
+    /// Link an edge to a source event in kg_evidence.
+    pub fn link_evidence_edge(&self, edge_id: i64, event_id: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO kg_evidence (edge_id, event_id) VALUES (?1, ?2)",
+            rusqlite::params![edge_id, event_id],
+        )?;
+        Ok(())
+    }
+
+    /// Find the most recent event ID for a session.
+    pub fn latest_event_id(&self, session_id: &str) -> Result<Option<i64>> {
+        Ok(self.conn.query_row(
+            "SELECT id FROM events WHERE source_session = ?1 ORDER BY id DESC LIMIT 1",
+            rusqlite::params![session_id],
+            |row| row.get(0),
+        ).ok())
+    }
+
+    // ========================================================================
     // Read — Entity Search
     // ========================================================================
 
     /// Full-text search for entities by name or description.
+    /// Automatically adds prefix matching (*) to bare ASCII terms.
+    /// CJK terms are passed through as-is (FTS5 unicode61 tokenizes per-character).
     pub fn search_entities(&self, query: &str, limit: usize) -> Result<Vec<GraphRow>> {
+        let has_ops = query.contains('*') || query.contains("AND") || query.contains("OR")
+            || query.contains("NOT") || query.contains('"');
+        let expanded = if has_ops {
+            query.to_string()
+        } else {
+            query.split_whitespace()
+                .map(|t| {
+                    // Only add prefix wildcard to ASCII terms; CJK chars don't benefit
+                    if t.chars().any(|c| c.is_ascii_alphabetic()) && !t.chars().any(|c| !c.is_ascii()) {
+                        format!("{}*", t)
+                    } else {
+                        t.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
         let mut stmt = self.conn.prepare(
             "SELECT n.id, n.name, n.entity_type, n.description, n.confidence
              FROM kg_nodes_fts fts JOIN kg_nodes n ON n.id = fts.rowid
              WHERE kg_nodes_fts MATCH ?1 ORDER BY rank LIMIT ?2"
         )?;
-        let rows = stmt.query_map(rusqlite::params![query, limit], |row| {
+        let rows = stmt.query_map(rusqlite::params![expanded, limit], |row| {
             Ok(GraphRow {
                 node_id: row.get(0)?, name: row.get(1)?, entity_type: row.get(2)?,
                 description: row.get(3)?, confidence: row.get(4)?,
                 relation_type: None, distance: None,
             })
         })?;
-        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+        let results: Vec<GraphRow> = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        let _ = self.touch_rows(&results);
+        Ok(results)
     }
 
     /// Resolve an entity name to its node ID (via exact match or alias).
@@ -139,12 +209,18 @@ impl<'a> GraphStore<'a> {
         if let Ok(Some(id)) = self.conn.query_row(
             "SELECT id FROM kg_nodes WHERE name = ?1", rusqlite::params![name], |row| row.get(0)
         ) {
+            let _ = self.touch_node(id);
             return Ok(Some(id));
         }
         // Try alias
-        self.conn.query_row(
+        let alias_result = self.conn.query_row(
             "SELECT node_id FROM kg_aliases WHERE alias = ?1", rusqlite::params![name], |row| row.get(0)
-        ).map(Some).or_else(|_| Ok(None))
+        );
+        if let Ok(id) = alias_result {
+            let _ = self.touch_node(id);
+            return Ok(Some(id));
+        }
+        Ok(None)
     }
 
     // ========================================================================
@@ -153,6 +229,10 @@ impl<'a> GraphStore<'a> {
 
     /// Get neighbors of an entity (1-hop connections).
     pub fn neighbors(&self, node_name: &str, scope: Option<&str>, limit: usize) -> Result<Vec<GraphRow>> {
+        // Touch the starting node first
+        if let Ok(Some(id)) = self.resolve_node(node_name) {
+            let _ = self.touch_node(id);
+        }
         let scope_filter = scope.unwrap_or("global");
         let mut stmt = self.conn.prepare(
             "SELECT n.id, n.name, n.entity_type, n.description, e.relation_type, e.confidence
@@ -172,7 +252,9 @@ impl<'a> GraphStore<'a> {
                 confidence: row.get(5)?, distance: Some(1),
             })
         })?;
-        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+        let results: Vec<GraphRow> = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        let _ = self.touch_rows(&results);
+        Ok(results)
     }
 
     /// Get top-scored interests/connections for a subject with temporal decay.
@@ -183,7 +265,11 @@ impl<'a> GraphStore<'a> {
                     ROUND(
                         e.confidence
                         * (1.0 + (CASE WHEN e.evidence_count > 0 THEN LN(CAST(e.evidence_count AS REAL) + 1) * 0.5 ELSE 0 END))
-                        * EXP(MAX(?1 - e.last_updated, 0) / -2592000.0),
+                        * (1.0 + (CASE WHEN n.access_count > 0 THEN LN(CAST(n.access_count AS REAL) + 1) * 0.3 ELSE 0 END))
+                        * EXP(MAX(?1 - e.last_updated, 0) / -2592000.0)
+                        * (CASE WHEN n.last_accessed IS NOT NULL
+                            THEN EXP(MAX(?1 - n.last_accessed, 0) / -604800.0)
+                            ELSE 0.5 END),
                     4) AS score
              FROM kg_nodes subj
              JOIN kg_edges e ON e.source_id = subj.id
@@ -236,7 +322,9 @@ impl<'a> GraphStore<'a> {
                 distance: Some(row.get(4)?),
             })
         })?;
-        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+        let results: Vec<GraphRow> = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        let _ = self.touch_rows(&results);
+        Ok(results)
     }
 
     /// Shortest path between two entities via BFS with recursive CTE.
@@ -290,6 +378,47 @@ impl<'a> GraphStore<'a> {
         )?;
         Ok(())
     }
+
+    // ========================================================================
+    // Maintenance
+    // ========================================================================
+
+    /// Prune stale low-confidence entities not accessed recently.
+    /// Returns the number of nodes removed.
+    pub fn prune_stale(&self, older_than_days: i64, max_count: usize) -> Result<usize> {
+        let cutoff = Utc::now().timestamp() - older_than_days * 86400;
+        // Delete stale nodes (never accessed, old, low confidence, not Person)
+        let deleted = self.conn.execute(
+            "DELETE FROM kg_nodes WHERE id IN (
+                SELECT id FROM kg_nodes
+                WHERE access_count = 0
+                  AND last_updated < ?1
+                  AND confidence < 0.5
+                  AND entity_type != 'Person'
+                LIMIT ?2
+            )",
+            rusqlite::params![cutoff, max_count as i64],
+        )?;
+
+        if deleted > 0 {
+            // Cascade: clean orphaned edges, aliases, evidence
+            self.conn.execute_batch(
+                "DELETE FROM kg_edges WHERE source_id NOT IN (SELECT id FROM kg_nodes)
+                    OR target_id NOT IN (SELECT id FROM kg_nodes);
+                 DELETE FROM kg_aliases WHERE node_id NOT IN (SELECT id FROM kg_nodes);
+                 DELETE FROM kg_evidence WHERE node_id NOT IN (SELECT id FROM kg_nodes)
+                    AND edge_id NOT IN (SELECT id FROM kg_edges);"
+            )?;
+        }
+        Ok(deleted)
+    }
+
+    /// Total entity count (for pruning threshold check).
+    pub fn node_count(&self) -> Result<usize> {
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*) FROM kg_nodes", [], |row| row.get::<_, i64>(0)
+        )? as usize)
+    }
 }
 
 #[cfg(test)]
@@ -299,6 +428,8 @@ mod tests {
     fn setup_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(include_str!("../../../../migrations/V8__add_knowledge_graph.sql")).unwrap();
+        conn.execute_batch("ALTER TABLE kg_nodes ADD COLUMN access_count INTEGER DEFAULT 0;").unwrap();
+        conn.execute_batch("ALTER TABLE kg_nodes ADD COLUMN last_accessed INTEGER;").unwrap();
         conn
     }
 

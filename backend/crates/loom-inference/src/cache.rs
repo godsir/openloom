@@ -20,6 +20,10 @@ pub struct PrefixCache {
     last_hash: Mutex<Option<u64>>,
     stats: Mutex<PrefixCacheStats>,
     prefix_message_count: usize,
+    /// Whether the most recent check() call was a cache hit.
+    last_hit: Mutex<Option<bool>>,
+    /// Estimated token count of the last prefix (char count / 4).
+    last_prefix_tokens: Mutex<usize>,
 }
 
 impl PrefixCache {
@@ -28,6 +32,8 @@ impl PrefixCache {
             last_hash: Mutex::new(None),
             stats: Mutex::new(PrefixCacheStats::default()),
             prefix_message_count,
+            last_hit: Mutex::new(None),
+            last_prefix_tokens: Mutex::new(0),
         }
     }
 
@@ -35,21 +41,58 @@ impl PrefixCache {
     /// Returns (is_hit, hash).
     pub fn check(&self, all_messages: &[Message]) -> (bool, u64) {
         let prefix_end = self.prefix_message_count.min(all_messages.len());
-        let hash = hash_prefix(&all_messages[..prefix_end]);
+        let prefix = &all_messages[..prefix_end];
+        let hash = hash_prefix(prefix);
+
+        // Estimate token count of this prefix (char/4)
+        let est_tokens: usize = prefix.iter()
+            .flat_map(|m| &m.content)
+            .map(|p| match p {
+                loom_types::ContentPart::Text { text } => text.chars().count(),
+                _ => 0,
+            })
+            .sum::<usize>() / 4;
 
         let mut last = self.last_hash.lock().unwrap();
-        let is_hit = last.map_or(false, |h| h == hash);
+        let is_hit = last.is_some_and(|h| h == hash);
 
         let mut stats = self.stats.lock().unwrap();
         if is_hit { stats.hits += 1; } else { stats.misses += 1; }
 
         *last = Some(hash);
+        *self.last_hit.lock().unwrap() = Some(is_hit);
+        *self.last_prefix_tokens.lock().unwrap() = est_tokens;
         (is_hit, hash)
+    }
+
+    /// Whether the most recent check() was a cache hit (None = no check performed yet).
+    pub fn last_check_was_hit(&self) -> Option<bool> {
+        *self.last_hit.lock().unwrap()
+    }
+
+    /// Estimated token count of the prefix that was cached (0 if last check was a miss).
+    pub fn last_cached_tokens(&self) -> usize {
+        if self.last_hit.lock().unwrap().unwrap_or(false) {
+            *self.last_prefix_tokens.lock().unwrap()
+        } else {
+            0
+        }
     }
 
     /// Reset per-turn stats only (prefix hash carries over).
     pub fn reset_turn(&self) {
         *self.stats.lock().unwrap() = PrefixCacheStats::default();
+        *self.last_hit.lock().unwrap() = None;
+    }
+
+    /// Snapshot the current prefix hash so it can be restored later.
+    pub fn snapshot_hash(&self) -> Option<u64> {
+        *self.last_hash.lock().unwrap()
+    }
+
+    /// Restore a previously-saved prefix hash.
+    pub fn restore_hash(&self, saved: Option<u64>) {
+        *self.last_hash.lock().unwrap() = saved;
     }
 
     pub fn stats(&self) -> PrefixCacheStats {

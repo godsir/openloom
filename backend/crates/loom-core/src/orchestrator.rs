@@ -7,6 +7,7 @@ use anyhow::Result;
 use loom_inference::engine::CloudClient;
 use loom_types::{AgentConfig, SessionId, CompletionRequest, Message, StreamDelta};
 use lume_mcp::McpClient;
+use lume_lsp::LspClient;
 use loom_memory::{ExtractedEntity, ExtractedRelationship, LLM_EXTRACTION_PROMPT, parse_llm_extraction};
 use tokio::sync::{mpsc, RwLock};
 
@@ -21,6 +22,7 @@ pub struct Orchestrator {
     pool: AgentPool,
     tool_registry: Arc<RwLock<ToolRegistry>>,
     mcp_client: Arc<McpClient>,
+    lsp_client: Arc<LspClient>,
     cloud_client: Arc<RwLock<Option<Box<dyn CloudClient>>>>,
     loop_config: Arc<RwLock<AgentLoopConfig>>,
     session_histories: Arc<RwLock<std::collections::HashMap<String, Vec<Message>>>>,
@@ -34,11 +36,11 @@ pub struct Orchestrator {
 /// Trait for memory backends (SqliteEventStore, etc.)
 #[async_trait::async_trait]
 pub trait MemoryStore: Send + Sync {
-    async fn save_turn(&self, session_id: &str, user_msg: &str, assistant_msg: &str, tools: usize, tokens: usize) -> Result<()>;
+    async fn save_turn(&self, session_id: &str, user_msg: &str, assistant_msg: &str, tools: usize, tokens: usize) -> Result<i64>;
     async fn load_history(&self, session_id: &str, limit: usize) -> Result<Vec<Message>>;
     async fn extract_cognitions(&self, session_id: &str, text: &str) -> Result<Vec<String>>;
     async fn get_persona(&self) -> Result<String>;
-    async fn feed_knowledge_graph(&self, entities: &[loom_memory::ExtractedEntity], relationships: &[loom_memory::ExtractedRelationship]) -> Result<(usize, usize)>;
+    async fn feed_knowledge_graph(&self, entities: &[loom_memory::ExtractedEntity], relationships: &[loom_memory::ExtractedRelationship], source_event_id: i64) -> Result<(usize, usize)>;
     async fn save_extracted_entities(&self, entities: &[loom_memory::ExtractedEntity], relationships: &[loom_memory::ExtractedRelationship]) -> Result<()>;
     // Agent config CRUD
     async fn save_agent_config(&self, config: &loom_types::AgentConfig) -> Result<()>;
@@ -50,10 +52,82 @@ pub trait MemoryStore: Send + Sync {
     async fn get_session_agent_name(&self, session_id: &str) -> Result<Option<String>>;
     // Knowledge graph read
     async fn query_kg_context(&self, entity_names: &[&str], limit: usize) -> Result<String>;
+    // Conversation summary (P0 memory optimization)
+    async fn get_summary(&self, session_id: &str) -> Result<Option<String>>;
+    async fn save_summary(&self, session_id: &str, summary: &str) -> Result<()>;
+    async fn get_summary_at_count(&self, session_id: &str) -> Result<usize>;
+    async fn get_message_count(&self, session_id: &str) -> Result<usize>;
+    // Memory maintenance (P2)
+    async fn prune_memory(&self) -> Result<usize>;
+    // Cross-session knowledge search (P2)
+    async fn search_knowledge(&self, query: &str, limit: usize) -> Result<Vec<(String, String, String, f64)>>;
+    async fn kg_node_count(&self) -> Result<usize>;
     // Session persistence
     async fn list_sessions(&self) -> Result<Vec<(String, String, usize, Option<String>)>>;
     async fn ensure_session(&self, id: &str) -> Result<()>;
     async fn delete_session(&self, id: &str) -> Result<()>;
+}
+
+// ── Entity extraction helper (English + Chinese) ─────────────────────────
+
+/// Extract candidate entity names from text for KG context injection.
+/// English: whitespace-delimited capitalized words > 3 chars.
+/// Chinese: CJK character n-grams (2-5 chars) via sliding window.
+fn extract_entity_candidates(text: &str) -> Vec<String> {
+    let mut candidates: Vec<String> = Vec::new();
+
+    // English: split by whitespace, keep capitalized words
+    for w in text.split_whitespace() {
+        let trimmed = w.trim_matches(|c: char| !c.is_alphabetic());
+        if trimmed.len() >= 3 && trimmed.chars().next().is_some_and(|c| c.is_uppercase()) {
+            candidates.push(trimmed.to_string());
+        }
+    }
+
+    // Chinese: sliding window of 2-5 CJK characters on consecutive runs
+    let chars: Vec<char> = text.chars().collect();
+    let cjk_indices: Vec<usize> = chars.iter().enumerate()
+        .filter(|(_, c)| is_cjk_char(**c))
+        .map(|(i, _)| i)
+        .collect();
+
+    let mut run_start = 0usize;
+    while run_start < cjk_indices.len() {
+        let mut run_end = run_start;
+        while run_end + 1 < cjk_indices.len()
+            && cjk_indices[run_end + 1] == cjk_indices[run_end] + 1 {
+            run_end += 1;
+        }
+        let run_len = run_end - run_start + 1;
+        if run_len >= 2 {
+            // Whole run
+            if run_len <= 5 {
+                candidates.push(chars[cjk_indices[run_start]..=cjk_indices[run_end]].iter().collect());
+            }
+            // Sub-ngrams (2-4 chars)
+            for n in 2..=5.min(run_len) {
+                for i in 0..=(run_len - n) {
+                    let s: String = chars[cjk_indices[run_start + i]..=cjk_indices[run_start + i + n - 1]].iter().collect();
+                    candidates.push(s);
+                }
+            }
+        }
+        run_start = run_end + 1;
+    }
+
+    candidates.sort();
+    candidates.dedup();
+    candidates.truncate(10);
+    candidates
+}
+
+fn is_cjk_char(c: char) -> bool {
+    matches!(c,
+        '\u{4E00}'..='\u{9FFF}'    // CJK Unified
+        | '\u{3400}'..='\u{4DBF}'   // CJK Extended A
+        | '\u{F900}'..='\u{FAFF}'   // CJK Compatibility
+        | '\u{2F800}'..='\u{2FA1F}' // CJK Compatibility Supplement
+    )
 }
 
 impl Orchestrator {
@@ -70,11 +144,18 @@ impl Orchestrator {
         let _ = registry.register(Arc::new(crate::builtin_tools::UseSkillTool {
             skill_bodies: skill_bodies.clone(),
         }));
+        let _ = registry.register(Arc::new(crate::builtin_tools::WebSearchTool));
+        let _ = registry.register(Arc::new(crate::builtin_tools::WebFetchTool));
+
+        // LSP tools — registered for on-demand loading via request_tools
+        let lsp_client = Arc::new(LspClient::new());
+        register_lsp_tools(&mut registry, &lsp_client);
 
         Self {
             pool: AgentPool::new(max_depth, default_max_iterations, default_timeout_secs),
             tool_registry: Arc::new(RwLock::new(registry)),
             mcp_client: Arc::new(McpClient::new()),
+            lsp_client,
             cloud_client: Arc::new(RwLock::new(None)),
             loop_config: Arc::new(RwLock::new(AgentLoopConfig::default())),
             session_histories: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -144,11 +225,68 @@ impl Orchestrator {
             };
             registry.register(Arc::new(mcp_tool))?;
         }
+
+        // Register resource/prompt tools for this server
+        let mcp_client = self.mcp_client.clone();
+        let server = name.clone();
+
+        // mcp__<server>__list_resources
+        registry.register(Arc::new(McpMetaTool {
+            server_name: server.clone(),
+            op: McpMetaOp::ListResources,
+            tool_definition: loom_types::ToolDefinition {
+                name: format!("mcp__{}__list_resources", server),
+                description: format!("[MCP:{}] List available resources from this server", server),
+                input_schema: serde_json::json!({"type":"object","properties":{},"required":[]}),
+            },
+            mcp_client: mcp_client.clone(),
+        }))?;
+
+        // mcp__<server>__read_resource
+        registry.register(Arc::new(McpMetaTool {
+            server_name: server.clone(),
+            op: McpMetaOp::ReadResource,
+            tool_definition: loom_types::ToolDefinition {
+                name: format!("mcp__{}__read_resource", server),
+                description: format!("[MCP:{}] Read a resource by URI. Use list_resources first to discover URIs.", server),
+                input_schema: serde_json::json!({"type":"object","properties":{"uri":{"type":"string","description":"Resource URI to read"}},"required":["uri"]}),
+            },
+            mcp_client: mcp_client.clone(),
+        }))?;
+
+        // mcp__<server>__list_prompts
+        registry.register(Arc::new(McpMetaTool {
+            server_name: server.clone(),
+            op: McpMetaOp::ListPrompts,
+            tool_definition: loom_types::ToolDefinition {
+                name: format!("mcp__{}__list_prompts", server),
+                description: format!("[MCP:{}] List available prompt templates from this server", server),
+                input_schema: serde_json::json!({"type":"object","properties":{},"required":[]}),
+            },
+            mcp_client: mcp_client.clone(),
+        }))?;
+
+        // mcp__<server>__get_prompt
+        registry.register(Arc::new(McpMetaTool {
+            server_name: server.clone(),
+            op: McpMetaOp::GetPrompt,
+            tool_definition: loom_types::ToolDefinition {
+                name: format!("mcp__{}__get_prompt", server),
+                description: format!("[MCP:{}] Get a prompt template with arguments filled in. Use list_prompts first to see available prompts and their argument schemas.", server),
+                input_schema: serde_json::json!({"type":"object","properties":{"name":{"type":"string","description":"Prompt name"},"arguments":{"type":"object","description":"Prompt arguments (key-value pairs)"}},"required":["name"]}),
+            },
+            mcp_client: mcp_client.clone(),
+        }))?;
+
         Ok(name)
     }
 
     pub fn mcp_client(&self) -> &Arc<McpClient> {
         &self.mcp_client
+    }
+
+    pub fn lsp_client(&self) -> &Arc<LspClient> {
+        &self.lsp_client
     }
 
     // === Tool Registry ===
@@ -187,6 +325,15 @@ impl Orchestrator {
     /// Set the memory store for persistence and cognition extraction.
     pub async fn set_memory_store(&self, store: Box<dyn MemoryStore>) {
         *self.memory_store.write().await = Some(store);
+    }
+
+    /// Prune stale low-confidence KG entities on startup.
+    pub async fn prune_memory(&self) -> Result<usize> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.prune_memory().await
+        } else {
+            Ok(0)
+        }
     }
 
     /// Rebuild the system prompt with skills and persona injected.
@@ -364,10 +511,9 @@ impl Orchestrator {
 
         // Build system prompt, applying agent config overrides
         let mut system_prompt = self.build_system_prompt().await;
-        if let Some(ref override_prompt) = agent_config.system_prompt_override {
-            if !override_prompt.is_empty() {
-                system_prompt = override_prompt.clone();
-            }
+        if let Some(ref override_prompt) = agent_config.system_prompt_override
+            && !override_prompt.is_empty() {
+            system_prompt = override_prompt.clone();
         }
         if !agent_config.persona.is_empty() {
             system_prompt.push_str(&format!("\n\n## Agent Persona\n{}", agent_config.persona));
@@ -377,12 +523,9 @@ impl Orchestrator {
         {
             let mem_guard = self.memory_store.read().await;
             if let Some(ref store) = *mem_guard {
+                let candidates = extract_entity_candidates(user_message);
                 let mut entities: Vec<&str> = vec!["USER"];
-                for w in user_message.split_whitespace() {
-                    if w.len() > 3 && w.chars().next().map_or(false, |c| c.is_uppercase()) {
-                        entities.push(w);
-                    }
-                }
+                for c in &candidates { entities.push(c.as_str()); }
                 entities.truncate(6);
                 match store.query_kg_context(&entities, 5).await {
                     Ok(kg) if !kg.is_empty() => {
@@ -393,10 +536,12 @@ impl Orchestrator {
             }
         }
 
-        let mut loop_config = AgentLoopConfig::default();
-        loop_config.system_prompt = system_prompt;
-        loop_config.temperature = agent_config.temperature.unwrap_or(0.0);
-        loop_config.max_iterations = agent_config.max_iterations.unwrap_or(10);
+        let loop_config = AgentLoopConfig {
+            system_prompt,
+            temperature: agent_config.temperature.unwrap_or(0.0),
+            max_iterations: agent_config.max_iterations.unwrap_or(10),
+            ..Default::default()
+        };
 
         // Prepare data for the spawned agent task
         let history = self.session_history(session_id).await;
@@ -438,7 +583,7 @@ impl Orchestrator {
             // Persist to memory store
             let mem = self.memory_store.read().await;
             if let Some(ref store) = *mem {
-                let _ = store.save_turn(session_id, user_message, &turn.response, turn.tool_calls_made, turn.prompt_tokens + turn.completion_tokens).await;
+                let event_id = store.save_turn(session_id, user_message, &turn.response, turn.tool_calls_made, turn.prompt_tokens + turn.completion_tokens).await?;
 
                 // LLM-based entity extraction (synchronous, runs after response)
                 let msg = user_message.to_string();
@@ -446,16 +591,15 @@ impl Orchestrator {
                 if let Some(ref client) = *client_opt {
                     match llm_extract_entities(client.as_ref(), &msg).await {
                         Ok((entities, relationships)) => {
-                            if let Ok((n, e)) = store.feed_knowledge_graph(&entities, &relationships).await {
+                            if let Ok((n, e)) = store.feed_knowledge_graph(&entities, &relationships, event_id).await {
                                 let _ = store.save_extracted_entities(&entities, &relationships).await;
                                 if n > 0 || e > 0 {
                                     tracing::info!(n, e, "KG updated via LLM");
                                 }
                             }
-                            if let Ok(persona) = store.get_persona().await {
-                                if !persona.is_empty() {
-                                    *self.persona_context.write().await = persona;
-                                }
+                            if let Ok(persona) = store.get_persona().await
+                                && !persona.is_empty() {
+                                *self.persona_context.write().await = persona;
                             }
                         }
                         Err(e) => tracing::debug!("LLM extraction: {}", e),
@@ -493,8 +637,59 @@ impl Orchestrator {
         let history = self.session_history(session_id).await;
 
         let system_prompt = self.build_system_prompt().await;
-        let mut config = AgentLoopConfig::default();
-        config.system_prompt = system_prompt;
+
+        // ── Summary check (P0 memory optimization) ──
+        // Phase 1: read existing summary + KG context (lock held briefly)
+        let (existing_summary, kg_ctx, should_summarize) = {
+            let mem = self.memory_store.read().await;
+            if let Some(ref store) = *mem {
+                let existing = store.get_summary(session_id).await.unwrap_or(None);
+                let last_at = store.get_summary_at_count(session_id).await.unwrap_or(0);
+                // Use DB message_count (not truncated history.len()) for accurate summary trigger
+                let total_msgs = store.get_message_count(session_id).await.unwrap_or(history.len());
+                let do_summarize = loom_memory::SummaryEngine::should_summarize(total_msgs, last_at, 12, 6);
+                let candidates = extract_entity_candidates(user_message);
+                let mut entities: Vec<&str> = vec!["USER"];
+                for c in &candidates { entities.push(c.as_str()); }
+                entities.truncate(6);
+                let kg = store.query_kg_context(&entities, 5).await.unwrap_or_default();
+                (existing, if kg.is_empty() { None } else { Some(kg) }, do_summarize)
+            } else {
+                (None, None, false)
+            }
+        }; // lock dropped here
+
+        // Phase 2: call LLM for summary if needed (no lock held)
+        let summary = if should_summarize {
+            let prompt = loom_memory::SummaryEngine::build_prompt(&history, existing_summary.as_deref());
+            let request = loom_memory::SummaryEngine::build_request(&prompt);
+            let saved_hash = client.prefix_hash_snapshot();
+            let result = client.complete(request).await;
+            client.prefix_hash_restore(saved_hash);
+            match result {
+                Ok(resp) if !resp.text.is_empty() => {
+                    let new_summary = resp.text;
+                    // Phase 3: save summary (re-acquire lock briefly)
+                    if let Some(ref store) = *self.memory_store.read().await {
+                        let _ = store.save_summary(session_id, &new_summary).await;
+                    }
+                    tracing::info!(chars = new_summary.len(), "conversation summarized");
+                    Some(new_summary)
+                }
+                _ => existing_summary,
+            }
+        } else {
+            existing_summary
+        };
+
+        let config = AgentLoopConfig {
+            system_prompt,
+            // persona already baked into system_prompt via build_system_prompt()
+            persona: None,
+            summary,
+            kg_context: kg_ctx,
+            ..Default::default()
+        };
 
         let result = run_agent_turn_streaming(
             client.as_ref(),
@@ -517,7 +712,7 @@ impl Orchestrator {
             // Persist to memory store
             let mem = self.memory_store.read().await;
             if let Some(ref store) = *mem {
-                let _ = store.save_turn(session_id, user_message, &turn.response, turn.tool_calls_made, turn.prompt_tokens + turn.completion_tokens).await;
+                let event_id = store.save_turn(session_id, user_message, &turn.response, turn.tool_calls_made, turn.prompt_tokens + turn.completion_tokens).await?;
 
                 // LLM-based entity extraction (synchronous, runs after response)
                 let msg = user_message.to_string();
@@ -525,16 +720,15 @@ impl Orchestrator {
                 if let Some(ref client) = *client_opt {
                     match llm_extract_entities(client.as_ref(), &msg).await {
                         Ok((entities, relationships)) => {
-                            if let Ok((n, e)) = store.feed_knowledge_graph(&entities, &relationships).await {
+                            if let Ok((n, e)) = store.feed_knowledge_graph(&entities, &relationships, event_id).await {
                                 let _ = store.save_extracted_entities(&entities, &relationships).await;
                                 if n > 0 || e > 0 {
                                     tracing::info!(n, e, "KG updated via LLM");
                                 }
                             }
-                            if let Ok(persona) = store.get_persona().await {
-                                if !persona.is_empty() {
-                                    *self.persona_context.write().await = persona;
-                                }
+                            if let Ok(persona) = store.get_persona().await
+                                && !persona.is_empty() {
+                                *self.persona_context.write().await = persona;
                             }
                         }
                         Err(e) => tracing::debug!("LLM extraction: {}", e),
@@ -611,6 +805,217 @@ impl AgentTool for McpAgentTool {
 }
 
 // ============================================================================
+// McpMetaTool — wraps MCP resource/prompt operations as AgentTools
+// ============================================================================
+
+enum McpMetaOp {
+    ListResources,
+    ReadResource,
+    ListPrompts,
+    GetPrompt,
+}
+
+struct McpMetaTool {
+    server_name: String,
+    op: McpMetaOp,
+    tool_definition: loom_types::ToolDefinition,
+    mcp_client: Arc<McpClient>,
+}
+
+#[async_trait::async_trait]
+impl AgentTool for McpMetaTool {
+    fn tool_name(&self) -> &str {
+        &self.tool_definition.name
+    }
+
+    fn tool_definition(&self) -> loom_types::ToolDefinition {
+        self.tool_definition.clone()
+    }
+
+    async fn execute(
+        &self, arguments: serde_json::Value,
+        _progress: tokio::sync::mpsc::UnboundedSender<loom_types::ToolProgress>,
+    ) -> Result<crate::tool_registry::ToolResult> {
+        let result: Result<serde_json::Value> = match &self.op {
+            McpMetaOp::ListResources => {
+                let resources = self.mcp_client.list_resources(&self.server_name).await?;
+                Ok(serde_json::to_value(resources).unwrap_or_default())
+            }
+            McpMetaOp::ReadResource => {
+                let uri = arguments.get("uri").and_then(|v| v.as_str()).unwrap_or("");
+                if uri.is_empty() {
+                    return Ok(crate::tool_registry::ToolResult {
+                        content: "Error: 'uri' parameter is required".into(),
+                        is_error: true,
+                        structured_content: None,
+                    });
+                }
+                let contents = self.mcp_client.read_resource(&self.server_name, uri).await?;
+                Ok(serde_json::to_value(contents).unwrap_or_default())
+            }
+            McpMetaOp::ListPrompts => {
+                let prompts = self.mcp_client.list_prompts(&self.server_name).await?;
+                Ok(serde_json::to_value(prompts).unwrap_or_default())
+            }
+            McpMetaOp::GetPrompt => {
+                let name = arguments.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                if name.is_empty() {
+                    return Ok(crate::tool_registry::ToolResult {
+                        content: "Error: 'name' parameter is required".into(),
+                        is_error: true,
+                        structured_content: None,
+                    });
+                }
+                let args = arguments.get("arguments");
+                let prompt_result = self.mcp_client.get_prompt(&self.server_name, name, args).await?;
+                Ok(serde_json::to_value(prompt_result).unwrap_or_default())
+            }
+        };
+
+        match result {
+            Ok(value) => Ok(crate::tool_registry::ToolResult {
+                content: serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into()),
+                is_error: false,
+                structured_content: Some(value),
+            }),
+            Err(e) => Ok(crate::tool_registry::ToolResult {
+                content: format!("MCP error: {}", e),
+                is_error: true,
+                structured_content: None,
+            }),
+        }
+    }
+
+    fn provenance(&self) -> crate::tool_registry::ToolProvenance {
+        crate::tool_registry::ToolProvenance::Mcp { server: self.server_name.clone() }
+    }
+}
+
+// ============================================================================
+// LspTool — wraps LSP operations as AgentTools
+// ============================================================================
+
+#[allow(dead_code)]
+enum LspOp {
+    Diagnostics,
+    Completion,
+    Hover,
+    Definition,
+    References,
+    DocumentSymbols,
+}
+
+#[allow(dead_code)]
+struct LspTool {
+    op: LspOp,
+    tool_definition: loom_types::ToolDefinition,
+    lsp_client: Arc<LspClient>,
+}
+
+#[allow(dead_code)]
+#[async_trait::async_trait]
+impl AgentTool for LspTool {
+    fn tool_name(&self) -> &str {
+        &self.tool_definition.name
+    }
+
+    fn tool_definition(&self) -> loom_types::ToolDefinition {
+        self.tool_definition.clone()
+    }
+
+    async fn execute(
+        &self, arguments: serde_json::Value,
+        _progress: tokio::sync::mpsc::UnboundedSender<loom_types::ToolProgress>,
+    ) -> Result<crate::tool_registry::ToolResult> {
+        let file_path = arguments.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+        if file_path.is_empty() {
+            return Ok(crate::tool_registry::ToolResult {
+                content: "Error: 'file_path' parameter is required".into(),
+                is_error: true,
+                structured_content: None,
+            });
+        }
+
+        let result: Result<serde_json::Value> = match &self.op {
+            LspOp::Diagnostics => {
+                self.lsp_client.diagnostics(file_path).await
+            }
+            LspOp::Completion => {
+                let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let character = arguments.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                self.lsp_client.completion(file_path, line, character).await
+            }
+            LspOp::Hover => {
+                let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let character = arguments.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                self.lsp_client.hover(file_path, line, character).await
+            }
+            LspOp::Definition => {
+                let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let character = arguments.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                self.lsp_client.definition(file_path, line, character).await
+            }
+            LspOp::References => {
+                let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let character = arguments.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let include_decl = arguments.get("include_declaration").and_then(|v| v.as_bool()).unwrap_or(true);
+                self.lsp_client.references(file_path, line, character, include_decl).await
+            }
+            LspOp::DocumentSymbols => {
+                self.lsp_client.document_symbols(file_path).await
+            }
+        };
+
+        match result {
+            Ok(value) => Ok(crate::tool_registry::ToolResult {
+                content: serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into()),
+                is_error: false,
+                structured_content: Some(value),
+            }),
+            Err(e) => Ok(crate::tool_registry::ToolResult {
+                content: format!("LSP error: {}", e),
+                is_error: true,
+                structured_content: None,
+            }),
+        }
+    }
+
+    fn provenance(&self) -> crate::tool_registry::ToolProvenance {
+        crate::tool_registry::ToolProvenance::Builtin
+    }
+}
+
+#[allow(dead_code)]
+fn register_lsp_tools(registry: &mut ToolRegistry, lsp_client: &Arc<LspClient>) {
+    let tools: Vec<(LspOp, &str, &str, serde_json::Value)> = vec![
+        (LspOp::Diagnostics, "lsp_diagnostics", "Get LSP diagnostics (errors, warnings, hints) for a file",
+            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"}},"required":["file_path"]})),
+        (LspOp::Completion, "lsp_completion", "Get code completion suggestions at a position in a file",
+            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"},"line":{"type":"integer","description":"0-based line number"},"character":{"type":"integer","description":"0-based character offset"}},"required":["file_path","line","character"]})),
+        (LspOp::Hover, "lsp_hover", "Get type info and documentation for the symbol at a position",
+            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"},"line":{"type":"integer","description":"0-based line number"},"character":{"type":"integer","description":"0-based character offset"}},"required":["file_path","line","character"]})),
+        (LspOp::Definition, "lsp_definition", "Go to definition — find where a symbol is defined",
+            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"},"line":{"type":"integer","description":"0-based line number"},"character":{"type":"integer","description":"0-based character offset"}},"required":["file_path","line","character"]})),
+        (LspOp::References, "lsp_references", "Find all references to a symbol",
+            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"},"line":{"type":"integer","description":"0-based line number"},"character":{"type":"integer","description":"0-based character offset"},"include_declaration":{"type":"boolean","description":"Include the declaration in results (default: true)"}},"required":["file_path","line","character"]})),
+        (LspOp::DocumentSymbols, "lsp_symbols", "List all symbols (functions, classes, variables) in a file",
+            serde_json::json!({"type":"object","properties":{"file_path":{"type":"string","description":"Path to the source file"}},"required":["file_path"]})),
+    ];
+
+    for (op, name, desc, schema) in tools {
+        let _ = registry.register(Arc::new(LspTool {
+            op,
+            tool_definition: loom_types::ToolDefinition {
+                name: name.to_string(),
+                description: desc.to_string(),
+                input_schema: schema,
+            },
+            lsp_client: lsp_client.clone(),
+        }));
+    }
+}
+
+// ============================================================================
 // LLM-based entity extraction
 // ============================================================================
 
@@ -624,7 +1029,7 @@ async fn llm_extract_entities(
         messages: vec![Message::user(&prompt)],
         tools: vec![],
         tool_choice: None,
-        prompt: prompt,
+        prompt,
         max_tokens: 1024,
         temperature: 0.0,
         top_p: 1.0,

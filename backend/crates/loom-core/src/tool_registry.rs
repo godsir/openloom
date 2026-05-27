@@ -205,6 +205,10 @@ impl AgentTool for SpawnAgentTool {
             max_iterations: config.max_iterations.min(5),
             max_tokens: config.max_tokens,
             temperature: config.temperature,
+            lazy_tools: config.lazy_tools,
+            persona: None,
+            summary: None,
+            kg_context: None,
         };
         drop(config);
 

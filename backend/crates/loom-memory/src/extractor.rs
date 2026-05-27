@@ -81,18 +81,17 @@ impl EntityExtractor for RuleBasedEntityExtractor {
                     // Only create relationship if both appear near each other in text
                     let pos_i = text.to_lowercase().find(&entity_names[i].to_lowercase());
                     let pos_j = text.to_lowercase().find(&entity_names[j].to_lowercase());
-                    if let (Some(pi), Some(pj)) = (pos_i, pos_j) {
-                        if (pi as i64 - pj as i64).abs() < 200 {
-                            rels.push(ExtractedRelationship {
-                                source_name: "USER".into(),
-                                target_name: entity_names[j].to_string(),
-                                relation_type: "interested_in".into(),
-                                fact: format!("USER mentioned {} and {}", entity_names[i], entity_names[j]),
-                                confidence: 0.4,
-                                scope: "global".into(),
-                            });
-                            break; // one relationship per entity pair
-                        }
+                    if let (Some(pi), Some(pj)) = (pos_i, pos_j)
+                        && (pi as i64 - pj as i64).abs() < 200 {
+                        rels.push(ExtractedRelationship {
+                            source_name: "USER".into(),
+                            target_name: entity_names[j].to_string(),
+                            relation_type: "interested_in".into(),
+                            fact: format!("USER mentioned {} and {}", entity_names[i], entity_names[j]),
+                            confidence: 0.4,
+                            scope: "global".into(),
+                        });
+                        break; // one relationship per entity pair
                     }
                 }
             }

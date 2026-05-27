@@ -8,6 +8,7 @@ use loom_types::{
 };
 use reqwest::Client as HttpClient;
 
+use crate::cache::PrefixCache;
 use crate::engine::CloudClient;
 
 pub struct OpenAIClient {
@@ -15,11 +16,12 @@ pub struct OpenAIClient {
     model: String,
     base_url: String,
     http: HttpClient,
+    prefix_cache: PrefixCache,
 }
 
 impl OpenAIClient {
     pub fn new(api_key: String, model: String, base_url: String, _is_local: bool) -> Self {
-        Self { api_key, model, base_url, http: HttpClient::new() }
+        Self { api_key, model, base_url, http: HttpClient::new(), prefix_cache: PrefixCache::new(2) }
     }
 
     async fn complete_with_retry(&self, req: &CompletionRequest, retries: usize) -> Result<CompletionResponse> {
@@ -37,7 +39,10 @@ impl OpenAIClient {
     }
 
     async fn try_complete(&self, req: &CompletionRequest) -> Result<CompletionResponse> {
-        let messages = self.lower_messages(&req.effective_messages());
+        let eff = req.effective_messages();
+        let (cache_hit, _) = self.prefix_cache.check(&eff);
+        if cache_hit { tracing::info!("KV cache hit"); } else { tracing::info!("KV cache miss"); }
+        let messages = self.lower_messages(&eff);
         let mut body = serde_json::json!({
             "model": self.model, "max_tokens": req.max_tokens, "messages": messages,
         });
@@ -154,7 +159,10 @@ impl CloudClient for OpenAIClient {
     }
 
     async fn complete_stream(&self, req: CompletionRequest, tx: tokio::sync::mpsc::Sender<String>) -> Result<()> {
-        let messages = self.lower_messages(&req.effective_messages());
+        let eff = req.effective_messages();
+        let (cache_hit, _) = self.prefix_cache.check(&eff);
+        if cache_hit { tracing::info!("KV cache hit (stream)"); } else { tracing::info!("KV cache miss (stream)"); }
+        let messages = self.lower_messages(&eff);
         let mut body = serde_json::json!({
             "model": self.model, "max_tokens": req.max_tokens, "messages": messages,
             "stream": true, "stream_options": {"include_usage": true},
@@ -206,7 +214,10 @@ impl CloudClient for OpenAIClient {
     }
 
     async fn complete_stream_structured(&self, req: CompletionRequest, tx: tokio::sync::mpsc::Sender<StreamDelta>) -> Result<()> {
-        let messages = self.lower_messages(&req.effective_messages());
+        let eff = req.effective_messages();
+        let (cache_hit, _) = self.prefix_cache.check(&eff);
+        if cache_hit { tracing::info!("KV cache hit (structured stream)"); } else { tracing::info!("KV cache miss (structured stream)"); }
+        let messages = self.lower_messages(&eff);
         let mut body = serde_json::json!({
             "model": self.model, "max_tokens": req.max_tokens, "messages": messages,
             "stream": true, "stream_options": {"include_usage": true},
@@ -268,6 +279,13 @@ impl CloudClient for OpenAIClient {
 
     fn provider(&self) -> ModelBackend { ModelBackend::OpenAI }
     fn model_name(&self) -> &str { &self.model }
+
+    fn prefix_cache_reset(&self) { self.prefix_cache.reset_turn(); }
+    fn prefix_cache_stats(&self) -> crate::cache::PrefixCacheStats { self.prefix_cache.stats() }
+    fn last_cache_hit(&self) -> Option<bool> { self.prefix_cache.last_check_was_hit() }
+    fn estimated_cache_tokens(&self) -> usize { self.prefix_cache.last_cached_tokens() }
+    fn prefix_hash_snapshot(&self) -> Option<u64> { self.prefix_cache.snapshot_hash() }
+    fn prefix_hash_restore(&self, saved: Option<u64>) { self.prefix_cache.restore_hash(saved); }
 }
 
 // ============================================================================

@@ -1,6 +1,6 @@
 [package]
 name = "loom-core"
-version = "0.2.0"
+version = "0.2.15"
 edition = "2024"
 description = "Agent orchestrator for openLoom v2 — AgentPool, agent loop, tool dispatch, event bus"
 
@@ -8,6 +8,7 @@ description = "Agent orchestrator for openLoom v2 — AgentPool, agent loop, too
 loom-types = { path = "../loom-types" }
 loom-inference = { path = "../loom-inference" }
 lume-mcp = { path = "../lume-mcp" }
+lume-lsp = { path = "../lume-lsp" }
 loom-memory = { path = "../loom-memory" }
 loom-context = { path = "../loom-context" }
 loom-security = { path = "../loom-security" }
@@ -20,3 +21,5 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v7"] }
 async-trait = "0.1"
 tokio-util = "0.7"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+scraper = "0.22"

@@ -1,6 +1,6 @@
 # openLoom v2 愿景差距分析
 
-> 生成: 2026-05-26 | 最后更新: 2026-05-27 | 剩余: LSP(deferred) + Phase 4 + Phase 4 前端
+> 生成: 2026-05-26 | 最后更新: 2026-05-27 | 剩余: Phase 4 前端
 
 ## 核心开发原则
 
@@ -33,6 +33,11 @@
 | 2026-05-26 | loom-context 接入 | #18 deferred→done，ContextAssembler 接入 agent_loop |
 | 2026-05-26 | InferenceEngine 实现 | #19 deferred→done，stub→真实 HTTP LLM 调用 |
 | 2026-05-26 | Agent 配置系统 | V9 迁移 + AgentConfigStore + 7 新 RPC + 会话绑定 + 工具过滤 |
+| 2026-05-27 | MCP resources/prompts | P3→done：McpPrompt 类型 + list_prompts/get_prompt + resourceTemplates + LLM 工具 + RPC |
+| 2026-05-27 | MCP bug fixes | stdio 连接修复 + SSE \r\n 支持 + stderr drain + reqwest timeout + wait() after kill |
+| 2026-05-27 | LSP 客户端 | P1→done：lume-lsp crate + LspClient + 40+ 语言 LS 检测 + 6 LLM 工具 + 8 RPC |
+| 2026-05-27 | LSP bug fixes | file_uri 中文 percent-encoding + Content-Length 10MB 上限 + didChange + 30s timeout + stderr drain |
+| 2026-05-27 | clippy cleanup | 全仓 20+ 已有 clippy 错误清零 + AgentId/SessionId Default derive |
 
 ---
 
@@ -95,16 +100,20 @@
 | McpAgentTool 统一分发 | `loom-core/src/orchestrator.rs` |
 | mcp.list_servers / mcp.list_tools | dispatch.rs |
 | MCP 工具注册到 ToolRegistry | orchestrator.rs `connect_mcp_server()` |
+| MCP 资源操作 | `list_resources` / `read_resource` / `list_resource_templates` |
+| MCP 提示词操作 | `list_prompts` / `get_prompt` + McpPrompt/McpPromptMessage 类型 |
 | mcp.json 配置文件支持 | `lume-cli/src/mcp_config.rs` |
+| LSP 客户端 | `lume-lsp/src/lib.rs`：LspClient + stdio JSON-RPC + Content-Length 帧 + 40+ 语言检测 |
+| LSP LLM 工具 | `lsp_diagnostics` / `lsp_completion` / `lsp_hover` / `lsp_definition` / `lsp_references` / `lsp_symbols` |
+| LSP RPC | 8 个 RPC：list_servers / diagnostics / completion / hover / definition / references / symbols / shutdown |
 
 #### 缺失
 | 缺口 | 严重度 | 说明 |
 |------|:--:|------|
-| **LSP 零代码** | **P1** | 没有 LSP 客户端、协议实现、工具封装 |
-| MCP 连接管理简陋 | **P3** | 无重连、无心跳、无健康检查 |
-| 不支持 MCP resources/prompts | **P3** | 当前仅 tools |
+| MCP 连接管理简陋 | **P3** | 无重连、无心跳（已有 timeout + health check + stderr drain） |
 
-**结论：MCP 工具级可用但不健壮；LSP 完全空白。**
+
+**结论：MCP 工具/资源/提示词三类全覆盖；LSP 客户端完整实现（40+ 语言 LS 自动检测，6 个 LLM 工具，8 个 RPC）。**
 
 ---
 
@@ -177,13 +186,14 @@
 | **P0** | KG 只写不读 | 记忆 | ✅ query_kg_context + 每轮自动注入 |
 | **P1** | Agent 不并发运行 | 多 Agent | ✅ tokio::spawn agent task |
 | **P1** | 会话历史不隔离 | 多对话 | ✅ session_histories HashMap |
+| **P1** | LSP 空白 | LSP | ✅ lume-lsp crate + 6 LLM tools + 8 RPC |
 | **P2** | 会话不持久 | 多对话 | ✅ SQLite 同步 + 启动恢复 + -c 延续 |
 | **P2** | 无 Plugin 系统 | Plugins | ✅ Claude Code/OpenClaw 兼容 + 递归扫描 |
-| **P3** | MCP 连接管理 | MCP | ✅ timeout + resources + health check |
+| **P3** | MCP 连接管理 | MCP | ✅ timeout + resources + prompts + health check |
 | **P3** | agent.config RPC | Agent | ✅ 5 CRUD RPC + 会话绑定 |
 | **P2** | Bridge 系统 | 外部接入 | ✅ lume-bridge crate + Telegram adapter + BridgeManager |
-| **P1** | LSP 空白 | LSP | 📋 deferred |
-| **P3** | MCP resources/prompts | MCP | 协议不完整 |
+| — | ~~SSE 流全文非逐 token~~ | 推理 | ✅ 已验证本地端点逐 token 正常 |
+| — | Persona 动态演化 | 记忆 | P2 — 会话中 persona 不随新认知刷新 |
 
 ---
 
@@ -238,7 +248,7 @@
 
 ### LSP
 
-**零可复用代码。** 老 `crates/` 中无任何 LSP 实现。纯绿场。
+**已于 2026-05-27 从零构建完成。** `backend/crates/lume-lsp/` — LspClient + stdio JSON-RPC over Content-Length 帧协议 + 40+ 语言 LS 自动检测 + 6 LLM 工具 + 8 RPC。无旧代码可复用。
 
 ### 总计
 
@@ -256,17 +266,19 @@
 ## 七、建议执行顺序
 
 ```
-P0 先导: Skills 执行 + KG 读取接入  (让核心差异化立起来)
+P0: Skills 执行 + KG 读取接入          ✅ done
   ↓
-P1: Agent 并发 + 会话隔离            (让多 Agent 多对话真正可用)
+P1: Agent 并发 + 会话隔离              ✅ done
   ↓
-P1: LSP 客户端 + 工具封装            (代码智能)
+P1: LSP 客户端 + 工具封装              ✅ done (2026-05-27)
   ↓
-P2: 会话持久化 + Plugin 框架         (完善体验)
+P3: MCP resources/prompts              ✅ done (2026-05-27)
   ↓
-P2: Bridge Adapter 实现              (按需逐个做)
+P2: 会话持久化 + Plugin 框架           ✅ done
   ↓
-Phase 4: 前端 + 切换 + 删除 legacy   (收尾)
+P2: Bridge Adapter 实现                ✅ done
+  ↓
+Phase 4: 前端 + 切换 + 删除 legacy     ⏳ next
 ```
 
 ---

@@ -32,8 +32,8 @@ fn truncate(s: &str, max_chars: usize) -> &str {
 
 #[async_trait::async_trait]
 impl MemoryStore for LoomMemoryStore {
-    async fn save_turn(&self, session_id: &str, user_msg: &str, assistant_msg: &str, tools: usize, tokens: usize) -> Result<()> {
-        {
+    async fn save_turn(&self, session_id: &str, user_msg: &str, assistant_msg: &str, tools: usize, tokens: usize) -> Result<i64> {
+        let event_id = {
             let store = self.store.lock().unwrap();
             let conn = store.conn();
             let now = chrono::Utc::now().to_rfc3339();
@@ -66,10 +66,10 @@ impl MemoryStore for LoomMemoryStore {
                 source_text: user_msg.to_string(),
                 payload: Some(serde_json::json!({"assistant_response": assistant_msg, "tool_calls": tools, "tokens": tokens})),
             };
-            store.insert_event(&event)?;
-        }
-        tracing::debug!(session_id, "chat turn saved");
-        Ok(())
+            store.insert_event(&event)?
+        };
+        tracing::debug!(session_id, event_id, "chat turn saved");
+        Ok(event_id)
     }
 
     async fn load_history(&self, session_id: &str, limit: usize) -> Result<Vec<Message>> {
@@ -171,6 +171,7 @@ impl MemoryStore for LoomMemoryStore {
     async fn feed_knowledge_graph(
         &self, entities: &[loom_memory::ExtractedEntity],
         relationships: &[loom_memory::ExtractedRelationship],
+        source_event_id: i64,
     ) -> Result<(usize, usize)> {
         let store = self.store.lock().unwrap();
         let graph = loom_memory::GraphStore::new(store.conn());
@@ -185,14 +186,22 @@ impl MemoryStore for LoomMemoryStore {
                 for alias in &e.aliases {
                     let _ = graph.add_alias(id, alias);
                 }
+                // Wire evidence to the most recent event for this session
+                // (best-effort; evidence is non-critical for operation)
             }
         }
+        // Wire evidence for nodes
+        for (_, node_id) in &node_ids {
+            let _ = graph.link_evidence_node(*node_id, source_event_id);
+        }
+        // Wire evidence for edges
         for r in relationships {
             let src = node_ids.get(&r.source_name).copied();
             let tgt = node_ids.get(&r.target_name).copied();
             if let (Some(s), Some(t)) = (src, tgt) {
-                if graph.upsert_edge(s, t, &r.relation_type, &r.fact, r.confidence, &r.scope).is_ok() {
+                if let Ok(edge_id) = graph.upsert_edge(s, t, &r.relation_type, &r.fact, r.confidence, &r.scope) {
                     edge_count += 1;
+                    let _ = graph.link_evidence_edge(edge_id, source_event_id);
                 }
             }
         }
@@ -252,11 +261,13 @@ impl MemoryStore for LoomMemoryStore {
         let store = self.store.lock().unwrap();
         let graph = GraphStore::new(store.conn());
         let mut lines: Vec<String> = Vec::new();
+        const MIN_CONFIDENCE: f64 = 0.5;
 
         // Always include the USER node
         if let Ok(Some(_user_id)) = graph.resolve_node("USER") {
             let neighbors = graph.neighbors("USER", None, limit)?;
             for n in &neighbors {
+                if n.confidence < MIN_CONFIDENCE { continue; }
                 let relation = n.relation_type.as_deref().unwrap_or("related_to");
                 lines.push(format!("- USER {} {} (confidence: {:.2})", relation, n.name, n.confidence));
             }
@@ -267,12 +278,13 @@ impl MemoryStore for LoomMemoryStore {
             if *name == "USER" || name.is_empty() { continue; }
             if let Ok(results) = graph.search_entities(name, 3) {
                 for r in &results {
-                    if r.name == "USER" { continue; }
+                    if r.name == "USER" || r.confidence < MIN_CONFIDENCE { continue; }
                     lines.push(format!("- {} is a {}: {} (confidence: {:.2})", r.name, r.entity_type, r.description, r.confidence));
                     // Get immediate neighbors
                     if let Ok(neighbors) = graph.neighbors(&r.name, None, 3) {
                         for n in &neighbors {
                             if n.name == "USER" || n.name == r.name { continue; }
+                            if n.confidence < MIN_CONFIDENCE { continue; }
                             let relation = n.relation_type.as_deref().unwrap_or("related_to");
                             lines.push(format!("  └ {} {} {}", r.name, relation, n.name));
                         }
@@ -309,9 +321,85 @@ impl MemoryStore for LoomMemoryStore {
         Ok(())
     }
 
+    async fn prune_memory(&self) -> Result<usize> {
+        let store = self.store.lock().unwrap();
+        let graph = GraphStore::new(store.conn());
+        // Only prune when entity count exceeds threshold
+        let count = graph.node_count()?;
+        if count <= 500 { return Ok(0); }
+        let pruned = graph.prune_stale(30, 100)?;
+        if pruned > 0 {
+            tracing::info!(pruned, total = count, "memory pruned");
+        }
+        Ok(pruned)
+    }
+
+    async fn search_knowledge(&self, query: &str, limit: usize) -> Result<Vec<(String, String, String, f64)>> {
+        let store = self.store.lock().unwrap();
+        let graph = GraphStore::new(store.conn());
+        let results = graph.search_entities(query, limit)?;
+        Ok(results.iter().map(|r| {
+            (r.name.clone(), r.entity_type.clone(), r.description.clone(), r.confidence)
+        }).collect())
+    }
+
+    async fn kg_node_count(&self) -> Result<usize> {
+        let store = self.store.lock().unwrap();
+        GraphStore::new(store.conn()).node_count()
+    }
+
     async fn delete_session(&self, id: &str) -> Result<()> {
         let store = self.store.lock().unwrap();
         store.conn().execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])?;
         Ok(())
+    }
+
+    async fn get_summary(&self, session_id: &str) -> Result<Option<String>> {
+        let store = self.store.lock().unwrap();
+        let result = store.conn().query_row(
+            "SELECT summary FROM sessions WHERE id = ?1",
+            rusqlite::params![session_id],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(s) if s.is_empty() => Ok(None),
+            Ok(s) => Ok(Some(s)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    async fn save_summary(&self, session_id: &str, summary: &str) -> Result<()> {
+        let store = self.store.lock().unwrap();
+        // Also record the current message count so we know when to re-summarize
+        let count: i64 = store.conn().query_row(
+            "SELECT message_count FROM sessions WHERE id = ?1",
+            rusqlite::params![session_id],
+            |row| row.get(0),
+        ).unwrap_or(0);
+        store.conn().execute(
+            "UPDATE sessions SET summary = ?1, summary_at_count = ?2 WHERE id = ?3",
+            rusqlite::params![summary, count, session_id],
+        )?;
+        Ok(())
+    }
+
+    async fn get_summary_at_count(&self, session_id: &str) -> Result<usize> {
+        let store = self.store.lock().unwrap();
+        let result = store.conn().query_row(
+            "SELECT summary_at_count FROM sessions WHERE id = ?1",
+            rusqlite::params![session_id],
+            |row| row.get::<_, i64>(0),
+        );
+        Ok(result.unwrap_or(0) as usize)
+    }
+
+    async fn get_message_count(&self, session_id: &str) -> Result<usize> {
+        let store = self.store.lock().unwrap();
+        let result = store.conn().query_row(
+            "SELECT message_count FROM sessions WHERE id = ?1",
+            rusqlite::params![session_id],
+            |row| row.get::<_, i64>(0),
+        );
+        Ok(result.unwrap_or(0) as usize)
     }
 }

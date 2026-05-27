@@ -354,17 +354,16 @@ fn simple_content_search(path: &Path, pattern: &str, max_results: usize) -> Resu
         for entry in std::fs::read_dir(path)? {
             let entry = entry?;
             let p = entry.path();
-            if p.is_dir() && !p.file_name().map_or(false, |n| n == ".git" || n == "node_modules" || n == "target") {
+            if p.is_dir() && !p.file_name().is_some_and(|n| n == ".git" || n == "node_modules" || n == "target") {
                 if let Ok(sub) = simple_content_search(&p, pattern, max_results.saturating_sub(results.len())) {
                     results.extend(sub);
                 }
-            } else if p.is_file() {
-                if let Ok(content) = std::fs::read_to_string(&p) {
-                    for (i, line) in content.lines().enumerate() {
-                        if line.to_lowercase().contains(&pattern.to_lowercase()) {
-                            results.push(format!("{}:{}: {}", p.display(), i + 1, line));
-                            if results.len() >= max_results { return Ok(results); }
-                        }
+            } else if p.is_file()
+                && let Ok(content) = std::fs::read_to_string(&p) {
+                for (i, line) in content.lines().enumerate() {
+                    if line.to_lowercase().contains(&pattern.to_lowercase()) {
+                        results.push(format!("{}:{}: {}", p.display(), i + 1, line));
+                        if results.len() >= max_results { return Ok(results); }
                     }
                 }
             }
@@ -473,4 +472,177 @@ fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
     let mut end = max_bytes;
     while !s.is_char_boundary(end) { end -= 1; }
     &s[..end]
+}
+
+// ============================================================================
+// WebSearch — DuckDuckGo Lite search (no API key needed)
+// ============================================================================
+
+pub struct WebSearchTool;
+
+#[async_trait]
+impl AgentTool for WebSearchTool {
+    fn tool_name(&self) -> &str { "web_search" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "web_search".into(),
+            description: "Search the web using DuckDuckGo. Returns titles, URLs, and snippets for the given query. Use for finding current information, documentation, or answers.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Search query" },
+                    "max_results": { "type": "integer", "description": "Max results (default 5)", "default": 5 }
+                },
+                "required": ["query"]
+            }),
+        }
+    }
+
+    async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>) -> Result<ToolResult> {
+        let query = arguments["query"].as_str().unwrap_or("");
+        let max_results = arguments["max_results"].as_u64().unwrap_or(5).min(10) as usize;
+
+        if query.is_empty() {
+            return Ok(ToolResult { content: "No search query provided.".into(), is_error: true, structured_content: None });
+        }
+
+        let client = reqwest::Client::builder()
+            .user_agent("openLoom/0.2")
+            .timeout(std::time::Duration::from_secs(15))
+            .build()?;
+
+        // Use DuckDuckGo Lite (no JS, plain HTML, no API key)
+        let url = format!("https://lite.duckduckgo.com/lite/?q={}", urlencoding(query));
+        let html = client.get(&url).send().await?.text().await?;
+
+        let results = parse_ddg_lite(&html, max_results);
+        if results.is_empty() {
+            Ok(ToolResult {
+                content: format!("No results found for '{}'.", query),
+                is_error: false, structured_content: None,
+            })
+        } else {
+            let out = results.iter().enumerate()
+                .map(|(i, (title, snippet, link))| {
+                    format!("{}. {}\n   {}\n   {}", i + 1, title, snippet, link)
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            Ok(ToolResult { content: out, is_error: false, structured_content: None })
+        }
+    }
+
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
+
+fn parse_ddg_lite(html: &str, max_results: usize) -> Vec<(String, String, String)> {
+    let mut results = Vec::new();
+    // DDG Lite format: <a href="URL" class="result-link">TITLE</a>
+    //                 <span class="result-snippet">SNIPPET</span>
+    let fragment = scraper::Html::parse_fragment(html);
+
+    let link_sel = scraper::Selector::parse("a.result-link").unwrap();
+    let snippet_sel = scraper::Selector::parse(".result-snippet").unwrap();
+
+    let links: Vec<_> = fragment.select(&link_sel).collect();
+    let snippets: Vec<_> = fragment.select(&snippet_sel).collect();
+
+    let count = links.len().min(snippets.len()).min(max_results);
+    for i in 0..count {
+        let title = links[i].text().collect::<Vec<_>>().join(" ").trim().to_string();
+        let snippet = snippets[i].text().collect::<Vec<_>>().join(" ").trim().to_string();
+        let url = links[i].value().attr("href").unwrap_or("").to_string();
+        if !title.is_empty() {
+            results.push((title, snippet, url));
+        }
+    }
+    results
+}
+
+fn urlencoding(s: &str) -> String {
+    let mut result = String::new();
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' {
+            result.push(c);
+        } else {
+            for b in c.to_string().as_bytes() {
+                result.push_str(&format!("%{:02X}", b));
+            }
+        }
+    }
+    result
+}
+
+// ============================================================================
+// WebFetch — fetch and extract text from a URL
+// ============================================================================
+
+pub struct WebFetchTool;
+
+#[async_trait]
+impl AgentTool for WebFetchTool {
+    fn tool_name(&self) -> &str { "web_fetch" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "web_fetch".into(),
+            description: "Fetch and extract readable text content from a web page. Strips HTML, scripts, and styles. Use after web_search to read full content of a result.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "Full URL of the page to fetch" },
+                    "max_chars": { "type": "integer", "description": "Max characters to return (default 5000)", "default": 5000 }
+                },
+                "required": ["url"]
+            }),
+        }
+    }
+
+    async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>) -> Result<ToolResult> {
+        let url = arguments["url"].as_str().unwrap_or("");
+        let max_chars = arguments["max_chars"].as_u64().unwrap_or(5000).min(20000) as usize;
+
+        if url.is_empty() {
+            return Ok(ToolResult { content: "No URL provided.".into(), is_error: true, structured_content: None });
+        }
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            return Ok(ToolResult { content: format!("Invalid URL (must start with http/https): {}", url), is_error: true, structured_content: None });
+        }
+
+        let client = reqwest::Client::builder()
+            .user_agent("openLoom/0.2")
+            .timeout(std::time::Duration::from_secs(15))
+            .build()?;
+
+        let html = client.get(url).send().await?.text().await?;
+        let text = extract_text(&html);
+
+        if text.is_empty() {
+            Ok(ToolResult { content: "Page returned no readable text content.".into(), is_error: false, structured_content: None })
+        } else if text.len() > max_chars {
+            Ok(ToolResult {
+                content: format!("{}...\n\n[truncated at {} chars, full page: {} chars]", &text[..max_chars], max_chars, text.len()),
+                is_error: false, structured_content: None,
+            })
+        } else {
+            Ok(ToolResult { content: text, is_error: false, structured_content: None })
+        }
+    }
+
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
+
+fn extract_text(html: &str) -> String {
+    let document = scraper::Html::parse_document(html);
+
+    // Collect text from <body> if available, otherwise from root
+    let dom = if let Ok(body_sel) = scraper::Selector::parse("body") {
+        document.select(&body_sel).next().unwrap_or(document.root_element())
+    } else {
+        document.root_element()
+    };
+
+    let text = dom.text().collect::<Vec<_>>().join(" ");
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }

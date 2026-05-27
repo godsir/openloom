@@ -5,7 +5,7 @@
 //! HTTP transport (POST JSON-RPC 2.0 to an MCP endpoint).
 
 use anyhow::{anyhow, Context, Result};
-use loom_types::{McpResource, McpResourceContent, McpTool, ToolDefinition};
+use loom_types::{GetPromptResult, McpPrompt, McpPromptMessage, McpResource, McpResourceContent, McpResourceTemplate, McpTool, ToolDefinition};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -57,6 +57,8 @@ fn default_tool_timeout() -> u64 { 60 }
 
 struct McpConnection {
     process: Child,
+    stdin: tokio::io::BufWriter<tokio::process::ChildStdin>,
+    stdout: BufReader<tokio::process::ChildStdout>,
     tools: Vec<McpTool>,
     next_id: u64,
 }
@@ -75,38 +77,58 @@ impl McpConnection {
         let mut process = cmd.spawn()
             .with_context(|| format!("failed to spawn '{}'. Is it installed?", config.command))?;
 
+        // Drain stderr to prevent child process deadlock
+        if let Some(stderr) = process.stderr.take() {
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stderr);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match reader.read_line(&mut line).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {
+                            let trimmed = line.trim();
+                            if !trimmed.is_empty() {
+                                tracing::debug!(target: "mcp_stderr", "{}", trimmed);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
         let stdin = process.stdin.take().ok_or_else(|| anyhow!("stdin unavailable"))?;
         let stdout = process.stdout.take().ok_or_else(|| anyhow!("stdout unavailable"))?;
-        let mut writer = tokio::io::BufWriter::new(stdin);
-        let mut reader = BufReader::new(stdout);
-        let mut conn = Self { process, tools: Vec::new(), next_id: 1 };
+        let stdin = tokio::io::BufWriter::new(stdin);
+        let stdout_reader = BufReader::new(stdout);
+        let mut conn = Self { process, stdin, stdout: stdout_reader, tools: Vec::new(), next_id: 1 };
 
         // init
-        let result = conn.send_request(&mut writer, &mut reader, "initialize", &serde_json::json!({
+        let result = conn.send_request("initialize", &serde_json::json!({
             "protocolVersion": "2024-11-05", "capabilities": {},
             "clientInfo": {"name": "openLoom", "version": "0.2.0"}
         })).await?;
         tracing::info!(server=%config.name, version=%result["protocolVersion"], "MCP init");
 
         // initialized notification
-        conn.send_notification(&mut writer, "notifications/initialized", &serde_json::json!({})).await?;
+        conn.send_notification("notifications/initialized", &serde_json::json!({})).await?;
 
         // tools/list
-        let tools_resp = conn.send_request(&mut writer, &mut reader, "tools/list", &serde_json::json!({})).await?;
+        let tools_resp = conn.send_request("tools/list", &serde_json::json!({})).await?;
         conn.tools = parse_tool_list(&tools_resp, &config);
         tracing::info!(server=%config.name, count=conn.tools.len(), "MCP tools");
 
         Ok(conn)
     }
 
-    async fn send_request(&mut self, w: &mut (impl AsyncWriteExt + Unpin), r: &mut (impl AsyncBufReadExt + Unpin), method: &str, params: &Value) -> Result<Value> {
+    async fn send_request(&mut self, method: &str, params: &Value) -> Result<Value> {
         let id = self.next_id; self.next_id += 1;
         let mut body = serde_json::to_string(&serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
         body.push('\n');
-        w.write_all(body.as_bytes()).await?; w.flush().await?;
+        self.stdin.write_all(body.as_bytes()).await?; self.stdin.flush().await?;
 
         let mut line = String::new();
-        r.read_line(&mut line).await?;
+        self.stdout.read_line(&mut line).await?;
         let resp: Value = serde_json::from_str(&line)
             .with_context(|| format!("MCP parse error: {}", truncate(&line, 200)))?;
         if let Some(err) = resp.get("error") {
@@ -115,10 +137,10 @@ impl McpConnection {
         Ok(resp["result"].clone())
     }
 
-    async fn send_notification(&self, w: &mut (impl AsyncWriteExt + Unpin), method: &str, params: &Value) -> Result<()> {
+    async fn send_notification(&mut self, method: &str, params: &Value) -> Result<()> {
         let mut body = serde_json::to_string(&serde_json::json!({"jsonrpc":"2.0","method":method,"params":params}))?;
         body.push('\n');
-        w.write_all(body.as_bytes()).await?; w.flush().await?;
+        self.stdin.write_all(body.as_bytes()).await?; self.stdin.flush().await?;
         Ok(())
     }
 }
@@ -127,8 +149,8 @@ fn parse_tool_list(result: &Value, config: &McpServerConfig) -> Vec<McpTool> {
     let tools = result["tools"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
     tools.iter().filter_map(|t| {
         let name = t["name"].as_str()?.to_string();
-        if let Some(ref a) = config.enabled_tools { if !a.contains(&name) { return None; } }
-        if let Some(ref d) = config.disabled_tools { if d.contains(&name) { return None; } }
+        if let Some(ref a) = config.enabled_tools && !a.contains(&name) { return None; }
+        if let Some(ref d) = config.disabled_tools && d.contains(&name) { return None; }
         Some(McpTool {
             name, title: t["title"].as_str().map(String::from),
             description: t["description"].as_str().unwrap_or("").to_string(),
@@ -143,7 +165,7 @@ fn parse_tool_list(result: &Value, config: &McpServerConfig) -> Vec<McpTool> {
 // ============================================================================
 
 enum ServerConn {
-    Stdio { conn: McpConnection, stdin: tokio::io::BufWriter<tokio::process::ChildStdin>, stdout: BufReader<tokio::process::ChildStdout> },
+    Stdio { conn: Box<McpConnection> },
     Http { tools: Vec<McpTool>, url: String, headers: reqwest::header::HeaderMap, client: reqwest::Client, next_id: AtomicU64 },
 }
 
@@ -181,7 +203,10 @@ impl McpClient {
                 reqwest::header::ACCEPT,
                 reqwest::header::HeaderValue::from_static("application/json, text/event-stream"),
             );
-            let client = reqwest::Client::new();
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .connect_timeout(Duration::from_secs(10))
+                .build()?;
 
                 let r = mcp_http_post(&client, &url, &headers, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"openLoom","version":"0.2.0"}}})).await?;
             if r.get("error").is_some() { anyhow::bail!("MCP init: {}", r["error"]["message"].as_str().unwrap_or("?")); }
@@ -193,10 +218,8 @@ impl McpClient {
             tracing::info!(server=%name, url=%url, count=tools.len(), "MCP HTTP connected");
             ServerConn::Http { tools, url, headers, client, next_id: AtomicU64::new(3) }
         } else {
-            let mut connection = McpConnection::handshake(config).await?;
-            let stdin = tokio::io::BufWriter::new(connection.process.stdin.take().ok_or_else(|| anyhow!("stdin gone"))?);
-            let stdout = BufReader::new(connection.process.stdout.take().ok_or_else(|| anyhow!("stdout gone"))?);
-            ServerConn::Stdio { conn: connection, stdin, stdout }
+            let connection = McpConnection::handshake(config).await?;
+            ServerConn::Stdio { conn: Box::new(connection) }
         };
 
         self.servers.write().await.insert(name.clone(), conn);
@@ -229,8 +252,8 @@ impl McpClient {
         let mut servers = self.servers.write().await;
         let entry = servers.get_mut(server).ok_or_else(|| anyhow!("MCP server '{}' not found", server))?;
         match entry {
-            ServerConn::Stdio { conn, stdin, stdout } => {
-                conn.send_request(stdin, stdout, "tools/call", &serde_json::json!({"name":tool,"arguments":args})).await
+            ServerConn::Stdio { conn } => {
+                conn.send_request("tools/call", &serde_json::json!({"name":tool,"arguments":args})).await
             }
             ServerConn::Http { url, headers, client, next_id, .. } => {
                 let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -258,8 +281,8 @@ impl McpClient {
         let mut servers = self.servers.write().await;
         let entry = servers.get_mut(server).ok_or_else(|| anyhow!("MCP server '{}' not found", server))?;
         match entry {
-            ServerConn::Stdio { conn, stdin, stdout } => {
-                let result = conn.send_request(stdin, stdout, "resources/list", &serde_json::json!({})).await?;
+            ServerConn::Stdio { conn } => {
+                let result = conn.send_request("resources/list", &serde_json::json!({})).await?;
                 let resources = result["resources"].as_array().map(|a| a.iter().filter_map(|r| {
                     Some(McpResource {
                         uri: r["uri"].as_str()?.to_string(),
@@ -289,23 +312,18 @@ impl McpClient {
         }
     }
 
-    /// Read a resource from an MCP server.
-    pub async fn read_resource(&self, server: &str, uri: &str) -> Result<McpResourceContent> {
+    /// Read a resource from an MCP server. Returns all content blocks.
+    pub async fn read_resource(&self, server: &str, uri: &str) -> Result<Vec<McpResourceContent>> {
         let mut servers = self.servers.write().await;
         let entry = servers.get_mut(server).ok_or_else(|| anyhow!("MCP server '{}' not found", server))?;
         let timeout = default_tool_timeout();
         match entry {
-            ServerConn::Stdio { conn, stdin, stdout } => {
+            ServerConn::Stdio { conn } => {
                 let result = tokio::time::timeout(
                     Duration::from_secs(timeout),
-                    conn.send_request(stdin, stdout, "resources/read", &serde_json::json!({"uri": uri})),
+                    conn.send_request("resources/read", &serde_json::json!({"uri": uri})),
                 ).await.map_err(|_| anyhow!("MCP read_resource timeout after {}s", timeout))??;
-                Ok(McpResourceContent {
-                    uri: uri.to_string(),
-                    mime_type: result["contents"][0]["mimeType"].as_str().map(String::from),
-                    text: result["contents"][0]["text"].as_str().map(String::from),
-                    blob: result["contents"][0]["blob"].as_str().map(String::from),
-                })
+                Ok(parse_resource_contents(&result, uri))
             }
             ServerConn::Http { url, headers, client, next_id, .. } => {
                 let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -314,12 +332,66 @@ impl McpClient {
                     mcp_http_post(client, url, headers, &serde_json::json!({"jsonrpc":"2.0","id":id,"method":"resources/read","params":{"uri":uri}})),
                 ).await.map_err(|_| anyhow!("MCP read_resource timeout after {}s", timeout))??;
                 let result = r.get("result").ok_or_else(|| anyhow!("MCP: no result"))?;
-                Ok(McpResourceContent {
-                    uri: uri.to_string(),
-                    mime_type: result["contents"][0]["mimeType"].as_str().map(String::from),
-                    text: result["contents"][0]["text"].as_str().map(String::from),
-                    blob: result["contents"][0]["blob"].as_str().map(String::from),
-                })
+                Ok(parse_resource_contents(result, uri))
+            }
+        }
+    }
+
+    /// List resource templates from an MCP server.
+    pub async fn list_resource_templates(&self, server: &str) -> Result<Vec<McpResourceTemplate>> {
+        let mut servers = self.servers.write().await;
+        let entry = servers.get_mut(server).ok_or_else(|| anyhow!("MCP server '{}' not found", server))?;
+        match entry {
+            ServerConn::Stdio { conn } => {
+                let result = conn.send_request("resources/templates/list", &serde_json::json!({})).await?;
+                Ok(parse_resource_templates(&result))
+            }
+            ServerConn::Http { url, headers, client, next_id, .. } => {
+                let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let r = mcp_http_post(client, url, headers, &serde_json::json!({"jsonrpc":"2.0","id":id,"method":"resources/templates/list","params":{}})).await?;
+                let result = r.get("result").ok_or_else(|| anyhow!("MCP: no result"))?;
+                Ok(parse_resource_templates(result))
+            }
+        }
+    }
+
+    /// List prompts from an MCP server.
+    pub async fn list_prompts(&self, server: &str) -> Result<Vec<McpPrompt>> {
+        let mut servers = self.servers.write().await;
+        let entry = servers.get_mut(server).ok_or_else(|| anyhow!("MCP server '{}' not found", server))?;
+        match entry {
+            ServerConn::Stdio { conn } => {
+                let result = conn.send_request("prompts/list", &serde_json::json!({})).await?;
+                Ok(parse_prompt_list(&result))
+            }
+            ServerConn::Http { url, headers, client, next_id, .. } => {
+                let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let r = mcp_http_post(client, url, headers, &serde_json::json!({"jsonrpc":"2.0","id":id,"method":"prompts/list","params":{}})).await?;
+                let result = r.get("result").ok_or_else(|| anyhow!("MCP: no result"))?;
+                Ok(parse_prompt_list(result))
+            }
+        }
+    }
+
+    /// Get a prompt from an MCP server with arguments.
+    pub async fn get_prompt(&self, server: &str, name: &str, arguments: Option<&serde_json::Value>) -> Result<GetPromptResult> {
+        let mut servers = self.servers.write().await;
+        let entry = servers.get_mut(server).ok_or_else(|| anyhow!("MCP server '{}' not found", server))?;
+        let params = if let Some(args) = arguments {
+            serde_json::json!({"name": name, "arguments": args})
+        } else {
+            serde_json::json!({"name": name})
+        };
+        match entry {
+            ServerConn::Stdio { conn } => {
+                let result = conn.send_request("prompts/get", &params).await?;
+                Ok(parse_get_prompt_result(&result))
+            }
+            ServerConn::Http { url, headers, client, next_id, .. } => {
+                let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let r = mcp_http_post(client, url, headers, &serde_json::json!({"jsonrpc":"2.0","id":id,"method":"prompts/get","params":params})).await?;
+                let result = r.get("result").ok_or_else(|| anyhow!("MCP: no result"))?;
+                Ok(parse_get_prompt_result(result))
             }
         }
     }
@@ -331,6 +403,7 @@ impl McpClient {
             match conn {
                 ServerConn::Stdio { mut conn, .. } => {
                     conn.process.kill().await?;
+                    conn.process.wait().await?;
                     tracing::info!(server=%name, "MCP stdio disconnected");
                 }
                 ServerConn::Http { .. } => {
@@ -377,15 +450,15 @@ async fn mcp_http_post(client: &reqwest::Client, url: &str, headers: &reqwest::h
 
     if content_type.contains("text/event-stream") {
         let mut result = Value::Null;
-        for event in text.split("\n\n") {
+        let normalized = text.replace("\r\n", "\n");
+        for event in normalized.split("\n\n") {
             let mut event_type = ""; let mut data = "";
             for line in event.lines() {
                 if let Some(t) = line.strip_prefix("event: ") { event_type = t.trim(); }
                 if let Some(d) = line.strip_prefix("data: ") { data = d.trim(); }
             }
-            if (event_type == "message" || event_type.is_empty()) && !data.is_empty() {
-                if let Ok(parsed) = serde_json::from_str::<Value>(data) { result = parsed; }
-            }
+            if (event_type == "message" || event_type.is_empty()) && !data.is_empty()
+                && let Ok(parsed) = serde_json::from_str::<Value>(data) { result = parsed; }
         }
         if result.is_null() { anyhow::bail!("SSE contained no data: {}", truncate(&text, 200)); }
         Ok(result)
@@ -397,6 +470,7 @@ async fn mcp_http_post(client: &reqwest::Client, url: &str, headers: &reqwest::h
 async fn mcp_http_notify(client: &reqwest::Client, url: &str, headers: &reqwest::header::HeaderMap, body: &Value) -> Result<()> {
     let resp = client.post(url).headers(headers.clone()).json(body).send().await?;
     tracing::debug!(%url, status=%resp.status(), "MCP HTTP notify");
+    let _ = resp.bytes().await;
     Ok(())
 }
 
@@ -404,6 +478,78 @@ fn truncate(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {
         Some((i, _)) => &s[..i],
         None => s,
+    }
+}
+
+fn parse_resource_contents(result: &Value, uri: &str) -> Vec<McpResourceContent> {
+    result["contents"].as_array().map(|a| {
+        a.iter().map(|c| McpResourceContent {
+            uri: c["uri"].as_str().unwrap_or(uri).to_string(),
+            mime_type: c["mimeType"].as_str().map(String::from),
+            text: c["text"].as_str().map(String::from),
+            blob: c["blob"].as_str().map(String::from),
+        }).collect()
+    }).unwrap_or_default()
+}
+
+fn parse_resource_templates(result: &Value) -> Vec<McpResourceTemplate> {
+    result["resourceTemplates"].as_array().map(|a| {
+        a.iter().filter_map(|t| Some(McpResourceTemplate {
+            uri_template: t["uriTemplate"].as_str()?.to_string(),
+            name: t["name"].as_str()?.to_string(),
+            description: t["description"].as_str().map(String::from),
+            mime_type: t["mimeType"].as_str().map(String::from),
+        })).collect()
+    }).unwrap_or_default()
+}
+
+fn parse_prompt_list(result: &Value) -> Vec<McpPrompt> {
+    result["prompts"].as_array().map(|a| {
+        a.iter().map(|p| McpPrompt {
+            name: p["name"].as_str().unwrap_or("").to_string(),
+            description: p["description"].as_str().map(String::from),
+            arguments: p["arguments"].as_array().map(|args| {
+                args.iter().map(|a| loom_types::McpPromptArgument {
+                    name: a["name"].as_str().unwrap_or("").to_string(),
+                    description: a["description"].as_str().map(String::from),
+                    required: a["required"].as_bool().unwrap_or(false),
+                }).collect()
+            }).unwrap_or_default(),
+        }).collect()
+    }).unwrap_or_default()
+}
+
+fn parse_get_prompt_result(result: &Value) -> GetPromptResult {
+    let messages = result["messages"].as_array().map(|a| {
+        a.iter().map(|m| McpPromptMessage {
+            role: m["role"].as_str().unwrap_or("user").to_string(),
+            content: parse_content_block(&m["content"]),
+        }).collect()
+    }).unwrap_or_default();
+    GetPromptResult {
+        description: result["description"].as_str().map(String::from),
+        messages,
+    }
+}
+
+fn parse_content_block(value: &Value) -> loom_types::McpContentBlock {
+    match value["type"].as_str() {
+        Some("text") => loom_types::McpContentBlock::Text {
+            text: value["text"].as_str().unwrap_or("").to_string(),
+        },
+        Some("image") => loom_types::McpContentBlock::Image {
+            data: value["data"].as_str().unwrap_or("").to_string(),
+            mime_type: value["mimeType"].as_str().unwrap_or("image/png").to_string(),
+        },
+        Some("resource") => loom_types::McpContentBlock::Resource {
+            resource: McpResourceContent {
+                uri: value["resource"]["uri"].as_str().unwrap_or("").to_string(),
+                mime_type: value["resource"]["mimeType"].as_str().map(String::from),
+                text: value["resource"]["text"].as_str().map(String::from),
+                blob: value["resource"]["blob"].as_str().map(String::from),
+            },
+        },
+        _ => loom_types::McpContentBlock::Text { text: String::new() },
     }
 }
 

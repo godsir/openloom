@@ -20,10 +20,8 @@ pub fn check_permission(
     }
 
     // File write tools
-    if ["file_write", "file_edit"].contains(&tool_name) {
-        if permissions.fs_write.is_none() {
-            return (false, RiskLevel::Medium);
-        }
+    if ["file_write", "file_edit"].contains(&tool_name) && permissions.fs_write.is_none() {
+        return (false, RiskLevel::Medium);
     }
 
     (true, RiskLevel::Low)
