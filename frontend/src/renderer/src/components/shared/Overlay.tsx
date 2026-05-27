@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react'
+import { IconX } from '../../utils/icons'
 
 interface OverlayProps {
   open: boolean
@@ -23,26 +24,24 @@ export default function Overlay({ open, onClose, children, title }: OverlayProps
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
       <div
         ref={overlayRef}
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
         onClick={onClose}
       />
-      {/* Panel */}
-      <div className="relative bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-y-auto m-4">
+      <div className="relative bg-[var(--bg)] border border-[var(--border-accent)] rounded-[var(--r-lg)] shadow-[var(--shadow-lg)] max-w-xl w-full max-h-[80vh] overflow-y-auto m-4 animate-fade-up">
         {title && (
-          <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
-            <h2 className="text-sm font-semibold">{title}</h2>
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--border)]">
+            <h2 className="text-sm font-semibold text-[var(--text)]">{title}</h2>
             <button
               onClick={onClose}
-              className="text-zinc-500 hover:text-zinc-300 text-lg leading-none"
+              className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors-fast"
             >
-              ×
+              <IconX size={16} />
             </button>
           </div>
         )}
-        <div className="p-4">{children}</div>
+        <div className="p-5">{children}</div>
       </div>
     </div>
   )

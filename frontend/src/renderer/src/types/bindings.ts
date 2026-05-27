@@ -14,3 +14,27 @@ export type JsonRpcResponse = {
   error?: { code: number; message: string; data?: unknown }
   id: number
 }
+
+// === Model Config (mirrors backend ModelConfig) ===
+
+export type ModelBackend = 'LmStudio' | 'Anthropic' | 'OpenAI' | 'DeepSeek' | 'Ollama'
+
+export interface ModelConfig {
+  name: string
+  model?: string
+  model_type: 'Router' | 'Summarizer' | 'Reasoning'
+  backend: ModelBackend
+  base_url?: string
+  api_key_env?: string
+  context_size: number
+  max_output_tokens?: number
+  is_active?: boolean
+}
+
+export interface ModelListItem {
+  name: string
+  model?: string
+  backend: string
+  base_url?: string
+  is_active: boolean
+}

@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useStore } from '../../stores'
-import type { SessionSummary } from '../../stores/session'
 import SessionItem from './SessionItem'
+import { IconPlus, IconSearch, IconSettings, IconPanelLeftClose } from '../../utils/icons'
 
 export default function Sidebar() {
   const sessions = useStore((s) => s.sessions)
@@ -9,26 +9,20 @@ export default function Sidebar() {
   const createSession = useStore((s) => s.createSession)
   const switchSession = useStore((s) => s.switchSession)
   const setSettingsOpen = useStore((s) => s.setSettingsOpen)
-  const [search, setSearch] = useState(false)
+  const setSidebarOpen = useStore((s) => s.setSidebarOpen)
   const [query, setQuery] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    if (search) inputRef.current?.focus()
-  }, [search])
+  useEffect(() => { inputRef.current?.focus() }, [])
 
   const filtered = useMemo(() => {
     if (!query.trim()) return sessions
     const q = query.toLowerCase()
-    return sessions.filter(
-      (s) =>
-        (s.title || '').toLowerCase().includes(q) ||
-        s.path.toLowerCase().includes(q),
-    )
+    return sessions.filter(s => (s.title||'').toLowerCase().includes(q) || s.path.toLowerCase().includes(q))
   }, [sessions, query])
 
-  const pinned = filtered.filter((s) => pinnedIds.has(s.path))
-  const unpinned = filtered.filter((s) => !pinnedIds.has(s.path))
+  const pinned = filtered.filter(s => pinnedIds.has(s.path))
+  const unpinned = filtered.filter(s => !pinnedIds.has(s.path))
 
   const handleCreate = async () => {
     const id = await createSession()
@@ -36,88 +30,80 @@ export default function Sidebar() {
   }
 
   return (
-    <div className="flex flex-col h-full bg-zinc-950 border-r border-zinc-800 w-[280px]">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800">
-        {search ? (
+    <aside className="flex flex-col w-[var(--sidebar-w)] h-full bg-[rgba(0,227,199,0.01)] border-r border-[var(--border)]">
+      {/* Header — matches titlebar height */}
+      <div className="flex items-center justify-between h-[var(--titlebar-h)] px-3 border-b border-[var(--border)]">
+        <div className="flex items-center gap-2">
+          <div className="w-5 h-5 rounded-[4px] bg-[var(--accent)] flex items-center justify-center">
+            <span className="text-[9px] font-extrabold text-[var(--bg)]">L</span>
+          </div>
+          <span className="text-[13px] font-semibold text-[var(--text)] tracking-tight">openLoom</span>
+        </div>
+        <button
+          onClick={() => setSidebarOpen(false)}
+          className="flex items-center justify-center w-6 h-6 rounded-[var(--r-sm)] text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[rgba(0,227,199,0.06)] transition-colors"
+          title="收起侧边栏 (⌘B)"
+        >
+          <IconPanelLeftClose size={14} />
+        </button>
+      </div>
+
+      {/* Search */}
+      <div className="px-3 py-2">
+        <div className="flex items-center gap-2 h-[28px] px-2.5 rounded-[var(--r-md)] bg-[rgba(0,227,199,0.03)] border border-[rgba(0,227,199,0.06)]">
+          <IconSearch size={12} className="text-[var(--text-muted)] shrink-0" />
           <input
             ref={inputRef}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Escape' && (setSearch(false), setQuery(''))}
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => e.key==='Escape'&&setQuery('')}
             placeholder="搜索会话..."
-            className="flex-1 bg-zinc-800 text-zinc-200 text-sm rounded px-2 py-1 outline-none focus:ring-1 focus:ring-blue-500/50 placeholder:text-zinc-600"
+            className="flex-1 bg-transparent text-[var(--text)] text-[12px] outline-none placeholder:text-[var(--text-muted)]"
           />
-        ) : (
-          <span className="font-semibold text-sm text-zinc-200">openLoom</span>
-        )}
-        <div className="flex gap-1">
-          <button
-            onClick={() => { setSearch(!search); setQuery('') }}
-            className={`w-7 h-7 flex items-center justify-center rounded text-sm transition-colors ${search ? 'bg-blue-600 text-white' : 'hover:bg-zinc-800 text-zinc-400'}`}
-            title="搜索"
-          >
-            &#128269;
-          </button>
-          <button
-            onClick={handleCreate}
-            className="w-7 h-7 flex items-center justify-center rounded hover:bg-zinc-800 text-zinc-400 text-lg"
-            title="新建会话"
-          >
-            +
-          </button>
-          <button
-            onClick={() => setSettingsOpen(true)}
-            className="w-7 h-7 flex items-center justify-center rounded hover:bg-zinc-800 text-zinc-400 text-sm"
-            title="设置"
-          >
-            &#9881;
-          </button>
         </div>
       </div>
 
       {/* Session list */}
-      <div className="flex-1 overflow-y-auto py-1">
-        {filtered.length === 0 && (
-          <div className="px-4 py-8 text-center">
-            <p className="text-sm text-zinc-600">
+      <div className="flex-1 overflow-y-auto">
+        {filtered.length === 0 ? (
+          <div className="px-4 py-16 text-center">
+            <p className="text-[12px] text-[var(--text-muted)]">
               {query ? '无匹配会话' : '暂无会话'}
             </p>
-            {!query && (
-              <button
-                onClick={handleCreate}
-                className="mt-2 px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-500 transition-colors"
-              >
-                新建会话
-              </button>
-            )}
           </div>
-        )}
-
-        {pinned.length > 0 && (
-          <div className="mb-1">
-            <div className="px-3 py-1 text-[10px] text-zinc-600 uppercase tracking-wider font-medium">
-              已置顶
-            </div>
-            {pinned.map((s) => (
-              <SessionItem key={s.path} session={s} />
-            ))}
-          </div>
-        )}
-
-        {unpinned.length > 0 && (
-          <div>
+        ) : (
+          <>
             {pinned.length > 0 && (
-              <div className="px-3 py-1 text-[10px] text-zinc-600 uppercase tracking-wider font-medium">
-                全部
+              <div>
+                <div className="px-4 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[1.2px] text-[var(--text-muted)]">
+                  已置顶
+                </div>
+                {pinned.map(s => <SessionItem key={s.path} session={s} />)}
               </div>
             )}
-            {unpinned.map((s) => (
-              <SessionItem key={s.path} session={s} />
-            ))}
-          </div>
+            {unpinned.length > 0 && (
+              <div>
+                <div className="px-4 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[1.2px] text-[var(--text-muted)]">
+                  {pinned.length > 0 ? '全部' : '今天'}
+                </div>
+                {unpinned.map(s => <SessionItem key={s.path} session={s} />)}
+              </div>
+            )}
+          </>
         )}
       </div>
-    </div>
+
+      {/* Bottom actions */}
+      <div className="flex items-center gap-2 px-3 py-2.5 border-t border-[var(--border)]">
+        <button onClick={handleCreate}
+          className="flex items-center gap-1.5 flex-1 h-[28px] px-3 text-[12px] font-medium text-[var(--accent)] bg-[rgba(0,227,199,0.08)] hover:bg-[rgba(0,227,199,0.12)] border border-[rgba(0,227,199,0.12)] rounded-[var(--r-md)] transition-colors justify-center">
+          <IconPlus size={13} /> 新建会话
+        </button>
+        <button onClick={() => setSettingsOpen(true)}
+          className="w-[28px] h-[28px] flex items-center justify-center rounded-[var(--r-md)] text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[rgba(255,255,255,0.04)] transition-colors">
+          <IconSettings size={14} />
+        </button>
+      </div>
+    </aside>
   )
 }

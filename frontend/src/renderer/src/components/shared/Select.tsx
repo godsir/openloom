@@ -15,7 +15,7 @@ export default function Select<T extends string>({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value as T)}
-      className={`bg-zinc-800 text-zinc-200 text-sm rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-blue-500/50 border-0 cursor-pointer ${className}`}
+      className={`bg-[var(--bg-card)] text-[var(--text-light)] text-sm rounded-[var(--r-input)] px-3 py-1.5 outline-none border border-[var(--border)] focus:border-[var(--border-accent)] cursor-pointer transition-colors ${className}`}
     >
       {options.map((opt) => (
         <option key={opt.value} value={opt.value}>

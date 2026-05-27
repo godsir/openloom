@@ -42,28 +42,28 @@ export default function AgentConfigPanel() {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-zinc-200">Agent 配置</h3>
+        <h3 className="text-sm font-semibold text-[var(--text)]">Agent 配置</h3>
         <Button size="sm" onClick={() => setCreating(true)}>
           + 新建
         </Button>
       </div>
 
       {agents.length === 0 && !creating && (
-        <p className="text-sm text-zinc-500">暂无 Agent 配置</p>
+        <p className="text-sm text-[var(--text-muted)]">暂无 Agent 配置</p>
       )}
 
       <div className="space-y-1">
         {agents.map((a) => (
           <div
             key={a.id}
-            className="flex items-center gap-2 px-3 py-2 bg-zinc-800/50 rounded text-sm"
+            className="flex items-center gap-2 px-3 py-2 bg-[var(--bg-card)] rounded-[var(--r-sm)] text-sm border border-[var(--border)]"
           >
-            <span className="w-2 h-2 rounded-full bg-green-500" />
-            <span className="flex-1 text-zinc-300">{a.name}</span>
-            <span className="text-xs text-zinc-500">{a.status}</span>
+            <span className="w-2 h-2 rounded-full bg-[var(--green)]" />
+            <span className="flex-1 text-[var(--text-light)]">{a.name}</span>
+            <span className="text-[11px] font-mono text-[var(--text-muted)]">{a.status}</span>
             <button
               onClick={() => handleDelete(a.name || a.id)}
-              className="text-xs text-zinc-500 hover:text-red-400"
+              className="text-[11px] font-mono text-[var(--text-muted)] hover:text-[var(--red)] transition-colors-fast"
             >
               删除
             </button>
@@ -75,16 +75,16 @@ export default function AgentConfigPanel() {
         <Overlay open={creating} onClose={() => setCreating(false)} title="新建 Agent 配置">
           <div className="space-y-3">
             <div>
-              <label className="block text-xs text-zinc-400 mb-1">名称</label>
+              <label className="block text-xs text-[var(--text-muted)] mb-1.5">名称</label>
               <input
                 value={nameDraft}
                 onChange={(e) => setNameDraft(e.target.value)}
                 placeholder="输入 Agent 名称..."
-                className="w-full bg-zinc-800 text-zinc-200 text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-blue-500/50"
+                className="w-full bg-[var(--bg-card)] text-[var(--text)] text-sm rounded-[var(--r-sm)] px-3 py-2 outline-none border border-[var(--border)] focus:border-[var(--border-accent)] transition-colors placeholder:text-[var(--text-muted)]"
               />
             </div>
             <div>
-              <label className="block text-xs text-zinc-400 mb-1">
+              <label className="block text-xs text-[var(--text-muted)] mb-1.5">
                 Persona（可选）
               </label>
               <textarea
@@ -92,7 +92,7 @@ export default function AgentConfigPanel() {
                 onChange={(e) => setPersonaDraft(e.target.value)}
                 placeholder="描述 Agent 的行为特征..."
                 rows={3}
-                className="w-full bg-zinc-800 text-zinc-200 text-sm rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-blue-500/50 resize-none"
+                className="w-full bg-[var(--bg-card)] text-[var(--text)] text-sm rounded-[var(--r-sm)] px-3 py-2 outline-none border border-[var(--border)] focus:border-[var(--border-accent)] transition-colors placeholder:text-[var(--text-muted)] resize-none"
               />
             </div>
             <div className="flex justify-end gap-2">

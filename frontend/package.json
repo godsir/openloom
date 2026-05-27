@@ -23,6 +23,7 @@
     "codemirror": "^6.0.2",
     "electron-updater": "^6.8.3",
     "katex": "^0.16.47",
+    "lucide-react": "^1.16.0",
     "markdown-it": "^14.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

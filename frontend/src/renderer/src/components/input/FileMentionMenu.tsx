@@ -1,10 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 
-interface FileItem {
-  path: string
-  name: string
-  kind: string
-}
+interface FileItem { path: string; name: string; kind: string }
 
 interface Props {
   query: string
@@ -18,9 +14,7 @@ export default function FileMentionMenu({ query, onSelect, onClose }: Props) {
 
   useEffect(() => {
     const close = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        onClose()
-      }
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose()
     }
     document.addEventListener('mousedown', close)
     return () => document.removeEventListener('mousedown', close)
@@ -35,10 +29,10 @@ export default function FileMentionMenu({ query, onSelect, onClose }: Props) {
   return (
     <div
       ref={menuRef}
-      className="absolute bottom-full left-0 mb-1 w-64 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl overflow-hidden z-20"
+      className="absolute bottom-full left-0 mb-1 w-64 bg-[var(--bg)] border border-[var(--border-accent)] rounded-[var(--r-sm)] shadow-xl overflow-hidden z-20 animate-fade-in"
     >
       {filtered.length === 0 ? (
-        <div className="px-3 py-2 text-xs text-zinc-500">
+        <div className="px-3.5 py-3 text-xs text-[var(--text-muted)]">
           {query ? '无匹配文件' : '输入文件名搜索...'}
         </div>
       ) : (
@@ -46,12 +40,12 @@ export default function FileMentionMenu({ query, onSelect, onClose }: Props) {
           <button
             key={f.path}
             onClick={() => onSelect(f)}
-            className="w-full text-left px-3 py-2 hover:bg-zinc-700 transition-colors flex items-center gap-2"
+            className="w-full text-left px-3.5 py-2.5 hover:bg-[rgba(255,255,255,0.04)] transition-colors-fast flex items-center gap-2"
           >
-            <span className="text-xs text-zinc-500">
+            <span className="opacity-50 text-sm">
               {f.kind === 'image' ? '🖼' : f.kind === 'code' ? '📄' : '📎'}
             </span>
-            <span className="text-sm text-zinc-300 truncate">{f.name}</span>
+            <span className="text-[13px] text-[var(--text-light)] truncate">{f.name}</span>
           </button>
         ))
       )}

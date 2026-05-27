@@ -1,31 +1,22 @@
 import type { ContentBlock } from '../../stores/chat'
+import { IconFile, IconExternalLink } from '../../utils/icons'
 
 export default function FileBlock({ block }: { block: ContentBlock }) {
-  const name = (block.name as string) || 'unknown'
+  const name = (block.name as string) || 'file'
   const filePath = (block.path as string) || ''
   const size = block.size as number | undefined
 
-  const formatSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  }
+  const fmt = (b: number) => b < 1024 ? `${b}B` : b < 1024**2 ? `${(b/1024).toFixed(1)}KB` : `${(b/1024**2).toFixed(1)}MB`
 
   return (
-    <div className="border border-zinc-700/50 rounded-md px-3 py-2 flex items-center gap-3 text-sm">
-      <span className="text-zinc-500">&#128196;</span>
-      <div className="flex-1 min-w-0">
-        <p className="text-zinc-300 truncate">{name}</p>
-        {size != null && (
-          <p className="text-xs text-zinc-600">{formatSize(size)}</p>
-        )}
-      </div>
+    <div className="inline-flex items-center gap-2.5 px-3 py-2 rounded-[var(--r-md)] bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.04)] text-[12px]">
+      <IconFile size={12} className="text-[var(--accent)] opacity-60 shrink-0" />
+      <span className="text-[var(--text)] truncate max-w-[200px]">{name}</span>
+      {size != null && <span className="text-[10px] text-[var(--text-muted)] tabular-nums">{fmt(size)}</span>}
       {filePath && (
-        <button
-          onClick={() => window.hana.openFile(filePath)}
-          className="text-xs text-blue-400 hover:text-blue-300 shrink-0"
-        >
-          打开
+        <button onClick={() => window.hana.openFile(filePath)}
+          className="flex items-center gap-1 text-[10px] text-[var(--accent)] hover:text-[var(--accent-hover)] transition-colors">
+          <IconExternalLink size={9} /> 打开
         </button>
       )}
     </div>

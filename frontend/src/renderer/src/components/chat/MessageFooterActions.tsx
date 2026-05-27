@@ -1,16 +1,9 @@
 import { useStore } from '../../stores'
+import { IconCopy, IconTrash } from '../../utils/icons'
 
-interface MessageFooterActionsProps {
-  messageId: string
-  role: 'user' | 'assistant'
-  timestamp: string
-}
+interface Props { messageId: string; role: 'user' | 'assistant'; timestamp: string }
 
-export default function MessageFooterActions({
-  messageId,
-  role,
-  timestamp,
-}: MessageFooterActionsProps) {
+export default function MessageFooterActions({ messageId, role, timestamp }: Props) {
   const deleteMessage = useStore((s) => s.deleteMessage)
   const currentSessionId = useStore((s) => s.currentSessionId)
 
@@ -30,25 +23,16 @@ export default function MessageFooterActions({
     deleteMessage(currentSessionId, messageId)
   }
 
-  const formattedTime = new Date(timestamp).toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  const time = new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 
   return (
-    <div className="flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
-      <span className="text-[10px] text-zinc-600 mr-1">{formattedTime}</span>
-      <button
-        onClick={handleCopy}
-        className="text-[10px] text-zinc-500 hover:text-zinc-300 px-1 py-0.5 rounded"
-      >
-        复制
+    <div className={`flex items-center gap-0.5 mt-1 opacity-0 group-hover:opacity-100 transition-opacity ${role === 'user' ? 'justify-end' : ''}`}>
+      <span className="text-[10px] text-[var(--text-muted)] mr-1 tabular-nums">{time}</span>
+      <button onClick={handleCopy} className="flex items-center gap-0.5 text-[10px] text-[var(--text-muted)] hover:text-[var(--accent)] px-1 py-0.5 rounded-[var(--r-sm)] transition-colors">
+        <IconCopy size={9} />
       </button>
-      <button
-        onClick={handleDelete}
-        className="text-[10px] text-zinc-500 hover:text-red-400 px-1 py-0.5 rounded"
-      >
-        删除
+      <button onClick={handleDelete} className="flex items-center gap-0.5 text-[10px] text-[var(--text-muted)] hover:text-[var(--red)] px-1 py-0.5 rounded-[var(--r-sm)] transition-colors">
+        <IconTrash size={9} />
       </button>
     </div>
   )

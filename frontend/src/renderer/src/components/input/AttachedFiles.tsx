@@ -1,3 +1,5 @@
+import { IconX } from '../../utils/icons'
+
 interface Props {
   files: { name: string; path: string; size: number; mimeType: string }[]
   onRemove: (index: number) => void
@@ -17,19 +19,19 @@ export default function AttachedFiles({ files, onRemove }: Props) {
       {files.map((f, i) => (
         <div
           key={i}
-          className="flex items-center gap-1.5 px-2 py-1 bg-zinc-800 border border-zinc-700/50 rounded-md text-xs group"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[var(--bg-card)] border border-[var(--border)] rounded-[var(--r-sm)] text-xs group"
           title={f.path}
         >
-          <span className="text-zinc-500">
+          <span className="opacity-50 text-sm">
             {f.mimeType?.startsWith('image/') ? '🖼' : '📎'}
           </span>
-          <span className="text-zinc-300 truncate max-w-[120px]">{f.name}</span>
-          <span className="text-[10px] text-zinc-600">{formatSize(f.size)}</span>
+          <span className="text-[var(--text-light)] truncate max-w-[120px]">{f.name}</span>
+          <span className="text-[10px] font-mono text-[var(--text-muted)]">{formatSize(f.size)}</span>
           <button
             onClick={() => onRemove(i)}
-            className="text-zinc-500 hover:text-zinc-300 shrink-0"
+            className="text-[var(--text-muted)] hover:text-[var(--text)] shrink-0 transition-colors-fast"
           >
-            ×
+            <IconX size={12} />
           </button>
         </div>
       ))}

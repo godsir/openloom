@@ -72,7 +72,7 @@ export default function MarkdownEditor({
   return (
     <div
       ref={containerRef}
-      className="cm-editor-container text-sm text-zinc-200 overflow-auto"
+      className="cm-editor-container text-sm text-[var(--text)] overflow-auto"
     />
   )
 }

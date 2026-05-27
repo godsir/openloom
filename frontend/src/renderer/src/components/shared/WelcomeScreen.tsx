@@ -10,21 +10,26 @@ export default function WelcomeScreen() {
   }
 
   return (
-    <div className="flex items-center justify-center h-full">
-      <div className="text-center max-w-md">
-        <h1 className="text-3xl font-bold mb-3">欢迎使用 openLoom</h1>
-        <p className="text-zinc-400 mb-6 text-sm leading-relaxed">
-          你的本地优先 AI 助理。所有数据存储在本地，支持多模型、MCP 工具、
+    <div className="flex items-center justify-center h-full bg-[var(--bg)]">
+      <div className="text-center max-w-md animate-fade-up">
+        <div className="w-12 h-12 mx-auto mb-6 rounded-[var(--r-lg)] bg-[rgba(0,227,199,0.06)] border border-[rgba(0,227,199,0.12)] flex items-center justify-center shadow-[0_0_30px_rgba(0,227,199,0.06)]">
+          <span className="text-xl font-bold text-[var(--accent)]">L</span>
+        </div>
+        <h1 className="text-2xl text-[var(--text)] mb-3 tracking-tight font-semibold">
+          openLoom
+        </h1>
+        <p className="text-[var(--text-light)] mb-8 text-[13px] leading-relaxed">
+          本地优先的 AI 助理。支持多模型、MCP 工具、
           知识图谱记忆、LSP 代码理解和 Skills 技能系统。
         </p>
         <button
           onClick={handleStart}
-          className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors text-sm font-medium"
+          className="px-6 py-2.5 rounded-[var(--r-md)] bg-[var(--accent-light)] text-[var(--accent)] hover:bg-[rgba(var(--accent-rgb),.25)] border border-[var(--border-accent)] text-[13px] font-medium transition-colors"
         >
           开始新对话
         </button>
-        <p className="text-xs text-zinc-600 mt-4">
-          会话将自动保存在本地 SQLite 数据库中
+        <p className="text-[10px] text-[var(--text-muted)] mt-5">
+          所有数据存储在本地 SQLite 数据库中
         </p>
       </div>
     </div>

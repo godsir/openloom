@@ -9,7 +9,7 @@ export default function TextBlock({ block }: { block: ContentBlock }) {
 
   return (
     <div
-      className="prose-chat max-w-none text-zinc-300 text-sm leading-relaxed"
+      className="prose-chat max-w-none text-[14px] text-[var(--text)]"
       dangerouslySetInnerHTML={{ __html: displayHtml }}
     />
   )

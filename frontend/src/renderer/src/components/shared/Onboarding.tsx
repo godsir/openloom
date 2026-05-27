@@ -31,21 +31,25 @@ export default function Onboarding({
   const [step, setStep] = useState(0)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950">
-      <div className="max-w-md w-full mx-4 text-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--bg)]">
+      <div className="max-w-md w-full mx-4 text-center animate-fade-up">
         <div className="mb-8">
-          <div className="flex justify-center gap-2 mb-6">
+          <div className="flex justify-center gap-2 mb-8">
             {STEPS.map((_, i) => (
               <div
                 key={i}
-                className={`w-2 h-2 rounded-full ${
-                  i <= step ? 'bg-blue-500' : 'bg-zinc-700'
+                className={`h-1 rounded-full transition-all duration-300 ${
+                  i <= step
+                    ? 'w-6 bg-[var(--accent)]'
+                    : 'w-2 bg-[var(--border)]'
                 }`}
               />
             ))}
           </div>
-          <h2 className="text-xl font-semibold mb-3">{STEPS[step].title}</h2>
-          <p className="text-zinc-400 text-sm leading-relaxed">
+          <h2 className="text-2xl text-[var(--text)] mb-4 tracking-tight font-semibold">
+            {STEPS[step].title}
+          </h2>
+          <p className="text-[var(--text-muted)] text-[13px] leading-relaxed">
             {STEPS[step].description}
           </p>
         </div>
@@ -54,7 +58,7 @@ export default function Onboarding({
           {step > 0 && (
             <button
               onClick={() => setStep(step - 1)}
-              className="px-5 py-2 bg-zinc-800 text-zinc-300 rounded-lg hover:bg-zinc-700 text-sm"
+              className="px-5 py-2.5 rounded-[var(--r-sm)] bg-[var(--bg-card)] text-[var(--text-light)] hover:bg-[rgba(255,255,255,0.04)] border border-[var(--border)] text-sm transition-colors-fast"
             >
               上一步
             </button>
@@ -62,14 +66,14 @@ export default function Onboarding({
           {step < STEPS.length - 1 ? (
             <button
               onClick={() => setStep(step + 1)}
-              className="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 text-sm"
+              className="px-5 py-2.5 rounded-[var(--r-sm)] bg-[var(--accent-light)] text-[var(--accent)] hover:bg-[rgba(var(--accent-rgb),.25)] border border-[var(--border-accent)] text-sm transition-colors-fast"
             >
               下一步
             </button>
           ) : (
             <button
               onClick={onComplete}
-              className="px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 text-sm font-medium"
+              className="px-5 py-2.5 rounded-[var(--r-sm)] bg-[var(--accent-light)] text-[var(--accent)] hover:bg-[rgba(var(--accent-rgb),.25)] border border-[var(--border-accent)] text-sm font-medium transition-colors-fast"
             >
               开始使用
             </button>

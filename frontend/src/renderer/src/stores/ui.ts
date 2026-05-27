@@ -4,25 +4,23 @@ export type ThemeId = 'dark' | 'light' | 'midnight' | 'warm-paper'
 
 export interface UiSlice {
   theme: ThemeId
-  sidebarWidth: number
-  activePanel: string | null
   settingsOpen: boolean
+  sidebarOpen: boolean
   setTheme: (theme: ThemeId) => void
-  setSidebarWidth: (w: number) => void
-  setActivePanel: (panel: string | null) => void
   setSettingsOpen: (open: boolean) => void
+  setSidebarOpen: (open: boolean) => void
+  toggleSidebar: () => void
 }
 
-export const createUiSlice: StateCreator<UiSlice> = (set) => ({
+export const createUiSlice: StateCreator<UiSlice> = (set, get) => ({
   theme: 'dark',
-  sidebarWidth: 280,
-  activePanel: null,
   settingsOpen: false,
+  sidebarOpen: true,
   setTheme: (theme) => {
     document.documentElement.setAttribute('data-theme', theme)
     set({ theme })
   },
-  setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
-  setActivePanel: (activePanel) => set({ activePanel }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
+  toggleSidebar: () => set({ sidebarOpen: !get().sidebarOpen }),
 })

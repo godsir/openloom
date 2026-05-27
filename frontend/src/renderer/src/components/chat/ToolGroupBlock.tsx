@@ -1,13 +1,16 @@
 import { useState } from 'react'
 import type { ContentBlock } from '../../stores/chat'
+import { IconZap, IconCheck, IconLoader, IconXCircle, IconChevronRight, IconChevronDown } from '../../utils/icons'
 
 interface ToolCall {
-  id: string
-  name: string
-  status: 'running' | 'done'
-  elapsed: number
-  args: Record<string, unknown>
-  result?: string
+  id: string; name: string; status: 'running' | 'done' | 'error'
+  elapsed: number; args: Record<string, unknown>; result?: string
+}
+
+const statusIcon = (s: string) => {
+  if (s === 'done') return <IconCheck size={10} className="text-[var(--accent)]" />
+  if (s === 'running') return <IconLoader size={10} className="text-[var(--amber)] animate-spin" />
+  return <IconXCircle size={10} className="text-[var(--red)]" />
 }
 
 export default function ToolGroupBlock({ block }: { block: ContentBlock }) {
@@ -16,44 +19,34 @@ export default function ToolGroupBlock({ block }: { block: ContentBlock }) {
   const collapsed = block.collapsed as boolean
 
   return (
-    <div className="border border-blue-700/30 rounded-md overflow-hidden">
-      <div className="px-3 py-1.5 text-xs text-blue-400 bg-blue-900/10">
-        工具调用 ({tools.length})
-      </div>
-      <div className={collapsed ? 'hidden' : ''}>
-        {tools.map((tool) => (
-          <div
-            key={tool.id}
-            className="border-t border-zinc-700/30 px-3 py-1.5"
+    <div className="bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.04)] rounded-[var(--r-md)] overflow-hidden">
+      {!collapsed && tools.map((tool, idx) => (
+        <div key={tool.id} className={idx > 0 ? 'border-t border-[rgba(255,255,255,0.03)]' : ''}>
+          <button
+            onClick={() => setExpandedId(expandedId === tool.id ? null : tool.id)}
+            className="flex items-center gap-2.5 w-full px-3 py-2 text-[11px] hover:bg-[rgba(255,255,255,0.02)] transition-colors"
           >
-            <button
-              onClick={() =>
-                setExpandedId(expandedId === tool.id ? null : tool.id)
-              }
-              className="flex items-center gap-2 w-full text-xs"
-            >
-              <span className="text-blue-400">{tool.name}</span>
-              <span className="text-zinc-500">
-                {tool.status === 'running' ? '执行中...' : '完成'}
-              </span>
-            </button>
-            {expandedId === tool.id && (
-              <div className="mt-1 text-xs text-zinc-500 space-y-1">
-                {Object.keys(tool.args).length > 0 && (
-                  <pre className="bg-zinc-900/50 rounded p-1 overflow-x-auto text-zinc-600">
-                    {JSON.stringify(tool.args, null, 2)}
-                  </pre>
-                )}
-                {tool.result && (
-                  <pre className="bg-zinc-900/50 rounded p-1 overflow-x-auto text-zinc-400 max-h-32 overflow-y-auto">
-                    {tool.result}
-                  </pre>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
+            <IconZap size={10} className="text-[var(--accent)] shrink-0" />
+            <span className="font-medium text-[var(--text-light)]">{tool.name}</span>
+            <span className="ml-auto">{statusIcon(tool.status)}</span>
+            {expandedId !== tool.id ? <IconChevronRight size={9} className="text-[var(--text-muted)]" /> : <IconChevronDown size={9} className="text-[var(--text-muted)]" />}
+          </button>
+          {expandedId === tool.id && (
+            <div className="px-3 pb-2.5 space-y-1.5">
+              {Object.keys(tool.args).length > 0 && (
+                <pre className="bg-[var(--bg)] rounded-[var(--r-sm)] p-2 overflow-x-auto text-[10px] text-[var(--text-muted)] font-mono">
+                  {JSON.stringify(tool.args, null, 2)}
+                </pre>
+              )}
+              {tool.result && (
+                <pre className="bg-[var(--bg)] rounded-[var(--r-sm)] p-2 overflow-x-auto text-[11px] text-[var(--text-light)] font-mono max-h-36 overflow-y-auto">
+                  {tool.result}
+                </pre>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   )
 }

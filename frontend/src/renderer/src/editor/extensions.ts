@@ -53,7 +53,7 @@ export const FileBadge = Node.create({
       'span',
       {
         'data-file': HTMLAttributes.path,
-        class: 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-zinc-700 text-zinc-300 text-xs',
+        class: 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--bg-card)] text-[var(--t-secondary)] text-xs border border-[var(--b-subtle)]',
       },
       `📎 ${HTMLAttributes.name || HTMLAttributes.path}`,
     ]

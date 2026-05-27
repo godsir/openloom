@@ -38,7 +38,7 @@ export default function ContextMenu({
   return (
     <div
       ref={ref}
-      className="fixed z-50 min-w-[140px] bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl py-1"
+      className="fixed z-50 min-w-[150px] bg-[var(--bg)] border border-[var(--border-accent)] rounded-[var(--r-md)] shadow-xl py-1 animate-fade-in backdrop-blur-xl"
       style={{ left: x, top: y }}
     >
       {children}
@@ -58,10 +58,10 @@ export function ContextMenuItem({
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
+      className={`w-full text-left px-3.5 py-2 text-[13px] transition-colors-fast ${
         danger
-          ? 'text-red-400 hover:bg-red-900/20'
-          : 'text-zinc-300 hover:bg-zinc-700'
+          ? 'text-[var(--red)] hover:bg-[var(--red-light)]'
+          : 'text-[var(--text-light)] hover:bg-[rgba(0,227,199,0.04)] hover:text-[var(--text)]'
       }`}
     >
       {children}
@@ -70,5 +70,5 @@ export function ContextMenuItem({
 }
 
 export function ContextMenuDivider() {
-  return <div className="my-1 border-t border-zinc-700" />
+  return <div className="my-1 border-t border-[var(--border)]" />
 }

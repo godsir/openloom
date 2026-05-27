@@ -1,18 +1,9 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
+import { IconX } from '../../utils/icons'
 
-interface MediaViewerProps {
-  open: boolean
-  src: string
-  alt?: string
-  onClose: () => void
-}
+interface MediaViewerProps { open: boolean; src: string; alt?: string; onClose: () => void }
 
-export default function MediaViewer({
-  open,
-  src,
-  alt,
-  onClose,
-}: MediaViewerProps) {
+export default function MediaViewer({ open, src, alt, onClose }: MediaViewerProps) {
   const [scale, setScale] = useState(1)
 
   useEffect(() => {
@@ -33,13 +24,18 @@ export default function MediaViewer({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm"
       onClick={onClose}
     >
-      <div className="absolute top-3 right-3 flex gap-2 text-xs text-zinc-400">
-        <span className="px-2 py-1 bg-zinc-800/50 rounded">{Math.round(scale * 100)}%</span>
-        <button onClick={onClose} className="px-2 py-1 bg-zinc-800/50 rounded hover:bg-zinc-700">
-          × 关闭
+      <div className="absolute top-4 right-4 flex items-center gap-2 text-xs">
+        <span className="px-2.5 py-1 bg-[var(--bg-card)]/80 rounded-[var(--r-sm)] text-[var(--text-light)] font-mono backdrop-blur-sm">
+          {Math.round(scale * 100)}%
+        </span>
+        <button
+          onClick={onClose}
+          className="flex items-center gap-1 px-2.5 py-1 bg-[var(--bg-card)]/80 rounded-[var(--r-sm)] text-[var(--text-light)] hover:text-[var(--text)] transition-colors-fast backdrop-blur-sm"
+        >
+          <IconX size={12} /> 关闭
         </button>
       </div>
 
@@ -48,7 +44,7 @@ export default function MediaViewer({
         alt={alt || ''}
         onClick={(e) => e.stopPropagation()}
         style={{ transform: `scale(${scale})`, maxWidth: '90vw', maxHeight: '90vh', objectFit: 'contain' }}
-        className="transition-transform duration-200 cursor-zoom-in rounded"
+        className="transition-transform duration-200 rounded-[var(--r-sm)]"
         draggable={false}
       />
     </div>

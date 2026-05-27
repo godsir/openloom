@@ -3,6 +3,7 @@ import { useStore } from '../../stores'
 import Overlay from './Overlay'
 import Button from './Button'
 import AgentConfigPanel from './AgentConfigPanel'
+import ModelConfigPanel from './ModelConfigPanel'
 import { type ThemeId } from '../../stores/ui'
 
 const THEMES: { id: ThemeId; label: string }[] = [
@@ -12,7 +13,7 @@ const THEMES: { id: ThemeId; label: string }[] = [
   { id: 'warm-paper', label: '暖纸' },
 ]
 
-type Tab = 'appearance' | 'agent' | 'about'
+type Tab = 'appearance' | 'agent' | 'models' | 'about'
 
 export default function SettingsModal({
   open,
@@ -29,22 +30,22 @@ export default function SettingsModal({
   const tabs: { id: Tab; label: string }[] = [
     { id: 'appearance', label: '外观' },
     { id: 'agent', label: 'Agent' },
+    { id: 'models', label: '模型' },
     { id: 'about', label: '关于' },
   ]
 
   return (
     <Overlay open={open} onClose={onClose} title="设置">
-      <div className="flex gap-4">
-        {/* Tab nav */}
-        <div className="w-24 shrink-0 space-y-0.5">
+      <div className="flex gap-5">
+        <div className="w-20 shrink-0 space-y-0.5">
           {tabs.map((t) => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`w-full text-left px-3 py-1.5 text-sm rounded-md transition-colors ${
+              className={`w-full text-left px-3 py-1.5 text-[13px] rounded-[var(--r-sm)] transition-colors-fast ${
                 tab === t.id
-                  ? 'bg-zinc-700 text-zinc-100'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
+                  ? 'bg-[var(--accent-light)] text-[var(--accent)]'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-card)]'
               }`}
             >
               {t.label}
@@ -52,11 +53,10 @@ export default function SettingsModal({
           ))}
         </div>
 
-        {/* Tab content */}
         <div className="flex-1 min-w-0">
           {tab === 'appearance' && (
             <div className="space-y-4">
-              <h3 className="text-sm font-semibold text-zinc-200">主题</h3>
+              <h3 className="text-sm font-semibold text-[var(--text)]">主题</h3>
               <div className="flex gap-2 flex-wrap">
                 {THEMES.map((t) => (
                   <Button
@@ -74,25 +74,27 @@ export default function SettingsModal({
 
           {tab === 'agent' && <AgentConfigPanel />}
 
+          {tab === 'models' && <ModelConfigPanel />}
+
           {tab === 'about' && (
-            <div className="space-y-2 text-sm text-zinc-400">
+            <div className="space-y-2.5 text-[13px] text-[var(--text-muted)]">
               <p>
-                <span className="text-zinc-500">版本</span>{' '}
-                <span className="text-zinc-300">openLoom v0.2.0</span>
+                <span className="text-[var(--text-muted)]">版本</span>{' '}
+                <span className="font-mono text-[var(--text-light)]">openLoom v0.2.0</span>
               </p>
               <p>
-                <span className="text-zinc-500">连接状态</span>{' '}
+                <span className="text-[var(--text-muted)]">连接状态</span>{' '}
                 <span
-                  className={
+                  className={`font-mono ${
                     wsState === 'connected'
-                      ? 'text-green-400'
-                      : 'text-yellow-400'
-                  }
+                      ? 'text-[var(--green)]'
+                      : 'text-[var(--amber)]'
+                  }`}
                 >
                   {wsState === 'connected' ? '已连接' : wsState}
                 </span>
               </p>
-              <p className="text-xs text-zinc-600 mt-4">
+              <p className="text-xs text-[var(--text-muted)] mt-4 leading-relaxed">
                 本地优先的私人 AI 助理。所有数据存储在本地。
               </p>
             </div>
