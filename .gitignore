@@ -23,8 +23,6 @@ Thumbs.db
 .superpower/
 .superpowers/
 
-# Temp
-tempopencode/
 
 # Logs
 *.log

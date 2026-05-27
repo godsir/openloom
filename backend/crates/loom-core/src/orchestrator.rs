@@ -11,10 +11,10 @@ use lume_lsp::LspClient;
 use loom_memory::{ExtractedEntity, ExtractedRelationship, LLM_EXTRACTION_PROMPT, parse_llm_extraction};
 use tokio::sync::{mpsc, RwLock};
 
-use crate::agent_loop::{run_agent_turn, run_agent_turn_streaming, AgentLoopConfig, TurnResult};
+use crate::agent_loop::{run_agent_turn_streaming, AgentLoopConfig, TurnResult};
 use crate::agent_pool::{AgentPool, AgentSummary};
 use crate::agent::AgentStatus;
-use crate::event_bus::EventBus;
+use crate::event_bus::{AgentEvent, EventBus};
 use crate::tool_registry::{AgentTool, SpawnAgentTool, SpawnContext, ToolRegistry};
 
 /// The central orchestrator for openLoom v2.
@@ -519,7 +519,7 @@ impl Orchestrator {
             system_prompt.push_str(&format!("\n\n## Agent Persona\n{}", agent_config.persona));
         }
 
-        // Inject knowledge graph context: always include USER, plus entities from message
+        // Inject knowledge graph context
         {
             let mem_guard = self.memory_store.read().await;
             if let Some(ref store) = *mem_guard {
@@ -543,37 +543,105 @@ impl Orchestrator {
             ..Default::default()
         };
 
-        // Prepare data for the spawned agent task
         let history = self.session_history(session_id).await;
-        let cloud = self.cloud_client.clone();
-        let registry = self.tool_registry.clone();
-        let allowed = agent_config.allowed_tools.clone();
-        let disallowed = agent_config.disallowed_tools.clone();
         let user_msg = user_message.to_string();
+        let sid = session_id.to_string();
 
         // Transition: Idle → Thinking
         let _ = self.pool.transition(&agent_id, AgentStatus::Thinking, Some("processing".into())).await;
 
-        // Spawn agent turn as a tokio task
-        let handle = tokio::spawn(async move {
+        // Create streaming channel and forward deltas to event bus
+        let (delta_tx, mut delta_rx) = tokio::sync::mpsc::channel::<StreamDelta>(256);
+        let event_bus = self.pool.event_bus().clone();
+        let forward_agent_id = agent_id.clone();
+        let forward_session_id = sid.clone();
+
+        let forward_handle = tokio::spawn(async move {
+            let mut full_text = String::new();
+            let mut started_tools: Vec<(String, String)> = Vec::new();
+            while let Some(delta) = delta_rx.recv().await {
+                match delta {
+                    StreamDelta::Text(t) => {
+                        full_text.push_str(&t);
+                        let _ = event_bus.publish(AgentEvent::StreamDelta {
+                            agent_id: forward_agent_id.clone(),
+                            session_id: forward_session_id.clone(),
+                            delta: t,
+                        });
+                    }
+                    StreamDelta::Reasoning(t) => {
+                        let _ = event_bus.publish(AgentEvent::StreamDelta {
+                            agent_id: forward_agent_id.clone(),
+                            session_id: forward_session_id.clone(),
+                            delta: format!("\x02REASONING\x02{}", t),
+                        });
+                    }
+                    StreamDelta::ToolCallBegin { index: _, id, name } => {
+                        started_tools.push((id.clone(), name.clone()));
+                        let _ = event_bus.publish(AgentEvent::ToolStarted {
+                            agent_id: forward_agent_id.clone(),
+                            call_id: id.clone(),
+                            tool_name: name.clone(),
+                        });
+                    }
+                    StreamDelta::ToolCallArgsChunk { .. } => {}
+                    StreamDelta::Usage { prompt_tokens, completion_tokens, .. } => {
+                        let _ = event_bus.publish(AgentEvent::TokenUsage {
+                            agent_id: forward_agent_id.clone(),
+                            session_id: forward_session_id.clone(),
+                            model: String::new(),
+                            prompt_tokens: prompt_tokens as usize,
+                            completion_tokens: completion_tokens as usize,
+                        });
+                    }
+                }
+            }
+            // Emit ToolCompleted for all started tools
+            for (call_id, tool_name) in &started_tools {
+                let _ = event_bus.publish(AgentEvent::ToolCompleted {
+                    agent_id: forward_agent_id.clone(),
+                    call_id: call_id.clone(),
+                    tool_name: tool_name.clone(),
+                    success: true,
+                });
+            }
+            // Send StreamEnd when channel closes
+            let _ = event_bus.publish(AgentEvent::StreamEnd {
+                agent_id: forward_agent_id.clone(),
+                session_id: forward_session_id.clone(),
+                full_response: full_text,
+            });
+        });
+
+        // Run the agent turn with streaming
+        let cloud = self.cloud_client.clone();
+        let registry = self.tool_registry.clone();
+        let allowed = agent_config.allowed_tools.clone();
+        let disallowed = agent_config.disallowed_tools.clone();
+
+        let result = {
             let guard = cloud.read().await;
             let client = match guard.as_ref() {
                 Some(c) => c,
                 None => return Err(anyhow::anyhow!("No cloud client configured")),
             };
             let reg = registry.read().await;
-            run_agent_turn(
+            run_agent_turn_streaming(
                 client.as_ref(),
                 &reg,
                 &history,
                 &user_msg,
                 &loop_config,
+                delta_tx,
                 &allowed,
                 &disallowed,
             ).await
-        });
+        };
 
-        let result = handle.await.map_err(|e| anyhow::anyhow!("Agent task panicked: {}", e)).and_then(|r| r);
+        // Wait for forwarder to finish flushing
+        drop(cloud);
+        drop(registry);
+        let _ = forward_handle.await;
 
         if let Ok(ref turn) = result {
             let _ = self.pool.transition(&agent_id, AgentStatus::Completed, None).await;

@@ -70,6 +70,7 @@ pub enum AgentEvent {
 
 /// A lightweight event bus using tokio broadcast.
 /// Multiple observers can subscribe to agent events concurrently.
+#[derive(Debug, Clone)]
 pub struct EventBus {
     tx: tokio::sync::broadcast::Sender<AgentEvent>,
 }

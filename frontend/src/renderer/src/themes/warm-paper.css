@@ -1,0 +1,20 @@
+[data-theme="warm-paper"] {
+  --color-bg: #fef3c7;
+  --color-surface: #fde68a;
+  --color-border: #d4a574;
+  --color-text: #3e2723;
+  --color-text-muted: #795548;
+}
+
+[data-theme="warm-paper"] .bg-zinc-950 { background-color: #fef3c7; }
+[data-theme="warm-paper"] .bg-zinc-900 { background-color: #fef3c7; }
+[data-theme="warm-paper"] .bg-zinc-800 { background-color: #fde68a; }
+[data-theme="warm-paper"] .bg-zinc-700 { background-color: #fcd34d; }
+[data-theme="warm-paper"] .text-zinc-200 { color: #3e2723; }
+[data-theme="warm-paper"] .text-zinc-300 { color: #4e342e; }
+[data-theme="warm-paper"] .text-zinc-400 { color: #6d4c41; }
+[data-theme="warm-paper"] .text-zinc-500 { color: #795548; }
+[data-theme="warm-paper"] .text-zinc-600 { color: #8d6e63; }
+[data-theme="warm-paper"] .text-white { color: #3e2723; }
+[data-theme="warm-paper"] .border-zinc-800 { border-color: #d4a574; }
+[data-theme="warm-paper"] .hover\:bg-zinc-800:hover { background-color: #fcd34d; }

@@ -1,0 +1,35 @@
+import { create } from 'zustand'
+import { createConnectionSlice, ConnectionSlice } from './connection'
+import { createUiSlice, UiSlice } from './ui'
+import { createModelSlice, ModelSlice } from './model'
+import { createAgentSlice, AgentSlice } from './agent'
+import { createSessionSlice, SessionSlice } from './session'
+import { createChatSlice, ChatSlice } from './chat'
+import { createStreamingSlice, StreamingSlice } from './streaming'
+import { createInputSlice, InputSlice } from './input'
+import { createSelectionSlice, SelectionSlice } from './selection'
+import { createToastSlice, ToastSlice } from './toast'
+
+export type AppStore = ConnectionSlice &
+  UiSlice &
+  ModelSlice &
+  AgentSlice &
+  SessionSlice &
+  ChatSlice &
+  StreamingSlice &
+  InputSlice &
+  SelectionSlice &
+  ToastSlice
+
+export const useStore = create<AppStore>()((...a) => ({
+  ...createConnectionSlice(...a),
+  ...createUiSlice(...a),
+  ...createModelSlice(...a),
+  ...createAgentSlice(...a),
+  ...createSessionSlice(...a),
+  ...createChatSlice(...a),
+  ...createStreamingSlice(...a),
+  ...createInputSlice(...a),
+  ...createSelectionSlice(...a),
+  ...createToastSlice(...a),
+}))
