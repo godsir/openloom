@@ -456,11 +456,12 @@ impl<'a> ModelConfigStore<'a> {
     }
 
     pub fn upsert(&self, config: &loom_types::ModelConfig) -> Result<()> {
+        let caps_json = serde_json::to_string(&config.capabilities).unwrap_or_default();
         self.conn.execute(
             "INSERT OR REPLACE INTO model_configs
              (name, model, model_type, backend, base_url, api_key_env,
-              context_size, max_output_tokens, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now'))",
+              context_size, max_output_tokens, backend_label, capabilities, api_format, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, datetime('now'))",
             params![
                 config.name,
                 config.model,
@@ -474,6 +475,9 @@ impl<'a> ModelConfigStore<'a> {
                 config.api_key_env,
                 config.context_size as i64,
                 config.max_output_tokens.map(|v| v as i64),
+                config.backend_label,
+                caps_json,
+                config.api_format,
             ],
         )?;
         Ok(())
@@ -482,13 +486,15 @@ impl<'a> ModelConfigStore<'a> {
     pub fn get(&self, name: &str) -> Result<Option<loom_types::ModelConfig>> {
         let mut stmt = self.conn.prepare(
             "SELECT name, model, model_type, backend, base_url, api_key_env,
-                    context_size, max_output_tokens, is_active
+                    context_size, max_output_tokens, is_active, backend_label, capabilities, api_format
              FROM model_configs WHERE name = ?1",
         )?;
         let row = stmt
             .query_row(params![name], |row| {
                 let model_type_str: String = row.get::<_, String>(2).unwrap_or_default();
                 let backend_str: String = row.get::<_, String>(3).unwrap_or_default();
+                let caps_str: String = row.get::<_, String>(10).unwrap_or_default();
+                let caps = serde_json::from_str(&caps_str).unwrap_or_default();
                 Ok(loom_types::ModelConfig {
                     name: row.get(0)?,
                     model: row.get(1)?,
@@ -506,6 +512,9 @@ impl<'a> ModelConfigStore<'a> {
                         .map(|v| v as usize),
                     path: None,
                     n_gpu_layers: 0,
+                    backend_label: row.get(9).ok().flatten(),
+                    capabilities: caps,
+                    api_format: row.get(11).ok().flatten(),
                 })
             })
             .ok();
@@ -515,18 +524,21 @@ impl<'a> ModelConfigStore<'a> {
     pub fn list(&self) -> Result<Vec<loom_types::ModelConfig>> {
         let mut stmt = self.conn.prepare(
             "SELECT name, model, model_type, backend, base_url, api_key_env,
-                    context_size, max_output_tokens, is_active
+                    context_size, max_output_tokens, is_active, backend_label, capabilities, api_format
              FROM model_configs ORDER BY name",
         )?;
         let rows = stmt.query_map([], |row| {
             let model_type_str: String = row.get::<_, String>(2).unwrap_or_default();
             let backend_str: String = row.get::<_, String>(3).unwrap_or_default();
+            let caps_str: String = row.get::<_, String>(10).unwrap_or_default();
+            let caps = serde_json::from_str(&caps_str).unwrap_or_default();
             Ok(loom_types::ModelConfig {
                 name: row.get(0)?,
                 model: row.get(1)?,
                 model_type: serde_json::from_str(&format!("\"{}\"", model_type_str))
                     .unwrap_or_default(),
                 backend: serde_json::from_str(&format!("\"{}\"", backend_str)).unwrap_or_default(),
+                backend_label: row.get(9).ok().flatten(),
                 base_url: row.get(4)?,
                 api_key_env: row.get(5)?,
                 context_size: row.get::<_, i64>(6).unwrap_or(4096) as usize,
@@ -537,6 +549,8 @@ impl<'a> ModelConfigStore<'a> {
                     .map(|v| v as usize),
                 path: None,
                 n_gpu_layers: 0,
+                capabilities: caps,
+                api_format: row.get(11).ok().flatten(),
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -561,13 +575,15 @@ impl<'a> ModelConfigStore<'a> {
     pub fn get_active(&self) -> Result<Option<loom_types::ModelConfig>> {
         let mut stmt = self.conn.prepare(
             "SELECT name, model, model_type, backend, base_url, api_key_env,
-                    context_size, max_output_tokens, is_active
+                    context_size, max_output_tokens, is_active, backend_label, capabilities, api_format
              FROM model_configs WHERE is_active = 1 LIMIT 1",
         )?;
         let row = stmt
             .query_row([], |row| {
                 let model_type_str: String = row.get::<_, String>(2).unwrap_or_default();
                 let backend_str: String = row.get::<_, String>(3).unwrap_or_default();
+                let caps_str: String = row.get::<_, String>(10).unwrap_or_default();
+                let caps = serde_json::from_str(&caps_str).unwrap_or_default();
                 Ok(loom_types::ModelConfig {
                     name: row.get(0)?,
                     model: row.get(1)?,
@@ -585,6 +601,9 @@ impl<'a> ModelConfigStore<'a> {
                         .map(|v| v as usize),
                     path: None,
                     n_gpu_layers: 0,
+                    backend_label: row.get(9).ok().flatten(),
+                    capabilities: caps,
+                    api_format: row.get(11).ok().flatten(),
                 })
             })
             .ok();

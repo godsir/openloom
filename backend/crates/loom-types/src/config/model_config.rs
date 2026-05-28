@@ -15,6 +15,7 @@ pub enum ModelBackend {
     OpenAI,
     DeepSeek,
     Ollama,
+    Custom,
 }
 
 impl ModelBackend {
@@ -25,6 +26,7 @@ impl ModelBackend {
             ModelBackend::OpenAI => "OpenAI",
             ModelBackend::DeepSeek => "DeepSeek",
             ModelBackend::Ollama => "Ollama",
+            ModelBackend::Custom => "Custom",
         }
     }
 
@@ -56,6 +58,8 @@ pub struct ModelConfig {
     pub model_type: ModelType,
     #[serde(default)]
     pub backend: ModelBackend,
+    #[serde(default)]
+    pub backend_label: Option<String>,
     pub path: Option<String>,
     #[serde(default = "default_context_size")]
     pub context_size: usize,
@@ -66,6 +70,21 @@ pub struct ModelConfig {
     pub api_key_env: Option<String>,
     #[serde(default)]
     pub base_url: Option<String>,
+    #[serde(default)]
+    pub capabilities: ModelCapabilities,
+    #[serde(default)]
+    pub api_format: Option<String>,
+}
+
+/// Model capability flags.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModelCapabilities {
+    #[serde(default)]
+    pub vision: bool,
+    #[serde(default)]
+    pub reasoning: bool,
+    #[serde(default)]
+    pub function_calling: bool,
 }
 
 fn default_context_size() -> usize {
@@ -85,12 +104,15 @@ impl Default for ModelConfig {
             model: None,
             model_type: ModelType::Router,
             backend: ModelBackend::default(),
+            backend_label: None,
             path: None,
             context_size: default_context_size(),
             max_output_tokens: None,
             n_gpu_layers: 0,
             api_key_env: None,
             base_url: None,
+            capabilities: ModelCapabilities::default(),
+            api_format: None,
         }
     }
 }

@@ -40,7 +40,7 @@ impl AgentPool {
     ) -> Self {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
-            event_bus: EventBus::new(256),
+            event_bus: EventBus::new(65536),
             max_depth,
         }
     }

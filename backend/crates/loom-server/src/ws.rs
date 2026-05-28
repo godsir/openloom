@@ -8,6 +8,7 @@ use crate::dispatch;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
 use axum::response::IntoResponse;
+use futures::{SinkExt, StreamExt};
 use loom_core::AgentEvent;
 use loom_types::{JsonRpcRequest, JsonRpcResponse};
 use tokio::sync::broadcast;
@@ -19,32 +20,55 @@ pub async fn ws_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
+async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     tracing::info!("WebSocket connected");
 
     let mut event_rx = state.orchestrator.event_bus().subscribe();
+    let (mut ws_tx, mut ws_rx) = socket.split();
+
+    // Channel for sending responses back through the WebSocket
+    let (resp_tx, mut resp_rx) = tokio::sync::mpsc::channel::<String>(64);
 
     loop {
         tokio::select! {
             // Incoming client messages
-            msg = socket.recv() => {
+            msg = ws_rx.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<JsonRpcRequest>(&text) {
                             Ok(req) => {
-                                let response = dispatch::dispatch_method(&state, &req).await;
-                                let resp = JsonRpcResponse {
-                                    jsonrpc: "2.0".into(),
-                                    result: response.as_ref().ok().cloned(),
-                                    error: response.as_ref().err().cloned(),
-                                    id: req.id,
-                                };
-                                if let Ok(json) = serde_json::to_string(&resp) {
-                                    let _ = socket.send(Message::Text(json)).await;
+                                if req.method == "chat.send" {
+                                    // Long-running: spawn in background so other RPCs aren't blocked
+                                    let st = state.clone();
+                                    let tx = resp_tx.clone();
+                                    tokio::spawn(async move {
+                                        let response = dispatch::dispatch_method(&st, &req).await;
+                                        let resp = JsonRpcResponse {
+                                            jsonrpc: "2.0".into(),
+                                            result: response.as_ref().ok().cloned(),
+                                            error: response.as_ref().err().cloned(),
+                                            id: req.id,
+                                        };
+                                        if let Ok(json) = serde_json::to_string(&resp) {
+                                            let _ = tx.send(json).await;
+                                        }
+                                    });
+                                } else {
+                                    // Short RPCs: dispatch inline
+                                    let response = dispatch::dispatch_method(&state, &req).await;
+                                    let resp = JsonRpcResponse {
+                                        jsonrpc: "2.0".into(),
+                                        result: response.as_ref().ok().cloned(),
+                                        error: response.as_ref().err().cloned(),
+                                        id: req.id,
+                                    };
+                                    if let Ok(json) = serde_json::to_string(&resp) {
+                                        let _ = ws_tx.send(Message::Text(json)).await;
+                                    }
                                 }
                             }
                             Err(_) => {
-                                let _ = socket.send(Message::Text(
+                                let _ = ws_tx.send(Message::Text(
                                     r#"{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":0}"#.into()
                                 )).await;
                             }
@@ -58,22 +82,26 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                     _ => {} // ignore binary/ping/pong
                 }
             }
+            // Responses from background tasks (chat.send)
+            Some(json) = resp_rx.recv() => {
+                let _ = ws_tx.send(Message::Text(json)).await;
+            }
             // Outgoing server events: forward AgentEvents as WS notifications
             event = event_rx.recv() => {
                 match event {
                     Ok(ref e) => {
                         let method = agent_event_method(e);
+                        let params = agent_event_params(e);
                         if let Ok(json) = serde_json::to_string(&serde_json::json!({
                             "jsonrpc": "2.0",
                             "method": method,
-                            "params": e,
+                            "params": params,
                         })) {
-                            let _ = socket.send(Message::Text(json)).await;
+                            let _ = ws_tx.send(Message::Text(json)).await;
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!(skipped = n, "WS event lag");
-                        // Resubscribe to reset the receiver
                         event_rx = state.orchestrator.event_bus().subscribe();
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
@@ -96,5 +124,27 @@ fn agent_event_method(event: &AgentEvent) -> &'static str {
         AgentEvent::StreamDelta { .. } => "chat.stream_delta",
         AgentEvent::StreamEnd { .. } => "chat.stream_end",
         AgentEvent::TokenUsage { .. } => "chat.token_usage",
+    }
+}
+
+fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
+    use serde_json::json;
+    match event {
+        AgentEvent::StreamDelta { agent_id: _, session_id, delta } => {
+            json!({ "session_id": session_id, "delta": delta })
+        }
+        AgentEvent::StreamEnd { agent_id: _, session_id, full_response: _ } => {
+            json!({ "session_id": session_id })
+        }
+        AgentEvent::ToolStarted { agent_id: _, call_id, tool_name } => {
+            json!({ "id": call_id, "name": tool_name })
+        }
+        AgentEvent::ToolCompleted { agent_id: _, call_id, tool_name, success: _ } => {
+            json!({ "id": call_id, "name": tool_name })
+        }
+        AgentEvent::TokenUsage { agent_id: _, session_id, model: _, prompt_tokens, completion_tokens } => {
+            json!({ "session_id": session_id, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens })
+        }
+        _ => json!({}),
     }
 }

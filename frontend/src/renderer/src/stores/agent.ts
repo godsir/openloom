@@ -1,9 +1,11 @@
 import { StateCreator } from 'zustand'
 
 export interface AgentSummary {
-  id: string
+  id?: string
   name: string
-  status: string
+  status?: string
+  persona?: string
+  model?: string
 }
 
 export interface AgentSlice {

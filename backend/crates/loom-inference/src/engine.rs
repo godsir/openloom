@@ -38,20 +38,42 @@ impl InferenceEngine {
         let base = base_url.trim_end_matches('/').to_string();
         let http = HttpClient::new();
 
-        // Trigger model load via LM Studio API (non-fatal if it fails)
-        let load_url = base.trim_end_matches("/v1");
-        match http
-            .post(format!("{}/api/v1/models/load", load_url))
-            .json(&serde_json::json!({"model": model}))
-            .timeout(std::time::Duration::from_secs(10))
+        // Check if the model is already loaded before triggering a redundant load
+        let already_loaded = match http
+            .get(format!("{}/models", base))
+            .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
         {
-            Ok(resp) if resp.status().is_success() => {
-                tracing::info!(%model, "model loaded via LM Studio API");
-            }
-            _ => {
-                tracing::debug!(%model, "model load API skipped (non-LM-Studio or already loaded)");
+            Ok(resp) => match resp.json::<serde_json::Value>().await {
+                Ok(v) => v
+                    .get("data")
+                    .and_then(|d| d.as_array())
+                    .map(|a| a.iter().any(|m| m.get("id").and_then(|id| id.as_str()) == Some(model)))
+                    .unwrap_or(false),
+                Err(_) => false,
+            },
+            Err(_) => false,
+        };
+
+        if already_loaded {
+            tracing::info!(%model, "model already loaded, skipping load API");
+        } else {
+            // Trigger model load via LM Studio API (non-fatal if it fails)
+            let load_url = base.trim_end_matches("/v1");
+            match http
+                .post(format!("{}/api/v1/models/load", load_url))
+                .json(&serde_json::json!({"model": model}))
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    tracing::info!(%model, "model loaded via LM Studio API");
+                }
+                _ => {
+                    tracing::debug!(%model, "model load API skipped (non-LM-Studio or load failed)");
+                }
             }
         }
 
@@ -220,9 +242,9 @@ impl InferenceEngine {
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
             buf.extend_from_slice(&chunk);
-            while let Some(pos) = buf.windows(2).position(|w| w == b"\n\n") {
+            while let Some((pos, skip)) = find_sse_boundary(&buf) {
                 let frame_bytes = buf[..pos].to_vec();
-                buf.drain(..pos + 2);
+                buf.drain(..pos + skip);
                 let frame = String::from_utf8_lossy(&frame_bytes);
                 for line in frame.lines() {
                     if let Some(data) = line.strip_prefix("data: ") {
@@ -305,6 +327,42 @@ impl InferenceEngine {
     }
 }
 
+/// Send an unload request to a local inference endpoint (non-fatal).
+///
+/// Used when switching between LM Studio / Ollama models to avoid
+/// piling up multiple models in VRAM.
+pub async fn unload_local_model(base_url: &str, model: &str) {
+    let base = base_url.trim_end_matches("/v1");
+    let url = format!("{}/api/v1/models/unload", base);
+    match HttpClient::new()
+        .post(&url)
+        .json(&serde_json::json!({"model": model}))
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            tracing::info!(%model, "model unloaded");
+        }
+        _ => {
+            tracing::debug!(%model, "model unload skipped (non-LM-Studio or already unloaded)");
+        }
+    }
+}
+
+/// Find SSE frame boundary: "\n\n" (Linux/macOS) or "\r\n\r\n" (Windows/LM Studio default).
+/// Returns (position, skip_bytes).
+fn find_sse_boundary(buf: &[u8]) -> Option<(usize, usize)> {
+    buf.windows(2)
+        .position(|w| w == b"\n\n")
+        .map(|pos| (pos, 2))
+        .or_else(|| {
+            buf.windows(4)
+                .position(|w| w == b"\r\n\r\n")
+                .map(|pos| (pos, 4))
+        })
+}
+
 // ── CloudClient impl ────────────────────────────────────────────────
 
 #[async_trait]
@@ -370,9 +428,9 @@ impl CloudClient for InferenceEngine {
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
             buf.extend_from_slice(&chunk);
-            while let Some(pos) = buf.windows(2).position(|w| w == b"\n\n") {
+            while let Some((pos, skip)) = find_sse_boundary(&buf) {
                 let frame_bytes = buf[..pos].to_vec();
-                buf.drain(..pos + 2);
+                buf.drain(..pos + skip);
                 let frame = String::from_utf8_lossy(&frame_bytes);
                 for line in frame.lines() {
                     if let Some(data) = line.strip_prefix("data: ") {

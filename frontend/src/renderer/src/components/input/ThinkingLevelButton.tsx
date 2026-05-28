@@ -1,4 +1,5 @@
 import { useStore } from '../../stores'
+import { IconLightbulb } from '../../utils/icons'
 import type { ThinkingLevel } from '../../stores/model'
 
 const LEVELS: { id: ThinkingLevel; label: string }[] = [
@@ -22,7 +23,7 @@ export default function ThinkingLevelButton() {
       }}
       className="pill-neutral"
     >
-      think: {label}
+      <IconLightbulb size={12} /> {label}
     </button>
   )
 }

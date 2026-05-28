@@ -7,6 +7,8 @@ description = "HTTP/WebSocket server for openLoom v2 — Axum routes, JSON-RPC d
 [dependencies]
 loom-types = { path = "../loom-types" }
 loom-core = { path = "../loom-core" }
+lume-mcp = { path = "../lume-mcp" }
+lume-skills = { path = "../lume-skills" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 anyhow = "1"
 tracing = "0.1"
@@ -18,3 +20,5 @@ axum = { version = "0.7", features = ["ws"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors"] }
 futures = "0.3"
+reqwest = { version = "0.12", features = ["json"] }
+dirs = "6"

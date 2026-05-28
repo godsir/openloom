@@ -9,6 +9,7 @@ import { createStreamingSlice, StreamingSlice } from './streaming'
 import { createInputSlice, InputSlice } from './input'
 import { createSelectionSlice, SelectionSlice } from './selection'
 import { createToastSlice, ToastSlice } from './toast'
+import { createConfirmSlice, ConfirmSlice } from './confirm'
 
 export type AppStore = ConnectionSlice &
   UiSlice &
@@ -19,7 +20,8 @@ export type AppStore = ConnectionSlice &
   StreamingSlice &
   InputSlice &
   SelectionSlice &
-  ToastSlice
+  ToastSlice &
+  ConfirmSlice
 
 export const useStore = create<AppStore>()((...a) => ({
   ...createConnectionSlice(...a),
@@ -32,4 +34,5 @@ export const useStore = create<AppStore>()((...a) => ({
   ...createInputSlice(...a),
   ...createSelectionSlice(...a),
   ...createToastSlice(...a),
+  ...createConfirmSlice(...a),
 }))

@@ -1,6 +1,7 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
+import Select from '../shared/Select'
 import type { ModelListItem } from '../../types/bindings'
 
 export default function ModelSelector() {
@@ -12,31 +13,29 @@ export default function ModelSelector() {
     loomRpc<{ models: ModelListItem[]; activeModel: string | null }>('model.list')
       .then((result) => {
         if (result.models?.length) {
-          setModels(result.models.map((m) => m.model || m.name).filter(Boolean))
+          setModels(result.models.map((m) => m.name).filter(Boolean))
           if (result.activeModel) {
-            const a = result.models.find((m) => m.name === result.activeModel)
-            if (a?.model) setCurrentModel(a.model)
+            setCurrentModel(result.activeModel)
           }
           if (!currentModel && result.models.length && !result.activeModel) {
-            setCurrentModel(result.models[0].model || result.models[0].name)
+            setCurrentModel(result.models[0].name)
           }
         }
       })
       .catch(() => {})
   }, [])
 
-  const displayModel = currentModel || 'deepseek-v4-flash'
+  const options = useMemo(() => models.map((m) => ({ value: m, label: m })), [models])
 
   return (
-    <select
-      value={currentModel || undefined}
-      onChange={(e) => {
-        setCurrentModel(e.target.value)
-        loomRpc('model.switch', { model: e.target.value }).catch(() => {})
+    <Select
+      value={currentModel}
+      options={options}
+      onChange={(v) => {
+        setCurrentModel(v)
+        loomRpc('model.switch', { model: v }).catch(() => {})
       }}
-      className="bg-transparent text-[11px] text-[rgba(0,227,199,0.3)] hover:text-[rgba(0,227,199,0.5)] outline-none border-0 cursor-pointer transition-colors appearance-none"
-    >
-      {models.map((m) => <option key={m} value={m}>{m}</option>)}
-    </select>
+      variant="pill"
+    />
   )
 }

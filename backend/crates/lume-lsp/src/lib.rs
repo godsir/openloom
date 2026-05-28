@@ -552,6 +552,115 @@ impl LspClient {
         }
         Ok(())
     }
+
+    pub fn supported_languages(&self) -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("rust", "rust-analyzer"),
+            ("typescript", "typescript-language-server"),
+            ("javascript", "typescript-language-server"),
+            ("python", "pylsp"),
+            ("go", "gopls"),
+            ("c", "clangd"),
+            ("cpp", "clangd"),
+            ("java", "jdtls"),
+            ("csharp", "omnisharp"),
+            ("swift", "sourcekit-lsp"),
+            ("kotlin", "kotlin-language-server"),
+            ("scala", "metals"),
+            ("ruby", "solargraph"),
+            ("lua", "lua-language-server"),
+            ("zig", "zls"),
+            ("haskell", "haskell-language-server-wrapper"),
+            ("dart", "dart"),
+            ("vue", "vue-language-server"),
+            ("svelte", "svelteserver"),
+            ("html", "vscode-html-language-server"),
+            ("css", "vscode-css-language-server"),
+            ("json", "vscode-json-language-server"),
+            ("yaml", "yaml-language-server"),
+            ("toml", "taplo"),
+            ("markdown", "marksman"),
+            ("bash", "bash-language-server"),
+            ("dockerfile", "docker-langserver"),
+        ]
+    }
+
+    pub async fn start_custom(&self, language: &str, command: &str, args: &[String]) -> Result<()> {
+        if self.servers.read().await.contains_key(language) {
+            return Ok(());
+        }
+
+        let mut servers = self.servers.write().await;
+        if servers.contains_key(language) {
+            return Ok(());
+        }
+
+        let root_uri = "file:///".to_string();
+
+        let mut cmd = Command::new(command);
+        cmd.args(args);
+        cmd.stdin(std::process::Stdio::piped());
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        cmd.kill_on_drop(true);
+
+        let mut process = cmd.spawn().with_context(|| {
+            format!("Failed to spawn '{}'", command)
+        })?;
+
+        if let Some(stderr) = process.stderr.take() {
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stderr);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match reader.read_line(&mut line).await {
+                        Ok(0) | Err(_) => break,
+                        _ => tracing::debug!(target: "lsp_stderr", "{}", line.trim_end()),
+                    }
+                }
+            });
+        }
+
+        let stdin = BufWriter::new(
+            process.stdin.take().ok_or_else(|| anyhow!("stdin unavailable"))?,
+        );
+        let stdout = BufReader::new(
+            process.stdout.take().ok_or_else(|| anyhow!("stdout unavailable"))?,
+        );
+        let conn = Box::new(LspConnection::new(process));
+
+        let entry = Arc::new(ServerEntry {
+            conn,
+            stdin: tokio::sync::Mutex::new(stdin),
+            stdout: tokio::sync::Mutex::new(stdout),
+            language_id: language.to_string(),
+            doc_version: AtomicU64::new(1),
+        });
+
+        let _result = entry
+            .request(
+                "initialize",
+                &serde_json::json!({
+                    "processId": std::process::id(),
+                    "rootUri": root_uri,
+                    "capabilities": {
+                        "textDocument": {
+                            "completion": { "completionItem": { "snippetSupport": false } },
+                            "hover": { "contentFormat": ["markdown", "plaintext"] }
+                        }
+                    },
+                    "clientInfo": { "name": "openLoom", "version": "0.2.0" }
+                }),
+            )
+            .await?;
+
+        entry.notify("initialized", &serde_json::json!({})).await?;
+        tracing::info!(language = language, command = command, "custom LSP started");
+
+        servers.insert(language.to_string(), entry);
+        Ok(())
+    }
 }
 
 impl Default for LspClient {

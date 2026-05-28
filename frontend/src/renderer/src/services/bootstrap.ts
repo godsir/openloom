@@ -27,7 +27,9 @@ export async function bootstrapApp(): Promise<void> {
   )
 
   loomSubscribe((method, params) => {
-    const p = params as Record<string, unknown> | undefined
+    // Unwrap tagged-enum params (old backend format: {"StreamDelta": {...}})
+    // or flat params (new backend format: {"session_id": "...", "delta": "..."})
+    const p = unwrapEvent(method, params as Record<string, unknown> | undefined)
     const sessionId =
       (p?.session_id as string) ||
       useStore.getState().currentSessionId ||
@@ -54,8 +56,8 @@ export async function bootstrapApp(): Promise<void> {
           sessionId, (p?.id as string) || '', p?.result as string | undefined)
         break
       case 'agent.state_changed':
-        loomRpc('agent.list').then((r: any) =>
-          useStore.getState().setAgents(r.agents || [])
+        loomRpc('agent.config.list').then((r: any) =>
+          useStore.getState().setAgents(r.configs || [])
         ).catch(() => {})
         break
     }
@@ -65,11 +67,34 @@ export async function bootstrapApp(): Promise<void> {
   onWsReconnect(async () => {
     await useStore.getState().loadSessions()
     try {
-      const agents = await loomRpc<{ agents: unknown[] }>('agent.list')
-      useStore.getState().setAgents(agents.agents as any[] || [])
+      const configs = await loomRpc<{ configs: unknown[] }>('agent.config.list')
+      useStore.getState().setAgents(configs.configs as any[] || [])
     } catch { /* non-critical */ }
   })
 
   // Connect — onopen triggers onReconnect which loads data
   await connectWebSocket(port)
+}
+
+/** Method name → serde external-tag variant name mapping */
+const EVENT_VARIANTS: Record<string, string> = {
+  'chat.stream_delta': 'StreamDelta',
+  'chat.stream_end': 'StreamEnd',
+  'chat.token_usage': 'TokenUsage',
+  'tool.started': 'ToolStarted',
+  'tool.completed': 'ToolCompleted',
+  'agent.subagent_spawned': 'SubagentSpawned',
+  'agent.subagent_completed': 'SubagentCompleted',
+  'agent.subagent_errored': 'SubagentErrored',
+  'agent.state_changed': 'StateChanged',
+}
+
+/** Unwrap tagged-enum params like {"StreamDelta": {"delta": "..."}} into flat {"delta": "..."}. */
+function unwrapEvent(method: string, params: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!params) return undefined
+  const variant = EVENT_VARIANTS[method]
+  if (variant && params[variant] && typeof params[variant] === 'object') {
+    return params[variant] as Record<string, unknown>
+  }
+  return params
 }

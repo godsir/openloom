@@ -1,0 +1,49 @@
+/* Neon Pink theme — dark near-black with hot pink accent */
+[data-theme="neon-pink"] {
+  /* Surface */
+  --bg:         #1a1a1d;
+  --bg-surface: #222225;
+  --bg-card:    #28282b;
+  --bg-active:  #303034;
+  --bg-overlay: rgba(0,0,0,0.70);
+  --bg-input:   #222225;
+  --bg-tooltip: #28282b;
+
+  /* Text */
+  --text:           rgba(255,255,255,0.90);
+  --text-secondary: rgba(255,255,255,0.55);
+  --text-muted:     rgba(255,255,255,0.28);
+  --text-light:     rgba(255,255,255,0.55);
+
+  /* Borders */
+  --border:         rgba(230,57,124,0.06);
+  --border-default: rgba(230,57,124,0.10);
+  --border-accent:  rgba(230,57,124,0.25);
+  --border-light:   rgba(230,57,124,0.04);
+
+  /* Accent — Hot Pink #e6397c */
+  --accent:         #e6397c;
+  --accent-hover:   #f04a88;
+  --accent-rgb:     230,57,124;
+  --accent-subtle:  rgba(230,57,124,0.10);
+  --accent-medium:  rgba(230,57,124,0.16);
+  --accent-glow:    rgba(230,57,124,0.20);
+  --accent-light:   rgba(230,57,124,0.12);
+  --accent-strong:  rgba(230,57,124,0.22);
+
+  /* Semantic */
+  --green:        #2DD4BF;
+  --green-light:  rgba(45,212,191,0.10);
+  --amber:        #F59E0B;
+  --amber-light:  rgba(245,158,11,0.10);
+  --red:          #F87171;
+  --red-light:    rgba(248,113,113,0.12);
+
+  /* Shadows */
+  --shadow:          0 1px 3px rgba(0,0,0,0.5);
+  --shadow-md:       0 4px 16px rgba(0,0,0,0.6);
+  --shadow-lg:       0 8px 32px rgba(0,0,0,0.7);
+  --shadow-glow:     0 0 24px rgba(230,57,124,0.18);
+  --shadow-composer: 0 0 30px rgba(230,57,124,0.08), 0 4px 20px rgba(0,0,0,0.5);
+  --shadow-glass:    0 8px 32px rgba(0,0,0,0.5);
+}

@@ -1,4 +1,6 @@
 import { useStore } from '../../stores'
+import { IconPlus } from '../../utils/icons'
+import styles from './WelcomeScreen.module.css'
 
 export default function WelcomeScreen() {
   const createSession = useStore((s) => s.createSession)
@@ -6,30 +8,30 @@ export default function WelcomeScreen() {
 
   const handleStart = async () => {
     const id = await createSession()
-    await switchSession(id)
+    if (id) await switchSession(id)
   }
 
   return (
-    <div className="flex items-center justify-center h-full bg-[var(--bg)]">
-      <div className="text-center max-w-md animate-fade-up">
-        <div className="w-12 h-12 mx-auto mb-6 rounded-[var(--r-lg)] bg-[rgba(0,227,199,0.06)] border border-[rgba(0,227,199,0.12)] flex items-center justify-center shadow-[0_0_30px_rgba(0,227,199,0.06)]">
-          <span className="text-xl font-bold text-[var(--accent)]">L</span>
+    <div className={styles.wrapper}>
+      <div className={styles.inner}>
+        <div className={styles.logo}>
+          <span className={styles.logoText}>L</span>
         </div>
-        <h1 className="text-2xl text-[var(--text)] mb-3 tracking-tight font-semibold">
-          openLoom
-        </h1>
-        <p className="text-[var(--text-light)] mb-8 text-[13px] leading-relaxed">
-          本地优先的 AI 助理。支持多模型、MCP 工具、
-          知识图谱记忆、LSP 代码理解和 Skills 技能系统。
-        </p>
-        <button
-          onClick={handleStart}
-          className="px-6 py-2.5 rounded-[var(--r-md)] bg-[var(--accent-light)] text-[var(--accent)] hover:bg-[rgba(var(--accent-rgb),.25)] border border-[var(--border-accent)] text-[13px] font-medium transition-colors"
-        >
+        <h1 className={styles.title}>openLoom</h1>
+        <p className={styles.subtitle}>你的私人 AI 助理</p>
+
+        <div className={styles.features}>
+          {['多模型支持', 'MCP 工具', '知识图谱记忆', 'LSP 代码理解', 'Skills 技能'].map(name => (
+            <span key={name} className="pill-neutral">{name}</span>
+          ))}
+        </div>
+
+        <button onClick={handleStart} className={styles.startBtn}>
+          <IconPlus size={13} />
           开始新对话
         </button>
-        <p className="text-[10px] text-[var(--text-muted)] mt-5">
-          所有数据存储在本地 SQLite 数据库中
+        <p className={styles.footer}>
+          所有数据存储在本地 SQLite 数据库中 · 完全离线可用
         </p>
       </div>
     </div>

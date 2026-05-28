@@ -1,8 +1,9 @@
-import { app } from 'electron'
 import { join } from 'path'
+import { homedir } from 'os'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 
-const storePath = join(app.getPath('userData'), 'preferences.json')
+const storeDir = join(homedir(), '.loom')
+const storePath = join(storeDir, 'preferences.json')
 
 export function readStore(): Record<string, unknown> {
   try {
@@ -14,8 +15,7 @@ export function readStore(): Record<string, unknown> {
 }
 
 export function writeStore(data: Record<string, unknown>): void {
-  const dir = app.getPath('userData')
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  if (!existsSync(storeDir)) mkdirSync(storeDir, { recursive: true })
   writeFileSync(storePath, JSON.stringify(data, null, 2), 'utf-8')
 }
 

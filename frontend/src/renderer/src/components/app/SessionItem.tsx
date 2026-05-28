@@ -3,6 +3,7 @@ import { useStore } from '../../stores'
 import type { SessionSummary } from '../../stores/session'
 import ContextMenu, { ContextMenuItem } from '../shared/ContextMenu'
 import { IconPin, IconPinOff } from '../../utils/icons'
+import styles from './SessionItem.module.css'
 
 export default function SessionItem({ session }: { session: SessionSummary }) {
   const currentId = useStore(s => s.currentSessionId)
@@ -33,32 +34,49 @@ export default function SessionItem({ session }: { session: SessionSummary }) {
     <div
       onClick={() => switchSession(sid)}
       onContextMenu={e => { e.preventDefault(); setMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true) }}
-      className={`group relative flex items-center gap-2 mx-2 px-2 py-1 cursor-pointer rounded-[var(--r-sm)] transition-all duration-[var(--dur-fast)] ${
-        isActive
-          ? 'bg-[rgba(0,227,199,0.05)] border-l-2 border-l-[var(--accent)] pl-1.5'
-          : 'border-l-2 border-l-transparent text-[var(--text-light)] hover:bg-[rgba(0,227,199,0.03)] hover:text-[var(--text)]'
-      }`}
+      className={`${styles.item} ${isActive ? styles.active : ''}`}
     >
       {renaming ? (
         <input ref={inputRef} value={titleDraft} onChange={e => setTitleDraft(e.target.value)}
           onKeyDown={e => { if(e.key==='Enter')submitRename(); if(e.key==='Escape')setRenaming(false) }}
           onBlur={submitRename} onClick={e => e.stopPropagation()}
-          className="flex-1 bg-[rgba(255,255,255,0.06)] text-[var(--text)] text-[12px] rounded-[var(--r-sm)] px-1.5 py-0.5 outline-none" />
+          className={styles.renameInput} />
       ) : (
-        <span className="flex-1 truncate text-[12px] leading-snug">
-          {session.title || `会话 ${sid.slice(0, 8)}`}
-        </span>
+        <div className={styles.content}>
+          <div className={styles.title}>
+            {session.title || session.firstMessage?.slice(0, 40) || `会话 ${sid.slice(0, 8)}`}
+          </div>
+          {(session.modified || session.messageCount > 0) && (
+            <div className={styles.meta}>
+              {session.modified && <span>{relativeTime(session.modified)}</span>}
+              {session.modified && session.messageCount > 0 && <span>·</span>}
+              {session.messageCount > 0 && <span>{session.messageCount}条消息</span>}
+            </div>
+          )}
+        </div>
       )}
       {!renaming && (
         <button onClick={e => { e.stopPropagation(); isPinned ? unpinSession(sid) : pinSession(sid) }}
-          className={`shrink-0 ${isPinned ? 'text-[var(--accent)] opacity-100' : 'text-[var(--text-muted)] opacity-0 group-hover:opacity-100'} transition-opacity`}>
+          className={`${styles.pinBtn} ${isPinned ? styles.pinned : ''}`}>
           {isPinned ? <IconPinOff size={11} /> : <IconPin size={11} />}
         </button>
       )}
       <ContextMenu open={menuOpen} x={menuPos.x} y={menuPos.y} onClose={() => setMenuOpen(false)}>
         <ContextMenuItem onClick={()=>{setMenuOpen(false);setRenaming(true);setTitleDraft(session.title||'')}}>重命名</ContextMenuItem>
-        <ContextMenuItem onClick={()=>{setMenuOpen(false);if(confirm('确定删除此会话？'))deleteSession(sid)}} danger>删除</ContextMenuItem>
+        <ContextMenuItem onClick={async ()=>{setMenuOpen(false); const ok = await useStore.getState().showConfirm('删除会话', '确定删除此会话？', true); if(ok)deleteSession(sid)}} danger>删除</ContextMenuItem>
       </ContextMenu>
     </div>
   )
+}
+
+function relativeTime(iso: string): string {
+  if (!iso) return ''
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return '刚刚'
+  if (mins < 60) return `${mins}分钟前`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}小时前`
+  const days = Math.floor(hrs / 24)
+  return `${days}天前`
 }

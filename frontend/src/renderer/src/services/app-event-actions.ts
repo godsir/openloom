@@ -6,15 +6,16 @@ import { scheduleSessionRefresh } from './session-refresh'
 export function handleModelsChanged(): void {
   loomRpc('model.list')
     .then((r: any) => {
-      useStore.getState().setModels(r.models || [])
+      const names = (r.models || []).map((m: any) => m.name).filter(Boolean)
+      useStore.getState().setModels(names)
       if (r.activeModel) useStore.getState().setCurrentModel(r.activeModel)
     })
     .catch(() => {})
 }
 
 export function handleAgentUpdated(): void {
-  loomRpc('agent.list')
-    .then((r: any) => useStore.getState().setAgents(r.agents || []))
+  loomRpc('agent.config.list')
+    .then((r: any) => useStore.getState().setAgents(r.configs || []))
     .catch(() => {})
 }
 

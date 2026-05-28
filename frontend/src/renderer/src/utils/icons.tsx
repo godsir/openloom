@@ -37,6 +37,13 @@ export {
   Wifi as IconWifi,
   WifiOff as IconWifiOff,
   ExternalLink as IconExternalLink,
+  Paperclip as IconPaperclip,
+  Image as IconImage,
+  Eye as IconEye,
+  FolderOpen as IconFolder,
+  Package as IconPackage,
+  FileText as IconFileText,
+  Lightbulb as IconLightbulb,
 } from 'lucide-react'
 
 export function IconStarFilled({ size = 16, className = '' }: { size?: number; className?: string }) {

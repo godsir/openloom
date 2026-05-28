@@ -1,6 +1,6 @@
 import { StateCreator } from 'zustand'
 
-export type ThemeId = 'dark' | 'light' | 'midnight' | 'warm-paper'
+export type ThemeId = 'dark' | 'light' | 'midnight' | 'warm-paper' | 'neon-pink' | 'ember'
 
 export interface UiSlice {
   theme: ThemeId
@@ -18,6 +18,7 @@ export const createUiSlice: StateCreator<UiSlice> = (set, get) => ({
   sidebarOpen: true,
   setTheme: (theme) => {
     document.documentElement.setAttribute('data-theme', theme)
+    window.hana.setPreference('theme', theme)
     set({ theme })
   },
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),

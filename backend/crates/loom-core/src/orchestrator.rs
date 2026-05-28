@@ -419,12 +419,19 @@ impl Orchestrator {
         let store = self.memory_store.read().await;
         if let Some(ref s) = *store {
             let msgs = s.load_history(session_id, 50).await?;
+            tracing::info!(
+                session_id,
+                db_returned = msgs.len(),
+                "orchestrator.load_history: DB result"
+            );
             if !msgs.is_empty() {
                 self.session_histories
                     .write()
                     .await
                     .insert(session_id.to_string(), msgs);
             }
+        } else {
+            tracing::warn!(session_id, "orchestrator.load_history: memory_store is None");
         }
         Ok(())
     }
@@ -500,43 +507,68 @@ impl Orchestrator {
     }
 
     pub async fn agent_config_get(&self, name: &str) -> Result<loom_types::AgentConfig> {
-        self.agent_configs
-            .read()
-            .await
-            .get(name)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("agent config '{}' not found", name))
+        // Check cache first
+        {
+            let cache = self.agent_configs.read().await;
+            if let Some(cfg) = cache.get(name).cloned() {
+                return Ok(cfg);
+            }
+        }
+        // Fall back to DB — cache may be stale after a silent load failure
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            if let Some(cfg) = s.get_agent_config(name).await? {
+                self.agent_configs.write().await.insert(name.to_string(), cfg.clone());
+                return Ok(cfg);
+            }
+        }
+        anyhow::bail!("agent config '{}' not found", name)
     }
 
     pub async fn agent_config_create(&self, config: loom_types::AgentConfig) -> Result<()> {
         let name = config.name.clone();
+        // Reject duplicate against the union of cache + DB
         {
-            let mut cache = self.agent_configs.write().await;
+            let cache = self.agent_configs.read().await;
             if cache.contains_key(&name) {
                 anyhow::bail!("agent config '{}' already exists", name);
             }
-            cache.insert(name.clone(), config.clone());
         }
+        // DB first — avoid polluting cache if persistence fails
         let store = self.memory_store.read().await;
         if let Some(ref s) = *store {
+            if s.get_agent_config(&name).await?.is_some() {
+                anyhow::bail!("agent config '{}' already exists", name);
+            }
             s.save_agent_config(&config).await?;
         }
+        drop(store);
+        self.agent_configs.write().await.insert(name, config);
         Ok(())
     }
 
-    pub async fn agent_config_update(&self, config: loom_types::AgentConfig) -> Result<()> {
-        let name = config.name.clone();
-        {
-            let mut cache = self.agent_configs.write().await;
-            if !cache.contains_key(&name) {
-                anyhow::bail!("agent config '{}' not found", name);
-            }
-            cache.insert(name.clone(), config.clone());
-        }
+    pub async fn agent_config_update(&self, config: loom_types::AgentConfig, prev_name: &str) -> Result<()> {
+        let new_name = config.name.clone();
+        // Update is upsert-with-rename semantics: if prev_name no longer exists
+        // anywhere (cache + DB out of sync, prior failed save, etc.), treat as
+        // create rather than failing — the user clearly sees this entry in the
+        // UI and expects save to succeed. Renames still delete the old row.
         let store = self.memory_store.read().await;
+        // DB first
         if let Some(ref s) = *store {
+            if new_name != prev_name {
+                // Best-effort delete of the old row; ignore "not found"
+                let _ = s.delete_agent_config(prev_name).await;
+            }
             s.save_agent_config(&config).await?;
         }
+        drop(store);
+        // Then sync cache
+        let mut cache = self.agent_configs.write().await;
+        if new_name != prev_name {
+            cache.remove(prev_name);
+        }
+        cache.insert(new_name, config);
         Ok(())
     }
 
@@ -561,12 +593,7 @@ impl Orchestrator {
             None
         };
         let name = config_name.unwrap_or_else(|| "default".to_string());
-        self.agent_configs
-            .read()
-            .await
-            .get(&name)
-            .cloned()
-            .unwrap_or_default()
+        self.agent_config_get(&name).await.unwrap_or_default()
     }
 
     // === Model Config Management ===
@@ -574,6 +601,7 @@ impl Orchestrator {
     /// Load model configs from the memory store into the in-memory cache.
     pub async fn load_model_configs(&self) -> Result<()> {
         let store = self.memory_store.read().await;
+        let mut active_config: Option<loom_types::ModelConfig> = None;
         if let Some(ref s) = *store {
             let configs = s.list_model_configs().await?;
             let mut cache = self.model_configs.write().await;
@@ -583,8 +611,14 @@ impl Orchestrator {
             // Track the active model
             if let Ok(Some(active)) = s.get_active_model().await {
                 *self.active_model_name.write().await = Some(active.name.clone());
+                active_config = Some(active);
             }
             tracing::info!(count = cache.len(), "model configs loaded");
+        }
+        drop(store);
+        // Build cloud client for the active model on startup
+        if let Some(config) = active_config {
+            self.try_build_cloud_client(&config).await;
         }
         Ok(())
     }
@@ -606,6 +640,23 @@ impl Orchestrator {
         let name = config.name.clone();
         {
             let mut cache = self.model_configs.write().await;
+            if cache.contains_key(&name) {
+                anyhow::bail!("model config '{}' already exists", name);
+            }
+            // Check for duplicate model ID (same LM Studio model under a different config name)
+            if let Some(ref model_id) = config.model {
+                for (existing_name, existing) in cache.iter() {
+                    if existing.model.as_deref() == Some(model_id.as_str())
+                        && existing_name != &name
+                    {
+                        anyhow::bail!(
+                            "model '{}' is already configured as '{}'",
+                            model_id,
+                            existing_name
+                        );
+                    }
+                }
+            }
             cache.insert(name.clone(), config.clone());
         }
         let store = self.memory_store.read().await;
@@ -616,6 +667,12 @@ impl Orchestrator {
     }
 
     pub async fn model_config_update(&self, config: loom_types::ModelConfig) -> Result<()> {
+        let name = config.name.clone();
+        // Remove old entry first so the duplicate check in create doesn't false-positive
+        {
+            let mut cache = self.model_configs.write().await;
+            cache.remove(&name);
+        }
         self.model_config_create(config).await
     }
 
@@ -637,6 +694,30 @@ impl Orchestrator {
     pub async fn model_config_set_active(&self, name: &str) -> Result<()> {
         // Verify the model config exists
         let config = self.model_config_get(name).await?;
+
+        // Unload the previous local model before switching (avoids piling up in LM Studio)
+        {
+            let old_name = self.active_model_name.read().await.clone();
+            if let Some(ref old_name) = old_name {
+                if old_name != name {
+                    if let Ok(old_config) = self.model_config_get(old_name).await {
+                        if old_config.backend.is_local_inference() {
+                            if let Some(ref old_model_id) = old_config.model {
+                                let base = old_config.base_url.as_deref().unwrap_or(
+                                    match old_config.backend {
+                                        loom_types::ModelBackend::LmStudio => "http://localhost:1234/v1",
+                                        loom_types::ModelBackend::Ollama => "http://localhost:11434/v1",
+                                        _ => "http://localhost:1234/v1",
+                                    },
+                                );
+                                loom_inference::unload_local_model(base, old_model_id).await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Update DB
         let store = self.memory_store.read().await;
         if let Some(ref s) = *store {
@@ -664,6 +745,18 @@ impl Orchestrator {
             Some(m) => m.clone(),
             None => return,
         };
+
+        // Skip if the current client already points to the same model
+        {
+            let guard = self.cloud_client.read().await;
+            if let Some(ref client) = *guard {
+                if client.model_name() == model {
+                    tracing::debug!(%model, "cloud client already active, skipping rebuild");
+                    return;
+                }
+            }
+        }
+
         let is_local = config.backend.is_local_inference();
         let base_url = config
             .base_url
@@ -674,6 +767,7 @@ impl Orchestrator {
                 loom_types::ModelBackend::Anthropic => "https://api.anthropic.com".into(),
                 loom_types::ModelBackend::OpenAI => "https://api.openai.com".into(),
                 loom_types::ModelBackend::DeepSeek => "https://api.deepseek.com/v1".into(),
+                loom_types::ModelBackend::Custom => "http://localhost:8080/v1".into(),
             });
 
         let client: Option<Box<dyn CloudClient>> = if is_local {
@@ -735,6 +829,7 @@ impl Orchestrator {
             user_message,
             "default",
             &loom_types::AgentConfig::default(),
+            None,
         )
         .await
     }
@@ -746,6 +841,7 @@ impl Orchestrator {
         user_message: &str,
         session_id: &str,
         agent_config: &loom_types::AgentConfig,
+        thinking_budget: Option<usize>,
     ) -> Result<TurnResult> {
         // Register agent in pool
         let agent_id = self
@@ -791,6 +887,7 @@ impl Orchestrator {
             system_prompt,
             temperature: agent_config.temperature.unwrap_or(0.0),
             max_iterations: agent_config.max_iterations.unwrap_or(10),
+            thinking_budget,
             ..Default::default()
         };
 

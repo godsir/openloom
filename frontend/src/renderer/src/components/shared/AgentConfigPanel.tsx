@@ -1,111 +1,164 @@
-import { useState } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
-import Button from './Button'
-import Overlay from './Overlay'
+import { rpc } from '../../services/rpc-toast'
+import Select from './Select'
+import styles from './ConfigPanel.module.css'
 
 export default function AgentConfigPanel() {
   const agents = useStore((s) => s.agents)
-  const [creating, setCreating] = useState(false)
+  const models = useStore((s) => s.models)
+  const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [nameDraft, setNameDraft] = useState('')
   const [personaDraft, setPersonaDraft] = useState('')
+  const [modelDraft, setModelDraft] = useState('')
+
+  const refreshAgents = async () => {
+    const result = await loomRpc<{ configs: unknown[] }>('agent.config.list')
+    useStore.getState().setAgents(result.configs as any[] || [])
+  }
+
+  // Load agents on mount — store may have stale data from before a server restart
+  useEffect(() => { refreshAgents() }, [])
 
   const handleCreate = async () => {
     if (!nameDraft.trim()) return
     try {
-      await loomRpc('agent.config.create', {
+      await rpc('agent.config.create', {
         name: nameDraft.trim(),
         persona: personaDraft.trim(),
-      })
-      const result = await loomRpc<{ agents: unknown[] }>('agent.list')
-      useStore.getState().setAgents(result.agents as any[] || [])
-      setCreating(false)
+        model: modelDraft.trim() || null,
+      }, 'Agent 已创建')
+      await refreshAgents()
+      setShowForm(false)
       setNameDraft('')
       setPersonaDraft('')
-    } catch (e: any) {
-      console.error('Failed to create agent config:', e)
-    }
+      setModelDraft('')
+    } catch { /* toast already shown */ }
+  }
+
+  const startEdit = (agent: any) => {
+    setEditingId(agent.name || agent.id)
+    setNameDraft(agent.name || '')
+    setPersonaDraft(agent.persona || '')
+    setModelDraft(agent.model || '')
+  }
+
+  const handleUpdate = async () => {
+    if (!editingId || !nameDraft.trim()) return
+    try {
+      await rpc('agent.config.update', {
+        name: nameDraft.trim(),
+        prev_name: editingId,
+        persona: personaDraft.trim(),
+        model: modelDraft.trim() || null,
+      }, 'Agent 已更新')
+      await refreshAgents()
+      setEditingId(null)
+      setNameDraft('')
+      setPersonaDraft('')
+      setModelDraft('')
+    } catch { /* toast already shown */ }
   }
 
   const handleDelete = async (name: string) => {
-    if (!confirm(`确定删除 Agent 配置 "${name}"？`)) return
+    const ok = await useStore.getState().showConfirm('删除 Agent', `确定删除 Agent 配置 "${name}"？`, true)
+    if (!ok) return
     try {
-      await loomRpc('agent.config.delete', { name })
-      const result = await loomRpc<{ agents: unknown[] }>('agent.list')
-      useStore.getState().setAgents(result.agents as any[] || [])
-    } catch (e: any) {
-      console.error('Failed to delete agent config:', e)
-    }
+      await rpc('agent.config.delete', { name }, 'Agent 已删除')
+      await refreshAgents()
+    } catch { /* toast already shown */ }
   }
 
+  const cancelForm = () => {
+    setShowForm(false)
+    setEditingId(null)
+    setNameDraft('')
+    setPersonaDraft('')
+    setModelDraft('')
+  }
+
+  const isEditing = showForm || editingId !== null
+
+  const modelOptions = useMemo(
+    () => [{ value: '', label: '使用默认模型' }, ...models.map((m) => ({ value: m, label: m }))],
+    [models],
+  )
+
+  const filteredAgents = agents.filter((a) => a.name && a.name !== 'default')
+
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-[var(--text)]">Agent 配置</h3>
-        <Button size="sm" onClick={() => setCreating(true)}>
-          + 新建
-        </Button>
+    <div className={styles.panel}>
+      <div className={styles.header}>
+        {!isEditing && (
+          <button onClick={() => setShowForm(true)} className={styles.addBtn}>+ 新建</button>
+        )}
       </div>
 
-      {agents.length === 0 && !creating && (
-        <p className="text-sm text-[var(--text-muted)]">暂无 Agent 配置</p>
+      {/* Create / Edit form */}
+      {isEditing && (
+        <div className={styles.form}>
+          <div className={styles.formRow}>
+            <label className={styles.formLabel}>名称 *</label>
+            <input
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              placeholder="输入 Agent 名称"
+              className={styles.formInput}
+            />
+          </div>
+          <div className={styles.formRow}>
+            <label className={styles.formLabel}>模型</label>
+            <Select
+              value={modelDraft}
+              options={modelOptions}
+              onChange={setModelDraft}
+            />
+          </div>
+          <div className={styles.formRow}>
+            <label className={styles.formLabel}>Persona</label>
+            <textarea
+              value={personaDraft}
+              onChange={(e) => setPersonaDraft(e.target.value)}
+              placeholder="描述 Agent 的行为特征和角色定位..."
+              className={styles.formTextarea}
+            />
+          </div>
+          <div className={styles.formActions}>
+            <button onClick={cancelForm} className={styles.cancelBtn}>取消</button>
+            <button
+              onClick={editingId ? handleUpdate : handleCreate}
+              disabled={!nameDraft.trim()}
+              className={styles.submitBtn}
+            >
+              {editingId ? '保存' : '创建'}
+            </button>
+          </div>
+        </div>
       )}
 
-      <div className="space-y-1">
-        {agents.map((a) => (
-          <div
-            key={a.id}
-            className="flex items-center gap-2 px-3 py-2 bg-[var(--bg-card)] rounded-[var(--r-sm)] text-sm border border-[var(--border)]"
-          >
-            <span className="w-2 h-2 rounded-full bg-[var(--green)]" />
-            <span className="flex-1 text-[var(--text-light)]">{a.name}</span>
-            <span className="text-[11px] font-mono text-[var(--text-muted)]">{a.status}</span>
-            <button
-              onClick={() => handleDelete(a.name || a.id)}
-              className="text-[11px] font-mono text-[var(--text-muted)] hover:text-[var(--red)] transition-colors-fast"
-            >
-              删除
-            </button>
+      {/* Agent list */}
+      {filteredAgents.length === 0 && !isEditing && (
+        <p className={styles.empty}>暂无 Agent 配置，点击"新建"添加</p>
+      )}
+
+      <div className={styles.list}>
+        {filteredAgents.map((a) => (
+          <div key={a.name} className={`${styles.modelItem} ${editingId === a.name ? styles.modelItemActive : ''}`}>
+            <span className={`${styles.dot} ${styles.dotActive}`} />
+            <div className={styles.modelInfo}>
+              <span className={styles.modelName}>{a.name}</span>
+              {a.persona && <span className={styles.modelId}>{a.persona.slice(0, 30)}{a.persona.length > 30 ? '...' : ''}</span>}
+            </div>
+            <span className={styles.providerBadge}>{a.model || 'default'}</span>
+            <div className={styles.actions}>
+              <button onClick={() => startEdit(a)} className={styles.actionBtn}>编辑</button>
+              <button onClick={() => handleDelete(a.name)} className={styles.deleteBtn}>删除</button>
+            </div>
           </div>
         ))}
       </div>
-
-      {creating && (
-        <Overlay open={creating} onClose={() => setCreating(false)} title="新建 Agent 配置">
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs text-[var(--text-muted)] mb-1.5">名称</label>
-              <input
-                value={nameDraft}
-                onChange={(e) => setNameDraft(e.target.value)}
-                placeholder="输入 Agent 名称..."
-                className="w-full bg-[var(--bg-card)] text-[var(--text)] text-sm rounded-[var(--r-sm)] px-3 py-2 outline-none border border-[var(--border)] focus:border-[var(--border-accent)] transition-colors placeholder:text-[var(--text-muted)]"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-[var(--text-muted)] mb-1.5">
-                Persona（可选）
-              </label>
-              <textarea
-                value={personaDraft}
-                onChange={(e) => setPersonaDraft(e.target.value)}
-                placeholder="描述 Agent 的行为特征..."
-                rows={3}
-                className="w-full bg-[var(--bg-card)] text-[var(--text)] text-sm rounded-[var(--r-sm)] px-3 py-2 outline-none border border-[var(--border)] focus:border-[var(--border-accent)] transition-colors placeholder:text-[var(--text-muted)] resize-none"
-              />
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button size="sm" variant="ghost" onClick={() => setCreating(false)}>
-                取消
-              </Button>
-              <Button size="sm" variant="primary" onClick={handleCreate}>
-                创建
-              </Button>
-            </div>
-          </div>
-        </Overlay>
-      )}
     </div>
   )
 }

@@ -17,24 +17,36 @@ export type JsonRpcResponse = {
 
 // === Model Config (mirrors backend ModelConfig) ===
 
-export type ModelBackend = 'LmStudio' | 'Anthropic' | 'OpenAI' | 'DeepSeek' | 'Ollama'
+export type ModelBackend = 'LmStudio' | 'Anthropic' | 'OpenAI' | 'DeepSeek' | 'Ollama' | 'Custom'
 
 export interface ModelConfig {
   name: string
   model?: string
   model_type: 'Router' | 'Summarizer' | 'Reasoning'
   backend: ModelBackend
+  backend_label?: string
   base_url?: string
   api_key_env?: string
+  api_format?: string
   context_size: number
   max_output_tokens?: number
   is_active?: boolean
+  capabilities?: ModelCapabilities
+}
+
+export interface ModelCapabilities {
+  vision?: boolean
+  reasoning?: boolean
+  function_calling?: boolean
 }
 
 export interface ModelListItem {
   name: string
   model?: string
   backend: string
+  backend_label?: string
   base_url?: string
   is_active: boolean
+  context_size?: number
+  capabilities?: ModelCapabilities
 }

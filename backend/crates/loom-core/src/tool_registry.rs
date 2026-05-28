@@ -220,6 +220,7 @@ impl AgentTool for SpawnAgentTool {
             persona: None,
             summary: None,
             kg_context: None,
+            thinking_budget: config.thinking_budget,
         };
         drop(config);
 

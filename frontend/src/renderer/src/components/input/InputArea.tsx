@@ -1,12 +1,15 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
+import { streamBufferManager } from '../../services/stream-buffer'
 import ContextRing from './ContextRing'
 import ModelSelector from './ModelSelector'
+import AgentSelector from './AgentSelector'
 import ThinkingLevelButton from './ThinkingLevelButton'
 import PermissionModeButton from './PermissionModeButton'
 import TypingIndicator from '../shared/TypingIndicator'
 import { IconSend } from '../../utils/icons'
+import styles from './InputArea.module.css'
 
 export default function InputArea() {
   const [text, setText] = useState('')
@@ -51,8 +54,31 @@ export default function InputArea() {
       blocks: [{ type: 'text', html: escapeHtml(content), source: content }],
       timestamp: new Date().toISOString(),
     })
-    try { await loomRpc('chat.send', { session_id: sid, content }) }
-    catch (e: any) { useStore.getState().setInlineError(sid, e.message||'发送失败'); useStore.getState().deleteMessage(sid, msgId) }
+    // Create assistant placeholder immediately so user sees feedback
+    const aiMsgId = crypto.randomUUID()
+    useStore.getState().addStreamingSession(sid)
+    useStore.getState().appendMessage(sid, {
+      id: aiMsgId, role: 'assistant',
+      blocks: [],
+      timestamp: new Date().toISOString(),
+    })
+    // Wire the stream buffer to this placeholder
+    streamBufferManager.startStream(sid, aiMsgId)
+    try {
+      const { currentModel, thinkingLevel } = useStore.getState()
+      await loomRpc('chat.send', {
+        session_id: sid,
+        content,
+        model: currentModel || undefined,
+        thinking_level: thinkingLevel || 'off',
+      })
+    }
+    catch (e: any) {
+      useStore.getState().setInlineError(sid, e.message||'发送失败')
+      // Clear the streaming placeholder on error
+      useStore.getState().removeStreamingSession(sid)
+      streamBufferManager.clear(sid)
+    }
     finally { setSending(false) }
   }
 
@@ -61,12 +87,12 @@ export default function InputArea() {
   }
 
   const isConnected = wsState === 'connected'
-  const placeholder = !isConnected ? '正在连接...' : !sessionId ? '新建会话后开始对话' : isStreaming ? 'AI 回复中...' : '输入消息，⏎ 发送'
+  const placeholder = !isConnected ? '正在连接...' : !sessionId ? '开始新对话...' : isStreaming ? 'AI 回复中...' : '输入消息，Enter 发送'
 
   return (
-    <div className="absolute bottom-0 left-0 right-0 z-5 px-4 pb-4 pointer-events-none">
-      <div className="max-w-[680px] mx-auto pointer-events-auto">
-        <div className="flex flex-col bg-[rgba(0,227,199,0.025)] backdrop-blur-[24px] border border-[rgba(0,227,199,0.07)] rounded-[var(--r-xl)] shadow-[var(--shadow-glass)]">
+    <div className={styles.wrapper}>
+      <div className={styles.container}>
+        <div className={styles.composer}>
           <textarea
             ref={textareaRef}
             value={text}
@@ -75,18 +101,19 @@ export default function InputArea() {
             placeholder={placeholder}
             rows={2}
             disabled={!isConnected || isStreaming}
-            className="w-full bg-transparent text-[var(--text)] text-[0.875rem] leading-relaxed resize-none outline-none placeholder:text-[var(--text-muted)] placeholder:italic px-3.5 pt-3 disabled:opacity-40"
+            className={styles.textarea}
           />
-          <div className="flex items-center gap-2 px-3.5 pb-2.5 pt-1 border-t border-[rgba(255,255,255,0.03)]">
+          <div className={styles.toolbar}>
             <PermissionModeButton />
             <ThinkingLevelButton />
-            <div className="flex-1" />
             <ModelSelector />
+            <AgentSelector />
+            <div className={styles.spacer} />
             <ContextRing />
             <button
               onClick={handleSend}
               disabled={!text.trim() || !isConnected || isStreaming}
-              className="inline-flex items-center justify-center gap-1.5 h-[26px] px-3.5 text-[12px] font-semibold text-[var(--bg)] bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-25 disabled:cursor-not-allowed rounded-[var(--r-md)] transition-all shrink-0"
+              className={styles.sendBtn}
             >
               {isStreaming ? <TypingIndicator /> : <><IconSend size={12} />发送</>}
             </button>

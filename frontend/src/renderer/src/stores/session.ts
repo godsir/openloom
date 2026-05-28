@@ -1,5 +1,6 @@
 import { StateCreator } from 'zustand'
 import { loomRpc } from '../services/jsonrpc'
+import { rpc } from '../services/rpc-toast'
 
 // Matches actual backend SessionData JSON response.
 // Fields are camelCase as returned by serde Serialize.
@@ -40,7 +41,7 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
   setCurrentSessionId: (currentSessionId) => set({ currentSessionId }),
 
   createSession: async () => {
-    const result = await loomRpc<{ session_id: string }>('session.create')
+    const result = await rpc<{ session_id: string }>('session.create', undefined, '会话已创建')
     await get().loadSessions()
     return result.session_id
   },
@@ -59,8 +60,8 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
       if (result.messages?.length) {
         const msgs = result.messages.map((m: any, i: number) => ({
           id: `hist-${id}-${i}`,
-          role: m.role || 'user',
-          blocks: [{ type: 'text', html: escapeHtml(m.content || ''), source: m.content || '' }],
+          role: parseRole(m.role),
+          blocks: parseContentParts(m.content),
           timestamp: m.timestamp || new Date().toISOString(),
         }))
         ;(get() as any).hydrateMessages?.(id, msgs)
@@ -71,12 +72,12 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
   },
 
   renameSession: async (id, title) => {
-    await loomRpc('session.rename', { session_id: id, title })
+    await rpc('session.rename', { session_id: id, title }, '已重命名')
     await get().loadSessions()
   },
 
   deleteSession: async (id) => {
-    await loomRpc('session.delete', { session_id: id })
+    await rpc('session.delete', { session_id: id }, '会话已删除')
     if (get().currentSessionId === id) {
       set({ currentSessionId: null })
     }
@@ -87,20 +88,154 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
     const next = new Set(get().pinnedIds)
     next.add(id)
     set({ pinnedIds: next })
+    window.hana.setPreference('pinnedIds', [...next])
   },
 
   unpinSession: (id) => {
     const next = new Set(get().pinnedIds)
     next.delete(id)
     set({ pinnedIds: next })
+    window.hana.setPreference('pinnedIds', [...next])
   },
 
   loadSessions: async () => {
-    const result = await loomRpc<{ sessions: SessionSummary[] }>('session.list')
-    set({ sessions: result.sessions })
+    const result = await loomRpc<{ sessions: any[] }>('session.list')
+    const mapped: SessionSummary[] = (result.sessions || []).map((s: any) => ({
+      path: s.id || s.path || '',
+      title: s.title || null,
+      firstMessage: '',
+      modified: s.created_at || '',
+      messageCount: s.message_count ?? 0,
+      agentId: null,
+      agentName: s.agent_config_name || null,
+      cwd: null,
+      permissionMode: null,
+      pinnedAt: null,
+    }))
+    set({ sessions: mapped })
   },
 })
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/**
+ * Parse the role field from backend Message.
+ * Rust's Role enum may serialize as a lowercase string ("user", "assistant", "system", "tool")
+ * or as a tagged enum object like {"User": {}}.
+ */
+function parseRole(role: any): 'user' | 'assistant' {
+  if (typeof role === 'string') {
+    const lower = role.toLowerCase()
+    if (lower === 'assistant' || lower === 'system') return 'assistant'
+    return 'user'
+  }
+  // Tagged enum object: check key names
+  if (role && typeof role === 'object') {
+    const key = Object.keys(role)[0]?.toLowerCase()
+    if (key === 'assistant' || key === 'system') return 'assistant'
+    return 'user'
+  }
+  return 'user'
+}
+
+/**
+ * Parse backend ContentPart[] into frontend ContentBlock[].
+ *
+ * Rust's ContentPart enum with serde default tagging serializes as snake_case:
+ *   { "text": { "text": "hello" } }
+ *   { "tool_call": { "id": "...", "name": "...", "arguments": "..." } }
+ *   { "tool_result": { "tool_call_id": "...", "content": "..." } }
+ *   { "image": { "source_type": "...", "media_type": "...", "data": "..." } }
+ *
+ * Or possibly flat objects like { "type": "text", "text": "hello" }.
+ */
+function parseContentParts(content: any): any[] {
+  // If content is a plain string (legacy format), treat as single text block
+  if (typeof content === 'string') {
+    return [{ type: 'text', html: escapeHtml(content), source: content }]
+  }
+
+  // If not an array, wrap it
+  if (!Array.isArray(content)) {
+    const text = JSON.stringify(content)
+    return [{ type: 'text', html: escapeHtml(text), source: text }]
+  }
+
+  const blocks: any[] = []
+
+  for (const part of content) {
+    if (!part || typeof part !== 'object') continue
+
+    // Serde tagged enum format (snake_case): { "text": { "text": "..." } }
+    if ('text' in part) {
+      const text = part.text?.text || ''
+      blocks.push({ type: 'text', html: escapeHtml(text), source: text })
+    } else if ('tool_call' in part) {
+      const tc = part.tool_call
+      // arguments may be a JSON string (OpenAI format) or already an object (serde Value)
+      let args: Record<string, unknown> = {}
+      if (typeof tc.arguments === 'string') {
+        try { args = JSON.parse(tc.arguments || '{}') } catch { /* ignore */ }
+      } else if (tc.arguments && typeof tc.arguments === 'object') {
+        args = tc.arguments as Record<string, unknown>
+      }
+      blocks.push({
+        type: 'tool_group',
+        tools: [{
+          id: tc.id || `tc-${blocks.length}`,
+          name: tc.name || 'unknown',
+          status: 'done' as const,
+          elapsed: 0,
+          args,
+          result: undefined,
+        }],
+        collapsed: true,
+      })
+    } else if ('tool_result' in part) {
+      // Skip — already represented by the corresponding ToolCall block
+      continue
+    } else if ('image' in part) {
+      const url = part.image?.data || part.image?.url || ''
+      blocks.push({ type: 'text', html: `<img src="${escapeHtml(url)}" />`, source: url })
+    }
+    // Flat object format: { type: "text", text: "..." }
+    else if (part.type === 'text' || part.type === 'Text') {
+      const text = part.text || ''
+      blocks.push({ type: 'text', html: escapeHtml(text), source: text })
+    } else if (part.type === 'tool_call' || part.type === 'ToolCall') {
+      let args: Record<string, unknown> = {}
+      if (typeof part.arguments === 'string') {
+        try { args = JSON.parse(part.arguments || '{}') } catch { /* ignore */ }
+      } else if (part.arguments && typeof part.arguments === 'object') {
+        args = part.arguments as Record<string, unknown>
+      }
+      blocks.push({
+        type: 'tool_group',
+        tools: [{
+          id: part.id || `tc-${blocks.length}`,
+          name: part.name || 'unknown',
+          status: 'done' as const,
+          elapsed: 0,
+          args,
+          result: undefined,
+        }],
+        collapsed: true,
+      })
+    } else if (part.type === 'tool_result' || part.type === 'ToolResult') {
+      continue
+    } else {
+      // Unknown format — render as text
+      const text = JSON.stringify(part)
+      blocks.push({ type: 'text', html: escapeHtml(text), source: text })
+    }
+  }
+
+  // If no blocks were produced, return a fallback empty text block
+  if (blocks.length === 0) {
+    blocks.push({ type: 'text', html: '', source: '' })
+  }
+
+  return blocks
 }

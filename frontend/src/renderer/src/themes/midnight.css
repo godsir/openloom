@@ -1,24 +1,49 @@
+/* Midnight theme — deep navy with cool blue accent */
 [data-theme="midnight"] {
-  --bg:        #0F172A;
-  --bg-card:   rgba(165,191,248,0.04);
-  --bg-input:  rgba(165,191,248,0.03);
-  --bg-tooltip:rgba(165,191,248,0.06);
-  --bg-overlay:rgba(0,0,0,0.60);
+  /* Surface */
+  --bg:         #0B1120;
+  --bg-surface: #0F172A;
+  --bg-card:    #131D35;
+  --bg-active:  #182540;
+  --bg-overlay: rgba(0,0,0,0.65);
+  --bg-input:   #131D35;
+  --bg-tooltip: #182540;
 
-  --text:       rgba(255,255,255,0.88);
-  --text-light: rgba(255,255,255,0.50);
-  --text-muted: rgba(255,255,255,0.18);
+  /* Text */
+  --text:           rgba(255,255,255,0.90);
+  --text-secondary: rgba(255,255,255,0.55);
+  --text-muted:     rgba(255,255,255,0.25);
+  --text-light:     rgba(255,255,255,0.55);
 
-  --border:     rgba(165,191,248,0.06);
-  --border-light:rgba(165,191,248,0.03);
-  --border-accent:rgba(165,191,248,0.12);
+  /* Borders */
+  --border:         rgba(165,191,248,0.06);
+  --border-default: rgba(165,191,248,0.10);
+  --border-accent:  rgba(165,191,248,0.18);
+  --border-light:   rgba(165,191,248,0.03);
 
-  --accent:        #A5BFF8;
-  --accent-hover:  #BFCEFA;
-  --accent-rgb:    165,191,248;
-  --accent-light:  rgba(165,191,248,0.08);
-  --accent-strong: rgba(165,191,248,0.14);
-  --accent-glow:   rgba(165,191,248,0.20);
+  /* Accent — Cool Blue */
+  --accent:         #A5BFF8;
+  --accent-hover:   #C5D5FA;
+  --accent-rgb:     165,191,248;
+  --accent-subtle:  rgba(165,191,248,0.08);
+  --accent-medium:  rgba(165,191,248,0.14);
+  --accent-glow:    rgba(165,191,248,0.15);
+  --accent-light:   rgba(165,191,248,0.10);
+  --accent-strong:  rgba(165,191,248,0.18);
 
-  --shadow-glass: 0 0 40px rgba(165,191,248,0.03),0 4px 20px rgba(0,0,0,0.4);
+  /* Semantic */
+  --green:        #2DD4BF;
+  --green-light:  rgba(45,212,191,0.10);
+  --amber:        #F59E0B;
+  --amber-light:  rgba(245,158,11,0.10);
+  --red:          #EF4444;
+  --red-light:    rgba(239,68,68,0.10);
+
+  /* Shadows */
+  --shadow:          0 1px 3px rgba(0,0,0,0.5);
+  --shadow-md:       0 4px 16px rgba(0,0,0,0.6);
+  --shadow-lg:       0 8px 32px rgba(0,0,0,0.7);
+  --shadow-glow:     0 0 20px rgba(165,191,248,0.12);
+  --shadow-composer: 0 0 30px rgba(165,191,248,0.06), 0 4px 20px rgba(0,0,0,0.5);
+  --shadow-glass:    0 8px 32px rgba(0,0,0,0.5);
 }

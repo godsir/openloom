@@ -1,4 +1,4 @@
-import { IconX } from '../../utils/icons'
+import { IconX, IconImage, IconPaperclip } from '../../utils/icons'
 
 interface Props {
   files: { name: string; path: string; size: number; mimeType: string }[]
@@ -22,8 +22,8 @@ export default function AttachedFiles({ files, onRemove }: Props) {
           className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[var(--bg-card)] border border-[var(--border)] rounded-[var(--r-sm)] text-xs group"
           title={f.path}
         >
-          <span className="opacity-50 text-sm">
-            {f.mimeType?.startsWith('image/') ? '🖼' : '📎'}
+          <span className="opacity-50">
+            {f.mimeType?.startsWith('image/') ? <IconImage size={14} /> : <IconPaperclip size={14} />}
           </span>
           <span className="text-[var(--text-light)] truncate max-w-[120px]">{f.name}</span>
           <span className="text-[10px] font-mono text-[var(--text-muted)]">{formatSize(f.size)}</span>

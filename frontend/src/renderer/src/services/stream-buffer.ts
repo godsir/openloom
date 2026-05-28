@@ -24,6 +24,12 @@ interface BufferState {
 class StreamBufferManager {
   private buffers = new Map<string, BufferState>()
 
+  /** Register an existing assistant placeholder message for streaming updates. */
+  startStream(sessionId: string, messageId: string): void {
+    const buf = this.ensureBuffer(sessionId)
+    buf.messageId = messageId
+  }
+
   private ensureBuffer(sessionId: string): BufferState {
     if (!this.buffers.has(sessionId)) {
       this.buffers.set(sessionId, {
@@ -44,7 +50,7 @@ class StreamBufferManager {
 
     // Handle REASONING control signal
     if (delta.startsWith('\x02REASONING\x02')) {
-      buf.thinkingAcc += delta.slice(12)
+      buf.thinkingAcc += delta.slice(11) // skip \x02 + "REASONING" + \x02 = 11 chars
       buf.inThinking = true
     } else if (delta.startsWith('\x00USAGE:')) {
       // Token usage control signal: \x00USAGE:{"prompt":N,"completion":M}

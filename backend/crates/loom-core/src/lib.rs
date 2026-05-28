@@ -11,6 +11,7 @@ pub mod builtin_tools;
 pub mod event_bus;
 pub mod orchestrator;
 pub mod tool_registry;
+pub mod vision;
 
 pub use agent::{Agent, AgentConfig, AgentStatus};
 pub use agent_loop::{AgentLoopConfig, TurnResult, run_agent_turn, run_agent_turn_streaming};

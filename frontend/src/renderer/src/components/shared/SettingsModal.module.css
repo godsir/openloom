@@ -1,0 +1,704 @@
+.layout {
+  display: flex;
+  height: 100%;
+}
+
+/* Left nav */
+.nav {
+  width: 160px;
+  flex-shrink: 0;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border);
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.navLabel {
+  padding: 8px 12px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.navItem {
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--r-md);
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.navItem:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.navActive {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-color: rgba(var(--accent-rgb), 0.10);
+}
+
+/* Right content — fixed header + scrollable body */
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+
+.contentHeader {
+  flex-shrink: 0;
+  padding: 20px 24px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.contentBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 24px 24px;
+}
+
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.sectionDesc {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* Theme grid */
+.themeSection {
+  margin-top: 8px;
+}
+
+.themeLabel {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.themeGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.themeCard {
+  padding: 12px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  transition: all 0.15s ease;
+}
+
+.themeCard:hover {
+  border-color: var(--border-default);
+}
+
+.themeCardActive {
+  border-color: var(--border-accent);
+  background: var(--accent-subtle);
+}
+
+.themePreview {
+  width: 100%;
+  height: 64px;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.themePreviewInner {
+  display: flex;
+  height: 100%;
+}
+
+.themePreviewSidebar {
+  width: 30%;
+  padding: 6px;
+}
+
+.themePreviewMain {
+  flex: 1;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.themeName {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.themeNameActive {
+  color: var(--accent);
+}
+
+/* About tab */
+.aboutSection {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.aboutRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+}
+
+.aboutLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.aboutValue {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.aboutValueGreen {
+  color: var(--green);
+}
+
+.aboutValueAmber {
+  color: var(--amber);
+}
+
+.aboutFooter {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-top: 8px;
+}
+
+/* Shared tools styles (reused by MCP) */
+.toolsBadgeGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.toolsBadge {
+  display: inline-block;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.toolsBadge:hover {
+  color: var(--accent);
+  border-color: var(--border-accent);
+}
+
+.toolsSectionLabel {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.toolsEmpty {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.toolsError {
+  font-size: 11px;
+  color: var(--amber);
+  margin: 0 0 12px;
+}
+
+/* ─── MCP Tab ─── */
+
+.mcpServerList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.mcpServerItem {
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+}
+
+.mcpServerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mcpServerNameRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcpServerStatus {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mcpServerStatus[data-healthy="true"] {
+  background: var(--green);
+  box-shadow: 0 0 4px rgba(34, 197, 94, 0.4);
+}
+
+.mcpServerStatus[data-healthy="false"] {
+  background: var(--red, #ef4444);
+}
+
+.mcpServerStatus[data-healthy="unknown"] {
+  background: var(--text-muted);
+}
+
+.mcpServerName {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.mcpDisconnectBtn {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mcpDisconnectBtn:hover {
+  color: var(--red, #ef4444);
+  border-color: var(--red, #ef4444);
+}
+
+.mcpAddBtn {
+  display: inline-block;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border: 1px solid rgba(var(--accent-rgb), 0.20);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mcpAddBtn:hover {
+  background: var(--accent-medium);
+}
+
+.mcpAddForm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  margin-top: 4px;
+}
+
+.mcpFormRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mcpFormLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.mcpFormInput {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.mcpFormInput:focus {
+  border-color: var(--border-accent);
+}
+
+.mcpFormInput::placeholder {
+  color: var(--text-muted);
+}
+
+.mcpTransportToggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  width: fit-content;
+}
+
+.mcpTransportBtn {
+  height: 28px;
+  padding: 0 14px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mcpTransportBtn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.mcpTransportActive {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.mcpFormActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.mcpCancelBtn {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mcpCancelBtn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.mcpConnectBtn {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border: 1px solid rgba(var(--accent-rgb), 0.20);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mcpConnectBtn:hover {
+  background: var(--accent-medium);
+}
+
+.mcpConnectBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ─── LSP Tab ─── */
+
+.lspServerList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.lspServerItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+}
+
+.lspServerName {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.lspStopBtn {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.lspStopBtn:hover {
+  color: var(--red, #ef4444);
+  border-color: var(--red, #ef4444);
+}
+
+.lspStopAllBtn {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+.lspStopAllBtn:hover {
+  color: var(--red, #ef4444);
+  border-color: var(--red, #ef4444);
+}
+
+.lspInfoText {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-top: 12px;
+}
+
+/* ─── Skills Tab ─── */
+
+.skillActions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.skillList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.skillCard {
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.skillCard:hover {
+  border-color: var(--border-default);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.skillCardActive {
+  border-color: rgba(var(--accent-rgb), 0.20);
+  background: var(--accent-subtle);
+}
+
+.skillCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.skillCardName {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.skillCardDesc {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+  line-height: 1.4;
+}
+
+.skillBadges {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.skillBadge {
+  display: inline-block;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.skillBadgeAccent {
+  color: var(--accent);
+  border-color: rgba(var(--accent-rgb), 0.20);
+}
+
+.skillBadgeGreen {
+  color: var(--green);
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.skillDetail {
+  margin-top: 4px;
+  padding: 12px;
+  border-radius: 0 0 var(--r-md) var(--r-md);
+  border: 1px solid var(--border);
+  border-top: none;
+  background: var(--bg-surface);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.skillDetailContent {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+/* ─── Plugins Tab ─── */
+
+.pluginList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.pluginCard {
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  transition: all 0.15s ease;
+}
+
+.pluginCard:hover {
+  border-color: var(--border-default);
+}
+
+.pluginCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pluginCardName {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.pluginCardDesc {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+  line-height: 1.4;
+}
+
+.pluginCardMeta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.pluginMetaItem {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+.pluginPath {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  margin-top: 6px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--r-sm);
+  word-break: break-all;
+}

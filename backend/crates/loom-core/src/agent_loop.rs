@@ -47,6 +47,8 @@ pub struct AgentLoopConfig {
     pub summary: Option<String>,
     /// KG context text (injected into stable prefix).
     pub kg_context: Option<String>,
+    /// Extended thinking token budget. None = disabled.
+    pub thinking_budget: Option<usize>,
 }
 
 impl Default for AgentLoopConfig {
@@ -60,6 +62,7 @@ impl Default for AgentLoopConfig {
             persona: None,
             summary: None,
             kg_context: None,
+            thinking_budget: None,
         }
     }
 }
@@ -145,6 +148,34 @@ pub async fn run_agent_turn(
     };
     let mut messages = assembler.build(opts)?;
     messages.push(Message::user(user_message));
+
+    // Vision auxiliary: if images present + local backend + vision enabled,
+    // call vision model and inject context
+    if crate::vision::has_images(&messages) {
+        let vision_cfg = crate::vision::load_vision_config();
+        if vision_cfg.enabled {
+            if let Some(vision_model) = &vision_cfg.model {
+                let images = crate::vision::extract_images(&messages);
+                if !images.is_empty() {
+                    let model_configs: Vec<loom_types::ModelConfig> = Vec::new(); // TODO: pass from orchestrator
+                    match crate::vision::prepare_vision_context(&images, user_message, vision_model, &model_configs).await {
+                        Ok(context) => {
+                            messages.push(Message {
+                                role: loom_types::Role::System,
+                                content: vec![ContentPart::Text { text: context }],
+                                timestamp: chrono::Utc::now(),
+                            });
+                            info!("vision auxiliary context injected");
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "vision auxiliary failed, skipping");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let mut tool_calls_made = 0;
     let mut total_prompt = 0usize;
     let mut total_completion = 0usize;
@@ -160,7 +191,7 @@ pub async fn run_agent_turn(
             top_p: 1.0,
             stop: Vec::new(),
             stream: false,
-            thinking_budget: None,
+            thinking_budget: config.thinking_budget,
         };
 
         info!(
@@ -344,7 +375,7 @@ pub async fn run_agent_turn_streaming(
             top_p: 1.0,
             stop: Vec::new(),
             stream: true,
-            thinking_budget: None,
+            thinking_budget: config.thinking_budget,
         };
 
         // Real streaming: use complete_stream_structured to get token-by-token deltas.

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { IconImage, IconFileText, IconPaperclip } from '../../utils/icons'
 
 interface FileItem { path: string; name: string; kind: string }
 
@@ -42,8 +43,8 @@ export default function FileMentionMenu({ query, onSelect, onClose }: Props) {
             onClick={() => onSelect(f)}
             className="w-full text-left px-3.5 py-2.5 hover:bg-[rgba(255,255,255,0.04)] transition-colors-fast flex items-center gap-2"
           >
-            <span className="opacity-50 text-sm">
-              {f.kind === 'image' ? '🖼' : f.kind === 'code' ? '📄' : '📎'}
+            <span className="opacity-50">
+              {f.kind === 'image' ? <IconImage size={14} /> : f.kind === 'code' ? <IconFileText size={14} /> : <IconPaperclip size={14} />}
             </span>
             <span className="text-[13px] text-[var(--text-light)] truncate">{f.name}</span>
           </button>

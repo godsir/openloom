@@ -142,8 +142,12 @@ async fn main() -> anyhow::Result<()> {
             match memory::LoomMemoryStore::open(&db_path) {
                 Ok(store) => {
                     orchestrator.set_memory_store(Box::new(store)).await;
-                    let _ = orchestrator.load_agent_configs().await;
-                    let _ = orchestrator.load_model_configs().await;
+                    if let Err(e) = orchestrator.load_agent_configs().await {
+                        eprintln!("[server] load agent configs failed: {}", e);
+                    }
+                    if let Err(e) = orchestrator.load_model_configs().await {
+                        eprintln!("[server] load model configs failed: {}", e);
+                    }
                     println!("[server] memory store: {}", db_path.display());
                 }
                 Err(e) => println!("[server] memory unavailable: {}", e),
@@ -534,8 +538,12 @@ async fn run_chat_demo(
             }
             orchestrator.set_memory_store(Box::new(store)).await;
             let _ = orchestrator.prune_memory().await;
-            let _ = orchestrator.load_agent_configs().await;
-            let _ = orchestrator.load_model_configs().await;
+            if let Err(e) = orchestrator.load_agent_configs().await {
+                eprintln!("[memory] load agent configs failed: {}", e);
+            }
+            if let Err(e) = orchestrator.load_model_configs().await {
+                eprintln!("[memory] load model configs failed: {}", e);
+            }
             if !is_new {
                 let _ = orchestrator.load_history(session).await;
                 let history = orchestrator.session_history(session).await;

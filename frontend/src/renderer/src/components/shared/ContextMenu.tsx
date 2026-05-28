@@ -1,4 +1,5 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 
 interface ContextMenuProps {
   open: boolean
@@ -16,6 +17,29 @@ export default function ContextMenu({
   children,
 }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
+  const [adjustX, setAdjustX] = useState(0)
+  const [adjustY, setAdjustY] = useState(0)
+
+  useEffect(() => {
+    if (!open) {
+      setAdjustX(0)
+      setAdjustY(0)
+      return
+    }
+    // Clamp position after render so menu stays within viewport
+    const raf = requestAnimationFrame(() => {
+      if (!ref.current) return
+      const rect = ref.current.getBoundingClientRect()
+      const vw = window.innerWidth
+      const vh = window.innerHeight
+      let ax = 0, ay = 0
+      if (x + rect.width > vw - 8) ax = x + rect.width - vw + 8
+      if (y + rect.height > vh - 8) ay = y + rect.height - vh + 8
+      setAdjustX(ax)
+      setAdjustY(ay)
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [open, x, y])
 
   useEffect(() => {
     if (!open) return
@@ -35,14 +59,15 @@ export default function ContextMenu({
 
   if (!open) return null
 
-  return (
+  return createPortal(
     <div
       ref={ref}
-      className="fixed z-50 min-w-[150px] bg-[var(--bg)] border border-[var(--border-accent)] rounded-[var(--r-md)] shadow-xl py-1 animate-fade-in backdrop-blur-xl"
-      style={{ left: x, top: y }}
+      className="fixed z-[9999] min-w-[160px] bg-[var(--bg-card)] border border-[var(--border)] rounded-[var(--r-md)] shadow-[var(--shadow-lg)] py-1 animate-fade-in"
+      style={{ left: x - adjustX, top: y - adjustY }}
     >
       {children}
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -58,10 +83,10 @@ export function ContextMenuItem({
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left px-3.5 py-2 text-[13px] transition-colors-fast ${
+      className={`w-full text-left px-3.5 py-2 text-[13px] transition-colors ${
         danger
           ? 'text-[var(--red)] hover:bg-[var(--red-light)]'
-          : 'text-[var(--text-light)] hover:bg-[rgba(0,227,199,0.04)] hover:text-[var(--text)]'
+          : 'text-[var(--text-secondary)] hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--text)]'
       }`}
     >
       {children}

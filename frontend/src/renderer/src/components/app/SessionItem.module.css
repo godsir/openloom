@@ -1,0 +1,78 @@
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin: 2px 0;
+  cursor: pointer;
+  border-radius: var(--r-md);
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.item:hover {
+  background: var(--bg-card);
+}
+
+.active {
+  background: var(--bg-active);
+  border-color: var(--border-accent);
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.active .title {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.pinBtn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.item:hover .pinBtn {
+  opacity: 1;
+}
+
+.pinned {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.renameInput {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font-size: 12px;
+  border-radius: var(--r-sm);
+  padding: 4px 8px;
+  border: none;
+  outline: none;
+}

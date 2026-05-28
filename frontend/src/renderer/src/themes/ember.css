@@ -1,0 +1,49 @@
+/* Ember theme — deep navy with fiery orange accent */
+[data-theme="ember"] {
+  /* Surface */
+  --bg:         #000026;
+  --bg-surface: #060630;
+  --bg-card:    #0d0d38;
+  --bg-active:  #141442;
+  --bg-overlay: rgba(0,0,0,0.72);
+  --bg-input:   #060630;
+  --bg-tooltip: #0d0d38;
+
+  /* Text */
+  --text:           rgba(255,255,255,0.90);
+  --text-secondary: rgba(255,255,255,0.55);
+  --text-muted:     rgba(255,255,255,0.28);
+  --text-light:     rgba(255,255,255,0.55);
+
+  /* Borders */
+  --border:         rgba(255,119,15,0.07);
+  --border-default: rgba(255,119,15,0.11);
+  --border-accent:  rgba(255,119,15,0.28);
+  --border-light:   rgba(255,119,15,0.04);
+
+  /* Accent — Ember Orange #ff770f */
+  --accent:         #ff770f;
+  --accent-hover:   #ff8c33;
+  --accent-rgb:     255,119,15;
+  --accent-subtle:  rgba(255,119,15,0.10);
+  --accent-medium:  rgba(255,119,15,0.16);
+  --accent-glow:    rgba(255,119,15,0.22);
+  --accent-light:   rgba(255,119,15,0.12);
+  --accent-strong:  rgba(255,119,15,0.22);
+
+  /* Semantic */
+  --green:        #34D399;
+  --green-light:  rgba(52,211,153,0.10);
+  --amber:        #FBBF24;
+  --amber-light:  rgba(251,191,36,0.12);
+  --red:          #F87171;
+  --red-light:    rgba(248,113,113,0.12);
+
+  /* Shadows */
+  --shadow:          0 1px 3px rgba(0,0,0,0.5);
+  --shadow-md:       0 4px 16px rgba(0,0,0,0.6);
+  --shadow-lg:       0 8px 32px rgba(0,0,0,0.7);
+  --shadow-glow:     0 0 24px rgba(255,119,15,0.20);
+  --shadow-composer: 0 0 30px rgba(255,119,15,0.08), 0 4px 20px rgba(0,0,0,0.5);
+  --shadow-glass:    0 8px 32px rgba(0,0,0,0.5);
+}

@@ -1,27 +1,49 @@
+/* Warm Paper theme — cream surfaces with terracotta accent */
 [data-theme="warm-paper"] {
-  --bg:        #F5F0E8;
-  --bg-card:   rgba(176,90,48,0.04);
-  --bg-input:  rgba(176,90,48,0.03);
-  --bg-tooltip:rgba(176,90,48,0.06);
-  --bg-overlay:rgba(0,0,0,0.40);
+  /* Surface */
+  --bg:         #FDFBF7;
+  --bg-surface: #F5F0E8;
+  --bg-card:    #FAF6F0;
+  --bg-active:  #EDE4D6;
+  --bg-overlay: rgba(40,30,20,0.35);
+  --bg-input:   #F5F0E8;
+  --bg-tooltip: #FAF6F0;
 
-  --text:       rgba(45,36,22,0.90);
-  --text-light: rgba(45,36,22,0.55);
-  --text-muted: rgba(45,36,22,0.25);
+  /* Text */
+  --text:           rgba(45,36,22,0.92);
+  --text-secondary: rgba(45,36,22,0.55);
+  --text-muted:     rgba(45,36,22,0.30);
+  --text-light:     rgba(45,36,22,0.55);
 
-  --border:     rgba(176,90,48,0.08);
-  --border-light:rgba(176,90,48,0.04);
-  --border-accent:rgba(176,90,48,0.14);
+  /* Borders */
+  --border:         rgba(120,90,60,0.10);
+  --border-default: rgba(120,90,60,0.14);
+  --border-accent:  rgba(176,90,48,0.30);
+  --border-light:   rgba(120,90,60,0.06);
 
-  --accent:        #B05A30;
-  --accent-hover:  #C06A3A;
-  --accent-rgb:    176,90,48;
-  --accent-light:  rgba(176,90,48,0.08);
-  --accent-strong: rgba(176,90,48,0.14);
-  --accent-glow:   rgba(176,90,48,0.20);
+  /* Accent — Terracotta */
+  --accent:         #B05A30;
+  --accent-hover:   #C06A3A;
+  --accent-rgb:     176,90,48;
+  --accent-subtle:  rgba(176,90,48,0.08);
+  --accent-medium:  rgba(176,90,48,0.14);
+  --accent-glow:    rgba(176,90,48,0.15);
+  --accent-light:   rgba(176,90,48,0.10);
+  --accent-strong:  rgba(176,90,48,0.18);
 
-  --shadow:       0 1px 3px rgba(0,0,0,0.06);
-  --shadow-md:    0 4px 12px rgba(0,0,0,0.08);
-  --shadow-lg:    0 8px 28px rgba(0,0,0,0.10);
-  --shadow-glass: 0 0 40px rgba(176,90,48,0.03),0 4px 20px rgba(0,0,0,0.06);
+  /* Semantic */
+  --green:        #10B981;
+  --green-light:  rgba(16,185,129,0.10);
+  --amber:        #D97706;
+  --amber-light:  rgba(217,119,6,0.10);
+  --red:          #DC2626;
+  --red-light:    rgba(220,38,38,0.10);
+
+  /* Shadows */
+  --shadow:          0 1px 3px rgba(80,50,30,0.06);
+  --shadow-md:       0 4px 16px rgba(80,50,30,0.08);
+  --shadow-lg:       0 8px 32px rgba(80,50,30,0.10);
+  --shadow-glow:     0 0 20px rgba(176,90,48,0.10);
+  --shadow-composer: 0 0 30px rgba(176,90,48,0.06), 0 4px 16px rgba(80,50,30,0.08);
+  --shadow-glass:    0 8px 32px rgba(80,50,30,0.08);
 }

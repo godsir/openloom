@@ -5,6 +5,7 @@ import WelcomeScreen from './components/shared/WelcomeScreen'
 import Onboarding from './components/shared/Onboarding'
 import ErrorBoundary from './components/shared/ErrorBoundary'
 import ToastContainer from './components/shared/ToastContainer'
+import ConfirmDialog from './components/shared/ConfirmDialog'
 import { bootstrapApp } from './services/bootstrap'
 import { useStore } from './stores'
 
@@ -14,6 +15,14 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(false)
   const settingsOpen = useStore((s) => s.settingsOpen)
   const setSettingsOpen = useStore((s) => s.setSettingsOpen)
+  const theme = useStore((s) => s.theme)
+  const confirm = useStore((s) => s.confirm)
+  const set = useStore.setState
+
+  // Apply theme on mount and on change
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+  }, [theme])
 
   useEffect(() => {
     let cancelled = false
@@ -24,6 +33,14 @@ export default function App() {
         setReady(true)
         const pref = await window.hana.getPreference('onboarded', false)
         if (!pref) setShowOnboarding(true)
+        // Restore saved theme from ~/.loom/preferences.json
+        const savedTheme = await window.hana.getPreference('theme', 'dark')
+        useStore.getState().setTheme(savedTheme as any)
+        // Restore pinned session IDs
+        const savedPinned = await window.hana.getPreference<string[]>('pinnedIds', [])
+        if (savedPinned.length) {
+          useStore.setState({ pinnedIds: new Set(savedPinned) })
+        }
       } catch (e: any) {
         if (cancelled) return
         setError(e.message || '启动失败')
@@ -87,6 +104,20 @@ export default function App() {
       <AppShell />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <ToastContainer />
+      <ConfirmDialog
+        open={confirm.open}
+        title={confirm.title}
+        message={confirm.message}
+        danger={confirm.danger}
+        onConfirm={() => {
+          confirm.resolve?.(true)
+          set({ confirm: { open: false, title: '', message: '', danger: false, resolve: null } })
+        }}
+        onCancel={() => {
+          confirm.resolve?.(false)
+          set({ confirm: { open: false, title: '', message: '', danger: false, resolve: null } })
+        }}
+      />
     </ErrorBoundary>
   )
 }

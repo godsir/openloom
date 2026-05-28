@@ -31,10 +31,11 @@ function doSend<T>(method: string, params: Record<string, unknown>): Promise<T> 
   }
 
   return new Promise((resolve, reject) => {
+    const timeout = method === 'chat.send' ? 180000 : 30000
     const timer = setTimeout(() => {
       pending.delete(id)
       reject(new Error(`RPC timeout: ${method}`))
-    }, 30000)
+    }, timeout)
 
     pending.set(id, {
       resolve: (v: unknown) => { clearTimeout(timer); resolve(v as T) },
@@ -104,6 +105,9 @@ export function handleWsMessage(data: string): void {
         }
       }
     } else if ('method' in msg && msg.method) {
+      if (msg.method.startsWith('chat.')) {
+        console.warn('[ws:in]', msg.method, (msg.params as any)?.delta?.slice(0, 60) || JSON.stringify(msg.params).slice(0, 80))
+      }
       for (const handler of subscribers) {
         handler(msg.method, msg.params)
       }

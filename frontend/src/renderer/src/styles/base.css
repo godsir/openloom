@@ -6,66 +6,77 @@
    ================================================================ */
 
 :root {
-  /* ── Surface (3-level depth) ── */
-  --bg:        #0A0E14;
-  --bg-card:   rgba(0,227,199,0.03);
-  --bg-input:  rgba(0,227,199,0.025);
-  --bg-tooltip:rgba(0,227,199,0.06);
-  --bg-overlay:rgba(0,0,0,0.60);
-
-  /* ── Ink (3-level text) ── */
-  --text:       rgba(255,255,255,0.85);
-  --text-light: rgba(255,255,255,0.45);
-  --text-muted: rgba(255,255,255,0.15);
-
-  /* ── Borders ── */
-  --border:     rgba(0,227,199,0.06);
-  --border-light:rgba(0,227,199,0.03);
-  --border-accent:rgba(0,227,199,0.12);
-
-  /* ── Accent: Cyan #00E3C7 ── */
-  --accent:        #00E3C7;
-  --accent-hover:  #33EAD3;
-  --accent-rgb:    0,227,199;
-  --accent-light:  rgba(0,227,199,0.08);
-  --accent-strong: rgba(0,227,199,0.14);
-  --accent-glow:   rgba(0,227,199,0.20);
-
-  /* ── Semantic ── */
-  --green:       #2DD4BF;
-  --green-light: rgba(45,212,191,0.08);
-  --amber:       #F59E0B;
-  --amber-light: rgba(245,158,11,0.08);
-  --red:         #EF4444;
-  --red-light:   rgba(239,68,68,0.08);
-
   /* ── Typography ── */
   --font:      "Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   --font-mono: "JetBrains Mono","Cascadia Code","Fira Code","Consolas",monospace;
 
   /* ── Radii ── */
-  --r-sm: 4px; --r-md: 8px; --r-lg: 12px; --r-xl: 14px; --r-full: 9999px;
-  --r-input: 8px;
-
-  /* ── Shadows ── */
-  --shadow:       0 1px 3px rgba(0,0,0,0.4);
-  --shadow-md:    0 4px 12px rgba(0,0,0,0.5);
-  --shadow-lg:    0 8px 28px rgba(0,0,0,0.6);
-  --shadow-glow:  0 0 16px var(--accent-glow);
-  --shadow-glass: 0 0 40px rgba(0,227,199,0.03),0 4px 20px rgba(0,0,0,0.3);
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 10px;
+  --r-xl: 14px;
+  --r-2xl: 16px;
+  --r-full: 9999px;
 
   /* ── Animation ── */
-  --ease-out:    cubic-bezier(0.16,1,0.3,1);
-  --ease-in:     cubic-bezier(0.4,0,1,1);
+  --ease-out:     cubic-bezier(0.16,1,0.3,1);
+  --ease-in:      cubic-bezier(0.4,0,1,1);
   --ease-standard:cubic-bezier(0.2,0,0,1);
-  --dur-fast:    0.15s;
-  --dur-normal:  0.2s;
-  --dur-slow:    0.25s;
+  --dur-fast:     0.15s;
+  --dur-normal:   0.2s;
+  --dur-slow:     0.25s;
 
   /* ── Shell ── */
-  --sidebar-w:   240px;
-  --titlebar-h:  36px;
-  --statusbar-h: 22px;
+  --sidebar-w:   220px;
+  --titlebar-h:  48px;
+
+  /* ── Legacy aliases ── */
+  --r-input: 8px;
+}
+
+/* ── Dark theme (default) ── */
+[data-theme="dark"], :root {
+  --bg:         #0B0F14;
+  --bg-surface: #111820;
+  --bg-card:    #161E28;
+  --bg-active:  #1A2535;
+  --bg-overlay: rgba(0,0,0, 0.70);
+
+  --text:        rgba(255,255,255, 0.88);
+  --text-secondary: rgba(255,255,255, 0.60);
+  --text-muted:  rgba(255,255,255, 0.30);
+  --text-light: rgba(255,255,255, 0.60);
+
+  --border:       rgba(255,255,255, 0.06);
+  --border-default: rgba(255,255,255, 0.10);
+  --border-accent:  rgba(34,211,238, 0.30);
+
+  --accent:        #22D3EE;
+  --accent-hover:  #67E8F9;
+  --accent-rgb:    34,211,238;
+  --accent-subtle: rgba(34,211,238, 0.08);
+  --accent-medium: rgba(34,211,238, 0.14);
+  --accent-glow:   rgba(34,211,238, 0.20);
+
+  --green:       #2DD4BF;
+  --green-light: rgba(45,212,191,0.10);
+  --amber:       #F59E0B;
+  --amber-light: rgba(245,158,11,0.10);
+  --red:         #EF4444;
+  --red-light:   rgba(239,68,68,0.10);
+
+  --shadow:       0 1px 3px rgba(0,0,0,0.5);
+  --shadow-md:    0 4px 12px rgba(0,0,0,0.6);
+  --shadow-lg:    0 8px 28px rgba(0,0,0,0.7);
+  --shadow-glow:  0 0 20px rgba(34,211,238,0.15), 0 0 40px rgba(34,211,238,0.05);
+  --shadow-composer: 0 0 30px rgba(34,211,238,0.08), 4px 0 20px rgba(0,0,0,0.4);
+
+  --bg-input:  #161E28;
+  --bg-tooltip:#1A2535;
+  --border-light: rgba(255,255,255, 0.04);
+  --accent-light: rgba(34,211,238, 0.12);
+  --accent-strong: rgba(34,211,238, 0.20);
+  --shadow-glass: 0 0 40px rgba(34,211,238,0.05),0 4px 20px rgba(0,0,0,0.4);
 }
 
 /* ================================================================
@@ -86,8 +97,6 @@ body{
 }
 
 ::selection{background:rgba(0,227,199,.22);color:#fff}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r-sm)}
-:focus:not(:focus-visible){outline:none}
 
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -148,30 +157,29 @@ body{
 
 .pill{
   display:inline-flex;align-items:center;
-  height:24px;padding:0 8px;
-  font-size:.6875rem;font-weight:500;
-  background:rgba(0,227,199,0.08);
-  border:1px solid rgba(0,227,199,0.12);
-  border-radius:var(--r-sm);
+  height:26px;padding:0 10px;
+  font-size:11px;font-weight:500;
+  background:rgba(var(--accent-rgb),0.12);
+  border:1px solid rgba(var(--accent-rgb),0.25);
+  border-radius:var(--r-full);
   color:var(--accent);
   cursor:pointer;
   transition:all var(--dur-fast) var(--ease-out);
 }
-.pill:hover{background:rgba(0,227,199,0.12);border-color:rgba(0,227,199,0.2)}
-.pill.active{background:rgba(0,227,199,0.12);color:var(--accent);border-color:rgba(0,227,199,0.2)}
+.pill:hover{background:rgba(var(--accent-rgb),0.18);border-color:rgba(var(--accent-rgb),0.35)}
 
 .pill-neutral{
   display:inline-flex;align-items:center;
-  height:24px;padding:0 8px;
-  font-size:.6875rem;font-weight:500;
-  background:rgba(255,255,255,0.03);
-  border:1px solid rgba(255,255,255,0.05);
-  border-radius:var(--r-sm);
-  color:rgba(255,255,255,0.35);
+  height:26px;padding:0 10px;
+  font-size:11px;font-weight:500;
+  background:var(--bg-card);
+  border:1px solid var(--border);
+  border-radius:var(--r-full);
+  color:var(--text-secondary);
   cursor:pointer;
   transition:all var(--dur-fast) var(--ease-out);
 }
-.pill-neutral:hover{background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.5)}
+.pill-neutral:hover{background:var(--bg-active);color:var(--text)}
 
 .card{
   background:var(--bg-card);
@@ -200,14 +208,14 @@ body{
 .prose-chat p:first-child{margin-top:0}
 .prose-chat p:last-child{margin-bottom:0}
 .prose-chat pre{
-  background:rgba(0,227,199,0.02);padding:.5rem 1rem;
+  background:rgba(var(--accent-rgb),0.04);padding:.75rem 1rem;
   border-radius:var(--r-md);overflow-x:auto;
-  font-size:.85em;font-family:var(--font-mono);
+  font-size:12.5px;font-family:var(--font-mono);
   border:1px solid var(--border);
 }
 .prose-chat code{
-  font-size:.85em;font-family:var(--font-mono);
-  background:rgba(0,227,199,0.06);padding:.15em .35em;
+  font-size:12.5px;font-family:var(--font-mono);
+  background:var(--accent-subtle);padding:.15em .4em;
   border-radius:var(--r-sm);color:var(--accent);
 }
 .prose-chat pre code{background:none;padding:0;color:var(--text)}
