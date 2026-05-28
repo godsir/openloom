@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import styles from './ContextMenu.module.css'
 
 interface ContextMenuProps {
   open: boolean
@@ -26,7 +27,6 @@ export default function ContextMenu({
       setAdjustY(0)
       return
     }
-    // Clamp position after render so menu stays within viewport
     const raf = requestAnimationFrame(() => {
       if (!ref.current) return
       const rect = ref.current.getBoundingClientRect()
@@ -62,7 +62,7 @@ export default function ContextMenu({
   return createPortal(
     <div
       ref={ref}
-      className="fixed z-[9999] min-w-[160px] bg-[var(--bg-card)] border border-[var(--border)] rounded-[var(--r-md)] shadow-[var(--shadow-lg)] py-1 animate-fade-in"
+      className={styles.menu}
       style={{ left: x - adjustX, top: y - adjustY }}
     >
       {children}
@@ -83,11 +83,7 @@ export function ContextMenuItem({
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left px-3.5 py-2 text-[13px] transition-colors ${
-        danger
-          ? 'text-[var(--red)] hover:bg-[var(--red-light)]'
-          : 'text-[var(--text-secondary)] hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--text)]'
-      }`}
+      className={`${styles.item} ${danger ? styles.itemDanger : ''}`}
     >
       {children}
     </button>
@@ -95,5 +91,5 @@ export function ContextMenuItem({
 }
 
 export function ContextMenuDivider() {
-  return <div className="my-1 border-t border-[var(--border)]" />
+  return <div className={styles.divider} />
 }

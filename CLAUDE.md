@@ -110,6 +110,7 @@ cargo build -p lume-cli --release
 2. agent 返回值是参考，关键路径自己读一遍确认
 3. 多个独立探索任务并行派发，不串行等待
 4. 失败/超时重新派发，不跳过
+5.禁止使用内联样式，必须用module.css做样式
 
 ## 参考文档
 
@@ -123,69 +124,3 @@ cargo build -p lume-cli --release
 | [记忆系统优化 P0/P1](docs/memory-optimization-plan.md) | 摘要引擎 + 稳定前缀 + KG 增强 |
 | [记忆系统优化 P2](docs/p2-memory-optimization-plan.md) | Evidence + 修剪 + 搜索 + 中文修复 |
 
-## 当前进度 (v2)
-
-| 阶段 | 状态 | 说明 |
-|------|:--:|------|
-| Phase 0 — 基础设施 | ✅ | 10 crate + loom-types + inference + V8 迁移 |
-| Phase 1 — Agent 核心 | ✅ | Agent struct + 9 状态机 + AgentPool + Orchestrator + Server 骨架 |
-| Phase 2 — 工具 + 子 Agent | ✅ | ToolRegistry + MCP 分发 + spawn_agent + WS + 流式 + 安全 + 防循环 |
-| Phase 3 — 记忆 + 技能 | ✅ | KG 四表 + GraphStore + Skills 解析 + LLM 实体提取 + 对话持久 + Persona + EntityExtractor |
-| Phase 4 — 前端 + 切换 | ⏳ | frontend monorepo + 页面迁移 + Electron TS + 删除 legacy |
-
-### 2026-05-26~27 新增
-
-| 改动 | 说明 |
-|------|------|
-| loom-context 接入 agent_loop | ContextAssembler 替代手写消息拼接 |
-| InferenceEngine 真实实现 | stub→HTTP 调用 LM Studio/Ollama，实现 CloudClient trait |
-| Agent 配置系统 | V9 迁移 + AgentConfigStore + 5 CRUD RPC + 会话绑定 + 工具过滤 |
-| KG 读取接入 | MemoryStore.query_kg_context + 每轮自动注入 USER 实体 + 邻近关系 |
-| use_skill 工具 | LLM 可调用 use_skill(name) 获取完整 SKILL.md 指令体 |
-| Agent tokio task 化 | process_message 内 agent 循环通过 tokio::spawn 运行 |
-| 会话历史隔离 | session_histories HashMap 替代单 Vec，按 session_id 隔离 |
-| --resume / -c 会话延续 | 启动加载历史 + 完整回显 + 新会话自动生成唯一 ID |
-| 会话持久化 | SessionStore → SQLite 同步，lume serve 启动恢复 |
-| MCP 增强 | tool call timeout + resources/list/read + resourceTemplates + prompts/list/get + server_health + RPC |
-| Plugin 系统 | 兼容 Claude Code/OpenClaw，递归扫描 4 层，TOML+JSON manifest |
-| Bridge 外部接入 | lume-bridge crate：ChannelAdapter + Telegram + WeChat(iLink) + BridgeManager + BridgeStore |
-| 默认模型 | deepseek-v4-flash (autodetect deepseek provider) |
-| MCP resources/prompts | McpPrompt/McpPromptMessage 类型 + list_prompts/get_prompt + resourceTemplates + LLM 工具注册 |
-| MCP bug fixes | stdio 连接修复 + SSE \r\n 支持 + stderr drain + reqwest timeout + HTTP body drain |
-| LSP 客户端 | lume-lsp crate：LspClient + 40+ 语言 LS 自动检测 + Content-Length 帧协议 + 6 LLM 工具 + 8 RPC |
-| LSP bug fixes | file_uri 中文路径 percent-encoding + Content-Length 10MB 上限 + didChange 支持 + timeout + stderr drain |
-
-### 2026-05-27 新增 (记忆系统 + Token 优化)
-
-| 改动 | 说明 |
-|------|------|
-| **KV Cache 追踪** | PrefixCache + 每轮显示 `kv hit/miss`，CLI 输出 cache 命中状态 |
-| **本地端点路由** | InferenceEngine vs AnthropicClient 按 provider 分流，URL 自动补 `/v1` |
-| **Lazy Tools** | `request_tools` 元工具：纯对话只加载 1 个工具，LLM 需时才按关键字匹配注入 |
-| **Skill 名精简** | 系统提示词只列 skill 名称（`- name`），完整描述通过 `use_skill()` 按需获取 |
-| **系统提示词缩短** | 388→190 字符 |
-| **对话摘要引擎** | `SummaryEngine`：长对话(≥12条)自动触发 LLM 摘要，增量更新，语言自适应 |
-| **稳定前缀上下文** | `ContextAssembler` 重写：稳定前缀 + 动态后缀，最大化 KV cache 复用 |
-| **中文 token 估算修正** | `ascii/4 + (non_ascii+1)/2` 替代 `chars/4`，修正 4-8 倍低估 |
-| **中文实体提取** | CJK n-gram 滑动窗口提取候选实体名，替代仅英文 whitespace+大写方案 |
-| **KG 访问计数** | `touch_node`/`touch_rows`：查询自动更新 `access_count`/`last_accessed` |
-| **KG 时间衰减** | `top_interests` 公式加入 `access_count` 权重 + 7 天近因衰减 |
-| **KG evidence 接线** | `save_turn` 返回 event_id → `feed_knowledge_graph` 写入 `kg_evidence` |
-| **Persona 增强** | 按 `confidence × evidence_count` 排序 + `top_n` 限制 |
-| **Web 搜索** | `web_search` (DuckDuckGo) + `web_fetch` (HTML→text) 内置工具，按需加载 |
-| **记忆自动修剪** | 启动时清理 >500 实体中 30 天未访问的低置信度实体 |
-| **跨会话 KG 搜索** | `lume kg search` / `lume kg stats` CLI + FTS5 前缀自动扩展 |
-| **LLM 查询扩展** | `lume kg search --expand "性能优化"` → LLM 多语言关键词扩展 |
-| **KG 污染修复** | `query_kg_context` 加 `MIN_CONFIDENCE = 0.5` 过滤低质量实体 |
-| **V10 迁移** | `sessions.summary` + `kg_nodes.access_count/last_accessed` |
-
-### 参考文档
-
-| 文档 | 说明 |
-|------|------|
-| [记忆系统优化 P0/P1](docs/memory-optimization-plan.md) | 摘要引擎 + 稳定前缀 + KG 增强 实施记录 |
-| [记忆系统优化 P2](docs/p2-memory-optimization-plan.md) | Evidence + 修剪 + 搜索 + 中文修复 实施记录 |
-
-### 测试状态
-
-新 backend: 34+ tests pass (含 8 summary + 3 graph + 3 extractor) | Clippy: 0 warnings | fmt: clean

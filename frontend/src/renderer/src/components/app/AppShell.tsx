@@ -5,6 +5,8 @@ import WindowControls from './WindowControls'
 import ChatWorkspace from '../chat/ChatWorkspace'
 import { IconPanelLeftClose, IconPanelLeft } from '../../utils/icons'
 import styles from './AppShell.module.css'
+import logoDev from '../../assets/loom_logo_dev.png'
+import logoRelease from '../../assets/loom_logo.png'
 
 export default function AppShell() {
   const sidebarOpen = useStore(s => s.sidebarOpen)
@@ -12,6 +14,7 @@ export default function AppShell() {
   const currentSessionId = useStore(s => s.currentSessionId)
   const sessions = useStore(s => s.sessions)
   const wsState = useStore(s => s.wsState)
+  const isPackaged = window.__isPackaged__ ?? true
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -32,6 +35,11 @@ export default function AppShell() {
     <div className={styles.shell}>
       <header className={styles.titlebar}>
         <div className={styles.titlebarLeft}>
+          <img
+            src={isPackaged ? logoRelease : logoDev}
+            alt="openLoom"
+            className={styles.titlebarIcon}
+          />
           <button onClick={toggleSidebar} className={styles.toggleBtn} title="⌘B 切换侧边栏">
             {sidebarOpen ? <IconPanelLeftClose size={16} /> : <IconPanelLeft size={16} />}
           </button>

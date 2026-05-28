@@ -19,6 +19,10 @@ use crate::tool_registry::ToolRegistry;
 #[derive(Debug, Clone)]
 pub struct TurnResult {
     pub response: String,
+    /// Thinking/reasoning content (empty if model doesn't support it).
+    pub thinking: String,
+    /// Rich content parts for persistence (thinking + text + tool calls).
+    pub content_parts: Vec<ContentPart>,
     pub tool_calls_made: usize,
     pub iterations: usize,
     pub prompt_tokens: usize,
@@ -126,12 +130,56 @@ fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
     matched
 }
 
+pub(crate) fn build_user_message(user_message: &str, attached_images: &[ContentPart]) -> Message {
+    let mut content: Vec<ContentPart> = Vec::new();
+    if !user_message.is_empty() {
+        content.push(ContentPart::Text { text: user_message.to_string() });
+    }
+    content.extend(attached_images.iter().cloned());
+    if content.is_empty() {
+        content.push(ContentPart::Text { text: String::new() });
+    }
+    Message {
+        role: loom_types::Role::User,
+        content,
+        timestamp: chrono::Utc::now(),
+        usage: None,
+    }
+}
+
 /// Execute one agent turn: user message → LLM → tools → response.
 pub async fn run_agent_turn(
     client: &dyn CloudClient,
     registry: &ToolRegistry,
     history: &[Message],
     user_message: &str,
+    config: &AgentLoopConfig,
+    allowed_tools: &Option<Vec<String>>,
+    disallowed_tools: &Option<Vec<String>>,
+) -> Result<TurnResult> {
+    run_agent_turn_inner(client, registry, history, user_message, &[], config, allowed_tools, disallowed_tools).await
+}
+
+/// Execute one agent turn with attached images.
+pub async fn run_agent_turn_with_images(
+    client: &dyn CloudClient,
+    registry: &ToolRegistry,
+    history: &[Message],
+    user_message: &str,
+    attached_images: &[ContentPart],
+    config: &AgentLoopConfig,
+    allowed_tools: &Option<Vec<String>>,
+    disallowed_tools: &Option<Vec<String>>,
+) -> Result<TurnResult> {
+    run_agent_turn_inner(client, registry, history, user_message, attached_images, config, allowed_tools, disallowed_tools).await
+}
+
+async fn run_agent_turn_inner(
+    client: &dyn CloudClient,
+    registry: &ToolRegistry,
+    history: &[Message],
+    user_message: &str,
+    attached_images: &[ContentPart],
     config: &AgentLoopConfig,
     allowed_tools: &Option<Vec<String>>,
     disallowed_tools: &Option<Vec<String>>,
@@ -147,7 +195,7 @@ pub async fn run_agent_turn(
         history: history.to_vec(),
     };
     let mut messages = assembler.build(opts)?;
-    messages.push(Message::user(user_message));
+    messages.push(build_user_message(user_message, attached_images));
 
     // Vision auxiliary: if images present + local backend + vision enabled,
     // call vision model and inject context
@@ -164,6 +212,7 @@ pub async fn run_agent_turn(
                                 role: loom_types::Role::System,
                                 content: vec![ContentPart::Text { text: context }],
                                 timestamp: chrono::Utc::now(),
+                                usage: None,
                             });
                             info!("vision auxiliary context injected");
                         }
@@ -218,6 +267,7 @@ pub async fn run_agent_turn(
                         text: "You have used many tools. Stop and give your final answer now based on what you've found. Do NOT call more tools.".into(),
                     }],
                     timestamp: chrono::Utc::now(),
+                    usage: None,
                 });
             } else if iteration >= 3 {
                 messages.push(Message {
@@ -226,6 +276,7 @@ pub async fn run_agent_turn(
                         text: "Consider whether you have enough information to answer. If so, respond directly without more tools.".into(),
                     }],
                     timestamp: chrono::Utc::now(),
+                    usage: None,
                 });
             }
 
@@ -247,6 +298,7 @@ pub async fn run_agent_turn(
                 role: Role::Assistant,
                 content: assistant_content,
                 timestamp: chrono::Utc::now(),
+                usage: None,
             });
 
             // Execute each tool call
@@ -296,8 +348,16 @@ pub async fn run_agent_turn(
         } else {
             response.text.clone()
         };
+        let thinking_text = response.thinking.unwrap_or_default();
+        let mut content_parts = Vec::new();
+        if !thinking_text.is_empty() {
+            content_parts.push(ContentPart::Thinking { text: thinking_text.clone() });
+        }
+        content_parts.push(ContentPart::Text { text: response_text.clone() });
         return Ok(TurnResult {
             response: response_text,
+            thinking: thinking_text,
+            content_parts,
             tool_calls_made,
             iterations: iteration + 1,
             prompt_tokens: total_prompt,
@@ -309,6 +369,8 @@ pub async fn run_agent_turn(
 
     Ok(TurnResult {
         response: "Agent reached maximum iterations without resolving.".into(),
+        thinking: String::new(),
+        content_parts: vec![ContentPart::Text { text: "Agent reached maximum iterations without resolving.".into() }],
         tool_calls_made,
         iterations: config.max_iterations,
         prompt_tokens: total_prompt,
@@ -325,6 +387,37 @@ pub async fn run_agent_turn_streaming(
     registry: &ToolRegistry,
     history: &[Message],
     user_message: &str,
+    config: &AgentLoopConfig,
+    delta_tx: mpsc::Sender<StreamDelta>,
+    allowed_tools: &Option<Vec<String>>,
+    disallowed_tools: &Option<Vec<String>>,
+) -> Result<TurnResult> {
+    run_agent_turn_streaming_inner(client, registry, history, user_message, &[], config, delta_tx, allowed_tools, disallowed_tools).await
+}
+
+/// Execute one agent turn (streaming) with attached images.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_agent_turn_streaming_with_images(
+    client: &dyn CloudClient,
+    registry: &ToolRegistry,
+    history: &[Message],
+    user_message: &str,
+    attached_images: &[ContentPart],
+    config: &AgentLoopConfig,
+    delta_tx: mpsc::Sender<StreamDelta>,
+    allowed_tools: &Option<Vec<String>>,
+    disallowed_tools: &Option<Vec<String>>,
+) -> Result<TurnResult> {
+    run_agent_turn_streaming_inner(client, registry, history, user_message, attached_images, config, delta_tx, allowed_tools, disallowed_tools).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_agent_turn_streaming_inner(
+    client: &dyn CloudClient,
+    registry: &ToolRegistry,
+    history: &[Message],
+    user_message: &str,
+    attached_images: &[ContentPart],
     config: &AgentLoopConfig,
     delta_tx: mpsc::Sender<StreamDelta>,
     allowed_tools: &Option<Vec<String>>,
@@ -358,11 +451,13 @@ pub async fn run_agent_turn_streaming(
         all_tools.len(),
         history.len(),
     );
-    messages.push(Message::user(user_message));
+    messages.push(build_user_message(user_message, attached_images));
     let mut tool_calls_made = 0;
     let mut total_prompt = 0usize;
     let mut total_completion = 0usize;
     let mut final_text = String::new();
+    let mut content_parts: Vec<ContentPart> = Vec::new();
+    let mut captured_thinking = String::new();
 
     for _iteration in 0..config.max_iterations {
         let request = CompletionRequest {
@@ -378,69 +473,68 @@ pub async fn run_agent_turn_streaming(
             thinking_budget: config.thinking_budget,
         };
 
-        // Real streaming: use complete_stream_structured to get token-by-token deltas.
-        // Use unbounded channel + select! to avoid deadlock — stream sender and
-        // receiver must run concurrently.
         let (stream_tx, mut stream_rx) = mpsc::channel::<StreamDelta>(4096);
         let stream_fut = client.complete_stream_structured(request, stream_tx);
         tokio::pin!(stream_fut);
-        let mut stream_done = false;
 
         let mut pending_tool_calls: Vec<(usize, String, String, String)> = Vec::new();
         let mut this_text = String::new();
         let mut this_thinking = String::new();
 
-        while !stream_done {
+        loop {
             tokio::select! {
-                r = &mut stream_fut => { r?; stream_done = true; }
+                biased;
+
+                // Consume deltas as long as any are available.
                 delta = stream_rx.recv() => {
                     let Some(delta) = delta else { break };
                     match delta {
-                StreamDelta::Text(t) => {
-                    this_text.push_str(&t);
-                    let _ = delta_tx.send(StreamDelta::Text(t)).await;
-                }
-                StreamDelta::Reasoning(t) => {
-                    this_thinking.push_str(&t);
-                    let _ = delta_tx.send(StreamDelta::Reasoning(t)).await;
-                }
-                StreamDelta::ToolCallBegin { index, id, name } => {
-                    pending_tool_calls.push((index, id.clone(), name.clone(), String::new()));
-                    let _ = delta_tx.send(StreamDelta::ToolCallBegin { index, id, name }).await;
-                }
-                StreamDelta::ToolCallArgsChunk { index, chunk } => {
-                    if let Some(tc) = pending_tool_calls.iter_mut().find(|(i, _, _, _)| *i == index) {
-                        tc.3.push_str(&chunk);
+                        StreamDelta::Text(t) => {
+                            this_text.push_str(&t);
+                            let _ = delta_tx.send(StreamDelta::Text(t)).await;
+                        }
+                        StreamDelta::Reasoning(t) => {
+                            this_thinking.push_str(&t);
+                            let _ = delta_tx.send(StreamDelta::Reasoning(t)).await;
+                        }
+                        StreamDelta::ToolCallBegin { index, id, name } => {
+                            pending_tool_calls.push((index, id.clone(), name.clone(), String::new()));
+                            let _ = delta_tx.send(StreamDelta::ToolCallBegin { index, id, name }).await;
+                        }
+                        StreamDelta::ToolCallArgsChunk { index, chunk } => {
+                            if let Some(tc) = pending_tool_calls.iter_mut().find(|(i, _, _, _)| *i == index) {
+                                tc.3.push_str(&chunk);
+                            }
+                        }
+                        StreamDelta::Usage { prompt_tokens, completion_tokens, .. } => {
+                            total_prompt += prompt_tokens as usize;
+                            total_completion += completion_tokens as usize;
+                            let _ = delta_tx.send(StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens: 0, cache_write_tokens: 0 }).await;
+                        }
                     }
                 }
-                StreamDelta::Usage { prompt_tokens, completion_tokens, .. } => {
-                    total_prompt += prompt_tokens as usize;
-                    total_completion += completion_tokens as usize;
-                }
+                r = &mut stream_fut => {
+                    r?;
+                    // Future completed — drain any remaining buffered deltas
+                    while let Ok(delta) = stream_rx.try_recv() {
+                        match delta {
+                            StreamDelta::Text(t) => {
+                                this_text.push_str(&t);
+                                let _ = delta_tx.send(StreamDelta::Text(t)).await;
+                            }
+                            StreamDelta::Reasoning(t) => {
+                                let _ = delta_tx.send(StreamDelta::Reasoning(t)).await;
+                            }
+                            StreamDelta::Usage { prompt_tokens, completion_tokens, .. } => {
+                                total_prompt += prompt_tokens as usize;
+                                total_completion += completion_tokens as usize;
+                                let _ = delta_tx.send(StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens: 0, cache_write_tokens: 0 }).await;
+                            }
+                            _ => {}
+                        }
                     }
+                    break;
                 }
-            }
-        }
-
-        // Drain any remaining deltas after stream completes
-        while let Ok(delta) = stream_rx.try_recv() {
-            match delta {
-                StreamDelta::Text(t) => {
-                    this_text.push_str(&t);
-                    let _ = delta_tx.send(StreamDelta::Text(t)).await;
-                }
-                StreamDelta::Reasoning(t) => {
-                    let _ = delta_tx.send(StreamDelta::Reasoning(t)).await;
-                }
-                StreamDelta::Usage {
-                    prompt_tokens,
-                    completion_tokens,
-                    ..
-                } => {
-                    total_prompt += prompt_tokens as usize;
-                    total_completion += completion_tokens as usize;
-                }
-                _ => {}
             }
         }
 
@@ -463,6 +557,7 @@ pub async fn run_agent_turn_streaming(
                 role: Role::Assistant,
                 content: assistant_content,
                 timestamp: chrono::Utc::now(),
+                usage: None,
             });
 
             for (_, tc_id, tc_name, tc_args) in &pending_tool_calls {
@@ -513,11 +608,19 @@ pub async fn run_agent_turn_streaming(
         }
 
         final_text = this_text;
+        captured_thinking = std::mem::take(&mut this_thinking);
+        content_parts.clear();
+        if !captured_thinking.is_empty() {
+            content_parts.push(ContentPart::Thinking { text: captured_thinking.clone() });
+        }
+        content_parts.push(ContentPart::Text { text: final_text.clone() });
         break;
     }
 
     Ok(TurnResult {
         response: final_text,
+        thinking: captured_thinking,
+        content_parts,
         tool_calls_made,
         iterations: 1,
         prompt_tokens: total_prompt,

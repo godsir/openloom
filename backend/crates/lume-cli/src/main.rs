@@ -340,7 +340,8 @@ async fn run_chat_demo(
         let auto = match provider {
             "deepseek" => "DEEPSEEK_API_KEY",
             "openai" => "OPENAI_API_KEY",
-            _ => "ANTHROPIC_API_KEY",
+            "anthropic" => "ANTHROPIC_API_KEY",
+            _ => "OPENLOOM_API_KEY",
         };
         std::env::var(auto)
             .map_err(|_| anyhow::anyhow!("No API key. Set env {} or use --api-key", auto))?

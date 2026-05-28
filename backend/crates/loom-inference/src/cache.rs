@@ -149,6 +149,7 @@ mod tests {
             role,
             content: vec![ContentPart::Text { text: text.into() }],
             timestamp: chrono::Utc::now(),
+            usage: None,
         }
     }
 

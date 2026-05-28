@@ -49,6 +49,31 @@
   flex: 1;
 }
 
+.attachmentsArea {
+  padding: 8px 20px 0;
+}
+
+.fileActionBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.fileActionBtn:hover {
+  color: var(--text);
+  background: var(--bg-active);
+  border-color: rgba(var(--accent-rgb), 0.25);
+}
+
 .sendBtn {
   display: inline-flex;
   align-items: center;

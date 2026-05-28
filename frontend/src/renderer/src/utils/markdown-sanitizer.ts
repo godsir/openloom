@@ -68,6 +68,11 @@ export function sanitizeHtml(html: string): string {
     }
   }
 
-  clean(doc.body)
+  if (!doc.body) return html
+  // Clean only body's children — never body/html/head themselves,
+  // otherwise clean() removes them (not in ALLOWED_TAGS) and doc.body becomes null.
+  for (const child of [...doc.body.childNodes]) {
+    clean(child)
+  }
   return doc.body.innerHTML
 }

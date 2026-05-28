@@ -4,6 +4,16 @@
   padding: 28px 32px 140px;
 }
 
+.chatScroll img {
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+  border-radius: var(--r-sm);
+}
+
+.chatScroll img:hover {
+  opacity: 0.85;
+}
+
 .messageList {
   max-width: 640px;
   margin: 0 auto;

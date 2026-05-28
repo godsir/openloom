@@ -485,11 +485,60 @@ impl<'a> GraphStore<'a> {
         Ok(deleted)
     }
 
+    /// List recent nodes with pagination.
+    pub fn list_nodes(&self, limit: usize, offset: usize) -> Result<Vec<GraphRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT n.id, n.name, n.entity_type, n.description, n.confidence,
+                    CAST(NULL AS TEXT) as relation_type, CAST(NULL AS INTEGER) as distance
+             FROM kg_nodes n ORDER BY n.last_updated DESC LIMIT ?1 OFFSET ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+            Ok(GraphRow {
+                node_id: row.get(0)?,
+                name: row.get(1)?,
+                entity_type: row.get(2)?,
+                description: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                confidence: row.get(4)?,
+                relation_type: None,
+                distance: None,
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Delete a node by name and optional scope (NULL means all scopes).
+    pub fn delete_node(&self, name: &str) -> Result<bool> {
+        let affected = self.conn.execute(
+            "DELETE FROM kg_nodes WHERE name = ?1", rusqlite::params![name],
+        )?;
+        Ok(affected > 0)
+    }
+
+    /// Delete an edge between two named nodes by relation type.
+    pub fn delete_edge(&self, source_name: &str, target_name: &str, relation_type: &str) -> Result<bool> {
+        let affected = self.conn.execute(
+            "DELETE FROM kg_edges WHERE source_id = (SELECT id FROM kg_nodes WHERE name = ?1)
+             AND target_id = (SELECT id FROM kg_nodes WHERE name = ?2)
+             AND relation_type = ?3",
+            rusqlite::params![source_name, target_name, relation_type],
+        )?;
+        Ok(affected > 0)
+    }
+
     /// Total entity count (for pruning threshold check).
     pub fn node_count(&self) -> Result<usize> {
         Ok(self
             .conn
             .query_row("SELECT COUNT(*) FROM kg_nodes", [], |row| {
+                row.get::<_, i64>(0)
+            })? as usize)
+    }
+
+    /// Total edge count.
+    pub fn edge_count(&self) -> Result<usize> {
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*) FROM kg_edges", [], |row| {
                 row.get::<_, i64>(0)
             })? as usize)
     }

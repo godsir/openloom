@@ -17,7 +17,7 @@ async function waitForPort(maxWait = 10000): Promise<number> {
   throw new Error('Timeout waiting for engine port')
 }
 
-export async function bootstrapApp(): Promise<void> {
+export async function bootstrapApp(): Promise<() => void> {
   const port = await waitForPort()
   useStore.getState().setPort(port)
 
@@ -26,9 +26,7 @@ export async function bootstrapApp(): Promise<void> {
     (n) => useStore.getState().setReconnectAttempt(n),
   )
 
-  loomSubscribe((method, params) => {
-    // Unwrap tagged-enum params (old backend format: {"StreamDelta": {...}})
-    // or flat params (new backend format: {"session_id": "...", "delta": "..."})
+  const unsub = loomSubscribe((method, params) => {
     const p = unwrapEvent(method, params as Record<string, unknown> | undefined)
     const sessionId =
       (p?.session_id as string) ||
@@ -74,6 +72,8 @@ export async function bootstrapApp(): Promise<void> {
 
   // Connect — onopen triggers onReconnect which loads data
   await connectWebSocket(port)
+
+  return unsub
 }
 
 /** Method name → serde external-tag variant name mapping */

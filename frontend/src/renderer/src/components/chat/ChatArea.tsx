@@ -1,7 +1,8 @@
 import { useStore } from '../../stores'
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useState, useCallback } from 'react'
 import AssistantMessage from './AssistantMessage'
 import UserMessage from './UserMessage'
+import ImageLightbox from '../shared/ImageLightbox'
 import styles from './ChatArea.module.css'
 
 const EMPTY: never[] = []
@@ -15,11 +16,27 @@ export default function ChatArea() {
   const inlineErrors = useStore(s => s.inlineErrors)
   const error = sessionId ? inlineErrors.get(sessionId)?.text : null
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
 
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [messages[messages.length - 1]?.id, isStreaming])
+
+  const handleImageClick = useCallback((e: MouseEvent) => {
+    const target = e.target as HTMLElement
+    if (target.tagName === 'IMG') {
+      const src = (target as HTMLImageElement).src
+      if (src) setLightboxSrc(src)
+    }
+  }, [])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    el.addEventListener('click', handleImageClick)
+    return () => el.removeEventListener('click', handleImageClick)
+  }, [handleImageClick])
 
   if (messages.length === 0 && !isStreaming) {
     return (
@@ -50,6 +67,7 @@ export default function ChatArea() {
           </div>
         )}
       </div>
+      <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
     </div>
   )
 }

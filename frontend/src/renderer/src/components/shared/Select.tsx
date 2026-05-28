@@ -1,10 +1,12 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { IconChevronDown, IconCheck } from '../../utils/icons'
+import styles from './Select.module.css'
 
 export interface SelectOption<T extends string = string> {
   value: T
   label: string
+  group?: string
 }
 
 interface SelectProps<T extends string> {
@@ -15,7 +17,14 @@ interface SelectProps<T extends string> {
   placeholder?: string
   variant?: 'form' | 'pill'
   disabled?: boolean
+  menuWidth?: number
 }
+
+const ITEM_HEIGHT = 34
+const HEADER_HEIGHT = 26
+const MENU_MAX_HEIGHT = 300
+const MENU_GAP = 4
+const VIEWPORT_MARGIN = 12
 
 export default function Select<T extends string = string>({
   value,
@@ -25,6 +34,7 @@ export default function Select<T extends string = string>({
   placeholder,
   variant = 'form',
   disabled,
+  menuWidth,
 }: SelectProps<T>) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -32,17 +42,45 @@ export default function Select<T extends string = string>({
   const [menuPos, setMenuPos] = useState<React.CSSProperties>({})
   const label = options.find((o) => o.value === value)?.label ?? placeholder ?? ''
 
+  const groupHeaders = useMemo(() => {
+    const seen = new Set<string>()
+    const headers: { group: string; index: number }[] = []
+    options.forEach((o, i) => {
+      if (o.group && !seen.has(o.group)) {
+        seen.add(o.group)
+        headers.push({ group: o.group, index: i + headers.length })
+      }
+    })
+    return headers
+  }, [options])
+
   const updatePosition = useCallback(() => {
     if (!triggerRef.current) return
     const rect = triggerRef.current.getBoundingClientRect()
-    setMenuPos({
+    const estimatedHeight = Math.min(
+      options.length * ITEM_HEIGHT + groupHeaders.length * HEADER_HEIGHT,
+      MENU_MAX_HEIGHT,
+    )
+    const spaceBelow = window.innerHeight - rect.bottom - VIEWPORT_MARGIN
+    const spaceAbove = rect.top - VIEWPORT_MARGIN
+    const shouldFlip = spaceBelow < estimatedHeight && spaceAbove > spaceBelow
+
+    const width = menuWidth ?? Math.max(rect.width, 160)
+    const pos: React.CSSProperties = {
       position: 'fixed',
       left: rect.left,
-      top: rect.bottom + 4,
-      minWidth: rect.width,
+      width,
+      maxHeight: MENU_MAX_HEIGHT,
+      overflowY: 'auto',
       zIndex: 9999,
-    })
-  }, [])
+    }
+    if (shouldFlip) {
+      pos.bottom = window.innerHeight - rect.top + MENU_GAP
+    } else {
+      pos.top = rect.bottom + MENU_GAP
+    }
+    setMenuPos(pos)
+  }, [options.length, groupHeaders.length, menuWidth])
 
   useEffect(() => {
     if (open) {
@@ -53,7 +91,6 @@ export default function Select<T extends string = string>({
         if (menuRef.current?.contains(target)) return
         setOpen(false)
       }
-      // Delay listener to avoid the mousedown that opened the menu closing it immediately
       const timer = setTimeout(() => document.addEventListener('mousedown', handler), 0)
       return () => {
         clearTimeout(timer)
@@ -62,10 +99,13 @@ export default function Select<T extends string = string>({
     }
   }, [open, updatePosition])
 
-  const triggerClass =
-    variant === 'pill'
-      ? `pill-neutral pr-5 cursor-pointer flex items-center gap-1 ${className} ${disabled ? 'opacity-50 pointer-events-none' : ''}`
-      : `bg-[var(--bg-card)] text-[var(--text)] text-sm rounded-[var(--r-input)] px-3 py-1.5 outline-none border border-[var(--border)] cursor-pointer transition-colors flex items-center justify-between min-w-[120px] ${className} ${disabled ? 'opacity-50 pointer-events-none' : ''}`
+  const isPill = variant === 'pill'
+  const triggerClass = [
+    isPill ? styles.triggerPill : styles.trigger,
+    className,
+  ].filter(Boolean).join(' ')
+
+  let lastGroup = ''
 
   return (
     <>
@@ -76,27 +116,35 @@ export default function Select<T extends string = string>({
         className={triggerClass}
         disabled={disabled}
       >
-        <span className={value ? '' : 'text-[var(--text-muted)]'}>{label}</span>
-        <IconChevronDown size={variant === 'pill' ? 8 : 12} />
+        <span className={`${styles.label} ${value ? '' : styles.placeholder}`}>{label}</span>
+        <IconChevronDown size={isPill ? 8 : 12} />
       </button>
       {open &&
         createPortal(
-          <div ref={menuRef} style={menuPos} className="bg-[var(--bg-card)] border border-[var(--border)] rounded-[var(--r-md)] shadow-[var(--shadow-lg)] overflow-hidden">
-            {options.map((opt) => (
-              <div
-                key={opt.value}
-                onClick={() => {
-                  onChange(opt.value)
-                  setOpen(false)
-                }}
-                className={`flex items-center gap-2 px-3 py-2 text-sm cursor-pointer transition-colors
-                  ${opt.value === value ? 'text-[var(--accent)] bg-[var(--accent-subtle)]' : 'text-[var(--text)] hover:bg-[rgba(255,255,255,0.04)]'}
-                `}
-              >
-                <span className="flex-1">{opt.label}</span>
-                {opt.value === value && <IconCheck size={12} />}
-              </div>
-            ))}
+          <div ref={menuRef} style={menuPos} className={styles.menu}>
+            {options.map((opt) => {
+              const showHeader = opt.group && opt.group !== lastGroup
+              if (showHeader) lastGroup = opt.group!
+              const headerEl = showHeader ? (
+                <div key={`h-${opt.group}`} className={styles.groupHeader}>
+                  {opt.group}
+                </div>
+              ) : null
+              const itemEl = (
+                <div
+                  key={opt.value}
+                  onClick={() => {
+                    onChange(opt.value)
+                    setOpen(false)
+                  }}
+                  className={`${styles.item} ${opt.value === value ? styles.itemActive : ''}`}
+                >
+                  <span className={styles.itemLabel} title={opt.label}>{opt.label}</span>
+                  {opt.value === value && <IconCheck size={12} className={styles.check} />}
+                </div>
+              )
+              return showHeader ? [headerEl, itemEl] : itemEl
+            })}
           </div>,
           document.body,
         )}

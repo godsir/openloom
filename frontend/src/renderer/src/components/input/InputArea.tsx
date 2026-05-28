@@ -7,32 +7,52 @@ import ModelSelector from './ModelSelector'
 import AgentSelector from './AgentSelector'
 import ThinkingLevelButton from './ThinkingLevelButton'
 import PermissionModeButton from './PermissionModeButton'
+import AttachedFiles from './AttachedFiles'
 import TypingIndicator from '../shared/TypingIndicator'
-import { IconSend } from '../../utils/icons'
+import { IconSend, IconImage, IconPaperclip } from '../../utils/icons'
+import type { AttachedFile } from '../../stores/input'
 import styles from './InputArea.module.css'
+
+function makeFileEntry(file: File): AttachedFile {
+  return {
+    path: (file as any).path ?? '',
+    name: file.name,
+    size: file.size,
+    mimeType: file.type || 'application/octet-stream',
+  }
+}
 
 export default function InputArea() {
   const [text, setText] = useState('')
-  const [sending, setSending] = useState(false)
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
+  const sendingRef = useRef(false)
+  const pasteCounterRef = useRef(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const sessionId = useStore(s => s.currentSessionId)
   const createSession = useStore(s => s.createSession)
   const switchSession = useStore(s => s.switchSession)
-  const isStreaming = useStore(s => sessionId ? s.streamingSessionIds.has(sessionId) : false)
   const wsState = useStore(s => s.wsState)
   const { saveDraft, restoreDraft } = useStore.getState()
 
   useEffect(() => {
-    if (sessionId) { const d = restoreDraft(sessionId); setText(d?.text ?? '') }
-    else setText('')
+    if (sessionId) {
+      const d = restoreDraft(sessionId)
+      setText(d?.text ?? '')
+      setAttachedFiles(d?.attachedFiles ?? [])
+    } else {
+      setText('')
+      setAttachedFiles([])
+    }
   }, [sessionId])
 
   useEffect(() => {
-    if (sessionId && text) {
-      const t = setTimeout(() => saveDraft(sessionId, { text, attachedFiles: [] }), 300)
+    if (sessionId && (text || attachedFiles.length > 0)) {
+      const t = setTimeout(() => saveDraft(sessionId, { text, attachedFiles }), 300)
       return () => clearTimeout(t)
     }
-  }, [text, sessionId])
+  }, [text, attachedFiles, sessionId])
 
   const ensureSession = useCallback(async (): Promise<string> => {
     if (sessionId) return sessionId
@@ -41,20 +61,103 @@ export default function InputArea() {
     return id
   }, [sessionId, createSession, switchSession])
 
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+
+    const imageItems: DataTransferItem[] = []
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith('image/')) {
+        imageItems.push(items[i])
+      }
+    }
+
+    if (imageItems.length === 0) return
+
+    e.preventDefault()
+
+    for (const item of imageItems) {
+      const blob = item.getAsFile()
+      if (!blob) continue
+
+      pasteCounterRef.current += 1
+      const idx = pasteCounterRef.current
+      const ext = blob.type.split('/')[1] || 'png'
+      const reader = new FileReader()
+      reader.onload = () => {
+        setAttachedFiles(prev => [...prev, {
+          path: '',
+          name: `pasted-image-${Date.now()}-${idx}.${ext}`,
+          size: blob.size,
+          mimeType: blob.type,
+          thumbnail: reader.result as string,
+        }])
+      }
+      reader.readAsDataURL(blob)
+    }
+  }, [])
+
+  const processFiles = useCallback((files: FileList | null) => {
+    if (!files || files.length === 0) return
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      const entry = makeFileEntry(file)
+      setAttachedFiles(prev => [...prev, entry])
+
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader()
+        reader.onload = () => {
+          setAttachedFiles(prev => prev.map(f =>
+            f.name === entry.name && f.size === entry.size
+              ? { ...f, thumbnail: reader.result as string }
+              : f
+          ))
+        }
+        reader.readAsDataURL(file)
+      }
+    }
+
+    // reset input so the same file can be re-selected
+    if (imageInputRef.current) imageInputRef.current.value = ''
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }, [])
+
+  const handleRemoveFile = useCallback((index: number) => {
+    setAttachedFiles(prev => prev.filter((_, i) => i !== index))
+  }, [])
+
   const handleSend = async () => {
     const content = text.trim()
-    if (!content || sending || isStreaming) return
-    setSending(true); setText('')
+    if ((!content && attachedFiles.length === 0) || sendingRef.current || (sessionId && useStore.getState().streamingSessionIds.has(sessionId))) return
+    sendingRef.current = true
+    setText('')
+    const filesToSend = attachedFiles
+    setAttachedFiles([])
     const sid = await ensureSession()
-    if (!sid) { setSending(false); setText(content); return }
+    if (!sid) { sendingRef.current = false; setText(content); setAttachedFiles(filesToSend); return }
+
     const msgId = crypto.randomUUID()
     useStore.getState().ensureSession(sid)
+
+    const blocks: any[] = []
+    if (content) {
+      blocks.push({ type: 'text', html: escapeHtml(content), source: content })
+    }
+    for (const f of filesToSend) {
+      if (f.mimeType.startsWith('image/')) {
+        blocks.push({ type: 'image', path: f.path, name: f.name, mimeType: f.mimeType, thumbnail: f.thumbnail })
+      } else {
+        blocks.push({ type: 'file', path: f.path, name: f.name, mimeType: f.mimeType, size: f.size })
+      }
+    }
+
     useStore.getState().appendMessage(sid, {
       id: msgId, role: 'user',
-      blocks: [{ type: 'text', html: escapeHtml(content), source: content }],
+      blocks,
       timestamp: new Date().toISOString(),
     })
-    // Create assistant placeholder immediately so user sees feedback
+
     const aiMsgId = crypto.randomUUID()
     useStore.getState().addStreamingSession(sid)
     useStore.getState().appendMessage(sid, {
@@ -62,7 +165,6 @@ export default function InputArea() {
       blocks: [],
       timestamp: new Date().toISOString(),
     })
-    // Wire the stream buffer to this placeholder
     streamBufferManager.startStream(sid, aiMsgId)
     try {
       const { currentModel, thinkingLevel } = useStore.getState()
@@ -71,39 +173,83 @@ export default function InputArea() {
         content,
         model: currentModel || undefined,
         thinking_level: thinkingLevel || 'off',
+        attached_files: filesToSend.map(f => ({
+          path: f.path,
+          name: f.name,
+          size: f.size,
+          mime_type: f.mimeType,
+          thumbnail: f.thumbnail,
+        })),
       })
     }
     catch (e: any) {
-      useStore.getState().setInlineError(sid, e.message||'发送失败')
-      // Clear the streaming placeholder on error
+      useStore.getState().setInlineError(sid, e.message || '发送失败')
       useStore.getState().removeStreamingSession(sid)
       streamBufferManager.clear(sid)
     }
-    finally { setSending(false) }
+    finally { sendingRef.current = false }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
   }
 
+  const streaming = useStore(s => sessionId ? s.streamingSessionIds.has(sessionId) : false)
   const isConnected = wsState === 'connected'
-  const placeholder = !isConnected ? '正在连接...' : !sessionId ? '开始新对话...' : isStreaming ? 'AI 回复中...' : '输入消息，Enter 发送'
+  const placeholder = !isConnected ? '正在连接...' : !sessionId ? '开始新对话...' : streaming ? 'AI 回复中...' : '输入消息，Enter 发送'
 
   return (
     <div className={styles.wrapper}>
       <div className={styles.container}>
         <div className={styles.composer}>
+          {attachedFiles.length > 0 && (
+            <div className={styles.attachmentsArea}>
+              <AttachedFiles files={attachedFiles} onRemove={handleRemoveFile} />
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             value={text}
             onChange={e => setText(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder={placeholder}
             rows={2}
-            disabled={!isConnected || isStreaming}
+            disabled={!isConnected || streaming}
             className={styles.textarea}
           />
           <div className={styles.toolbar}>
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={e => processFiles(e.target.files)}
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={e => processFiles(e.target.files)}
+            />
+            <button
+              onClick={() => imageInputRef.current?.click()}
+              disabled={!isConnected || streaming}
+              className={styles.fileActionBtn}
+              title="插入图片"
+            >
+              <IconImage size={15} />
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!isConnected || streaming}
+              className={styles.fileActionBtn}
+              title="添加附件"
+            >
+              <IconPaperclip size={15} />
+            </button>
             <PermissionModeButton />
             <ThinkingLevelButton />
             <ModelSelector />
@@ -112,10 +258,10 @@ export default function InputArea() {
             <ContextRing />
             <button
               onClick={handleSend}
-              disabled={!text.trim() || !isConnected || isStreaming}
+              disabled={(!text.trim() && attachedFiles.length === 0) || !isConnected || streaming}
               className={styles.sendBtn}
             >
-              {isStreaming ? <TypingIndicator /> : <><IconSend size={12} />发送</>}
+              {streaming ? <TypingIndicator /> : <><IconSend size={12} />发送</>}
             </button>
           </div>
         </div>

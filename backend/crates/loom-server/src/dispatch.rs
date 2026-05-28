@@ -5,9 +5,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use base64::Engine;
 use loom_types::Message as LoomMessage;
 use loom_types::{
-    AgentConfig, ErrorCode, JsonRpcError, JsonRpcRequest, JsonRpcResponse, ModelConfig,
+    AgentConfig, ContentPart, ErrorCode, JsonRpcError, JsonRpcRequest, JsonRpcResponse, ModelConfig,
 };
 use lume_mcp::McpServerConfig;
 use lume_skills::SkillLoader;
@@ -138,6 +139,38 @@ impl SessionStore {
     }
 }
 
+/// Guess context length from well-known model id prefixes.
+fn guess_context_length(id: &str) -> Option<u64> {
+    let id_lower = id.to_lowercase();
+    // Claude models
+    if id_lower.contains("claude-3.5") || id_lower.contains("claude-3-5") { return Some(200_000); }
+    if id_lower.contains("claude-3") || id_lower.contains("claude-4") { return Some(200_000); }
+    // GPT models
+    if id_lower.starts_with("gpt-4o") || id_lower.starts_with("gpt-4.5") { return Some(128_000); }
+    if id_lower.starts_with("gpt-4") { return Some(8_192); }
+    if id_lower.starts_with("gpt-3.5") { return Some(16_384); }
+    if id_lower.starts_with("o3") || id_lower.starts_with("o4") { return Some(200_000); }
+    if id_lower.starts_with("o1") { return Some(200_000); }
+    // DeepSeek
+    if id_lower.starts_with("deepseek") { return Some(64_000); }
+    // Gemini
+    if id_lower.starts_with("gemini") { return Some(1_000_000); }
+    // Grok
+    if id_lower.starts_with("grok") { return Some(131_072); }
+    // Llama / Mistral / Mixtral / Qwen local models
+    if id_lower.contains("llama-3") || id_lower.contains("llama3") { return Some(128_000); }
+    if id_lower.contains("llama") { return Some(4_096); }
+    if id_lower.contains("mistral") || id_lower.contains("mixtral") { return Some(32_000); }
+    if id_lower.starts_with("qwen") { return Some(32_000); }
+    if id_lower.contains("codestral") { return Some(32_000); }
+    // Generic heuristics
+    if id_lower.contains("8k") { return Some(8_192); }
+    if id_lower.contains("32k") { return Some(32_768); }
+    if id_lower.contains("128k") { return Some(131_072); }
+    if id_lower.contains("1m") { return Some(1_000_000); }
+    None
+}
+
 pub async fn dispatch_handler(state: Arc<AppState>, req: JsonRpcRequest) -> JsonRpcResponse {
     let result = dispatch_method(&state, &req).await;
     let (result_val, error_val) = match result {
@@ -169,7 +202,8 @@ pub async fn dispatch_method(
         // === Chat ===
         "chat.send" => {
             let content = p.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            if content.is_empty() {
+            let attached_images = parse_attached_images(&p);
+            if content.is_empty() && attached_images.is_empty() {
                 return Err(err(ErrorCode::InvalidRequest, "content required"));
             }
             let session_id = p
@@ -215,7 +249,7 @@ pub async fn dispatch_method(
 
             let result = state
                 .orchestrator
-                .process_message_with_config(content, session_id, &agent_config, thinking_budget)
+                .process_message_with_config(content, session_id, &agent_config, thinking_budget, attached_images)
                 .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             state
@@ -348,30 +382,37 @@ pub async fn dispatch_method(
                 .and_then(|v| v.as_str())
                 .unwrap_or("default");
             let s = state.sessions.get_or_create(Some(id)).await;
-            tracing::info!(
-                session_id = %id,
-                in_memory_msgs = s.messages.len(),
-                "session.messages: in-memory snapshot"
-            );
-            // If in-memory messages are empty, try loading from persisted history
-            let msgs = if s.messages.is_empty() {
+            // Always prefer orchestrator history (rich ContentParts) over SessionStore (legacy text-only)
+            let history = state.orchestrator.session_history(id).await;
+            let msgs = if !history.is_empty() {
+                tracing::info!(
+                    session_id = %id,
+                    history_len = history.len(),
+                    "session.messages: returning orchestrator history"
+                );
+                history
+            } else {
+                // Try loading from persisted DB if orchestrator cache is empty
                 match state.orchestrator.load_history(id).await {
                     Ok(_) => tracing::info!(session_id = %id, "load_history ok"),
                     Err(e) => tracing::warn!(session_id = %id, error = %e, "load_history failed"),
                 }
-                let history = state.orchestrator.session_history(id).await;
-                tracing::info!(
-                    session_id = %id,
-                    history_len = history.len(),
-                    "session.messages: loaded from DB"
-                );
-                if history.is_empty() {
-                    s.messages
+                let loaded = state.orchestrator.session_history(id).await;
+                if !loaded.is_empty() {
+                    tracing::info!(
+                        session_id = %id,
+                        loaded_len = loaded.len(),
+                        "session.messages: loaded from DB"
+                    );
+                    loaded
                 } else {
-                    history
+                    tracing::info!(
+                        session_id = %id,
+                        legacy_msgs = s.messages.len(),
+                        "session.messages: fallback to SessionStore"
+                    );
+                    s.messages
                 }
-            } else {
-                s.messages
             };
             tracing::info!(
                 session_id = %id,
@@ -442,6 +483,7 @@ pub async fn dispatch_method(
                         "name": c.name,
                         "model": c.model,
                         "backend": c.backend.name(),
+                        "backend_label": c.backend_label,
                         "base_url": c.base_url,
                         "is_active": active.as_deref() == Some(&c.name),
                         "capabilities": c.capabilities,
@@ -533,82 +575,80 @@ pub async fn dispatch_method(
         "model.save_key" => {
             let backend = p.get("backend").and_then(|v| v.as_str()).unwrap_or("");
             let api_key = p.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
+            let api_key_env = p.get("api_key_env").and_then(|v| v.as_str());
             if backend.is_empty() || api_key.is_empty() {
                 return Err(err(ErrorCode::InvalidRequest, "backend and api_key required"));
             }
-            let env_name = format!("{}_API_KEY", backend.to_uppercase().replace('-', "_"));
-            // Write to .loom/env file for persistence
-            let home = dirs::home_dir().unwrap_or_default().join(".loom");
-            let _ = std::fs::create_dir_all(&home);
-            let env_file = home.join("env");
-            let mut lines: Vec<String> = std::fs::read_to_string(&env_file)
-                .unwrap_or_default()
-                .lines()
-                .filter(|l| !l.starts_with(&format!("{}=", env_name)))
-                .map(|l| l.to_string())
-                .collect();
-            lines.push(format!("{}={}", env_name, api_key));
-            let _ = std::fs::write(&env_file, lines.join("\n"));
-            // Also set in current process environment
+            let env_name = api_key_env
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("{}_API_KEY", backend.to_uppercase().replace('-', "_")));
             // SAFETY: single-threaded dispatch context, no concurrent env reads during write
             unsafe { std::env::set_var(&env_name, api_key); }
-            Ok(json!({ "ok": true, "env_name": env_name }))
+            Ok(json!({ "ok": true, "env_name": env_name, "persisted": false }))
         }
 
         "model.discover" => {
             let backend = p.get("backend").and_then(|v| v.as_str()).unwrap_or("");
             let base_url = p.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
             let api_format = p.get("api_format").and_then(|v| v.as_str()).unwrap_or("openai");
+            let api_key_env = p.get("api_key_env").and_then(|v| v.as_str());
             if base_url.is_empty() {
                 return Err(err(ErrorCode::InvalidRequest, "base_url required"));
             }
-            let env_name = format!("{}_API_KEY", backend.to_uppercase().replace('-', "_"));
-            let api_key = std::env::var(&env_name).unwrap_or_default();
+            let api_key = api_key_env
+                .and_then(|e| std::env::var(e).ok())
+                .or_else(|| {
+                    let env_name = format!("{}_API_KEY", backend.to_uppercase().replace('-', "_"));
+                    std::env::var(&env_name).ok()
+                })
+                .or_else(|| {
+                    let auto_env = match backend.to_lowercase().as_str() {
+                        "deepseek" => "DEEPSEEK_API_KEY",
+                        "openai" => "OPENAI_API_KEY",
+                        "anthropic" => "ANTHROPIC_API_KEY",
+                        _ => "OPENLOOM_API_KEY",
+                    };
+                    std::env::var(auto_env).ok()
+                })
+                .unwrap_or_default();
             let client = reqwest::Client::new();
 
-            let models: Vec<String> = if api_format == "anthropic" {
-                let url = format!("{}/v1/models", base_url.trim_end_matches('/'));
-                let resp = client
-                    .get(&url)
+            let url = if api_format == "anthropic" {
+                format!("{}/v1/models", base_url.trim_end_matches('/'))
+            } else {
+                format!("{}/models", base_url.trim_end_matches('/'))
+            };
+            let req = if api_format == "anthropic" {
+                client.get(&url)
                     .header("x-api-key", &api_key)
                     .header("anthropic-version", "2023-06-01")
-                    .timeout(std::time::Duration::from_secs(10))
-                    .send()
-                    .await
-                    .map_err(|e| err(ErrorCode::InternalError, &format!("HTTP error: {}", e)))?;
-                if !resp.status().is_success() {
-                    let status = resp.status();
-                    let body = resp.text().await.unwrap_or_default();
-                    return Err(err(ErrorCode::InternalError, &format!("API returned {}: {}", status, body)));
-                }
-                let body: Value = resp.json().await
-                    .map_err(|e| err(ErrorCode::InternalError, &format!("Parse error: {}", e)))?;
-                body.get("data")
-                    .and_then(|d| d.as_array())
-                    .map(|arr| arr.iter().filter_map(|item| item.get("id").and_then(|id| id.as_str()).map(|s| s.to_string())).collect())
-                    .unwrap_or_default()
             } else {
-                let url = format!("{}/models", base_url.trim_end_matches('/'));
-                let resp = client
-                    .get(&url)
+                client.get(&url)
                     .header("Authorization", format!("Bearer {}", api_key))
-                    .timeout(std::time::Duration::from_secs(10))
-                    .send()
-                    .await
-                    .map_err(|e| err(ErrorCode::InternalError, &format!("HTTP error: {}", e)))?;
-                if !resp.status().is_success() {
-                    let status = resp.status();
-                    let body = resp.text().await.unwrap_or_default();
-                    return Err(err(ErrorCode::InternalError, &format!("API returned {}: {}", status, body)));
-                }
-                let body: Value = resp.json().await
-                    .map_err(|e| err(ErrorCode::InternalError, &format!("Parse error: {}", e)))?;
-                body.get("data")
-                    .and_then(|d| d.as_array())
-                    .map(|arr| arr.iter().filter_map(|item| item.get("id").and_then(|id| id.as_str()).map(|s| s.to_string())).collect())
-                    .unwrap_or_default()
             };
-
+            let resp = req.timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+                .map_err(|e| err(ErrorCode::InternalError, &format!("HTTP error: {}", e)))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(err(ErrorCode::InternalError, &format!("API returned {}: {}", status, body)));
+            }
+            let body: Value = resp.json().await
+                .map_err(|e| err(ErrorCode::InternalError, &format!("Parse error: {}", e)))?;
+            let raw_models: Vec<Value> = body.get("data")
+                .and_then(|d| d.as_array()).cloned().unwrap_or_default();
+            let models: Vec<Value> = raw_models.iter().filter_map(|item| {
+                let id = item.get("id").and_then(|v| v.as_str())?;
+                let ctx = item.get("context_window")
+                    .or_else(|| item.get("context_length"))
+                    .or_else(|| item.get("max_input_tokens"))
+                    .or_else(|| item.get("max_context_length"))
+                    .and_then(|v| v.as_u64())
+                    .or_else(|| guess_context_length(id));
+                Some(json!({ "id": id, "context_length": ctx }))
+            }).collect();
             Ok(json!({ "models": models }))
         }
 
@@ -1134,12 +1174,154 @@ pub async fn dispatch_method(
             Ok(json!({ "plugins": plugins }))
         }
 
+        // === Knowledge Graph ===
+        "kg.search" => {
+            let query = p.get("query").and_then(|v| v.as_str()).unwrap_or("");
+            let limit = p.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+            let rows = state
+                .orchestrator
+                .kg_search(query, limit)
+                .await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "rows": rows }))
+        }
+        "kg.stats" => {
+            let stats = state
+                .orchestrator
+                .kg_stats()
+                .await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(serde_json::to_value(stats).unwrap_or_default())
+        }
+        "kg.neighbors" => {
+            let node_name = p.get("node_name").and_then(|v| v.as_str()).unwrap_or("");
+            if node_name.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "node_name required"));
+            }
+            let limit = p.get("limit").and_then(|v| v.as_u64()).unwrap_or(30) as usize;
+            let graph = state
+                .orchestrator
+                .kg_neighbors(node_name, limit)
+                .await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(serde_json::to_value(graph).unwrap_or_default())
+        }
+        "kg.walk" => {
+            let start_name = p
+                .get("start_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if start_name.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "start_name required"));
+            }
+            let max_depth = p
+                .get("max_depth")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(2) as u8;
+            let limit = p.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+            let graph = state
+                .orchestrator
+                .kg_walk(start_name, max_depth, limit)
+                .await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(serde_json::to_value(graph).unwrap_or_default())
+        }
+
+        "kg.list" => {
+            let limit = p.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+            let offset = p.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let nodes = state.orchestrator.kg_list_nodes(limit, offset).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "nodes": nodes }))
+        }
+
+        "kg.node.delete" => {
+            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if name.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "name required"));
+            }
+            let deleted = state.orchestrator.kg_delete_node(name).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "deleted": deleted }))
+        }
+
+        "kg.edge.delete" => {
+            let source = p.get("source").and_then(|v| v.as_str()).unwrap_or("");
+            let target = p.get("target").and_then(|v| v.as_str()).unwrap_or("");
+            let relation = p.get("relation").and_then(|v| v.as_str()).unwrap_or("");
+            if source.is_empty() || target.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "source and target required"));
+            }
+            let deleted = state.orchestrator.kg_delete_edge(source, target, relation).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "deleted": deleted }))
+        }
+
         // Fallback
         _ => Err(err(
             ErrorCode::MethodNotFound,
             &format!("method '{}' not found", req.method),
         )),
     }
+}
+
+/// Parse attached_files from frontend JSON-RPC params into ContentPart::Image items.
+/// Handles both data URL thumbnails (pasted images) and file paths (picked files).
+fn parse_attached_images(p: &Value) -> Vec<ContentPart> {
+    let files = p
+        .get("attached_files")
+        .and_then(|v| v.as_array())
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
+
+    let mut parts = Vec::new();
+    for file in files {
+        let mime_type = file
+            .get("mime_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("image/png");
+
+        if !mime_type.starts_with("image/") {
+            continue;
+        }
+
+        let data = if let Some(thumb) = file.get("thumbnail").and_then(|v| v.as_str()) {
+            if thumb.is_empty() {
+                continue;
+            }
+            // data URL format: "data:image/png;base64,XXXX"
+            if let Some(comma) = thumb.find(',') {
+                thumb[comma + 1..].to_string()
+            } else {
+                thumb.to_string()
+            }
+        } else if let Some(ref path) = file.get("path").and_then(|v| v.as_str()) {
+            if path.is_empty() {
+                continue;
+            }
+            match std::fs::read(path) {
+                Ok(bytes) => base64::engine::general_purpose::STANDARD.encode(&bytes),
+                Err(e) => {
+                    tracing::warn!(path = %path, error = %e, "failed to read image file");
+                    continue;
+                }
+            }
+        } else {
+            continue;
+        };
+
+        if data.is_empty() {
+            continue;
+        }
+
+        parts.push(ContentPart::Image {
+            source_type: "base64".to_string(),
+            media_type: mime_type.to_string(),
+            data,
+        });
+    }
+
+    parts
 }
 
 fn err(code: ErrorCode, msg: &str) -> JsonRpcError {

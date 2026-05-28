@@ -20,17 +20,9 @@
 .pvListItem {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  cursor: pointer;
+  padding: 0 8px 0 14px;
   border-left: 2px solid transparent;
   transition: all 0.12s ease;
-  border: none;
-  background: none;
-  width: 100%;
-  text-align: left;
 }
 
 .pvListItem:hover {
@@ -39,9 +31,50 @@
 
 .pvListItemSelected {
   border-left-color: var(--accent);
+  background: var(--accent-subtle);
   color: var(--accent);
   font-weight: 500;
-  background: var(--accent-subtle);
+}
+
+.pvListItemBtn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 10px 0;
+  font-size: 12px;
+  color: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  text-align: left;
+}
+
+.pvListDelete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-sm);
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.12s ease;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.pvListItem:hover .pvListDelete {
+  opacity: 1;
+}
+
+.pvListDelete:hover {
+  color: var(--red);
+  background: rgba(239, 68, 68, 0.1);
 }
 
 .pvStatusDot {
@@ -70,6 +103,17 @@
   font-size: 10px;
   color: var(--text-muted);
   flex-shrink: 0;
+}
+
+.pvSectionHeader {
+  padding: 14px 14px 4px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  opacity: 0.5;
+  user-select: none;
 }
 
 .pvAddBtn {
@@ -318,6 +362,23 @@
 
 .pvDiscoverItem:hover {
   background: var(--accent-subtle);
+}
+
+.pvDiscoverMeta {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pvModelCtx {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-active);
+  padding: 1px 5px;
+  border-radius: var(--r-sm);
+  flex-shrink: 0;
 }
 
 .pvNoModels {

@@ -1,6 +1,8 @@
 import { StateCreator } from 'zustand'
 import { loomRpc } from '../services/jsonrpc'
 import { rpc } from '../services/rpc-toast'
+import { renderMarkdown } from '../utils/markdown'
+import { sanitizeHtml } from '../utils/markdown-sanitizer'
 
 // Matches actual backend SessionData JSON response.
 // Fields are camelCase as returned by serde Serialize.
@@ -63,6 +65,10 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
           role: parseRole(m.role),
           blocks: parseContentParts(m.content),
           timestamp: m.timestamp || new Date().toISOString(),
+          usage: m.usage ? {
+            prompt: m.usage.prompt_tokens || 0,
+            completion: m.usage.completion_tokens || 0,
+          } : undefined,
         }))
         ;(get() as any).hydrateMessages?.(id, msgs)
       }
@@ -154,13 +160,13 @@ function parseRole(role: any): 'user' | 'assistant' {
 function parseContentParts(content: any): any[] {
   // If content is a plain string (legacy format), treat as single text block
   if (typeof content === 'string') {
-    return [{ type: 'text', html: escapeHtml(content), source: content }]
+    return [{ type: 'text', html: sanitizeHtml(renderMarkdown(content)), source: content }]
   }
 
   // If not an array, wrap it
   if (!Array.isArray(content)) {
     const text = JSON.stringify(content)
-    return [{ type: 'text', html: escapeHtml(text), source: text }]
+    return [{ type: 'text', html: sanitizeHtml(renderMarkdown(text)), source: text }]
   }
 
   const blocks: any[] = []
@@ -169,9 +175,12 @@ function parseContentParts(content: any): any[] {
     if (!part || typeof part !== 'object') continue
 
     // Serde tagged enum format (snake_case): { "text": { "text": "..." } }
-    if ('text' in part) {
+    if ('thinking' in part) {
+      const text = part.thinking?.text || ''
+      blocks.push({ type: 'thinking', content: text, sealed: true })
+    } else if ('text' in part) {
       const text = part.text?.text || ''
-      blocks.push({ type: 'text', html: escapeHtml(text), source: text })
+      blocks.push({ type: 'text', html: sanitizeHtml(renderMarkdown(text)), source: text })
     } else if ('tool_call' in part) {
       const tc = part.tool_call
       // arguments may be a JSON string (OpenAI format) or already an object (serde Value)
@@ -197,13 +206,21 @@ function parseContentParts(content: any): any[] {
       // Skip — already represented by the corresponding ToolCall block
       continue
     } else if ('image' in part) {
-      const url = part.image?.data || part.image?.url || ''
-      blocks.push({ type: 'text', html: `<img src="${escapeHtml(url)}" />`, source: url })
+      const img = part.image || {}
+      const mimeType = img.media_type || 'image/png'
+      const data = img.data || ''
+      blocks.push({
+        type: 'image',
+        path: '',
+        name: '',
+        mimeType,
+        thumbnail: data ? `data:${mimeType};base64,${data}` : '',
+      })
     }
     // Flat object format: { type: "text", text: "..." }
     else if (part.type === 'text' || part.type === 'Text') {
       const text = part.text || ''
-      blocks.push({ type: 'text', html: escapeHtml(text), source: text })
+      blocks.push({ type: 'text', html: sanitizeHtml(renderMarkdown(text)), source: text })
     } else if (part.type === 'tool_call' || part.type === 'ToolCall') {
       let args: Record<string, unknown> = {}
       if (typeof part.arguments === 'string') {
@@ -228,7 +245,7 @@ function parseContentParts(content: any): any[] {
     } else {
       // Unknown format — render as text
       const text = JSON.stringify(part)
-      blocks.push({ type: 'text', html: escapeHtml(text), source: text })
+      blocks.push({ type: 'text', html: sanitizeHtml(renderMarkdown(text)), source: text })
     }
   }
 

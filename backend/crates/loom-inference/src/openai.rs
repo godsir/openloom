@@ -10,6 +10,7 @@ use reqwest::Client as HttpClient;
 
 use crate::cache::PrefixCache;
 use crate::engine::CloudClient;
+use crate::engine::find_sse_boundary;
 
 pub struct OpenAIClient {
     api_key: String,
@@ -256,9 +257,9 @@ impl CloudClient for OpenAIClient {
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result?;
             buf.extend_from_slice(&chunk);
-            while let Some(pos) = buf.windows(2).position(|w| w == b"\n\n") {
+            while let Some((pos, skip)) = find_sse_boundary(&buf) {
                 let frame_bytes = buf[..pos].to_vec();
-                buf.drain(..pos + 2);
+                buf.drain(..pos + skip);
                 let frame = String::from_utf8_lossy(&frame_bytes);
                 for line in frame.lines() {
                     if let Some(data) = line.strip_prefix("data: ") {
@@ -344,9 +345,9 @@ impl CloudClient for OpenAIClient {
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result?;
             buf.extend_from_slice(&chunk);
-            while let Some(pos) = buf.windows(2).position(|w| w == b"\n\n") {
+            while let Some((pos, skip)) = find_sse_boundary(&buf) {
                 let frame_bytes = buf[..pos].to_vec();
-                buf.drain(..pos + 2);
+                buf.drain(..pos + skip);
                 let frame = String::from_utf8_lossy(&frame_bytes);
                 for line in frame.lines() {
                     if let Some(data) = line.strip_prefix("data: ") {

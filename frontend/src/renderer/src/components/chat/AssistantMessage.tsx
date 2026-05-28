@@ -47,7 +47,7 @@ export default function AssistantMessage({ message }: { message: Message }) {
           </div>
         )}
         {message.blocks.length > 0 && (
-          <MessageFooterActions messageId={message.id} role="assistant" timestamp={message.timestamp} />
+          <MessageFooterActions messageId={message.id} role="assistant" timestamp={message.timestamp} usage={message.usage} />
         )}
       </div>
     </div>

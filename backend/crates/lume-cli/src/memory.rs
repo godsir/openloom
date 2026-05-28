@@ -43,12 +43,14 @@ impl MemoryStore for LoomMemoryStore {
         user_msg: &str,
         assistant_msg: &str,
         tools: usize,
-        tokens: usize,
+        prompt_tokens: usize,
+        completion_tokens: usize,
     ) -> Result<i64> {
         let event_id = {
             let store = self.store.lock().unwrap();
             let conn = store.conn();
             let now = chrono::Utc::now().to_rfc3339();
+            let usage_meta = serde_json::json!({"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}).to_string();
 
             let seq: i64 = conn.query_row(
                 "SELECT COALESCE(MAX(seq), 0) + 1 FROM message_history WHERE session_id = ?1",
@@ -60,8 +62,8 @@ impl MemoryStore for LoomMemoryStore {
                 rusqlite::params![session_id, seq, user_msg, now],
             )?;
             conn.execute(
-                "INSERT INTO message_history (session_id, seq, role, content, timestamp) VALUES (?1, ?2, 'assistant', ?3, ?4)",
-                rusqlite::params![session_id, seq + 1, assistant_msg, now],
+                "INSERT INTO message_history (session_id, seq, role, content, timestamp, metadata) VALUES (?1, ?2, 'assistant', ?3, ?4, ?5)",
+                rusqlite::params![session_id, seq + 1, assistant_msg, now, usage_meta],
             )?;
             conn.execute(
                 "UPDATE sessions SET message_count = message_count + 2 WHERE id = ?1",
@@ -81,7 +83,7 @@ impl MemoryStore for LoomMemoryStore {
                 source_session: Some(session_id.to_string()),
                 source_text: user_msg.to_string(),
                 payload: Some(
-                    serde_json::json!({"assistant_response": assistant_msg, "tool_calls": tools, "tokens": tokens}),
+                    serde_json::json!({"assistant_response": assistant_msg, "tool_calls": tools, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}),
                 ),
             };
             store.insert_event(&event)?
@@ -93,15 +95,37 @@ impl MemoryStore for LoomMemoryStore {
     async fn load_history(&self, session_id: &str, limit: usize) -> Result<Vec<Message>> {
         let store = self.store.lock().unwrap();
         let mut stmt = store.conn().prepare(
-            "SELECT role, content FROM message_history WHERE session_id = ?1 ORDER BY seq ASC LIMIT ?2"
+            "SELECT role, content, metadata FROM message_history WHERE session_id = ?1 ORDER BY seq ASC LIMIT ?2"
         )?;
         let rows = stmt.query_map(rusqlite::params![session_id, limit as i64], |row| {
             let role: String = row.get(0)?;
             let content: String = row.get(1)?;
-            Ok(match role.as_str() {
-                "user" => Message::user(&content),
-                "assistant" => Message::assistant(&content),
-                _ => Message::user(&content),
+            let metadata: Option<String> = row.get(2)?;
+            let usage = metadata.and_then(|m| {
+                let v: serde_json::Value = serde_json::from_str(&m).ok()?;
+                Some(loom_types::TokenUsage {
+                    prompt_tokens: v["prompt_tokens"].as_u64()? as usize,
+                    completion_tokens: v["completion_tokens"].as_u64()? as usize,
+                    cached_tokens: 0,
+                    latency_ms: 0,
+                })
+            });
+            // Try to parse content as JSON (structured ContentParts). Fall back to plain text.
+            let parts: Vec<loom_types::ContentPart> =
+                serde_json::from_str(&content).unwrap_or_else(|_| {
+                    vec![loom_types::ContentPart::Text { text: content.clone() }]
+                });
+            let role_enum = match role.as_str() {
+                "user" => loom_types::Role::User,
+                "assistant" => loom_types::Role::Assistant,
+                "system" => loom_types::Role::System,
+                _ => loom_types::Role::User,
+            };
+            Ok(Message {
+                role: role_enum,
+                content: parts,
+                timestamp: chrono::Utc::now(),
+                usage,
             })
         })?;
         let mut msgs = Vec::new();
@@ -508,6 +532,65 @@ impl MemoryStore for LoomMemoryStore {
         GraphStore::new(store.conn()).node_count()
     }
 
+    async fn kg_edge_count(&self) -> Result<usize> {
+        let store = self.store.lock().unwrap();
+        GraphStore::new(store.conn()).edge_count()
+    }
+
+    async fn kg_neighbors(&self, node_name: &str, limit: usize) -> Result<loom_types::KgGraph> {
+        let store = self.store.lock().unwrap();
+        let graph = GraphStore::new(store.conn());
+        let rows = graph.neighbors(node_name, None, limit)?;
+        let nodes: Vec<loom_types::KgNode> = rows
+            .iter()
+            .map(|r| loom_types::KgNode {
+                node_id: r.node_id,
+                name: r.name.clone(),
+                entity_type: r.entity_type.clone(),
+                description: r.description.clone(),
+                confidence: r.confidence,
+            })
+            .collect();
+        let edges: Vec<loom_types::KgEdge> = rows
+            .iter()
+            .filter_map(|r| {
+                r.relation_type.as_ref().map(|rel| loom_types::KgEdge {
+                    source: node_name.to_string(),
+                    target: r.name.clone(),
+                    relation_type: rel.clone(),
+                    fact: String::new(),
+                    confidence: r.confidence,
+                })
+            })
+            .collect();
+        Ok(loom_types::KgGraph { nodes, edges })
+    }
+
+    async fn kg_walk(
+        &self,
+        start_name: &str,
+        max_depth: u8,
+        limit: usize,
+    ) -> Result<loom_types::KgGraph> {
+        let store = self.store.lock().unwrap();
+        let graph = GraphStore::new(store.conn());
+        let rows = graph.walk(start_name, max_depth, None, limit)?;
+        let nodes: Vec<loom_types::KgNode> = rows
+            .iter()
+            .map(|r| loom_types::KgNode {
+                node_id: r.node_id,
+                name: r.name.clone(),
+                entity_type: r.entity_type.clone(),
+                description: r.description.clone(),
+                confidence: r.confidence,
+            })
+            .collect();
+        Ok(loom_types::KgGraph {
+            nodes,
+            edges: Vec::new(),
+        })
+    }
+
     async fn delete_session(&self, id: &str) -> Result<()> {
         let store = self.store.lock().unwrap();
         store
@@ -566,5 +649,28 @@ impl MemoryStore for LoomMemoryStore {
             |row| row.get::<_, i64>(0),
         );
         Ok(result.unwrap_or(0) as usize)
+    }
+
+    async fn kg_list_nodes(&self, limit: usize, offset: usize) -> Result<Vec<loom_types::KgNode>> {
+        let store = self.store.lock().unwrap();
+        let graph = GraphStore::new(store.conn());
+        let rows = graph.list_nodes(limit, offset)?;
+        Ok(rows.iter().map(|r| loom_types::KgNode {
+            node_id: r.node_id,
+            name: r.name.clone(),
+            entity_type: r.entity_type.clone(),
+            description: r.description.clone(),
+            confidence: r.confidence,
+        }).collect())
+    }
+
+    async fn kg_delete_node(&self, name: &str) -> Result<bool> {
+        let store = self.store.lock().unwrap();
+        GraphStore::new(store.conn()).delete_node(name)
+    }
+
+    async fn kg_delete_edge(&self, source: &str, target: &str, relation: &str) -> Result<bool> {
+        let store = self.store.lock().unwrap();
+        GraphStore::new(store.conn()).delete_edge(source, target, relation)
     }
 }

@@ -67,6 +67,8 @@ pub struct Message {
     pub content: Vec<ContentPart>,
     #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub usage: Option<crate::inference::TokenUsage>,
 }
 
 impl Message {
@@ -75,6 +77,7 @@ impl Message {
             role: Role::User,
             content: vec![ContentPart::Text { text: text.into() }],
             timestamp: Utc::now(),
+            usage: None,
         }
     }
 
@@ -83,6 +86,7 @@ impl Message {
             role: Role::Assistant,
             content: vec![ContentPart::Text { text: text.into() }],
             timestamp: Utc::now(),
+            usage: None,
         }
     }
 
@@ -99,6 +103,7 @@ impl Message {
                 result: result.into(),
             }],
             timestamp: Utc::now(),
+            usage: None,
         }
     }
 
@@ -154,6 +159,7 @@ impl Message {
                 text: msg.content.clone(),
             }],
             timestamp: msg.timestamp,
+            usage: None,
         }
     }
 }

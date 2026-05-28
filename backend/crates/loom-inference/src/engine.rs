@@ -352,7 +352,7 @@ pub async fn unload_local_model(base_url: &str, model: &str) {
 
 /// Find SSE frame boundary: "\n\n" (Linux/macOS) or "\r\n\r\n" (Windows/LM Studio default).
 /// Returns (position, skip_bytes).
-fn find_sse_boundary(buf: &[u8]) -> Option<(usize, usize)> {
+pub(crate) fn find_sse_boundary(buf: &[u8]) -> Option<(usize, usize)> {
     buf.windows(2)
         .position(|w| w == b"\n\n")
         .map(|pos| (pos, 2))

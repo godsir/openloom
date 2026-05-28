@@ -96,6 +96,11 @@
   white-space: nowrap;
 }
 
+.systemPromptBadge {
+  font-size: 10px;
+  color: var(--amber);
+}
+
 .providerBadge {
   height: 20px;
   padding: 0 6px;

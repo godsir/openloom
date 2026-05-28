@@ -40,6 +40,34 @@ export interface ModelCapabilities {
   function_calling?: boolean
 }
 
+// === Knowledge Graph ===
+
+export interface KgNode {
+  node_id: number
+  name: string
+  entity_type: string
+  description: string
+  confidence: number
+}
+
+export interface KgEdge {
+  source: string
+  target: string
+  relation_type: string
+  fact: string
+  confidence: number
+}
+
+export interface KgGraph {
+  nodes: KgNode[]
+  edges: KgEdge[]
+}
+
+export interface KgStats {
+  node_count: number
+  edge_count: number
+}
+
 export interface ModelListItem {
   name: string
   model?: string

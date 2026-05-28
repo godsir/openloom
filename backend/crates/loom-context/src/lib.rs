@@ -79,6 +79,7 @@ impl ContextAssembler {
             role: loom_types::Role::System,
             content: vec![loom_types::ContentPart::Text { text: prefix }],
             timestamp: chrono::Utc::now(),
+            usage: None,
         });
 
         // ── Dynamic suffix: recent history (capped at half the budget) ──

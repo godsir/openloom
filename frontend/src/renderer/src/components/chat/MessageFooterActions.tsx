@@ -1,9 +1,15 @@
 import { useStore } from '../../stores'
 import { IconCopy, IconTrash } from '../../utils/icons'
+import styles from './MessageFooterActions.module.css'
 
-interface Props { messageId: string; role: 'user' | 'assistant'; timestamp: string }
+interface Props { messageId: string; role: 'user' | 'assistant'; timestamp: string; usage?: { prompt: number; completion: number } }
 
-export default function MessageFooterActions({ messageId, role, timestamp }: Props) {
+function formatTokens(n: number): string {
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
+  return String(n)
+}
+
+export default function MessageFooterActions({ messageId, role, timestamp, usage }: Props) {
   const deleteMessage = useStore((s) => s.deleteMessage)
   const currentSessionId = useStore((s) => s.currentSessionId)
 
@@ -26,13 +32,18 @@ export default function MessageFooterActions({ messageId, role, timestamp }: Pro
   const time = new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 
   return (
-    <div className={`flex items-center gap-0.5 mt-1 opacity-0 group-hover:opacity-100 transition-opacity ${role === 'user' ? 'justify-end' : ''}`}>
-      <span className="text-[10px] text-[var(--text-muted)] mr-1 tabular-nums">{time}</span>
-      <button onClick={handleCopy} className="flex items-center gap-0.5 text-[10px] text-[var(--text-muted)] hover:text-[var(--accent)] px-1 py-0.5 rounded-[var(--r-sm)] transition-colors">
-        <IconCopy size={9} />
+    <div className={`${styles.footer} ${role === 'user' ? styles.footerRight : ''}`}>
+      <span className={styles.time}>{time}</span>
+      {usage && (usage.prompt > 0 || usage.completion > 0) && (
+        <span className={styles.tokens} title={`输入 ${usage.prompt} tokens · 输出 ${usage.completion} tokens`}>
+          {formatTokens(usage.prompt)}&nbsp;↑&nbsp;{formatTokens(usage.completion)}&nbsp;↓
+        </span>
+      )}
+      <button onClick={handleCopy} className={styles.btn} title="复制">
+        <IconCopy size={10} />
       </button>
-      <button onClick={handleDelete} className="flex items-center gap-0.5 text-[10px] text-[var(--text-muted)] hover:text-[var(--red)] px-1 py-0.5 rounded-[var(--r-sm)] transition-colors">
-        <IconTrash size={9} />
+      <button onClick={handleDelete} className={`${styles.btn} ${styles.btnDanger}`} title="删除">
+        <IconTrash size={10} />
       </button>
     </div>
   )

@@ -5,13 +5,13 @@ export default function WindowControls() {
   return (
     <div className={styles.controls}>
       <button onClick={() => window.hana.windowMinimize()} className={styles.btn} aria-label="最小化">
-        <IconWinMin size={10} />
+        <IconWinMin size={14} />
       </button>
       <button onClick={() => window.hana.windowMaximize()} className={styles.btn} aria-label="最大化">
-        <IconWinMax size={10} />
+        <IconWinMax size={14} />
       </button>
       <button onClick={() => window.hana.windowClose()} className={styles.closeBtn} aria-label="关闭">
-        <IconWinClose size={10} />
+        <IconWinClose size={14} />
       </button>
     </div>
   )

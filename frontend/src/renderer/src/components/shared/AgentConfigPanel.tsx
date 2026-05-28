@@ -13,6 +13,7 @@ export default function AgentConfigPanel() {
   const [nameDraft, setNameDraft] = useState('')
   const [personaDraft, setPersonaDraft] = useState('')
   const [modelDraft, setModelDraft] = useState('')
+  const [systemPromptDraft, setSystemPromptDraft] = useState('')
 
   const refreshAgents = async () => {
     const result = await loomRpc<{ configs: unknown[] }>('agent.config.list')
@@ -29,12 +30,14 @@ export default function AgentConfigPanel() {
         name: nameDraft.trim(),
         persona: personaDraft.trim(),
         model: modelDraft.trim() || null,
+        system_prompt_override: systemPromptDraft.trim() || null,
       }, 'Agent 已创建')
       await refreshAgents()
       setShowForm(false)
       setNameDraft('')
       setPersonaDraft('')
       setModelDraft('')
+      setSystemPromptDraft('')
     } catch { /* toast already shown */ }
   }
 
@@ -43,6 +46,7 @@ export default function AgentConfigPanel() {
     setNameDraft(agent.name || '')
     setPersonaDraft(agent.persona || '')
     setModelDraft(agent.model || '')
+    setSystemPromptDraft(agent.system_prompt_override || '')
   }
 
   const handleUpdate = async () => {
@@ -53,12 +57,14 @@ export default function AgentConfigPanel() {
         prev_name: editingId,
         persona: personaDraft.trim(),
         model: modelDraft.trim() || null,
+        system_prompt_override: systemPromptDraft.trim() || null,
       }, 'Agent 已更新')
       await refreshAgents()
       setEditingId(null)
       setNameDraft('')
       setPersonaDraft('')
       setModelDraft('')
+      setSystemPromptDraft('')
     } catch { /* toast already shown */ }
   }
 
@@ -77,12 +83,13 @@ export default function AgentConfigPanel() {
     setNameDraft('')
     setPersonaDraft('')
     setModelDraft('')
+    setSystemPromptDraft('')
   }
 
   const isEditing = showForm || editingId !== null
 
   const modelOptions = useMemo(
-    () => [{ value: '', label: '使用默认模型' }, ...models.map((m) => ({ value: m, label: m }))],
+    () => [{ value: '', label: '使用默认模型' }, ...models.map((m) => ({ value: m.name, label: m.name }))],
     [models],
   )
 
@@ -121,7 +128,16 @@ export default function AgentConfigPanel() {
             <textarea
               value={personaDraft}
               onChange={(e) => setPersonaDraft(e.target.value)}
-              placeholder="描述 Agent 的行为特征和角色定位..."
+              placeholder="描述 Agent 的核心身份，如：「你是 openLoom，一个注重隐私的本地 AI 助理。你讲中文，风格简洁直接。」"
+              className={styles.formTextarea}
+            />
+          </div>
+          <div className={styles.formRow}>
+            <label className={styles.formLabel}>系统提示词</label>
+            <textarea
+              value={systemPromptDraft}
+              onChange={(e) => setSystemPromptDraft(e.target.value)}
+              placeholder="自定义系统指令。留空使用默认。例如：「每次回答前先确认用户环境，优先使用本地工具而非远程 API。」"
               className={styles.formTextarea}
             />
           </div>
@@ -149,7 +165,8 @@ export default function AgentConfigPanel() {
             <span className={`${styles.dot} ${styles.dotActive}`} />
             <div className={styles.modelInfo}>
               <span className={styles.modelName}>{a.name}</span>
-              {a.persona && <span className={styles.modelId}>{a.persona.slice(0, 30)}{a.persona.length > 30 ? '...' : ''}</span>}
+              {a.persona && <span className={styles.modelId}>{a.persona.slice(0, 40)}{a.persona.length > 40 ? '...' : ''}</span>}
+              {a.system_prompt_override && <span className={styles.systemPromptBadge}>自定义提示词</span>}
             </div>
             <span className={styles.providerBadge}>{a.model || 'default'}</span>
             <div className={styles.actions}>

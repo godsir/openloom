@@ -4715,6 +4715,7 @@ version = "0.2.15"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
  "chrono",
  "dirs",
  "loom-context",
@@ -5254,6 +5255,7 @@ version = "0.2.15"
 dependencies = [
  "anyhow",
  "axum 0.7.9",
+ "base64",
  "chrono",
  "dirs",
  "futures",

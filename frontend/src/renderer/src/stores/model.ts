@@ -1,13 +1,14 @@
 import { StateCreator } from 'zustand'
+import type { ModelListItem } from '../types/bindings'
 
 export type ThinkingLevel = 'off' | 'auto' | 'low' | 'medium' | 'high' | 'xhigh'
 
 export interface ModelSlice {
-  models: string[]
+  models: ModelListItem[]
   currentModel: string
   thinkingLevel: ThinkingLevel
   tokenUsage: { prompt: number; completion: number }
-  setModels: (models: string[]) => void
+  setModels: (models: ModelListItem[]) => void
   setCurrentModel: (model: string) => void
   setThinkingLevel: (level: ThinkingLevel) => void
   setTokenUsage: (usage: { prompt: number; completion: number }) => void

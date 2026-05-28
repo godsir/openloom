@@ -4,6 +4,7 @@ declare global {
   interface Window {
     hana: HanaApi
     __enginePort__: number
+    __isPackaged__: boolean
   }
 }
 

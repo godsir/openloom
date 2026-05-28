@@ -6,8 +6,8 @@ import { scheduleSessionRefresh } from './session-refresh'
 export function handleModelsChanged(): void {
   loomRpc('model.list')
     .then((r: any) => {
-      const names = (r.models || []).map((m: any) => m.name).filter(Boolean)
-      useStore.getState().setModels(names)
+      const items = (r.models || []).filter((m: any) => m.name)
+      useStore.getState().setModels(items)
       if (r.activeModel) useStore.getState().setCurrentModel(r.activeModel)
     })
     .catch(() => {})

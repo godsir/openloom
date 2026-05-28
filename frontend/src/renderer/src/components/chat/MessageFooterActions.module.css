@@ -1,0 +1,47 @@
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.footerRight {
+  justify-content: flex-end;
+}
+
+.time {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-right: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tokens {
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.6;
+  margin-right: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.btn {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.btn:hover {
+  color: var(--accent);
+}
+
+.btnDanger:hover {
+  color: var(--red);
+}

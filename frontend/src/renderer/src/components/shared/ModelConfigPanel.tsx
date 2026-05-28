@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
 import { useStore } from '../../stores'
-import { IconEye, IconWrench, IconBrain } from '../../utils/icons'
+import { IconEye, IconWrench, IconBrain, IconX } from '../../utils/icons'
 import Select from './Select'
 import type { ModelConfig, ModelListItem, ModelBackend } from '../../types/bindings'
 import styles from './ModelConfig.module.css'
@@ -14,6 +14,7 @@ interface ProviderEntry {
   defaultUrl: string
   apiFormat: 'openai' | 'anthropic'
   isCustom?: boolean
+  envVar?: string
 }
 
 const PRESET_PROVIDERS: ProviderEntry[] = [
@@ -24,6 +25,39 @@ const PRESET_PROVIDERS: ProviderEntry[] = [
   { id: 'deepseek', label: 'DeepSeek', backend: 'DeepSeek', defaultUrl: 'https://api.deepseek.com/v1', apiFormat: 'openai' },
 ]
 
+const CUSTOM_PROVIDERS_KEY = 'customProviders'
+
+async function loadCustomProviders(): Promise<ProviderEntry[]> {
+  try {
+    return await window.hana.getPreference<ProviderEntry[]>(CUSTOM_PROVIDERS_KEY, [])
+  } catch { return [] }
+}
+
+function saveCustomProviders(entries: ProviderEntry[]): void {
+  const custom = entries.filter(e => e.isCustom)
+  window.hana.setPreference(CUSTOM_PROVIDERS_KEY, custom)
+}
+
+function buildProviders(customProviders: ProviderEntry[], models: ModelListItem[]): ProviderEntry[] {
+  // Discover custom providers from loaded models (backend_label on Custom backend)
+  const seenLabels = new Set(customProviders.map(c => c.label))
+  const discovered: ProviderEntry[] = []
+  for (const m of models) {
+    if (m.backend === 'Custom' && m.backend_label && !seenLabels.has(m.backend_label)) {
+      seenLabels.add(m.backend_label)
+      discovered.push({
+        id: `custom-discovered-${m.backend_label}`,
+        label: m.backend_label,
+        backend: 'Custom',
+        defaultUrl: m.base_url || '',
+        apiFormat: (m as any).api_format === 'anthropic' ? 'anthropic' : 'openai',
+        isCustom: true,
+      })
+    }
+  }
+  return [...PRESET_PROVIDERS, ...discovered, ...customProviders.filter(c => !seenLabels.has(c.label))]
+}
+
 export default function ModelConfigPanel() {
   const [models, setModels] = useState<ModelListItem[]>([])
   const [providers, setProviders] = useState<ProviderEntry[]>(PRESET_PROVIDERS)
@@ -32,6 +66,7 @@ export default function ModelConfigPanel() {
   const [customName, setCustomName] = useState('')
   const [customUrl, setCustomUrl] = useState('')
   const [customFormat, setCustomFormat] = useState<'openai' | 'anthropic'>('openai')
+  const [customEnvVar, setCustomEnvVar] = useState('OPENLOOM_API_KEY')
 
   // Per-provider state
   const [apiKey, setApiKey] = useState('')
@@ -40,7 +75,7 @@ export default function ModelConfigPanel() {
   const [verifyStatus, setVerifyStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
 
   // Discovered
-  const [discovered, setDiscovered] = useState<string[]>([])
+  const [discovered, setDiscovered] = useState<Array<{ id: string; context_length?: number }>>([])
   const [discovering, setDiscovering] = useState(false)
 
   // Edit state
@@ -55,8 +90,12 @@ export default function ModelConfigPanel() {
 
   const refresh = async () => {
     try {
-      const result = await loomRpc<{ models: ModelListItem[]; activeModel: string | null }>('model.list')
+      const [result, customProviders] = await Promise.all([
+        loomRpc<{ models: ModelListItem[]; activeModel: string | null }>('model.list'),
+        loadCustomProviders(),
+      ])
       setModels(result.models || [])
+      setProviders(buildProviders(customProviders, result.models || []))
     } catch (e) {
       console.error('Failed to list models:', e)
     }
@@ -81,6 +120,7 @@ export default function ModelConfigPanel() {
         backend: selected.backend,
         api_key: apiKey.trim(),
         base_url: baseUrl.trim(),
+        api_key_env: selected.isCustom ? selected.envVar : undefined,
       }, 'API Key 已保存')
       setVerifyStatus('ok')
       setApiKey('')
@@ -93,10 +133,11 @@ export default function ModelConfigPanel() {
     if (!selected) return
     setDiscovering(true)
     try {
-      const result = await loomRpc<{ models: string[] }>('model.discover', {
+      const result = await loomRpc<{ models: Array<{ id: string; context_length?: number }> }>('model.discover', {
         backend: selected.backend,
         base_url: baseUrl.trim(),
         api_format: apiFormat,
+        api_key_env: selected.isCustom ? selected.envVar : undefined,
       })
       setDiscovered(result.models || [])
     } catch (e: any) {
@@ -107,11 +148,12 @@ export default function ModelConfigPanel() {
     }
   }
 
-  const handleAddModel = async (modelId: string) => {
+  const handleAddModel = async (model: { id: string; context_length?: number }) => {
     if (!selected) return
+    const modelId = model.id
     const name = modelId.split('/').pop() || modelId
     const envName = selected.isCustom
-      ? `${(selected.label).toUpperCase().replace(/[\s-]+/g, '_')}_API_KEY`
+      ? selected.envVar || 'OPENLOOM_API_KEY'
       : `${selected.backend.toUpperCase()}_API_KEY`
     try {
       await rpc('model.config.create', {
@@ -123,10 +165,10 @@ export default function ModelConfigPanel() {
         base_url: baseUrl.trim() || null,
         api_key_env: envName,
         api_format: apiFormat,
-        context_size: 4096,
+        context_size: model.context_length || 4096,
       }, `模型 "${name}" 已添加`)
       await refresh()
-      setDiscovered(prev => prev.filter(m => m !== modelId))
+      setDiscovered(prev => prev.filter(m => m.id !== modelId))
     } catch (e: any) {
       console.error('Failed to add model:', e)
     }
@@ -188,6 +230,24 @@ export default function ModelConfigPanel() {
     } catch { /* toast already shown */ }
   }
 
+  const handleDeleteCustom = async (entry: ProviderEntry) => {
+    const ok = await useStore.getState().showConfirm('删除供应商', `确定删除供应商 "${entry.label}"？已配置的模型不会受影响。`, true)
+    if (!ok) return
+    setProviders(prev => {
+      const next = prev.filter(p => p.id !== entry.id)
+      saveCustomProviders(next)
+      return next
+    })
+    if (selectedId === entry.id) {
+      setSelectedId('deepseek')
+      setBaseUrl('https://api.deepseek.com/v1')
+      setApiFormat('openai')
+      setApiKey('')
+      setVerifyStatus('idle')
+      setDiscovered([])
+    }
+  }
+
   const handleAddCustom = () => {
     if (!customName.trim() || !customUrl.trim()) return
     const entry: ProviderEntry = {
@@ -197,8 +257,13 @@ export default function ModelConfigPanel() {
       defaultUrl: customUrl.trim(),
       apiFormat: customFormat,
       isCustom: true,
+      envVar: customEnvVar.trim() || 'OPENLOOM_API_KEY',
     }
-    setProviders(prev => [...prev, entry])
+    setProviders(prev => {
+      const next = [...prev, entry]
+      saveCustomProviders(next)
+      return next
+    })
     setSelectedId(entry.id)
     setBaseUrl(entry.defaultUrl)
     setApiFormat(entry.apiFormat)
@@ -206,6 +271,7 @@ export default function ModelConfigPanel() {
     setCustomName('')
     setCustomUrl('')
     setCustomFormat('openai')
+    setCustomEnvVar('OPENLOOM_API_KEY')
   }
 
   const providerModels = selected
@@ -226,21 +292,51 @@ export default function ModelConfigPanel() {
     <div className={styles.pvLayout}>
       {/* Left: provider list */}
       <div className={styles.pvList}>
-        {providers.map((p) => {
+        {providers.filter(p => !p.isCustom).map((p) => {
           const count = getModelCount(p)
-          const hasKey = count > 0 || verifyStatus === 'ok' && selectedId === p.id
+          const hasKey = count > 0 || (verifyStatus === 'ok' && selectedId === p.id)
           return (
-            <button
+            <div
               key={p.id}
-              onClick={() => handleSelect(p)}
               className={`${styles.pvListItem} ${selectedId === p.id ? styles.pvListItemSelected : ''}`}
             >
-              <span className={`${styles.pvStatusDot} ${hasKey ? styles.pvStatusDotOn : ''}`} />
-              <span className={styles.pvListName}>{p.label}</span>
-              {count > 0 && <span className={styles.pvListCount}>{count}</span>}
-            </button>
+              <button onClick={() => handleSelect(p)} className={styles.pvListItemBtn}>
+                <span className={`${styles.pvStatusDot} ${hasKey ? styles.pvStatusDotOn : ''}`} />
+                <span className={styles.pvListName}>{p.label}</span>
+                {count > 0 && <span className={styles.pvListCount}>{count}</span>}
+              </button>
+            </div>
           )
         })}
+
+        {providers.some(p => p.isCustom) && (
+          <>
+            <div className={styles.pvSectionHeader}>自定义供应商</div>
+            {providers.filter(p => p.isCustom).map((p) => {
+              const count = getModelCount(p)
+              const hasKey = count > 0 || (verifyStatus === 'ok' && selectedId === p.id)
+              return (
+                <div
+                  key={p.id}
+                  className={`${styles.pvListItem} ${selectedId === p.id ? styles.pvListItemSelected : ''}`}
+                >
+                  <button onClick={() => handleSelect(p)} className={styles.pvListItemBtn}>
+                    <span className={`${styles.pvStatusDot} ${hasKey ? styles.pvStatusDotOn : ''}`} />
+                    <span className={styles.pvListName}>{p.label}</span>
+                    {count > 0 && <span className={styles.pvListCount}>{count}</span>}
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDeleteCustom(p) }}
+                    className={styles.pvListDelete}
+                    title="删除供应商"
+                  >
+                    <IconX size={10} />
+                  </button>
+                </div>
+              )
+            })}
+          </>
+        )}
 
         {showCustomForm ? (
           <div className={styles.pvCustomForm}>
@@ -264,6 +360,12 @@ export default function ModelConfigPanel() {
                 { value: 'anthropic', label: 'Anthropic 格式' },
               ]}
               onChange={(v) => setCustomFormat(v as 'openai' | 'anthropic')}
+            />
+            <input
+              value={customEnvVar}
+              onChange={e => setCustomEnvVar(e.target.value)}
+              placeholder="环境变量名 (如 OPENLOOM_API_KEY)"
+              className={styles.pvCustomInput}
             />
             <div className={styles.pvCustomActions}>
               <button onClick={() => setShowCustomForm(false)} className={styles.pvCustomBtn}>取消</button>
@@ -337,11 +439,16 @@ export default function ModelConfigPanel() {
               </div>
 
               {/* Discovered */}
-              {discovered.filter(m => !configuredModelIds.has(m)).length > 0 && (
+              {discovered.filter(m => !configuredModelIds.has(m.id)).length > 0 && (
                 <div className={styles.pvModelList}>
-                  {discovered.filter(m => !configuredModelIds.has(m)).map(modelId => (
-                    <div key={modelId} className={styles.pvDiscoverItem} onClick={() => handleAddModel(modelId)}>
-                      <span className={styles.pvModelName}>{modelId}</span>
+                  {discovered.filter(m => !configuredModelIds.has(m.id)).map(m => (
+                    <div key={m.id} className={styles.pvDiscoverItem} onClick={() => handleAddModel(m)}>
+                      <div className={styles.pvDiscoverMeta}>
+                        <span className={styles.pvModelName}>{m.id}</span>
+                        {m.context_length != null && (
+                          <span className={styles.pvModelCtx}>{(m.context_length / 1000).toFixed(0)}K</span>
+                        )}
+                      </div>
                       <span className={styles.pvModelBtn}>+ 添加</span>
                     </div>
                   ))}

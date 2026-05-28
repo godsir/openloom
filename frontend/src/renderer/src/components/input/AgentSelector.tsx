@@ -25,5 +25,5 @@ export default function AgentSelector() {
     }).catch(() => {})
   }
 
-  return <Select value={selected} options={options} onChange={handleChange} variant="pill" />
+  return <Select value={selected} options={options} onChange={handleChange} variant="pill" menuWidth={180} />
 }

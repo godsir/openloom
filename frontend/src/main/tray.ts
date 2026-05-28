@@ -4,9 +4,15 @@ import { existsSync } from 'fs'
 
 let tray: Tray | null = null
 
+function getIconPath(): string {
+  if (app.isPackaged) {
+    return join(process.resourcesPath, 'icon.png')
+  }
+  return join(__dirname, '../../src/asset/loom_logo_dev.png')
+}
+
 export function createTray(mainWindow: BrowserWindow): void {
-  // Use icon from resources, fallback to empty 16x16
-  const iconPath = join(__dirname, '../../resources/icon.ico')
+  const iconPath = getIconPath()
   const icon = existsSync(iconPath)
     ? nativeImage.createFromPath(iconPath)
     : nativeImage.createEmpty()

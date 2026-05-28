@@ -19,15 +19,43 @@ interface BufferState {
   }>
   inThinking: boolean
   flushTimer: ReturnType<typeof setTimeout> | null
+  _lastTextLen: number
+  _lastThinkLen: number
+  _lastToolCount: number
 }
 
 class StreamBufferManager {
   private buffers = new Map<string, BufferState>()
 
-  /** Register an existing assistant placeholder message for streaming updates. */
+  /** Register an existing assistant placeholder message for streaming updates.
+   *  Resets any stale state from a previous stream on the same session. */
   startStream(sessionId: string, messageId: string): void {
+    // If there's a stale buffer for this session, clean up its old placeholder
+    const old = this.buffers.get(sessionId)
+    if (old?.messageId && old.messageId !== messageId) {
+      this.removeMessage(sessionId, old.messageId)
+    }
     const buf = this.ensureBuffer(sessionId)
     buf.messageId = messageId
+    buf.textAcc = ''
+    buf.thinkingAcc = ''
+    buf.toolCalls = []
+    buf.inThinking = false
+    if (buf.flushTimer) { clearTimeout(buf.flushTimer); buf.flushTimer = null }
+  }
+
+  /** Remove a message from the store by ID. */
+  private removeMessage(sessionId: string, messageId: string): void {
+    const store = useStore.getState()
+    const msgs = store.messagesBySession.get(sessionId)
+    if (!msgs) return
+    const idx = msgs.findIndex(m => m.id === messageId)
+    if (idx < 0) return
+    const next = new Map(store.messagesBySession)
+    const updated = [...msgs]
+    updated.splice(idx, 1)
+    next.set(sessionId, updated)
+    useStore.setState({ messagesBySession: next })
   }
 
   private ensureBuffer(sessionId: string): BufferState {
@@ -40,31 +68,32 @@ class StreamBufferManager {
         toolCalls: [],
         inThinking: false,
         flushTimer: null,
+        _lastTextLen: 0,
+        _lastThinkLen: 0,
+        _lastToolCount: 0,
       })
     }
     return this.buffers.get(sessionId)!
   }
 
   handleStreamDelta(sessionId: string, delta: string): void {
+    // Ignore deltas arriving after stream has ended (late WebSocket frames)
+    if (!useStore.getState().streamingSessionIds.has(sessionId)) return
     const buf = this.ensureBuffer(sessionId)
+    // Defensive: if buffer has no messageId, stream wasn't properly started
+    if (!buf.messageId) return
 
     // Handle REASONING control signal
     if (delta.startsWith('\x02REASONING\x02')) {
-      buf.thinkingAcc += delta.slice(11) // skip \x02 + "REASONING" + \x02 = 11 chars
+      buf.thinkingAcc += delta.slice(11)
       buf.inThinking = true
     } else if (delta.startsWith('\x00USAGE:')) {
-      // Token usage control signal: \x00USAGE:{"prompt":N,"completion":M}
       try {
-        const usageJson = delta.slice(8)
-        const usage = JSON.parse(usageJson) as {
-          prompt: number
-          completion: number
-        }
-        if (usage.prompt || usage.completion) {
-          useStore.getState().setTokenUsage({
-            prompt: usage.prompt || 0,
-            completion: usage.completion || 0,
-          })
+        const parts = delta.slice(8).split(':')
+        const prompt = parseInt(parts[0], 10) || 0
+        const completion = parseInt(parts[1], 10) || 0
+        if (prompt || completion) {
+          useStore.getState().setTokenUsage({ prompt, completion })
         }
       } catch {
         /* ignore parse errors */
@@ -74,7 +103,6 @@ class StreamBufferManager {
       buf.textAcc += delta
     }
 
-    this.createPlaceholderIfNeeded(buf, sessionId)
     this.scheduleFlush(buf, sessionId)
   }
 
@@ -82,14 +110,15 @@ class StreamBufferManager {
     sessionId: string,
     tool: { id: string; name: string; args: Record<string, unknown> },
   ): void {
+    if (!useStore.getState().streamingSessionIds.has(sessionId)) return
     const buf = this.ensureBuffer(sessionId)
+    if (!buf.messageId) return
     buf.toolCalls.push({
       ...tool,
       status: 'running',
       elapsed: 0,
       args: tool.args ?? {},
     })
-    this.createPlaceholderIfNeeded(buf, sessionId)
     this.scheduleFlush(buf, sessionId)
   }
 
@@ -98,7 +127,9 @@ class StreamBufferManager {
     toolId: string,
     result?: string,
   ): void {
+    if (!useStore.getState().streamingSessionIds.has(sessionId)) return
     const buf = this.ensureBuffer(sessionId)
+    if (!buf.messageId) return
     const tool = buf.toolCalls.find((t) => t.id === toolId)
     if (tool) {
       tool.status = 'done'
@@ -112,6 +143,10 @@ class StreamBufferManager {
     if (buf.flushTimer) clearTimeout(buf.flushTimer)
     buf.inThinking = false
     this.flush(buf, sessionId)
+    const usage = useStore.getState().tokenUsage
+    if (buf.messageId && (usage.prompt || usage.completion)) {
+      useStore.getState().setMessageUsage(sessionId, buf.messageId, { ...usage })
+    }
     useStore.getState().removeStreamingSession(sessionId)
     this.buffers.delete(sessionId)
   }
@@ -121,6 +156,18 @@ class StreamBufferManager {
     sessionId: string,
   ): void {
     if (buf.messageId) return
+    // If we reach here, the stream started without a registered placeholder.
+    // Check if there's an existing empty assistant message we can adopt.
+    const msgs = useStore.getState().messagesBySession.get(sessionId)
+    if (msgs) {
+      const empty = msgs.find(m => m.role === 'assistant' && m.blocks.length === 0)
+      if (empty) {
+        buf.messageId = empty.id
+        useStore.getState().addStreamingSession(sessionId)
+        return
+      }
+    }
+    // No existing placeholder — create one as last resort
     buf.messageId = crypto.randomUUID()
     useStore.getState().addStreamingSession(sessionId)
     useStore.getState().ensureSession(sessionId)

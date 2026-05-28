@@ -7,6 +7,7 @@ import Overlay from './Overlay'
 import AgentConfigPanel from './AgentConfigPanel'
 import ModelConfigPanel from './ModelConfigPanel'
 import VisionConfigSection from './VisionConfigSection'
+import KnowledgeGraphPanel from '../kg/KnowledgeGraphPanel'
 import { type ThemeId } from '../../stores/ui'
 import styles from './SettingsModal.module.css'
 
@@ -19,7 +20,7 @@ const THEMES: { id: ThemeId; label: string; bg: string; surface: string; text: s
   { id: 'ember', label: '余烬', bg: '#000026', surface: '#060630', text: '#ffe0c0', accent: '#ff770f' },
 ]
 
-type Tab = 'appearance' | 'agent' | 'models' | 'mcp' | 'lsp' | 'skills' | 'plugins' | 'about'
+type Tab = 'appearance' | 'agent' | 'models' | 'mcp' | 'lsp' | 'skills' | 'plugins' | 'kg' | 'about'
 
 interface McpTool {
   name: string
@@ -77,6 +78,7 @@ export default function SettingsModal({
     { id: 'lsp', label: 'LSP' },
     { id: 'skills', label: 'Skills' },
     { id: 'plugins', label: 'Plugins' },
+    { id: 'kg', label: '认知图谱' },
     { id: 'about', label: '关于' },
   ]
 
@@ -169,6 +171,17 @@ export default function SettingsModal({
           {tab === 'lsp' && <LspTab />}
           {tab === 'skills' && <SkillsTab />}
           {tab === 'plugins' && <PluginsTab />}
+          {tab === 'kg' && (
+            <>
+              <div className={styles.contentHeader}>
+                <h3 className={styles.sectionTitle}>认知图谱</h3>
+                <p className={styles.sectionDesc}>浏览和管理 AI 学习到的知识实体与关系</p>
+              </div>
+              <div className={styles.contentBody}>
+                <KnowledgeGraphPanel />
+              </div>
+            </>
+          )}
           {tab === 'about' && <AboutTab wsState={wsState} />}
         </div>
       </div>
@@ -735,8 +748,8 @@ function SkillsTab() {
               {skills.length === 0 ? (
                 <p className={styles.toolsEmpty}>暂无已发现的 Skill</p>
               ) : (
-                skills.map((skill) => (
-                  <div key={skill.name}>
+                skills.map((skill, i) => (
+                  <div key={skill.path || `${skill.name}-${i}`}>
                     <div
                       className={`${styles.skillCard} ${selectedSkill === skill.name ? styles.skillCardActive : ''}`}
                       onClick={() => handleSelectSkill(skill.name)}

@@ -3,6 +3,13 @@ import { join } from 'path'
 
 let mainWindow: BrowserWindow | null = null
 
+function getIconPath(): string {
+  if (app.isPackaged) {
+    return join(process.resourcesPath, 'icon.ico')
+  }
+  return join(__dirname, '../../src/asset/loom_logo_dev.ico')
+}
+
 export function createMainWindow(port: number): BrowserWindow {
   const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize
   const width = Math.min(1200, Math.floor(screenWidth * 0.75))
@@ -17,6 +24,7 @@ export function createMainWindow(port: number): BrowserWindow {
     titleBarStyle: 'hidden',
     backgroundColor: '#1a1a2e',
     show: false,
+    icon: getIconPath(),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -33,9 +41,9 @@ export function createMainWindow(port: number): BrowserWindow {
     mainWindow = null
   })
 
-  // Inject port AFTER page loads (dev mode loadURL resets pre-load context)
+  // Inject port and isPackaged AFTER page loads (dev mode loadURL resets pre-load context)
   mainWindow.webContents.on('did-finish-load', () => {
-    mainWindow?.webContents.executeJavaScript(`window.__enginePort__ = ${port}; console.log('[main] port injected:', ${port})`)
+    mainWindow?.webContents.executeJavaScript(`window.__enginePort__ = ${port}; window.__isPackaged__ = ${app.isPackaged}; console.log('[main] port injected:', ${port})`)
   })
 
   if (!app.isPackaged) {

@@ -49,9 +49,6 @@ async fn dispatch_handler_http(
 
 /// Start the server on the given address.
 pub async fn serve(host: &str, port: u16, orchestrator: Arc<Orchestrator>) -> anyhow::Result<()> {
-    // Load saved API keys from ~/.loom/env
-    load_env_file();
-
     let state = Arc::new(AppState::new(orchestrator));
     // Hydrate sessions from persisted store
     let sessions = state.orchestrator.list_persisted_sessions().await;
@@ -70,24 +67,4 @@ pub async fn serve(host: &str, port: u16, orchestrator: Arc<Orchestrator>) -> an
     println!("Health check: http://{}/health", actual_addr);
     axum::serve(listener, app).await?;
     Ok(())
-}
-
-fn load_env_file() {
-    let env_file = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".loom")
-        .join("env");
-    if let Ok(content) = std::fs::read_to_string(&env_file) {
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            if let Some((key, value)) = line.split_once('=') {
-                // SAFETY: called once at startup before spawning threads
-                unsafe { std::env::set_var(key.trim(), value.trim()); }
-            }
-        }
-        tracing::info!(path = %env_file.display(), "loaded API keys from env file");
-    }
 }

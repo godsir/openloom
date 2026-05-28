@@ -26,17 +26,17 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
+    let teardown: (() => void) | null = null
     async function boot() {
       try {
-        await bootstrapApp()
-        if (cancelled) return
+        const cleanup = await bootstrapApp()
+        if (cancelled) { cleanup(); return }
+        teardown = cleanup
         setReady(true)
         const pref = await window.hana.getPreference('onboarded', false)
         if (!pref) setShowOnboarding(true)
-        // Restore saved theme from ~/.loom/preferences.json
         const savedTheme = await window.hana.getPreference('theme', 'dark')
         useStore.getState().setTheme(savedTheme as any)
-        // Restore pinned session IDs
         const savedPinned = await window.hana.getPreference<string[]>('pinnedIds', [])
         if (savedPinned.length) {
           useStore.setState({ pinnedIds: new Set(savedPinned) })
@@ -47,7 +47,7 @@ export default function App() {
       }
     }
     boot()
-    return () => { cancelled = true }
+    return () => { cancelled = true; teardown?.() }
   }, [])
 
   const handleRetry = () => {

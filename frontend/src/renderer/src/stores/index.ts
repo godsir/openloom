@@ -10,6 +10,7 @@ import { createInputSlice, InputSlice } from './input'
 import { createSelectionSlice, SelectionSlice } from './selection'
 import { createToastSlice, ToastSlice } from './toast'
 import { createConfirmSlice, ConfirmSlice } from './confirm'
+import { createKgSlice, KgSlice } from './kg'
 
 export type AppStore = ConnectionSlice &
   UiSlice &
@@ -21,7 +22,8 @@ export type AppStore = ConnectionSlice &
   InputSlice &
   SelectionSlice &
   ToastSlice &
-  ConfirmSlice
+  ConfirmSlice &
+  KgSlice
 
 export const useStore = create<AppStore>()((...a) => ({
   ...createConnectionSlice(...a),
@@ -35,4 +37,5 @@ export const useStore = create<AppStore>()((...a) => ({
   ...createSelectionSlice(...a),
   ...createToastSlice(...a),
   ...createConfirmSlice(...a),
+  ...createKgSlice(...a),
 }))

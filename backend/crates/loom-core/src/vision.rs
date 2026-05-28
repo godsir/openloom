@@ -100,6 +100,7 @@ pub async fn prepare_vision_context(
         role: Role::User,
         content: content_parts,
         timestamp: Utc::now(),
+        usage: None,
     }];
 
     let request = CompletionRequest {

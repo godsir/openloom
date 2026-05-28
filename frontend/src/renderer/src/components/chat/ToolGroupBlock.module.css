@@ -1,0 +1,78 @@
+.block {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.row {
+  border-top: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.row:first-child {
+  border-top: none;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-family: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.toggle:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.iconZap {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.toolName {
+  font-weight: 500;
+  color: var(--text-light);
+}
+
+.statusIcon {
+  margin-left: auto;
+}
+
+.chevron {
+  color: var(--text-muted);
+}
+
+.body {
+  padding: 0 12px 10px;
+}
+
+.args {
+  background: var(--bg);
+  border-radius: var(--r-sm);
+  padding: 8px;
+  overflow-x: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: ui-monospace, monospace;
+  margin-bottom: 6px;
+}
+
+.result {
+  background: var(--bg);
+  border-radius: var(--r-sm);
+  padding: 8px;
+  overflow-x: auto;
+  font-size: 11px;
+  color: var(--text-light);
+  font-family: ui-monospace, monospace;
+  max-height: 144px;
+  overflow-y: auto;
+}

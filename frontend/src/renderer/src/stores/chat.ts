@@ -10,6 +10,7 @@ export interface Message {
   role: 'user' | 'assistant'
   blocks: ContentBlock[]
   timestamp: string
+  usage?: { prompt: number; completion: number }
 }
 
 const MAX_CACHED_SESSIONS = 8
@@ -23,6 +24,7 @@ export interface ChatSlice {
   patchBlockByTaskId: (sessionId: string, taskId: string, patch: Partial<ContentBlock>) => void
   hydrateMessages: (sessionId: string, messages: Message[]) => void
   deleteMessage: (sessionId: string, messageId: string) => void
+  setMessageUsage: (sessionId: string, messageId: string, usage: { prompt: number; completion: number }) => void
   evictSession: (sessionId: string) => void
 }
 
@@ -113,6 +115,16 @@ export const createChatSlice: StateCreator<ChatSlice> = (set, get) => ({
   deleteMessage: (sessionId, messageId) => {
     const next = new Map(get().messagesBySession)
     const msgs = (next.get(sessionId) || []).filter((m) => m.id !== messageId)
+    next.set(sessionId, msgs)
+    set({ messagesBySession: next })
+  },
+
+  setMessageUsage: (sessionId, messageId, usage) => {
+    const next = new Map(get().messagesBySession)
+    const msgs = [...(next.get(sessionId) || [])]
+    const idx = msgs.findIndex((m) => m.id === messageId)
+    if (idx === -1) return
+    msgs[idx] = { ...msgs[idx], usage }
     next.set(sessionId, msgs)
     set({ messagesBySession: next })
   },

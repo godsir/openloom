@@ -8,13 +8,13 @@ use loom_inference::engine::CloudClient;
 use loom_memory::{
     ExtractedEntity, ExtractedRelationship, LLM_EXTRACTION_PROMPT, parse_llm_extraction,
 };
-use loom_types::{AgentConfig, CompletionRequest, Message, SessionId, StreamDelta};
+use loom_types::{AgentConfig, CompletionRequest, ContentPart, Message, Role, SessionId, StreamDelta};
 use lume_lsp::LspClient;
 use lume_mcp::McpClient;
 use tokio::sync::{RwLock, mpsc};
 
 use crate::agent::AgentStatus;
-use crate::agent_loop::{AgentLoopConfig, TurnResult, run_agent_turn_streaming};
+use crate::agent_loop::{AgentLoopConfig, TurnResult, build_user_message, run_agent_turn_streaming, run_agent_turn_streaming_with_images};
 use crate::agent_pool::{AgentPool, AgentSummary};
 use crate::event_bus::{AgentEvent, EventBus};
 use crate::tool_registry::{AgentTool, SpawnAgentTool, SpawnContext, ToolRegistry};
@@ -46,7 +46,8 @@ pub trait MemoryStore: Send + Sync {
         user_msg: &str,
         assistant_msg: &str,
         tools: usize,
-        tokens: usize,
+        prompt_tokens: usize,
+        completion_tokens: usize,
     ) -> Result<i64>;
     async fn load_history(&self, session_id: &str, limit: usize) -> Result<Vec<Message>>;
     async fn extract_cognitions(&self, session_id: &str, text: &str) -> Result<Vec<String>>;
@@ -97,6 +98,17 @@ pub trait MemoryStore: Send + Sync {
         limit: usize,
     ) -> Result<Vec<(String, String, String, f64)>>;
     async fn kg_node_count(&self) -> Result<usize>;
+    async fn kg_edge_count(&self) -> Result<usize>;
+    async fn kg_neighbors(&self, node_name: &str, limit: usize) -> Result<loom_types::KgGraph>;
+    async fn kg_walk(
+        &self,
+        start_name: &str,
+        max_depth: u8,
+        limit: usize,
+    ) -> Result<loom_types::KgGraph>;
+    async fn kg_list_nodes(&self, limit: usize, offset: usize) -> Result<Vec<loom_types::KgNode>>;
+    async fn kg_delete_node(&self, name: &str) -> Result<bool>;
+    async fn kg_delete_edge(&self, source: &str, target: &str, relation: &str) -> Result<bool>;
     // Session persistence
     async fn list_sessions(&self) -> Result<Vec<(String, String, usize, Option<String>)>>;
     async fn ensure_session(&self, id: &str) -> Result<()>;
@@ -396,22 +408,102 @@ impl Orchestrator {
         }
     }
 
-    /// Rebuild the system prompt with skills and persona injected.
+    // === Knowledge Graph Queries ===
+
+    pub async fn kg_search(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<loom_types::KgNode>> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            let results = store.search_knowledge(query, limit).await?;
+            Ok(results
+                .into_iter()
+                .map(|(name, entity_type, description, confidence)| {
+                    loom_types::KgNode {
+                        node_id: 0,
+                        name,
+                        entity_type,
+                        description,
+                        confidence,
+                    }
+                })
+                .collect())
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    pub async fn kg_stats(&self) -> Result<loom_types::KgStats> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            Ok(loom_types::KgStats {
+                node_count: store.kg_node_count().await?,
+                edge_count: store.kg_edge_count().await?,
+            })
+        } else {
+            Ok(loom_types::KgStats {
+                node_count: 0,
+                edge_count: 0,
+            })
+        }
+    }
+
+    pub async fn kg_neighbors(&self, node_name: &str, limit: usize) -> Result<loom_types::KgGraph> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.kg_neighbors(node_name, limit).await
+        } else {
+            Ok(loom_types::KgGraph {
+                nodes: Vec::new(),
+                edges: Vec::new(),
+            })
+        }
+    }
+
+    pub async fn kg_walk(
+        &self,
+        start_name: &str,
+        max_depth: u8,
+        limit: usize,
+    ) -> Result<loom_types::KgGraph> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.kg_walk(start_name, max_depth, limit).await
+        } else {
+            Ok(loom_types::KgGraph {
+                nodes: Vec::new(),
+                edges: Vec::new(),
+            })
+        }
+    }
+
+    pub async fn kg_list_nodes(&self, limit: usize, offset: usize) -> Result<Vec<loom_types::KgNode>> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.kg_list_nodes(limit, offset).await
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    pub async fn kg_delete_node(&self, name: &str) -> Result<bool> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.kg_delete_node(name).await
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub async fn kg_delete_edge(&self, source: &str, target: &str, relation: &str) -> Result<bool> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.kg_delete_edge(source, target, relation).await
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Return the base system prompt without persona/skills injection.
+    /// Persona, skills, and agent-specific additions are injected separately
+    /// by the caller (process_message_with_config / process_message_streaming).
     pub async fn build_system_prompt(&self) -> String {
-        let cfg = self.loop_config.read().await;
-        let mut prompt = cfg.system_prompt.clone();
-
-        let persona = self.persona_context.read().await;
-        if !persona.is_empty() {
-            prompt.push_str(&format!("\n\n## User Profile\n{}", persona));
-        }
-
-        let skills = self.skill_context.read().await;
-        if !skills.is_empty() {
-            prompt.push_str(&format!("\n\n## Available Skills\n{}", skills));
-        }
-
-        prompt
+        self.loop_config.read().await.system_prompt.clone()
     }
 
     /// Load conversation history for a session from memory (restore on startup).
@@ -643,14 +735,16 @@ impl Orchestrator {
             if cache.contains_key(&name) {
                 anyhow::bail!("model config '{}' already exists", name);
             }
-            // Check for duplicate model ID (same LM Studio model under a different config name)
+            // Check for exact duplicate: same model + same backend + same label
             if let Some(ref model_id) = config.model {
                 for (existing_name, existing) in cache.iter() {
                     if existing.model.as_deref() == Some(model_id.as_str())
                         && existing_name != &name
+                        && existing.backend == config.backend
+                        && existing.backend_label == config.backend_label
                     {
                         anyhow::bail!(
-                            "model '{}' is already configured as '{}'",
+                            "model '{}' is already configured as '{}' for this provider",
                             model_id,
                             existing_name
                         );
@@ -790,23 +884,28 @@ impl Orchestrator {
                     let auto_env = match config.backend {
                         loom_types::ModelBackend::DeepSeek => "DEEPSEEK_API_KEY",
                         loom_types::ModelBackend::OpenAI => "OPENAI_API_KEY",
-                        _ => "ANTHROPIC_API_KEY",
+                        loom_types::ModelBackend::Anthropic => "ANTHROPIC_API_KEY",
+                        _ => "OPENLOOM_API_KEY",
                     };
                     std::env::var(auto_env).ok()
                 });
             let model_id = model.clone();
             match api_key {
-                Some(key) => match config.backend {
-                    loom_types::ModelBackend::Anthropic => Some(Box::new(
-                        loom_inference::AnthropicClient::new(key, model_id.clone(), base_url),
-                    )),
-                    loom_types::ModelBackend::DeepSeek => Some(Box::new(
-                        loom_inference::OpenAIClient::new(key, model_id.clone(), base_url, false),
-                    )),
-                    _ => Some(Box::new(loom_inference::OpenAIClient::new(
-                        key, model_id, base_url, false,
-                    ))),
-                },
+                Some(key) => {
+                    let is_anthropic = config.api_format.as_deref() == Some("anthropic")
+                        || matches!(config.backend, loom_types::ModelBackend::Anthropic);
+                    if is_anthropic {
+                        Some(Box::new(loom_inference::AnthropicClient::new(
+                            key,
+                            model_id.clone(),
+                            base_url,
+                        )))
+                    } else {
+                        Some(Box::new(loom_inference::OpenAIClient::new(
+                            key, model_id, base_url, false,
+                        )))
+                    }
+                }
                 None => {
                     tracing::warn!(model = %model, "no API key found; model set but cloud client not created");
                     None
@@ -830,18 +929,21 @@ impl Orchestrator {
             "default",
             &loom_types::AgentConfig::default(),
             None,
+            vec![],
         )
         .await
     }
 
     /// Process a user message with a specific session and agent config.
     /// Uses the Agent state machine: Idle → Thinking → Completed (or Errored).
+    /// `attached_images` are ContentPart::Image items to send directly to the model.
     pub async fn process_message_with_config(
         &self,
         user_message: &str,
         session_id: &str,
         agent_config: &loom_types::AgentConfig,
         thinking_budget: Option<usize>,
+        attached_images: Vec<ContentPart>,
     ) -> Result<TurnResult> {
         // Register agent in pool
         let agent_id = self
@@ -853,15 +955,36 @@ impl Orchestrator {
             )
             .await?;
 
-        // Build system prompt, applying agent config overrides
-        let mut system_prompt = self.build_system_prompt().await;
+        // ── System prompt assembly ──
+        // Order: Agent Identity → Instructions → Context → Tools
+        let mut system_prompt = String::new();
+
+        // 1. Agent persona — the agent's core identity, placed first for maximum effect
+        if !agent_config.persona.is_empty() {
+            system_prompt.push_str(&agent_config.persona);
+        }
+        // 2. System instructions — base prompt or agent-specific override
         if let Some(ref override_prompt) = agent_config.system_prompt_override
             && !override_prompt.is_empty()
         {
-            system_prompt = override_prompt.clone();
+            if !system_prompt.is_empty() { system_prompt.push_str("\n\n"); }
+            system_prompt.push_str(override_prompt);
+        } else {
+            let base = self.build_system_prompt().await;
+            if !base.is_empty() {
+                if !system_prompt.is_empty() { system_prompt.push_str("\n\n"); }
+                system_prompt.push_str(&base);
+            }
         }
-        if !agent_config.persona.is_empty() {
-            system_prompt.push_str(&format!("\n\n## Agent Persona\n{}", agent_config.persona));
+        // 3. User profile — learned facts about the user (context, not identity)
+        let user_persona = self.persona_context.read().await;
+        if !user_persona.is_empty() {
+            system_prompt.push_str(&format!("\n\n## User Profile\n{}", user_persona));
+        }
+        // 4. Available skills
+        let skills = self.skill_context.read().await;
+        if !skills.is_empty() {
+            system_prompt.push_str(&format!("\n\n## Available Skills\n{}", skills));
         }
 
         // Inject knowledge graph context
@@ -910,10 +1033,13 @@ impl Orchestrator {
         let forward_handle = tokio::spawn(async move {
             let mut full_text = String::new();
             let mut started_tools: Vec<(String, String)> = Vec::new();
+            let mut delta_seq: u64 = 0;
             while let Some(delta) = delta_rx.recv().await {
                 match delta {
                     StreamDelta::Text(t) => {
+                        delta_seq += 1;
                         full_text.push_str(&t);
+                        tracing::debug!(seq = delta_seq, delta = %t, "forward_handle Text delta");
                         let _ = event_bus.publish(AgentEvent::StreamDelta {
                             agent_id: forward_agent_id.clone(),
                             session_id: forward_session_id.clone(),
@@ -981,11 +1107,12 @@ impl Orchestrator {
                 None => return Err(anyhow::anyhow!("No cloud client configured")),
             };
             let reg = registry.read().await;
-            run_agent_turn_streaming(
+            run_agent_turn_streaming_with_images(
                 client.as_ref(),
                 &reg,
                 &history,
                 &user_msg,
+                &attached_images,
                 &loop_config,
                 delta_tx,
                 &allowed,
@@ -1004,21 +1131,36 @@ impl Orchestrator {
                 .pool
                 .transition(&agent_id, AgentStatus::Completed, None)
                 .await;
-            self.add_to_history(session_id, Message::user(user_message))
+            self.add_to_history(session_id, build_user_message(&user_msg, &attached_images))
                 .await;
-            self.add_to_history(session_id, Message::assistant(&turn.response))
+            let content_json = serde_json::to_string(&turn.content_parts).unwrap_or_else(|_| serde_json::json!([{"text": turn.response}]).to_string());
+            let assistant_parts = if turn.content_parts.is_empty() {
+                vec![ContentPart::Text { text: turn.response.clone() }]
+            } else {
+                turn.content_parts.clone()
+            };
+            self.add_to_history(session_id, Message {
+                role: Role::Assistant,
+                content: assistant_parts,
+                timestamp: chrono::Utc::now(),
+                usage: None,
+            })
                 .await;
 
             // Persist to memory store
             let mem = self.memory_store.read().await;
             if let Some(ref store) = *mem {
+                let user_content_parts = build_user_message(&user_msg, &attached_images).content;
+                let user_content_json = serde_json::to_string(&user_content_parts)
+                    .unwrap_or_else(|_| user_msg.clone());
                 let event_id = store
                     .save_turn(
                         session_id,
-                        user_message,
-                        &turn.response,
+                        &user_content_json,
+                        &content_json,
                         turn.tool_calls_made,
-                        turn.prompt_tokens + turn.completion_tokens,
+                        turn.prompt_tokens,
+                        turn.completion_tokens,
                     )
                     .await?;
 
@@ -1095,7 +1237,16 @@ impl Orchestrator {
         let registry = self.tool_registry.read().await;
         let history = self.session_history(session_id).await;
 
-        let system_prompt = self.build_system_prompt().await;
+        let mut system_prompt = self.build_system_prompt().await;
+        // Inject persona + skills (no longer part of build_system_prompt)
+        let user_persona = self.persona_context.read().await;
+        if !user_persona.is_empty() {
+            system_prompt.push_str(&format!("\n\n## User Profile\n{}", user_persona));
+        }
+        let skills = self.skill_context.read().await;
+        if !skills.is_empty() {
+            system_prompt.push_str(&format!("\n\n## Available Skills\n{}", skills));
+        }
 
         // ── Summary check (P0 memory optimization) ──
         // Phase 1: read existing summary + KG context (lock held briefly)
@@ -1185,7 +1336,18 @@ impl Orchestrator {
                 .await;
             self.add_to_history(session_id, Message::user(user_message))
                 .await;
-            self.add_to_history(session_id, Message::assistant(&turn.response))
+            let content_json = serde_json::to_string(&turn.content_parts).unwrap_or_else(|_| serde_json::json!([{"text": turn.response}]).to_string());
+            let assistant_parts = if turn.content_parts.is_empty() {
+                vec![ContentPart::Text { text: turn.response.clone() }]
+            } else {
+                turn.content_parts.clone()
+            };
+            self.add_to_history(session_id, Message {
+                role: Role::Assistant,
+                content: assistant_parts,
+                timestamp: chrono::Utc::now(),
+                usage: None,
+            })
                 .await;
 
             // Persist to memory store
@@ -1195,9 +1357,10 @@ impl Orchestrator {
                     .save_turn(
                         session_id,
                         user_message,
-                        &turn.response,
+                        &content_json,
                         turn.tool_calls_made,
-                        turn.prompt_tokens + turn.completion_tokens,
+                        turn.prompt_tokens,
+                        turn.completion_tokens,
                     )
                     .await?;
 
