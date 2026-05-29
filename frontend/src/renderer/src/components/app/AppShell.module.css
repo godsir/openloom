@@ -76,6 +76,16 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
+  background: var(--red);
+}
+
+.connectionDot[data-state="connected"] {
+  background: var(--accent);
+  box-shadow: 0 0 4px rgba(34, 211, 238, 0.4);
+}
+
+.connectionDot[data-state="reconnecting"] {
+  background: var(--amber);
 }
 
 .connectionStatus {
@@ -99,7 +109,14 @@
 .sidebarSlot {
   flex-shrink: 0;
   overflow: hidden;
+  width: 0;
+  opacity: 0;
   transition: width 0.2s var(--ease-out), opacity 0.2s var(--ease-out);
+}
+
+.sidebarSlotOpen {
+  width: 220px;
+  opacity: 1;
 }
 
 .main {

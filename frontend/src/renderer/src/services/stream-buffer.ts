@@ -8,6 +8,7 @@ interface BufferState {
   messageId: string | null
   textAcc: string
   thinkingAcc: string
+  imageAcc: Array<{ mimeType: string; data: string }>
   moodAcc: { yuan: string; text: string }
   toolCalls: Array<{
     id: string
@@ -18,6 +19,8 @@ interface BufferState {
     result?: string
   }>
   inThinking: boolean
+  inVision: boolean
+  visionDone: boolean
   flushTimer: ReturnType<typeof setTimeout> | null
   _lastTextLen: number
   _lastThinkLen: number
@@ -39,8 +42,11 @@ class StreamBufferManager {
     buf.messageId = messageId
     buf.textAcc = ''
     buf.thinkingAcc = ''
+    buf.imageAcc = []
     buf.toolCalls = []
     buf.inThinking = false
+    buf.inVision = false
+    buf.visionDone = false
     if (buf.flushTimer) { clearTimeout(buf.flushTimer); buf.flushTimer = null }
   }
 
@@ -67,6 +73,8 @@ class StreamBufferManager {
         moodAcc: { yuan: '', text: '' },
         toolCalls: [],
         inThinking: false,
+        inVision: false,
+        visionDone: false,
         flushTimer: null,
         _lastTextLen: 0,
         _lastThinkLen: 0,
@@ -87,6 +95,23 @@ class StreamBufferManager {
     if (delta.startsWith('\x02REASONING\x02')) {
       buf.thinkingAcc += delta.slice(11)
       buf.inThinking = true
+    } else if (delta.startsWith('\x02VISION_START\x02')) {
+      buf.inVision = true
+      buf.visionDone = false
+    } else if (delta.startsWith('\x02VISION_DONE\x02')) {
+      buf.inVision = false
+      buf.visionDone = true
+    } else if (delta.startsWith('\x02IMAGE\x02')) {
+      // Format: \x02IMAGE\x02{media_type};{base64_data}
+      // Prefix length = 1 + "IMAGE".length + 1 = 7
+      const payload = delta.slice(7)
+      const semi = payload.indexOf(';')
+      if (semi > 0) {
+        buf.imageAcc.push({
+          mimeType: payload.slice(0, semi),
+          data: payload.slice(semi + 1),
+        })
+      }
     } else if (delta.startsWith('\x00USAGE:')) {
       try {
         const parts = delta.slice(8).split(':')
@@ -200,7 +225,31 @@ class StreamBufferManager {
 
     const blocks: Array<{ type: string; [key: string]: unknown }> = []
 
-    // Display order: thinking → mood → tool_group → text
+    // Display order: vision → images → thinking → mood → tool_group → text
+    if (buf.inVision) {
+      blocks.push({
+        type: 'vision_processing',
+        status: 'running',
+        content: '辅助视觉正在处理图片',
+      })
+    } else if (buf.visionDone && !buf.textAcc && !buf.thinkingAcc) {
+      // Vision finished; main model not yet emitting — keep user informed.
+      blocks.push({
+        type: 'vision_processing',
+        status: 'waiting',
+        content: '辅助视觉已完成，主模型生成中',
+      })
+    }
+
+    for (const img of buf.imageAcc) {
+      blocks.push({
+        type: 'image',
+        mimeType: img.mimeType,
+        thumbnail: `data:${img.mimeType};base64,${img.data}`,
+        name: 'generated-image',
+      })
+    }
+
     if (buf.thinkingAcc) {
       blocks.push({
         type: 'thinking',

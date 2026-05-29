@@ -1,5 +1,6 @@
 import { ipcMain, BrowserWindow, app } from 'electron'
 import { getStoreKey, setStoreKey } from '../store'
+import { checkForUpdates, downloadUpdate, installUpdate } from '../updater'
 
 export function registerAppIpc(): void {
   ipcMain.handle('get-platform', () => process.platform)
@@ -20,7 +21,13 @@ export function registerAppIpc(): void {
   })
 
   ipcMain.handle('window-close', (event) => {
-    BrowserWindow.fromWebContents(event.sender)?.close()
+    const closeToTray = getStoreKey('closeToTray', true)
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (closeToTray) {
+      win?.hide()
+    } else {
+      win?.close()
+    }
   })
 
   ipcMain.handle('window-is-maximized', (event) => {
@@ -33,5 +40,22 @@ export function registerAppIpc(): void {
 
   ipcMain.handle('set-preference', (_, key: string, value: unknown) => {
     setStoreKey(key, value)
+    // Apply auto-start immediately
+    if (key === 'autoStart') {
+      app.setLoginItemSettings({ openAtLogin: !!value })
+    }
+  })
+
+  // Auto-update
+  ipcMain.handle('check-for-updates', async () => {
+    await checkForUpdates()
+  })
+
+  ipcMain.handle('download-update', async () => {
+    await downloadUpdate()
+  })
+
+  ipcMain.handle('install-update', () => {
+    installUpdate()
   })
 }

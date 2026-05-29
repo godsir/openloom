@@ -1,0 +1,121 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+}
+
+.dialog {
+  position: relative;
+  background: var(--bg);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg);
+  width: 100%;
+  max-width: 360px;
+  margin: 0 16px;
+  overflow: hidden;
+  animation: fadeIn 0.15s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+}
+
+.iconCircle {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.iconCircleNormal {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.iconCircleDanger {
+  background: var(--red-light);
+  color: var(--red);
+}
+
+.title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.message {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.btn {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.btnCancel {
+  background: var(--bg-card);
+  color: var(--text-secondary);
+}
+
+.btnCancel:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.btnConfirm {
+  background: var(--accent);
+  color: #000;
+  border-color: var(--accent);
+}
+
+.btnConfirm:hover {
+  background: var(--accent-hover);
+}
+
+.btnDanger {
+  background: var(--red);
+  color: #fff;
+  border-color: var(--red);
+}
+
+.btnDanger:hover {
+  background: #dc2626;
+}

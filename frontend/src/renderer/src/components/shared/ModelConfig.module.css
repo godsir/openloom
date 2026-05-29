@@ -233,6 +233,25 @@
   border-color: var(--green);
 }
 
+.pvModelBtnActive {
+  color: var(--accent);
+}
+
+.pvCheckboxRow {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.pvCheckboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
 .pvVerifyFail {
   color: var(--red);
   border-color: var(--red);

@@ -88,10 +88,15 @@ impl InferenceEngine {
 
     /// Build an engine pointed at a known endpoint (no load trigger).
     pub fn new(base_url: String, model: String) -> Self {
+        let http = HttpClient::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(300))
+            .build()
+            .unwrap_or_default();
         Self {
             base_url,
             model,
-            http: HttpClient::new(),
+            http,
             prefix_cache: PrefixCache::new(2),
         }
     }
@@ -190,6 +195,7 @@ impl InferenceEngine {
                 .as_str()
                 .filter(|s| !s.is_empty())
                 .map(String::from),
+            images: Vec::new(),
         })
     }
 

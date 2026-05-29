@@ -4,8 +4,10 @@ import { registerIpcHandlers } from './ipc'
 import { startEngine, stopEngine } from './engine'
 import { createTray } from './tray'
 import { setupAutoUpdater, checkForUpdates } from './updater'
+import { getStoreKey, readStore } from './store'
 
 let port = 0
+let isQuitting = false
 
 app.whenReady().then(async () => {
   if (!app.requestSingleInstanceLock()) {
@@ -17,9 +19,14 @@ app.whenReady().then(async () => {
     const win = getMainWindow()
     if (win) {
       if (win.isMinimized()) win.restore()
+      win.show()
       win.focus()
     }
   })
+
+  // Auto-start on boot
+  const autoStart = getStoreKey('autoStart', false)
+  app.setLoginItemSettings({ openAtLogin: autoStart })
 
   registerIpcHandlers()
 
@@ -43,11 +50,20 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createMainWindow(port)
+    } else {
+      getMainWindow()?.show()
     }
   })
 })
 
+app.on('before-quit', () => {
+  isQuitting = true
+})
+
 app.on('window-all-closed', async () => {
-  await stopEngine()
-  app.quit()
+  if (isQuitting) {
+    await stopEngine()
+    app.quit()
+  }
+  // Otherwise: close-to-tray is active, just keep running in tray
 })

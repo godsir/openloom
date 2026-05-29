@@ -162,7 +162,7 @@ pub async fn dispatch_method(
     match req.method.as_str() {
         // === System ===
         "system.health" => Ok(json!({
-            "status": "ok", "version": "0.2.0",
+            "status": "ok", "version": "0.2.15",
             "agent_count": state.orchestrator.list_agents().await.len(),
             "tool_count": state.orchestrator.tool_registry().await.len(),
         })),
@@ -170,7 +170,24 @@ pub async fn dispatch_method(
         // === Chat ===
         "chat.send" => {
             let content = p.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let attached_files_count = p
+                .get("attached_files")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            if attached_files_count > 0 {
+                tracing::info!(
+                    count = attached_files_count,
+                    "chat.send with attached_files"
+                );
+            }
             let attached_images = parse_attached_images(&p);
+            if !attached_images.is_empty() {
+                tracing::info!(
+                    image_count = attached_images.len(),
+                    "parsed attached images"
+                );
+            }
             if content.is_empty() && attached_images.is_empty() {
                 return Err(err(ErrorCode::InvalidRequest, "content required"));
             }
@@ -1174,8 +1191,15 @@ pub async fn dispatch_method(
             if name.is_empty() {
                 return Err(err(ErrorCode::InvalidRequest, "name required"));
             }
-            match state.orchestrator.get_skill_body(name).await {
-                Some(content) => Ok(json!({ "content": content })),
+            // Discover from disk — the orchestrator's in-memory map is only
+            // populated by the CLI, not the server.
+            let home = dirs::home_dir().unwrap_or_default();
+            let data_dir = home.join(".loom");
+            let mut loader = SkillLoader::new();
+            loader.add_standard_paths(&data_dir);
+            let skills = loader.discover().unwrap_or_default();
+            match skills.iter().find(|s| s.manifest.name == name) {
+                Some(skill) => Ok(json!({ "content": skill.body })),
                 None => Err(err(
                     ErrorCode::MethodNotFound,
                     &format!("skill '{}' not found", name),
@@ -1252,11 +1276,9 @@ pub async fn dispatch_method(
                         if !path.is_dir() {
                             continue;
                         }
-                        // Look for plugin.toml, manifest.json, or SKILL.md
-                        let has_manifest = path.join("plugin.toml").exists()
-                            || path.join("manifest.json").exists()
-                            || path.join("SKILL.md").exists();
-                        if !has_manifest {
+                        // Count SKILL.md files recursively (max depth 4)
+                        let mut skill_count = count_skill_files(&path, 4);
+                        if skill_count == 0 {
                             continue;
                         }
                         let name = path
@@ -1266,7 +1288,6 @@ pub async fn dispatch_method(
                             .to_string();
                         let mut version: Option<String> = None;
                         let mut description: Option<String> = None;
-                        let mut skill_count = 0u32;
                         let mut mcp_server_count = 0u32;
 
                         // Try reading manifest.json
@@ -1284,7 +1305,7 @@ pub async fn dispatch_method(
                                     .get("skills")
                                     .and_then(|v| v.as_array())
                                     .map(|a| a.len() as u32)
-                                    .unwrap_or(0);
+                                    .unwrap_or(skill_count);
                                 mcp_server_count = manifest
                                     .get("mcp_servers")
                                     .and_then(|v| v.as_array())
@@ -1292,10 +1313,7 @@ pub async fn dispatch_method(
                                     .unwrap_or(0);
                             }
                         }
-                        // Fallback: count SKILL.md files in subdirectories
-                        if skill_count == 0 && path.join("SKILL.md").exists() {
-                            skill_count = 1;
-                        }
+
                         plugins.push(json!({
                             "name": name,
                             "version": version,
@@ -1417,12 +1435,18 @@ fn parse_attached_images(p: &Value) -> Vec<ContentPart> {
             .and_then(|v| v.as_str())
             .unwrap_or("image/png");
 
+        let name = file.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+        let has_thumb = file.get("thumbnail").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
+        let has_path = file.get("path").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
+
         if !mime_type.starts_with("image/") {
+            tracing::debug!(%name, %mime_type, "skipped non-image file");
             continue;
         }
 
         let data = if let Some(thumb) = file.get("thumbnail").and_then(|v| v.as_str()) {
             if thumb.is_empty() {
+                tracing::warn!(%name, "empty thumbnail");
                 continue;
             }
             // data URL format: "data:image/png;base64,XXXX"
@@ -1433,6 +1457,7 @@ fn parse_attached_images(p: &Value) -> Vec<ContentPart> {
             }
         } else if let Some(ref path) = file.get("path").and_then(|v| v.as_str()) {
             if path.is_empty() {
+                tracing::warn!(%name, "empty thumbnail and empty path, skipping image");
                 continue;
             }
             match std::fs::read(path) {
@@ -1443,6 +1468,7 @@ fn parse_attached_images(p: &Value) -> Vec<ContentPart> {
                 }
             }
         } else {
+            tracing::warn!(%name, %mime_type, has_thumb, has_path, "no thumbnail or path for image, skipping");
             continue;
         };
 
@@ -1458,6 +1484,25 @@ fn parse_attached_images(p: &Value) -> Vec<ContentPart> {
     }
 
     parts
+}
+
+fn count_skill_files(dir: &std::path::Path, max_depth: u32) -> u32 {
+    if max_depth == 0 || !dir.is_dir() {
+        return 0;
+    }
+    let mut count = 0u32;
+    if dir.join("SKILL.md").exists() {
+        count += 1;
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                count += count_skill_files(&path, max_depth - 1);
+            }
+        }
+    }
+    count
 }
 
 fn err(code: ErrorCode, msg: &str) -> JsonRpcError {

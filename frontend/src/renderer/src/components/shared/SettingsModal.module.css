@@ -141,6 +141,8 @@
 .themePreviewSidebar {
   width: 30%;
   padding: 6px;
+  background: var(--pv-surface);
+  border-right: 1px solid rgba(128, 128, 128, 0.1);
 }
 
 .themePreviewMain {
@@ -149,6 +151,53 @@
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+  background: var(--pv-bg);
+}
+
+.themePreviewAccentBar {
+  width: 70%;
+  height: 3px;
+  background: var(--pv-accent);
+  border-radius: 2px;
+  margin-bottom: 4px;
+}
+
+.themePreviewBarWide {
+  width: 90%;
+  height: 2px;
+  background: var(--pv-text-13);
+  border-radius: 1px;
+  margin-bottom: 3px;
+}
+
+.themePreviewBarNarrow {
+  width: 60%;
+  height: 2px;
+  background: var(--pv-text-13);
+  border-radius: 1px;
+}
+
+.themePreviewBarTitle {
+  width: 50%;
+  height: 2px;
+  background: var(--pv-text-27);
+  border-radius: 1px;
+  margin-bottom: 3px;
+}
+
+.themePreviewBarBody {
+  width: 80%;
+  height: 2px;
+  background: var(--pv-text-13);
+  border-radius: 1px;
+}
+
+.themePreviewCard {
+  width: 70%;
+  height: 10px;
+  background: var(--pv-surface);
+  border-radius: 4px;
+  border: 1px solid rgba(128, 128, 128, 0.1);
 }
 
 .themeName {
@@ -325,10 +374,13 @@
 }
 
 .mcpAddBtn {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   height: 28px;
   padding: 0 12px;
   font-size: 11px;
+  line-height: 1;
   font-weight: 500;
   color: var(--accent);
   background: var(--accent-subtle);
@@ -701,4 +753,64 @@
   background: rgba(255, 255, 255, 0.02);
   border-radius: var(--r-sm);
   word-break: break-all;
+}
+
+/* ─── MCP server item details ─── */
+
+.mcpServerMeta {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.mcpServerActions {
+  display: flex;
+  gap: 6px;
+}
+
+.mcpServerCmd {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+/* ─── MCP form variants ─── */
+
+.mcpFormTextarea {
+  height: 56px;
+  padding: 6px 10px;
+  resize: vertical;
+}
+
+.mcpFormTextareaSm {
+  height: 48px;
+}
+
+.mcpFormTextareaLg {
+  height: 64px;
+}
+
+.mcpFormRowHorizontal {
+  flex-direction: row;
+  gap: 12px;
+}
+
+.mcpFormFlexCell {
+  flex: 1;
+}
+
+.mcpFormRowCheckbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.mcpFormLabelClickable {
+  margin: 0;
+  cursor: pointer;
+}
+
+/* ─── LSP ─── */
+
+.lspQuickStart {
+  margin-top: 16px;
 }

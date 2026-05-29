@@ -22,11 +22,16 @@ pub struct AnthropicClient {
 
 impl AnthropicClient {
     pub fn new(api_key: String, model: String, base_url: String) -> Self {
+        let http = HttpClient::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(180))
+            .build()
+            .unwrap_or_default();
         Self {
             api_key,
             model,
             base_url,
-            http: HttpClient::new(),
+            http,
             prefix_cache: PrefixCache::new(2),
         }
     }
@@ -128,6 +133,7 @@ impl AnthropicClient {
             cached_tokens,
             latency_ms: 0,
             thinking,
+            images: Vec::new(),
         })
     }
 

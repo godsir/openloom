@@ -1,0 +1,59 @@
+/* Navy Gold theme — deep navy with warm gold accent */
+[data-theme="navy-gold"] {
+  /* Surface */
+  --bg:         #050F2E;
+  --bg-surface: #0A1A45;
+  --bg-card:    #0D1F52;
+  --bg-active:  #122860;
+  --bg-overlay: rgba(0,0,0,0.65);
+  --bg-input:   #0D1F52;
+  --bg-tooltip: #122860;
+
+  /* Text */
+  --text:           rgba(255,255,255,0.92);
+  --text-secondary: rgba(255,255,255,0.55);
+  --text-muted:     rgba(255,255,255,0.28);
+  --text-light:     rgba(255,255,255,0.55);
+
+  /* Borders */
+  --border:         rgba(255,231,111,0.06);
+  --border-default: rgba(255,231,111,0.10);
+  --border-accent:  rgba(255,231,111,0.20);
+  --border-light:   rgba(255,231,111,0.03);
+
+  /* Accent — Warm Gold */
+  --accent:         #FFE76F;
+  --accent-hover:   #FFED8A;
+  --accent-rgb:     255,231,111;
+  --accent-subtle:  rgba(255,231,111,0.06);
+  --accent-medium:  rgba(255,231,111,0.12);
+  --accent-glow:    rgba(255,231,111,0.12);
+  --accent-light:   rgba(255,231,111,0.08);
+  --accent-strong:  rgba(255,231,111,0.16);
+
+  /* Semantic */
+  --green:        #34D399;
+  --green-light:  rgba(52,211,153,0.10);
+  --amber:        #FBBF24;
+  --amber-light:  rgba(251,191,36,0.10);
+  --red:          #F87171;
+  --red-light:    rgba(248,113,113,0.10);
+
+  /* Toast — solid bg + white text */
+  --toast-success-bg: #0F766E;
+  --toast-success-text: #FFFFFF;
+  --toast-warning-bg: #B45309;
+  --toast-warning-text: #FFFFFF;
+  --toast-error-bg: #B91C1C;
+  --toast-error-text: #FFFFFF;
+  --toast-info-bg: #0E7490;
+  --toast-info-text: #FFFFFF;
+
+  /* Shadows */
+  --shadow:          0 1px 3px rgba(0,0,0,0.5);
+  --shadow-md:       0 4px 16px rgba(0,0,0,0.6);
+  --shadow-lg:       0 8px 32px rgba(0,0,0,0.7);
+  --shadow-glow:     0 0 20px rgba(255,231,111,0.10);
+  --shadow-composer: 0 0 30px rgba(255,231,111,0.05), 0 4px 20px rgba(0,0,0,0.5);
+  --shadow-glass:    0 8px 32px rgba(0,0,0,0.5);
+}

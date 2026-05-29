@@ -630,12 +630,13 @@ impl Orchestrator {
         }
     }
 
-    /// Delete a session from the persisted store.
+    /// Delete a session from the persisted store and in-memory cache.
     pub async fn delete_session_persisted(&self, id: &str) {
         let store = self.memory_store.read().await;
         if let Some(ref s) = *store {
             let _ = s.delete_session(id).await;
         }
+        self.session_histories.write().await.remove(id);
     }
 
     // === Agent Config ===
@@ -1075,6 +1076,8 @@ impl Orchestrator {
             temperature: agent_config.temperature.unwrap_or(0.0),
             max_iterations: agent_config.max_iterations.unwrap_or(10),
             thinking_budget,
+            model_configs: self.model_configs.read().await.values().cloned().collect(),
+            active_model_name: self.active_model_name.read().await.clone(),
             ..Default::default()
         };
 
@@ -1143,6 +1146,13 @@ impl Orchestrator {
                         });
                     }
                     StreamDelta::ToolCallArgsChunk { .. } => {}
+                    StreamDelta::Image { media_type, data } => {
+                        let _ = event_bus.publish(AgentEvent::StreamDelta {
+                            agent_id: forward_agent_id.clone(),
+                            session_id: forward_session_id.clone(),
+                            delta: format!("\x02IMAGE\x02{};{}", media_type, data),
+                        });
+                    }
                     StreamDelta::Usage {
                         prompt_tokens,
                         completion_tokens,
@@ -1394,6 +1404,8 @@ impl Orchestrator {
             persona: None,
             summary,
             kg_context: kg_ctx,
+            model_configs: self.model_configs.read().await.values().cloned().collect(),
+            active_model_name: self.active_model_name.read().await.clone(),
             ..Default::default()
         };
 

@@ -10,8 +10,8 @@
 }
 
 .avatar {
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   border-radius: 8px;
   background: var(--accent-subtle);
   border: 1px solid var(--border-default);
@@ -21,13 +21,13 @@
 }
 
 .avatarText {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
   color: var(--accent);
 }
 
 .name {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--text-secondary);
 }
@@ -38,7 +38,7 @@
 }
 
 .content {
-  padding-left: 34px;
+  padding-left: 38px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -51,6 +51,25 @@
   gap: 8px;
   font-size: 13px;
   color: var(--text-muted);
+}
+
+.imageBlock {
+  border-radius: var(--r-md);
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+}
+
+.imageBlockImg {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.imageBlockImg:hover {
+  opacity: 0.85;
 }
 
 @keyframes fadeIn {

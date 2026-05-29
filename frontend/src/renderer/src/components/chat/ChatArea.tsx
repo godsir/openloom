@@ -1,5 +1,5 @@
 import { useStore } from '../../stores'
-import { useRef, useEffect, useState, useCallback } from 'react'
+import { useRef, useEffect } from 'react'
 import AssistantMessage from './AssistantMessage'
 import UserMessage from './UserMessage'
 import ImageLightbox from '../shared/ImageLightbox'
@@ -16,27 +16,39 @@ export default function ChatArea() {
   const inlineErrors = useStore(s => s.inlineErrors)
   const error = sessionId ? inlineErrors.get(sessionId)?.text : null
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
+  const lightboxSrc = useStore(s => s.lightbox.lightboxSrc)
+  const openLightbox = useStore(s => s.openLightbox)
+  const closeLightbox = useStore(s => s.closeLightbox)
 
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [messages[messages.length - 1]?.id, isStreaming])
 
-  const handleImageClick = useCallback((e: MouseEvent) => {
-    const target = e.target as HTMLElement
-    if (target.tagName === 'IMG') {
-      const src = (target as HTMLImageElement).src
-      if (src) setLightboxSrc(src)
-    }
-  }, [])
-
   useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    el.addEventListener('click', handleImageClick)
-    return () => el.removeEventListener('click', handleImageClick)
-  }, [handleImageClick])
+    // Use document-level delegation so we don't depend on scrollRef being
+    // mounted at the time this effect runs (the empty-state branch returns
+    // early before scrollRef is attached).
+    const docHandler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (!target || target.tagName !== 'IMG') return
+      // Only react to images inside the chat area
+      const inChat = target.closest('[class*="chatScroll"]') || target.closest('[class*="message"]')
+      if (!inChat) return
+      const img = target as HTMLImageElement
+      const blocked = img.getAttribute('data-blocked-src')
+      if (blocked) {
+        img.src = blocked
+        img.removeAttribute('data-blocked-src')
+        img.classList.remove('blocked-image')
+        img.removeAttribute('title')
+        return
+      }
+      if (img.src) openLightbox(img.src)
+    }
+    document.addEventListener('click', docHandler, true)
+    return () => document.removeEventListener('click', docHandler, true)
+  }, [openLightbox])
 
   if (messages.length === 0 && !isStreaming) {
     return (
@@ -67,7 +79,7 @@ export default function ChatArea() {
           </div>
         )}
       </div>
-      <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
+      <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
     </div>
   )
 }

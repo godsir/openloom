@@ -14,13 +14,15 @@ import styles from './SettingsModal.module.css'
 const THEMES: { id: ThemeId; label: string; bg: string; surface: string; text: string; accent: string }[] = [
   { id: 'dark', label: '暗色', bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' },
   { id: 'light', label: '亮色', bg: '#ffffff', surface: '#f1f5f9', text: '#0f172a', accent: '#0d9488' },
-  { id: 'midnight', label: '午夜蓝', bg: '#0b1120', surface: '#0f172a', text: '#e2e8f0', accent: '#a5bff8' },
-  { id: 'warm-paper', label: '暖纸', bg: '#fdfbf7', surface: '#f5f0e8', text: '#2d2416', accent: '#b05a30' },
-  { id: 'neon-pink', label: '霓虹粉', bg: '#1a1a1d', surface: '#222225', text: '#f0e0e8', accent: '#e6397c' },
-  { id: 'ember', label: '余烬', bg: '#000026', surface: '#060630', text: '#ffe0c0', accent: '#ff770f' },
+  { id: 'midnight', label: '星夜', bg: '#0b1120', surface: '#0f172a', text: '#e2e8f0', accent: '#a5bff8' },
+  { id: 'warm-paper', label: '素笺', bg: '#fdfbf7', surface: '#f5f0e8', text: '#2d2416', accent: '#b05a30' },
+  { id: 'neon-pink', label: '紫夜', bg: '#1a1a1d', surface: '#222225', text: '#f0e0e8', accent: '#e6397c' },
+  { id: 'ember', label: '熔岩', bg: '#000026', surface: '#060630', text: '#ffe0c0', accent: '#ff770f' },
+  { id: 'navy-gold', label: '鎏金', bg: '#050F2E', surface: '#0A1A45', text: '#e2e8f0', accent: '#FFE76F' },
+  { id: 'umber-cream', label: '摩卡', bg: '#2D1B14', surface: '#3D271D', text: '#fff8f0', accent: '#D8C7B5' },
 ]
 
-type Tab = 'appearance' | 'agent' | 'models' | 'mcp' | 'lsp' | 'skills' | 'plugins' | 'kg' | 'about'
+type Tab = 'appearance' | 'software' | 'agent' | 'models' | 'mcp' | 'lsp' | 'skills' | 'plugins' | 'kg' | 'about'
 
 interface McpTool {
   name: string
@@ -72,6 +74,7 @@ export default function SettingsModal({
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'appearance', label: '外观' },
+    { id: 'software', label: '软件' },
     { id: 'agent', label: 'Agent' },
     { id: 'models', label: '模型' },
     { id: 'mcp', label: 'MCP' },
@@ -112,22 +115,31 @@ export default function SettingsModal({
                     {THEMES.map((t) => (
                       <button
                         key={t.id}
-                        onClick={() => setTheme(t.id)}
+                                                onClick={() => { setTheme(t.id); useStore.getState().addToast({ type: 'success', message: `主题已切换为${t.label}` }) }}
                         className={`${styles.themeCard} ${theme === t.id ? styles.themeCardActive : ''}`}
                       >
-                        <div className={styles.themePreview} style={{ background: t.bg }}>
+                        <div
+                          className={styles.themePreview}
+                          style={{
+                            '--pv-bg': t.bg,
+                            '--pv-surface': t.surface,
+                            '--pv-accent': t.accent,
+                            '--pv-text-13': t.text + '22',
+                            '--pv-text-27': t.text + '44',
+                          } as React.CSSProperties}
+                        >
                           <div className={styles.themePreviewInner}>
-                            <div className={styles.themePreviewSidebar} style={{ background: t.surface, borderRight: '1px solid rgba(128,128,128,0.1)' }}>
-                              <div style={{ width: '70%', height: 3, background: t.accent, borderRadius: 2, marginBottom: 4 }} />
-                              <div style={{ width: '90%', height: 2, background: `${t.text}22`, borderRadius: 1, marginBottom: 3 }} />
-                              <div style={{ width: '60%', height: 2, background: `${t.text}22`, borderRadius: 1 }} />
+                            <div className={styles.themePreviewSidebar}>
+                              <div className={styles.themePreviewAccentBar} />
+                              <div className={styles.themePreviewBarWide} />
+                              <div className={styles.themePreviewBarNarrow} />
                             </div>
-                            <div className={styles.themePreviewMain} style={{ background: t.bg }}>
+                            <div className={styles.themePreviewMain}>
                               <div>
-                                <div style={{ width: '50%', height: 2, background: `${t.text}44`, borderRadius: 1, marginBottom: 3 }} />
-                                <div style={{ width: '80%', height: 2, background: `${t.text}22`, borderRadius: 1 }} />
+                                <div className={styles.themePreviewBarTitle} />
+                                <div className={styles.themePreviewBarBody} />
                               </div>
-                              <div style={{ width: '70%', height: 10, background: t.surface, borderRadius: 4, border: '1px solid rgba(128,128,128,0.1)' }} />
+                              <div className={styles.themePreviewCard} />
                             </div>
                           </div>
                         </div>
@@ -141,6 +153,8 @@ export default function SettingsModal({
               </div>
             </>
           )}
+
+          {tab === 'software' && <SoftwareTab />}
 
           {tab === 'agent' && (
             <>
@@ -186,6 +200,94 @@ export default function SettingsModal({
         </div>
       </div>
     </Overlay>
+  )
+}
+
+/* ─── Software Tab ─── */
+
+function SoftwareTab() {
+  const [autoStart, setAutoStart] = useState(false)
+  const [closeToTray, setCloseToTray] = useState(true)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    Promise.all([
+      window.hana.getPreference('autoStart', false),
+      window.hana.getPreference('closeToTray', true),
+    ]).then(([as, ct]) => {
+      setAutoStart(as)
+      setCloseToTray(ct)
+      setLoaded(true)
+    })
+  }, [])
+
+  const handleAutoStart = async (val: boolean) => {
+    setAutoStart(val)
+    await window.hana.setPreference('autoStart', val)
+    useStore.getState().addToast({ type: 'success', message: val ? '已开启开机自启动' : '已关闭开机自启动' })
+  }
+
+  const handleCloseToTray = async (val: boolean) => {
+    setCloseToTray(val)
+    await window.hana.setPreference('closeToTray', val)
+    useStore.getState().addToast({ type: 'success', message: val ? '关闭按钮将最小化到托盘' : '关闭按钮将退出程序' })
+  }
+
+  return (
+    <>
+      <div className={styles.contentHeader}>
+        <h3 className={styles.sectionTitle}>软件设置</h3>
+        <p className={styles.sectionDesc}>启动行为和关闭方式</p>
+      </div>
+      <div className={styles.contentBody}>
+        {!loaded ? (
+          <p className={styles.toolsEmpty}>加载中...</p>
+        ) : (
+          <div className={styles.aboutSection}>
+            <div className={styles.aboutRow}>
+              <div>
+                <span className={styles.aboutLabel}>关闭按钮行为</span>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>点击标题栏关闭按钮时的操作</p>
+              </div>
+              <div className={styles.mcpTransportToggle}>
+                <button
+                  className={`${styles.mcpTransportBtn} ${closeToTray ? styles.mcpTransportActive : ''}`}
+                  onClick={() => handleCloseToTray(true)}
+                >
+                  最小化到托盘
+                </button>
+                <button
+                  className={`${styles.mcpTransportBtn} ${!closeToTray ? styles.mcpTransportActive : ''}`}
+                  onClick={() => handleCloseToTray(false)}
+                >
+                  退出程序
+                </button>
+              </div>
+            </div>
+            <div className={styles.aboutRow}>
+              <div>
+                <span className={styles.aboutLabel}>开机自启动</span>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>系统启动时自动运行 openLoom</p>
+              </div>
+              <div className={styles.mcpTransportToggle}>
+                <button
+                  className={`${styles.mcpTransportBtn} ${autoStart ? styles.mcpTransportActive : ''}`}
+                  onClick={() => handleAutoStart(true)}
+                >
+                  开启
+                </button>
+                <button
+                  className={`${styles.mcpTransportBtn} ${!autoStart ? styles.mcpTransportActive : ''}`}
+                  onClick={() => handleAutoStart(false)}
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
   )
 }
 
@@ -428,13 +530,13 @@ function McpTab() {
                         <div className={styles.mcpServerNameRow}>
                           <span className={styles.mcpServerStatus} data-healthy={healthState} />
                           <span className={styles.mcpServerName}>{c.name}</span>
-                          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                          <span className={styles.mcpServerMeta}>
                             {c.transport.toUpperCase()}
                             {c.autostart && ' · autostart'}
                             {!c.connected && ' · 已断开'}
                           </span>
                         </div>
-                        <div style={{ display: 'flex', gap: 6 }}>
+                        <div className={styles.mcpServerActions}>
                           {c.connected ? (
                             <button className={styles.mcpDisconnectBtn} onClick={() => handleDisconnect(c.name)}>
                               断开
@@ -452,7 +554,7 @@ function McpTab() {
                           </button>
                         </div>
                       </div>
-                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                      <div className={styles.mcpServerCmd}>
                         {c.transport === 'stdio'
                           ? `${c.command} ${c.args.join(' ')}`
                           : c.url || ''}
@@ -551,8 +653,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
           <div className={styles.mcpFormRow}>
             <label className={styles.mcpFormLabel}>参数（逗号或换行分隔）</label>
             <textarea
-              className={styles.mcpFormInput}
-              style={{ height: 56, padding: '6px 10px', resize: 'vertical' }}
+              className={`${styles.mcpFormInput} ${styles.mcpFormTextarea}`}
               value={v.args.join('\n')}
               onChange={(e) => set({ args: parseCsv(e.target.value) })}
               placeholder={'-y\n@modelcontextprotocol/server-xxx'}
@@ -582,8 +683,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
           <div className={styles.mcpFormRow}>
             <label className={styles.mcpFormLabel}>请求头（每行 KEY=VALUE）</label>
             <textarea
-              className={styles.mcpFormInput}
-              style={{ height: 64, padding: '6px 10px', resize: 'vertical' }}
+              className={`${styles.mcpFormInput} ${styles.mcpFormTextarea} ${styles.mcpFormTextareaLg}`}
               value={kvToText(v.headers)}
               onChange={(e) => set({ headers: parseKvLines(e.target.value) })}
               placeholder={'Authorization=Bearer xxx\nX-Custom=abc'}
@@ -595,16 +695,15 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
       <div className={styles.mcpFormRow}>
         <label className={styles.mcpFormLabel}>环境变量（每行 KEY=VALUE，可选）</label>
         <textarea
-          className={styles.mcpFormInput}
-          style={{ height: 56, padding: '6px 10px', resize: 'vertical' }}
+          className={`${styles.mcpFormInput} ${styles.mcpFormTextarea}`}
           value={kvToText(v.env)}
           onChange={(e) => set({ env: parseKvLines(e.target.value) })}
           placeholder={'API_KEY=...'}
         />
       </div>
 
-      <div className={styles.mcpFormRow} style={{ flexDirection: 'row', gap: 12 }}>
-        <div style={{ flex: 1 }}>
+      <div className={`${styles.mcpFormRow} ${styles.mcpFormRowHorizontal}`}>
+        <div className={styles.mcpFormFlexCell}>
           <label className={styles.mcpFormLabel}>启动超时(秒)</label>
           <input
             className={styles.mcpFormInput}
@@ -614,7 +713,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
             onChange={(e) => set({ startup_timeout_secs: Number(e.target.value) || 30 })}
           />
         </div>
-        <div style={{ flex: 1 }}>
+        <div className={styles.mcpFormFlexCell}>
           <label className={styles.mcpFormLabel}>工具超时(秒)</label>
           <input
             className={styles.mcpFormInput}
@@ -629,8 +728,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
       <div className={styles.mcpFormRow}>
         <label className={styles.mcpFormLabel}>仅启用工具（逗号或换行，留空=全部）</label>
         <textarea
-          className={styles.mcpFormInput}
-          style={{ height: 48, padding: '6px 10px', resize: 'vertical' }}
+          className={`${styles.mcpFormInput} ${styles.mcpFormTextarea} ${styles.mcpFormTextareaSm}`}
           value={(v.enabled_tools ?? []).join('\n')}
           onChange={(e) => {
             const list = parseCsv(e.target.value)
@@ -642,8 +740,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
       <div className={styles.mcpFormRow}>
         <label className={styles.mcpFormLabel}>禁用工具（逗号或换行）</label>
         <textarea
-          className={styles.mcpFormInput}
-          style={{ height: 48, padding: '6px 10px', resize: 'vertical' }}
+          className={`${styles.mcpFormInput} ${styles.mcpFormTextarea} ${styles.mcpFormTextareaSm}`}
           value={(v.disabled_tools ?? []).join('\n')}
           onChange={(e) => {
             const list = parseCsv(e.target.value)
@@ -653,14 +750,14 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
         />
       </div>
 
-      <div className={styles.mcpFormRow} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+      <div className={`${styles.mcpFormRow} ${styles.mcpFormRowCheckbox}`}>
         <input
           id="mcp-autostart"
           type="checkbox"
           checked={v.autostart}
           onChange={(e) => set({ autostart: e.target.checked })}
         />
-        <label htmlFor="mcp-autostart" className={styles.mcpFormLabel} style={{ margin: 0, cursor: 'pointer' }}>
+        <label htmlFor="mcp-autostart" className={`${styles.mcpFormLabel} ${styles.mcpFormLabelClickable}`}>
           引擎启动时自动重连
         </label>
       </div>
@@ -721,6 +818,7 @@ function LspTab() {
   const handleShutdown = async (language: string) => {
     try {
       await loomRpc('lsp.shutdown', { language })
+      useStore.getState().addToast({ type: 'success', message: `LSP "${language}" 已停止` })
       await loadData()
     } catch (e: any) {
       setError(`停止失败: ${e.message || e}`)
@@ -730,6 +828,7 @@ function LspTab() {
   const handleShutdownAll = async () => {
     try {
       await loomRpc('lsp.shutdown_all', {})
+      useStore.getState().addToast({ type: 'success', message: '所有 LSP 服务已停止' })
       await loadData()
     } catch (e: any) {
       setError(`停止失败: ${e.message || e}`)
@@ -742,6 +841,7 @@ function LspTab() {
     try {
       const args = formArgs.trim() ? formArgs.trim().split(/\s+/) : []
       await loomRpc('lsp.start', { language: formLang.trim(), command: formCmd.trim(), args })
+      useStore.getState().addToast({ type: 'success', message: `LSP "${formLang.trim()}" 已启动` })
       setShowForm(false)
       setFormLang('')
       setFormCmd('')
@@ -852,7 +952,7 @@ function LspTab() {
 
             {/* Supported languages as quick-start pills */}
             {supported.length > 0 && (
-              <div style={{ marginTop: 16 }}>
+              <div className={styles.lspQuickStart}>
                 <div className={styles.toolsSectionLabel}>快速启动（点击预填）</div>
                 <div className={styles.toolsBadgeGrid}>
                   {supported.map(s => (
@@ -1158,30 +1258,91 @@ function PluginsTab() {
 function AboutTab({ wsState }: { wsState: string }) {
   const [health, setHealth] = useState<SystemHealth | null>(null)
   const [healthError, setHealthError] = useState(false)
+  const [appVersion, setAppVersion] = useState('...')
+  const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'no-update' | 'error'>('idle')
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null)
+  const [updateError, setUpdateError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
+
+    window.hana.getAppVersion().then((v) => { if (!cancelled) setAppVersion(v) })
 
     loomRpc<SystemHealth>('system.health')
       .then((data) => { if (!cancelled) setHealth(data) })
       .catch(() => { if (!cancelled) setHealthError(true) })
 
+    // Listen for update events from main process
+    window.hana.onUpdateAvailable((info: any) => {
+      if (!cancelled) {
+        setUpdateStatus('available')
+        setUpdateVersion(info?.version ?? null)
+      }
+    })
+    window.hana.onUpdateNotAvailable(() => {
+      if (!cancelled) setUpdateStatus('no-update')
+    })
+    window.hana.onUpdateDownloaded(() => {
+      if (!cancelled) setUpdateStatus('downloaded')
+    })
+    window.hana.onUpdateError((msg: string) => {
+      if (!cancelled) {
+        setUpdateStatus('error')
+        setUpdateError(msg)
+      }
+    })
+
     return () => { cancelled = true }
   }, [])
+
+  const handleCheckUpdate = async () => {
+    setUpdateStatus('checking')
+    setUpdateError(null)
+    try {
+      await window.hana.checkForUpdates()
+    } catch {
+      setUpdateStatus('error')
+      setUpdateError('检查更新失败')
+    }
+  }
+
+  const handleDownload = async () => {
+    setUpdateStatus('downloading')
+    try {
+      await window.hana.downloadUpdate()
+    } catch {
+      setUpdateStatus('error')
+      setUpdateError('下载失败')
+    }
+  }
+
+  const handleInstall = () => {
+    window.hana.installUpdate()
+  }
+
+  const updateLabel = () => {
+    switch (updateStatus) {
+      case 'checking': return '正在检查更新...'
+      case 'available': return updateVersion ? `发现新版本 ${updateVersion}` : '发现新版本'
+      case 'downloading': return '正在下载更新...'
+      case 'downloaded': return '更新已就绪，重启后生效'
+      case 'no-update': return '已是最新版本'
+      case 'error': return updateError ?? '检查更新失败'
+      default: return ''
+    }
+  }
 
   return (
     <>
       <div className={styles.contentHeader}>
         <h3 className={styles.sectionTitle}>关于</h3>
-        <p className={styles.sectionDesc}>版本和连接信息</p>
+        <p className={styles.sectionDesc}>版本、更新和连接信息</p>
       </div>
       <div className={styles.contentBody}>
         <div className={styles.aboutSection}>
           <div className={styles.aboutRow}>
             <span className={styles.aboutLabel}>版本</span>
-            <span className={styles.aboutValue}>
-              {health ? health.version : healthError ? 'v0.2.0' : '...'}
-            </span>
+            <span className={styles.aboutValue}>{appVersion}</span>
           </div>
           <div className={styles.aboutRow}>
             <span className={styles.aboutLabel}>状态</span>
@@ -1209,6 +1370,36 @@ function AboutTab({ wsState }: { wsState: string }) {
               {wsState === 'connected' ? '已连接' : wsState}
             </span>
           </div>
+
+          {/* Auto-update section */}
+          <div className={styles.aboutRow}>
+            <div>
+              <span className={styles.aboutLabel}>自动更新</span>
+              {updateLabel() && (
+                <p style={{ fontSize: 11, color: updateStatus === 'available' || updateStatus === 'downloaded' ? 'var(--accent)' : updateStatus === 'error' ? 'var(--red)' : 'var(--text-muted)', margin: '2px 0 0' }}>
+                  {updateLabel()}
+                </p>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {(updateStatus === 'idle' || updateStatus === 'no-update' || updateStatus === 'error') && (
+                <button className={styles.mcpDisconnectBtn} onClick={handleCheckUpdate}>
+                  检查更新
+                </button>
+              )}
+              {updateStatus === 'available' && (
+                <button className={styles.mcpConnectBtn} onClick={handleDownload}>
+                  下载更新
+                </button>
+              )}
+              {updateStatus === 'downloaded' && (
+                <button className={styles.mcpConnectBtn} onClick={handleInstall}>
+                  立即重启
+                </button>
+              )}
+            </div>
+          </div>
+
           {healthError && (
             <p className={styles.toolsError}>系统信息加载失败</p>
           )}

@@ -40,10 +40,10 @@ export default function MessageFooterActions({ messageId, role, timestamp, usage
         </span>
       )}
       <button onClick={handleCopy} className={styles.btn} title="复制">
-        <IconCopy size={10} />
+        <IconCopy size={13} />
       </button>
       <button onClick={handleDelete} className={`${styles.btn} ${styles.btnDanger}`} title="删除">
-        <IconTrash size={10} />
+        <IconTrash size={13} />
       </button>
     </div>
   )

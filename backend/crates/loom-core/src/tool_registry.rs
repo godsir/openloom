@@ -221,6 +221,8 @@ impl AgentTool for SpawnAgentTool {
             summary: None,
             kg_context: None,
             thinking_budget: config.thinking_budget,
+            model_configs: Vec::new(),
+            active_model_name: None,
         };
         drop(config);
 

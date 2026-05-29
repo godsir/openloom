@@ -3,10 +3,17 @@ import type { Toast } from '../../stores/toast'
 import { IconX } from '../../utils/icons'
 
 const TYPE_STYLES: Record<string, string> = {
-  info: 'border-[rgba(var(--accent-rgb),.15)] bg-[var(--accent-light)] text-[var(--accent)]',
-  success: 'border-[var(--green)]/15 bg-[var(--green-light)] text-[var(--green)]',
-  warning: 'border-[var(--amber)]/15 bg-[var(--amber-light)] text-[var(--amber)]',
-  error: 'border-[var(--red)]/15 bg-[var(--red-light)] text-[var(--red)]',
+  info: 'border-white/10 text-[var(--toast-info-text)]',
+  success: 'border-white/10 text-[var(--toast-success-text)]',
+  warning: 'border-white/10 text-[var(--toast-warning-text)]',
+  error: 'border-white/10 text-[var(--toast-error-text)]',
+}
+
+const TYPE_BG: Record<string, string> = {
+  info: 'var(--toast-info-bg)',
+  success: 'var(--toast-success-bg)',
+  warning: 'var(--toast-warning-bg)',
+  error: 'var(--toast-error-bg)',
 }
 
 export default function ToastContainer() {
@@ -21,6 +28,7 @@ export default function ToastContainer() {
         <div
           key={t.id}
           className={`flex items-center gap-2 px-3.5 py-2.5 rounded-[var(--r-sm)] border text-sm shadow-lg backdrop-blur-md toast-enter ${TYPE_STYLES[t.type]}`}
+          style={{ background: TYPE_BG[t.type] }}
         >
           <span className="flex-1 text-[13px]">{t.message}</span>
           {t.action && (
@@ -29,7 +37,7 @@ export default function ToastContainer() {
                 t.action!.onClick()
                 removeToast(t.id)
               }}
-              className="shrink-0 px-2 py-0.5 rounded-[var(--r-sm)] bg-white/10 hover:bg-white/20 text-xs font-medium transition-colors-fast"
+              className="shrink-0 px-2 py-0.5 rounded-[var(--r-sm)] bg-white/20 hover:bg-white/30 text-xs font-medium transition-colors-fast"
             >
               {t.action.label}
             </button>

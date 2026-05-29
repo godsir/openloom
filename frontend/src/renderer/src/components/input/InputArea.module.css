@@ -100,3 +100,8 @@
   opacity: 0.25;
   cursor: not-allowed;
 }
+
+.dragOver .composer {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.25), var(--shadow-composer);
+}

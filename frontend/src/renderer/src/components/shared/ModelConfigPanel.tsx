@@ -476,7 +476,7 @@ export default function ModelConfigPanel() {
                       <div className={styles.pvModelActions}>
                         <button onClick={() => handleStartEdit(m)} className={styles.pvModelBtn}>编辑</button>
                         {!m.is_active && <button onClick={() => handleSetActive(m.name)} className={styles.pvModelBtn}>激活</button>}
-                        {m.is_active && <span className={styles.pvModelBtn} style={{ color: 'var(--accent)' }}>当前</span>}
+                        {m.is_active && <span className={`${styles.pvModelBtn} ${styles.pvModelBtnActive}`}>当前</span>}
                         <button onClick={() => handleDeleteModel(m.name)} className={styles.pvModelBtnDanger}>删除</button>
                       </div>
                     </div>
@@ -532,8 +532,8 @@ export default function ModelConfigPanel() {
                         </div>
                         <div className={styles.pvEditRow}>
                           <label className={styles.pvEditLabel}>模型能力</label>
-                          <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                          <div className={styles.pvCheckboxRow}>
+                            <label className={styles.pvCheckboxLabel}>
                               <input
                                 type="checkbox"
                                 checked={editForm.vision}
@@ -541,7 +541,7 @@ export default function ModelConfigPanel() {
                               />
                               视觉
                             </label>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                            <label className={styles.pvCheckboxLabel}>
                               <input
                                 type="checkbox"
                                 checked={editForm.reasoning}
@@ -549,7 +549,7 @@ export default function ModelConfigPanel() {
                               />
                               推理
                             </label>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                            <label className={styles.pvCheckboxLabel}>
                               <input
                                 type="checkbox"
                                 checked={editForm.function_calling}

@@ -1,4 +1,5 @@
 import type { Message } from '../../stores/chat'
+import { useStore } from '../../stores'
 import FileBlock from './FileBlock'
 import MessageFooterActions from './MessageFooterActions'
 import styles from './UserMessage.module.css'
@@ -8,6 +9,7 @@ export default function UserMessage({ message }: { message: Message }) {
   const imageBlocks = message.blocks.filter((b) => b.type === 'image')
   const fileBlocks = message.blocks.filter((b) => b.type === 'file')
   const hasVisualBlocks = imageBlocks.length > 0 || fileBlocks.length > 0
+  const openLightbox = useStore(s => s.openLightbox)
 
   return (
     <div className={styles.wrapper}>
@@ -21,6 +23,10 @@ export default function UserMessage({ message }: { message: Message }) {
                     src={(block.thumbnail as string) || (block.path as string)}
                     alt={(block.name as string) || 'image'}
                     className={styles.imageThumb}
+                    onClick={() => {
+                      const src = (block.thumbnail as string) || (block.path as string)
+                      if (src) openLightbox(src)
+                    }}
                   />
                 </div>
               ))}

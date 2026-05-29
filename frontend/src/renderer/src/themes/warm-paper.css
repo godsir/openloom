@@ -39,6 +39,16 @@
   --red:          #DC2626;
   --red-light:    rgba(220,38,38,0.10);
 
+  /* Toast — solid bg + white text */
+  --toast-success-bg: #059669;
+  --toast-success-text: #FFFFFF;
+  --toast-warning-bg: #B45309;
+  --toast-warning-text: #FFFFFF;
+  --toast-error-bg: #B91C1C;
+  --toast-error-text: #FFFFFF;
+  --toast-info-bg: #0E7490;
+  --toast-info-text: #FFFFFF;
+
   /* Shadows */
   --shadow:          0 1px 3px rgba(80,50,30,0.06);
   --shadow-md:       0 4px 16px rgba(80,50,30,0.08);

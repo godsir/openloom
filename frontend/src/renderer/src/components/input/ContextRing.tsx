@@ -57,7 +57,7 @@ export default function ContextRing() {
         <circle cx="9" cy="9" r="7" fill="none" stroke="rgba(34,211,238,0.12)" strokeWidth="2" />
         <circle cx="9" cy="9" r="7" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round"
           strokeDasharray={circ} strokeDashoffset={offset}
-          style={{ transition: 'stroke-dashoffset 0.5s ease' }} />
+          className={styles.ringProgress} />
       </svg>
       <span className={styles.centerLabel}>
         {total >= 1000 ? `${(total / 1000).toFixed(0)}k` : total}

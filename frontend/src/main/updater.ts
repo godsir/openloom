@@ -23,6 +23,7 @@ export function setupAutoUpdater(mainWindow: BrowserWindow): void {
 
   autoUpdater.on('error', (err) => {
     console.error('[updater] error:', err.message)
+    mainWindow.webContents.send('update-error', err.message)
   })
 
   // Check for updates every 4 hours

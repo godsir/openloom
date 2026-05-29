@@ -667,6 +667,9 @@ impl MemoryStore for LoomMemoryStore {
         let store = self.store.lock().unwrap();
         store
             .conn()
+            .execute("DELETE FROM message_history WHERE session_id = ?1", rusqlite::params![id])?;
+        store
+            .conn()
             .execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])?;
         Ok(())
     }

@@ -45,12 +45,14 @@ export function sanitizeHtml(html: string): string {
         }
       }
 
-      // Block remote image sources (privacy)
+      // Block remote image sources (privacy) — keep data: URLs intact
       if (el.tagName === 'IMG') {
         const src = el.getAttribute('src') || ''
         if (BLOCKED_SRC_RE.test(src)) {
-          el.removeAttribute('src')
           el.setAttribute('data-blocked-src', src)
+          el.removeAttribute('src')
+          el.setAttribute('title', '点击加载远程图片')
+          el.classList.add('blocked-image')
         }
       }
 

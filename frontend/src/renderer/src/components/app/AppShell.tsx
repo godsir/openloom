@@ -53,10 +53,7 @@ export default function AppShell() {
           <div className={styles.connectionStatus}>
             <span
               className={styles.connectionDot}
-              style={{
-                background: wsState === 'connected' ? 'var(--accent)' : wsState === 'reconnecting' ? 'var(--amber)' : 'var(--red)',
-                boxShadow: wsState === 'connected' ? '0 0 4px rgba(34,211,238,0.4)' : 'none',
-              }}
+              data-state={wsState}
             />
             <span className={styles.connectionText}>
               {wsState === 'connected' ? '已连接' : wsState === 'reconnecting' ? '重连中' : '离线'}
@@ -68,8 +65,7 @@ export default function AppShell() {
 
       <div className={styles.body}>
         <div
-          className={styles.sidebarSlot}
-          style={{ width: sidebarOpen ? 220 : 0, opacity: sidebarOpen ? 1 : 0 }}
+          className={`${styles.sidebarSlot} ${sidebarOpen ? styles.sidebarSlotOpen : ''}`}
         >
           <Sidebar />
         </div>

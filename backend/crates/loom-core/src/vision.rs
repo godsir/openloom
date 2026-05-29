@@ -20,14 +20,17 @@ impl Default for VisionConfig {
     }
 }
 
-const VISION_PROMPT: &str = r#"Analyze this image in detail. Respond in JSON with these fields:
-- "image_overview": Brief description of what the image shows
-- "visible_text": Any text/code visible in the image (OCR)
-- "objects_and_layout": Key objects, their positions and relationships
-- "charts_or_data": Any charts, tables, or structured data
-- "user_context": What the user likely wants to know about this image
+const VISION_PROMPT: &str = r#"Analyze this image for another text-only model. Return a concise note with these exact sections:
+image_overview: fixed basic description of what the image is.
+visible_text: important OCR or readable text.
+objects_and_layout: important objects, positions, counts, and relationships.
+charts_or_data: chart/table/data details if present; otherwise say none.
+user_request: restate the user's request in one short sentence.
+user_request_answer: answer the user's request using the image when possible.
+evidence: the visual evidence supporting that answer.
+uncertainty: anything unclear, hidden, or guessed.
 
-Be concise but thorough. Respond ONLY with valid JSON."#;
+Do not mention that you are a tool or a separate model. Output the note as plain text, no Markdown fences, no JSON."#;
 
 pub fn load_vision_config() -> VisionConfig {
     let home = dirs::home_dir().unwrap_or_default().join(".loom").join("vision.json");
@@ -69,9 +72,40 @@ pub async fn prepare_vision_context(
         .find(|c| c.name == vision_model_name)
         .ok_or_else(|| anyhow::anyhow!("Vision model '{}' not found in configs", vision_model_name))?;
 
-    let api_key = config.api_key_env.as_deref()
+    let api_key = config
+        .api_key_env
+        .as_deref()
         .and_then(|env| std::env::var(env).ok())
+        .or_else(|| {
+            // Fallback to backend-default env names, matching orchestrator's
+            // try_build_cloud_client behaviour. Without this, a vision model
+            // saved via the UI may fail with 401 because its api_key_env was
+            // never explicitly set.
+            let auto_env = match config.backend {
+                ModelBackend::DeepSeek => "DEEPSEEK_API_KEY",
+                ModelBackend::OpenAI => "OPENAI_API_KEY",
+                ModelBackend::Anthropic => "ANTHROPIC_API_KEY",
+                _ => "OPENLOOM_API_KEY",
+            };
+            std::env::var(auto_env).ok()
+        })
         .unwrap_or_default();
+
+    if api_key.is_empty() {
+        anyhow::bail!(
+            "Vision model '{}' has no API key (api_key_env='{}'). Save a key for this provider in Settings → Models.",
+            vision_model_name,
+            config.api_key_env.as_deref().unwrap_or("<unset>")
+        );
+    }
+
+    tracing::info!(
+        vision_model = %vision_model_name,
+        backend = %config.backend.name(),
+        api_key_env = %config.api_key_env.as_deref().unwrap_or("<unset>"),
+        api_key_len = api_key.len(),
+        "vision auxiliary calling provider"
+    );
 
     let base_url = config.base_url.clone().unwrap_or_else(|| match config.backend {
         ModelBackend::Anthropic => "https://api.anthropic.com".into(),
@@ -85,8 +119,13 @@ pub async fn prepare_vision_context(
     let client = OpenAIClient::new(api_key, model_id, base_url, false);
 
     let mut content_parts: Vec<ContentPart> = Vec::new();
+    let request_line = if user_text.trim().is_empty() {
+        "(no explicit text request)".to_string()
+    } else {
+        user_text.trim().to_string()
+    };
     content_parts.push(ContentPart::Text {
-        text: format!("{}\n\nUser's message: {}", VISION_PROMPT, user_text),
+        text: format!("{}\n\nUser request:\n{}", VISION_PROMPT, request_line),
     });
     for (source_type, media_type, data) in images {
         content_parts.push(ContentPart::Image {

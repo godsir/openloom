@@ -4,8 +4,8 @@ directories:
   output: dist
   buildResources: resources
 extraResources:
-  - from: ../target/release/loom-server.exe
-    to: engine/loom-server.exe
+  - from: ../target/release/lume.exe
+    to: engine/lume.exe
 win:
   target: nsis
   icon: resources/icon.ico

@@ -13,18 +13,11 @@ import { IconSend, IconImage, IconPaperclip } from '../../utils/icons'
 import type { AttachedFile } from '../../stores/input'
 import styles from './InputArea.module.css'
 
-function makeFileEntry(file: File): AttachedFile {
-  return {
-    path: (file as any).path ?? '',
-    name: file.name,
-    size: file.size,
-    mimeType: file.type || 'application/octet-stream',
-  }
-}
 
 export default function InputArea() {
   const [text, setText] = useState('')
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
+  const [isDragOver, setIsDragOver] = useState(false)
   const sendingRef = useRef(false)
   const pasteCounterRef = useRef(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -97,35 +90,64 @@ export default function InputArea() {
     }
   }, [])
 
-  const processFiles = useCallback((files: FileList | null) => {
+  const processFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
-      const entry = makeFileEntry(file)
-      setAttachedFiles(prev => [...prev, entry])
+      let thumbnail: string | undefined
 
       if (file.type.startsWith('image/')) {
-        const reader = new FileReader()
-        reader.onload = () => {
-          setAttachedFiles(prev => prev.map(f =>
-            f.name === entry.name && f.size === entry.size
-              ? { ...f, thumbnail: reader.result as string }
-              : f
-          ))
-        }
-        reader.readAsDataURL(file)
+        thumbnail = await new Promise<string>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.readAsDataURL(file)
+        })
       }
+
+      setAttachedFiles(prev => [...prev, {
+        path: (file as any).path ?? '',
+        name: file.name,
+        size: file.size,
+        mimeType: file.type || 'application/octet-stream',
+        thumbnail,
+      }])
     }
 
     // reset input so the same file can be re-selected
     if (imageInputRef.current) imageInputRef.current.value = ''
     if (fileInputRef.current) fileInputRef.current.value = ''
-  }, [])
+  }
 
   const handleRemoveFile = useCallback((index: number) => {
     setAttachedFiles(prev => prev.filter((_, i) => i !== index))
   }, [])
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.dataTransfer.types.some(t => t === 'Files' || t === 'application/x-moz-file')) {
+      e.dataTransfer.dropEffect = 'copy'
+      setIsDragOver(true)
+    }
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragOver(false)
+    }
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      processFiles(e.dataTransfer.files)
+    }
+  }
 
   const handleSend = async () => {
     const content = text.trim()
@@ -199,7 +221,12 @@ export default function InputArea() {
   const placeholder = !isConnected ? '正在连接...' : !sessionId ? '开始新对话...' : streaming ? 'AI 回复中...' : '输入消息，Enter 发送'
 
   return (
-    <div className={styles.wrapper}>
+    <div
+      className={`${styles.wrapper} ${isDragOver ? styles.dragOver : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <div className={styles.container}>
         <div className={styles.composer}>
           {attachedFiles.length > 0 && (

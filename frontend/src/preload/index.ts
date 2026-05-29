@@ -15,6 +15,13 @@ export interface HanaApi {
   windowIsMaximized: () => Promise<boolean>
   getPreference: <T>(key: string, fallback: T) => Promise<T>
   setPreference: (key: string, value: unknown) => Promise<void>
+  checkForUpdates: () => Promise<void>
+  downloadUpdate: () => Promise<void>
+  installUpdate: () => void
+  onUpdateAvailable: (cb: (info: unknown) => void) => void
+  onUpdateNotAvailable: (cb: () => void) => void
+  onUpdateDownloaded: (cb: () => void) => void
+  onUpdateError: (cb: (msg: string) => void) => void
 }
 
 contextBridge.exposeInMainWorld('hana', {
@@ -33,4 +40,11 @@ contextBridge.exposeInMainWorld('hana', {
   windowIsMaximized: () => ipcRenderer.invoke('window-is-maximized'),
   getPreference: <T>(key: string, fallback: T) => ipcRenderer.invoke('get-preference', key, fallback),
   setPreference: (key: string, value: unknown) => ipcRenderer.invoke('set-preference', key, value),
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  installUpdate: () => ipcRenderer.invoke('install-update'),
+  onUpdateAvailable: (cb: (info: unknown) => void) => ipcRenderer.on('update-available', (_e, info) => cb(info)),
+  onUpdateNotAvailable: (cb: () => void) => ipcRenderer.on('update-not-available', () => cb()),
+  onUpdateDownloaded: (cb: () => void) => ipcRenderer.on('update-downloaded', () => cb()),
+  onUpdateError: (cb: (msg: string) => void) => ipcRenderer.on('update-error', (_e, msg: string) => cb(msg)),
 } satisfies HanaApi)

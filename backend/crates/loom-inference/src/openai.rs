@@ -22,11 +22,16 @@ pub struct OpenAIClient {
 
 impl OpenAIClient {
     pub fn new(api_key: String, model: String, base_url: String, _is_local: bool) -> Self {
+        let http = HttpClient::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(180))
+            .build()
+            .unwrap_or_default();
         Self {
             api_key,
             model,
             base_url,
-            http: HttpClient::new(),
+            http,
             prefix_cache: PrefixCache::new(2),
         }
     }
@@ -109,7 +114,39 @@ impl OpenAIClient {
             )
         })?;
         let choice = &json["choices"][0]["message"];
-        let raw_text = choice["content"].as_str().unwrap_or("").to_string();
+
+        // content can be a string or an array of parts (GPT-4o multimodal output)
+        let (raw_text, images) = if choice["content"].is_array() {
+            let parts = choice["content"].as_array().unwrap();
+            let mut text = String::new();
+            let mut imgs: Vec<(String, String)> = Vec::new();
+            for part in parts {
+                match part["type"].as_str() {
+                    Some("text") => {
+                        if let Some(t) = part["text"].as_str() {
+                            text.push_str(t);
+                        }
+                    }
+                    Some("image_url") => {
+                        if let Some(url) = part["image_url"]["url"].as_str() {
+                            // data:image/png;base64,XXXX or https://...
+                            if let Some(comma) = url.find(',') {
+                                let media_type = url[5..comma]
+                                    .trim_end_matches(";base64")
+                                    .to_string();
+                                let data = url[comma + 1..].to_string();
+                                imgs.push((media_type, data));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            (text, imgs)
+        } else {
+            (choice["content"].as_str().unwrap_or("").to_string(), Vec::new())
+        };
+
         let mut tool_calls: Vec<ToolCall> = choice["tool_calls"]
             .as_array()
             .map(|arr| {
@@ -147,6 +184,7 @@ impl OpenAIClient {
                 .as_str()
                 .filter(|s| !s.is_empty())
                 .map(String::from),
+            images,
         })
     }
 

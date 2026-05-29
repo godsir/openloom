@@ -63,6 +63,7 @@ pub async fn serve(host: &str, port: u16, orchestrator: Arc<Orchestrator>) -> an
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     let actual_addr = listener.local_addr()?;
     tracing::info!("loom-server listening on http://{}", actual_addr);
+    println!("{{\"type\":\"ready\",\"port\":{}}}", actual_addr.port());
     println!("Server started: http://{}", actual_addr);
     println!("Health check: http://{}/health", actual_addr);
     axum::serve(listener, app).await?;

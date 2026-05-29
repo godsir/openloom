@@ -1,6 +1,6 @@
 import { StateCreator } from 'zustand'
 
-export type ThemeId = 'dark' | 'light' | 'midnight' | 'warm-paper' | 'neon-pink' | 'ember'
+export type ThemeId = 'dark' | 'light' | 'midnight' | 'warm-paper' | 'neon-pink' | 'ember' | 'navy-gold' | 'umber-cream'
 
 export interface UiSlice {
   theme: ThemeId

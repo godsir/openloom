@@ -77,6 +77,8 @@ pub struct CompletionResponse {
     pub cached_tokens: usize,
     pub latency_ms: u64,
     pub thinking: Option<String>,
+    /// Image content blocks returned by the model (e.g. GPT-4o image generation).
+    pub images: Vec<(String, String)>, // (media_type, base64_data)
 }
 
 /// Structured streaming delta emitted during true streaming with tool support.
@@ -84,6 +86,10 @@ pub struct CompletionResponse {
 pub enum StreamDelta {
     Text(String),
     Reasoning(String),
+    Image {
+        media_type: String,
+        data: String,
+    },
     ToolCallBegin {
         index: usize,
         id: String,

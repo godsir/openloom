@@ -12,8 +12,10 @@ export default function SessionItem({ session }: { session: SessionSummary }) {
   const deleteSession = useStore(s => s.deleteSession)
   const pinSession = useStore(s => s.pinSession)
   const unpinSession = useStore(s => s.unpinSession)
+  const streamingIds = useStore(s => s.streamingSessionIds)
   const sid = session.path || ''
   const isActive = sid === currentId
+  const isStreaming = sid ? streamingIds.has(sid) : false
   const isPinned = useStore(s => sid ? s.pinnedIds.has(sid) : false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 })
@@ -44,6 +46,7 @@ export default function SessionItem({ session }: { session: SessionSummary }) {
       ) : (
         <div className={styles.content}>
           <div className={styles.title}>
+            {isStreaming && <span className={styles.streamingDot} />}
             {session.title || session.firstMessage?.slice(0, 40) || `会话 ${sid.slice(0, 8)}`}
           </div>
           {(session.modified || session.messageCount > 0) && (
