@@ -1,25 +1,29 @@
 import { useState } from 'react'
+import styles from './Onboarding.module.css'
+import logoDev from '../../assets/loom_logo_dev.png'
+import logoRelease from '../../assets/loom_logo.png'
 
 interface Step {
   title: string
   description: string
+  tags: string[]
 }
 
 const STEPS: Step[] = [
   {
     title: '欢迎来到 openLoom',
-    description:
-      'openLoom 是一个本地优先的私人 AI 助理。所有对话、记忆和配置都存储在你的电脑上。',
+    description: '本地优先的私人 AI 助理，所有数据存储在你的电脑上。',
+    tags: ['多模型支持', 'MCP 工具', '知识图谱记忆', 'LSP 代码理解', 'Skills 技能'],
   },
   {
-    title: '选择模型',
-    description:
-      'openLoom 支持多种 AI 模型。你可以在设置中配置云端模型（Anthropic、OpenAI、DeepSeek）或本地模型（LM Studio、Ollama）。',
+    title: '选择你的模型',
+    description: '支持云端与本地模型，在设置中配置后即可按需切换。',
+    tags: ['Anthropic', 'OpenAI', 'DeepSeek', 'LM Studio', 'Ollama'],
   },
   {
     title: '开始对话',
-    description:
-      '点击 "开始" 创建你的第一个对话。你可以随时在左侧边栏管理会话。',
+    description: '创建你的第一个对话，在左侧边栏管理会话和主题。',
+    tags: [],
   },
 ]
 
@@ -29,36 +33,51 @@ export default function Onboarding({
   onComplete: () => void
 }) {
   const [step, setStep] = useState(0)
+  const isPackaged = window.__isPackaged__ ?? true
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--bg)]">
-      <div className="max-w-md w-full mx-4 text-center animate-fade-up">
-        <div className="mb-8">
-          <div className="flex justify-center gap-2 mb-8">
-            {STEPS.map((_, i) => (
-              <div
-                key={i}
-                className={`h-1 rounded-full transition-all duration-300 ${
-                  i <= step
-                    ? 'w-6 bg-[var(--accent)]'
-                    : 'w-2 bg-[var(--border)]'
-                }`}
-              />
-            ))}
-          </div>
-          <h2 className="text-2xl text-[var(--text)] mb-4 tracking-tight font-semibold">
-            {STEPS[step].title}
-          </h2>
-          <p className="text-[var(--text-muted)] text-[13px] leading-relaxed">
-            {STEPS[step].description}
-          </p>
+    <div className={styles.backdrop}>
+      <div className={`${styles.bgOrb} ${styles.bgOrb1}`} />
+      <div className={`${styles.bgOrb} ${styles.bgOrb2}`} />
+      <div className={`${styles.bgOrb} ${styles.bgOrb3}`} />
+      <div className={styles.bgGrid} />
+
+      <div className={styles.card}>
+        <div className={styles.logoBox}>
+          <img
+            src={isPackaged ? logoRelease : logoDev}
+            alt="openLoom"
+            className={styles.logoImg}
+          />
         </div>
 
-        <div className="flex justify-center gap-3">
+        <div className={styles.dots}>
+          {STEPS.map((_, i) => (
+            <div
+              key={i}
+              className={`${styles.dot} ${i <= step ? styles.dotActive : styles.dotInactive}`}
+            />
+          ))}
+        </div>
+
+        <div key={step} className={styles.stepContent}>
+          <h2 className={styles.title}>{STEPS[step].title}</h2>
+          <p className={styles.desc}>{STEPS[step].description}</p>
+
+          <div className={styles.tags}>
+            {STEPS[step].tags.map((name) => (
+              <span key={name} className={styles.tag}>
+                {name}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className={styles.actions}>
           {step > 0 && (
             <button
               onClick={() => setStep(step - 1)}
-              className="px-5 py-2.5 rounded-[var(--r-sm)] bg-[var(--bg-card)] text-[var(--text-light)] hover:bg-[rgba(255,255,255,0.04)] border border-[var(--border)] text-sm transition-colors-fast"
+              className={styles.btnSecondary}
             >
               上一步
             </button>
@@ -66,15 +85,12 @@ export default function Onboarding({
           {step < STEPS.length - 1 ? (
             <button
               onClick={() => setStep(step + 1)}
-              className="px-5 py-2.5 rounded-[var(--r-sm)] bg-[var(--accent-light)] text-[var(--accent)] hover:bg-[rgba(var(--accent-rgb),.25)] border border-[var(--border-accent)] text-sm transition-colors-fast"
+              className={styles.btnPrimary}
             >
               下一步
             </button>
           ) : (
-            <button
-              onClick={onComplete}
-              className="px-5 py-2.5 rounded-[var(--r-sm)] bg-[var(--accent-light)] text-[var(--accent)] hover:bg-[rgba(var(--accent-rgb),.25)] border border-[var(--border-accent)] text-sm font-medium transition-colors-fast"
-            >
+            <button onClick={onComplete} className={styles.btnPrimary}>
               开始使用
             </button>
           )}
