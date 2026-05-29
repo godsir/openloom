@@ -10,7 +10,7 @@ export interface Message {
   role: 'user' | 'assistant'
   blocks: ContentBlock[]
   timestamp: string
-  usage?: { prompt: number; completion: number }
+  usage?: { prompt: number; completion: number; model?: string; contextWindow?: number }
 }
 
 const MAX_CACHED_SESSIONS = 8
@@ -24,7 +24,7 @@ export interface ChatSlice {
   patchBlockByTaskId: (sessionId: string, taskId: string, patch: Partial<ContentBlock>) => void
   hydrateMessages: (sessionId: string, messages: Message[]) => void
   deleteMessage: (sessionId: string, messageId: string) => void
-  setMessageUsage: (sessionId: string, messageId: string, usage: { prompt: number; completion: number }) => void
+  setMessageUsage: (sessionId: string, messageId: string, usage: { prompt: number; completion: number; model?: string; contextWindow?: number }) => void
   evictSession: (sessionId: string) => void
 }
 

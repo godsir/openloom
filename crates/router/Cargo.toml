@@ -1,8 +1,0 @@
-[package]
-name = "openloom-router"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-openloom-models = { path = "../models" }
-regex = "1"

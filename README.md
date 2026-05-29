@@ -1,4 +1,4 @@
-# openLoom v2
+# openLoom v0.2.15
 
 可配置多 Agent、多对话的私人 AI 助理内核。认知图谱记忆 + Skills/Plugins/MCP 调用 + 外部消息平台接入。
 
@@ -13,39 +13,32 @@ backend/crates/
 ├── loom-context      ← 上下文组装 (ContextAssembler)
 ├── loom-security     ← 权限检查
 ├── loom-server       ← Axum HTTP + WebSocket + JSON-RPC 2.0
-├── lume-cli          ← CLI (lume serve/chat/mcp/doctor)
+├── lume-cli          ← CLI (lume serve/chat/mcp/kg/doctor)
 ├── lume-mcp          ← MCP 客户端 (stdio + HTTP/SSE + resources + timeout)
 ├── lume-skills       ← Skills 解析 (Claude Code + OpenClaw SKILL.md)
-├── lume-bridge       ← Bridge 外部接入 (ChannelAdapter + Telegram + WeChat iLink)
-└── lume-plugins      ← 内置于 lume-cli，兼容 Claude Code/OpenClaw 插件格式
+├── lume-lsp          ← LSP 客户端 (40+ 语言)
+└── lume-bridge       ← Bridge 外部接入 (ChannelAdapter + Telegram + WeChat iLink)
+
+frontend/
+├── src/main/         ← Electron 主进程
+├── src/preload/      ← 预加载脚本 (IPC 桥接)
+└── src/renderer/     ← React 19 + Tailwind CSS 4 + Vite 6
 ```
 
-## 开发状态
 
-| Phase | 内容 | 状态 |
-|-------|------|:--:|
-| Phase 0 | 基础设施 (10 crate + 类型 + inference + V8 迁移) | ✅ |
-| Phase 1 | Agent 核心 (Agent + AgentPool + Orchestrator + Server) | ✅ |
-| Phase 2 | 工具 + 子 Agent (ToolRegistry + MCP + WS + 流式 + 安全) | ✅ |
-| Phase 3 | 记忆 + 技能 (KG + GraphStore + Skills + LLM 提取 + 对话持久) | ✅ |
-| Phase 4 | 前端 + 切换 + 删除 legacy | ⏳ |
-
-**愿景差距：** 10/11 已修复（只剩 LSP deferred）。详见 [docs/v2-vision-gap-analysis.md](docs/v2-vision-gap-analysis.md)
-
-**质量：** 20+ tests pass, clippy 0 warnings, fmt clean
 
 ## 快速开始
 
 ### 前置
 
 - Rust 1.85+
+- Node.js 20+（桌面客户端开发）
 - 云端推理：任一 API Key（DeepSeek / Anthropic / OpenAI）
 - 本地推理：LM Studio (localhost:1234) 或 Ollama (localhost:11434)
 
 ### 构建 & 运行
 
 ```powershell
-# 构建
 cargo build -p lume-cli --release
 
 # 聊天（DeepSeek）
@@ -53,33 +46,136 @@ $env:DEEPSEEK_API_KEY = "sk-xxx"
 .\target\release\lume.exe chat
 
 # 聊天（本地 LM Studio）
-$env:LMSTUDIO_API_KEY = "lm-studio"
-.\target\release\lume.exe chat --model llama-3-8b --api-key-env LMSTUDIO_API_KEY --base-url http://127.0.0.1:1234
+.\target\release\lume.exe chat --model qwen3-8b --provider lmstudio --base-url http://127.0.0.1:1234/v1
 
-# 继续上次对话
-.\target\release\lume.exe chat --c
-
-# 启动 HTTP/WS 服务
+# 启动 HTTP/WS 服务（自动加载 MCP 配置）
 .\target\release\lume.exe serve --port 8080
 
 # 环境诊断
 .\target\release\lume.exe doctor
 ```
 
+### lume chat 参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--model` | `deepseek-v4-flash` | 模型名或 ID |
+| `--provider` | `auto` | `auto` / `openai` / `anthropic` / `deepseek` / `lmstudio` / `ollama` |
+| `--api-key` | — | API Key（明文） |
+| `--api-key-env` | — | 从环境变量读取 API Key |
+| `--base-url` | — | 自定义 API 端点 |
+| `--mcp-args` | — | 快速连接 MCP：`'http://url'` 或 `'command args...'` |
+| `--no-mcp-config` | — | 跳过加载 mcp.json |
+| `--resume` | — | 恢复指定会话 |
+| `-c` / `--continue` | — | 继续上次默认会话 |
+
 ### 会话管理
 
 ```
 lume chat                    新会话（自动生成唯一 ID）
-lume chat --c                继续 "default" 会话
+lume chat -c                 继续 "default" 会话
 lume chat --resume my-sess   恢复指定会话
 ```
+
+### lume serve
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--host` | `127.0.0.1` | 绑定地址 |
+| `--port` | `0` | 绑定端口（0 = 随机端口） |
+
+启动时自动加载 `~/.loom/mcp.json` 和 `.lume/mcp.json` 并连接所有 MCP 服务器。
+
+服务端点：
+
+| 端点 | 协议 | 说明 |
+|------|------|------|
+| `/ws` | WebSocket | JSON-RPC 2.0 双向 + 服务端推送 |
+| `/api` | HTTP POST | JSON-RPC 2.0（无推送） |
+| `/health` | HTTP GET | 健康检查 |
 
 ### MCP 管理
 
 ```powershell
-.\target\release\lume.exe mcp add --name my-server --transport stdio --command node --args server.js
+# 添加 HTTP 服务器
+.\target\release\lume.exe mcp add --name my-server --transport http --url http://localhost:3000
+
+# 添加 stdio 服务器
+.\target\release\lume.exe mcp add --name my-tool --transport stdio --command node --args "server.js"
+
+# 列出已配置的服务器
 .\target\release\lume.exe mcp list
 ```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--name` | *必需* | 服务器名 |
+| `--transport` | `http` | `http` / `stdio` |
+| `--url` | — | HTTP 端点 |
+| `--command` | — | stdio 启动命令 |
+| `--args` | — | 命令行参数（空格分隔） |
+| `--header` | — | HTTP 请求头 `key=value`（可重复） |
+
+配置格式（`~/.loom/mcp.json`）：
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "type": "http",
+      "url": "https://mcp.example.com/sse",
+      "headers": { "Authorization": "Bearer xxx" }
+    },
+    "local-tool": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["server.js"]
+    }
+  }
+}
+```
+
+### 知识图谱
+
+```powershell
+# 全文搜索
+.\target\release\lume.exe kg search "trading"
+
+# LLM 查询扩展
+.\target\release\lume.exe kg search "偏好" --expand
+
+# 统计
+.\target\release\lume.exe kg stats
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `query` | *必需* | 搜索词 |
+| `--limit` | `20` | 最大结果数 |
+| `--expand` | — | LLM 查询扩展 |
+| `--model` | `gemma-4-e4b` | 扩展用模型 |
+| `--expand-url` | `http://localhost:1234/v1` | 扩展用推理端点 |
+
+### 桌面客户端
+
+```powershell
+cd frontend
+
+# 安装依赖（首次）
+npm install
+
+# 开发模式（需要先启动后端服务）
+npm run dev
+
+# 类型检查
+npm run typecheck
+
+# 打包
+npm run build
+npm run package
+```
+
+前端通过 WebSocket 连接后端（`ws://127.0.0.1:{port}/ws`），支持热重载。
 
 ## 核心功能
 
@@ -157,7 +253,7 @@ cargo test -p loom-inference -p loom-memory -p lume-skills -p lume-mcp -p loom-c
 | 推理 | Anthropic / OpenAI / DeepSeek / LM Studio / Ollama |
 | 服务 | Axum 0.7 + WebSocket + JSON-RPC 2.0 |
 | CLI | clap + tracing-subscriber |
-| 前端 | React 19 + Tailwind CSS 4 + Vite 6 (Phase 4 迁移中) |
+| 前端 | React 19 + Tailwind CSS 4 + Vite 6 + Electron 38 |
 
 ## 许可证
 

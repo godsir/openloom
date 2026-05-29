@@ -93,7 +93,15 @@ class StreamBufferManager {
         const prompt = parseInt(parts[0], 10) || 0
         const completion = parseInt(parts[1], 10) || 0
         if (prompt || completion) {
-          useStore.getState().setTokenUsage({ prompt, completion })
+          // Inline USAGE control delta carries no model/context — preserve any
+          // previous values for this session so the ring scale stays correct.
+          const prev = useStore.getState().usageBySession.get(sessionId)
+          useStore.getState().setSessionUsage(sessionId, {
+            prompt,
+            completion,
+            model: prev?.model ?? '',
+            contextWindow: prev?.contextWindow ?? 0,
+          })
         }
       } catch {
         /* ignore parse errors */
@@ -143,8 +151,8 @@ class StreamBufferManager {
     if (buf.flushTimer) clearTimeout(buf.flushTimer)
     buf.inThinking = false
     this.flush(buf, sessionId)
-    const usage = useStore.getState().tokenUsage
-    if (buf.messageId && (usage.prompt || usage.completion)) {
+    const usage = useStore.getState().usageBySession.get(sessionId)
+    if (buf.messageId && usage && (usage.prompt || usage.completion)) {
       useStore.getState().setMessageUsage(sessionId, buf.messageId, { ...usage })
     }
     useStore.getState().removeStreamingSession(sessionId)

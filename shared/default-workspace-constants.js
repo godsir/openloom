@@ -1,2 +1,0 @@
-export const DEFAULT_WORKSPACE_DIRNAME = "LM-WorkSpace";
-export const DEFAULT_HEARTBEAT_INTERVAL_MINUTES = 31;

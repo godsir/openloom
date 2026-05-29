@@ -139,38 +139,6 @@ impl SessionStore {
     }
 }
 
-/// Guess context length from well-known model id prefixes.
-fn guess_context_length(id: &str) -> Option<u64> {
-    let id_lower = id.to_lowercase();
-    // Claude models
-    if id_lower.contains("claude-3.5") || id_lower.contains("claude-3-5") { return Some(200_000); }
-    if id_lower.contains("claude-3") || id_lower.contains("claude-4") { return Some(200_000); }
-    // GPT models
-    if id_lower.starts_with("gpt-4o") || id_lower.starts_with("gpt-4.5") { return Some(128_000); }
-    if id_lower.starts_with("gpt-4") { return Some(8_192); }
-    if id_lower.starts_with("gpt-3.5") { return Some(16_384); }
-    if id_lower.starts_with("o3") || id_lower.starts_with("o4") { return Some(200_000); }
-    if id_lower.starts_with("o1") { return Some(200_000); }
-    // DeepSeek
-    if id_lower.starts_with("deepseek") { return Some(64_000); }
-    // Gemini
-    if id_lower.starts_with("gemini") { return Some(1_000_000); }
-    // Grok
-    if id_lower.starts_with("grok") { return Some(131_072); }
-    // Llama / Mistral / Mixtral / Qwen local models
-    if id_lower.contains("llama-3") || id_lower.contains("llama3") { return Some(128_000); }
-    if id_lower.contains("llama") { return Some(4_096); }
-    if id_lower.contains("mistral") || id_lower.contains("mixtral") { return Some(32_000); }
-    if id_lower.starts_with("qwen") { return Some(32_000); }
-    if id_lower.contains("codestral") { return Some(32_000); }
-    // Generic heuristics
-    if id_lower.contains("8k") { return Some(8_192); }
-    if id_lower.contains("32k") { return Some(32_768); }
-    if id_lower.contains("128k") { return Some(131_072); }
-    if id_lower.contains("1m") { return Some(1_000_000); }
-    None
-}
-
 pub async fn dispatch_handler(state: Arc<AppState>, req: JsonRpcRequest) -> JsonRpcResponse {
     let result = dispatch_method(&state, &req).await;
     let (result_val, error_val) = match result {
@@ -613,6 +581,7 @@ pub async fn dispatch_method(
                 .unwrap_or_default();
             let client = reqwest::Client::new();
 
+            // Standard OpenAI-compatible /models endpoint
             let url = if api_format == "anthropic" {
                 format!("{}/v1/models", base_url.trim_end_matches('/'))
             } else {
@@ -639,14 +608,41 @@ pub async fn dispatch_method(
                 .map_err(|e| err(ErrorCode::InternalError, &format!("Parse error: {}", e)))?;
             let raw_models: Vec<Value> = body.get("data")
                 .and_then(|d| d.as_array()).cloned().unwrap_or_default();
+
+            // Try native API for local providers — yields accurate context_length
+            let native_ctx: std::collections::HashMap<String, u64> = if backend == "lmstudio" || backend == "LmStudio" {
+                let native_url = format!("{}/api/v1/models", base_url.trim_end_matches("/v1").trim_end_matches('/'));
+                match client.get(&native_url).timeout(std::time::Duration::from_secs(5)).send().await {
+                    Ok(resp) if resp.status().is_success() => {
+                        match resp.json::<Value>().await {
+                            Ok(v) => v.get("data").and_then(|d| d.as_array()).map(|arr| {
+                                arr.iter().filter_map(|m| {
+                                    let id = m.get("id").and_then(|v| v.as_str())?;
+                                    let ctx = m.get("max_context_length").and_then(|v| v.as_u64()).filter(|&n| n > 0);
+                                    Some((id.to_string(), ctx.unwrap_or(0)))
+                                }).collect()
+                            }).unwrap_or_default(),
+                            Err(_) => std::collections::HashMap::new(),
+                        }
+                    }
+                    _ => std::collections::HashMap::new(),
+                }
+            } else {
+                std::collections::HashMap::new()
+            };
+
             let models: Vec<Value> = raw_models.iter().filter_map(|item| {
                 let id = item.get("id").and_then(|v| v.as_str())?;
-                let ctx = item.get("context_window")
-                    .or_else(|| item.get("context_length"))
-                    .or_else(|| item.get("max_input_tokens"))
-                    .or_else(|| item.get("max_context_length"))
-                    .and_then(|v| v.as_u64())
-                    .or_else(|| guess_context_length(id));
+                // Prefer native API context length, then standard API fields
+                let ctx = native_ctx.get(id).copied().filter(|&n| n > 0)
+                    .or_else(|| {
+                        item.get("context_window")
+                            .or_else(|| item.get("context_length"))
+                            .or_else(|| item.get("max_input_tokens"))
+                            .or_else(|| item.get("max_context_length"))
+                            .and_then(|v| v.as_u64())
+                            .filter(|&n| n > 0)
+                    });
                 Some(json!({ "id": id, "context_length": ctx }))
             }).collect();
             Ok(json!({ "models": models }))
@@ -766,6 +762,155 @@ pub async fn dispatch_method(
                 .get("transport")
                 .and_then(|v| v.as_str())
                 .unwrap_or("stdio");
+            let persist = p.get("persist").and_then(|v| v.as_bool()).unwrap_or(true);
+            let autostart = p.get("autostart").and_then(|v| v.as_bool()).unwrap_or(true);
+            let config = McpServerConfig {
+                name: name.to_string(),
+                transport: transport.to_string(),
+                command: p
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                args: p
+                    .get("args")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                url: p.get("url").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                headers: p
+                    .get("headers")
+                    .and_then(|v| v.as_object())
+                    .map(|obj| {
+                        obj.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                env: p
+                    .get("env")
+                    .and_then(|v| v.as_object())
+                    .map(|obj| {
+                        obj.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                cwd: p.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                startup_timeout_secs: p
+                    .get("startup_timeout_secs")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(30),
+                tool_timeout_secs: p
+                    .get("tool_timeout_secs")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(60),
+                enabled_tools: p
+                    .get("enabled_tools")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    }),
+                disabled_tools: p
+                    .get("disabled_tools")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    }),
+            };
+            // Persist before connect: even if the server fails to start, the
+            // user's filled-in form values survive so they can edit + retry
+            // without re-typing everything.
+            if persist {
+                if let Err(e) = state
+                    .orchestrator
+                    .save_mcp_server(&config, autostart)
+                    .await
+                {
+                    tracing::warn!(error = %e, "failed to persist MCP server config");
+                }
+            }
+            state
+                .orchestrator
+                .connect_mcp_server(config)
+                .await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "ok": true }))
+        }
+        "mcp.disconnect" => {
+            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if name.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "name required"));
+            }
+            state
+                .orchestrator
+                .mcp_client()
+                .disconnect(name)
+                .await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "ok": true }))
+        }
+        "mcp.server_health" => {
+            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if name.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "name required"));
+            }
+            let healthy = state.orchestrator.mcp_client().server_health(name).await;
+            Ok(json!({ "healthy": healthy }))
+        }
+        // === MCP saved (persisted) configs ===
+        "mcp.config.list" => {
+            let configs = state
+                .orchestrator
+                .list_saved_mcp_servers()
+                .await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            let live: std::collections::HashSet<String> =
+                state.orchestrator.mcp_client().server_names().await.into_iter().collect();
+            let items: Vec<serde_json::Value> = configs
+                .into_iter()
+                .map(|(cfg, autostart)| {
+                    let connected = live.contains(&cfg.name);
+                    json!({
+                        "name": cfg.name,
+                        "transport": cfg.transport,
+                        "command": cfg.command,
+                        "args": cfg.args,
+                        "url": cfg.url,
+                        "headers": cfg.headers,
+                        "env": cfg.env,
+                        "cwd": cfg.cwd,
+                        "startup_timeout_secs": cfg.startup_timeout_secs,
+                        "tool_timeout_secs": cfg.tool_timeout_secs,
+                        "enabled_tools": cfg.enabled_tools,
+                        "disabled_tools": cfg.disabled_tools,
+                        "autostart": autostart,
+                        "connected": connected,
+                    })
+                })
+                .collect();
+            Ok(json!({ "configs": items }))
+        }
+        "mcp.config.save" => {
+            // Save without connecting — used by the editor to update fields
+            // on a disconnected entry, or to add an autostart entry for later.
+            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if name.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "name required"));
+            }
+            let transport = p
+                .get("transport")
+                .and_then(|v| v.as_str())
+                .unwrap_or("stdio");
+            let autostart = p.get("autostart").and_then(|v| v.as_bool()).unwrap_or(true);
             let config = McpServerConfig {
                 name: name.to_string(),
                 transport: transport.to_string(),
@@ -830,31 +975,22 @@ pub async fn dispatch_method(
             };
             state
                 .orchestrator
-                .connect_mcp_server(config)
+                .save_mcp_server(&config, autostart)
                 .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             Ok(json!({ "ok": true }))
         }
-        "mcp.disconnect" => {
+        "mcp.config.delete" => {
             let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
             if name.is_empty() {
                 return Err(err(ErrorCode::InvalidRequest, "name required"));
             }
             state
                 .orchestrator
-                .mcp_client()
-                .disconnect(name)
+                .delete_saved_mcp_server(name)
                 .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             Ok(json!({ "ok": true }))
-        }
-        "mcp.server_health" => {
-            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            if name.is_empty() {
-                return Err(err(ErrorCode::InvalidRequest, "name required"));
-            }
-            let healthy = state.orchestrator.mcp_client().server_health(name).await;
-            Ok(json!({ "healthy": healthy }))
         }
 
         // === LSP ===

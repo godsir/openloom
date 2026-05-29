@@ -191,53 +191,113 @@ export default function SettingsModal({
 
 /* ─── MCP Tab ─── */
 
+interface McpServerConfig {
+  name: string
+  transport: 'stdio' | 'http'
+  command: string
+  args: string[]
+  url: string | null
+  headers: Record<string, string>
+  env: Record<string, string>
+  cwd: string | null
+  startup_timeout_secs: number
+  tool_timeout_secs: number
+  enabled_tools: string[] | null
+  disabled_tools: string[] | null
+  autostart: boolean
+  connected: boolean
+}
+
+const EMPTY_FORM: McpServerConfig = {
+  name: '',
+  transport: 'stdio',
+  command: '',
+  args: [],
+  url: '',
+  headers: {},
+  env: {},
+  cwd: '',
+  startup_timeout_secs: 30,
+  tool_timeout_secs: 60,
+  enabled_tools: null,
+  disabled_tools: null,
+  autostart: true,
+  connected: false,
+}
+
+function parseKvLines(text: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
+    const eq = line.indexOf('=')
+    if (eq <= 0) continue
+    out[line.slice(0, eq).trim()] = line.slice(eq + 1).trim()
+  }
+  return out
+}
+function kvToText(obj: Record<string, string>): string {
+  return Object.entries(obj).map(([k, v]) => `${k}=${v}`).join('\n')
+}
+function parseCsv(text: string): string[] {
+  return text.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
+}
+
 function McpTab() {
-  const [servers, setServers] = useState<string[]>([])
-  const [serverHealth, setServerHealth] = useState<Record<string, boolean | null>>({})
-  const [mcpTools, setMcpTools] = useState<McpTool[]>([])
+  const [configs, setConfigs] = useState<McpServerConfig[]>([])
+  const [healthByName, setHealthByName] = useState<Record<string, boolean | null>>({})
+  const [toolsByServer, setToolsByServer] = useState<Record<string, McpTool[]>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [showForm, setShowForm] = useState(false)
 
-  // Form state
-  const [formName, setFormName] = useState('')
-  const [formTransport, setFormTransport] = useState<'stdio' | 'http'>('stdio')
-  const [formCommand, setFormCommand] = useState('')
-  const [formArgs, setFormArgs] = useState('')
-  const [formUrl, setFormUrl] = useState('')
-  const [connecting, setConnecting] = useState(false)
+  // Editor state — null = closed, {} = new entry, populated = editing existing.
+  const [editing, setEditing] = useState<McpServerConfig | null>(null)
+  const [editingOriginalName, setEditingOriginalName] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
   const loadData = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const [serversRes, toolsRes] = await Promise.allSettled([
-        loomRpc<{ servers: string[] }>('mcp.list_servers'),
-        loomRpc<{ tools: McpTool[] }>('mcp.list_tools'),
+      const [cfgRes, toolsRes] = await Promise.allSettled([
+        loomRpc<{ configs: McpServerConfig[] }>('mcp.config.list'),
+        loomRpc<{ tools: (McpTool & { server?: string })[] }>('mcp.list_tools'),
       ])
 
-      if (serversRes.status === 'fulfilled') {
-        const srvList = serversRes.value.servers ?? []
-        setServers(srvList)
-        // Check health for each server
-        const healthMap: Record<string, boolean | null> = {}
-        await Promise.allSettled(
-          srvList.map(async (name) => {
-            try {
-              const res = await loomRpc<{ healthy: boolean }>('mcp.server_health', { name })
-              healthMap[name] = res.healthy
-            } catch {
-              healthMap[name] = null
-            }
-          })
-        )
-        setServerHealth(healthMap)
+      let list: McpServerConfig[] = []
+      if (cfgRes.status === 'fulfilled') {
+        list = cfgRes.value.configs ?? []
+        setConfigs(list)
       } else {
-        setError(`加载 MCP 服务列表失败: ${serversRes.reason?.message || serversRes.reason}`)
+        setError(`加载 MCP 配置失败: ${cfgRes.reason?.message || cfgRes.reason}`)
       }
 
+      // Health for currently connected servers.
+      const health: Record<string, boolean | null> = {}
+      await Promise.allSettled(
+        list.filter((c) => c.connected).map(async (c) => {
+          try {
+            const res = await loomRpc<{ healthy: boolean }>('mcp.server_health', { name: c.name })
+            health[c.name] = res.healthy
+          } catch {
+            health[c.name] = null
+          }
+        })
+      )
+      setHealthByName(health)
+
       if (toolsRes.status === 'fulfilled') {
-        setMcpTools(toolsRes.value.tools ?? [])
+        // Tool names are prefixed mcp__<server>__<tool>; bucket by server.
+        const grouped: Record<string, McpTool[]> = {}
+        for (const t of toolsRes.value.tools ?? []) {
+          const m = /^mcp__([^_]+(?:_[^_]+)*?)__(.+)$/.exec(t.name)
+          const server = m?.[1]
+          const local = m?.[2] ?? t.name
+          if (!server) continue
+          if (!grouped[server]) grouped[server] = []
+          grouped[server].push({ name: local, description: t.description })
+        }
+        setToolsByServer(grouped)
       }
     } catch (e: any) {
       setError(`加载失败: ${e.message || e}`)
@@ -248,37 +308,91 @@ function McpTab() {
 
   useEffect(() => { loadData() }, [loadData])
 
-  const handleConnect = async () => {
-    if (!formName.trim()) return
-    setConnecting(true)
+  const startCreate = () => {
+    setEditing({ ...EMPTY_FORM })
+    setEditingOriginalName(null)
+  }
+  const startEdit = (c: McpServerConfig) => {
+    setEditing({ ...c, url: c.url ?? '', cwd: c.cwd ?? '' })
+    setEditingOriginalName(c.name)
+  }
+  const cancelEdit = () => {
+    setEditing(null)
+    setEditingOriginalName(null)
+  }
+
+  const buildPayload = (cfg: McpServerConfig): Record<string, unknown> => ({
+    name: cfg.name.trim(),
+    transport: cfg.transport,
+    command: cfg.command,
+    args: cfg.args,
+    url: cfg.url || null,
+    headers: cfg.headers,
+    env: cfg.env,
+    cwd: cfg.cwd || null,
+    startup_timeout_secs: cfg.startup_timeout_secs,
+    tool_timeout_secs: cfg.tool_timeout_secs,
+    enabled_tools: cfg.enabled_tools,
+    disabled_tools: cfg.disabled_tools,
+    autostart: cfg.autostart,
+  })
+
+  const handleSaveAndConnect = async () => {
+    if (!editing || !editing.name.trim()) return
+    setBusy(true)
     try {
-      const params: Record<string, unknown> = {
-        name: formName.trim(),
-        transport: formTransport,
+      // If renaming an existing entry, drop the old row first.
+      if (editingOriginalName && editingOriginalName !== editing.name.trim()) {
+        await loomRpc('mcp.config.delete', { name: editingOriginalName }).catch(() => {})
       }
-      if (formTransport === 'stdio') {
-        params.command = formCommand.trim()
-        params.args = formArgs.trim() ? formArgs.split(',').map((s) => s.trim()) : []
-      } else {
-        params.url = formUrl.trim()
-      }
-      await rpc('mcp.connect', params, `MCP "${formName}" 已连接`)
-      setShowForm(false)
-      setFormName('')
-      setFormCommand('')
-      setFormArgs('')
-      setFormUrl('')
+      await rpc('mcp.connect', { ...buildPayload(editing), persist: true },
+        `MCP "${editing.name}" 已连接`)
+      cancelEdit()
       await loadData()
     } catch (e: any) {
       setError(`连接失败: ${e.message || e}`)
     } finally {
-      setConnecting(false)
+      setBusy(false)
     }
   }
-
+  const handleSaveOnly = async () => {
+    if (!editing || !editing.name.trim()) return
+    setBusy(true)
+    try {
+      if (editingOriginalName && editingOriginalName !== editing.name.trim()) {
+        await loomRpc('mcp.config.delete', { name: editingOriginalName }).catch(() => {})
+      }
+      await rpc('mcp.config.save', buildPayload(editing), `MCP "${editing.name}" 已保存`)
+      cancelEdit()
+      await loadData()
+    } catch (e: any) {
+      setError(`保存失败: ${e.message || e}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const handleConnectExisting = async (cfg: McpServerConfig) => {
+    setBusy(true)
+    try {
+      await rpc('mcp.connect', { ...buildPayload(cfg), persist: true },
+        `MCP "${cfg.name}" 已连接`)
+      await loadData()
+    } catch (e: any) {
+      setError(`连接失败: ${e.message || e}`)
+    } finally {
+      setBusy(false)
+    }
+  }
   const handleDisconnect = async (name: string) => {
     try {
       await rpc('mcp.disconnect', { name }, `MCP "${name}" 已断开`)
+      await loadData()
+    } catch { /* toast already shown */ }
+  }
+  const handleDelete = async (name: string) => {
+    if (!window.confirm(`确认删除 MCP "${name}" 的配置？这会断开连接并移除保存的参数。`)) return
+    try {
+      await rpc('mcp.config.delete', { name }, `已删除 "${name}"`)
       await loadData()
     } catch { /* toast already shown */ }
   }
@@ -287,7 +401,7 @@ function McpTab() {
     <>
       <div className={styles.contentHeader}>
         <h3 className={styles.sectionTitle}>MCP 服务</h3>
-        <p className={styles.sectionDesc}>管理 Model Context Protocol 服务器连接</p>
+        <p className={styles.sectionDesc}>管理 Model Context Protocol 服务器连接（配置自动持久化）</p>
       </div>
       <div className={styles.contentBody}>
         {error && <p className={styles.toolsError}>{error}</p>}
@@ -295,119 +409,280 @@ function McpTab() {
           <p className={styles.toolsEmpty}>加载中...</p>
         ) : (
           <>
-            {/* Server list */}
             <div className={styles.mcpServerList}>
-              {servers.length === 0 ? (
-                <p className={styles.toolsEmpty}>暂无已连接的 MCP 服务器</p>
+              {configs.length === 0 ? (
+                <p className={styles.toolsEmpty}>暂无 MCP 服务器配置</p>
               ) : (
-                servers.map((name) => (
-                  <div key={name} className={styles.mcpServerItem}>
-                    <div className={styles.mcpServerHeader}>
-                      <div className={styles.mcpServerNameRow}>
-                        <span className={styles.mcpServerStatus} data-healthy={serverHealth[name] === true ? 'true' : serverHealth[name] === false ? 'false' : 'unknown'} />
-                        <span className={styles.mcpServerName}>{name}</span>
-                      </div>
-                      <button className={styles.mcpDisconnectBtn} onClick={() => handleDisconnect(name)}>
-                        断开
-                      </button>
-                    </div>
-                    {mcpTools.length > 0 && (
-                      <div className={styles.toolsBadgeGrid}>
-                        {mcpTools.map((tool) => (
-                          <span key={tool.name} className={styles.toolsBadge} title={tool.description}>
-                            {tool.name}
+                configs.map((c) => {
+                  const healthState = !c.connected
+                    ? 'unknown'
+                    : healthByName[c.name] === true
+                      ? 'true'
+                      : healthByName[c.name] === false
+                        ? 'false'
+                        : 'unknown'
+                  const tools = toolsByServer[c.name] ?? []
+                  return (
+                    <div key={c.name} className={styles.mcpServerItem}>
+                      <div className={styles.mcpServerHeader}>
+                        <div className={styles.mcpServerNameRow}>
+                          <span className={styles.mcpServerStatus} data-healthy={healthState} />
+                          <span className={styles.mcpServerName}>{c.name}</span>
+                          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                            {c.transport.toUpperCase()}
+                            {c.autostart && ' · autostart'}
+                            {!c.connected && ' · 已断开'}
                           </span>
-                        ))}
+                        </div>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          {c.connected ? (
+                            <button className={styles.mcpDisconnectBtn} onClick={() => handleDisconnect(c.name)}>
+                              断开
+                            </button>
+                          ) : (
+                            <button className={styles.mcpDisconnectBtn} onClick={() => handleConnectExisting(c)}>
+                              连接
+                            </button>
+                          )}
+                          <button className={styles.mcpDisconnectBtn} onClick={() => startEdit(c)}>
+                            编辑
+                          </button>
+                          <button className={styles.mcpDisconnectBtn} onClick={() => handleDelete(c.name)}>
+                            删除
+                          </button>
+                        </div>
                       </div>
-                    )}
-                  </div>
-                ))
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                        {c.transport === 'stdio'
+                          ? `${c.command} ${c.args.join(' ')}`
+                          : c.url || ''}
+                      </div>
+                      {tools.length > 0 && (
+                        <div className={styles.toolsBadgeGrid}>
+                          {tools.map((tool) => (
+                            <span key={tool.name} className={styles.toolsBadge} title={tool.description}>
+                              {tool.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
               )}
             </div>
 
-            {/* Add form toggle */}
-            {!showForm ? (
-              <button className={styles.mcpAddBtn} onClick={() => setShowForm(true)}>
+            {!editing ? (
+              <button className={styles.mcpAddBtn} onClick={startCreate}>
                 + 添加服务器
               </button>
             ) : (
-              <div className={styles.mcpAddForm}>
-                <div className={styles.mcpFormRow}>
-                  <label className={styles.mcpFormLabel}>名称</label>
-                  <input
-                    className={styles.mcpFormInput}
-                    value={formName}
-                    onChange={(e) => setFormName(e.target.value)}
-                    placeholder="server-name"
-                  />
-                </div>
-                <div className={styles.mcpFormRow}>
-                  <label className={styles.mcpFormLabel}>传输类型</label>
-                  <div className={styles.mcpTransportToggle}>
-                    <button
-                      className={`${styles.mcpTransportBtn} ${formTransport === 'stdio' ? styles.mcpTransportActive : ''}`}
-                      onClick={() => setFormTransport('stdio')}
-                    >
-                      stdio
-                    </button>
-                    <button
-                      className={`${styles.mcpTransportBtn} ${formTransport === 'http' ? styles.mcpTransportActive : ''}`}
-                      onClick={() => setFormTransport('http')}
-                    >
-                      HTTP
-                    </button>
-                  </div>
-                </div>
-                {formTransport === 'stdio' ? (
-                  <>
-                    <div className={styles.mcpFormRow}>
-                      <label className={styles.mcpFormLabel}>命令</label>
-                      <input
-                        className={styles.mcpFormInput}
-                        value={formCommand}
-                        onChange={(e) => setFormCommand(e.target.value)}
-                        placeholder="npx, node, python..."
-                      />
-                    </div>
-                    <div className={styles.mcpFormRow}>
-                      <label className={styles.mcpFormLabel}>参数 (逗号分隔)</label>
-                      <input
-                        className={styles.mcpFormInput}
-                        value={formArgs}
-                        onChange={(e) => setFormArgs(e.target.value)}
-                        placeholder="-y, @modelcontextprotocol/server-xxx"
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <div className={styles.mcpFormRow}>
-                    <label className={styles.mcpFormLabel}>URL</label>
-                    <input
-                      className={styles.mcpFormInput}
-                      value={formUrl}
-                      onChange={(e) => setFormUrl(e.target.value)}
-                      placeholder="http://localhost:8080/sse"
-                    />
-                  </div>
-                )}
-                <div className={styles.mcpFormActions}>
-                  <button className={styles.mcpCancelBtn} onClick={() => setShowForm(false)}>
-                    取消
-                  </button>
-                  <button
-                    className={styles.mcpConnectBtn}
-                    onClick={handleConnect}
-                    disabled={connecting || !formName.trim()}
-                  >
-                    {connecting ? '连接中...' : '连接'}
-                  </button>
-                </div>
-              </div>
+              <McpEditor
+                value={editing}
+                onChange={setEditing}
+                onCancel={cancelEdit}
+                onSave={handleSaveOnly}
+                onSaveAndConnect={handleSaveAndConnect}
+                busy={busy}
+                isEdit={editingOriginalName !== null}
+              />
             )}
           </>
         )}
       </div>
     </>
+  )
+}
+
+interface McpEditorProps {
+  value: McpServerConfig
+  onChange: (next: McpServerConfig) => void
+  onCancel: () => void
+  onSave: () => void
+  onSaveAndConnect: () => void
+  busy: boolean
+  isEdit: boolean
+}
+
+function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, isEdit }: McpEditorProps) {
+  const v = value
+  const set = (patch: Partial<McpServerConfig>) => onChange({ ...v, ...patch })
+
+  return (
+    <div className={styles.mcpAddForm}>
+      <div className={styles.mcpFormRow}>
+        <label className={styles.mcpFormLabel}>名称</label>
+        <input
+          className={styles.mcpFormInput}
+          value={v.name}
+          onChange={(e) => set({ name: e.target.value })}
+          placeholder="server-name"
+        />
+      </div>
+      <div className={styles.mcpFormRow}>
+        <label className={styles.mcpFormLabel}>传输类型</label>
+        <div className={styles.mcpTransportToggle}>
+          <button
+            className={`${styles.mcpTransportBtn} ${v.transport === 'stdio' ? styles.mcpTransportActive : ''}`}
+            onClick={() => set({ transport: 'stdio' })}
+          >
+            stdio
+          </button>
+          <button
+            className={`${styles.mcpTransportBtn} ${v.transport === 'http' ? styles.mcpTransportActive : ''}`}
+            onClick={() => set({ transport: 'http' })}
+          >
+            HTTP
+          </button>
+        </div>
+      </div>
+
+      {v.transport === 'stdio' ? (
+        <>
+          <div className={styles.mcpFormRow}>
+            <label className={styles.mcpFormLabel}>命令</label>
+            <input
+              className={styles.mcpFormInput}
+              value={v.command}
+              onChange={(e) => set({ command: e.target.value })}
+              placeholder="npx, node, python..."
+            />
+          </div>
+          <div className={styles.mcpFormRow}>
+            <label className={styles.mcpFormLabel}>参数（逗号或换行分隔）</label>
+            <textarea
+              className={styles.mcpFormInput}
+              style={{ height: 56, padding: '6px 10px', resize: 'vertical' }}
+              value={v.args.join('\n')}
+              onChange={(e) => set({ args: parseCsv(e.target.value) })}
+              placeholder={'-y\n@modelcontextprotocol/server-xxx'}
+            />
+          </div>
+          <div className={styles.mcpFormRow}>
+            <label className={styles.mcpFormLabel}>工作目录（可选）</label>
+            <input
+              className={styles.mcpFormInput}
+              value={v.cwd ?? ''}
+              onChange={(e) => set({ cwd: e.target.value })}
+              placeholder="/path/to/cwd"
+            />
+          </div>
+        </>
+      ) : (
+        <>
+          <div className={styles.mcpFormRow}>
+            <label className={styles.mcpFormLabel}>URL</label>
+            <input
+              className={styles.mcpFormInput}
+              value={v.url ?? ''}
+              onChange={(e) => set({ url: e.target.value })}
+              placeholder="http://localhost:8080/sse"
+            />
+          </div>
+          <div className={styles.mcpFormRow}>
+            <label className={styles.mcpFormLabel}>请求头（每行 KEY=VALUE）</label>
+            <textarea
+              className={styles.mcpFormInput}
+              style={{ height: 64, padding: '6px 10px', resize: 'vertical' }}
+              value={kvToText(v.headers)}
+              onChange={(e) => set({ headers: parseKvLines(e.target.value) })}
+              placeholder={'Authorization=Bearer xxx\nX-Custom=abc'}
+            />
+          </div>
+        </>
+      )}
+
+      <div className={styles.mcpFormRow}>
+        <label className={styles.mcpFormLabel}>环境变量（每行 KEY=VALUE，可选）</label>
+        <textarea
+          className={styles.mcpFormInput}
+          style={{ height: 56, padding: '6px 10px', resize: 'vertical' }}
+          value={kvToText(v.env)}
+          onChange={(e) => set({ env: parseKvLines(e.target.value) })}
+          placeholder={'API_KEY=...'}
+        />
+      </div>
+
+      <div className={styles.mcpFormRow} style={{ flexDirection: 'row', gap: 12 }}>
+        <div style={{ flex: 1 }}>
+          <label className={styles.mcpFormLabel}>启动超时(秒)</label>
+          <input
+            className={styles.mcpFormInput}
+            type="number"
+            min={1}
+            value={v.startup_timeout_secs}
+            onChange={(e) => set({ startup_timeout_secs: Number(e.target.value) || 30 })}
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label className={styles.mcpFormLabel}>工具超时(秒)</label>
+          <input
+            className={styles.mcpFormInput}
+            type="number"
+            min={1}
+            value={v.tool_timeout_secs}
+            onChange={(e) => set({ tool_timeout_secs: Number(e.target.value) || 60 })}
+          />
+        </div>
+      </div>
+
+      <div className={styles.mcpFormRow}>
+        <label className={styles.mcpFormLabel}>仅启用工具（逗号或换行，留空=全部）</label>
+        <textarea
+          className={styles.mcpFormInput}
+          style={{ height: 48, padding: '6px 10px', resize: 'vertical' }}
+          value={(v.enabled_tools ?? []).join('\n')}
+          onChange={(e) => {
+            const list = parseCsv(e.target.value)
+            set({ enabled_tools: list.length ? list : null })
+          }}
+          placeholder="tool_a, tool_b"
+        />
+      </div>
+      <div className={styles.mcpFormRow}>
+        <label className={styles.mcpFormLabel}>禁用工具（逗号或换行）</label>
+        <textarea
+          className={styles.mcpFormInput}
+          style={{ height: 48, padding: '6px 10px', resize: 'vertical' }}
+          value={(v.disabled_tools ?? []).join('\n')}
+          onChange={(e) => {
+            const list = parseCsv(e.target.value)
+            set({ disabled_tools: list.length ? list : null })
+          }}
+          placeholder="dangerous_tool"
+        />
+      </div>
+
+      <div className={styles.mcpFormRow} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <input
+          id="mcp-autostart"
+          type="checkbox"
+          checked={v.autostart}
+          onChange={(e) => set({ autostart: e.target.checked })}
+        />
+        <label htmlFor="mcp-autostart" className={styles.mcpFormLabel} style={{ margin: 0, cursor: 'pointer' }}>
+          引擎启动时自动重连
+        </label>
+      </div>
+
+      <div className={styles.mcpFormActions}>
+        <button className={styles.mcpCancelBtn} onClick={onCancel}>取消</button>
+        <button
+          className={styles.mcpCancelBtn}
+          onClick={onSave}
+          disabled={busy || !v.name.trim()}
+        >
+          {busy ? '保存中...' : '仅保存'}
+        </button>
+        <button
+          className={styles.mcpConnectBtn}
+          onClick={onSaveAndConnect}
+          disabled={busy || !v.name.trim()}
+        >
+          {busy ? '连接中...' : isEdit ? '保存并重连' : '保存并连接'}
+        </button>
+      </div>
+    </div>
   )
 }
 

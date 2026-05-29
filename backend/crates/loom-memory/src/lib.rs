@@ -19,7 +19,7 @@ pub use graph::GraphStore;
 pub use persona::CognitionsPersonaProvider;
 pub use pipeline::{MemoryPipeline, PipelineConfig};
 pub use store::{
-    AgentConfigStore, CognitionRow, CognitionSnapshot, CognitionStore, EventRow, ModelConfigStore,
-    NewEvent, SqliteEventStore,
+    AgentConfigStore, CognitionRow, CognitionSnapshot, CognitionStore, EventRow, McpConfigStore,
+    McpServerRow, ModelConfigStore, NewEvent, SqliteEventStore,
 };
 pub use summary::SummaryEngine;

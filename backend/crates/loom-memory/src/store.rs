@@ -610,3 +610,126 @@ impl<'a> ModelConfigStore<'a> {
         Ok(row)
     }
 }
+
+// ============================================================================
+// McpConfigStore — persisted MCP server profile CRUD
+// ============================================================================
+
+/// Wire shape for persisted MCP server rows. The store is intentionally type-
+/// agnostic about `McpServerConfig` (which lives in `lume-mcp`) — callers
+/// serialise the live config into this shape and back, keeping `loom-memory`
+/// free of higher-level crate deps.
+#[derive(Debug, Clone)]
+pub struct McpServerRow {
+    pub name: String,
+    pub transport: String,
+    pub command: String,
+    pub args_json: String,
+    pub url: Option<String>,
+    pub headers_json: String,
+    pub env_json: String,
+    pub cwd: Option<String>,
+    pub startup_timeout_secs: u64,
+    pub tool_timeout_secs: u64,
+    pub enabled_tools_json: Option<String>,
+    pub disabled_tools_json: Option<String>,
+    pub autostart: bool,
+}
+
+pub struct McpConfigStore<'a> {
+    conn: &'a Connection,
+}
+
+impl<'a> McpConfigStore<'a> {
+    pub fn new(conn: &'a Connection) -> Self {
+        Self { conn }
+    }
+
+    pub fn upsert(&self, row: &McpServerRow) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO mcp_servers
+             (name, transport, command, args_json, url, headers_json, env_json, cwd,
+              startup_timeout_secs, tool_timeout_secs, enabled_tools_json, disabled_tools_json,
+              autostart, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, datetime('now'))",
+            params![
+                row.name,
+                row.transport,
+                row.command,
+                row.args_json,
+                row.url,
+                row.headers_json,
+                row.env_json,
+                row.cwd,
+                row.startup_timeout_secs as i64,
+                row.tool_timeout_secs as i64,
+                row.enabled_tools_json,
+                row.disabled_tools_json,
+                row.autostart as i64,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list(&self) -> Result<Vec<McpServerRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, transport, command, args_json, url, headers_json, env_json, cwd,
+                    startup_timeout_secs, tool_timeout_secs, enabled_tools_json, disabled_tools_json,
+                    autostart
+             FROM mcp_servers ORDER BY name",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(McpServerRow {
+                name: row.get(0)?,
+                transport: row.get(1)?,
+                command: row.get(2)?,
+                args_json: row.get(3)?,
+                url: row.get(4)?,
+                headers_json: row.get(5)?,
+                env_json: row.get(6)?,
+                cwd: row.get(7)?,
+                startup_timeout_secs: row.get::<_, i64>(8).unwrap_or(30) as u64,
+                tool_timeout_secs: row.get::<_, i64>(9).unwrap_or(60) as u64,
+                enabled_tools_json: row.get(10)?,
+                disabled_tools_json: row.get(11)?,
+                autostart: row.get::<_, i64>(12).unwrap_or(1) != 0,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn get(&self, name: &str) -> Result<Option<McpServerRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, transport, command, args_json, url, headers_json, env_json, cwd,
+                    startup_timeout_secs, tool_timeout_secs, enabled_tools_json, disabled_tools_json,
+                    autostart
+             FROM mcp_servers WHERE name = ?1",
+        )?;
+        let row = stmt
+            .query_row(params![name], |row| {
+                Ok(McpServerRow {
+                    name: row.get(0)?,
+                    transport: row.get(1)?,
+                    command: row.get(2)?,
+                    args_json: row.get(3)?,
+                    url: row.get(4)?,
+                    headers_json: row.get(5)?,
+                    env_json: row.get(6)?,
+                    cwd: row.get(7)?,
+                    startup_timeout_secs: row.get::<_, i64>(8).unwrap_or(30) as u64,
+                    tool_timeout_secs: row.get::<_, i64>(9).unwrap_or(60) as u64,
+                    enabled_tools_json: row.get(10)?,
+                    disabled_tools_json: row.get(11)?,
+                    autostart: row.get::<_, i64>(12).unwrap_or(1) != 0,
+                })
+            })
+            .ok();
+        Ok(row)
+    }
+
+    pub fn delete(&self, name: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM mcp_servers WHERE name = ?1", params![name])?;
+        Ok(())
+    }
+}

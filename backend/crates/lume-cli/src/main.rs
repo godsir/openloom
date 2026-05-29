@@ -152,6 +152,41 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Err(e) => println!("[server] memory unavailable: {}", e),
             }
+            // Load MCP servers from config files (~/.loom/mcp.json, .lume/mcp.json)
+            match mcp_config::load_mcp_configs(&loom_dir) {
+                Ok((configs, sources)) => {
+                    for src in &sources {
+                        tracing::info!("[mcp] config: {}", src);
+                    }
+                    for config in configs {
+                        let name = config.name.clone();
+                        tracing::info!("[mcp] connecting {} ({})...", name, config.transport);
+                        match orchestrator.connect_mcp_server(config).await {
+                            Ok(server_name) => {
+                                let tools = orchestrator
+                                    .mcp_client()
+                                    .server_tools(&server_name)
+                                    .await
+                                    .unwrap_or_default();
+                                tracing::info!(
+                                    "[mcp] '{}' connected — {} tools",
+                                    server_name,
+                                    tools.len()
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!("[mcp] failed to connect '{}': {}", name, e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("[mcp] failed to load configs: {}", e);
+                }
+            }
+            // Reconnect MCP servers previously saved via the UI (DB-persisted),
+            // skipping any entry already brought up by the file-based loader.
+            orchestrator.autostart_mcp_servers().await;
             loom_server::serve(&host, port, orchestrator).await?;
         }
         Command::Chat {

@@ -5,8 +5,8 @@
 use anyhow::Result;
 use loom_core::MemoryStore;
 use loom_memory::{
-    AgentConfigStore, CognitionStore, CognitionsPersonaProvider, GraphStore, ModelConfigStore,
-    NewEvent, SqliteEventStore,
+    AgentConfigStore, CognitionStore, CognitionsPersonaProvider, GraphStore, McpConfigStore,
+    McpServerRow, ModelConfigStore, NewEvent, SqliteEventStore,
 };
 use loom_types::{AgentConfig, Message, ModelConfig, PersonaProvider};
 
@@ -404,6 +404,78 @@ impl MemoryStore for LoomMemoryStore {
     async fn get_active_model(&self) -> Result<Option<ModelConfig>> {
         let store = self.store.lock().unwrap();
         ModelConfigStore::new(store.conn()).get_active()
+    }
+
+    async fn save_mcp_server(
+        &self,
+        config: &lume_mcp::McpServerConfig,
+        autostart: bool,
+    ) -> Result<()> {
+        let row = McpServerRow {
+            name: config.name.clone(),
+            transport: config.transport.clone(),
+            command: config.command.clone(),
+            args_json: serde_json::to_string(&config.args).unwrap_or_else(|_| "[]".into()),
+            url: config.url.clone(),
+            headers_json: serde_json::to_string(&config.headers).unwrap_or_else(|_| "{}".into()),
+            env_json: serde_json::to_string(&config.env).unwrap_or_else(|_| "{}".into()),
+            cwd: config.cwd.clone(),
+            startup_timeout_secs: config.startup_timeout_secs,
+            tool_timeout_secs: config.tool_timeout_secs,
+            enabled_tools_json: config
+                .enabled_tools
+                .as_ref()
+                .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".into())),
+            disabled_tools_json: config
+                .disabled_tools
+                .as_ref()
+                .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".into())),
+            autostart,
+        };
+        let store = self.store.lock().unwrap();
+        McpConfigStore::new(store.conn()).upsert(&row)
+    }
+
+    async fn list_mcp_servers(&self) -> Result<Vec<(lume_mcp::McpServerConfig, bool)>> {
+        let store = self.store.lock().unwrap();
+        let rows = McpConfigStore::new(store.conn()).list()?;
+        let configs = rows
+            .into_iter()
+            .map(|r| {
+                let args: Vec<String> = serde_json::from_str(&r.args_json).unwrap_or_default();
+                let headers = serde_json::from_str(&r.headers_json).unwrap_or_default();
+                let env = serde_json::from_str(&r.env_json).unwrap_or_default();
+                let enabled_tools = r
+                    .enabled_tools_json
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
+                let disabled_tools = r
+                    .disabled_tools_json
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
+                let config = lume_mcp::McpServerConfig {
+                    name: r.name,
+                    transport: r.transport,
+                    command: r.command,
+                    args,
+                    url: r.url,
+                    headers,
+                    env,
+                    cwd: r.cwd,
+                    startup_timeout_secs: r.startup_timeout_secs,
+                    tool_timeout_secs: r.tool_timeout_secs,
+                    enabled_tools,
+                    disabled_tools,
+                };
+                (config, r.autostart)
+            })
+            .collect();
+        Ok(configs)
+    }
+
+    async fn delete_mcp_server(&self, name: &str) -> Result<()> {
+        let store = self.store.lock().unwrap();
+        McpConfigStore::new(store.conn()).delete(name)
     }
 
     async fn query_kg_context(&self, entity_names: &[&str], limit: usize) -> Result<String> {

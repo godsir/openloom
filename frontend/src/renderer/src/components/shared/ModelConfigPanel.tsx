@@ -33,9 +33,9 @@ async function loadCustomProviders(): Promise<ProviderEntry[]> {
   } catch { return [] }
 }
 
-function saveCustomProviders(entries: ProviderEntry[]): void {
+async function saveCustomProviders(entries: ProviderEntry[]): Promise<void> {
   const custom = entries.filter(e => e.isCustom)
-  window.hana.setPreference(CUSTOM_PROVIDERS_KEY, custom)
+  await window.hana.setPreference(CUSTOM_PROVIDERS_KEY, custom)
 }
 
 function buildProviders(customProviders: ProviderEntry[], models: ModelListItem[]): ProviderEntry[] {
@@ -55,7 +55,7 @@ function buildProviders(customProviders: ProviderEntry[], models: ModelListItem[
       })
     }
   }
-  return [...PRESET_PROVIDERS, ...discovered, ...customProviders.filter(c => !seenLabels.has(c.label))]
+  return [...PRESET_PROVIDERS, ...customProviders, ...discovered]
 }
 
 export default function ModelConfigPanel() {
@@ -83,6 +83,7 @@ export default function ModelConfigPanel() {
   const [editForm, setEditForm] = useState<{
     name: string; model: string; backend: ModelBackend; base_url: string;
     context_size: number; max_output_tokens: string
+    backend_label?: string; api_format?: string
     vision: boolean; reasoning: boolean; function_calling: boolean
   }>({ name: '', model: '', backend: 'DeepSeek', base_url: '', context_size: 4096, max_output_tokens: '', vision: false, reasoning: false, function_calling: false })
 
@@ -199,6 +200,8 @@ export default function ModelConfigPanel() {
       base_url: m.base_url || '',
       context_size: m.context_size || 4096,
       max_output_tokens: '',
+      backend_label: (m as any).backend_label,
+      api_format: (m as any).api_format,
       vision: m.capabilities?.vision ?? false,
       reasoning: m.capabilities?.reasoning ?? false,
       function_calling: m.capabilities?.function_calling ?? false,
@@ -217,6 +220,8 @@ export default function ModelConfigPanel() {
         model: editForm.model || undefined,
         backend: editForm.backend,
         base_url: editForm.base_url.trim() || undefined,
+        backend_label: editForm.backend_label || undefined,
+        api_format: editForm.api_format || undefined,
         context_size: editForm.context_size,
         max_output_tokens: editForm.max_output_tokens ? parseInt(editForm.max_output_tokens, 10) : undefined,
         capabilities: {
@@ -233,11 +238,9 @@ export default function ModelConfigPanel() {
   const handleDeleteCustom = async (entry: ProviderEntry) => {
     const ok = await useStore.getState().showConfirm('删除供应商', `确定删除供应商 "${entry.label}"？已配置的模型不会受影响。`, true)
     if (!ok) return
-    setProviders(prev => {
-      const next = prev.filter(p => p.id !== entry.id)
-      saveCustomProviders(next)
-      return next
-    })
+    const next = providers.filter(p => p.id !== entry.id)
+    setProviders(next)
+    await saveCustomProviders(next)
     if (selectedId === entry.id) {
       setSelectedId('deepseek')
       setBaseUrl('https://api.deepseek.com/v1')
@@ -248,7 +251,7 @@ export default function ModelConfigPanel() {
     }
   }
 
-  const handleAddCustom = () => {
+  const handleAddCustom = async () => {
     if (!customName.trim() || !customUrl.trim()) return
     const entry: ProviderEntry = {
       id: `custom-${Date.now()}`,
@@ -259,11 +262,9 @@ export default function ModelConfigPanel() {
       isCustom: true,
       envVar: customEnvVar.trim() || 'OPENLOOM_API_KEY',
     }
-    setProviders(prev => {
-      const next = [...prev, entry]
-      saveCustomProviders(next)
-      return next
-    })
+    const next = [...providers, entry]
+    setProviders(next)
+    await saveCustomProviders(next)
     setSelectedId(entry.id)
     setBaseUrl(entry.defaultUrl)
     setApiFormat(entry.apiFormat)
@@ -281,7 +282,8 @@ export default function ModelConfigPanel() {
       })
     : []
 
-  const configuredModelIds = new Set(models.map(m => m.model))
+  // Only dedup within the current provider — same model name across different providers is expected
+  const configuredModelIds = new Set(providerModels.map(m => m.model))
 
   const getModelCount = (p: ProviderEntry) => {
     if (p.isCustom) return models.filter(m => (m.backend_label || '') === p.label).length

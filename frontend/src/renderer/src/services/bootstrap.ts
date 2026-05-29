@@ -41,10 +41,21 @@ export async function bootstrapApp(): Promise<() => void> {
         streamBufferManager.handleStreamEnd(sessionId)
         break
       case 'chat.token_usage':
-        if (p) useStore.getState().setTokenUsage({
-          prompt: (p.prompt_tokens as number) || 0,
-          completion: (p.completion_tokens as number) || 0,
-        })
+        if (p) {
+          const usage = {
+            prompt: (p.prompt_tokens as number) || 0,
+            completion: (p.completion_tokens as number) || 0,
+            model: (p.model as string) || '',
+            contextWindow: (p.context_window as number) || 0,
+          }
+          useStore.getState().setSessionUsage(sessionId, usage)
+          // Also stash on the streaming assistant message so closing/reopening
+          // the session can rehydrate the ring from history.
+          const buf = streamBufferManager.snapshot(sessionId)
+          if (buf?.messageId) {
+            useStore.getState().setMessageUsage(sessionId, buf.messageId, usage)
+          }
+        }
         break
       case 'tool.started':
         streamBufferManager.handleToolStarted(sessionId, p as any)

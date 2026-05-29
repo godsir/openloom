@@ -82,6 +82,11 @@ pub trait MemoryStore: Send + Sync {
     async fn delete_model_config(&self, name: &str) -> Result<()>;
     async fn set_active_model(&self, name: &str) -> Result<()>;
     async fn get_active_model(&self) -> Result<Option<loom_types::ModelConfig>>;
+    // MCP server config CRUD — persisted across restarts so users don't have
+    // to re-enter command/URL/headers/etc. every time the backend restarts.
+    async fn save_mcp_server(&self, config: &lume_mcp::McpServerConfig, autostart: bool) -> Result<()>;
+    async fn list_mcp_servers(&self) -> Result<Vec<(lume_mcp::McpServerConfig, bool)>>;
+    async fn delete_mcp_server(&self, name: &str) -> Result<()>;
     // Knowledge graph read
     async fn query_kg_context(&self, entity_names: &[&str], limit: usize) -> Result<String>;
     // Conversation summary (P0 memory optimization)
@@ -355,6 +360,65 @@ impl Orchestrator {
 
     pub fn mcp_client(&self) -> &Arc<McpClient> {
         &self.mcp_client
+    }
+
+    // === MCP saved server CRUD ===
+
+    /// Persist (or upsert) an MCP server config. Does not touch live state.
+    pub async fn save_mcp_server(
+        &self,
+        config: &lume_mcp::McpServerConfig,
+        autostart: bool,
+    ) -> Result<()> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.save_mcp_server(config, autostart).await?;
+        }
+        Ok(())
+    }
+
+    /// List persisted MCP server configs + autostart flag.
+    pub async fn list_saved_mcp_servers(
+        &self,
+    ) -> Result<Vec<(lume_mcp::McpServerConfig, bool)>> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            return store.list_mcp_servers().await;
+        }
+        Ok(Vec::new())
+    }
+
+    /// Delete a persisted MCP server config (and disconnect if live).
+    pub async fn delete_saved_mcp_server(&self, name: &str) -> Result<()> {
+        // Best-effort disconnect — ignore "not connected" errors.
+        let _ = self.mcp_client.disconnect(name).await;
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.delete_mcp_server(name).await?;
+        }
+        Ok(())
+    }
+
+    /// Reconnect every saved server with `autostart=true`. Called once at
+    /// engine start. Failures are logged but do not abort startup.
+    pub async fn autostart_mcp_servers(&self) {
+        let configs = match self.list_saved_mcp_servers().await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to read saved MCP servers");
+                return;
+            }
+        };
+        let live: std::collections::HashSet<String> =
+            self.mcp_client.server_names().await.into_iter().collect();
+        for (cfg, autostart) in configs {
+            if !autostart || live.contains(&cfg.name) {
+                continue;
+            }
+            let name = cfg.name.clone();
+            if let Err(e) = self.connect_mcp_server(cfg).await {
+                tracing::warn!(server = %name, error = %e, "MCP autostart failed");
+            } else {
+                tracing::info!(server = %name, "MCP autostart connected");
+            }
+        }
     }
 
     pub fn lsp_client(&self) -> &Arc<LspClient> {
@@ -1030,6 +1094,23 @@ impl Orchestrator {
         let forward_agent_id = agent_id.clone();
         let forward_session_id = sid.clone();
 
+        // Resolve current active model name + context window for TokenUsage events.
+        // We read it once at turn start; if the user switches models mid-turn the
+        // value still reflects the model that produced this response.
+        let (active_model_name, active_context_window) = {
+            let name = self.active_model_name.read().await.clone().unwrap_or_default();
+            let ctx = self
+                .model_configs
+                .read()
+                .await
+                .get(&name)
+                .map(|c| c.context_size)
+                .unwrap_or(0);
+            (name, ctx)
+        };
+        let usage_model = active_model_name.clone();
+        let usage_ctx = active_context_window;
+
         let forward_handle = tokio::spawn(async move {
             let mut full_text = String::new();
             let mut started_tools: Vec<(String, String)> = Vec::new();
@@ -1070,9 +1151,10 @@ impl Orchestrator {
                         let _ = event_bus.publish(AgentEvent::TokenUsage {
                             agent_id: forward_agent_id.clone(),
                             session_id: forward_session_id.clone(),
-                            model: String::new(),
+                            model: usage_model.clone(),
                             prompt_tokens: prompt_tokens as usize,
                             completion_tokens: completion_tokens as usize,
+                            context_window: usage_ctx,
                         });
                     }
                 }

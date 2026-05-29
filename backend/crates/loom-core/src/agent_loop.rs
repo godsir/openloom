@@ -127,6 +127,13 @@ fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
         }
     }
 
+    // Always include all MCP tools (mcp__ prefix) so the model can discover them
+    for t in all {
+        if t.name.starts_with("mcp__") && !matched.iter().any(|m| m.name == t.name) {
+            matched.push(t.clone());
+        }
+    }
+
     matched
 }
 

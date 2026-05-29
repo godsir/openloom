@@ -116,11 +116,5 @@ cargo build -p lume-cli --release
 
 | 文档 | 说明 |
 |------|------|
-| [v2 重建计划](docs/v2-rebuild-plan.md) | Phase 0-4 分阶段执行计划 |
-| [Phase 0-3 缺口审计](docs/phase0-3-gap-audit.md) | 编译/逻辑缺口 (23 项, 19 修 4 deferred) |
-| [愿景差距分析](docs/v2-vision-gap-analysis.md) | 5 维度逐项差距 + 可复用老代码资产 + 优先级 |
-| [全仓库审计报告](docs/audit-report-2026-05-26.md) | 三套代码并存现状 |
-| [架构决策 / 已知限制](docs/architecture.md) | 技术决策记录 |
-| [记忆系统优化 P0/P1](docs/memory-optimization-plan.md) | 摘要引擎 + 稳定前缀 + KG 增强 |
-| [记忆系统优化 P2](docs/p2-memory-optimization-plan.md) | Evidence + 修剪 + 搜索 + 中文修复 |
+| [API 文档](docs/api.md) | JSON-RPC 2.0 接口（~55 方法 + 9 推送事件） |
 

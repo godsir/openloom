@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import AppShell from './components/app/AppShell'
 import SettingsModal from './components/shared/SettingsModal'
 import WelcomeScreen from './components/shared/WelcomeScreen'
@@ -13,6 +13,7 @@ export default function App() {
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showOnboarding, setShowOnboarding] = useState(false)
+  const retryCleanupRef = useRef<(() => void) | null>(null)
   const settingsOpen = useStore((s) => s.settingsOpen)
   const setSettingsOpen = useStore((s) => s.setSettingsOpen)
   const theme = useStore((s) => s.theme)
@@ -53,8 +54,12 @@ export default function App() {
   const handleRetry = () => {
     setError(null)
     setReady(false)
+    retryCleanupRef.current?.()
     bootstrapApp()
-      .then(() => setReady(true))
+      .then((cleanup) => {
+        retryCleanupRef.current = cleanup
+        setReady(true)
+      })
       .catch((e: any) => setError(e.message || '启动失败'))
   }
 

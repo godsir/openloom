@@ -1,63 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/*",
-    "crates/loom-utils/absolute-path",
-    "crates/loom-utils/ansi-escape",
-    "crates/loom-utils/approval-presets",
-    "crates/loom-utils/async-utils",
-    "crates/loom-utils/cache",
-    "crates/loom-utils/cli",
-    "crates/loom-utils/elapsed",
-    "crates/loom-utils/file-search",
-    "crates/loom-utils/file-system",
-    "crates/loom-utils/fuzzy-match",
-    "crates/loom-utils/git-utils",
-    "crates/loom-utils/home-dir",
-    "crates/loom-utils/image",
-    "crates/loom-utils/install-context",
-    "crates/loom-utils/path",
-    "crates/loom-utils/rustls-provider",
-    "crates/loom-utils/sleep-inhibitor",
-    "crates/loom-utils/string",
-    "crates/loom-utils/terminal-detection",
-    "crates/loom-utils/uds",
-    "crates/loom-protocol/execpolicy",
-    "crates/loom-protocol/network-proxy",
-    "crates/loom-protocol/protocol",
-    "crates/loom-protocol/sandboxing",
-    "crates/loom-protocol/shell-command",
-    "crates/loom-protocol/skills",
-    "crates/loom-protocol/app-server-protocol",
-    "crates/loom-utils/otel-stub",
-    "crates/loom-protocol/features",
-    "crates/loom-utils/shim-stubs",
-    "crates/loom-utils/tui-stubs",
-    "crates/loom-utils/plugins",
-    # "crates/loom-utils/sandbox-summary",
-    # "crates/loom-utils/oss",
-    "crates/loom-utils/arg0",
-    "crates/loom-utils/oss",
-    "crates/loom-utils/sandbox-summary",
-    "crates/loom-protocol/exec-server",
-    "crates/loom-protocol/core-plugins",
-    "crates/loom-protocol/core-skills",
-    "crates/loom-protocol/tools",
-    "crates/loom-protocol/hooks",
-    "crates/loom-protocol/external-agent-migration",
-    "crates/loom-protocol/external-agent-sessions",
-    "crates/loom-protocol/config",
-    "crates/loom-protocol/app-server-client",
-    "crates/loom-protocol/mcp",
-    "crates/loom-protocol/rmcp-client",
-    "crates/loom-protocol/chatgpt",
-    "crates/loom-protocol/tui",
-    "crates/loom-protocol/cli",
     "backend/crates/*",
-]
-exclude = [
-    "crates/loom-utils",
-    "crates/loom-protocol",
 ]
 
 [workspace.package]
@@ -214,62 +158,6 @@ rustls-native-certs = "0.8.3"
 rustls-pki-types = "1.14.0"
 uds_windows = "1.1.0"
 
-# Level 0 utility crate path entries (for workspace = true references)
-loom-absolute-path = { path = "crates/loom-utils/absolute-path" }
-loom-home-dir = { path = "crates/loom-utils/home-dir" }
-
-# Level 1-2 crate path entries (for workspace = true references)
-loom-approval-presets = { path = "crates/loom-utils/approval-presets" }
-loom-arg0 = { path = "crates/loom-utils/arg0" }
-loom-cache = { path = "crates/loom-utils/cache" }
-loom-execpolicy = { path = "crates/loom-protocol/execpolicy" }
-loom-exec = { path = "crates/loom-protocol/exec" }
-loom-network-proxy = { path = "crates/loom-protocol/network-proxy" }
-loom-protocol = { path = "crates/loom-protocol/protocol" }
-loom-sandbox-summary = { path = "crates/loom-utils/sandbox-summary" }
-loom-shell-command = { path = "crates/loom-protocol/shell-command" }
-loom-app-server-protocol = { path = "crates/loom-protocol/app-server-protocol" }
-loom-app-server-client = { path = "crates/loom-protocol/app-server-client" }
-loom-features = { path = "crates/loom-protocol/features" }
-loom-otel-stub = { path = "crates/loom-utils/otel-stub" }
-loom-shim-stubs = { path = "crates/loom-utils/shim-stubs" }
-loom-tui-stubs = { path = "crates/loom-utils/tui-stubs" }
-loom-sandboxing = { path = "crates/loom-protocol/sandboxing" }
-loom-exec-server = { path = "crates/loom-protocol/exec-server" }
-loom-skills = { path = "crates/loom-protocol/skills" }
-loom-core-plugins = { path = "crates/loom-protocol/core-plugins" }
-loom-core-skills = { path = "crates/loom-protocol/core-skills" }
-loom-tools = { path = "crates/loom-protocol/tools" }
-loom-hooks = { path = "crates/loom-protocol/hooks" }
-loom-external-agent-sessions = { path = "crates/loom-protocol/external-agent-sessions" }
-loom-external-agent-migration = { path = "crates/loom-protocol/external-agent-migration" }
-loom-file-system = { path = "crates/loom-utils/file-system" }
-loom-file-search = { path = "crates/loom-utils/file-search" }
-loom-git-utils = { path = "crates/loom-utils/git-utils" }
-loom-sleep-inhibitor = { path = "crates/loom-utils/sleep-inhibitor" }
-loom-oss = { path = "crates/loom-utils/oss" }
-loom-plugins = { path = "crates/loom-utils/plugins" }
-loom-cli-utils = { path = "crates/loom-utils/cli" }
-loom-image = { path = "crates/loom-utils/image" }
-
-# Level 0 deps that need explicit path entries (others use crate name convention)
-loom-ansi-escape = { path = "crates/loom-utils/ansi-escape" }
-loom-async-utils = { path = "crates/loom-utils/async-utils" }
-loom-elapsed = { path = "crates/loom-utils/elapsed" }
-loom-fuzzy-match = { path = "crates/loom-utils/fuzzy-match" }
-loom-rustls-provider = { path = "crates/loom-utils/rustls-provider" }
-loom-string = { path = "crates/loom-utils/string" }
-loom-terminal-detection = { path = "crates/loom-utils/terminal-detection" }
-loom-uds = { path = "crates/loom-utils/uds" }
-loom-path-utils = { path = "crates/loom-utils/path" }
-loom-config = { path = "crates/loom-protocol/config" }
-loom-mcp = { path = "crates/loom-protocol/mcp" }
-loom-rmcp-client = { path = "crates/loom-protocol/rmcp-client" }
-loom-chatgpt = { path = "crates/loom-protocol/chatgpt" }
-loom-tui = { path = "crates/loom-protocol/tui" }
-loom-cli = { path = "crates/loom-protocol/cli" }
-loom-install-context = { path = "crates/loom-utils/install-context" }
-
 # Commonly used deps (already used by openLoom, centralized here)
 anyhow = "1"
 async-trait = "0.1.89"
@@ -302,12 +190,3 @@ tracing-appender = "0.2"
 vt100 = "0.16"
 assert_matches = "1.5"
 insta = "1.42"
-
-[patch.crates-io]
-crossterm = { git = "https://github.com/nornagon/crossterm", rev = "87db8bfa6dc99427fd3b071681b07fc31c6ce995" }
-ratatui = { git = "https://github.com/nornagon/ratatui", rev = "9b2ad1298408c45918ee9f8241a6f95498cdbed2" }
-tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "132f5b39c862e3a970f731d709608b3e6276d5f6" }
-tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "9200079d3b54a1ff51072e24d81fd354f085156f" }
-
-[patch."ssh://git@github.com/openai-oss-forks/tungstenite-rs.git"]
-tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "9200079d3b54a1ff51072e24d81fd354f085156f" }
