@@ -6,7 +6,9 @@
 /// Spawns a background thread to persist via setx / ~/.profile.
 /// Returns the env var name that was set.
 pub fn save_credential(env_name: &str, api_key: &str) -> String {
-    unsafe { std::env::set_var(env_name, api_key); }
+    unsafe {
+        std::env::set_var(env_name, api_key);
+    }
 
     let name = env_name.to_string();
     let key = api_key.to_string();
@@ -19,7 +21,9 @@ pub fn save_credential(env_name: &str, api_key: &str) -> String {
                 .args(["/c", "setx", &name, &key])
                 .output()
             {
-                Ok(o) if o.status.success() => tracing::info!(%name, "credential persisted via setx"),
+                Ok(o) if o.status.success() => {
+                    tracing::info!(%name, "credential persisted via setx")
+                }
                 Ok(o) => {
                     tracing::warn!(%name, stdout=%String::from_utf8_lossy(&o.stdout).trim(), stderr=%String::from_utf8_lossy(&o.stderr).trim(), "setx failed");
                 }
@@ -37,9 +41,14 @@ pub fn save_credential(env_name: &str, api_key: &str) -> String {
                 let line = format!("\n# openLoom credential\nexport {}=\"{}\"\n", name, key);
                 let mut c = std::fs::read_to_string(&profile).unwrap_or_default();
                 if let Some(s) = c.find(&format!("export {}=", name)) {
-                    if let Some(e) = c[s..].find('\n') { c.replace_range(s..s+e+1, &line); }
-                    else { c.replace_range(s.., &line); }
-                } else { c.push_str(&line); }
+                    if let Some(e) = c[s..].find('\n') {
+                        c.replace_range(s..s + e + 1, &line);
+                    } else {
+                        c.replace_range(s.., &line);
+                    }
+                } else {
+                    c.push_str(&line);
+                }
                 std::fs::write(&profile, &c)?;
                 tracing::info!(%name, "credential persisted to ~/.profile");
                 Ok(())

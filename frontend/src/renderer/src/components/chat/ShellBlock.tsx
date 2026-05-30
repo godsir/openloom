@@ -1,0 +1,95 @@
+import { useState, useRef, useEffect } from 'react'
+import type { ContentBlock } from '../../stores/chat'
+import { IconChevronRight, IconChevronDown, IconTerminal, IconEdit, IconSearch } from '../../utils/icons'
+import styles from './ShellBlock.module.css'
+
+export default function ShellBlock({ block }: { block: ContentBlock }) {
+  const [expanded, setExpanded] = useState(true)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const sealed = block.sealed as boolean
+  const toolName = (block.toolName as string) || 'unknown'
+  const args = block.args as Record<string, unknown> | undefined
+  const result = block.result as string | undefined
+  const status = block.status as string
+
+  const { label, detail } = formatTool(toolName, args)
+
+  useEffect(() => {
+    if (expanded && bodyRef.current) {
+      bodyRef.current.scrollTop = bodyRef.current.scrollHeight
+    }
+  }, [result, expanded])
+
+  return (
+    <div className={styles.block}>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className={styles.toggle}
+      >
+        {expanded ? <IconChevronDown size={10} /> : <IconChevronRight size={10} />}
+        <span className={styles.label}>{label}</span>
+        <span className={styles.detail}>{truncate(detail, 120)}</span>
+        {!sealed && <span className={styles.dot} />}
+      </button>
+      {expanded && (
+        <div ref={bodyRef} className={styles.body}>
+          <pre className={styles.output}>
+            {status === 'running' && !result && (
+              <span className={styles.cursor} />
+            )}
+            {result || (sealed ? '(no output)' : '')}
+          </pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function formatTool(name: string, args?: Record<string, unknown>): { label: string; detail: string } {
+  switch (name) {
+    case 'shell': {
+      const cmd = (args?.command as string) || ''
+      return { label: '$', detail: cmd }
+    }
+    case 'file_write': {
+      const path = (args?.path as string) || (args?.file_path as string) || ''
+      return { label: 'Write', detail: path }
+    }
+    case 'file_read': {
+      const path = (args?.path as string) || (args?.file_path as string) || ''
+      return { label: 'Read', detail: path }
+    }
+    case 'file_edit': {
+      const path = (args?.path as string) || (args?.file_path as string) || ''
+      return { label: 'Edit', detail: path }
+    }
+    case 'file_delete': {
+      const path = (args?.path as string) || (args?.file_path as string) || ''
+      return { label: 'Delete', detail: path }
+    }
+    case 'content_search': {
+      const pattern = (args?.pattern as string) || ''
+      const dir = (args?.directory as string) || (args?.path as string) || ''
+      return { label: 'Search', detail: dir ? `${pattern} in ${dir}` : pattern }
+    }
+    case 'file_list': {
+      const dir = (args?.path as string) || (args?.directory as string) || '.'
+      return { label: 'List', detail: dir }
+    }
+    case 'web_search': {
+      const query = (args?.query as string) || ''
+      return { label: 'Web', detail: query }
+    }
+    case 'web_fetch': {
+      const url = (args?.url as string) || ''
+      return { label: 'Fetch', detail: url }
+    }
+    default:
+      return { label: name, detail: JSON.stringify(args ?? {}).slice(0, 80) }
+  }
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s
+  return s.slice(0, max) + '...'
+}

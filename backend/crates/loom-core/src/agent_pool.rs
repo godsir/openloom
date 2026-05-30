@@ -153,7 +153,10 @@ impl AgentPool {
     }
 
     /// Get the cancel token for an agent so the agent loop can check for interruption.
-    pub async fn cancel_token(&self, agent_id: &AgentId) -> Result<tokio_util::sync::CancellationToken> {
+    pub async fn cancel_token(
+        &self,
+        agent_id: &AgentId,
+    ) -> Result<tokio_util::sync::CancellationToken> {
         let agents = self.agents.read().await;
         let agent = agents
             .get(agent_id)

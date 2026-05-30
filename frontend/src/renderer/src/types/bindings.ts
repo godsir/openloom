@@ -48,6 +48,7 @@ export interface KgNode {
   entity_type: string
   description: string
   confidence: number
+  scope: string
 }
 
 export interface KgEdge {
@@ -82,4 +83,27 @@ export interface ModelListItem {
   output_price?: number
   cache_read_price?: number
   cache_write_price?: number
+}
+
+export interface Cognition {
+  id: number
+  subject: string
+  trait_name: string
+  value: string
+  confidence: number
+  evidence_count: number
+  first_seen: number
+  last_updated: number
+  version: number
+  scope: string
+}
+
+export interface CognitionHistory {
+  id: number
+  version: number
+  trait_name: string
+  value: string
+  confidence: number
+  evidence_count: number
+  snapshot_at: number
 }

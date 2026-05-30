@@ -18,9 +18,30 @@ interface BufferState {
     args: Record<string, unknown>
     result?: string
   }>
+  skillCalls: Array<{
+    id: string
+    name: string
+    status: 'running' | 'done'
+    args: Record<string, unknown>
+    result?: string
+  }>
+  shellCalls: Array<{
+    id: string
+    name: string
+    status: 'running' | 'done'
+    args: Record<string, unknown>
+    result?: string
+  }>
+  userSkills: string[]
   inThinking: boolean
   inVision: boolean
   visionDone: boolean
+  visionBatches: Array<{
+    batchIndex: number
+    totalBatches: number
+    status: 'running' | 'done' | 'error'
+    result?: string
+  }>
   flushTimer: ReturnType<typeof setTimeout> | null
   _lastTextLen: number
   _lastThinkLen: number
@@ -32,7 +53,7 @@ class StreamBufferManager {
 
   /** Register an existing assistant placeholder message for streaming updates.
    *  Resets any stale state from a previous stream on the same session. */
-  startStream(sessionId: string, messageId: string): void {
+  startStream(sessionId: string, messageId: string, userSkills?: string[]): void {
     // If there's a stale buffer for this session, clean up its old placeholder
     const old = this.buffers.get(sessionId)
     if (old?.messageId && old.messageId !== messageId) {
@@ -44,9 +65,13 @@ class StreamBufferManager {
     buf.thinkingAcc = ''
     buf.imageAcc = []
     buf.toolCalls = []
+    buf.skillCalls = []
+    buf.shellCalls = []
+    buf.userSkills = userSkills ?? []
     buf.inThinking = false
     buf.inVision = false
     buf.visionDone = false
+    buf.visionBatches = []
     if (buf.flushTimer) { clearTimeout(buf.flushTimer); buf.flushTimer = null }
   }
 
@@ -72,9 +97,13 @@ class StreamBufferManager {
         thinkingAcc: '',
         moodAcc: { yuan: '', text: '' },
         toolCalls: [],
+        skillCalls: [],
+        shellCalls: [],
+        userSkills: [],
         inThinking: false,
         inVision: false,
         visionDone: false,
+        visionBatches: [],
         flushTimer: null,
         _lastTextLen: 0,
         _lastThinkLen: 0,
@@ -98,6 +127,29 @@ class StreamBufferManager {
     } else if (delta.startsWith('\x02VISION_START\x02')) {
       buf.inVision = true
       buf.visionDone = false
+      buf.visionBatches = []
+    } else if (delta.startsWith('\x02VISION_BATCH\x02')) {
+      // Format: \x02VISION_BATCH\x02batch_index;total_batches;status;result_encoded
+      // result_encoded has newlines replaced with \x03
+      const payload = delta.slice(15) // prefix length
+      const semi1 = payload.indexOf(';')
+      const semi2 = payload.indexOf(';', semi1 + 1)
+      const semi3 = payload.indexOf(';', semi2 + 1)
+      if (semi1 > 0 && semi2 > semi1 && semi3 > semi2) {
+        const batchIndex = parseInt(payload.slice(0, semi1), 10)
+        const totalBatches = parseInt(payload.slice(semi1 + 1, semi2), 10)
+        const status = payload.slice(semi2 + 1, semi3) as 'running' | 'done' | 'error'
+        const resultEncoded = payload.slice(semi3 + 1)
+        const result = resultEncoded ? resultEncoded.replace(/\x03/g, '\n') : undefined
+        // Update or add batch entry
+        const existing = buf.visionBatches.find(b => b.batchIndex === batchIndex)
+        if (existing) {
+          existing.status = status
+          existing.result = result
+        } else {
+          buf.visionBatches.push({ batchIndex, totalBatches, status, result })
+        }
+      }
     } else if (delta.startsWith('\x02VISION_DONE\x02')) {
       buf.inVision = false
       buf.visionDone = true
@@ -146,12 +198,27 @@ class StreamBufferManager {
     if (!useStore.getState().streamingSessionIds.has(sessionId)) return
     const buf = this.ensureBuffer(sessionId)
     if (!buf.messageId) return
-    buf.toolCalls.push({
-      ...tool,
-      status: 'running',
-      elapsed: 0,
-      args: tool.args ?? {},
-    })
+    console.log('[stream-buffer] Tool started:', tool.name, tool.id)
+    if (tool.name === 'use_skill') {
+      const skillName = (tool.args?.skill_name as string) || 'unknown'
+      buf.skillCalls.push({
+        id: tool.id,
+        name: skillName,
+        status: 'running',
+        args: tool.args ?? {},
+      })
+    } else if (tool.name === 'request_tools') {
+      // meta-tool — invisible, no block
+    } else {
+      // All other tools (shell, file_write, file_read, content_search, etc.)
+      // render in terminal-style ShellBlock for full visibility.
+      buf.shellCalls.push({
+        id: tool.id,
+        name: tool.name,
+        status: 'running',
+        args: tool.args ?? {},
+      })
+    }
     this.scheduleFlush(buf, sessionId)
   }
 
@@ -159,6 +226,7 @@ class StreamBufferManager {
     sessionId: string,
     toolId: string,
     result?: string,
+    toolName?: string,
   ): void {
     if (!useStore.getState().streamingSessionIds.has(sessionId)) return
     const buf = this.ensureBuffer(sessionId)
@@ -167,6 +235,38 @@ class StreamBufferManager {
     if (tool) {
       tool.status = 'done'
       tool.result = result
+    }
+    const shell = buf.shellCalls.find((t) => t.id === toolId)
+    if (shell) {
+      shell.status = 'done'
+      shell.result = result
+    }
+    const skill = buf.skillCalls.find((t) => t.id === toolId)
+    if (skill) {
+      skill.status = 'done'
+      skill.result = result
+      // Fix unknown name: ToolStarted args are often incomplete (first chunk only),
+      // so extract the real skill name from the use_skill result content.
+      if (skill.name === 'unknown' && result) {
+        const m = result.match(/^## Skill: ([^\n]+)/)
+        if (m) skill.name = m[1].trim()
+      }
+    }
+    // Fallback: if neither tool nor skill was tracked (started event missed),
+    // create a completed entry based on the tool name from the completed event
+    if (!tool && !skill && toolName === 'use_skill') {
+      let skillName = 'unknown'
+      if (result) {
+        const m = result.match(/^## Skill: ([^\n]+)/)
+        if (m) skillName = m[1].trim()
+      }
+      buf.skillCalls.push({
+        id: toolId,
+        name: skillName,
+        status: 'done',
+        args: {},
+        result,
+      })
     }
     this.scheduleFlush(buf, sessionId)
   }
@@ -182,6 +282,30 @@ class StreamBufferManager {
     }
     useStore.getState().removeStreamingSession(sessionId)
     this.buffers.delete(sessionId)
+
+    // Auto-title: trigger if session has no title and feature is enabled
+    this.maybeAutoTitle(sessionId)
+  }
+
+  private async maybeAutoTitle(sessionId: string): Promise<void> {
+    try {
+      const enabled = await window.hana.getPreference<boolean>('autoTitle', false)
+      if (!enabled) return
+      // Only fire for untitled sessions
+      const sessions = useStore.getState().sessions
+      const session = sessions.find(s => s.path === sessionId)
+      if (session?.title) return
+      // Must have at least some content
+      if (!session?.firstMessage && session?.messageCount === 0) return
+      // Call backend
+      const { loomRpc: rpc } = await import('../services/jsonrpc')
+      const result = await rpc<{ title: string }>('session.auto_title', { session_id: sessionId })
+      if (result?.title) {
+        useStore.getState().renameSession(sessionId, result.title)
+      }
+    } catch {
+      // Best-effort, silently ignore failures
+    }
   }
 
   private createPlaceholderIfNeeded(
@@ -225,19 +349,37 @@ class StreamBufferManager {
 
     const blocks: Array<{ type: string; [key: string]: unknown }> = []
 
-    // Display order: vision → images → thinking → mood → tool_group → text
-    if (buf.inVision) {
+    console.log('[stream-buffer] Flushing buffer:', {
+      skillCalls: buf.skillCalls.length,
+      toolCalls: buf.toolCalls.length,
+      thinking: buf.thinkingAcc.length > 0,
+      text: buf.textAcc.length > 0,
+    })
+
+    // Display order: vision → thinking → shells → skills → images → text
+    // Thinking above tools so the user sees reasoning first, then what was executed.
+
+    if (buf.inVision || buf.visionBatches.length > 0) {
+      const doneCount = buf.visionBatches.filter(b => b.status === 'done').length
+      const totalCount = buf.visionBatches.length > 0
+        ? buf.visionBatches[0].totalBatches
+        : 0
+      const allDone = buf.visionDone && doneCount === totalCount && totalCount > 0
+
       blocks.push({
         type: 'vision_processing',
-        status: 'running',
-        content: '辅助视觉正在处理图片',
-      })
-    } else if (buf.visionDone && !buf.textAcc && !buf.thinkingAcc) {
-      // Vision finished; main model not yet emitting — keep user informed.
-      blocks.push({
-        type: 'vision_processing',
-        status: 'waiting',
-        content: '辅助视觉已完成，主模型生成中',
+        status: allDone ? 'done' : buf.inVision ? 'running' : 'waiting',
+        content: totalCount > 1
+          ? `正在分析图片 ${doneCount}/${totalCount}`
+          : buf.inVision
+            ? '辅助视觉正在处理图片'
+            : '辅助视觉已完成，主模型生成中',
+        batches: buf.visionBatches.map(b => ({
+          batchIndex: b.batchIndex,
+          totalBatches: b.totalBatches,
+          status: b.status,
+          result: b.result,
+        })),
       })
     }
 
@@ -260,6 +402,34 @@ class StreamBufferManager {
 
     if (buf.moodAcc.text) {
       blocks.push({ type: 'mood', ...buf.moodAcc })
+    }
+
+    // User-selected skills
+    for (const name of buf.userSkills) {
+      blocks.push({ type: 'skill', name, status: 'done', sealed: true })
+    }
+
+    // Terminal-style blocks for shell/file tools — rendered below thinking
+    for (const sc of buf.shellCalls) {
+      blocks.push({
+        type: 'shell',
+        toolName: sc.name,
+        status: sc.status,
+        args: sc.args || {},
+        result: sc.result,
+        sealed: sc.status === 'done',
+      })
+    }
+
+    for (const sc of buf.skillCalls) {
+      console.log('[stream-buffer] Creating skill block:', sc.name, sc.status)
+      blocks.push({
+        type: 'skill',
+        name: sc.name,
+        status: sc.status,
+        result: sc.result,
+        sealed: sc.status === 'done',
+      })
     }
 
     if (buf.toolCalls.length > 0) {

@@ -48,8 +48,8 @@ export default function ContextRing() {
   const offset = circ * (1 - pct / 100)
   const color = pct > 80 ? 'var(--red)' : pct > 50 ? 'var(--amber)' : 'var(--accent)'
 
-  const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
-  const fmtScale = (n: number) => n >= 1000 ? `${Math.round(n / 1000)}k` : String(n)
+  const fmt = (n: number) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+  const fmtScale = (n: number) => n >= 1000000 ? `${Math.round(n / 1000000)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n)
 
   return (
     <div className={styles.wrapper}>
@@ -60,7 +60,7 @@ export default function ContextRing() {
           className={styles.ringProgress} />
       </svg>
       <span className={styles.centerLabel}>
-        {total >= 1000 ? `${(total / 1000).toFixed(0)}k` : total}
+        {total >= 1000000 ? `${(total / 1000000).toFixed(1)}M` : total >= 1000 ? `${(total / 1000).toFixed(0)}k` : total}
       </span>
 
       <div className={styles.tooltip}>

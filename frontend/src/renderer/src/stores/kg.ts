@@ -1,6 +1,6 @@
 import { StateCreator } from 'zustand'
 import { loomRpc } from '../services/jsonrpc'
-import type { KgNode, KgEdge, KgGraph, KgStats } from '../types/bindings'
+import type { KgNode, KgEdge, KgGraph, KgStats, Cognition, CognitionHistory } from '../types/bindings'
 
 export interface KgSlice {
   kgSearchResults: KgNode[]
@@ -8,14 +8,22 @@ export interface KgSlice {
   kgSelectedNode: KgNode | null
   kgStats: KgStats | null
   kgNodeList: KgNode[]
+  cognitionList: Cognition[]
+  cognitionSubjects: string[]
+  cognitionSnapshots: Record<number, CognitionHistory[]>
   kgSearch: (query: string) => Promise<void>
   kgExpandNode: (nodeName: string) => Promise<void>
   kgWalkFrom: (startName: string, maxDepth?: number) => Promise<void>
+  kgLoadGraph: (seeds: string[], maxDepth?: number) => Promise<void>
   kgLoadStats: () => Promise<void>
   kgClearGraph: () => void
-  kgListNodes: () => Promise<void>
+  kgListNodes: (scope?: string) => Promise<void>
   kgNodeDelete: (name: string) => Promise<void>
   kgEdgeDelete: (source: string, target: string, relation: string) => Promise<void>
+  cognitionListBySubject: (subject: string, scope?: string) => Promise<void>
+  cognitionListSubjects: () => Promise<void>
+  cognitionLoadSnapshots: (cognitionId: number) => Promise<void>
+  kgPrune: (olderThanDays: number) => Promise<void>
 }
 
 export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
@@ -24,6 +32,9 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
   kgSelectedNode: null,
   kgStats: null,
   kgNodeList: [],
+  cognitionList: [],
+  cognitionSubjects: [],
+  cognitionSnapshots: {},
 
   kgSearch: async (query) => {
     const result = await loomRpc<{ rows: KgNode[] }>('kg.search', { query, limit: 20 })
@@ -78,15 +89,60 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
     }
   },
 
+  kgLoadGraph: async (seeds, maxDepth = 2) => {
+    // Walk from each seed sequentially. Each walk discovers one "galaxy" —
+    // a connected component with all its internal edges. Skip seeds already
+    // covered by a previous walk's galaxy.
+    const nodeMap = new Map<string, KgNode>()
+    const edgeMap = new Map<string, KgEdge>()
+
+    const addResult = (r: KgGraph) => {
+      for (const n of r.nodes || []) {
+        if (!nodeMap.has(n.name)) nodeMap.set(n.name, n)
+      }
+      for (const e of r.edges || []) {
+        const key = `${e.source}||${e.target}||${e.relation_type}`
+        if (!edgeMap.has(key)) edgeMap.set(key, e)
+      }
+    }
+
+    for (const name of seeds) {
+      if (nodeMap.has(name)) continue
+      try {
+        const result = await loomRpc<KgGraph>('kg.walk', { start_name: name, max_depth: maxDepth, limit: 50 })
+        addResult(result)
+      } catch {
+        // skip failed walks
+      }
+    }
+
+    // Add remaining nodes from kgNodeList as single-star galaxies.
+    // These are entities with no relationships yet — they show up as
+    // isolated stars in the cosmic view, distinct from the connected galaxies.
+    if (nodeMap.size === 0 || get().kgNodeList.length > nodeMap.size) {
+      for (const n of get().kgNodeList) {
+        if (!nodeMap.has(n.name)) nodeMap.set(n.name, n)
+      }
+    }
+
+    set({
+      kgGraph: {
+        nodes: [...nodeMap.values()],
+        edges: [...edgeMap.values()],
+      },
+      kgSelectedNode: null,
+    })
+  },
+
   kgLoadStats: async () => {
     const result = await loomRpc<KgStats>('kg.stats')
     set({ kgStats: result })
   },
 
-  kgClearGraph: () => set({ kgGraph: null, kgSearchResults: [], kgSelectedNode: null }),
+  kgClearGraph: () => set({ kgGraph: null, kgSelectedNode: null }),
 
-  kgListNodes: async () => {
-    const result = await loomRpc<{ nodes: KgNode[] }>('kg.list', { limit: 50 })
+  kgListNodes: async (scope) => {
+    const result = await loomRpc<{ nodes: KgNode[] }>('kg.list', { limit: 50, scope })
     set({ kgNodeList: result.nodes ?? [] })
   },
 
@@ -99,6 +155,7 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
         edges: s.kgGraph.edges.filter(e => e.source !== name && e.target !== name),
       } : null,
     }))
+    await get().kgLoadStats()
   },
 
   kgEdgeDelete: async (source, target, relation) => {
@@ -111,5 +168,33 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
         ),
       } : null,
     }))
+    await get().kgLoadStats()
+  },
+
+  cognitionListBySubject: async (subject, scope) => {
+    const result = await loomRpc<{ rows: Cognition[] }>('cognitions.list', {
+      subject, scope, limit: 50, offset: 0,
+    })
+    set({ cognitionList: result.rows ?? [] })
+  },
+
+  cognitionListSubjects: async () => {
+    const result = await loomRpc<{ subjects: string[] }>('cognitions.subjects', {})
+    set({ cognitionSubjects: result.subjects ?? [] })
+  },
+
+  cognitionLoadSnapshots: async (cognitionId) => {
+    const result = await loomRpc<{ snapshots: CognitionHistory[] }>('cognitions.snapshots', {
+      cognition_id: cognitionId,
+    })
+    set(s => ({
+      cognitionSnapshots: { ...s.cognitionSnapshots, [cognitionId]: result.snapshots ?? [] },
+    }))
+  },
+
+  kgPrune: async (olderThanDays) => {
+    await loomRpc('kg.prune', { older_than_days: olderThanDays })
+    await get().kgLoadStats()
+    await get().kgListNodes()
   },
 })

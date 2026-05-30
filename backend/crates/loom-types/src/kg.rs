@@ -11,6 +11,7 @@ pub struct KgNode {
     pub entity_type: String,
     pub description: String,
     pub confidence: f64,
+    pub scope: String,
 }
 
 /// A directed relationship between two KG entities.
@@ -35,4 +36,29 @@ pub struct KgGraph {
 pub struct KgStats {
     pub node_count: usize,
     pub edge_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Cognition {
+    pub id: i64,
+    pub subject: String,
+    pub trait_name: String,
+    pub value: String,
+    pub confidence: f64,
+    pub evidence_count: usize,
+    pub first_seen: i64,
+    pub last_updated: i64,
+    pub version: i64,
+    pub scope: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CognitionHistory {
+    pub id: i64,
+    pub version: i64,
+    pub trait_name: String,
+    pub value: String,
+    pub confidence: f64,
+    pub evidence_count: usize,
+    pub snapshot_at: i64,
 }

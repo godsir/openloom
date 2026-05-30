@@ -648,46 +648,288 @@ pub async fn ensure_lm_studio_model(
     Ok(())
 }
 
-fn parse_inline_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
+pub fn parse_inline_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
     let mut tool_calls: Vec<ToolCall> = Vec::new();
-    let open = "<｜｜DSML｜｜tool_calls>";
-    let close = "";
     let mut cleaned = text.to_string();
+
+    // Strategy 1: Parse bare JSON tool call blocks from the text.
+    // Local models sometimes emit tool calls as raw JSON text instead of
+    // structured function calls, e.g.:
+    //   {"tool": "file_write", "arguments": {"path": "/foo"}}
+    //   {"name": "file_write", "arguments": {"path": "/foo"}}
+    //   {"tool": "request_tools", "arguments": {"tools": ["file_system"]}}
     let mut search_from = 0;
-    while let Some(start) = cleaned[search_from..].find(open) {
-        let abs_start = search_from + start;
-        let content_start = abs_start + open.len();
-        if let Some(end) = cleaned[content_start..].find(close) {
-            let content = &cleaned[content_start..content_start + end];
-            let tc_json: serde_json::Value = serde_json::from_str(content).unwrap_or_default();
-            let items = match tc_json {
-                serde_json::Value::Array(arr) => arr,
-                obj @ serde_json::Value::Object(_) => vec![obj],
-                _ => vec![],
-            };
-            for item in items {
-                let name = item["name"]
-                    .as_str()
-                    .or_else(|| item["function"]["name"].as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                let arguments = item
-                    .get("arguments")
-                    .or_else(|| item["function"].get("arguments"))
-                    .cloned()
-                    .unwrap_or_default();
-                tool_calls.push(ToolCall {
-                    id: format!("dsml-{}", tool_calls.len()),
-                    name,
-                    arguments,
-                });
+    while let Some(brace_start) = cleaned[search_from..].find('{') {
+        let abs_start = search_from + brace_start;
+        // Find matching closing brace by counting depth
+        let mut depth = 0i32;
+        let mut in_string = false;
+        let mut escape_next = false;
+        let mut end_pos = None;
+        for (i, ch) in cleaned[abs_start..].char_indices() {
+            if escape_next {
+                escape_next = false;
+                continue;
             }
-            let abs_end = content_start + end + close.len();
-            cleaned.replace_range(abs_start..abs_end, "");
-        } else {
-            search_from = content_start;
+            match ch {
+                '\\' if in_string => { escape_next = true; }
+                '"' => { in_string = !in_string; }
+                '{' if !in_string => { depth += 1; }
+                '}' if !in_string => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end_pos = Some(abs_start + i + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
         }
+        let abs_end = match end_pos {
+            Some(e) => e,
+            None => { search_from = abs_start + 1; continue; }
+        };
+        let json_str = &cleaned[abs_start..abs_end];
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+            // Accept objects that look like tool calls
+            let name = val["tool"].as_str()
+                .or_else(|| val["name"].as_str())
+                .or_else(|| val["function"]["name"].as_str());
+            if let Some(name) = name {
+                if !name.is_empty() && name.len() < 64
+                    && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                {
+                    let arguments = val.get("arguments")
+                        .or_else(|| val["function"].get("arguments"))
+                        .cloned()
+                        .unwrap_or(serde_json::json!({}));
+                    tool_calls.push(ToolCall {
+                        id: format!("inline-{}", tool_calls.len()),
+                        name: name.to_string(),
+                        arguments,
+                    });
+                    cleaned.replace_range(abs_start..abs_end, "");
+                    continue;
+                }
+            }
+        }
+        search_from = abs_end;
     }
+
+    // Strategy 2: Parse DeepSeek XML tool call format
+    let (cleaned, xml_calls) = parse_xml_tool_calls(&cleaned);
+    tool_calls.extend(xml_calls);
+
     let cleaned = cleaned.trim().to_string();
     (cleaned, tool_calls)
+}
+
+/// Parse DeepSeek XML tool call formats that appear when native tool calling is
+/// unavailable.
+///
+/// Format A (special Unicode markers):
+/// ```text
+/// <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>shell
+/// ```json
+/// {"command": "ls"}
+/// ```<｜tool▁call▁end｜><｜tool▁calls▁end｜>
+/// ```
+///
+/// Format B (standard XML):
+/// ```xml
+/// <tool_calls>
+/// <invoke name="shell">
+/// <parameter name="command">echo hi</parameter>
+/// </invoke>
+/// </tool_calls>
+/// ```
+fn parse_xml_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
+    let mut tool_calls: Vec<ToolCall> = Vec::new();
+    let mut cleaned = text.to_string();
+
+    // ── Format A: <｜tool▁calls▁begin｜>…<｜tool▁calls▁end｜> ──
+    if let Some(start) = cleaned.find("<｜tool▁calls▁begin｜>") {
+        if let Some(end) = cleaned.find("<｜tool▁calls▁end｜>") {
+            let block = &cleaned[start..end + "<｜tool▁calls▁end｜>".len()];
+            let mut search_from = 0;
+            while let Some(call_start) = block[search_from..].find("<｜tool▁call▁begin｜>function<｜tool▁sep｜>") {
+                let abs_start = search_from + call_start;
+                if let Some(call_end) = block[abs_start..].find("<｜tool▁call▁end｜>") {
+                    let call_block = &block[abs_start..abs_start + call_end + "<｜tool▁call▁end｜>".len()];
+                    if let Some(name_start) = call_block.find("<｜tool▁sep｜>") {
+                        let after_sep = &call_block[name_start + "<｜tool▁sep｜>".len()..];
+                        let name_end = after_sep.find('\n').unwrap_or(after_sep.len());
+                        let name = after_sep[..name_end].trim().to_string();
+                        let args = if let Some(json_start) = call_block.find("```json") {
+                            let after_json = &call_block[json_start + 7..];
+                            if let Some(json_end) = after_json.find("```") {
+                                let json_str = after_json[..json_end].trim();
+                                serde_json::from_str(json_str).unwrap_or(serde_json::json!({}))
+                            } else {
+                                serde_json::json!({})
+                            }
+                        } else {
+                            serde_json::json!({})
+                        };
+                        if !name.is_empty() {
+                            tool_calls.push(ToolCall {
+                                id: format!("xml-a-{}", tool_calls.len()),
+                                name,
+                                arguments: args,
+                            });
+                        }
+                    }
+                    search_from = abs_start + call_end + "<｜tool▁call▁end｜>".len();
+                } else {
+                    break;
+                }
+            }
+            cleaned = format!("{}{}", &cleaned[..start], &cleaned[end + "<｜tool▁calls▁end｜>".len()..]);
+        }
+    }
+
+    // ── Format B: <tool_calls><invoke name="X"><parameter name="Y">…</parameter></invoke></tool_calls> ──
+    // Match any open-tag containing "tool_calls" (handles Unicode prefix variants).
+    let re_tc_start = match regex_find(&cleaned, "<[^>]*tool_calls[^>]*>") {
+        Some((s, _)) => s,
+        None => return (cleaned, tool_calls),
+    };
+    let tc_start = re_tc_start;
+    // Find the matching close tag: any tag containing "tool_calls" preceded by "/"
+    // This handles prefix mismatches like <hz_tool_calls> … </tool_calls>
+    let tc_end = {
+        let after = &cleaned[tc_start + 1..];
+        // Find the next closing tag that contains "tool_calls"
+        let mut search = 0;
+        let mut found = None;
+        while let Some(slash) = after[search..].find("</") {
+            let abs_slash = search + slash;
+            if let Some(gt) = after[abs_slash..].find('>') {
+                let tag = &after[abs_slash..abs_slash + gt + 1];
+                if tag.contains("tool_calls") {
+                    found = Some(tc_start + 1 + abs_slash + gt + 1);
+                    break;
+                }
+                search = abs_slash + 1;
+            } else {
+                break;
+            }
+        }
+        match found {
+            Some(e) => e,
+            None => return (cleaned, tool_calls),
+        }
+    };
+    let block = &cleaned[tc_start..tc_end].to_string();
+
+    // Find all <invoke ...> … </invoke> blocks
+    let mut invoke_search = 0;
+    while let Some(inv_open) = block[invoke_search..].find("<invoke") {
+        let inv_start = invoke_search + inv_open;
+        // Find the end of the opening tag
+        let Some(tag_body_end) = block[inv_start..].find('>') else { break };
+        let open_tag = &block[inv_start..inv_start + tag_body_end + 1];
+
+        // Extract tool name from name="X"
+        let name =
+            open_tag
+                .split("name=")
+                .nth(1)
+                .and_then(|s| {
+                    let s = s.trim_start_matches('"').trim_start_matches('\'');
+                    let end = s.find(|c| c == '"' || c == '\'')?;
+                    Some(s[..end].to_string())
+                })
+                .unwrap_or_default();
+
+        // Find closing </invoke> — some models use a prefixed tag, so
+        // look for any tag ending with "invoke>"
+        let inv_end_tag = if let Some(pos) = block[inv_start + tag_body_end + 1..].find("</invoke") {
+            // skip to after the >
+            if let Some(gt) = block[inv_start + tag_body_end + 1 + pos..].find('>') {
+                inv_start + tag_body_end + 1 + pos + gt + 1
+            } else {
+                invoke_search = inv_start + 1;
+                continue;
+            }
+        } else {
+            invoke_search = inv_start + 1;
+            continue;
+        };
+        let invoke_body = &block[inv_start + tag_body_end + 1..inv_end_tag];
+
+        // Extract parameters
+        let mut args = serde_json::Map::new();
+        let mut param_search = 0;
+        while let Some(param_open) = invoke_body[param_search..].find("<parameter") {
+            let param_start = param_search + param_open;
+            let Some(param_tag_end) = invoke_body[param_start..].find('>') else { break };
+            let param_tag = &invoke_body[param_start..param_start + param_tag_end + 1];
+
+            let p_name = param_tag
+                .split("name=")
+                .nth(1)
+                .and_then(|s| {
+                    let s = s.trim_start_matches('"').trim_start_matches('\'');
+                    let end = s.find(|c| c == '"' || c == '\'')?;
+                    Some(s[..end].to_string())
+                })
+                .unwrap_or_default();
+
+            // Value is the text between <parameter...> and </parameter> (or similar closing tag)
+            let param_close = if let Some(pos) = invoke_body[param_start + param_tag_end + 1..].find("</parameter") {
+                param_start + param_tag_end + 1 + pos
+            } else {
+                param_search = param_start + 1;
+                continue;
+            };
+            // Find actual close > for the closing tag
+            let value_end = if let Some(close_gt) = invoke_body[param_close..].find('>') {
+                param_close + close_gt + 1
+            } else {
+                param_search = param_start + 1;
+                continue;
+            };
+            if !p_name.is_empty() {
+                let value = &invoke_body[param_start + param_tag_end + 1..param_close];
+                args.insert(p_name, serde_json::Value::String(value.trim().to_string()));
+            }
+            param_search = value_end;
+        }
+
+        if !name.is_empty() {
+            tool_calls.push(ToolCall {
+                id: format!("xml-b-{}", tool_calls.len()),
+                name,
+                arguments: serde_json::Value::Object(args),
+            });
+        }
+        invoke_search = inv_end_tag;
+    }
+
+    // Remove the entire tool_calls block from text
+    cleaned = format!("{}{}", &cleaned[..tc_start], &cleaned[tc_end..]);
+
+    (cleaned, tool_calls)
+}
+
+/// Find a regex-like pattern in text. Returns (start_index, end_index).
+/// Simple helper — scans for `<` then looks ahead for the pattern.
+fn regex_find(text: &str, _pattern: &str) -> Option<(usize, usize)> {
+    // pattern like "<[^>]*tool_calls[^>]*>"
+    // We look for '<', then skip non-'>' chars until we find "tool_calls", then skip to '>'
+    let mut i = 0;
+    while let Some(lt) = text[i..].find('<') {
+        let abs = i + lt;
+        if let Some(gt) = text[abs..].find('>') {
+            let tag = &text[abs..abs + gt + 1];
+            if tag.contains("tool_calls") {
+                return Some((abs, abs + gt + 1));
+            }
+            i = abs + 1;
+        } else {
+            break;
+        }
+    }
+    None
 }

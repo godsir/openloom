@@ -16,6 +16,7 @@ pub struct GraphRow {
     pub confidence: f64,
     pub relation_type: Option<String>,
     pub distance: Option<usize>,
+    pub scope: String,
 }
 
 /// A scored entity (for ranked queries like top interests).
@@ -204,9 +205,7 @@ impl<'a> GraphStore<'a> {
                 .split_whitespace()
                 .map(|t| {
                     // Only add prefix wildcard to ASCII terms; CJK chars don't benefit
-                    if t.chars().any(|c| c.is_ascii_alphabetic())
-                        && !t.chars().any(|c| !c.is_ascii())
-                    {
+                    if t.chars().any(|c| c.is_ascii_alphabetic()) && t.is_ascii() {
                         format!("{}*", t)
                     } else {
                         t.to_string()
@@ -216,7 +215,7 @@ impl<'a> GraphStore<'a> {
                 .join(" ")
         };
         let mut stmt = self.conn.prepare(
-            "SELECT n.id, n.name, n.entity_type, n.description, n.confidence
+            "SELECT n.id, n.name, n.entity_type, n.description, n.confidence, n.scope
              FROM kg_nodes_fts fts JOIN kg_nodes n ON n.id = fts.rowid
              WHERE kg_nodes_fts MATCH ?1 ORDER BY rank LIMIT ?2",
         )?;
@@ -229,6 +228,7 @@ impl<'a> GraphStore<'a> {
                 confidence: row.get(4)?,
                 relation_type: None,
                 distance: None,
+                scope: row.get(5)?,
             })
         })?;
         let results: Vec<GraphRow> = rows.collect::<std::result::Result<Vec<_>, _>>()?;
@@ -277,7 +277,7 @@ impl<'a> GraphStore<'a> {
         }
         let scope_filter = scope.unwrap_or("global");
         let mut stmt = self.conn.prepare(
-            "SELECT n.id, n.name, n.entity_type, n.description, e.relation_type, e.confidence
+            "SELECT n.id, n.name, n.entity_type, n.description, e.relation_type, e.confidence, n.scope
              FROM kg_nodes src
              JOIN kg_edges e ON (e.source_id = src.id OR e.target_id = src.id)
              JOIN kg_nodes n ON (
@@ -296,6 +296,7 @@ impl<'a> GraphStore<'a> {
                 relation_type: Some(row.get(4)?),
                 confidence: row.get(5)?,
                 distance: Some(1),
+                scope: row.get(6)?,
             })
         })?;
         let results: Vec<GraphRow> = rows.collect::<std::result::Result<Vec<_>, _>>()?;
@@ -356,9 +357,9 @@ impl<'a> GraphStore<'a> {
     ) -> Result<Vec<GraphRow>> {
         let scope_filter = scope.unwrap_or("global");
         let mut stmt = self.conn.prepare(
-            "WITH RECURSIVE walk(id, name, entity_type, description, depth, visited) AS (
+            "WITH RECURSIVE walk(id, name, entity_type, description, depth, visited, scope) AS (
                 SELECT n.id, n.name, n.entity_type, n.description, 0,
-                       '/' || CAST(n.id AS TEXT) || '/'
+                       '/' || CAST(n.id AS TEXT) || '/', n.scope
                 FROM kg_nodes n
                 WHERE n.name = ?1 AND (n.scope = ?2 OR n.scope = 'global')
                 UNION
@@ -367,7 +368,8 @@ impl<'a> GraphStore<'a> {
                        CASE WHEN e.source_id = w.id THEN tn.entity_type ELSE sn.entity_type END,
                        CASE WHEN e.source_id = w.id THEN tn.description ELSE sn.description END,
                        w.depth + 1,
-                       w.visited || CAST(CASE WHEN e.source_id = w.id THEN e.target_id ELSE e.source_id END AS TEXT) || '/'
+                       w.visited || CAST(CASE WHEN e.source_id = w.id THEN e.target_id ELSE e.source_id END AS TEXT) || '/',
+                       CASE WHEN e.source_id = w.id THEN tn.scope ELSE sn.scope END
                 FROM walk w
                 JOIN kg_edges e ON (e.source_id = w.id OR e.target_id = w.id)
                 JOIN kg_nodes sn ON sn.id = e.source_id
@@ -376,7 +378,7 @@ impl<'a> GraphStore<'a> {
                   AND (e.scope = ?2 OR e.scope = 'global')
                   AND w.visited NOT LIKE '%/' || CAST(CASE WHEN e.source_id = w.id THEN e.target_id ELSE e.source_id END AS TEXT) || '/%'
             )
-            SELECT DISTINCT id, name, entity_type, description, MIN(depth)
+            SELECT DISTINCT id, name, entity_type, description, MIN(depth), scope
             FROM walk WHERE depth > 0
             GROUP BY id ORDER BY MIN(depth) LIMIT ?4"
         )?;
@@ -391,6 +393,7 @@ impl<'a> GraphStore<'a> {
                     confidence: 0.0,
                     relation_type: None,
                     distance: Some(row.get(4)?),
+                    scope: row.get(5)?,
                 })
             },
         )?;
@@ -436,6 +439,40 @@ impl<'a> GraphStore<'a> {
             steps.push(row?);
         }
         Ok(steps)
+    }
+
+    /// Return all edges where both source and target are in the given node IDs.
+    pub fn edges_between(&self, node_ids: &[i64]) -> Result<Vec<(String, String, String, f64)>> {
+        if node_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Use positional `?` placeholders (not numbered `?N`) because the same
+        // set of IDs is used in two IN clauses and rusqlite needs separate bindings.
+        let placeholder = "?,".repeat(node_ids.len());
+        let in_clause = &placeholder[..placeholder.len() - 1]; // strip trailing comma
+        let sql = format!(
+            "SELECT sn.name, tn.name, e.relation_type, e.confidence
+             FROM kg_edges e
+             JOIN kg_nodes sn ON sn.id = e.source_id
+             JOIN kg_nodes tn ON tn.id = e.target_id
+             WHERE e.source_id IN ({}) AND e.target_id IN ({})",
+            in_clause, in_clause
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::types::ToSql> = node_ids
+            .iter()
+            .chain(node_ids.iter())
+            .map(|id| id as &dyn rusqlite::types::ToSql)
+            .collect();
+        let rows = stmt.query_map(params.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, f64>(3)?,
+            ))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     // ========================================================================
@@ -486,36 +523,79 @@ impl<'a> GraphStore<'a> {
     }
 
     /// List recent nodes with pagination.
-    pub fn list_nodes(&self, limit: usize, offset: usize) -> Result<Vec<GraphRow>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT n.id, n.name, n.entity_type, n.description, n.confidence,
-                    CAST(NULL AS TEXT) as relation_type, CAST(NULL AS INTEGER) as distance
-             FROM kg_nodes n ORDER BY n.last_updated DESC LIMIT ?1 OFFSET ?2",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
-            Ok(GraphRow {
-                node_id: row.get(0)?,
-                name: row.get(1)?,
-                entity_type: row.get(2)?,
-                description: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                confidence: row.get(4)?,
-                relation_type: None,
-                distance: None,
-            })
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+    pub fn list_nodes(
+        &self,
+        limit: usize,
+        offset: usize,
+        scope: Option<&str>,
+    ) -> Result<Vec<GraphRow>> {
+        let (sql, has_scope) = match scope {
+            Some(_) => (
+                "SELECT n.id, n.name, n.entity_type, n.description, n.confidence,
+                        CAST(NULL AS TEXT) as relation_type, CAST(NULL AS INTEGER) as distance, n.scope
+                 FROM kg_nodes n WHERE n.scope = ?3 OR n.scope = 'global'
+                 ORDER BY n.last_updated DESC LIMIT ?1 OFFSET ?2",
+                true
+            ),
+            None => (
+                "SELECT n.id, n.name, n.entity_type, n.description, n.confidence,
+                        CAST(NULL AS TEXT) as relation_type, CAST(NULL AS INTEGER) as distance, n.scope
+                 FROM kg_nodes n ORDER BY n.last_updated DESC LIMIT ?1 OFFSET ?2",
+                false
+            ),
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = if has_scope {
+            stmt.query_map(
+                rusqlite::params![limit as i64, offset as i64, scope.unwrap()],
+                |row| {
+                    Ok(GraphRow {
+                        node_id: row.get(0)?,
+                        name: row.get(1)?,
+                        entity_type: row.get(2)?,
+                        description: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                        confidence: row.get(4)?,
+                        relation_type: None,
+                        distance: None,
+                        scope: row.get(7)?,
+                    })
+                },
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map(rusqlite::params![limit as i64, offset as i64], |row| {
+                Ok(GraphRow {
+                    node_id: row.get(0)?,
+                    name: row.get(1)?,
+                    entity_type: row.get(2)?,
+                    description: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                    confidence: row.get(4)?,
+                    relation_type: None,
+                    distance: None,
+                    scope: row.get(7)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        Ok(rows)
     }
 
     /// Delete a node by name and optional scope (NULL means all scopes).
     pub fn delete_node(&self, name: &str) -> Result<bool> {
         let affected = self.conn.execute(
-            "DELETE FROM kg_nodes WHERE name = ?1", rusqlite::params![name],
+            "DELETE FROM kg_nodes WHERE name = ?1",
+            rusqlite::params![name],
         )?;
         Ok(affected > 0)
     }
 
     /// Delete an edge between two named nodes by relation type.
-    pub fn delete_edge(&self, source_name: &str, target_name: &str, relation_type: &str) -> Result<bool> {
+    pub fn delete_edge(
+        &self,
+        source_name: &str,
+        target_name: &str,
+        relation_type: &str,
+    ) -> Result<bool> {
         let affected = self.conn.execute(
             "DELETE FROM kg_edges WHERE source_id = (SELECT id FROM kg_nodes WHERE name = ?1)
              AND target_id = (SELECT id FROM kg_nodes WHERE name = ?2)

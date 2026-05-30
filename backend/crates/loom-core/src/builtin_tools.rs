@@ -27,15 +27,17 @@ impl AgentTool for ShellTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "shell".into(),
-            description: "Execute a shell command and return its output. Use for: listing files, reading file contents, searching with grep, checking git status, running build commands. Avoid destructive operations.".into(),
+            description: "Execute a shell command and return its output. Supports PowerShell syntax on Windows (Get-ChildItem, $env:PATH, etc.) and bash syntax on Unix. Use for: listing files, reading file contents, searching with grep/Select-String, checking git status, running build commands. Default timeout is 60 seconds. Avoid destructive operations.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "command": { "type": "string", "description": "Shell command to execute" },
-                    "cwd": { "type": "string", "description": "Working directory (optional)" }
+                    "cwd": { "type": "string", "description": "Working directory (optional)" },
+                    "timeout": { "type": "integer", "description": "Timeout in seconds (default 60, max 300)" }
                 },
                 "required": ["command"]
             }),
+            tags: vec![],
         }
     }
 
@@ -54,45 +56,100 @@ impl AgentTool for ShellTool {
         }
 
         let cwd = arguments["cwd"].as_str().map(Path::new);
+        let timeout_secs = arguments["timeout"].as_u64().unwrap_or(60).min(300);
 
-        // On Windows, wrap in cmd /c
-        let output = if cfg!(windows) {
-            std::process::Command::new("cmd")
-                .args(["/c", command])
-                .current_dir(cwd.unwrap_or(Path::new(".")))
-                .output()
+        // Use tokio::process::Command for async execution with timeout
+        let child_result = if cfg!(windows) {
+            // Prefer PowerShell over cmd.exe for better command support
+            let pwsh = which_shell("pwsh").or_else(|| which_shell("powershell"));
+            match pwsh {
+                Some(shell_path) => {
+                    tokio::process::Command::new(&shell_path)
+                        .args(["-NoProfile", "-NonInteractive", "-Command", command])
+                        .current_dir(cwd.unwrap_or(Path::new(".")))
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                }
+                None => {
+                    // Fallback to cmd.exe if PowerShell is not found
+                    tokio::process::Command::new("cmd")
+                        .args(["/c", command])
+                        .current_dir(cwd.unwrap_or(Path::new(".")))
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                }
+            }
         } else {
-            std::process::Command::new("sh")
+            tokio::process::Command::new("sh")
                 .args(["-c", command])
                 .current_dir(cwd.unwrap_or(Path::new(".")))
-                .output()
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
         };
 
-        match output {
-            Ok(out) => {
-                let is_error = !out.status.success();
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                let stderr = String::from_utf8_lossy(&out.stderr);
+        let mut child = match child_result {
+            Ok(c) => c,
+            Err(e) => {
+                return Ok(ToolResult {
+                    content: format!("Shell execution failed: {}", e),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        };
+
+        // Wait with timeout
+        let timeout_duration = std::time::Duration::from_secs(timeout_secs);
+        let wait_result = tokio::select! {
+            result = child.wait() => Ok(result),
+            _ = tokio::time::sleep(timeout_duration) => Err(()),
+        };
+
+        match wait_result {
+            Ok(Ok(status)) => {
+                // Process completed — collect output
+                let stdout = if let Some(mut stdout_pipe) = child.stdout.take() {
+                    let mut buf = Vec::new();
+                    let _ = tokio::io::AsyncReadExt::read_to_end(&mut stdout_pipe, &mut buf).await;
+                    buf
+                } else {
+                    Vec::new()
+                };
+                let stderr = if let Some(mut stderr_pipe) = child.stderr.take() {
+                    let mut buf = Vec::new();
+                    let _ = tokio::io::AsyncReadExt::read_to_end(&mut stderr_pipe, &mut buf).await;
+                    buf
+                } else {
+                    Vec::new()
+                };
+
+                let is_error = !status.success();
+                let stdout_str = String::from_utf8_lossy(&stdout);
+                let stderr_str = String::from_utf8_lossy(&stderr);
                 let mut content = if is_error {
-                    format!("[FAIL] exit code {}\n", out.status.code().unwrap_or(-1))
+                    format!("[FAIL] exit code {}\n", status.code().unwrap_or(-1))
                 } else {
                     String::new()
                 };
-                if !stdout.is_empty() {
-                    content.push_str(&stdout);
+                if !stdout_str.is_empty() {
+                    content.push_str(&stdout_str);
                 }
-                if !stderr.is_empty() {
+                if !stderr_str.is_empty() {
                     if !content.is_empty() {
                         content.push('\n');
                     }
                     content.push_str("[stderr]\n");
-                    content.push_str(&stderr);
+                    content.push_str(&stderr_str);
                 }
                 if content.is_empty() {
                     content = "[ok] Command executed on local machine — no errors.".to_string();
                 }
                 if content.len() > 65536 {
-                    content = format!("{}...\n[truncated at 64KB]", truncate_utf8(&content, 65536));
+                    content =
+                        format!("{}...\n[truncated at 64KB]", truncate_utf8(&content, 65536));
                 }
                 Ok(ToolResult {
                     content,
@@ -100,17 +157,91 @@ impl AgentTool for ShellTool {
                     structured_content: None,
                 })
             }
-            Err(e) => Ok(ToolResult {
+            Ok(Err(e)) => Ok(ToolResult {
                 content: format!("Shell execution failed: {}", e),
                 is_error: true,
                 structured_content: None,
             }),
+            Err(_) => {
+                // Timeout — kill the child process
+                let _ = child.kill().await;
+                Ok(ToolResult {
+                    content: format!(
+                        "[TIMEOUT] Command timed out after {} seconds and was killed.",
+                        timeout_secs
+                    ),
+                    is_error: true,
+                    structured_content: None,
+                })
+            }
         }
     }
 
     fn provenance(&self) -> ToolProvenance {
         ToolProvenance::Builtin
     }
+}
+
+/// Find a shell executable by name, checking common Windows paths.
+/// Tries `pwsh` (PowerShell 7+) first, then falls back to `powershell` (5.1).
+fn which_shell(name: &str) -> Option<String> {
+    // On Windows, try common absolute paths first (fast, no process spawn)
+    if cfg!(windows) {
+        let sysroot = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
+        let candidates = if name == "pwsh" {
+            vec![
+                format!("C:\\Program Files\\PowerShell\\7\\{name}.exe"),
+                format!("C:\\Program Files (x86)\\PowerShell\\7\\{name}.exe"),
+            ]
+        } else {
+            vec![
+                format!("{sysroot}\\System32\\WindowsPowerShell\\v1.0\\{name}.exe"),
+                format!("{sysroot}\\SysWOW64\\WindowsPowerShell\\v1.0\\{name}.exe"),
+            ]
+        };
+        for path in &candidates {
+            if Path::new(path).exists() {
+                return Some(path.clone());
+            }
+        }
+    }
+
+    // Fallback: check if it's directly available in PATH
+    if cfg!(windows) {
+        // Use `where` command on Windows
+        if let Ok(output) = std::process::Command::new("where")
+            .arg(name)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+        {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout);
+                if let Some(first_line) = path.lines().next() {
+                    let trimmed = first_line.trim().to_string();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed);
+                    }
+                }
+            }
+        }
+    } else {
+        // Use `which` on Unix
+        if let Ok(output) = std::process::Command::new("which")
+            .arg(name)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+        {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !path.is_empty() {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
 }
 
 // ============================================================================
@@ -139,6 +270,7 @@ impl AgentTool for FileListTool {
                 },
                 "required": ["path"]
             }),
+            tags: vec![],
         }
     }
 
@@ -253,6 +385,7 @@ impl AgentTool for FileReadTool {
                 },
                 "required": ["path"]
             }),
+            tags: vec![],
         }
     }
 
@@ -340,6 +473,7 @@ impl AgentTool for FileWriteTool {
                 },
                 "required": ["path", "content"]
             }),
+            tags: vec![],
         }
     }
 
@@ -407,6 +541,7 @@ impl AgentTool for ContentSearchTool {
                 },
                 "required": ["pattern"]
             }),
+            tags: vec![],
         }
     }
 
@@ -519,6 +654,7 @@ impl AgentTool for FileDeleteTool {
                 },
                 "required": ["path"]
             }),
+            tags: vec![],
         }
     }
 
@@ -586,6 +722,7 @@ impl AgentTool for UseSkillTool {
                 },
                 "required": ["skill_name"]
             }),
+            tags: vec![],
         }
     }
 
@@ -659,6 +796,7 @@ impl AgentTool for WebSearchTool {
                 },
                 "required": ["query"]
             }),
+            tags: vec![],
         }
     }
 
@@ -788,6 +926,7 @@ impl AgentTool for WebFetchTool {
                 },
                 "required": ["url"]
             }),
+            tags: vec![],
         }
     }
 

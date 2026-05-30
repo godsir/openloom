@@ -4,6 +4,26 @@ import { onWsConnected } from '../../services/websocket'
 import { useStore } from '../../stores'
 import styles from './TokenUsagePanel.module.css'
 
+const LOCAL_BACKENDS = new Set(['LmStudio', 'Ollama'])
+
+const BACKEND_LABELS: Record<string, string> = {
+  Anthropic: 'Anthropic',
+  OpenAI: 'OpenAI',
+  DeepSeek: 'DeepSeek',
+  LmStudio: 'LM Studio',
+  Ollama: 'Ollama',
+  Custom: '自定义',
+}
+
+function getProviderLabel(backend: string, backendLabel?: string): string {
+  if (backend === 'Custom' && backendLabel) return backendLabel
+  return BACKEND_LABELS[backend] ?? backend
+}
+
+function isLocalModel(backend: string): boolean {
+  return LOCAL_BACKENDS.has(backend)
+}
+
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
   if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
@@ -30,6 +50,17 @@ export default function TokenUsagePanel() {
   const loading = useStore((s) => s.loading)
   const timeRange = useStore((s) => s.timeRange)
   const setTimeRange = useStore((s) => s.setTimeRange)
+  const models = useStore((s) => s.models)
+
+  // Build a lookup: model name → { backend, backend_label }
+  const modelLookup = useMemo(() => {
+    const map = new Map<string, { backend: string; backendLabel?: string }>()
+    for (const m of models) {
+      map.set(m.name, { backend: m.backend, backendLabel: m.backend_label })
+      if (m.model) map.set(m.model, { backend: m.backend, backendLabel: m.backend_label })
+    }
+    return map
+  }, [models])
 
   useEffect(() => {
     setTimeRange('all')
@@ -140,6 +171,20 @@ export default function TokenUsagePanel() {
                       <div className={styles.rankBody}>
                         <div className={styles.rankHeader}>
                           <span className={styles.rankModel}>{m.model}</span>
+                          {(() => {
+                            const info = modelLookup.get(m.model)
+                            if (!info) return null
+                            return (
+                              <span className={styles.modelBadges}>
+                                <span className={`${styles.modelBadge} ${isLocalModel(info.backend) ? styles.badgeLocal : styles.badgeCloud}`}>
+                                  {isLocalModel(info.backend) ? '本地' : '云端'}
+                                </span>
+                                <span className={styles.modelBadgeProvider}>
+                                  {getProviderLabel(info.backend, info.backendLabel)}
+                                </span>
+                              </span>
+                            )
+                          })()}
                           <span className={styles.rankTokens}>
                             <strong>{formatTokens(m.total)}</strong>
                             {hasPrice && <span className={styles.rankCost}>{formatCost(m.cost)}</span>}
@@ -180,6 +225,7 @@ export default function TokenUsagePanel() {
                   <tr>
                     <th>#</th>
                     <th>模型</th>
+                    <th>供应商</th>
                     <th>请求</th>
                     <th>Prompt</th>
                     <th>Completion</th>
@@ -189,18 +235,31 @@ export default function TokenUsagePanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rankedModels.map((m, i) => (
-                    <tr key={m.model}>
-                      <td className={styles.rankCell}>{i + 1}</td>
-                      <td className={styles.modelNameCell}>{m.model}</td>
-                      <td>{m.requests}</td>
-                      <td>{formatNumber(m.prompt)}</td>
-                      <td>{formatNumber(m.completion)}</td>
-                      <td className={styles.totalCell}>{formatNumber(m.total)}</td>
-                      <td className={styles.pctCell}>{grandTotal > 0 ? ((m.total / grandTotal) * 100).toFixed(1) : '0'}%</td>
-                      <td className={styles.costCell}>{m.cost > 0 ? formatCost(m.cost) : '—'}</td>
-                    </tr>
-                  ))}
+                  {rankedModels.map((m, i) => {
+                    const info = modelLookup.get(m.model)
+                    const local = info ? isLocalModel(info.backend) : false
+                    const provider = info ? getProviderLabel(info.backend, info.backendLabel) : ''
+                    return (
+                      <tr key={m.model}>
+                        <td className={styles.rankCell}>{i + 1}</td>
+                        <td className={styles.modelNameCell}>
+                          <div className={styles.modelNameInner}>
+                            {m.model}
+                            {local && <span className={`${styles.modelBadge} ${styles.badgeLocal}`}>本地</span>}
+                          </div>
+                        </td>
+                        <td className={styles.providerCell}>
+                          {provider && <span className={styles.modelBadgeProvider}>{provider}</span>}
+                        </td>
+                        <td>{m.requests}</td>
+                        <td>{formatNumber(m.prompt)}</td>
+                        <td>{formatNumber(m.completion)}</td>
+                        <td className={styles.totalCell}>{formatNumber(m.total)}</td>
+                        <td className={styles.pctCell}>{grandTotal > 0 ? ((m.total / grandTotal) * 100).toFixed(1) : '0'}%</td>
+                        <td className={styles.costCell}>{m.cost > 0 ? formatCost(m.cost) : '—'}</td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

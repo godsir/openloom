@@ -38,6 +38,7 @@ pub enum AgentEvent {
         agent_id: AgentId,
         call_id: String,
         tool_name: String,
+        args: serde_json::Value,
     },
     /// Tool execution completed.
     ToolCompleted {
@@ -45,6 +46,7 @@ pub enum AgentEvent {
         call_id: String,
         tool_name: String,
         success: bool,
+        result: Option<String>,
     },
     /// LLM token streaming delta.
     StreamDelta {

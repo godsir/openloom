@@ -2,10 +2,10 @@
 //! main model lacks vision capabilities.
 
 use anyhow::Result;
+use chrono::Utc;
 use loom_inference::engine::CloudClient;
 use loom_inference::openai::OpenAIClient;
 use loom_types::{CompletionRequest, ContentPart, Message, ModelBackend, Role};
-use chrono::Utc;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -16,7 +16,10 @@ pub struct VisionConfig {
 
 impl Default for VisionConfig {
     fn default() -> Self {
-        Self { enabled: false, model: None }
+        Self {
+            enabled: false,
+            model: None,
+        }
     }
 }
 
@@ -33,7 +36,10 @@ uncertainty: anything unclear, hidden, or guessed.
 Do not mention that you are a tool or a separate model. Output the note as plain text, no Markdown fences, no JSON."#;
 
 pub fn load_vision_config() -> VisionConfig {
-    let home = dirs::home_dir().unwrap_or_default().join(".loom").join("vision.json");
+    let home = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".loom")
+        .join("vision.json");
     std::fs::read_to_string(&home)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -42,7 +48,9 @@ pub fn load_vision_config() -> VisionConfig {
 
 pub fn has_images(messages: &[Message]) -> bool {
     messages.iter().any(|m| {
-        m.content.iter().any(|part| matches!(part, ContentPart::Image { .. }))
+        m.content
+            .iter()
+            .any(|part| matches!(part, ContentPart::Image { .. }))
     })
 }
 
@@ -50,7 +58,12 @@ pub fn extract_images(messages: &[Message]) -> Vec<(String, String, String)> {
     let mut images = Vec::new();
     for msg in messages.iter().rev() {
         for part in &msg.content {
-            if let ContentPart::Image { source_type, media_type, data } = part {
+            if let ContentPart::Image {
+                source_type,
+                media_type,
+                data,
+            } = part
+            {
                 images.push((source_type.clone(), media_type.clone(), data.clone()));
             }
         }
@@ -61,16 +74,42 @@ pub fn extract_images(messages: &[Message]) -> Vec<(String, String, String)> {
     images
 }
 
+/// Progress event for vision batch processing
+#[derive(Debug, Clone)]
+pub struct VisionBatchProgress {
+    pub batch_index: usize,
+    pub total_batches: usize,
+    pub status: String, // "running", "done", "error"
+    pub result: Option<String>,
+}
+
+/// Token usage from the vision auxiliary model.
+#[derive(Debug, Clone, Default)]
+pub struct VisionUsage {
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub model_name: String,
+}
+
+/// Result of the vision auxiliary processing.
+pub struct VisionResult {
+    pub context: String,
+    pub usage: VisionUsage,
+}
+
 pub async fn prepare_vision_context(
     images: &[(String, String, String)],
     user_text: &str,
     vision_model_name: &str,
     model_configs: &[loom_types::ModelConfig],
-) -> Result<String> {
+    progress_tx: Option<tokio::sync::mpsc::Sender<VisionBatchProgress>>,
+) -> Result<VisionResult> {
     let config = model_configs
         .iter()
         .find(|c| c.name == vision_model_name)
-        .ok_or_else(|| anyhow::anyhow!("Vision model '{}' not found in configs", vision_model_name))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("Vision model '{}' not found in configs", vision_model_name)
+        })?;
 
     let api_key = config
         .api_key_env
@@ -80,7 +119,9 @@ pub async fn prepare_vision_context(
                 return Some(val);
             }
             let looks_like_env_var = !raw.is_empty()
-                && raw.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+                && raw
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
             if !looks_like_env_var && !raw.is_empty() {
                 Some(raw.to_string())
             } else {
@@ -114,59 +155,160 @@ pub async fn prepare_vision_context(
         backend = %config.backend.name(),
         api_key_env = %config.api_key_env.as_deref().unwrap_or("<unset>"),
         api_key_len = api_key.len(),
+        image_count = images.len(),
         "vision auxiliary calling provider"
     );
 
-    let base_url = config.base_url.clone().unwrap_or_else(|| match config.backend {
-        ModelBackend::Anthropic => "https://api.anthropic.com".into(),
-        ModelBackend::OpenAI => "https://api.openai.com/v1".into(),
-        ModelBackend::DeepSeek => "https://api.deepseek.com/v1".into(),
-        _ => "http://localhost:1234/v1".into(),
-    });
+    let base_url = config
+        .base_url
+        .clone()
+        .unwrap_or_else(|| match config.backend {
+            ModelBackend::Anthropic => "https://api.anthropic.com".into(),
+            ModelBackend::OpenAI => "https://api.openai.com/v1".into(),
+            ModelBackend::DeepSeek => "https://api.deepseek.com/v1".into(),
+            _ => "http://localhost:1234/v1".into(),
+        });
 
-    let model_id = config.model.clone().unwrap_or_else(|| vision_model_name.to_string());
+    let model_id = config
+        .model
+        .clone()
+        .unwrap_or_else(|| vision_model_name.to_string());
 
-    let client = OpenAIClient::new(api_key, model_id, base_url, false);
-
-    let mut content_parts: Vec<ContentPart> = Vec::new();
     let request_line = if user_text.trim().is_empty() {
         "(no explicit text request)".to_string()
     } else {
         user_text.trim().to_string()
     };
-    content_parts.push(ContentPart::Text {
-        text: format!("{}\n\nUser request:\n{}", VISION_PROMPT, request_line),
-    });
-    for (source_type, media_type, data) in images {
-        content_parts.push(ContentPart::Image {
-            source_type: source_type.clone(),
-            media_type: media_type.clone(),
-            data: data.clone(),
-        });
+
+    // Process images in sequential batches of 3 to avoid rate limits.
+    const BATCH_SIZE: usize = 3;
+    let batches: Vec<&[(String, String, String)]> = images.chunks(BATCH_SIZE).collect();
+    let batch_count = batches.len();
+
+    tracing::info!(
+        image_count = images.len(),
+        batch_count,
+        batch_size = BATCH_SIZE,
+        "vision: processing sequentially in batches of {}", BATCH_SIZE
+    );
+
+    let mut analyses = Vec::new();
+    let mut total_vision_prompt = 0usize;
+    let mut total_vision_completion = 0usize;
+    for (batch_idx, batch) in batches.iter().enumerate() {
+        // Report batch start
+        if let Some(ref tx) = progress_tx {
+            let _ = tx.send(VisionBatchProgress {
+                batch_index: batch_idx,
+                total_batches: batch_count,
+                status: "running".to_string(),
+                result: None,
+            }).await;
+        }
+
+        let client = OpenAIClient::new(
+            api_key.clone(),
+            model_id.clone(),
+            base_url.clone(),
+            false,
+        );
+
+        let mut content_parts: Vec<ContentPart> = Vec::new();
+        if batch_count > 1 {
+            content_parts.push(ContentPart::Text {
+                text: format!(
+                    "{}\n\nUser request:\n{}\n\n(This is batch {}/{} containing {} image(s))",
+                    VISION_PROMPT,
+                    request_line,
+                    batch_idx + 1,
+                    batch_count,
+                    batch.len()
+                ),
+            });
+        } else {
+            content_parts.push(ContentPart::Text {
+                text: format!("{}\n\nUser request:\n{}", VISION_PROMPT, request_line),
+            });
+        }
+        for (source_type, media_type, data) in batch.iter() {
+            content_parts.push(ContentPart::Image {
+                source_type: source_type.clone(),
+                media_type: media_type.clone(),
+                data: data.clone(),
+            });
+        }
+
+        let messages = vec![Message {
+            role: Role::User,
+            content: content_parts,
+            timestamp: Utc::now(),
+            usage: None,
+        }];
+
+        let request = CompletionRequest {
+            messages,
+            tools: Vec::new(),
+            tool_choice: None,
+            prompt: String::new(),
+            max_tokens: 2048,
+            temperature: 0.0,
+            top_p: 1.0,
+            stop: Vec::new(),
+            stream: false,
+            thinking_budget: None,
+        };
+
+        match client.complete(request).await {
+            Ok(response) => {
+                total_vision_prompt += response.prompt_tokens;
+                total_vision_completion += response.completion_tokens;
+                let text = response.text.trim().to_string();
+                let entry = if batch_count > 1 {
+                    format!("[Batch {}/{}]\n{}", batch_idx + 1, batch_count, text)
+                } else {
+                    text.clone()
+                };
+                analyses.push(entry);
+
+                // Report batch done
+                if let Some(ref tx) = progress_tx {
+                    let _ = tx.send(VisionBatchProgress {
+                        batch_index: batch_idx,
+                        total_batches: batch_count,
+                        status: "done".to_string(),
+                        result: Some(text),
+                    }).await;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(batch = batch_idx + 1, error = %e, "vision batch failed");
+                let error_msg = format!(
+                    "[Batch {}/{}] (analysis failed: {})",
+                    batch_idx + 1, batch_count, e
+                );
+                analyses.push(error_msg.clone());
+
+                // Report batch error
+                if let Some(ref tx) = progress_tx {
+                    let _ = tx.send(VisionBatchProgress {
+                        batch_index: batch_idx,
+                        total_batches: batch_count,
+                        status: "error".to_string(),
+                        result: Some(error_msg),
+                    }).await;
+                }
+            }
+        }
     }
 
-    let messages = vec![Message {
-        role: Role::User,
-        content: content_parts,
-        timestamp: Utc::now(),
-        usage: None,
-    }];
-
-    let request = CompletionRequest {
-        messages,
-        tools: Vec::new(),
-        tool_choice: None,
-        prompt: String::new(),
-        max_tokens: 2048,
-        temperature: 0.0,
-        top_p: 1.0,
-        stop: Vec::new(),
-        stream: false,
-        thinking_budget: None,
-    };
-
-    let response = client.complete(request).await?;
-    let analysis = response.text.trim().to_string();
-
-    Ok(format!("<vision-context>\n{}\n</vision-context>", analysis))
+    let combined = analyses.join("\n\n");
+    let context = format!("<vision-context>\n{}\n</vision-context>", combined);
+    Ok(VisionResult {
+        context,
+        usage: VisionUsage {
+            prompt_tokens: total_vision_prompt,
+            completion_tokens: total_vision_completion,
+            model_name: vision_model_name.to_string(),
+        },
+    })
 }

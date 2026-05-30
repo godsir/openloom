@@ -1,17 +1,40 @@
 .block {
+  border-radius: var(--r-md);
+  background: rgba(var(--accent-rgb), 0.04);
+  border: 1px solid rgba(var(--accent-rgb), 0.12);
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.blockDone {
+  border-color: rgba(var(--accent-rgb), 0.08);
+  opacity: 0.85;
+}
+
+.header {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  border-radius: var(--r-md);
-  background: rgba(var(--accent-rgb), 0.06);
-  border: 1px solid rgba(var(--accent-rgb), 0.12);
-  width: fit-content;
+  background: none;
+  border: none;
+  cursor: pointer;
+  width: 100%;
+  color: inherit;
+  font: inherit;
+}
+
+.header:disabled {
+  cursor: default;
 }
 
 .icon {
   color: var(--accent);
   flex-shrink: 0;
+}
+
+.iconPulse {
   animation: pulse 1.5s ease-in-out infinite;
 }
 
@@ -42,9 +65,66 @@
   animation-delay: 0.3s;
 }
 
-.block[data-status='waiting'] .icon {
-  animation: none;
-  opacity: 0.7;
+.chevron {
+  margin-left: auto;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+}
+
+/* Body — expanded batch list */
+.body {
+  border-top: 1px solid rgba(var(--accent-rgb), 0.08);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.batchRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.batchIconDone {
+  color: #34d399;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.batchIconRunning {
+  color: var(--accent);
+  flex-shrink: 0;
+  margin-top: 2px;
+  animation: spin 1s linear infinite;
+}
+
+.batchIconError {
+  color: #ef4444;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.batchLabel {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.batchResult {
+  width: 100%;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--r-sm);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 @keyframes pulse {
@@ -55,4 +135,9 @@
 @keyframes bounce {
   0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
   40% { transform: translateY(-3px); opacity: 1; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }

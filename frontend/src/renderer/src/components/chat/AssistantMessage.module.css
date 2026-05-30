@@ -50,6 +50,9 @@
   flex-direction: column;
   gap: 8px;
   user-select: text;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  min-width: 0;
 }
 
 .thinkingHint {
@@ -58,6 +61,14 @@
   gap: 8px;
   font-size: 13px;
   color: var(--text-muted);
+}
+
+.streamingHint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-top: 4px;
+  opacity: 0.6;
 }
 
 .imageBlock {

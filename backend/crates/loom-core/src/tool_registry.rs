@@ -155,6 +155,7 @@ pub struct SpawnContext {
     pub tool_registry: Arc<RwLock<ToolRegistry>>,
     pub agent_pool: Arc<crate::agent_pool::AgentPool>,
     pub loop_config: Arc<RwLock<crate::agent_loop::AgentLoopConfig>>,
+    pub event_bus: crate::event_bus::EventBus,
 }
 
 /// The spawn_agent tool allows an agent to delegate a subtask to a child agent.
@@ -188,6 +189,7 @@ impl AgentTool for SpawnAgentTool {
                 },
                 "required": ["description", "prompt"]
             }),
+            tags: vec![],
         }
     }
 

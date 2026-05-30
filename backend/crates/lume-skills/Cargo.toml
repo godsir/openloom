@@ -1,6 +1,6 @@
 [package]
 name = "lume-skills"
-version = "0.2.16"
+version = "0.2.17"
 edition = "2024"
 description = "Skill/plugin loading for openLoom v2 — Claude Code / OpenClaw compatible"
 

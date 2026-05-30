@@ -44,6 +44,10 @@ export {
   Package as IconPackage,
   FileText as IconFileText,
   Lightbulb as IconLightbulb,
+  RotateCcw as IconRotateCcw,
+  BookOpen as IconBookOpen,
+  Sparkles as IconSparkles,
+  Terminal as IconTerminal,
 } from 'lucide-react'
 
 export function IconStarFilled({ size = 16, className = '' }: { size?: number; className?: string }) {

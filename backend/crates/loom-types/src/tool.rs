@@ -12,6 +12,8 @@ pub struct ToolDefinition {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// A parsed tool call from a model response.

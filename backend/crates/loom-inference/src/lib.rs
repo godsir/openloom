@@ -8,4 +8,4 @@ pub mod openai;
 
 pub use anthropic::AnthropicClient;
 pub use engine::{CloudClient, InferenceEngine, unload_local_model};
-pub use openai::{OpenAIClient, create_cloud_client, ensure_lm_studio_model};
+pub use openai::{OpenAIClient, create_cloud_client, ensure_lm_studio_model, parse_inline_tool_calls};

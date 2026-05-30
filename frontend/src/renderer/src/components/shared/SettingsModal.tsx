@@ -2,11 +2,12 @@ import { useState, useEffect, useCallback } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
-import { IconFolder, IconPackage } from '../../utils/icons'
+import { IconFolder, IconPackage, IconRefresh } from '../../utils/icons'
 import Overlay from './Overlay'
 import AgentConfigPanel from './AgentConfigPanel'
 import ModelConfigPanel from './ModelConfigPanel'
 import VisionConfigSection from './VisionConfigSection'
+import AuxiliaryConfigSection from './AuxiliaryConfigSection'
 import KnowledgeGraphPanel from '../kg/KnowledgeGraphPanel'
 import TokenUsagePanel from './TokenUsagePanel'
 import { type ThemeId, type FontSizeId, FONT_SIZE_MAP } from '../../stores/ui'
@@ -81,7 +82,7 @@ export default function SettingsModal({
     { id: 'lsp', label: 'LSP 服务' },
     { id: 'skills', label: '技能' },
     { id: 'plugins', label: '插件' },
-    { id: 'kg', label: '认知图谱' },
+    { id: 'kg', label: '记忆系统' },
     { id: 'token', label: 'Token 用量' },
     { id: 'about', label: '关于' },
   ]
@@ -126,6 +127,7 @@ export default function SettingsModal({
               <div className={styles.contentBody}>
                 <ModelConfigPanel />
                 <VisionConfigSection />
+                <AuxiliaryConfigSection />
               </div>
             </>
           )}
@@ -137,8 +139,8 @@ export default function SettingsModal({
           {tab === 'kg' && (
             <>
               <div className={styles.contentHeader}>
-                <h3 className={styles.sectionTitle}>认知图谱</h3>
-                <p className={styles.sectionDesc}>浏览和管理 AI 学习到的知识实体与关系</p>
+                <h3 className={styles.sectionTitle}>记忆系统</h3>
+                <p className={styles.sectionDesc}>浏览和管理 AI 的知识图谱与认知记录</p>
               </div>
               <div className={styles.contentBody}>
                 <KnowledgeGraphPanel />
@@ -170,18 +172,27 @@ function SoftwareTab({ theme, setTheme }: { theme: string; setTheme: (t: any) =>
   const setFontSize = useStore((s) => s.setFontSize)
   const [autoStart, setAutoStart] = useState(false)
   const [closeToTray, setCloseToTray] = useState(true)
+  const [autoTitle, setAutoTitle] = useState(false)
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     Promise.all([
       window.hana.getPreference('autoStart', false),
       window.hana.getPreference('closeToTray', true),
-    ]).then(([as, ct]) => {
+      window.hana.getPreference('autoTitle', false),
+    ]).then(([as, ct, at]) => {
       setAutoStart(as)
       setCloseToTray(ct)
+      setAutoTitle(at)
       setLoaded(true)
     })
   }, [])
+
+  const handleAutoTitle = async (val: boolean) => {
+    setAutoTitle(val)
+    await window.hana.setPreference('autoTitle', val)
+    useStore.getState().addToast({ type: 'success', message: val ? '已开启 AI 自动命名' : '已关闭 AI 自动命名' })
+  }
 
   const handleAutoStart = async (val: boolean) => {
     setAutoStart(val)
@@ -202,72 +213,35 @@ function SoftwareTab({ theme, setTheme }: { theme: string; setTheme: (t: any) =>
         <p className={styles.sectionDesc}>主题、字体大小与启动行为</p>
       </div>
       <div className={styles.contentBody}>
-        {/* ── Theme ── */}
+        {/* ── AI Features ── */}
         <div className={styles.aboutSection}>
-          <div className={styles.themeLabel}>主题</div>
-          <div className={styles.themeGrid}>
-            {THEMES.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => { setTheme(t.id); useStore.getState().addToast({ type: 'success', message: `主题已切换为${t.label}` }) }}
-                className={`${styles.themeCard} ${theme === t.id ? styles.themeCardActive : ''}`}
-              >
-                <div
-                  className={styles.themePreview}
-                  style={{
-                    '--pv-bg': t.bg,
-                    '--pv-surface': t.surface,
-                    '--pv-accent': t.accent,
-                    '--pv-text-13': t.text + '22',
-                    '--pv-text-27': t.text + '44',
-                  } as React.CSSProperties}
-                >
-                  <div className={styles.themePreviewInner}>
-                    <div className={styles.themePreviewSidebar}>
-                      <div className={styles.themePreviewAccentBar} />
-                      <div className={styles.themePreviewBarWide} />
-                      <div className={styles.themePreviewBarNarrow} />
-                    </div>
-                    <div className={styles.themePreviewMain}>
-                      <div>
-                        <div className={styles.themePreviewBarTitle} />
-                        <div className={styles.themePreviewBarBody} />
-                      </div>
-                      <div className={styles.themePreviewCard} />
-                    </div>
-                  </div>
-                </div>
-                <span className={`${styles.themeName} ${theme === t.id ? styles.themeNameActive : ''}`}>
-                  {t.label}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* ── Font Size ── */}
-        <div className={styles.aboutSection} style={{ marginTop: 24 }}>
           <div className={styles.aboutRow}>
             <div>
-              <span className={styles.aboutLabel}>字体大小</span>
-              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>调整对话和输入区域的文字大小</p>
+              <span className={styles.aboutLabel}>AI 自动命名会话</span>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>首次对话后由 AI 提取 2-7 字标题</p>
             </div>
             <div className={styles.mcpTransportToggle}>
-              {(Object.entries(FONT_SIZE_MAP) as [FontSizeId, { label: string; px: number }][]).map(([id, { label }]) => (
-                <button
-                  key={id}
-                  className={`${styles.mcpTransportBtn} ${fontSize === id ? styles.mcpTransportActive : ''}`}
-                  onClick={() => setFontSize(id)}
-                >
-                  {label}
-                </button>
-              ))}
+              <button
+                onClick={() => handleAutoTitle(true)}
+                className={`${styles.mcpTransportBtn} ${autoTitle ? styles.mcpTransportActive : ''}`}
+              >
+                开启
+              </button>
+              <button
+                onClick={() => handleAutoTitle(false)}
+                className={`${styles.mcpTransportBtn} ${!autoTitle ? styles.mcpTransportActive : ''}`}
+              >
+                关闭
+              </button>
             </div>
           </div>
         </div>
 
+        <hr className={styles.sectionDivider} />
+
         {/* ── Software behaviors ── */}
-        <div className={styles.aboutSection} style={{ marginTop: 24 }}>
+        <div className={styles.aboutSection}>
+          <div className={styles.themeLabel}>软件设置</div>
           {!loaded ? (
             <p className={styles.toolsEmpty}>加载中...</p>
           ) : (
@@ -312,9 +286,72 @@ function SoftwareTab({ theme, setTheme }: { theme: string; setTheme: (t: any) =>
                   </button>
                 </div>
               </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>字体大小</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>调整对话和输入区域的文字大小</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  {(Object.entries(FONT_SIZE_MAP) as [FontSizeId, { label: string; px: number }][]).map(([id, { label }]) => (
+                    <button
+                      key={id}
+                      className={`${styles.mcpTransportBtn} ${fontSize === id ? styles.mcpTransportActive : ''}`}
+                      onClick={() => setFontSize(id)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </>
           )}
         </div>
+
+        <hr className={styles.sectionDivider} />
+
+        {/* ── Theme ── */}
+        <div className={styles.aboutSection}>
+          <div className={styles.themeLabel}>主题</div>
+          <div className={styles.themeGrid}>
+            {THEMES.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => { setTheme(t.id); useStore.getState().addToast({ type: 'success', message: `主题已切换为${t.label}` }) }}
+                className={`${styles.themeCard} ${theme === t.id ? styles.themeCardActive : ''}`}
+              >
+                <div
+                  className={styles.themePreview}
+                  style={{
+                    '--pv-bg': t.bg,
+                    '--pv-surface': t.surface,
+                    '--pv-accent': t.accent,
+                    '--pv-text-13': t.text + '22',
+                    '--pv-text-27': t.text + '44',
+                  } as React.CSSProperties}
+                >
+                  <div className={styles.themePreviewInner}>
+                    <div className={styles.themePreviewSidebar}>
+                      <div className={styles.themePreviewAccentBar} />
+                      <div className={styles.themePreviewBarWide} />
+                      <div className={styles.themePreviewBarNarrow} />
+                    </div>
+                    <div className={styles.themePreviewMain}>
+                      <div>
+                        <div className={styles.themePreviewBarTitle} />
+                        <div className={styles.themePreviewBarBody} />
+                      </div>
+                      <div className={styles.themePreviewCard} />
+                    </div>
+                  </div>
+                </div>
+                <span className={`${styles.themeName} ${theme === t.id ? styles.themeNameActive : ''}`}>
+                  {t.label}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
       </div>
     </>
   )
@@ -384,6 +421,7 @@ function McpTab() {
   // Editor state — null = closed, {} = new entry, populated = editing existing.
   const [editing, setEditing] = useState<McpServerConfig | null>(null)
   const [editingOriginalName, setEditingOriginalName] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const loadData = useCallback(async () => {
@@ -528,10 +566,26 @@ function McpTab() {
     } catch { /* toast already shown */ }
   }
 
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    await loadData()
+    setRefreshing(false)
+  }
+
   return (
     <>
       <div className={styles.contentHeader}>
-        <h3 className={styles.sectionTitle}>MCP 服务</h3>
+        <div className={styles.sectionHeaderRow}>
+          <h3 className={styles.sectionTitle}>MCP 服务</h3>
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing || loading}
+            className={styles.refreshBtn}
+            title="重新加载 MCP 配置"
+          >
+            <IconRefresh size={14} />
+          </button>
+        </div>
         <p className={styles.sectionDesc}>管理 Model Context Protocol 服务器连接（配置自动持久化）</p>
       </div>
       <div className={styles.contentBody}>
@@ -1018,6 +1072,7 @@ function SkillsTab() {
   const [skillContent, setSkillContent] = useState<string | null>(null)
   const [loadingContent, setLoadingContent] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
 
   const loadSkills = useCallback(async () => {
     setLoading(true)
@@ -1129,7 +1184,17 @@ function SkillsTab() {
   return (
     <>
       <div className={styles.contentHeader}>
-        <h3 className={styles.sectionTitle}>技能</h3>
+        <div className={styles.sectionHeaderRow}>
+          <h3 className={styles.sectionTitle}>技能</h3>
+          <button
+            onClick={async () => { setRefreshing(true); await loadSkills(); setRefreshing(false) }}
+            disabled={refreshing || loading}
+            className={styles.refreshBtn}
+            title="重新扫描技能"
+          >
+            <IconRefresh size={14} />
+          </button>
+        </div>
         <p className={styles.sectionDesc}>管理技能定义 — 支持文件夹或 ZIP 导入</p>
       </div>
       <div className={styles.contentBody}>
@@ -1210,30 +1275,47 @@ function SkillsTab() {
 function PluginsTab() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
-    async function load() {
-      setLoading(true)
-      setError(null)
-      try {
-        const res = await loomRpc<{ plugins: PluginInfo[] }>('plugins.list')
-        if (!cancelled) setPlugins(res.plugins ?? [])
-      } catch (e: any) {
-        if (!cancelled) setError(`加载失败: ${e.message || e}`)
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await loomRpc<{ plugins: PluginInfo[] }>('plugins.list')
+      setPlugins(res.plugins ?? [])
+    } catch (e: any) {
+      setError(`加载失败: ${e.message || e}`)
+    } finally {
+      setLoading(false)
     }
-    load()
-    return () => { cancelled = true }
   }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    try {
+      await loomRpc('plugins.reload')
+      await load()
+    } catch { /* ignore */ }
+    setRefreshing(false)
+  }
 
   return (
     <>
       <div className={styles.contentHeader}>
-        <h3 className={styles.sectionTitle}>插件</h3>
+        <div className={styles.sectionHeaderRow}>
+          <h3 className={styles.sectionTitle}>插件</h3>
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing || loading}
+            className={styles.refreshBtn}
+            title="重新扫描插件"
+          >
+            <IconRefresh size={14} />
+          </button>
+        </div>
         <p className={styles.sectionDesc}>已发现的插件包</p>
       </div>
       <div className={styles.contentBody}>

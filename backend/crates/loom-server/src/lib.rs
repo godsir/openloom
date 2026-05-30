@@ -41,7 +41,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/health", get(routes::health))
         .route("/ws", get(ws::ws_handler))
         .route("/api", axum::routing::post(dispatch_handler_http))
-        .route("/sessions/:session_id/images/:file_id", get(routes::serve_session_image))
+        .route(
+            "/sessions/:session_id/images/:file_id",
+            get(routes::serve_session_image),
+        )
         .with_state(state)
 }
 
@@ -54,7 +57,12 @@ async fn dispatch_handler_http(
 }
 
 /// Start the server on the given address.
-pub async fn serve(host: &str, port: u16, orchestrator: Arc<Orchestrator>, data_dir: &std::path::Path) -> anyhow::Result<()> {
+pub async fn serve(
+    host: &str,
+    port: u16,
+    orchestrator: Arc<Orchestrator>,
+    data_dir: &std::path::Path,
+) -> anyhow::Result<()> {
     tracing::info!(data_dir = %data_dir.display(), "loom-server starting");
     let state = Arc::new(AppState::new(orchestrator, data_dir.to_path_buf()));
     // Hydrate sessions from persisted store

@@ -250,14 +250,19 @@ impl<'a> CognitionStore<'a> {
     pub fn query_by_subject(
         &self,
         subject: &str,
+        scope: Option<&str>,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<CognitionRow>> {
-        let mut stmt = self.conn.prepare(
+        let sql = if scope.is_some() {
             "SELECT id, subject, trait, value, confidence, evidence_count, first_seen, last_updated, version, scope
-             FROM cognitions WHERE subject = ?1 ORDER BY last_updated DESC LIMIT ?2 OFFSET ?3",
-        )?;
-        let rows = stmt.query_map(params![subject, limit as i64, offset as i64], |row| {
+             FROM cognitions WHERE subject = ?1 AND scope = ?4 ORDER BY last_updated DESC LIMIT ?2 OFFSET ?3"
+        } else {
+            "SELECT id, subject, trait, value, confidence, evidence_count, first_seen, last_updated, version, scope
+             FROM cognitions WHERE subject = ?1 ORDER BY last_updated DESC LIMIT ?2 OFFSET ?3"
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let map_row = |row: &rusqlite::Row<'_>| {
             Ok(CognitionRow {
                 id: row.get(0)?,
                 subject: row.get(1)?,
@@ -270,8 +275,21 @@ impl<'a> CognitionStore<'a> {
                 version: row.get(8)?,
                 scope: row.get(9)?,
             })
-        })?;
+        };
+        let rows = if let Some(s) = scope {
+            stmt.query_map(params![subject, limit as i64, offset as i64, s], map_row)?
+        } else {
+            stmt.query_map(params![subject, limit as i64, offset as i64], map_row)?
+        };
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn list_subjects(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT subject FROM cognitions ORDER BY subject")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<String>, _>>()?)
     }
 
     pub fn delete(&self, id: i64) -> Result<()> {

@@ -2,6 +2,8 @@ import { useMemo } from 'react'
 import type { Message } from '../../stores/chat'
 import { useStore } from '../../stores'
 import ThinkingBlock from './ThinkingBlock'
+import SkillBlock from './SkillBlock'
+import ShellBlock from './ShellBlock'
 import ToolGroupBlock from './ToolGroupBlock'
 import TextBlock from './TextBlock'
 import FileBlock from './FileBlock'
@@ -14,8 +16,12 @@ import styles from './AssistantMessage.module.css'
 export default function AssistantMessage({ message, sessionId }: { message: Message; sessionId: string | null }) {
   const openLightbox = useStore(s => s.openLightbox)
   const agent = useStore(s => sessionId ? s.getSessionAgent(sessionId) : undefined)
+  const messages = useStore(s => sessionId ? (s.messagesBySession.get(sessionId) ?? []) : [])
 
   const isStreaming = useStore(s => sessionId ? s.streamingSessionIds.has(sessionId) : false)
+  // Only show streaming indicator on the LAST assistant message in an active stream
+  const isLastAssistant = messages.length > 0 && messages[messages.length - 1].id === message.id
+  const isStreamingActive = isStreaming && isLastAssistant
 
   const avatarContent = useMemo(() => {
     if (agent?.avatar) {
@@ -27,7 +33,7 @@ export default function AssistantMessage({ message, sessionId }: { message: Mess
   const displayName = (agent?.name && agent.name !== 'default') ? agent.name : 'Loom'
 
   return (
-    <div className={styles.message}>
+    <div className={styles.message} data-message-id={message.id}>
       <div className={styles.header}>
         <div className={styles.avatar}>
           {avatarContent}
@@ -42,6 +48,10 @@ export default function AssistantMessage({ message, sessionId }: { message: Mess
               return <VisionProcessingBlock key={i} block={block} />
             case 'thinking':
               return <ThinkingBlock key={i} block={block} />
+            case 'skill':
+              return <SkillBlock key={i} block={block} />
+            case 'shell':
+              return <ShellBlock key={i} block={block} />
             case 'tool_group':
               return <ToolGroupBlock key={i} block={block} />
             case 'text':
@@ -71,9 +81,14 @@ export default function AssistantMessage({ message, sessionId }: { message: Mess
               return null
           }
         })}
-        {message.blocks.length === 0 && isStreaming && (
+        {message.blocks.length === 0 && isStreamingActive && (
           <div className={styles.thinkingHint}>
             <span>思考中</span>
+            <TypingIndicator />
+          </div>
+        )}
+        {message.blocks.length > 0 && isStreamingActive && (
+          <div className={styles.streamingHint}>
             <TypingIndicator />
           </div>
         )}

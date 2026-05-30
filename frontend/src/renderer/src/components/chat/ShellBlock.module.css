@@ -1,0 +1,89 @@
+.block {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-family: var(--font-mono, 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace);
+  color: rgba(255, 255, 255, 0.5);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.toggle:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.label {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(74, 222, 128, 0.7);
+  text-transform: uppercase;
+  flex-shrink: 0;
+  min-width: 36px;
+}
+
+.detail {
+  color: rgba(255, 255, 255, 0.6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(74, 222, 128, 0.7);
+  margin-left: auto;
+  flex-shrink: 0;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.body {
+  padding: 0;
+}
+
+.output {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-family: var(--font-mono, 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace);
+  color: rgba(200, 200, 200, 0.9);
+  background: rgba(0, 0, 0, 0.2);
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 320px;
+  overflow-y: auto;
+  line-height: 1.5;
+}
+
+.cursor {
+  display: inline-block;
+  width: 8px;
+  height: 14px;
+  background: rgba(74, 222, 128, 0.7);
+  animation: blink 1s step-end infinite;
+  vertical-align: text-bottom;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}

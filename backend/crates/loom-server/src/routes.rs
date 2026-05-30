@@ -29,9 +29,12 @@ pub async fn serve_session_image(
     Path((session_id, file_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     // Prevent directory traversal
-    if session_id.contains("..") || file_id.contains("..")
-        || session_id.contains('/') || session_id.contains('\\')
-        || file_id.contains('/') || file_id.contains('\\')
+    if session_id.contains("..")
+        || file_id.contains("..")
+        || session_id.contains('/')
+        || session_id.contains('\\')
+        || file_id.contains('/')
+        || file_id.contains('\\')
     {
         return (StatusCode::BAD_REQUEST, "invalid path").into_response();
     }
@@ -63,7 +66,10 @@ pub async fn serve_session_image(
             (
                 [
                     (header::CONTENT_TYPE, mime.to_string()),
-                    (header::CACHE_CONTROL, "public, max-age=31536000, immutable".to_string()),
+                    (
+                        header::CACHE_CONTROL,
+                        "public, max-age=31536000, immutable".to_string(),
+                    ),
                 ],
                 data,
             )

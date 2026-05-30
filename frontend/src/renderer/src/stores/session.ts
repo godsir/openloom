@@ -250,18 +250,24 @@ function parseContentParts(content: any, sessionId: string, port: number): any[]
       } else if (tc.arguments && typeof tc.arguments === 'object') {
         args = tc.arguments as Record<string, unknown>
       }
-      blocks.push({
-        type: 'tool_group',
-        tools: [{
-          id: tc.id || `tc-${blocks.length}`,
-          name: tc.name || 'unknown',
-          status: 'done' as const,
-          elapsed: 0,
+      if (tc.name === 'use_skill') {
+        blocks.push({
+          type: 'skill',
+          name: (args.skill_name as string) || 'unknown',
+          status: 'done',
+          sealed: true,
+        })
+      } else if (tc.name === 'request_tools') {
+        // meta-tool — skip
+      } else {
+        blocks.push({
+          type: 'shell',
+          toolName: tc.name || 'unknown',
+          status: 'done',
           args,
-          result: undefined,
-        }],
-        collapsed: true,
-      })
+          sealed: true,
+        })
+      }
     } else if ('tool_result' in part) {
       // Skip — already represented by the corresponding ToolCall block
       continue
@@ -300,18 +306,24 @@ function parseContentParts(content: any, sessionId: string, port: number): any[]
       } else if (part.arguments && typeof part.arguments === 'object') {
         args = part.arguments as Record<string, unknown>
       }
-      blocks.push({
-        type: 'tool_group',
-        tools: [{
-          id: part.id || `tc-${blocks.length}`,
-          name: part.name || 'unknown',
-          status: 'done' as const,
-          elapsed: 0,
+      if (part.name === 'use_skill') {
+        blocks.push({
+          type: 'skill',
+          name: (args.skill_name as string) || 'unknown',
+          status: 'done',
+          sealed: true,
+        })
+      } else if (part.name === 'request_tools') {
+        // meta-tool — skip
+      } else {
+        blocks.push({
+          type: 'shell',
+          toolName: part.name || 'unknown',
+          status: 'done',
           args,
-          result: undefined,
-        }],
-        collapsed: true,
-      })
+          sealed: true,
+        })
+      }
     } else if (part.type === 'tool_result' || part.type === 'ToolResult') {
       continue
     } else {

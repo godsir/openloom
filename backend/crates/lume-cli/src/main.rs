@@ -134,14 +134,20 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Serve { host, port } => {
             let loom_dir = data_dir();
-            println!("[server] *** openLoom engine v{} [build-2026-05-30-vision-fix] ***", env!("CARGO_PKG_VERSION"));
+            println!(
+                "[server] *** openLoom engine v{} [build-2026-05-30-vision-fix] ***",
+                env!("CARGO_PKG_VERSION")
+            );
             let orchestrator = Arc::new(loom_core::Orchestrator::new(3, 20, 300, loom_dir.clone()));
             orchestrator.init_spawn_agent(3, 300).await;
             // Set up data directories
             let _ = std::fs::create_dir_all(loom_dir.join("data"));
             let _ = std::fs::create_dir_all(loom_dir.join("sessions"));
             println!("[server] loom dir: {}", loom_dir.display());
-            println!("[server] images:  {}\\sessions\\<id>\\images\\", loom_dir.display());
+            println!(
+                "[server] images:  {}\\sessions\\<id>\\images\\",
+                loom_dir.display()
+            );
             let db_path = loom_dir.join("data").join("memory.db");
             match memory::LoomMemoryStore::open(&db_path) {
                 Ok(store) => {
@@ -191,6 +197,29 @@ async fn main() -> anyhow::Result<()> {
             // Reconnect MCP servers previously saved via the UI (DB-persisted),
             // skipping any entry already brought up by the file-based loader.
             orchestrator.autostart_mcp_servers().await;
+            // === Skills ===
+            {
+                let mut skill_loader = lume_skills::SkillLoader::new();
+                skill_loader.add_standard_paths(&loom_dir);
+                match skill_loader.discover() {
+                    Ok(skills) if !skills.is_empty() => {
+                        let ctx: String = skills
+                            .iter()
+                            .map(|s| format!("- {}", s.manifest.name))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        orchestrator.set_skill_context(ctx).await;
+                        let bodies: std::collections::HashMap<String, String> = skills
+                            .iter()
+                            .map(|s| (s.manifest.name.clone(), s.body.clone()))
+                            .collect();
+                        orchestrator.set_skill_bodies(bodies).await;
+                        println!("[server] {} skills loaded", skills.len());
+                    }
+                    Ok(_) => println!("[server] 0 skills loaded"),
+                    Err(e) => eprintln!("[server] skills error: {}", e),
+                }
+            }
             loom_server::serve(&host, port, orchestrator, &loom_dir).await?;
         }
         Command::Chat {
@@ -990,6 +1019,10 @@ async fn run_kg_stats() {
     };
     match store.kg_node_count().await {
         Ok(n) => println!("Knowledge Graph Statistics\n  entities: {}", n),
+        Err(e) => println!("Stats error: {}", e),
+    }
+    match store.kg_edge_count().await {
+        Ok(n) => println!("  relations: {}", n),
         Err(e) => println!("Stats error: {}", e),
     }
 }

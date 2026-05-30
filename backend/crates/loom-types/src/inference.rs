@@ -99,11 +99,24 @@ pub enum StreamDelta {
         index: usize,
         chunk: String,
     },
+    ToolResult {
+        call_id: String,
+        tool_name: String,
+        success: bool,
+        result: Option<String>,
+    },
     Usage {
         prompt_tokens: u64,
         completion_tokens: u64,
         cache_read_tokens: u64,
         cache_write_tokens: u64,
+    },
+    /// Token usage from an auxiliary model (vision, entity extraction, summary).
+    /// Carries its own model name so it is persisted separately from the main model.
+    AuxiliaryUsage {
+        model: String,
+        prompt_tokens: u64,
+        completion_tokens: u64,
     },
 }
 

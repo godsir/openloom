@@ -1,32 +1,51 @@
 import { useState, useEffect, useMemo } from 'react'
-import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
 import Select from './Select'
 import styles from './VisionConfig.module.css'
 
+interface ModelListItem {
+  name: string
+  model?: string
+  backend: string
+  backend_label?: string
+  capabilities?: { vision?: boolean }
+}
+
+const BACKEND_ORDER: Record<string, number> = {
+  Anthropic: 0,
+  OpenAI: 1,
+  DeepSeek: 2,
+  LmStudio: 3,
+  Ollama: 4,
+  Custom: 5,
+}
+
+function sortModels(models: ModelListItem[]): ModelListItem[] {
+  return [...models].sort((a, b) => {
+    const ra = BACKEND_ORDER[a.backend] ?? 99
+    const rb = BACKEND_ORDER[b.backend] ?? 99
+    if (ra !== rb) return ra - rb
+    return a.name.localeCompare(b.name)
+  })
+}
+
 export default function VisionConfigSection() {
-  const models = useStore((s) => s.models)
   const [enabled, setEnabled] = useState(false)
   const [visionModel, setVisionModel] = useState('')
+  const [models, setModels] = useState<ModelListItem[]>([])
 
   useEffect(() => {
-    loomRpc<{ enabled: boolean; model: string | null }>('config.get_vision')
-      .then(result => {
-        setEnabled(result.enabled ?? false)
-        setVisionModel(result.model ?? '')
+    Promise.all([
+      loomRpc<{ enabled: boolean; model: string | null }>('config.get_vision'),
+      loomRpc<{ models: ModelListItem[] }>('model.list'),
+    ])
+      .then(([visionConfig, modelResult]) => {
+        setEnabled(visionConfig.enabled ?? false)
+        setVisionModel(visionConfig.model ?? '')
+        setModels(modelResult.models || [])
       })
       .catch(() => {})
-
-    // Populate global store on mount if empty (ModelConfigPanel may not have loaded yet)
-    if (useStore.getState().models.length === 0) {
-      loomRpc<{ models: ModelListItem[]; activeModel: string | null }>('model.list')
-        .then(result => {
-          useStore.getState().setModels(result.models || [])
-          if (result.activeModel) useStore.getState().setCurrentModel(result.activeModel)
-        })
-        .catch(() => {})
-    }
   }, [])
 
   const handleToggle = async () => {
@@ -47,12 +66,31 @@ export default function VisionConfigSection() {
   }
 
   const modelOptions = useMemo(
-    () => [
-      { value: '', label: '选择视觉模型...' },
-      ...models
-        .filter(m => m.capabilities?.vision || m.backend === 'OpenAI' || m.backend === 'Anthropic')
-        .map(m => ({ value: m.name, label: m.name, group: m.backend_label || m.backend })),
-    ],
+    () => {
+      // Include models that could support vision:
+      // 1. Explicitly marked with vision capability
+      // 2. From cloud providers with vision APIs (OpenAI, Anthropic, DeepSeek)
+      // 3. From local providers (users might configure vision models)
+      const visionBackends = new Set(['OpenAI', 'Anthropic', 'DeepSeek'])
+      const localBackends = new Set(['LmStudio', 'Ollama', 'Custom'])
+
+      const filtered = models.filter(m =>
+        m.capabilities?.vision ||
+        visionBackends.has(m.backend) ||
+        localBackends.has(m.backend)
+      )
+
+      const sorted = sortModels(filtered)
+
+      return [
+        { value: '', label: '选择视觉模型...' },
+        ...sorted.map(m => ({
+          value: m.name,
+          label: m.name,
+          group: m.backend_label || m.backend,
+        })),
+      ]
+    },
     [models],
   )
 
@@ -81,6 +119,7 @@ export default function VisionConfigSection() {
           options={modelOptions}
           onChange={handleModelChange}
           disabled={!enabled}
+          className={styles.visionModelSelect}
         />
       </div>
     </div>

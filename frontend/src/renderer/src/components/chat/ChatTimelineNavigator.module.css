@@ -1,0 +1,77 @@
+.nav {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  overflow: visible;
+}
+
+.card {
+  max-height: 70%;
+  overflow-y: auto;
+  overflow-x: visible;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  padding: 8px 8px 8px 0;
+  margin: auto 0;
+}
+
+.card::-webkit-scrollbar { display: none; }
+
+.marker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+  opacity: 0.55;
+  transition: opacity 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.marker:hover,
+.markerActive {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.label {
+  font-size: 10px;
+  color: var(--text-secondary);
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-width 0.2s, opacity 0.2s, margin 0.2s;
+}
+
+.marker:hover .label {
+  max-width: 80px;
+  opacity: 1;
+  margin-right: 2px;
+}
+
+.line {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--text-muted);
+  transition: background 0.15s, width 0.15s;
+  flex-shrink: 0;
+}
+
+.marker:hover .line,
+.markerActive .line {
+  background: var(--accent);
+}

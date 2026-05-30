@@ -1,6 +1,6 @@
 [package]
 name = "loom-security"
-version = "0.2.16"
+version = "0.2.17"
 edition = "2024"
 description = "Security layer for openLoom v2 — sandbox, approval, audit"
 

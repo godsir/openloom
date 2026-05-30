@@ -339,6 +339,7 @@ impl McpClient {
                     name: format!("{}__{}__{}", self.tool_prefix, name, t.name),
                     description: format!("[MCP:{}] {}", name, t.description),
                     input_schema: t.input_schema.clone(),
+                    tags: vec![],
                 });
             }
         }

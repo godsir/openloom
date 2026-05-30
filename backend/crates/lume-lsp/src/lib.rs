@@ -604,9 +604,9 @@ impl LspClient {
         cmd.stderr(std::process::Stdio::piped());
         cmd.kill_on_drop(true);
 
-        let mut process = cmd.spawn().with_context(|| {
-            format!("Failed to spawn '{}'", command)
-        })?;
+        let mut process = cmd
+            .spawn()
+            .with_context(|| format!("Failed to spawn '{}'", command))?;
 
         if let Some(stderr) = process.stderr.take() {
             tokio::spawn(async move {
@@ -623,10 +623,16 @@ impl LspClient {
         }
 
         let stdin = BufWriter::new(
-            process.stdin.take().ok_or_else(|| anyhow!("stdin unavailable"))?,
+            process
+                .stdin
+                .take()
+                .ok_or_else(|| anyhow!("stdin unavailable"))?,
         );
         let stdout = BufReader::new(
-            process.stdout.take().ok_or_else(|| anyhow!("stdout unavailable"))?,
+            process
+                .stdout
+                .take()
+                .ok_or_else(|| anyhow!("stdout unavailable"))?,
         );
         let conn = Box::new(LspConnection::new(process));
 

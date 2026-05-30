@@ -88,6 +88,7 @@
 
 .visionModelSelect {
   flex: 1;
+  min-width: 280px !important;
   height: 30px;
   padding: 0 10px;
   font-size: 12px;

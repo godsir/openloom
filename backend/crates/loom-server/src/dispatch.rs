@@ -141,7 +141,8 @@ impl SessionStore {
 
 /// Parse a JSON value as u64, handling both numeric and string representations.
 fn json_value_as_u64(v: &Value) -> Option<u64> {
-    v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+    v.as_u64()
+        .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
 }
 
 /// Fallback lookup for well-known model context windows when the provider's
@@ -255,7 +256,7 @@ pub async fn dispatch_method(
     match req.method.as_str() {
         // === System ===
         "system.health" => Ok(json!({
-            "status": "ok", "version": "0.2.16",
+            "status": "ok", "version": "0.2.17",
             "agent_count": state.orchestrator.list_agents().await.len(),
             "tool_count": state.orchestrator.tool_registry().await.len(),
         })),
@@ -322,6 +323,17 @@ pub async fn dispatch_method(
                 }
             }
 
+            // Parse selected skills
+            let selected_skills: Vec<String> = p
+                .get("skills")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
             // Resolve agent config for this session
             let config_name = state
                 .sessions
@@ -336,7 +348,14 @@ pub async fn dispatch_method(
 
             let result = state
                 .orchestrator
-                .process_message_with_config(&combined_content, session_id, &agent_config, thinking_budget, attached_images)
+                .process_message_with_config(
+                    &combined_content,
+                    session_id,
+                    &agent_config,
+                    thinking_budget,
+                    attached_images,
+                    selected_skills,
+                )
                 .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             state
@@ -357,8 +376,14 @@ pub async fn dispatch_method(
         }
 
         "chat.stop" => {
-            let session_id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("default");
-            let killed = state.orchestrator.stop_session(session_id).await
+            let session_id = p
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            let killed = state
+                .orchestrator
+                .stop_session(session_id)
+                .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             Ok(json!({ "ok": true, "killed": killed }))
         }
@@ -521,7 +546,10 @@ pub async fn dispatch_method(
             if session_id.is_empty() {
                 return Err(err(ErrorCode::InvalidRequest, "session_id required"));
             }
-            state.orchestrator.delete_message(session_id, index).await
+            state
+                .orchestrator
+                .delete_message(session_id, index)
+                .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             Ok(json!({ "ok": true }))
         }
@@ -533,6 +561,20 @@ pub async fn dispatch_method(
                 state.orchestrator.rename_session_persisted(id, title).await;
             }
             Ok(json!({ "ok": ok }))
+        }
+        "session.auto_title" => {
+            let id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+            if id.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "session_id required"));
+            }
+            match state.orchestrator.auto_title(id).await {
+                Ok(title) => {
+                    let _ = state.sessions.rename(id, &title).await;
+                    state.orchestrator.rename_session_persisted(id, &title).await;
+                    Ok(json!({ "title": title }))
+                }
+                Err(e) => Err(err(ErrorCode::InternalError, &e.to_string())),
+            }
         }
         "session.delete" => {
             let id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
@@ -671,34 +713,107 @@ pub async fn dispatch_method(
             // Build merged config: start from existing, override with provided fields
             let merged = ModelConfig {
                 name: name.to_string(),
-                model: p.get("model").and_then(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
+                model: p
+                    .get("model")
+                    .and_then(|v| {
+                        if v.is_null() {
+                            None
+                        } else {
+                            v.as_str().map(|s| s.to_string())
+                        }
+                    })
                     .or(existing.model),
-                model_type: serde_json::from_value(p.get("model_type").cloned().unwrap_or_default())
-                    .unwrap_or(existing.model_type),
+                model_type: serde_json::from_value(
+                    p.get("model_type").cloned().unwrap_or_default(),
+                )
+                .unwrap_or(existing.model_type),
                 backend: serde_json::from_value(p.get("backend").cloned().unwrap_or_default())
                     .unwrap_or(existing.backend),
-                backend_label: p.get("backend_label").and_then(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
+                backend_label: p
+                    .get("backend_label")
+                    .and_then(|v| {
+                        if v.is_null() {
+                            None
+                        } else {
+                            v.as_str().map(|s| s.to_string())
+                        }
+                    })
                     .or(existing.backend_label),
-                path: p.get("path").and_then(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
+                path: p
+                    .get("path")
+                    .and_then(|v| {
+                        if v.is_null() {
+                            None
+                        } else {
+                            v.as_str().map(|s| s.to_string())
+                        }
+                    })
                     .or(existing.path),
-                base_url: p.get("base_url").and_then(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
+                base_url: p
+                    .get("base_url")
+                    .and_then(|v| {
+                        if v.is_null() {
+                            None
+                        } else {
+                            v.as_str().map(|s| s.to_string())
+                        }
+                    })
                     .or(existing.base_url),
-                api_key_env: p.get("api_key_env").and_then(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
+                api_key_env: p
+                    .get("api_key_env")
+                    .and_then(|v| {
+                        if v.is_null() {
+                            None
+                        } else {
+                            v.as_str().map(|s| s.to_string())
+                        }
+                    })
                     .or(existing.api_key_env),
-                api_format: p.get("api_format").and_then(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
+                api_format: p
+                    .get("api_format")
+                    .and_then(|v| {
+                        if v.is_null() {
+                            None
+                        } else {
+                            v.as_str().map(|s| s.to_string())
+                        }
+                    })
                     .or(existing.api_format),
-                context_size: p.get("context_size").and_then(|v| v.as_u64()).map(|v| v as usize)
+                context_size: p
+                    .get("context_size")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as usize)
                     .unwrap_or(existing.context_size),
-                max_output_tokens: p.get("max_output_tokens").and_then(|v| v.as_u64()).map(|v| v as usize)
+                max_output_tokens: p
+                    .get("max_output_tokens")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as usize)
                     .or(existing.max_output_tokens),
-                n_gpu_layers: p.get("n_gpu_layers").and_then(|v| v.as_u64()).map(|v| v as usize)
+                n_gpu_layers: p
+                    .get("n_gpu_layers")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as usize)
                     .unwrap_or(existing.n_gpu_layers),
-                capabilities: serde_json::from_value(p.get("capabilities").cloned().unwrap_or_default())
-                    .unwrap_or(existing.capabilities),
-                input_price: p.get("input_price").and_then(|v| v.as_f64()).unwrap_or(existing.input_price),
-                output_price: p.get("output_price").and_then(|v| v.as_f64()).unwrap_or(existing.output_price),
-                cache_read_price: p.get("cache_read_price").and_then(|v| v.as_f64()).unwrap_or(existing.cache_read_price),
-                cache_write_price: p.get("cache_write_price").and_then(|v| v.as_f64()).unwrap_or(existing.cache_write_price),
+                capabilities: serde_json::from_value(
+                    p.get("capabilities").cloned().unwrap_or_default(),
+                )
+                .unwrap_or(existing.capabilities),
+                input_price: p
+                    .get("input_price")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(existing.input_price),
+                output_price: p
+                    .get("output_price")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(existing.output_price),
+                cache_read_price: p
+                    .get("cache_read_price")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(existing.cache_read_price),
+                cache_write_price: p
+                    .get("cache_write_price")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(existing.cache_write_price),
             };
             state
                 .orchestrator
@@ -737,13 +852,18 @@ pub async fn dispatch_method(
             let api_key = p.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
             let api_key_env = p.get("api_key_env").and_then(|v| v.as_str());
             if backend.is_empty() || api_key.is_empty() {
-                return Err(err(ErrorCode::InvalidRequest, "backend and api_key required"));
+                return Err(err(
+                    ErrorCode::InvalidRequest,
+                    "backend and api_key required",
+                ));
             }
             let env_name = api_key_env
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("{}_API_KEY", backend.to_uppercase().replace('-', "_")));
             // Set in current process immediately
-            unsafe { std::env::set_var(&env_name, api_key); }
+            unsafe {
+                std::env::set_var(&env_name, api_key);
+            }
             // Try OS-level persistence as secondary backup (non-fatal)
             crate::save_credential(&env_name, api_key);
 
@@ -762,13 +882,19 @@ pub async fn dispatch_method(
                     format!("{:?}", cfg.backend).to_lowercase() == backend_val.to_lowercase()
                 };
                 if matches {
-                    // Merge-update: only change api_key_env, keep all other fields
+                    // Merge-update: only change api_key_env, keep all other fields.
+                    // Store the environment variable NAME (e.g. "OPENAI_API_KEY"),
+                    // NOT the actual API key value. The key itself lives in the OS
+                    // environment variable or credential store.
                     let prev_name = cfg.name.clone();
                     let updated = ModelConfig {
-                        api_key_env: Some(api_key.to_string()),
+                        api_key_env: Some(env_name.clone()),
                         ..cfg
                     };
-                    let _ = state.orchestrator.model_config_update(updated, &prev_name).await;
+                    let _ = state
+                        .orchestrator
+                        .model_config_update(updated, &prev_name)
+                        .await;
                 }
             }
 
@@ -782,7 +908,10 @@ pub async fn dispatch_method(
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("{}_API_KEY", backend.to_uppercase().replace('-', "_")));
             // Check if env var is set, OR the raw value itself is a non-empty literal key
-            let has_key = std::env::var(&env_name).ok().filter(|v| !v.is_empty()).is_some()
+            let has_key = std::env::var(&env_name)
+                .ok()
+                .filter(|v| !v.is_empty())
+                .is_some()
                 || api_key_env.map(|v| !v.is_empty()).unwrap_or(false);
             Ok(json!({ "set": has_key, "env_name": env_name }))
         }
@@ -790,17 +919,28 @@ pub async fn dispatch_method(
         "model.discover" => {
             let backend = p.get("backend").and_then(|v| v.as_str()).unwrap_or("");
             let base_url = p.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
-            let api_format = p.get("api_format").and_then(|v| v.as_str()).unwrap_or("openai");
+            let api_format = p
+                .get("api_format")
+                .and_then(|v| v.as_str())
+                .unwrap_or("openai");
             let api_key_env = p.get("api_key_env").and_then(|v| v.as_str());
             if base_url.is_empty() {
                 return Err(err(ErrorCode::InvalidRequest, "base_url required"));
             }
             let api_key = api_key_env
                 .and_then(|raw| {
-                    if let Ok(val) = std::env::var(raw) { return Some(val); }
+                    if let Ok(val) = std::env::var(raw) {
+                        return Some(val);
+                    }
                     let looks_like_env_var = !raw.is_empty()
-                        && raw.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
-                    if !looks_like_env_var && !raw.is_empty() { Some(raw.to_string()) } else { None }
+                        && raw
+                            .chars()
+                            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+                    if !looks_like_env_var && !raw.is_empty() {
+                        Some(raw.to_string())
+                    } else {
+                        None
+                    }
                 })
                 .or_else(|| {
                     let env_name = format!("{}_API_KEY", backend.to_uppercase().replace('-', "_"));
@@ -825,25 +965,34 @@ pub async fn dispatch_method(
                 format!("{}/models", base_url.trim_end_matches('/'))
             };
             let req = if api_format == "anthropic" {
-                client.get(&url)
+                client
+                    .get(&url)
                     .header("x-api-key", &api_key)
                     .header("anthropic-version", "2023-06-01")
             } else {
-                client.get(&url)
+                client
+                    .get(&url)
                     .header("Authorization", format!("Bearer {}", api_key))
             };
-            let resp = req.timeout(std::time::Duration::from_secs(10))
+            let resp = req
+                .timeout(std::time::Duration::from_secs(10))
                 .send()
                 .await
                 .map_err(|e| err(ErrorCode::InternalError, &format!("HTTP error: {}", e)))?;
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
-                return Err(err(ErrorCode::InternalError, &format!("API returned {}: {}", status, body)));
+                return Err(err(
+                    ErrorCode::InternalError,
+                    &format!("API returned {}: {}", status, body),
+                ));
             }
-            let body: Value = resp.json().await
+            let body: Value = resp
+                .json()
+                .await
                 .map_err(|e| err(ErrorCode::InternalError, &format!("Parse error: {}", e)))?;
-            let raw_models: Vec<Value> = body.get("data")
+            let raw_models: Vec<Value> = body
+                .get("data")
                 .and_then(|d| d.as_array())
                 .cloned()
                 .unwrap_or_else(|| {
@@ -855,28 +1004,46 @@ pub async fn dispatch_method(
                 });
 
             // Try native API for local providers — yields accurate context_length
-            let native_ctx: std::collections::HashMap<String, u64> = if backend == "lmstudio" || backend == "LmStudio" {
-                let native_url = format!("{}/api/v1/models", base_url.trim_end_matches("/v1").trim_end_matches('/'));
-                match client.get(&native_url).timeout(std::time::Duration::from_secs(5)).send().await {
-                    Ok(resp) if resp.status().is_success() => {
-                        match resp.json::<Value>().await {
-                            Ok(v) => v.get("data").and_then(|d| d.as_array()).map(|arr| {
-                                arr.iter().filter_map(|m| {
-                                    let id = m.get("id").and_then(|v| v.as_str())?;
-                                    let ctx = m.get("max_context_length").and_then(|v| json_value_as_u64(v)).filter(|&n| n > 0);
-                                    Some((id.to_string(), ctx.unwrap_or(0)))
-                                }).collect()
-                            }).unwrap_or_default(),
-                            Err(_) => std::collections::HashMap::new(),
-                        }
-                    }
+            let native_ctx: std::collections::HashMap<String, u64> = if backend == "lmstudio"
+                || backend == "LmStudio"
+            {
+                let native_url = format!(
+                    "{}/api/v1/models",
+                    base_url.trim_end_matches("/v1").trim_end_matches('/')
+                );
+                match client
+                    .get(&native_url)
+                    .timeout(std::time::Duration::from_secs(5))
+                    .send()
+                    .await
+                {
+                    Ok(resp) if resp.status().is_success() => match resp.json::<Value>().await {
+                        Ok(v) => v
+                            .get("data")
+                            .and_then(|d| d.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|m| {
+                                        let id = m.get("id").and_then(|v| v.as_str())?;
+                                        let ctx = m
+                                            .get("max_context_length")
+                                            .and_then(|v| json_value_as_u64(v))
+                                            .filter(|&n| n > 0);
+                                        Some((id.to_string(), ctx.unwrap_or(0)))
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        Err(_) => std::collections::HashMap::new(),
+                    },
                     _ => std::collections::HashMap::new(),
                 }
             } else if backend == "ollama" || backend == "Ollama" {
                 // Ollama native /api/tags — yields model names then /api/show for context
                 let ollama_host = base_url.trim_end_matches("/v1").trim_end_matches('/');
                 let mut ctx_map = std::collections::HashMap::new();
-                if let Ok(resp) = client.get(format!("{}/api/tags", ollama_host))
+                if let Ok(resp) = client
+                    .get(format!("{}/api/tags", ollama_host))
                     .timeout(std::time::Duration::from_secs(5))
                     .send()
                     .await
@@ -896,11 +1063,16 @@ pub async fn dispatch_method(
                                         {
                                             if show_resp.status().is_success() {
                                                 if let Ok(info) = show_resp.json::<Value>().await {
-                                                    let ctx = info.get("model_info")
+                                                    let ctx = info
+                                                        .get("model_info")
                                                         .and_then(|mi| {
                                                             mi.get("llama.context_length")
-                                                                .or_else(|| mi.get("context_length"))
-                                                                .or_else(|| mi.get("max_context_length"))
+                                                                .or_else(|| {
+                                                                    mi.get("context_length")
+                                                                })
+                                                                .or_else(|| {
+                                                                    mi.get("max_context_length")
+                                                                })
                                                         })
                                                         .and_then(|v| json_value_as_u64(v));
                                                     if let Some(c) = ctx.filter(|&n| n > 0) {
@@ -920,21 +1092,27 @@ pub async fn dispatch_method(
                 std::collections::HashMap::new()
             };
 
-            let models: Vec<Value> = raw_models.iter().filter_map(|item| {
-                let id = item.get("id").and_then(|v| v.as_str())?;
-                // Resolve context length: native API → standard API fields → known lookup
-                let ctx = native_ctx.get(id).copied().filter(|&n| n > 0)
-                    .or_else(|| {
-                        item.get("context_window")
-                            .or_else(|| item.get("context_length"))
-                            .or_else(|| item.get("max_input_tokens"))
-                            .or_else(|| item.get("max_context_length"))
-                            .and_then(|v| json_value_as_u64(v))
-                            .filter(|&n| n > 0)
-                    })
-                    .or_else(|| known_context_window(id));
-                Some(json!({ "id": id, "context_length": ctx }))
-            }).collect();
+            let models: Vec<Value> = raw_models
+                .iter()
+                .filter_map(|item| {
+                    let id = item.get("id").and_then(|v| v.as_str())?;
+                    // Resolve context length: native API → standard API fields → known lookup
+                    let ctx = native_ctx
+                        .get(id)
+                        .copied()
+                        .filter(|&n| n > 0)
+                        .or_else(|| {
+                            item.get("context_window")
+                                .or_else(|| item.get("context_length"))
+                                .or_else(|| item.get("max_input_tokens"))
+                                .or_else(|| item.get("max_context_length"))
+                                .and_then(|v| json_value_as_u64(v))
+                                .filter(|&n| n > 0)
+                        })
+                        .or_else(|| known_context_window(id));
+                    Some(json!({ "id": id, "context_length": ctx }))
+                })
+                .collect();
             Ok(json!({ "models": models }))
         }
 
@@ -951,13 +1129,50 @@ pub async fn dispatch_method(
 
         "config.set_vision" => {
             let enabled = p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
-            let model = p.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let model = p
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             let home = dirs::home_dir().unwrap_or_default().join(".loom");
             let _ = std::fs::create_dir_all(&home);
             let config = json!({ "enabled": enabled, "model": model });
             let config_file = home.join("vision.json");
-            std::fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap_or_default())
-                .map_err(|e| err(ErrorCode::InternalError, &format!("Write error: {}", e)))?;
+            std::fs::write(
+                &config_file,
+                serde_json::to_string_pretty(&config).unwrap_or_default(),
+            )
+            .map_err(|e| err(ErrorCode::InternalError, &format!("Write error: {}", e)))?;
+            Ok(json!({ "ok": true }))
+        }
+
+        "config.get_auxiliary" => {
+            let home = dirs::home_dir().unwrap_or_default().join(".loom");
+            let config_file = home.join("auxiliary.json");
+            let config: Value = std::fs::read_to_string(&config_file)
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or(json!({ "summary_model": null, "entity_model": null }));
+            Ok(config)
+        }
+
+        "config.set_auxiliary" => {
+            let summary_model = p
+                .get("summary_model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let entity_model = p
+                .get("entity_model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let home = dirs::home_dir().unwrap_or_default().join(".loom");
+            let _ = std::fs::create_dir_all(&home);
+            let config = json!({ "summary_model": summary_model, "entity_model": entity_model });
+            let config_file = home.join("auxiliary.json");
+            std::fs::write(
+                &config_file,
+                serde_json::to_string_pretty(&config).unwrap_or_default(),
+            )
+            .map_err(|e| err(ErrorCode::InternalError, &format!("Write error: {}", e)))?;
             Ok(json!({ "ok": true }))
         }
 
@@ -1099,32 +1314,22 @@ pub async fn dispatch_method(
                     .get("tool_timeout_secs")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(60),
-                enabled_tools: p
-                    .get("enabled_tools")
-                    .and_then(|v| v.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect()
-                    }),
-                disabled_tools: p
-                    .get("disabled_tools")
-                    .and_then(|v| v.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect()
-                    }),
+                enabled_tools: p.get("enabled_tools").and_then(|v| v.as_array()).map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                }),
+                disabled_tools: p.get("disabled_tools").and_then(|v| v.as_array()).map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                }),
             };
             // Persist before connect: even if the server fails to start, the
             // user's filled-in form values survive so they can edit + retry
             // without re-typing everything.
             if persist {
-                if let Err(e) = state
-                    .orchestrator
-                    .save_mcp_server(&config, autostart)
-                    .await
-                {
+                if let Err(e) = state.orchestrator.save_mcp_server(&config, autostart).await {
                     tracing::warn!(error = %e, "failed to persist MCP server config");
                 }
             }
@@ -1163,8 +1368,13 @@ pub async fn dispatch_method(
                 .list_saved_mcp_servers()
                 .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
-            let live: std::collections::HashSet<String> =
-                state.orchestrator.mcp_client().server_names().await.into_iter().collect();
+            let live: std::collections::HashSet<String> = state
+                .orchestrator
+                .mcp_client()
+                .server_names()
+                .await
+                .into_iter()
+                .collect();
             let items: Vec<serde_json::Value> = configs
                 .into_iter()
                 .map(|(cfg, autostart)| {
@@ -1246,22 +1456,16 @@ pub async fn dispatch_method(
                     .get("tool_timeout_secs")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(60),
-                enabled_tools: p
-                    .get("enabled_tools")
-                    .and_then(|v| v.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect()
-                    }),
-                disabled_tools: p
-                    .get("disabled_tools")
-                    .and_then(|v| v.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect()
-                    }),
+                enabled_tools: p.get("enabled_tools").and_then(|v| v.as_array()).map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                }),
+                disabled_tools: p.get("disabled_tools").and_then(|v| v.as_array()).map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                }),
             };
             state
                 .orchestrator
@@ -1417,10 +1621,17 @@ pub async fn dispatch_method(
             let args: Vec<String> = p
                 .get("args")
                 .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
                 .unwrap_or_default();
             if language.is_empty() || command.is_empty() {
-                return Err(err(ErrorCode::InvalidRequest, "language and command required"));
+                return Err(err(
+                    ErrorCode::InvalidRequest,
+                    "language and command required",
+                ));
             }
             state
                 .orchestrator
@@ -1515,7 +1726,9 @@ pub async fn dispatch_method(
                     .map_err(|e| err(ErrorCode::InternalError, &format!("write failed: {}", e)))?;
                 wrote += 1;
             }
-            Ok(json!({ "ok": true, "path": skill_dir.display().to_string(), "files_written": wrote }))
+            Ok(
+                json!({ "ok": true, "path": skill_dir.display().to_string(), "files_written": wrote }),
+            )
         }
         "skills.delete" => {
             let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -1549,11 +1762,8 @@ pub async fn dispatch_method(
                         if !path.is_dir() {
                             continue;
                         }
-                        // Count SKILL.md files recursively (max depth 4)
+                        // Every subdirectory under plugins/ counts as a plugin
                         let mut skill_count = count_skill_files(&path, 4);
-                        if skill_count == 0 {
-                            continue;
-                        }
                         let name = path
                             .file_name()
                             .and_then(|n| n.to_str())
@@ -1601,6 +1811,35 @@ pub async fn dispatch_method(
             Ok(json!({ "plugins": plugins }))
         }
 
+        "plugins.reload" => {
+            // Re-scan plugins + standard skill dirs and update orchestrator
+            let home = dirs::home_dir().unwrap_or_default();
+            let data_dir = home.join(".loom");
+            let mut loader = SkillLoader::new();
+            loader.add_standard_paths(&data_dir);
+            match loader.discover() {
+                Ok(skills) => {
+                    let ctx: String = skills
+                        .iter()
+                        .map(|s| format!("- {}", s.manifest.name))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    state.orchestrator.set_skill_context(ctx).await;
+                    let bodies: std::collections::HashMap<String, String> = skills
+                        .iter()
+                        .map(|s| (s.manifest.name.clone(), s.body.clone()))
+                        .collect();
+                    state.orchestrator.set_skill_bodies(bodies).await;
+                    tracing::info!("[plugins.reload] {} skills reloaded", skills.len());
+                    Ok(json!({ "ok": true, "skill_count": skills.len() }))
+                }
+                Err(e) => Err(err(
+                    ErrorCode::InternalError,
+                    &format!("skill discovery failed: {}", e),
+                )),
+            }
+        }
+
         // === Knowledge Graph ===
         "kg.search" => {
             let query = p.get("query").and_then(|v| v.as_str()).unwrap_or("");
@@ -1634,17 +1873,11 @@ pub async fn dispatch_method(
             Ok(serde_json::to_value(graph).unwrap_or_default())
         }
         "kg.walk" => {
-            let start_name = p
-                .get("start_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let start_name = p.get("start_name").and_then(|v| v.as_str()).unwrap_or("");
             if start_name.is_empty() {
                 return Err(err(ErrorCode::InvalidRequest, "start_name required"));
             }
-            let max_depth = p
-                .get("max_depth")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(2) as u8;
+            let max_depth = p.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(2) as u8;
             let limit = p.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
             let graph = state
                 .orchestrator
@@ -1657,7 +1890,11 @@ pub async fn dispatch_method(
         "kg.list" => {
             let limit = p.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
             let offset = p.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            let nodes = state.orchestrator.kg_list_nodes(limit, offset).await
+            let scope = p.get("scope").and_then(|v| v.as_str());
+            let nodes = state
+                .orchestrator
+                .kg_list_nodes(limit, offset, scope)
+                .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             Ok(json!({ "nodes": nodes }))
         }
@@ -1667,7 +1904,10 @@ pub async fn dispatch_method(
             if name.is_empty() {
                 return Err(err(ErrorCode::InvalidRequest, "name required"));
             }
-            let deleted = state.orchestrator.kg_delete_node(name).await
+            let deleted = state
+                .orchestrator
+                .kg_delete_node(name)
+                .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             Ok(json!({ "deleted": deleted }))
         }
@@ -1679,25 +1919,86 @@ pub async fn dispatch_method(
             if source.is_empty() || target.is_empty() {
                 return Err(err(ErrorCode::InvalidRequest, "source and target required"));
             }
-            let deleted = state.orchestrator.kg_delete_edge(source, target, relation).await
+            let deleted = state
+                .orchestrator
+                .kg_delete_edge(source, target, relation)
+                .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             Ok(json!({ "deleted": deleted }))
         }
 
+        // === Cognition Records ===
+        "cognitions.list" => {
+            let subject = p.get("subject").and_then(|v| v.as_str()).unwrap_or("USER");
+            let scope = p.get("scope").and_then(|v| v.as_str());
+            let limit = p.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+            let offset = p.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let rows = state
+                .orchestrator
+                .cognition_list(subject, scope, limit, offset)
+                .await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "rows": rows }))
+        }
+        "cognitions.snapshots" => {
+            let cognition_id = p.get("cognition_id").and_then(|v| v.as_i64()).unwrap_or(0);
+            if cognition_id == 0 {
+                return Err(err(ErrorCode::InvalidRequest, "cognition_id required"));
+            }
+            let snapshots = state
+                .orchestrator
+                .cognition_snapshots(cognition_id)
+                .await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "snapshots": snapshots }))
+        }
+        "cognitions.subjects" => {
+            let subjects = state
+                .orchestrator
+                .cognition_list_subjects()
+                .await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "subjects": subjects }))
+        }
+        "kg.prune" => {
+            let older_than_days = p.get("older_than_days").and_then(|v| v.as_i64()).unwrap_or(30);
+            let pruned_count = state
+                .orchestrator
+                .kg_prune(older_than_days)
+                .await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "pruned_count": pruned_count }))
+        }
+
         // === Token Usage Stats ===
         "stats.token_summary" => {
-            let from = p.get("from").and_then(|v| v.as_str()).unwrap_or("1970-01-01");
+            let from = p
+                .get("from")
+                .and_then(|v| v.as_str())
+                .unwrap_or("1970-01-01");
             let to = p.get("to").and_then(|v| v.as_str()).unwrap_or("2099-12-31");
-            let summary = state.orchestrator.token_summary(from, to).await
+            let summary = state
+                .orchestrator
+                .token_summary(from, to)
+                .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             Ok(summary)
         }
 
         "stats.token_history" => {
-            let from = p.get("from").and_then(|v| v.as_str()).unwrap_or("1970-01-01");
+            let from = p
+                .get("from")
+                .and_then(|v| v.as_str())
+                .unwrap_or("1970-01-01");
             let to = p.get("to").and_then(|v| v.as_str()).unwrap_or("2099-12-31");
-            let granularity = p.get("granularity").and_then(|v| v.as_str()).unwrap_or("day");
-            let history = state.orchestrator.token_history(from, to, granularity).await
+            let granularity = p
+                .get("granularity")
+                .and_then(|v| v.as_str())
+                .unwrap_or("day");
+            let history = state
+                .orchestrator
+                .token_history(from, to, granularity)
+                .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             Ok(history)
         }
@@ -1729,8 +2030,16 @@ fn parse_attached_images(p: &Value) -> Vec<ContentPart> {
             .unwrap_or("image/png");
 
         let name = file.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-        let has_thumb = file.get("thumbnail").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
-        let has_path = file.get("path").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
+        let has_thumb = file
+            .get("thumbnail")
+            .and_then(|v| v.as_str())
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+        let has_path = file
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
 
         tracing::info!(%name, %mime_type, has_thumb, has_path, "parse_attached_images: processing file");
 
@@ -1785,19 +2094,73 @@ fn parse_attached_images(p: &Value) -> Vec<ContentPart> {
 fn is_text_extension(name: &str) -> bool {
     let lower = name.to_lowercase();
     let text_exts = [
-        ".txt", ".md", ".rs", ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".java",
-        ".c", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".swift", ".kt", ".scala",
-        ".sh", ".bash", ".zsh", ".fish", ".ps1", ".bat",
-        ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
-        ".xml", ".html", ".css", ".scss", ".less", ".svelte", ".vue",
-        ".sql", ".graphql", ".proto", ".env", ".lock", ".dockerfile", ".makefile",
-        ".log", ".csv", ".tsv",
-        ".r", ".m", ".lua", ".pl", ".ex", ".exs", ".erl", ".hrl",
-        ".zig", ".nim", ".v", ".dart", ".jl",
+        ".txt",
+        ".md",
+        ".rs",
+        ".py",
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".go",
+        ".java",
+        ".c",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".cs",
+        ".rb",
+        ".php",
+        ".swift",
+        ".kt",
+        ".scala",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".fish",
+        ".ps1",
+        ".bat",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".xml",
+        ".html",
+        ".css",
+        ".scss",
+        ".less",
+        ".svelte",
+        ".vue",
+        ".sql",
+        ".graphql",
+        ".proto",
+        ".env",
+        ".lock",
+        ".dockerfile",
+        ".makefile",
+        ".log",
+        ".csv",
+        ".tsv",
+        ".r",
+        ".m",
+        ".lua",
+        ".pl",
+        ".ex",
+        ".exs",
+        ".erl",
+        ".hrl",
+        ".zig",
+        ".nim",
+        ".v",
+        ".dart",
+        ".jl",
     ];
     text_exts.iter().any(|ext| lower.ends_with(ext))
-    || lower.contains("makefile")
-    || lower.contains("dockerfile")
+        || lower.contains("makefile")
+        || lower.contains("dockerfile")
 }
 
 /// Read text-based non-image attached files and return formatted content for the prompt.
@@ -1811,18 +2174,9 @@ fn parse_attached_file_contents(p: &Value) -> String {
     let mut result = String::new();
 
     for file in files {
-        let mime_type = file
-            .get("mime_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let name = file
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("?");
-        let path = file
-            .get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let mime_type = file.get("mime_type").and_then(|v| v.as_str()).unwrap_or("");
+        let name = file.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+        let path = file.get("path").and_then(|v| v.as_str()).unwrap_or("");
 
         // Images are handled by parse_attached_images separately
         if mime_type.starts_with("image/") {

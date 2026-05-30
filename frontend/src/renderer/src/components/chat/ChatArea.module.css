@@ -1,7 +1,16 @@
+.chatWrapper {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .chatScroll {
   flex: 1;
   overflow-y: auto;
-  padding: 28px 32px 140px;
+  overflow-x: hidden;
+  padding: 28px 71px 140px 15px;
 }
 
 .chatScroll img {
@@ -37,11 +46,10 @@
 }
 
 .messageList {
-  max-width: 640px;
-  margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 24px;
+  overflow-x: hidden;
 }
 
 /* Empty state */

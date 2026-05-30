@@ -127,6 +127,7 @@ export default function ModelConfigPanel() {
   const [baseUrl, setBaseUrl] = useState('https://api.deepseek.com/v1')
   const [apiFormat, setApiFormat] = useState<'openai' | 'anthropic'>('openai')
   const [verifyStatus, setVerifyStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
+  const [urlSaveStatus, setUrlSaveStatus] = useState<'idle' | 'saving' | 'ok' | 'fail'>('idle')
 
   // Discovered
   const [discovered, setDiscovered] = useState<Array<{ id: string; context_length?: number }>>([])
@@ -177,8 +178,19 @@ export default function ModelConfigPanel() {
     setApiFormat(p.apiFormat)
     setApiKey('')
     setVerifyStatus('idle')
+    setUrlSaveStatus('idle')
     setDiscovered([])
     setModelQuery('')
+    // Override with saved base_url / api_format from existing models
+    const existing = models.filter(m => {
+      if (p.isCustom) return (m.backend_label || '') === p.label
+      return m.backend === p.backend
+    })
+    if (existing.length > 0) {
+      if (existing[0].base_url) setBaseUrl(existing[0].base_url!)
+      const fmt = (existing[0] as any).api_format
+      if (fmt === 'openai' || fmt === 'anthropic') setApiFormat(fmt)
+    }
     try {
       const envName = p.isCustom ? (p.envVar || 'OPENLOOM_API_KEY') : undefined
       const result = await loomRpc<{ set: boolean; env_name: string }>('model.check_key', {
@@ -231,6 +243,46 @@ export default function ModelConfigPanel() {
       await refresh()
     } catch {
       setVerifyStatus('fail')
+    }
+  }
+
+  const handleSaveUrl = async () => {
+    if (!selected) return
+    setUrlSaveStatus('saving')
+    try {
+      const providerModels = models.filter(m => {
+        if (selected.isCustom) return (m.backend_label || '') === selected.label
+        return m.backend === selected.backend
+      })
+      if (providerModels.length > 0) {
+        for (const m of providerModels) {
+          try {
+            await loomRpc('model.config.update', {
+              name: m.name,
+              model: m.model || undefined,
+              backend: m.backend as ModelBackend,
+              backend_label: (m as any).backend_label || undefined,
+              base_url: baseUrl.trim() || undefined,
+              api_format: apiFormat,
+              api_key_env: m.api_key_env || undefined,
+              context_size: m.context_size || 4096,
+              capabilities: m.capabilities || {},
+            })
+          } catch { /* best-effort per model */ }
+        }
+      } else if (selected.isCustom) {
+        // No models yet — update the custom provider entry's defaultUrl
+        const next = providers.map(p =>
+          p.id === selected.id ? { ...p, defaultUrl: baseUrl.trim(), apiFormat } : p
+        )
+        setProviders(next)
+        await saveCustomProviders(next)
+      }
+      setUrlSaveStatus('ok')
+      useStore.getState().addToast({ type: 'success', message: 'Base URL 已保存' })
+      await refresh()
+    } catch {
+      setUrlSaveStatus('fail')
     }
   }
 
@@ -477,6 +529,21 @@ export default function ModelConfigPanel() {
     } catch {
       setKeyAlreadySet(false)
     }
+    // Auto-fetch models for the new custom provider
+    setDiscovering(true)
+    try {
+      const discResult = await loomRpc<{ models: Array<{ id: string; context_length?: number }> }>('model.discover', {
+        backend: entry.backend,
+        base_url: entry.defaultUrl,
+        api_format: entry.apiFormat,
+        api_key_env: entry.envVar,
+      })
+      setDiscovered(discResult.models || [])
+    } catch {
+      setDiscovered([])
+    } finally {
+      setDiscovering(false)
+    }
   }
 
   const providerModels = selected
@@ -631,23 +698,30 @@ export default function ModelConfigPanel() {
                 <span className={styles.pvCredLabel}>Base URL</span>
                 <input
                   value={baseUrl}
-                  onChange={e => setBaseUrl(e.target.value)}
+                  onChange={e => { setBaseUrl(e.target.value); setUrlSaveStatus('idle') }}
                   placeholder="https://api.example.com/v1"
                   className={styles.pvCredInput}
                 />
+                <button
+                  onClick={handleSaveUrl}
+                  disabled={!baseUrl.trim() || urlSaveStatus === 'saving'}
+                  className={`${styles.pvSaveBtn} ${urlSaveStatus === 'ok' ? styles.pvSaveOk : ''} ${urlSaveStatus === 'fail' ? styles.pvSaveFail : ''}`}
+                >
+                  {urlSaveStatus === 'saving' ? '...' : urlSaveStatus === 'ok' ? '✓ 已保存' : urlSaveStatus === 'fail' ? '✗ 失败' : '保存'}
+                </button>
               </div>
               <div className={styles.pvCredRow}>
                 <span className={styles.pvCredLabel}>API 格式</span>
                 <div className={styles.pvToggle}>
                   <button
                     className={`${styles.pvToggleBtn} ${apiFormat === 'openai' ? styles.pvToggleActive : ''}`}
-                    onClick={() => setApiFormat('openai')}
+                    onClick={() => { setApiFormat('openai'); setUrlSaveStatus('idle') }}
                   >
                     OpenAI
                   </button>
                   <button
                     className={`${styles.pvToggleBtn} ${apiFormat === 'anthropic' ? styles.pvToggleActive : ''}`}
-                    onClick={() => setApiFormat('anthropic')}
+                    onClick={() => { setApiFormat('anthropic'); setUrlSaveStatus('idle') }}
                   >
                     Anthropic
                   </button>

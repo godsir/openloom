@@ -8,26 +8,82 @@ import AgentSelector from './AgentSelector'
 import ThinkingLevelButton from './ThinkingLevelButton'
 import PermissionModeButton from './PermissionModeButton'
 import AttachedFiles from './AttachedFiles'
-import { IconSend, IconImage, IconPaperclip } from '../../utils/icons'
+import { IconSend, IconImage, IconPaperclip, IconSparkles, IconX, IconCheck } from '../../utils/icons'
 import { escapeHtml } from '../../utils/format'
 import type { AttachedFile } from '../../stores/input'
 import styles from './InputArea.module.css'
+
+interface SkillInfo {
+  name: string
+  description?: string
+  path?: string
+  version?: string
+  user_invocable?: boolean
+  always_active?: boolean
+}
 
 
 export default function InputArea() {
   const [text, setText] = useState('')
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([])
+  const [availableSkills, setAvailableSkills] = useState<SkillInfo[]>([])
+  const [showSkillPopover, setShowSkillPopover] = useState(false)
   const sendingRef = useRef(false)
   const pasteCounterRef = useRef(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const skillPopoverRef = useRef<HTMLDivElement>(null)
   const sessionId = useStore(s => s.currentSessionId)
   const createSession = useStore(s => s.createSession)
   const switchSession = useStore(s => s.switchSession)
   const wsState = useStore(s => s.wsState)
   const { saveDraft, restoreDraft } = useStore.getState()
+
+  // Load available skills (deduplicate by name)
+  const refreshSkills = useCallback(async () => {
+    try {
+      const res = await loomRpc<{ skills: SkillInfo[] }>('skills.list')
+      const seen = new Set<string>()
+      const deduped = (res.skills ?? []).filter(s => {
+        if (seen.has(s.name)) return false
+        seen.add(s.name)
+        return true
+      })
+      setAvailableSkills(deduped)
+      // Prune stale selections
+      const names = new Set(deduped.map(s => s.name))
+      setSelectedSkills(prev => prev.filter(n => names.has(n)))
+    } catch {}
+  }, [])
+
+  // Load on mount
+  useEffect(() => { refreshSkills() }, [refreshSkills])
+
+  // Refresh when popover opens (catches add/delete from Settings)
+  useEffect(() => {
+    if (showSkillPopover) refreshSkills()
+  }, [showSkillPopover, refreshSkills])
+
+  // Close popover on outside click
+  useEffect(() => {
+    if (!showSkillPopover) return
+    const handleClick = (e: MouseEvent) => {
+      if (skillPopoverRef.current && !skillPopoverRef.current.contains(e.target as Node)) {
+        setShowSkillPopover(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [showSkillPopover])
+
+  const toggleSkill = useCallback((name: string) => {
+    setSelectedSkills(prev =>
+      prev.includes(name) ? prev.filter(s => s !== name) : [...prev, name]
+    )
+  }, [])
 
   useEffect(() => {
     if (sessionId) {
@@ -216,7 +272,7 @@ export default function InputArea() {
       blocks: [],
       timestamp: new Date().toISOString(),
     })
-    streamBufferManager.startStream(sid, aiMsgId)
+    streamBufferManager.startStream(sid, aiMsgId, selectedSkills)
 
     // Safety timeout: if stream_end never arrives (e.g. backend deadlock),
     // auto-unlock the input after 3 minutes so the user isn't permanently stuck.
@@ -236,6 +292,7 @@ export default function InputArea() {
         content,
         model: currentModel || undefined,
         thinking_level: thinkingLevel || 'off',
+        skills: selectedSkills.length > 0 ? selectedSkills : undefined,
         attached_files: filesToSend.map(f => ({
           path: f.path,
           name: f.name,
@@ -292,6 +349,21 @@ export default function InputArea() {
     >
       <div className={styles.container}>
         <div className={styles.composer}>
+          {selectedSkills.length > 0 && (
+            <div className={styles.skillBar}>
+              {selectedSkills.map(name => (
+                <span key={name} className={styles.skillChip}>
+                  {name}
+                  <button
+                    onClick={() => toggleSkill(name)}
+                    className={styles.skillChipRemove}
+                  >
+                    <IconX size={10} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           {attachedFiles.length > 0 && (
             <div className={styles.attachmentsArea}>
               <AttachedFiles files={attachedFiles} onRemove={handleRemoveFile} />
@@ -340,6 +412,42 @@ export default function InputArea() {
             >
               <IconPaperclip size={15} />
             </button>
+            <div className={styles.skillBtnWrap} ref={skillPopoverRef}>
+              <button
+                onClick={() => setShowSkillPopover(v => !v)}
+                disabled={!isConnected || streaming}
+                className={`${styles.skillBtn} ${selectedSkills.length > 0 ? styles.skillBtnActive : ''}`}
+                title="加载技能"
+              >
+                <IconSparkles size={13} />
+                {selectedSkills.length > 0 && <span>{selectedSkills.length}</span>}
+              </button>
+              {showSkillPopover && (
+                <div className={styles.skillPopover}>
+                  <div className={styles.skillPopoverHeader}>可用技能</div>
+                  {availableSkills.length === 0 ? (
+                    <div className={styles.skillPopoverEmpty}>暂无技能，可在设置中导入</div>
+                  ) : (
+                    availableSkills.map(s => {
+                      const isSelected = selectedSkills.includes(s.name)
+                      return (
+                        <button
+                          key={s.name}
+                          onClick={() => toggleSkill(s.name)}
+                          className={`${styles.skillPopoverItem} ${isSelected ? styles.skillPopoverItemSelected : ''}`}
+                        >
+                          <span className={styles.skillPopoverItemName}>{s.name}</span>
+                          {s.description && (
+                            <span className={styles.skillPopoverItemDesc}>{s.description}</span>
+                          )}
+                          {isSelected && <IconCheck size={12} className={styles.skillPopoverCheck} />}
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
+              )}
+            </div>
             <PermissionModeButton />
             <ThinkingLevelButton />
             <ModelSelector />

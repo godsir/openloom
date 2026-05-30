@@ -131,9 +131,11 @@ impl MemoryStore for LoomMemoryStore {
                 })
             });
             // Try to parse content as JSON (structured ContentParts). Fall back to plain text.
-            let parts: Vec<loom_types::ContentPart> =
-                serde_json::from_str(&content).unwrap_or_else(|_| {
-                    vec![loom_types::ContentPart::Text { text: content.clone() }]
+            let parts: Vec<loom_types::ContentPart> = serde_json::from_str(&content)
+                .unwrap_or_else(|_| {
+                    vec![loom_types::ContentPart::Text {
+                        text: content.clone(),
+                    }]
                 });
             let role_enum = match role.as_str() {
                 "user" => loom_types::Role::User,
@@ -280,7 +282,7 @@ impl MemoryStore for LoomMemoryStore {
         let rows = {
             let store = self.store.lock().unwrap();
             let cognition = CognitionStore::new(store.conn());
-            cognition.query_by_subject("USER", 20, 0)?
+            cognition.query_by_subject("USER", None, 20, 0)?
         };
         let provider = CognitionsPersonaProvider::new(rows);
         provider.summarize().await
@@ -641,6 +643,7 @@ impl MemoryStore for LoomMemoryStore {
                 entity_type: r.entity_type.clone(),
                 description: r.description.clone(),
                 confidence: r.confidence,
+                scope: r.scope.clone(),
             })
             .collect();
         let edges: Vec<loom_types::KgEdge> = rows
@@ -667,27 +670,71 @@ impl MemoryStore for LoomMemoryStore {
         let store = self.store.lock().unwrap();
         let graph = GraphStore::new(store.conn());
         let rows = graph.walk(start_name, max_depth, None, limit)?;
-        let nodes: Vec<loom_types::KgNode> = rows
-            .iter()
-            .map(|r| loom_types::KgNode {
+
+        // Also include the start node itself
+        let start_id: Option<i64> = graph.resolve_node(start_name)?;
+        let mut all_ids: Vec<i64> = rows.iter().map(|r| r.node_id).collect();
+        if let Some(sid) = start_id {
+            if !all_ids.contains(&sid) {
+                all_ids.insert(0, sid);
+            }
+        }
+
+        let nodes: Vec<loom_types::KgNode> = if let Some(sid) = start_id {
+            // Add start node to the result
+            let start_node = loom_types::KgNode {
+                node_id: sid,
+                name: start_name.to_string(),
+                entity_type: rows.first().map(|r| r.entity_type.clone()).unwrap_or_default(),
+                description: String::new(),
+                confidence: 1.0,
+                scope: "global".to_string(),
+            };
+            let mut n = vec![start_node];
+            n.extend(rows.iter().map(|r| loom_types::KgNode {
                 node_id: r.node_id,
                 name: r.name.clone(),
                 entity_type: r.entity_type.clone(),
                 description: r.description.clone(),
                 confidence: r.confidence,
+                scope: r.scope.clone(),
+            }));
+            n
+        } else {
+            rows.iter()
+                .map(|r| loom_types::KgNode {
+                    node_id: r.node_id,
+                    name: r.name.clone(),
+                    entity_type: r.entity_type.clone(),
+                    description: r.description.clone(),
+                    confidence: r.confidence,
+                    scope: r.scope.clone(),
+                })
+                .collect()
+        };
+
+        // Get edges between all found nodes
+        let edge_rows = graph.edges_between(&all_ids)?;
+        let edges: Vec<loom_types::KgEdge> = edge_rows
+            .into_iter()
+            .map(|(src, tgt, rel, conf)| loom_types::KgEdge {
+                source: src,
+                target: tgt,
+                relation_type: rel,
+                fact: String::new(),
+                confidence: conf,
             })
             .collect();
-        Ok(loom_types::KgGraph {
-            nodes,
-            edges: Vec::new(),
-        })
+
+        Ok(loom_types::KgGraph { nodes, edges })
     }
 
     async fn delete_session(&self, id: &str) -> Result<()> {
         let store = self.store.lock().unwrap();
-        store
-            .conn()
-            .execute("DELETE FROM message_history WHERE session_id = ?1", rusqlite::params![id])?;
+        store.conn().execute(
+            "DELETE FROM message_history WHERE session_id = ?1",
+            rusqlite::params![id],
+        )?;
         store
             .conn()
             .execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])?;
@@ -755,17 +802,26 @@ impl MemoryStore for LoomMemoryStore {
         Ok(result.unwrap_or(0) as usize)
     }
 
-    async fn kg_list_nodes(&self, limit: usize, offset: usize) -> Result<Vec<loom_types::KgNode>> {
+    async fn kg_list_nodes(
+        &self,
+        limit: usize,
+        offset: usize,
+        scope: Option<&str>,
+    ) -> Result<Vec<loom_types::KgNode>> {
         let store = self.store.lock().unwrap();
         let graph = GraphStore::new(store.conn());
-        let rows = graph.list_nodes(limit, offset)?;
-        Ok(rows.iter().map(|r| loom_types::KgNode {
-            node_id: r.node_id,
-            name: r.name.clone(),
-            entity_type: r.entity_type.clone(),
-            description: r.description.clone(),
-            confidence: r.confidence,
-        }).collect())
+        let rows = graph.list_nodes(limit, offset, scope)?;
+        Ok(rows
+            .iter()
+            .map(|r| loom_types::KgNode {
+                node_id: r.node_id,
+                name: r.name.clone(),
+                entity_type: r.entity_type.clone(),
+                description: r.description.clone(),
+                confidence: r.confidence,
+                scope: r.scope.clone(),
+            })
+            .collect())
     }
 
     async fn kg_delete_node(&self, name: &str) -> Result<bool> {
@@ -776,6 +832,66 @@ impl MemoryStore for LoomMemoryStore {
     async fn kg_delete_edge(&self, source: &str, target: &str, relation: &str) -> Result<bool> {
         let store = self.store.lock().unwrap();
         GraphStore::new(store.conn()).delete_edge(source, target, relation)
+    }
+
+    async fn cognition_list(
+        &self,
+        subject: &str,
+        scope: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<loom_types::Cognition>> {
+        let store = self.store.lock().unwrap();
+        let cognitions = loom_memory::CognitionStore::new(store.conn());
+        let rows = cognitions.query_by_subject(subject, scope, limit, offset)?;
+        Ok(rows
+            .into_iter()
+            .map(|r| loom_types::Cognition {
+                id: r.id,
+                subject: r.subject,
+                trait_name: r.trait_name,
+                value: r.value,
+                confidence: r.confidence,
+                evidence_count: r.evidence_count,
+                first_seen: r.first_seen,
+                last_updated: r.last_updated,
+                version: r.version,
+                scope: r.scope,
+            })
+            .collect())
+    }
+
+    async fn cognition_list_subjects(&self) -> Result<Vec<String>> {
+        let store = self.store.lock().unwrap();
+        let cognitions = loom_memory::CognitionStore::new(store.conn());
+        cognitions.list_subjects()
+    }
+
+    async fn cognition_snapshots(
+        &self,
+        cognition_id: i64,
+    ) -> Result<Vec<loom_types::CognitionHistory>> {
+        let store = self.store.lock().unwrap();
+        let cognitions = loom_memory::CognitionStore::new(store.conn());
+        let snapshots = cognitions.snapshots_for(cognition_id)?;
+        Ok(snapshots
+            .into_iter()
+            .map(|s| loom_types::CognitionHistory {
+                id: s.id,
+                version: s.version,
+                trait_name: s.trait_name,
+                value: s.value,
+                confidence: s.confidence,
+                evidence_count: s.evidence_count,
+                snapshot_at: s.snapshot_at,
+            })
+            .collect())
+    }
+
+    async fn kg_prune(&self, older_than_days: i64) -> Result<usize> {
+        let store = self.store.lock().unwrap();
+        let graph = GraphStore::new(store.conn());
+        graph.prune_stale(older_than_days, 1000)
     }
 
     async fn record_token_usage(
@@ -807,7 +923,11 @@ impl MemoryStore for LoomMemoryStore {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
         )?;
 
-        let cache_hit_rate = if totals.0 > 0 { totals.3 as f64 / totals.0 as f64 } else { 0.0 };
+        let cache_hit_rate = if totals.0 > 0 {
+            totals.3 as f64 / totals.0 as f64
+        } else {
+            0.0
+        };
 
         let mut stmt = conn.prepare(
             "SELECT model, SUM(prompt_tokens) as p, SUM(completion_tokens) as c, SUM(cached_tokens) as ca, SUM(cached_read_tokens) as cr, SUM(cached_write_tokens) as cw, COUNT(*) as r, AVG(latency_ms) as l, AVG(CAST(prompt_tokens AS REAL) / NULLIF(context_window, 0)) as cu FROM token_usage WHERE created_at >= ?1 AND created_at <= ?2 GROUP BY model ORDER BY r DESC",
@@ -841,7 +961,12 @@ impl MemoryStore for LoomMemoryStore {
         }))
     }
 
-    async fn get_token_history(&self, from: &str, to: &str, granularity: &str) -> Result<serde_json::Value> {
+    async fn get_token_history(
+        &self,
+        from: &str,
+        to: &str,
+        granularity: &str,
+    ) -> Result<serde_json::Value> {
         let store = self.store.lock().unwrap();
         let conn = store.conn();
 
@@ -868,17 +993,20 @@ impl MemoryStore for LoomMemoryStore {
             ))
         })?;
 
-        let mut buckets: std::collections::BTreeMap<String, serde_json::Value> = std::collections::BTreeMap::new();
+        let mut buckets: std::collections::BTreeMap<String, serde_json::Value> =
+            std::collections::BTreeMap::new();
         for row in rows {
             let (bucket, model, p, c, ca, cnt) = row?;
-            let entry = buckets.entry(bucket.clone()).or_insert_with(|| serde_json::json!({
-                "date": bucket,
-                "prompt": 0,
-                "completion": 0,
-                "cached": 0,
-                "requests": 0,
-                "by_model": {},
-            }));
+            let entry = buckets.entry(bucket.clone()).or_insert_with(|| {
+                serde_json::json!({
+                    "date": bucket,
+                    "prompt": 0,
+                    "completion": 0,
+                    "cached": 0,
+                    "requests": 0,
+                    "by_model": {},
+                })
+            });
             entry["prompt"] = serde_json::json!(entry["prompt"].as_i64().unwrap_or(0) + p);
             entry["completion"] = serde_json::json!(entry["completion"].as_i64().unwrap_or(0) + c);
             entry["cached"] = serde_json::json!(entry["cached"].as_i64().unwrap_or(0) + ca);

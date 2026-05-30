@@ -12,7 +12,7 @@ export default function UserMessage({ message }: { message: Message }) {
   const openLightbox = useStore(s => s.openLightbox)
 
   return (
-    <div className={styles.wrapper}>
+    <div className={styles.wrapper} data-message-id={message.id}>
       <div className={styles.bubble}>
         <div className={styles.content}>
           {hasVisualBlocks && (

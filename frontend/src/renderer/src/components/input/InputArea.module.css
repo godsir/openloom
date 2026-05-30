@@ -3,7 +3,7 @@
 }
 
 .container {
-  max-width: 620px;
+  max-width: 860px;
   margin: 0 auto;
 }
 
@@ -118,4 +118,157 @@
 .dragOver .composer {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.25), var(--shadow-composer);
+}
+
+/* ─── Skill Selector ─── */
+
+.skillBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 20px 0;
+}
+
+.skillChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(139, 92, 246, 0.9);
+  background: rgba(139, 92, 246, 0.08);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  border-radius: var(--r-sm);
+  white-space: nowrap;
+}
+
+.skillChipRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: rgba(139, 92, 246, 0.5);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  border-radius: 2px;
+  transition: all 0.15s;
+}
+
+.skillChipRemove:hover {
+  color: rgba(139, 92, 246, 1);
+  background: rgba(139, 92, 246, 0.15);
+}
+
+.skillBtnWrap {
+  position: relative;
+}
+
+.skillBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.skillBtn:hover {
+  color: var(--text);
+  background: var(--bg-active);
+  border-color: rgba(var(--accent-rgb), 0.25);
+}
+
+.skillBtnActive {
+  color: rgba(139, 92, 246, 0.9);
+  background: rgba(139, 92, 246, 0.08);
+  border-color: rgba(139, 92, 246, 0.2);
+}
+
+.skillPopover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 260px;
+  max-width: 320px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0,0,0,0.3));
+  z-index: 100;
+  padding: 4px;
+}
+
+.skillPopoverHeader {
+  padding: 6px 10px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.skillPopoverItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.skillPopoverItem:hover {
+  background: var(--bg-active);
+}
+
+.skillPopoverItemSelected {
+  color: rgba(139, 92, 246, 0.9);
+  background: rgba(139, 92, 246, 0.06);
+}
+
+.skillPopoverItemName {
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.skillPopoverItemDesc {
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+
+.skillPopoverEmpty {
+  padding: 12px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.skillPopoverCheck {
+  color: rgba(139, 92, 246, 0.8);
+  flex-shrink: 0;
+  margin-left: auto;
 }

@@ -1,0 +1,95 @@
+.block {
+  background: rgba(139, 92, 246, 0.04);
+  border: 1px solid rgba(139, 92, 246, 0.1);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.toggle:hover {
+  background: rgba(139, 92, 246, 0.06);
+}
+
+.icon {
+  color: rgba(139, 92, 246, 0.7);
+  flex-shrink: 0;
+}
+
+.label {
+  font-weight: 500;
+  color: rgba(139, 92, 246, 0.9);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(139, 92, 246, 0.8);
+  margin-left: auto;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.body {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-top: 1px solid rgba(139, 92, 246, 0.08);
+  overflow-wrap: break-word;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+  line-height: 1.6;
+}
+
+.body code {
+  background: rgba(139, 92, 246, 0.08);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.body pre {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 8px 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 11px;
+}
+
+.body h1, .body h2, .body h3 {
+  margin: 8px 0 4px;
+  font-size: 13px;
+}
+
+.body p {
+  margin: 4px 0;
+}
+
+.body ul, .body ol {
+  padding-left: 18px;
+  margin: 4px 0;
+}
+
+.loading {
+  color: rgba(139, 92, 246, 0.6);
+  font-style: italic;
+}

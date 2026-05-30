@@ -72,7 +72,7 @@ export async function bootstrapApp(): Promise<() => void> {
         break
       case 'tool.completed':
         streamBufferManager.handleToolCompleted(
-          sessionId, (p?.id as string) || '', p?.result as string | undefined)
+          sessionId, (p?.id as string) || '', p?.result as string | undefined, p?.name as string | undefined)
         break
       case 'agent.state_changed':
         loomRpc('agent.config.list').then((r: any) =>

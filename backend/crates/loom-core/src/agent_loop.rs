@@ -31,6 +31,10 @@ pub struct TurnResult {
     pub cached_tokens: usize,
     /// Whether the most recent prefix check was a cache hit (None = not checked).
     pub kv_cache_hit: Option<bool>,
+    /// Intermediate tool-call and tool-result messages for persistence.
+    pub tool_messages: Vec<Message>,
+    /// Token usage from auxiliary models (vision, etc.) for separate cost tracking.
+    pub vision_usage: Option<crate::vision::VisionUsage>,
 }
 
 /// Configuration for the agent loop.
@@ -63,7 +67,7 @@ impl Default for AgentLoopConfig {
     fn default() -> Self {
         Self {
             system_prompt: "You are an AI assistant with real access to the user's machine. To use tools (file ops, shell, search, LSP, MCP), call request_tools first with what you need. Then use the loaded tools. For simple questions, just answer directly.".into(),
-            max_iterations: 10,
+            max_iterations: 30,
             max_tokens: 4096,
             temperature: 0.0,
             lazy_tools: true,
@@ -82,9 +86,12 @@ impl Default for AgentLoopConfig {
 /// models never receive an `image_url` part they cannot deserialize.
 fn strip_image_parts(messages: &mut Vec<Message>) {
     for m in messages.iter_mut() {
-        m.content.retain(|p| !matches!(p, ContentPart::Image { .. } | ContentPart::ImageRef { .. }));
+        m.content
+            .retain(|p| !matches!(p, ContentPart::Image { .. } | ContentPart::ImageRef { .. }));
         if m.content.is_empty() {
-            m.content.push(ContentPart::Text { text: String::new() });
+            m.content.push(ContentPart::Text {
+                text: String::new(),
+            });
         }
     }
 }
@@ -94,12 +101,83 @@ fn main_model_has_vision(
     model_configs: &[loom_types::ModelConfig],
     active_model_name: &Option<String>,
 ) -> bool {
-    let Some(name) = active_model_name.as_deref() else { return false };
+    let Some(name) = active_model_name.as_deref() else {
+        return false;
+    };
     model_configs
         .iter()
         .find(|c| c.name == name)
         .map(|c| c.capabilities.vision)
         .unwrap_or(false)
+}
+
+// ── Image path detection ───────────────────────────────────────────────
+
+/// Extract image file paths from text (Windows and Unix absolute paths with image extensions).
+fn extract_image_paths(text: &str) -> Vec<String> {
+    let image_exts = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"];
+    let ext_pattern = image_exts.join("|");
+    let mut paths = Vec::new();
+
+    // Match Windows paths: D:\foo\bar.jpg or C:/foo/bar.png
+    let win_re = regex::Regex::new(&format!(
+        r#"[A-Za-z]:[/\\][^\s<>"|]+\.(?i)({})"#, ext_pattern
+    ))
+    .unwrap();
+    for mat in win_re.find_iter(text) {
+        paths.push(mat.as_str().to_string());
+    }
+
+    // Match Unix paths: /foo/bar.jpg
+    let unix_re = regex::Regex::new(&format!(
+        r#"/[^\s<>"|]+\.(?i)({})"#, ext_pattern
+    ))
+    .unwrap();
+    for mat in unix_re.find_iter(text) {
+        let path = mat.as_str().to_string();
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+
+    paths
+}
+
+/// Load an image file and convert to ContentPart::Image with base64 data.
+fn load_image_as_content_part(path: &str) -> Result<ContentPart> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use std::path::Path;
+
+    let file_path = Path::new(path);
+    if !file_path.exists() {
+        anyhow::bail!("Image file not found: {}", path);
+    }
+
+    let data = std::fs::read(file_path)?;
+    let base64_data = STANDARD.encode(&data);
+
+    // Detect media type from extension
+    let ext = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+
+    let media_type = match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        _ => "image/jpeg", // default
+    };
+
+    Ok(ContentPart::Image {
+        source_type: "base64".to_string(),
+        media_type: media_type.to_string(),
+        data: base64_data,
+    })
 }
 
 // ── On-demand tool loading ───────────────────────────────────────────────
@@ -110,14 +188,15 @@ fn main_model_has_vision(
 fn request_tools_definition() -> ToolDefinition {
     ToolDefinition {
         name: "request_tools".into(),
-        description: "MUST call this first before any file/shell/search operation. Describe what you need to do (e.g. 'read a file', 'run a command', 'search code', 'check LSP diagnostics'). The matching tools will load and become available.".into(),
+        description: "MUST call this first before any file/shell/search operation. You can either describe what you need to do, or specify tool names directly. The matching tools will load and become available.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "reason": {"type": "string", "description": "What do you need to do? Be specific."}
-            },
-            "required": ["reason"]
+                "reason": {"type": "string", "description": "What do you need to do? Be specific."},
+                "tools": {"type": "array", "items": {"type": "string"}, "description": "Specific tool names you need, e.g. [\"file_write\", \"shell\"]"}
+            }
         }),
+        tags: vec![],
     }
 }
 
@@ -171,11 +250,15 @@ fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
 pub(crate) fn build_user_message(user_message: &str, attached_images: &[ContentPart]) -> Message {
     let mut content: Vec<ContentPart> = Vec::new();
     if !user_message.is_empty() {
-        content.push(ContentPart::Text { text: user_message.to_string() });
+        content.push(ContentPart::Text {
+            text: user_message.to_string(),
+        });
     }
     content.extend(attached_images.iter().cloned());
     if content.is_empty() {
-        content.push(ContentPart::Text { text: String::new() });
+        content.push(ContentPart::Text {
+            text: String::new(),
+        });
     }
     Message {
         role: loom_types::Role::User,
@@ -196,7 +279,18 @@ pub async fn run_agent_turn(
     disallowed_tools: &Option<Vec<String>>,
 ) -> Result<TurnResult> {
     let cancel = tokio_util::sync::CancellationToken::new();
-    run_agent_turn_inner(client, registry, history, user_message, &[], config, allowed_tools, disallowed_tools, &cancel).await
+    run_agent_turn_inner(
+        client,
+        registry,
+        history,
+        user_message,
+        &[],
+        config,
+        allowed_tools,
+        disallowed_tools,
+        &cancel,
+    )
+    .await
 }
 
 /// Execute one agent turn with attached images.
@@ -211,7 +305,18 @@ pub async fn run_agent_turn_with_images(
     disallowed_tools: &Option<Vec<String>>,
 ) -> Result<TurnResult> {
     let cancel = tokio_util::sync::CancellationToken::new();
-    run_agent_turn_inner(client, registry, history, user_message, attached_images, config, allowed_tools, disallowed_tools, &cancel).await
+    run_agent_turn_inner(
+        client,
+        registry,
+        history,
+        user_message,
+        attached_images,
+        config,
+        allowed_tools,
+        disallowed_tools,
+        &cancel,
+    )
+    .await
 }
 
 async fn run_agent_turn_inner(
@@ -226,7 +331,7 @@ async fn run_agent_turn_inner(
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<TurnResult> {
     client.prefix_cache_reset();
-    let mut tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
+    let tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
     let assembler = ContextAssembler::new(&config.system_prompt, 8192);
     let opts = AssembleOptions {
         persona: config.persona.clone(),
@@ -240,17 +345,36 @@ async fn run_agent_turn_inner(
     // model in their original turn. Only the current user message's images
     // (appended below) should trigger vision auxiliary processing.
     for msg in messages.iter_mut() {
-        msg.content.retain(|part| !matches!(part, ContentPart::Image { .. } | ContentPart::ImageRef { .. }));
+        msg.content.retain(|part| {
+            !matches!(
+                part,
+                ContentPart::Image { .. } | ContentPart::ImageRef { .. }
+            )
+        });
     }
     // Drop history messages that became empty after image stripping.
     messages.retain(|msg| !msg.content.is_empty());
     messages.push(build_user_message(user_message, attached_images));
 
+    // Detect image file paths in user message and load them as images
+    if let Some(last_msg) = messages.last_mut() {
+        let image_paths = extract_image_paths(user_message);
+        for path in image_paths {
+            if let Ok(image_part) = load_image_as_content_part(&path) {
+                last_msg.content.push(image_part);
+                info!(path = %path, "loaded image from path in user message");
+            }
+        }
+    }
+
+    let mut vision_usage: Option<crate::vision::VisionUsage> = None;
+
     // Vision auxiliary: if images present and the main model has no vision
     // capability, call the vision model to produce a textual analysis and
     // strip image parts so non-vision providers never see `image_url`.
     if crate::vision::has_images(&messages) {
-        let main_has_vision = main_model_has_vision(&config.model_configs, &config.active_model_name);
+        let main_has_vision =
+            main_model_has_vision(&config.model_configs, &config.active_model_name);
         if main_has_vision {
             info!("main model is vision-capable, skipping vision auxiliary");
         } else {
@@ -260,16 +384,22 @@ async fn run_agent_turn_inner(
                     let images = crate::vision::extract_images(&messages);
                     if !images.is_empty() {
                         let model_configs = config.model_configs.clone();
-                        let vision_fut = crate::vision::prepare_vision_context(&images, user_message, vision_model, &model_configs);
-                        let vision_result = tokio::time::timeout(
-                            std::time::Duration::from_secs(120),
-                            vision_fut,
-                        ).await;
+                        let vision_fut = crate::vision::prepare_vision_context(
+                            &images,
+                            user_message,
+                            vision_model,
+                            &model_configs,
+                            None, // no progress reporting in non-streaming
+                        );
+                        let vision_result =
+                            tokio::time::timeout(std::time::Duration::from_secs(300), vision_fut)
+                                .await;
                         match vision_result {
-                            Ok(Ok(context)) => {
+                            Ok(Ok(vresult)) => {
+                                vision_usage = Some(vresult.usage);
                                 messages.push(Message {
                                     role: loom_types::Role::System,
-                                    content: vec![ContentPart::Text { text: context }],
+                                    content: vec![ContentPart::Text { text: vresult.context }],
                                     timestamp: chrono::Utc::now(),
                                     usage: None,
                                 });
@@ -290,11 +420,11 @@ async fn run_agent_turn_inner(
                                 });
                             }
                             Err(_) => {
-                                tracing::warn!("vision auxiliary timed out after 120s");
+                                tracing::warn!("vision auxiliary timed out after 300s");
                                 messages.push(Message {
                                     role: loom_types::Role::System,
                                     content: vec![ContentPart::Text {
-                                        text: "<vision-context>\n[图像分析超时：辅助视觉模型 120s 内无响应。请明确告诉用户你没看到图片，建议检查视觉模型配置。]\n</vision-context>".into(),
+                                        text: "<vision-context>\n[图像分析超时：辅助视觉模型 300s 内无响应。请明确告诉用户你没看到图片，建议检查视觉模型配置。]\n</vision-context>".into(),
                                     }],
                                     timestamp: chrono::Utc::now(),
                                     usage: None,
@@ -311,6 +441,7 @@ async fn run_agent_turn_inner(
     }
 
     let mut tool_calls_made = 0;
+    let mut tool_messages: Vec<Message> = Vec::new();
     let mut total_prompt = 0usize;
     let mut total_completion = 0usize;
 
@@ -327,20 +458,25 @@ async fn run_agent_turn_inner(
                 completion_tokens: total_completion,
                 cached_tokens: 0,
                 kv_cache_hit: None,
-                content_parts: vec![ContentPart::Text { text: "[已中断]".into() }],
+                content_parts: vec![ContentPart::Text {
+                    text: "[已中断]".into(),
+                }],
+                tool_messages: vec![],
+                vision_usage: None,
             });
         }
 
         // Many providers (Gemini-compat gateways especially) reject requests
         // that combine image input with arbitrary function-calling tools, e.g.
         // "Only google search tool ... is supported for image response".
-        // Send no tools on iterations carrying images, then strip the images
-        // afterwards so the next iteration regains tool access.
+        // Only strip tools when the model can't see images natively.
         let images_in_call = crate::vision::has_images(&messages);
         let mut force_no_tools = false;
+        let strip_tools_for_images = images_in_call
+            && !main_model_has_vision(&config.model_configs, &config.active_model_name);
 
-        let response = loop {
-            let effective_tools = if images_in_call || force_no_tools {
+        let mut response = loop {
+            let effective_tools = if strip_tools_for_images || force_no_tools {
                 Vec::new()
             } else {
                 tools.clone()
@@ -361,9 +497,14 @@ async fn run_agent_turn_inner(
 
             info!(
                 iteration,
-                tool_count = if images_in_call || force_no_tools { 0 } else { tools.len() },
+                tool_count = if strip_tools_for_images || force_no_tools {
+                    0
+                } else {
+                    tools.len()
+                },
                 msg_count = messages.len(),
                 images_in_call,
+                strip_tools_for_images,
                 force_no_tools,
                 "agent turn iteration"
             );
@@ -396,31 +537,23 @@ async fn run_agent_turn_inner(
             strip_image_parts(&mut messages);
         }
 
+        // Local models sometimes emit tool calls as inline XML/text instead of
+        // structured calls. Parse them from the text when no structured calls
+        // were received. When tools are already cleared, strip the inline calls
+        // so raw XML doesn't leak into the final response.
+        if response.tool_calls.is_empty() && !response.text.is_empty() {
+            let (cleaned, inline_tcs) = loom_inference::parse_inline_tool_calls(&response.text);
+            if !inline_tcs.is_empty() {
+                response.text = cleaned;
+                if !tools.is_empty() {
+                    response.tool_calls = inline_tcs;
+                }
+            }
+        }
+
         // If the LLM returned tool calls, dispatch them
         if !response.tool_calls.is_empty() {
             info!(count = response.tool_calls.len(), names = ?response.tool_calls.iter().map(|t| &t.name).collect::<Vec<_>>(), "tool calls received");
-
-            // Stall breaker: strip tools after 7 iterations to force final response
-            if iteration >= 7 {
-                tools.clear();
-                messages.push(Message {
-                    role: Role::System,
-                    content: vec![ContentPart::Text {
-                        text: "You have used many tools. Stop and give your final answer now based on what you've found. Do NOT call more tools.".into(),
-                    }],
-                    timestamp: chrono::Utc::now(),
-                    usage: None,
-                });
-            } else if iteration >= 3 {
-                messages.push(Message {
-                    role: Role::System,
-                    content: vec![ContentPart::Text {
-                        text: "Consider whether you have enough information to answer. If so, respond directly without more tools.".into(),
-                    }],
-                    timestamp: chrono::Utc::now(),
-                    usage: None,
-                });
-            }
 
             // Add assistant message with tool calls + thinking (if any)
             let mut assistant_content: Vec<ContentPart> = Vec::new();
@@ -442,20 +575,27 @@ async fn run_agent_turn_inner(
                 timestamp: chrono::Utc::now(),
                 usage: None,
             });
+            tool_messages.push(messages.last().unwrap().clone());
 
             // Execute each tool call
             for tc in &response.tool_calls {
                 let tool_name = tc.name.clone();
                 info!(name = %tool_name, "executing tool");
-                // Permission check
-                let perms = SkillPermissions::default();
+                // Permission check — local personal AI allows shell and file write by default
+                let perms = SkillPermissions {
+                    shell: true,
+                    fs_write: Some(vec![]),
+                    ..Default::default()
+                };
                 let (allowed, risk) = check_permission(&tool_name, &perms);
                 if !allowed {
-                    messages.push(Message::tool(
+                    let perm_msg = Message::tool(
                         &tc.id,
                         &tool_name,
                         format!("Permission denied (risk: {:?})", risk),
-                    ));
+                    );
+                    messages.push(perm_msg.clone());
+                    tool_messages.push(perm_msg);
                     continue;
                 }
 
@@ -471,11 +611,15 @@ async fn run_agent_turn_inner(
                         } else {
                             result.content
                         };
-                        messages.push(Message::tool(&tc.id, &tool_name, &content));
+                        let tool_msg = Message::tool(&tc.id, &tool_name, &content);
+                        messages.push(tool_msg.clone());
+                        tool_messages.push(tool_msg);
                     }
                     Err(e) => {
                         let err_msg = format!("Tool execution failed: {}", e);
-                        messages.push(Message::tool(&tc.id, &tool_name, &err_msg));
+                        let tool_msg = Message::tool(&tc.id, &tool_name, &err_msg);
+                        messages.push(tool_msg.clone());
+                        tool_messages.push(tool_msg);
                     }
                 }
             }
@@ -493,9 +637,13 @@ async fn run_agent_turn_inner(
         let thinking_text = response.thinking.unwrap_or_default();
         let mut content_parts = Vec::new();
         if !thinking_text.is_empty() {
-            content_parts.push(ContentPart::Thinking { text: thinking_text.clone() });
+            content_parts.push(ContentPart::Thinking {
+                text: thinking_text.clone(),
+            });
         }
-        content_parts.push(ContentPart::Text { text: response_text.clone() });
+        content_parts.push(ContentPart::Text {
+            text: response_text.clone(),
+        });
         for (media_type, data) in &response.images {
             content_parts.push(ContentPart::Image {
                 source_type: "base64".to_string(),
@@ -513,19 +661,25 @@ async fn run_agent_turn_inner(
             completion_tokens: total_completion,
             cached_tokens: client.estimated_cache_tokens(),
             kv_cache_hit: client.last_cache_hit(),
+            tool_messages,
+            vision_usage: vision_usage.clone(),
         });
     }
 
     Ok(TurnResult {
         response: "Agent reached maximum iterations without resolving.".into(),
         thinking: String::new(),
-        content_parts: vec![ContentPart::Text { text: "Agent reached maximum iterations without resolving.".into() }],
+        content_parts: vec![ContentPart::Text {
+            text: "Agent reached maximum iterations without resolving.".into(),
+        }],
         tool_calls_made,
         iterations: config.max_iterations,
         prompt_tokens: total_prompt,
         completion_tokens: total_completion,
         cached_tokens: client.estimated_cache_tokens(),
         kv_cache_hit: client.last_cache_hit(),
+        tool_messages: vec![],
+        vision_usage: vision_usage.clone(),
     })
 }
 
@@ -542,7 +696,19 @@ pub async fn run_agent_turn_streaming(
     disallowed_tools: &Option<Vec<String>>,
 ) -> Result<TurnResult> {
     let cancel = tokio_util::sync::CancellationToken::new();
-    run_agent_turn_streaming_inner(client, registry, history, user_message, &[], config, delta_tx, allowed_tools, disallowed_tools, &cancel).await
+    run_agent_turn_streaming_inner(
+        client,
+        registry,
+        history,
+        user_message,
+        &[],
+        config,
+        delta_tx,
+        allowed_tools,
+        disallowed_tools,
+        &cancel,
+    )
+    .await
 }
 
 /// Execute one agent turn (streaming) with attached images.
@@ -559,7 +725,19 @@ pub async fn run_agent_turn_streaming_with_images(
     disallowed_tools: &Option<Vec<String>>,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<TurnResult> {
-    run_agent_turn_streaming_inner(client, registry, history, user_message, attached_images, config, delta_tx, allowed_tools, disallowed_tools, cancel).await
+    run_agent_turn_streaming_inner(
+        client,
+        registry,
+        history,
+        user_message,
+        attached_images,
+        config,
+        delta_tx,
+        allowed_tools,
+        disallowed_tools,
+        cancel,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -595,7 +773,12 @@ async fn run_agent_turn_streaming_inner(
     // model in their original turn. Only the current user message's images
     // (appended below) should trigger vision auxiliary processing.
     for msg in messages.iter_mut() {
-        msg.content.retain(|part| !matches!(part, ContentPart::Image { .. } | ContentPart::ImageRef { .. }));
+        msg.content.retain(|part| {
+            !matches!(
+                part,
+                ContentPart::Image { .. } | ContentPart::ImageRef { .. }
+            )
+        });
     }
     // Drop history messages that became empty after image stripping.
     messages.retain(|msg| !msg.content.is_empty());
@@ -612,6 +795,19 @@ async fn run_agent_turn_streaming_inner(
         history.len(),
     );
     messages.push(build_user_message(user_message, attached_images));
+
+    // Detect image file paths in user message and load them as images
+    if let Some(last_msg) = messages.last_mut() {
+        let image_paths = extract_image_paths(user_message);
+        for path in image_paths {
+            if let Ok(image_part) = load_image_as_content_part(&path) {
+                last_msg.content.push(image_part);
+                tracing::info!(path = %path, "loaded image from path in user message (streaming)");
+            }
+        }
+    }
+
+    let mut vision_usage: Option<crate::vision::VisionUsage> = None;
 
     // Vision auxiliary: if images present and main model lacks vision capability,
     // call vision model, inject textual context, and strip image parts.
@@ -632,7 +828,8 @@ async fn run_agent_turn_streaming_inner(
         }
     }
     if imgs_in_messages {
-        let main_has_vision = main_model_has_vision(&config.model_configs, &config.active_model_name);
+        let main_has_vision =
+            main_model_has_vision(&config.model_configs, &config.active_model_name);
         tracing::info!(main_has_vision, "main_model_has_vision result (streaming)");
         if main_has_vision {
             tracing::info!("main model is vision-capable, skipping vision auxiliary (streaming)");
@@ -642,18 +839,60 @@ async fn run_agent_turn_streaming_inner(
                 if let Some(vision_model) = &vision_cfg.model {
                     let images = crate::vision::extract_images(&messages);
                     if !images.is_empty() {
-                        let _ = delta_tx.send(StreamDelta::Text("\x02VISION_START\x02".into())).await;
+                        let _ = delta_tx
+                            .send(StreamDelta::Text("\x02VISION_START\x02".into()))
+                            .await;
                         let model_configs = config.model_configs.clone();
-                        let vision_fut = crate::vision::prepare_vision_context(&images, user_message, vision_model, &model_configs);
-                        let vision_result = tokio::time::timeout(
-                            std::time::Duration::from_secs(120),
-                            vision_fut,
-                        ).await;
+                        let (progress_tx, mut progress_rx) =
+                            tokio::sync::mpsc::channel::<crate::vision::VisionBatchProgress>(8);
+                        let images = images.clone();
+                        let user_message = user_message.to_string();
+                        let vision_model = vision_model.clone();
+
+                        // Spawn progress forwarder
+                        let delta_tx_progress = delta_tx.clone();
+                        let progress_handle = tokio::spawn(async move {
+                            while let Some(p) = progress_rx.recv().await {
+                                // Encode result: replace newlines with \x03 for safe transport
+                                let result_encoded = p.result
+                                    .as_deref()
+                                    .unwrap_or("")
+                                    .replace('\n', "\x03");
+                                let signal = format!(
+                                    "\x02VISION_BATCH\x02{};{};{};{}",
+                                    p.batch_index, p.total_batches, p.status, result_encoded
+                                );
+                                let _ = delta_tx_progress
+                                    .send(StreamDelta::Text(signal))
+                                    .await;
+                            }
+                        });
+
+                        let vision_fut = crate::vision::prepare_vision_context(
+                            &images,
+                            &user_message,
+                            &vision_model,
+                            &model_configs,
+                            Some(progress_tx),
+                        );
+                        let vision_result =
+                            tokio::time::timeout(std::time::Duration::from_secs(300), vision_fut)
+                                .await;
                         match vision_result {
-                            Ok(Ok(context)) => {
+                            Ok(Ok(vresult)) => {
+                                // Emit vision token usage as AuxiliaryUsage delta
+                                // so the orchestrator persists it under the vision model name
+                                if vresult.usage.prompt_tokens > 0 || vresult.usage.completion_tokens > 0 {
+                                    let _ = delta_tx.send(StreamDelta::AuxiliaryUsage {
+                                        model: vresult.usage.model_name.clone(),
+                                        prompt_tokens: vresult.usage.prompt_tokens as u64,
+                                        completion_tokens: vresult.usage.completion_tokens as u64,
+                                    }).await;
+                                }
+                                vision_usage = Some(vresult.usage);
                                 messages.push(Message {
                                     role: loom_types::Role::System,
-                                    content: vec![ContentPart::Text { text: context }],
+                                    content: vec![ContentPart::Text { text: vresult.context }],
                                     timestamp: chrono::Utc::now(),
                                     usage: None,
                                 });
@@ -674,18 +913,22 @@ async fn run_agent_turn_streaming_inner(
                                 });
                             }
                             Err(_) => {
-                                tracing::warn!("vision auxiliary timed out after 120s");
+                                tracing::warn!("vision auxiliary timed out after 300s");
                                 messages.push(Message {
                                     role: loom_types::Role::System,
                                     content: vec![ContentPart::Text {
-                                        text: "<vision-context>\n[图像分析超时：辅助视觉模型 120s 内无响应。请明确告诉用户你没看到图片，建议检查视觉模型配置。]\n</vision-context>".into(),
+                                        text: "<vision-context>\n[图像分析超时：辅助视觉模型 300s 内无响应。请明确告诉用户你没看到图片，建议检查视觉模型配置。]\n</vision-context>".into(),
                                     }],
                                     timestamp: chrono::Utc::now(),
                                     usage: None,
                                 });
                             }
                         }
-                        let _ = delta_tx.send(StreamDelta::Text("\x02VISION_DONE\x02".into())).await;
+                        // Clean up progress forwarder
+                        progress_handle.abort();
+                        let _ = delta_tx
+                            .send(StreamDelta::Text("\x02VISION_DONE\x02".into()))
+                            .await;
                     }
                 }
             }
@@ -695,6 +938,7 @@ async fn run_agent_turn_streaming_inner(
     }
 
     let mut tool_calls_made = 0;
+    let mut tool_messages: Vec<Message> = Vec::new();
     let mut total_prompt = 0usize;
     let mut total_completion = 0usize;
     let mut final_text = String::new();
@@ -717,15 +961,22 @@ async fn run_agent_turn_streaming_inner(
                 completion_tokens: total_completion,
                 cached_tokens: 0,
                 kv_cache_hit: None,
-                content_parts: vec![ContentPart::Text { text: "[已中断]".into() }],
+                content_parts: vec![ContentPart::Text {
+                    text: "[已中断]".into(),
+                }],
+                tool_messages: vec![],
+                vision_usage: None,
             });
         }
 
-        // Drop tools on iterations that carry image input — many providers
-        // (Gemini-compat gateways) reject image+tools combos. Strip images
-        // afterwards so subsequent iterations regain tool access.
+        // Drop tools on iterations that carry image input ONLY when the main
+        // model lacks vision capability. Vision-capable models can handle
+        // image+tools combos simultaneously.
         let images_in_call = crate::vision::has_images(&messages);
         let mut force_no_tools = false;
+        // Only strip tools for images when the model can't see them natively
+        let strip_tools_for_images = images_in_call
+            && !main_model_has_vision(&config.model_configs, &config.active_model_name);
 
         let mut pending_tool_calls: Vec<(usize, String, String, String)> = Vec::new();
         let mut this_text = String::new();
@@ -735,7 +986,7 @@ async fn run_agent_turn_streaming_inner(
         // returning image responses with errors like "Only google search tool
         // ... is supported for image response". Detect and retry without tools.
         loop {
-            let effective_tools = if images_in_call || force_no_tools {
+            let effective_tools = if strip_tools_for_images || force_no_tools {
                 Vec::new()
             } else {
                 tools.clone()
@@ -806,6 +1057,14 @@ async fn run_agent_turn_streaming_inner(
                                 forwarded_any = true;
                                 let _ = delta_tx.send(StreamDelta::Image { media_type, data }).await;
                             }
+                            StreamDelta::ToolResult { call_id, tool_name, success, result } => {
+                                forwarded_any = true;
+                                let _ = delta_tx.send(StreamDelta::ToolResult { call_id, tool_name, success, result }).await;
+                            }
+                            StreamDelta::AuxiliaryUsage { .. } => {
+                                // Forward auxiliary usage deltas as-is
+                                let _ = delta_tx.send(delta).await;
+                            }
                         }
                     }
                     r = &mut stream_fut => {
@@ -849,8 +1108,7 @@ async fn run_agent_turn_streaming_inner(
                 let is_image_tool_conflict = !force_no_tools
                     && !forwarded_any
                     && !tools.is_empty()
-                    && (msg.contains("image response")
-                        || msg.contains("Only google search tool"));
+                    && (msg.contains("image response") || msg.contains("Only google search tool"));
                 if is_image_tool_conflict {
                     tracing::warn!(
                         error = %msg,
@@ -880,6 +1138,22 @@ async fn run_agent_turn_streaming_inner(
             strip_image_parts(&mut messages);
         }
 
+        // Local models sometimes emit tool calls as inline JSON/text instead of
+        // structured calls. Parse them from the text when no structured calls
+        // were received. When tools are already cleared, strip the inline
+        // calls so raw XML doesn't leak into the final response.
+        if pending_tool_calls.is_empty() && !this_text.is_empty() {
+            let (cleaned, inline_tcs) = loom_inference::parse_inline_tool_calls(&this_text);
+            if !inline_tcs.is_empty() {
+                this_text = cleaned;
+                if !tools.is_empty() {
+                    for (idx, tc) in inline_tcs.into_iter().enumerate() {
+                        pending_tool_calls.push((idx, tc.id, tc.name, tc.arguments.to_string()));
+                    }
+                }
+            }
+        }
+
         if !pending_tool_calls.is_empty() {
             let mut assistant_content: Vec<ContentPart> = Vec::new();
             if !this_thinking.is_empty() {
@@ -901,24 +1175,82 @@ async fn run_agent_turn_streaming_inner(
                 timestamp: chrono::Utc::now(),
                 usage: None,
             });
+            tool_messages.push(messages.last().unwrap().clone());
 
             for (_, tc_id, tc_name, tc_args) in &pending_tool_calls {
                 // Handle request_tools meta-tool: match and inject real tools
                 if config.lazy_tools && tc_name == "request_tools" {
                     let args: serde_json::Value =
                         serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}));
+
+                    // Support both {"tools": ["file_write"]} and {"reason": "write a file"}
+                    let mut matched: Vec<ToolDefinition> = Vec::new();
+
+                    if let Some(tools_arr) = args["tools"].as_array() {
+                        // Match by exact tool name
+                        for t in tools_arr {
+                            if let Some(name) = t.as_str() {
+                                if let Some(def) = all_tools.iter().find(|d| d.name == name) {
+                                    if !matched.iter().any(|m| m.name == name) {
+                                        matched.push(def.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Also try matching by reason if provided
                     let reason = args["reason"].as_str().unwrap_or("");
-                    let matched = match_tools(reason, &all_tools);
+                    if !reason.is_empty() {
+                        let reason_matched = match_tools(reason, &all_tools);
+                        for t in reason_matched {
+                            if !matched.iter().any(|m| m.name == t.name) {
+                                matched.push(t);
+                            }
+                        }
+                    }
+
+                    // Fallback: if nothing matched, load all tools
+                    if matched.is_empty() {
+                        matched = all_tools.iter()
+                            .filter(|t| t.name != "request_tools")
+                            .cloned()
+                            .collect();
+                    }
+
                     let names: Vec<&str> = matched.iter().map(|t| t.name.as_str()).collect();
                     tracing::info!(%reason, ?names, "request_tools matched");
-                    let content = if matched.is_empty() {
-                        "No matching tools found. Try describing what you need differently.".into()
-                    } else {
-                        format!("Tools loaded: {}", names.join(", "))
-                    };
+                    let content = format!("Tools loaded: {}", names.join(", "));
                     messages.push(Message::tool(tc_id, tc_name, &content));
+                    tool_messages.push(messages.last().unwrap().clone());
                     tools = matched;
                     tool_calls_made += 1;
+                    continue;
+                }
+
+                // Permission check (same as non-streaming path)
+                let perms = loom_types::SkillPermissions {
+                    shell: true,
+                    fs_write: Some(vec![]),
+                    ..Default::default()
+                };
+                let (allowed, risk) = check_permission(tc_name, &perms);
+                if !allowed {
+                    let perm_msg = Message::tool(
+                        tc_id,
+                        tc_name,
+                        format!("Permission denied (risk: {:?})", risk),
+                    );
+                    messages.push(perm_msg.clone());
+                    tool_messages.push(perm_msg);
+                    let _ = delta_tx
+                        .send(StreamDelta::ToolResult {
+                            call_id: tc_id.clone(),
+                            tool_name: tc_name.clone(),
+                            success: false,
+                            result: Some(format!("Permission denied (risk: {:?})", risk)),
+                        })
+                        .await;
                     continue;
                 }
 
@@ -927,24 +1259,39 @@ async fn run_agent_turn_streaming_inner(
                 match registry.execute(tc_name, arguments, progress_tx).await {
                     Ok(result) => {
                         tool_calls_made += 1;
+                        let success = !result.is_error;
                         let content = if result.is_error {
                             format!("Error: {}", result.content)
                         } else {
                             result.content
                         };
-                        messages.push(Message::tool(tc_id, tc_name, &content));
+                        let tool_msg = Message::tool(tc_id, tc_name, &content);
+                        messages.push(tool_msg.clone());
+                        tool_messages.push(tool_msg);
+                        let _ = delta_tx
+                            .send(StreamDelta::ToolResult {
+                                call_id: tc_id.clone(),
+                                tool_name: tc_name.clone(),
+                                success,
+                                result: Some(content),
+                            })
+                            .await;
                     }
                     Err(e) => {
-                        messages.push(Message::tool(
-                            tc_id,
-                            tc_name,
-                            format!("Tool execution failed: {}", e),
-                        ));
+                        let err_msg = format!("Tool execution failed: {}", e);
+                        let tool_msg = Message::tool(tc_id, tc_name, &err_msg);
+                        messages.push(tool_msg.clone());
+                        tool_messages.push(tool_msg);
+                        let _ = delta_tx
+                            .send(StreamDelta::ToolResult {
+                                call_id: tc_id.clone(),
+                                tool_name: tc_name.clone(),
+                                success: false,
+                                result: Some(err_msg),
+                            })
+                            .await;
                     }
                 }
-            }
-            if iteration >= 7 {
-                tools.clear();
             }
             continue;
         }
@@ -953,9 +1300,13 @@ async fn run_agent_turn_streaming_inner(
         captured_thinking = std::mem::take(&mut this_thinking);
         content_parts.clear();
         if !captured_thinking.is_empty() {
-            content_parts.push(ContentPart::Thinking { text: captured_thinking.clone() });
+            content_parts.push(ContentPart::Thinking {
+                text: captured_thinking.clone(),
+            });
         }
-        content_parts.push(ContentPart::Text { text: final_text.clone() });
+        content_parts.push(ContentPart::Text {
+            text: final_text.clone(),
+        });
         break;
     }
 
@@ -978,5 +1329,7 @@ async fn run_agent_turn_streaming_inner(
         completion_tokens: total_completion,
         cached_tokens: client.estimated_cache_tokens(),
         kv_cache_hit: client.last_cache_hit(),
+        tool_messages,
+        vision_usage: vision_usage.clone(),
     })
 }

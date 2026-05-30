@@ -1,8 +1,10 @@
 import { useStore } from '../../stores'
-import { useRef, useEffect, useLayoutEffect } from 'react'
+import { useRef, useEffect, useLayoutEffect, useMemo } from 'react'
 import AssistantMessage from './AssistantMessage'
 import UserMessage from './UserMessage'
 import ImageLightbox from '../shared/ImageLightbox'
+import ChatTimelineNavigator from './ChatTimelineNavigator'
+import { buildTimelineAnchors } from './timeline-anchors'
 import styles from './ChatArea.module.css'
 
 const EMPTY: never[] = []
@@ -16,6 +18,7 @@ export default function ChatArea() {
   const inlineErrors = useStore(s => s.inlineErrors)
   const error = sessionId ? inlineErrors.get(sessionId)?.text : null
   const scrollRef = useRef<HTMLDivElement>(null)
+  const timelineAnchors = useMemo(() => buildTimelineAnchors(messages as any[]), [messages])
   const lightboxSrc = useStore(s => s.lightbox.lightboxSrc)
   const openLightbox = useStore(s => s.openLightbox)
   const closeLightbox = useStore(s => s.closeLightbox)
@@ -62,35 +65,39 @@ export default function ChatArea() {
     return () => document.removeEventListener('click', docHandler, true)
   }, [openLightbox])
 
-  if (messages.length === 0 && !isStreaming) {
-    return (
-      <div className={styles.emptyState}>
-        <div className={styles.emptyContent}>
-          <div className={styles.emptyLogo}>
-            <span className={styles.emptyLogoText}>L</span>
-          </div>
-          <p className={styles.emptyHint}>发送消息开始对话</p>
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <div ref={scrollRef} className={styles.chatScroll}>
-      <div className={styles.messageList}>
-        {messages.map(msg =>
-          msg.role === 'user'
-            ? <UserMessage key={msg.id} message={msg} />
-            : <AssistantMessage key={msg.id} message={msg} sessionId={sessionId} />
-        )}
-
-        {error && (
-          <div className={styles.errorBlock}>
-            <span className={styles.errorIcon}>!</span>
-            <span>{error}</span>
+    <div className={styles.chatWrapper}>
+      {messages.length === 0 && !isStreaming ? (
+        <div className={styles.emptyState}>
+          <div className={styles.emptyContent}>
+            <div className={styles.emptyLogo}>
+              <span className={styles.emptyLogoText}>L</span>
+            </div>
+            <p className={styles.emptyHint}>发送消息开始对话</p>
           </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div ref={scrollRef} className={styles.chatScroll}>
+          <div className={styles.messageList}>
+            {messages.map(msg =>
+              msg.role === 'user'
+                ? <UserMessage key={msg.id} message={msg} />
+                : <AssistantMessage key={msg.id} message={msg} sessionId={sessionId} />
+            )}
+
+            {error && (
+              <div className={styles.errorBlock}>
+                <span className={styles.errorIcon}>!</span>
+                <span>{error}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      <ChatTimelineNavigator
+        anchors={timelineAnchors}
+        scrollRef={scrollRef as React.RefObject<HTMLDivElement | null>}
+      />
       <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
     </div>
   )

@@ -130,19 +130,47 @@ fn agent_event_method(event: &AgentEvent) -> &'static str {
 fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
     use serde_json::json;
     match event {
-        AgentEvent::StreamDelta { agent_id: _, session_id, delta } => {
+        AgentEvent::StreamDelta {
+            agent_id: _,
+            session_id,
+            delta,
+        } => {
             json!({ "session_id": session_id, "delta": delta })
         }
-        AgentEvent::StreamEnd { agent_id: _, session_id, full_response: _ } => {
+        AgentEvent::StreamEnd {
+            agent_id: _,
+            session_id,
+            full_response: _,
+        } => {
             json!({ "session_id": session_id })
         }
-        AgentEvent::ToolStarted { agent_id: _, call_id, tool_name } => {
-            json!({ "id": call_id, "name": tool_name })
+        AgentEvent::ToolStarted {
+            agent_id: _,
+            call_id,
+            tool_name,
+            args,
+        } => {
+            json!({ "id": call_id, "name": tool_name, "args": args })
         }
-        AgentEvent::ToolCompleted { agent_id: _, call_id, tool_name, success: _ } => {
-            json!({ "id": call_id, "name": tool_name })
+        AgentEvent::ToolCompleted {
+            agent_id: _,
+            call_id,
+            tool_name,
+            success,
+            result,
+        } => {
+            json!({ "id": call_id, "name": tool_name, "success": success, "result": result })
         }
-        AgentEvent::TokenUsage { agent_id: _, session_id, model, prompt_tokens, completion_tokens, cached_tokens, latency_ms, context_window } => {
+        AgentEvent::TokenUsage {
+            agent_id: _,
+            session_id,
+            model,
+            prompt_tokens,
+            completion_tokens,
+            cached_tokens,
+            latency_ms,
+            context_window,
+        } => {
             json!({
                 "session_id": session_id,
                 "model": model,

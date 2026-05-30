@@ -48,26 +48,17 @@ function katexPlugin(md: MarkdownIt) {
 
 // File path detection — wraps absolute paths with an "open" button
 function filePathPlugin(md: MarkdownIt) {
-  const prev = md.renderer.rules.text || function (tokens, idx) {
+  const prevText = md.renderer.rules.text || function (tokens, idx) {
     return md.utils.escapeHtml(tokens[idx].content)
+  }
+  const prevCode = md.renderer.rules.code_inline || function (tokens, idx) {
+    return '<code>' + md.utils.escapeHtml(tokens[idx].content) + '</code>'
   }
 
   // Match Windows (D:\...) and Unix (/...) absolute paths with a file extension
   const RE = /[A-Za-z]:\\(?:\S+?\\)*\S+\.\w{1,10}|\/(?:\S+\/)+\S+\.\w{1,10}/g
 
-  md.renderer.rules.text = function (tokens, idx, options, env, self) {
-    const content = tokens[idx].content
-
-    // Delegate KaTeX math to the previous renderer (katexPlugin)
-    if (content.startsWith('\\(') && content.endsWith('\\)')) {
-      return prev(tokens, idx, options, env, self)
-    }
-
-    RE.lastIndex = 0
-    if (!RE.test(content)) {
-      return prev(tokens, idx, options, env, self)
-    }
-
+  function wrapPaths(content: string): string {
     RE.lastIndex = 0
     let result = ''
     let lastIndex = 0
@@ -82,6 +73,30 @@ function filePathPlugin(md: MarkdownIt) {
     }
     result += md.utils.escapeHtml(content.slice(lastIndex))
     return result
+  }
+
+  md.renderer.rules.text = function (tokens, idx, options, env, self) {
+    const content = tokens[idx].content
+
+    // Delegate KaTeX math to the previous renderer (katexPlugin)
+    if (content.startsWith('\\(') && content.endsWith('\\)')) {
+      return prevText(tokens, idx, options, env, self)
+    }
+
+    RE.lastIndex = 0
+    if (!RE.test(content)) {
+      return prevText(tokens, idx, options, env, self)
+    }
+    return wrapPaths(content)
+  }
+
+  md.renderer.rules.code_inline = function (tokens, idx, options, env, self) {
+    const content = tokens[idx].content
+    RE.lastIndex = 0
+    if (!RE.test(content)) {
+      return prevCode(tokens, idx, options, env, self)
+    }
+    return wrapPaths(content)
   }
 }
 

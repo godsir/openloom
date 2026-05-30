@@ -1,6 +1,6 @@
 .block {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
   border-radius: var(--r-md);
   overflow: hidden;
 }
@@ -13,7 +13,7 @@
   padding: 6px 12px;
   font-size: 11px;
   font-family: inherit;
-  color: var(--text-light);
+  color: var(--text-secondary);
   background: none;
   border: none;
   cursor: pointer;
@@ -21,7 +21,7 @@
 }
 
 .toggle:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--bg-active);
 }
 
 .label {
@@ -45,9 +45,11 @@
 .body {
   padding: 10px 12px;
   font-size: 12px;
-  color: var(--text-light);
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border-default);
   white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
   max-height: 224px;
   overflow-y: auto;
   line-height: 1.6;

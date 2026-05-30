@@ -20,6 +20,9 @@
   font-size: 13px;
   color: var(--text);
   line-height: 1.65;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  min-width: 0;
 }
 
 .empty {
