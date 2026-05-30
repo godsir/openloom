@@ -1,9 +1,11 @@
 //! Top-level orchestrator — wires AgentPool, ToolRegistry, McpClient,
 //! inference, and the agent loop into a single entry point.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use base64::Engine;
 use loom_inference::engine::CloudClient;
 use loom_memory::{
     ExtractedEntity, ExtractedRelationship, LLM_EXTRACTION_PROMPT, parse_llm_extraction,
@@ -25,7 +27,7 @@ pub struct Orchestrator {
     tool_registry: Arc<RwLock<ToolRegistry>>,
     mcp_client: Arc<McpClient>,
     lsp_client: Arc<LspClient>,
-    cloud_client: Arc<RwLock<Option<Box<dyn CloudClient>>>>,
+    cloud_client: Arc<RwLock<Option<Arc<dyn CloudClient>>>>,
     loop_config: Arc<RwLock<AgentLoopConfig>>,
     session_histories: Arc<RwLock<std::collections::HashMap<String, Vec<Message>>>>,
     skill_context: Arc<RwLock<String>>,
@@ -35,6 +37,10 @@ pub struct Orchestrator {
     agent_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::AgentConfig>>>,
     model_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::ModelConfig>>>,
     active_model_name: Arc<RwLock<Option<String>>>,
+    /// Serialises concurrent model-switch calls so `model.switch` and
+    /// the per-message model override in `chat.send` never race.
+    model_switch_lock: tokio::sync::Mutex<()>,
+    data_dir: PathBuf,
 }
 
 /// Trait for memory backends (SqliteEventStore, etc.)
@@ -50,6 +56,7 @@ pub trait MemoryStore: Send + Sync {
         completion_tokens: usize,
     ) -> Result<i64>;
     async fn load_history(&self, session_id: &str, limit: usize) -> Result<Vec<Message>>;
+    async fn delete_message(&self, session_id: &str, index: usize) -> Result<()>;
     async fn extract_cognitions(&self, session_id: &str, text: &str) -> Result<Vec<String>>;
     async fn get_persona(&self) -> Result<String>;
     async fn feed_knowledge_graph(
@@ -118,6 +125,31 @@ pub trait MemoryStore: Send + Sync {
     async fn list_sessions(&self) -> Result<Vec<(String, String, usize, Option<String>)>>;
     async fn ensure_session(&self, id: &str) -> Result<()>;
     async fn delete_session(&self, id: &str) -> Result<()>;
+    async fn rename_session(&self, id: &str, title: &str) -> Result<()>;
+
+    // Token usage tracking
+    async fn record_token_usage(
+        &self,
+        session_id: &str,
+        model: &str,
+        prompt_tokens: usize,
+        completion_tokens: usize,
+        cached_read_tokens: usize,
+        cached_write_tokens: usize,
+        latency_ms: u64,
+        context_window: usize,
+    ) -> Result<()>;
+    async fn get_token_summary(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<serde_json::Value>;
+    async fn get_token_history(
+        &self,
+        from: &str,
+        to: &str,
+        granularity: &str,
+    ) -> Result<serde_json::Value>;
 }
 
 // ── Entity extraction helper (English + Chinese) ─────────────────────────
@@ -193,7 +225,7 @@ fn is_cjk_char(c: char) -> bool {
 }
 
 impl Orchestrator {
-    pub fn new(max_depth: usize, default_max_iterations: usize, default_timeout_secs: u64) -> Self {
+    pub fn new(max_depth: usize, default_max_iterations: usize, default_timeout_secs: u64, data_dir: PathBuf) -> Self {
         let mut registry = ToolRegistry::new();
         let _ = registry.register(Arc::new(crate::builtin_tools::ShellTool));
         let _ = registry.register(Arc::new(crate::builtin_tools::FileListTool));
@@ -231,6 +263,8 @@ impl Orchestrator {
             )]))),
             model_configs: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_model_name: Arc::new(RwLock::new(None)),
+            model_switch_lock: tokio::sync::Mutex::new(()),
+            data_dir,
         }
     }
 
@@ -256,7 +290,7 @@ impl Orchestrator {
     // === Inference ===
 
     /// Set the cloud client (call after configuring a model).
-    pub async fn set_cloud_client(&self, client: Box<dyn CloudClient>) {
+    pub async fn set_cloud_client(&self, client: Arc<dyn CloudClient>) {
         *self.cloud_client.write().await = Some(client);
     }
 
@@ -265,9 +299,9 @@ impl Orchestrator {
     where
         F: FnOnce(&dyn CloudClient) -> Result<R>,
     {
-        let guard = self.cloud_client.read().await;
-        match &*guard {
-            Some(client) => f(client.as_ref()),
+        let client: Option<Arc<dyn CloudClient>> = self.cloud_client.read().await.clone();
+        match client {
+            Some(c) => f(c.as_ref()),
             None => Err(anyhow::anyhow!(
                 "No cloud client configured. Set up a model first."
             )),
@@ -571,15 +605,39 @@ impl Orchestrator {
     }
 
     /// Load conversation history for a session from memory (restore on startup).
+    /// Migrates old base64 `Image` parts to `ImageRef` on the fly.
     pub async fn load_history(&self, session_id: &str) -> Result<()> {
         let store = self.memory_store.read().await;
         if let Some(ref s) = *store {
-            let msgs = s.load_history(session_id, 50).await?;
+            let mut msgs = s.load_history(session_id, 50).await?;
             tracing::info!(
                 session_id,
                 db_returned = msgs.len(),
                 "orchestrator.load_history: DB result"
             );
+            // Lazy migration: convert old base64 Image parts to ImageRef
+            let mut migrated = 0usize;
+            for msg in &mut msgs {
+                for part in &mut msg.content {
+                    if let ContentPart::Image { media_type, data, .. } = part {
+                        match self.save_image_to_disk(session_id, media_type, data).await {
+                            Ok(file_id) => {
+                                *part = ContentPart::ImageRef {
+                                    media_type: std::mem::take(media_type),
+                                    file_id,
+                                };
+                                migrated += 1;
+                            }
+                            Err(e) => {
+                                tracing::warn!(session_id, error = %e, "failed to migrate image, keeping base64");
+                            }
+                        }
+                    }
+                }
+            }
+            if migrated > 0 {
+                tracing::info!(session_id, migrated, "migrated old base64 images to disk");
+            }
             if !msgs.is_empty() {
                 self.session_histories
                     .write()
@@ -589,6 +647,17 @@ impl Orchestrator {
         } else {
             tracing::warn!(session_id, "orchestrator.load_history: memory_store is None");
         }
+        Ok(())
+    }
+
+    /// Delete a message from a session's history by its index (0-based position).
+    pub async fn delete_message(&self, session_id: &str, index: usize) -> Result<()> {
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            s.delete_message(session_id, index).await?;
+        }
+        // Clear in-memory cache so it reloads from DB on next access
+        self.session_histories.write().await.remove(session_id);
         Ok(())
     }
 
@@ -630,13 +699,132 @@ impl Orchestrator {
         }
     }
 
-    /// Delete a session from the persisted store and in-memory cache.
+    /// Persist a session rename to the memory store.
+    pub async fn rename_session_persisted(&self, id: &str, title: &str) {
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            let _ = s.rename_session(id, title).await;
+        }
+    }
+
+    /// Delete a session from the persisted store, in-memory cache, and image files.
     pub async fn delete_session_persisted(&self, id: &str) {
         let store = self.memory_store.read().await;
         if let Some(ref s) = *store {
             let _ = s.delete_session(id).await;
         }
         self.session_histories.write().await.remove(id);
+        if let Err(e) = self.delete_session_images(id).await {
+            tracing::warn!(session_id = %id, error = %e, "failed to delete session images");
+        }
+    }
+
+    /// Query token usage summary for a time range.
+    pub async fn token_summary(&self, from: &str, to: &str) -> Result<serde_json::Value, anyhow::Error> {
+        let mut summary = match &*self.memory_store.read().await {
+            Some(store) => store.get_token_summary(from, to).await?,
+            None => serde_json::json!({
+                "total_prompt_tokens": 0, "total_completion_tokens": 0,
+                "total_cached_tokens": 0, "total_requests": 0,
+                "avg_latency_ms": 0, "cache_hit_rate": 0, "by_model": []
+            }),
+        };
+
+        // Enrich by_model entries with pricing from model configs
+        let configs = self.model_configs.read().await;
+        let mut total_cost = 0.0_f64;
+        if let Some(by_model) = summary["by_model"].as_array_mut() {
+            for entry in by_model {
+                let model_name = entry["model"].as_str().unwrap_or("");
+                let (input_price, output_price, cache_read_price, cache_write_price) = configs
+                    .get(model_name)
+                    .map(|c| (c.input_price, c.output_price, c.cache_read_price, c.cache_write_price))
+                    .unwrap_or((0.0, 0.0, 0.0, 0.0));
+                let prompt = entry["prompt"].as_i64().unwrap_or(0) as f64;
+                let completion = entry["completion"].as_i64().unwrap_or(0) as f64;
+                let cached_read = entry.get("cached_read").and_then(|v| v.as_i64()).unwrap_or(0) as f64;
+                let cached_write = entry.get("cached_write").and_then(|v| v.as_i64()).unwrap_or(0) as f64;
+                let cache_cost = (cached_read * cache_read_price + cached_write * cache_write_price) / 1_000_000.0;
+                let cost = (prompt * input_price + completion * output_price) / 1_000_000.0 + cache_cost;
+                total_cost += cost;
+                entry["input_price"] = serde_json::json!(input_price);
+                entry["output_price"] = serde_json::json!(output_price);
+                entry["cache_read_price"] = serde_json::json!(cache_read_price);
+                entry["cache_write_price"] = serde_json::json!(cache_write_price);
+                entry["cost"] = serde_json::json!((cost * 10000.0).round() / 10000.0);
+            }
+        }
+        summary["total_cost"] = serde_json::json!((total_cost * 10000.0).round() / 10000.0);
+
+        Ok(summary)
+    }
+
+    /// Query token usage history (time-series) for a time range.
+    pub async fn token_history(&self, from: &str, to: &str, granularity: &str) -> Result<serde_json::Value, anyhow::Error> {
+        match &*self.memory_store.read().await {
+            Some(store) => store.get_token_history(from, to, granularity).await,
+            None => Ok(serde_json::json!({ "points": [] })),
+        }
+    }
+
+    // ── Image file management ──────────────────────────────────────────
+
+    fn session_images_dir(&self, session_id: &str) -> PathBuf {
+        self.data_dir.join("sessions").join(session_id).join("images")
+    }
+
+    fn media_type_to_ext(media_type: &str) -> &str {
+        match media_type {
+            "image/png" => "png",
+            "image/jpeg" => "jpg",
+            "image/gif" => "gif",
+            "image/webp" => "webp",
+            "image/bmp" => "bmp",
+            "image/svg+xml" => "svg",
+            _ => "png",
+        }
+    }
+
+    async fn save_image_to_disk(
+        &self,
+        session_id: &str,
+        media_type: &str,
+        data: &str,
+    ) -> Result<String> {
+        let dir = self.session_images_dir(session_id);
+        tokio::fs::create_dir_all(&dir).await?;
+        let ext = Self::media_type_to_ext(media_type);
+        let file_id = format!("{}.{}", uuid::Uuid::now_v7().simple(), ext);
+        let path = dir.join(&file_id);
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .context("invalid base64 image data")?;
+        tokio::fs::write(&path, &bytes).await?;
+        tracing::info!(session_id, file_id = %file_id, path = %path.display(), size = bytes.len(), "image saved to disk");
+        Ok(file_id)
+    }
+
+    async fn delete_session_images(&self, session_id: &str) -> Result<()> {
+        let dir = self.session_images_dir(session_id);
+        if dir.exists() {
+            tokio::fs::remove_dir_all(&dir).await?;
+            tracing::info!(session_id, "session images deleted");
+        }
+        Ok(())
+    }
+
+    /// Convert all `ContentPart::Image` to `ContentPart::ImageRef` in-place.
+    async fn convert_images_to_refs(&self, session_id: &str, parts: &mut Vec<ContentPart>) -> Result<()> {
+        for part in parts.iter_mut() {
+            if let ContentPart::Image { media_type, data, .. } = part {
+                let file_id = self.save_image_to_disk(session_id, media_type, data).await?;
+                *part = ContentPart::ImageRef {
+                    media_type: std::mem::take(media_type),
+                    file_id,
+                };
+            }
+        }
+        Ok(())
     }
 
     // === Agent Config ===
@@ -825,14 +1013,22 @@ impl Orchestrator {
         Ok(())
     }
 
-    pub async fn model_config_update(&self, config: loom_types::ModelConfig) -> Result<()> {
-        let name = config.name.clone();
-        // Remove old entry first so the duplicate check in create doesn't false-positive
-        {
-            let mut cache = self.model_configs.write().await;
-            cache.remove(&name);
+    pub async fn model_config_update(&self, config: loom_types::ModelConfig, prev_name: &str) -> Result<()> {
+        let new_name = config.name.clone();
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            if new_name != prev_name {
+                let _ = s.delete_model_config(prev_name).await;
+            }
+            s.save_model_config(&config).await?;
         }
-        self.model_config_create(config).await
+        drop(store);
+        let mut cache = self.model_configs.write().await;
+        if new_name != prev_name {
+            cache.remove(prev_name);
+        }
+        cache.insert(new_name, config);
+        Ok(())
     }
 
     pub async fn model_config_delete(&self, name: &str) -> Result<()> {
@@ -851,6 +1047,9 @@ impl Orchestrator {
     }
 
     pub async fn model_config_set_active(&self, name: &str) -> Result<()> {
+        // Serialise concurrent switch calls (e.g. model.switch racing with chat.send override)
+        let _lock = self.model_switch_lock.lock().await;
+
         // Verify the model config exists
         let config = self.model_config_get(name).await?;
 
@@ -884,11 +1083,15 @@ impl Orchestrator {
         }
         // Update in-memory
         *self.active_model_name.write().await = Some(name.to_string());
+        tracing::info!(name = name, "active_model_name updated in memory");
         // Try to rebuild cloud client
         if let Some(model_id) = &config.model {
-            tracing::info!(name = name, model = %model_id, "switching active model");
+            tracing::info!(name = name, model = %model_id, "switching active model — rebuilding cloud client");
             drop(store);
             self.try_build_cloud_client(&config).await;
+            tracing::info!(name = name, model = %model_id, "model switch complete");
+        } else {
+            tracing::warn!(name = name, "model config has no model ID — cloud client not rebuilt");
         }
         Ok(())
     }
@@ -902,16 +1105,18 @@ impl Orchestrator {
     async fn try_build_cloud_client(&self, config: &loom_types::ModelConfig) {
         let model = match &config.model {
             Some(m) => m.clone(),
-            None => return,
+            None => {
+                tracing::warn!(name = %config.name, "try_build_cloud_client: no model ID in config, skipping");
+                return;
+            }
         };
 
-        // Skip if the current client already points to the same model
+        // Log if current client model matches (for debugging)
         {
-            let guard = self.cloud_client.read().await;
-            if let Some(ref client) = *guard {
+            let existing: Option<Arc<dyn CloudClient>> = self.cloud_client.read().await.clone();
+            if let Some(ref client) = existing {
                 if client.model_name() == model {
-                    tracing::debug!(%model, "cloud client already active, skipping rebuild");
-                    return;
+                    tracing::info!(%model, name = %config.name, "cloud client model_name matches — force rebuild anyway to pick up config changes");
                 }
             }
         }
@@ -929,22 +1134,41 @@ impl Orchestrator {
                 loom_types::ModelBackend::Custom => "http://localhost:8080/v1".into(),
             });
 
-        let client: Option<Box<dyn CloudClient>> = if is_local {
+        let client: Option<Arc<dyn CloudClient>> = if is_local {
             match loom_inference::InferenceEngine::connect(&base_url, &model, config.context_size)
                 .await
             {
-                Ok(engine) => Some(Box::new(engine)),
+                Ok(engine) => Some(Arc::new(engine)),
                 Err(e) => {
                     tracing::warn!(model = %model, error = %e, "failed to connect local inference engine");
                     None
                 }
             }
         } else {
-            // Cloud provider — read API key from env
+            // Cloud provider — resolve API key:
+            // 1. If api_key_env is set, try it as an env-var name first.
+            // 2. Only use the raw value as a literal key if it doesn't look like
+            //    an env var name (env var names are ALL_CAPS_WITH_UNDERSCORES).
+            //    This prevents "BAILIAN_API_KEY" from being sent as the key itself.
+            // 3. Fallback to well-known backend env vars.
             let api_key = config
                 .api_key_env
                 .as_deref()
-                .and_then(|env_name| std::env::var(env_name).ok())
+                .and_then(|raw| {
+                    // Try as env var name first
+                    if let Ok(val) = std::env::var(raw) {
+                        return Some(val);
+                    }
+                    // Only use as literal key if it looks like an actual key,
+                    // not an env var name (ALL_CAPS_WITH_UNDERSCORES_AND_DIGITS)
+                    let looks_like_env_var = !raw.is_empty()
+                        && raw.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+                    if !looks_like_env_var && !raw.is_empty() {
+                        Some(raw.to_string())
+                    } else {
+                        None
+                    }
+                })
                 .or_else(|| {
                     let auto_env = match config.backend {
                         loom_types::ModelBackend::DeepSeek => "DEEPSEEK_API_KEY",
@@ -960,15 +1184,15 @@ impl Orchestrator {
                     let is_anthropic = config.api_format.as_deref() == Some("anthropic")
                         || matches!(config.backend, loom_types::ModelBackend::Anthropic);
                     if is_anthropic {
-                        Some(Box::new(loom_inference::AnthropicClient::new(
+                        Some(Arc::new(loom_inference::AnthropicClient::new(
                             key,
                             model_id.clone(),
                             base_url,
-                        )))
+                        )) as Arc<dyn CloudClient>)
                     } else {
-                        Some(Box::new(loom_inference::OpenAIClient::new(
+                        Some(Arc::new(loom_inference::OpenAIClient::new(
                             key, model_id, base_url, false,
-                        )))
+                        )) as Arc<dyn CloudClient>)
                     }
                 }
                 None => {
@@ -1010,6 +1234,25 @@ impl Orchestrator {
         thinking_budget: Option<usize>,
         attached_images: Vec<ContentPart>,
     ) -> Result<TurnResult> {
+        tracing::info!(
+            session_id,
+            msg_len = user_message.len(),
+            img_count = attached_images.len(),
+            "[orchestrator] process_message_with_config ENTER"
+        );
+
+        // Read shared contexts BEFORE pool.spawn to avoid any lock interaction
+        // with the agent pool state (especially when another message's
+        // entity-extraction completion is about to write persona_context).
+        let user_persona = {
+            let p = self.persona_context.read().await;
+            p.clone()
+        };
+        let skills = {
+            let s = self.skill_context.read().await;
+            s.clone()
+        };
+
         // Register agent in pool
         let agent_id = self
             .pool
@@ -1042,19 +1285,19 @@ impl Orchestrator {
             }
         }
         // 3. User profile — learned facts about the user (context, not identity)
-        let user_persona = self.persona_context.read().await;
         if !user_persona.is_empty() {
             system_prompt.push_str(&format!("\n\n## User Profile\n{}", user_persona));
         }
         // 4. Available skills
-        let skills = self.skill_context.read().await;
         if !skills.is_empty() {
             system_prompt.push_str(&format!("\n\n## Available Skills\n{}", skills));
         }
 
         // Inject knowledge graph context
         {
+            tracing::info!(session_id, "[orchestrator] step: reading memory_store for KG");
             let mem_guard = self.memory_store.read().await;
+            tracing::info!(session_id, "[orchestrator] step: memory_store KG read done");
             if let Some(ref store) = *mem_guard {
                 let candidates = extract_entity_candidates(user_message);
                 let mut entities: Vec<&str> = vec!["USER"];
@@ -1080,20 +1323,32 @@ impl Orchestrator {
             active_model_name: self.active_model_name.read().await.clone(),
             ..Default::default()
         };
+        tracing::info!(session_id, "[orchestrator] step: loop_config built");
 
+        // Ensure history is loaded from DB if not already in cache (e.g. after restart or session switch)
+        if self.session_history(session_id).await.is_empty() {
+            tracing::info!(session_id, "[orchestrator] step: loading history from DB");
+            let _ = self.load_history(session_id).await;
+            tracing::info!(session_id, "[orchestrator] step: history loaded");
+        }
         let history = self.session_history(session_id).await;
+        tracing::info!(session_id, hist_len = history.len(), "[orchestrator] step: history ready");
         let user_msg = user_message.to_string();
         let sid = session_id.to_string();
 
         // Transition: Idle → Thinking
+        tracing::info!(session_id, "[orchestrator] step: pool.transition");
         let _ = self
             .pool
             .transition(&agent_id, AgentStatus::Thinking, Some("processing".into()))
             .await;
+        tracing::info!(session_id, "[orchestrator] step: pool.transition done");
 
+        tracing::info!(session_id, "[orchestrator] step: creating stream channel + forwarder");
         // Create streaming channel and forward deltas to event bus
         let (delta_tx, mut delta_rx) = tokio::sync::mpsc::channel::<StreamDelta>(256);
         let event_bus = self.pool.event_bus().clone();
+        let memory_store = self.memory_store.clone();
         let forward_agent_id = agent_id.clone();
         let forward_session_id = sid.clone();
 
@@ -1156,6 +1411,8 @@ impl Orchestrator {
                     StreamDelta::Usage {
                         prompt_tokens,
                         completion_tokens,
+                        cache_read_tokens,
+                        cache_write_tokens,
                         ..
                     } => {
                         let _ = event_bus.publish(AgentEvent::TokenUsage {
@@ -1164,8 +1421,23 @@ impl Orchestrator {
                             model: usage_model.clone(),
                             prompt_tokens: prompt_tokens as usize,
                             completion_tokens: completion_tokens as usize,
+                            cached_tokens: (cache_read_tokens + cache_write_tokens) as usize,
+                            latency_ms: 0,
                             context_window: usage_ctx,
                         });
+                        // Persist token usage to SQLite for historical stats
+                        if let Some(store) = &*memory_store.read().await {
+                            let _ = store.record_token_usage(
+                                &forward_session_id,
+                                &usage_model,
+                                prompt_tokens as usize,
+                                completion_tokens as usize,
+                                cache_read_tokens as usize,
+                                cache_write_tokens as usize,
+                                0, // latency not tracked at StreamDelta level
+                                usage_ctx,
+                            ).await;
+                        }
                     }
                 }
             }
@@ -1187,17 +1459,28 @@ impl Orchestrator {
         });
 
         // Run the agent turn with streaming
-        let cloud = self.cloud_client.clone();
+        // IMPORTANT: clone the Arc<dyn CloudClient> and immediately release the
+        // RwLock so concurrent model switches (write lock) are never blocked by
+        // a long-running turn holding a read lock. This prevents the deadlock:
+        //   Session A holds cloud_client.read() for full turn
+        //   → model_switch tries write() → blocked
+        //   → Tokio RwLock blocks new readers while writer waits
+        //   → Session B's process_message_with_config blocks on read()
+        tracing::info!(session_id, "[orchestrator] step: reading cloud_client");
+        let client: Arc<dyn CloudClient> = {
+            let guard = self.cloud_client.read().await;
+            match guard.as_ref() {
+                Some(c) => c.clone(), // clone Arc, release lock immediately
+                None => return Err(anyhow::anyhow!("No cloud client configured")),
+            }
+        }; // guard (read lock) released here
+        tracing::info!(session_id, "[orchestrator] step: cloud_client acquired, running agent loop");
         let registry = self.tool_registry.clone();
         let allowed = agent_config.allowed_tools.clone();
         let disallowed = agent_config.disallowed_tools.clone();
+        let cancel = self.pool.cancel_token(&agent_id).await?;
 
         let result = {
-            let guard = cloud.read().await;
-            let client = match guard.as_ref() {
-                Some(c) => c,
-                None => return Err(anyhow::anyhow!("No cloud client configured")),
-            };
             let reg = registry.read().await;
             run_agent_turn_streaming_with_images(
                 client.as_ref(),
@@ -1209,12 +1492,13 @@ impl Orchestrator {
                 delta_tx,
                 &allowed,
                 &disallowed,
+                &cancel,
             )
             .await
         };
 
         // Wait for forwarder to finish flushing
-        drop(cloud);
+        drop(client);
         drop(registry);
         let _ = forward_handle.await;
 
@@ -1223,17 +1507,34 @@ impl Orchestrator {
                 .pool
                 .transition(&agent_id, AgentStatus::Completed, None)
                 .await;
-            self.add_to_history(session_id, build_user_message(&user_msg, &attached_images))
-                .await;
-            let content_json = serde_json::to_string(&turn.content_parts).unwrap_or_else(|_| serde_json::json!([{"text": turn.response}]).to_string());
-            let assistant_parts = if turn.content_parts.is_empty() {
+
+            // Convert images to file refs before caching / persisting
+            let user_msg_full = build_user_message(&user_msg, &attached_images);
+            let mut user_parts = user_msg_full.content.clone();
+            if let Err(e) = self.convert_images_to_refs(session_id, &mut user_parts).await {
+                tracing::warn!(session_id, error = %e, "failed to convert user images to file refs");
+            }
+
+            self.add_to_history(session_id, Message {
+                role: Role::User,
+                content: user_parts.clone(),
+                timestamp: user_msg_full.timestamp,
+                usage: user_msg_full.usage,
+            }).await;
+
+            let mut assistant_parts = if turn.content_parts.is_empty() {
                 vec![ContentPart::Text { text: turn.response.clone() }]
             } else {
                 turn.content_parts.clone()
             };
+            if let Err(e) = self.convert_images_to_refs(session_id, &mut assistant_parts).await {
+                tracing::warn!(session_id, error = %e, "failed to convert assistant images to file refs");
+            }
+            let content_json = serde_json::to_string(&assistant_parts).unwrap_or_else(|_| serde_json::json!([{"text": turn.response}]).to_string());
+
             self.add_to_history(session_id, Message {
                 role: Role::Assistant,
-                content: assistant_parts,
+                content: assistant_parts.clone(),
                 timestamp: chrono::Utc::now(),
                 usage: None,
             })
@@ -1242,8 +1543,7 @@ impl Orchestrator {
             // Persist to memory store
             let mem = self.memory_store.read().await;
             if let Some(ref store) = *mem {
-                let user_content_parts = build_user_message(&user_msg, &attached_images).content;
-                let user_content_json = serde_json::to_string(&user_content_parts)
+                let user_content_json = serde_json::to_string(&user_parts)
                     .unwrap_or_else(|_| user_msg.clone());
                 let event_id = store
                     .save_turn(
@@ -1258,8 +1558,8 @@ impl Orchestrator {
 
                 // LLM-based entity extraction (synchronous, runs after response)
                 let msg = user_message.to_string();
-                let client_opt = self.cloud_client.read().await;
-                if let Some(ref client) = *client_opt {
+                let client_opt: Option<Arc<dyn CloudClient>> = self.cloud_client.read().await.clone();
+                if let Some(ref client) = client_opt {
                     match llm_extract_entities(client.as_ref(), &msg).await {
                         Ok((entities, relationships)) => {
                             if let Ok((n, e)) = store
@@ -1300,6 +1600,11 @@ impl Orchestrator {
         // Clean up agent from pool
         let _ = self.pool.remove(&agent_id).await;
 
+        tracing::info!(
+            session_id,
+            is_ok = result.is_ok(),
+            "[orchestrator] process_message_with_config EXIT"
+        );
         result
     }
 
@@ -1310,6 +1615,17 @@ impl Orchestrator {
         delta_tx: mpsc::Sender<StreamDelta>,
         session_id: &str,
     ) -> Result<TurnResult> {
+        // Read shared contexts BEFORE pool.spawn (same reason as
+        // process_message_with_config).
+        let user_persona = {
+            let p = self.persona_context.read().await;
+            p.clone()
+        };
+        let skills = {
+            let s = self.skill_context.read().await;
+            s.clone()
+        };
+
         // Register agent in pool
         let agent_id = self
             .pool
@@ -1322,20 +1638,20 @@ impl Orchestrator {
             .transition(&agent_id, AgentStatus::Thinking, Some("processing".into()))
             .await;
 
-        let guard = self.cloud_client.read().await;
-        let client = guard
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No cloud client configured"))?;
+        let client: Arc<dyn CloudClient> = {
+            let guard = self.cloud_client.read().await;
+            guard.as_ref()
+                .ok_or_else(|| anyhow::anyhow!("No cloud client configured"))?
+                .clone()
+        }; // read lock released immediately
         let registry = self.tool_registry.read().await;
         let history = self.session_history(session_id).await;
 
         let mut system_prompt = self.build_system_prompt().await;
-        // Inject persona + skills (no longer part of build_system_prompt)
-        let user_persona = self.persona_context.read().await;
+        // Inject persona + skills (already read before pool.spawn)
         if !user_persona.is_empty() {
             system_prompt.push_str(&format!("\n\n## User Profile\n{}", user_persona));
         }
-        let skills = self.skill_context.read().await;
         if !skills.is_empty() {
             system_prompt.push_str(&format!("\n\n## Available Skills\n{}", skills));
         }
@@ -1430,15 +1746,20 @@ impl Orchestrator {
                 .await;
             self.add_to_history(session_id, Message::user(user_message))
                 .await;
-            let content_json = serde_json::to_string(&turn.content_parts).unwrap_or_else(|_| serde_json::json!([{"text": turn.response}]).to_string());
-            let assistant_parts = if turn.content_parts.is_empty() {
+
+            let mut assistant_parts = if turn.content_parts.is_empty() {
                 vec![ContentPart::Text { text: turn.response.clone() }]
             } else {
                 turn.content_parts.clone()
             };
+            if let Err(e) = self.convert_images_to_refs(session_id, &mut assistant_parts).await {
+                tracing::warn!(session_id, error = %e, "failed to convert assistant images to file refs");
+            }
+            let content_json = serde_json::to_string(&assistant_parts).unwrap_or_else(|_| serde_json::json!([{"text": turn.response}]).to_string());
+
             self.add_to_history(session_id, Message {
                 role: Role::Assistant,
-                content: assistant_parts,
+                content: assistant_parts.clone(),
                 timestamp: chrono::Utc::now(),
                 usage: None,
             })
@@ -1460,8 +1781,8 @@ impl Orchestrator {
 
                 // LLM-based entity extraction (synchronous, runs after response)
                 let msg = user_message.to_string();
-                let client_opt = self.cloud_client.read().await;
-                if let Some(ref client) = *client_opt {
+                let client_opt: Option<Arc<dyn CloudClient>> = self.cloud_client.read().await.clone();
+                if let Some(ref client) = client_opt {
                     match llm_extract_entities(client.as_ref(), &msg).await {
                         Ok((entities, relationships)) => {
                             if let Ok((n, e)) = store
@@ -1520,6 +1841,18 @@ impl Orchestrator {
     }
     pub async fn kill_agent(&self, agent_id: &loom_types::AgentId) -> Result<()> {
         self.pool.kill(agent_id).await
+    }
+    /// Stop all running agents for a session.
+    pub async fn stop_session(&self, session_id: &str) -> Result<usize> {
+        let agents = self.pool.list().await;
+        let mut killed = 0usize;
+        for a in agents {
+            if a.session_id == session_id && !a.status.is_terminal() {
+                let _ = self.pool.kill(&a.id).await;
+                killed += 1;
+            }
+        }
+        Ok(killed)
     }
     pub async fn list_agents(&self) -> Vec<AgentSummary> {
         self.pool.list().await

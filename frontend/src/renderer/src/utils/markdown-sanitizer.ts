@@ -12,11 +12,12 @@ const ALLOWED_TAGS = new Set([
   'table', 'thead', 'tbody', 'tr', 'th', 'td',
   'span', 'div',
   'input', // for task checkboxes
+  'button', // for file-path open buttons
 ])
 
 const ALLOWED_ATTRS = new Set([
   'href', 'src', 'alt', 'title', 'width', 'height',
-  'class', 'id', 'data-theme', 'data-choice', 'data-stream-tail-char',
+  'class', 'id', 'data-theme', 'data-choice', 'data-stream-tail-char', 'data-file-path',
   'checked', 'disabled', 'type',
 ])
 

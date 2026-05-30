@@ -65,6 +65,8 @@ pub enum AgentEvent {
         model: String,
         prompt_tokens: usize,
         completion_tokens: usize,
+        cached_tokens: usize,
+        latency_ms: u64,
         /// Model context window in tokens. 0 if unknown.
         context_window: usize,
     },

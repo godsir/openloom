@@ -1,0 +1,121 @@
+import { StateCreator } from 'zustand'
+import { loomRpc } from '../services/jsonrpc'
+
+export interface TokenUsageRecord {
+  session_id: string
+  model: string
+  prompt: number
+  completion: number
+  cached: number
+  latency_ms: number
+  context_window: number
+}
+
+export interface TokenSummary {
+  total_prompt_tokens: number
+  total_completion_tokens: number
+  total_cached_tokens: number
+  total_requests: number
+  avg_latency_ms: number
+  cache_hit_rate: number
+  total_cost: number
+  by_model: Array<{
+    model: string
+    prompt: number
+    completion: number
+    cached: number
+    requests: number
+    avg_latency_ms: number
+    avg_context_utilization: number
+    input_price: number
+    output_price: number
+    cache_read_price: number
+    cache_write_price: number
+    cost: number
+  }>
+}
+
+export interface TokenHistoryPoint {
+  date: string
+  prompt: number
+  completion: number
+  cached: number
+  requests: number
+  by_model: Record<string, { prompt: number; completion: number; requests: number }>
+}
+
+export interface TokenStatsSlice {
+  sessionTotal: { prompt: number; completion: number; cached: number; requests: number }
+  sessionByModel: Record<string, { prompt: number; completion: number; cached: number; requests: number }>
+  summary: TokenSummary | null
+  history: TokenHistoryPoint[]
+  loading: boolean
+  timeRange: 'all' | '7d' | '30d'
+
+  recordUsage: (usage: TokenUsageRecord) => void
+  loadSummary: (from: string, to: string) => Promise<void>
+  loadHistory: (from: string, to: string, granularity: string) => Promise<void>
+  setTimeRange: (range: 'all' | '7d' | '30d') => void
+}
+
+export const createTokenStatsSlice: StateCreator<TokenStatsSlice> = (set, get) => ({
+  sessionTotal: { prompt: 0, completion: 0, cached: 0, requests: 0 },
+  sessionByModel: {},
+  summary: null,
+  history: [],
+  loading: false,
+  timeRange: 'all',
+
+  recordUsage: (usage) => {
+    set((s) => {
+      const total = {
+        prompt: s.sessionTotal.prompt + usage.prompt,
+        completion: s.sessionTotal.completion + usage.completion,
+        cached: s.sessionTotal.cached + usage.cached,
+        requests: s.sessionTotal.requests + 1,
+      }
+      const prev = s.sessionByModel[usage.model] || { prompt: 0, completion: 0, cached: 0, requests: 0 }
+      const byModel = {
+        ...s.sessionByModel,
+        [usage.model]: {
+          prompt: prev.prompt + usage.prompt,
+          completion: prev.completion + usage.completion,
+          cached: prev.cached + usage.cached,
+          requests: prev.requests + 1,
+        },
+      }
+      return { sessionTotal: total, sessionByModel: byModel }
+    })
+  },
+
+  loadSummary: async (from, to) => {
+    set({ loading: true })
+    try {
+      const data = await loomRpc<TokenSummary>('stats.token_summary', { from, to })
+      set({ summary: data, loading: false })
+    } catch {
+      set({ loading: false })
+    }
+  },
+
+  loadHistory: async (from, to, granularity) => {
+    set({ loading: true })
+    try {
+      const data = await loomRpc<{ points: TokenHistoryPoint[] }>('stats.token_history', { from, to, granularity })
+      set({ history: data.points || [], loading: false })
+    } catch {
+      set({ loading: false })
+    }
+  },
+
+  setTimeRange: (range) => {
+    set({ timeRange: range })
+    const now = new Date()
+    let from = '1970-01-01'
+    const to = range === 'all'
+      ? '2099-12-31'
+      : now.toISOString().slice(0, 10) + 'T23:59:59'
+    get().loadSummary(from, to)
+    get().loadHistory(from, to, 'day')
+  },
+})

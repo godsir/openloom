@@ -133,6 +133,7 @@ fn hash_prefix(messages: &[Message]) -> u64 {
                 }
                 loom_types::ContentPart::Thinking { text } => text.hash(&mut hasher),
                 loom_types::ContentPart::Image { .. } => {}
+                loom_types::ContentPart::ImageRef { .. } => {}
             }
         }
     }

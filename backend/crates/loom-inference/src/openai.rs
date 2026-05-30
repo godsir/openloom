@@ -200,28 +200,56 @@ impl OpenAIClient {
                 }
                 return obj;
             }
-            let has_images = msg.content.iter().any(|p| matches!(p, ContentPart::Image { .. }));
+            let has_images = msg.content.iter().any(|p| matches!(p, ContentPart::Image { .. } | ContentPart::ImageRef { .. }));
             if has_images {
                 let mut parts: Vec<serde_json::Value> = Vec::new();
+                let mut tc_vals: Vec<serde_json::Value> = Vec::new();
                 for p in &msg.content {
-                    if let ContentPart::Text { text } = p {
-                        parts.push(serde_json::json!({"type": "text", "text": text}));
-                    }
-                }
-                for p in &msg.content {
-                    if let ContentPart::Image { source_type: _, media_type, data } = p {
-                        parts.push(serde_json::json!({
-                            "type": "image_url",
-                            "image_url": {"url": format!("data:{};base64,{}", media_type, data)},
-                        }));
+                    match p {
+                        ContentPart::Text { text } => {
+                            parts.push(serde_json::json!({"type": "text", "text": text}));
+                        }
+                        ContentPart::Image { source_type: _, media_type, data } => {
+                            parts.push(serde_json::json!({
+                                "type": "image_url",
+                                "image_url": {"url": format!("data:{};base64,{}", media_type, data)},
+                            }));
+                        }
+                        ContentPart::ImageRef { media_type, file_id } => {
+                            tracing::warn!(
+                                file_id = %file_id,
+                                media_type = %media_type,
+                                "ImageRef leaked to OpenAI inference layer — image omitted. \
+                                 The agent loop should strip ImageRef from history before inference."
+                            );
+                        }
+                        ContentPart::ToolCall { id, name, arguments } => {
+                            tc_vals.push(serde_json::json!({
+                                "id": id, "type": "function",
+                                "function": {"name": name, "arguments": serde_json::to_string(arguments).unwrap_or_default()},
+                            }));
+                        }
+                        ContentPart::ToolResult { tool_call_id: _, name: _, result } => {
+                            parts.push(serde_json::json!({"type": "text", "text": result}));
+                        }
+                        ContentPart::Thinking { text } => {
+                            parts.push(serde_json::json!({"type": "text", "text": format!("[reasoning]\n{}", text)}));
+                        }
                     }
                 }
                 obj["content"] = serde_json::json!(parts);
+                if !tc_vals.is_empty() {
+                    obj["tool_calls"] = serde_json::json!(tc_vals);
+                }
                 return obj;
             }
             let texts: Vec<&str> = msg.content.iter()
                 .filter_map(|p| match p { ContentPart::Text { text } => Some(text.as_str()), _ => None })
                 .collect();
+            let thinking_texts: Vec<String> = msg.content.iter().filter_map(|p| match p {
+                ContentPart::Thinking { text } => Some(format!("[reasoning]\n{}", text)),
+                _ => None,
+            }).collect();
             let tc_vals: Vec<serde_json::Value> = msg.content.iter().filter_map(|p| match p {
                 ContentPart::ToolCall { id, name, arguments } => Some(serde_json::json!({
                     "id": id, "type": "function",
@@ -229,10 +257,13 @@ impl OpenAIClient {
                 })),
                 _ => None,
             }).collect();
-            if texts.is_empty() && tc_vals.is_empty() {
+            let all_texts: Vec<&str> = texts.iter().map(|s| *s)
+                .chain(thinking_texts.iter().map(|s| s.as_str()))
+                .collect();
+            if all_texts.is_empty() && tc_vals.is_empty() {
                 obj["content"] = serde_json::json!("");
-            } else if !texts.is_empty() {
-                obj["content"] = serde_json::json!(texts.join("\n"));
+            } else if !all_texts.is_empty() {
+                obj["content"] = serde_json::json!(all_texts.join("\n"));
                 if !tc_vals.is_empty() { obj["tool_calls"] = serde_json::json!(tc_vals); }
             } else {
                 obj["content"] = serde_json::Value::Null;

@@ -139,6 +139,99 @@ impl SessionStore {
     }
 }
 
+/// Parse a JSON value as u64, handling both numeric and string representations.
+fn json_value_as_u64(v: &Value) -> Option<u64> {
+    v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+}
+
+/// Fallback lookup for well-known model context windows when the provider's
+/// API does not return one. Patterns are sorted longest-first so specific
+/// model names match before generic family prefixes.
+fn known_context_window(model_id: &str) -> Option<u64> {
+    let patterns: &[(&str, u64)] = &[
+        // OpenAI / compatible
+        ("gpt-4.1", 1_000_000),
+        ("gpt-4o-mini", 128_000),
+        ("gpt-4o", 128_000),
+        ("gpt-4-turbo", 128_000),
+        ("gpt-4", 8_192),
+        ("gpt-3.5-turbo", 16_385),
+        ("o4-mini", 200_000),
+        ("o3-mini", 200_000),
+        ("o3", 200_000),
+        ("o1-mini", 200_000),
+        ("o1", 200_000),
+        // Anthropic
+        ("claude-opus-4-7", 200_000),
+        ("claude-opus-4", 200_000),
+        ("claude-sonnet-4", 200_000),
+        ("claude-haiku-4", 200_000),
+        ("claude-3.5", 200_000),
+        ("claude-3", 200_000),
+        ("claude", 200_000),
+        // DeepSeek
+        ("deepseek-r1", 128_000),
+        ("deepseek-v4", 128_000),
+        ("deepseek-v3", 128_000),
+        ("deepseek", 64_000),
+        // Gemini
+        ("gemini-2.5", 1_000_000),
+        ("gemini-2.0-flash", 1_000_000),
+        ("gemini-2.0", 1_000_000),
+        ("gemini-1.5", 2_000_000),
+        ("gemini", 32_000),
+        // Mistral
+        ("mistral-large", 128_000),
+        ("mistral-small", 32_000),
+        ("mistral", 32_000),
+        // Llama
+        ("llama-4", 128_000),
+        ("llama-3.3", 128_000),
+        ("llama-3.2", 128_000),
+        ("llama-3.1", 128_000),
+        ("llama-3", 8_192),
+        ("llama-2", 4_096),
+        ("llama", 4_096),
+        // Qwen
+        ("qwen3", 128_000),
+        ("qwen2.5", 128_000),
+        ("qwen2", 32_000),
+        ("qwen", 32_000),
+        // Yi
+        ("yi-large", 200_000),
+        ("yi", 32_000),
+        // Command R
+        ("command-r", 128_000),
+        // Phi
+        ("phi-4", 128_000),
+        ("phi-3", 128_000),
+        ("phi", 4_096),
+        // GLM
+        ("glm-4", 128_000),
+        ("glm", 8_000),
+        // InternLM
+        ("internlm", 32_000),
+        // MiniMax
+        ("minimax", 128_000),
+        // Moonshot / Kimi
+        ("moonshot", 128_000),
+        ("kimi", 128_000),
+        // DBRX / Databricks
+        ("dbrx", 32_000),
+    ];
+
+    let lower = model_id.to_lowercase();
+    // Longest patterns first so "gpt-4-turbo" matches before "gpt-4"
+    let mut sorted: Vec<&(&str, u64)> = patterns.iter().collect();
+    sorted.sort_by_key(|(p, _)| -(p.len() as i32));
+    for (pattern, ctx) in sorted {
+        if lower.contains(pattern) {
+            return Some(*ctx);
+        }
+    }
+    None
+}
+
 pub async fn dispatch_handler(state: Arc<AppState>, req: JsonRpcRequest) -> JsonRpcResponse {
     let result = dispatch_method(&state, &req).await;
     let (result_val, error_val) = match result {
@@ -162,7 +255,7 @@ pub async fn dispatch_method(
     match req.method.as_str() {
         // === System ===
         "system.health" => Ok(json!({
-            "status": "ok", "version": "0.2.15",
+            "status": "ok", "version": "0.2.16",
             "agent_count": state.orchestrator.list_agents().await.len(),
             "tool_count": state.orchestrator.tool_registry().await.len(),
         })),
@@ -175,12 +268,12 @@ pub async fn dispatch_method(
                 .and_then(|v| v.as_array())
                 .map(|a| a.len())
                 .unwrap_or(0);
-            if attached_files_count > 0 {
-                tracing::info!(
-                    count = attached_files_count,
-                    "chat.send with attached_files"
-                );
-            }
+            tracing::info!(
+                content_len = content.len(),
+                attached_files_count,
+                session_id = %p.get("session_id").and_then(|v| v.as_str()).unwrap_or("default"),
+                "[dispatch] chat.send received"
+            );
             let attached_images = parse_attached_images(&p);
             if !attached_images.is_empty() {
                 tracing::info!(
@@ -188,7 +281,16 @@ pub async fn dispatch_method(
                     "parsed attached images"
                 );
             }
-            if content.is_empty() && attached_images.is_empty() {
+            // Read text-based non-image files and inject their content
+            let file_contents = parse_attached_file_contents(&p);
+            let combined_content = if file_contents.is_empty() {
+                content.to_string()
+            } else {
+                let mut combined = content.to_string();
+                combined.push_str(&file_contents);
+                combined
+            };
+            if combined_content.is_empty() && attached_images.is_empty() {
                 return Err(err(ErrorCode::InvalidRequest, "content required"));
             }
             let session_id = p
@@ -234,7 +336,7 @@ pub async fn dispatch_method(
 
             let result = state
                 .orchestrator
-                .process_message_with_config(content, session_id, &agent_config, thinking_budget, attached_images)
+                .process_message_with_config(&combined_content, session_id, &agent_config, thinking_budget, attached_images)
                 .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             state
@@ -252,6 +354,13 @@ pub async fn dispatch_method(
                 "iterations": result.iterations,
                 "tokens": result.prompt_tokens + result.completion_tokens,
             }))
+        }
+
+        "chat.stop" => {
+            let session_id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("default");
+            let killed = state.orchestrator.stop_session(session_id).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "ok": true, "killed": killed }))
         }
 
         // === Agent ===
@@ -406,10 +515,23 @@ pub async fn dispatch_method(
             );
             Ok(json!({ "messages": msgs, "hasMore": false }))
         }
+        "session.delete_message" => {
+            let session_id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+            let index = p.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            if session_id.is_empty() {
+                return Err(err(ErrorCode::InvalidRequest, "session_id required"));
+            }
+            state.orchestrator.delete_message(session_id, index).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "ok": true }))
+        }
         "session.rename" => {
             let id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
             let title = p.get("title").and_then(|v| v.as_str()).unwrap_or("");
             let ok = state.sessions.rename(id, title).await;
+            if ok {
+                state.orchestrator.rename_session_persisted(id, title).await;
+            }
             Ok(json!({ "ok": ok }))
         }
         "session.delete" => {
@@ -471,8 +593,14 @@ pub async fn dispatch_method(
                         "backend_label": c.backend_label,
                         "base_url": c.base_url,
                         "is_active": active.as_deref() == Some(&c.name),
+                        "context_size": c.context_size,
                         "capabilities": c.capabilities,
                         "api_format": c.api_format,
+                        "api_key_env": c.api_key_env,
+                        "input_price": c.input_price,
+                        "output_price": c.output_price,
+                        "cache_read_price": c.cache_read_price,
+                        "cache_write_price": c.cache_write_price,
                     })
                 })
                 .collect();
@@ -520,14 +648,61 @@ pub async fn dispatch_method(
             Ok(json!({ "ok": true }))
         }
         "model.config.update" => {
-            let config: ModelConfig = serde_json::from_value(p.clone())
-                .map_err(|e| err(ErrorCode::InvalidRequest, &e.to_string()))?;
-            if config.name.is_empty() {
+            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if name.is_empty() {
                 return Err(err(ErrorCode::InvalidRequest, "name required"));
             }
+            let prev_name = p
+                .get("prev_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(name)
+                .to_string();
+            // Merge-update: load existing config by prev_name, apply only the
+            // fields present in the request so a partial update never overwrites
+            // base_url / model / api_format with serde defaults.
+            let existing = state
+                .orchestrator
+                .model_config_get(&prev_name)
+                .await
+                .unwrap_or_else(|_| ModelConfig {
+                    name: prev_name.clone(),
+                    ..Default::default()
+                });
+            // Build merged config: start from existing, override with provided fields
+            let merged = ModelConfig {
+                name: name.to_string(),
+                model: p.get("model").and_then(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
+                    .or(existing.model),
+                model_type: serde_json::from_value(p.get("model_type").cloned().unwrap_or_default())
+                    .unwrap_or(existing.model_type),
+                backend: serde_json::from_value(p.get("backend").cloned().unwrap_or_default())
+                    .unwrap_or(existing.backend),
+                backend_label: p.get("backend_label").and_then(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
+                    .or(existing.backend_label),
+                path: p.get("path").and_then(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
+                    .or(existing.path),
+                base_url: p.get("base_url").and_then(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
+                    .or(existing.base_url),
+                api_key_env: p.get("api_key_env").and_then(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
+                    .or(existing.api_key_env),
+                api_format: p.get("api_format").and_then(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
+                    .or(existing.api_format),
+                context_size: p.get("context_size").and_then(|v| v.as_u64()).map(|v| v as usize)
+                    .unwrap_or(existing.context_size),
+                max_output_tokens: p.get("max_output_tokens").and_then(|v| v.as_u64()).map(|v| v as usize)
+                    .or(existing.max_output_tokens),
+                n_gpu_layers: p.get("n_gpu_layers").and_then(|v| v.as_u64()).map(|v| v as usize)
+                    .unwrap_or(existing.n_gpu_layers),
+                capabilities: serde_json::from_value(p.get("capabilities").cloned().unwrap_or_default())
+                    .unwrap_or(existing.capabilities),
+                input_price: p.get("input_price").and_then(|v| v.as_f64()).unwrap_or(existing.input_price),
+                output_price: p.get("output_price").and_then(|v| v.as_f64()).unwrap_or(existing.output_price),
+                cache_read_price: p.get("cache_read_price").and_then(|v| v.as_f64()).unwrap_or(existing.cache_read_price),
+                cache_write_price: p.get("cache_write_price").and_then(|v| v.as_f64()).unwrap_or(existing.cache_write_price),
+            };
             state
                 .orchestrator
-                .model_config_update(config)
+                .model_config_update(merged, &prev_name)
                 .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             Ok(json!({ "ok": true }))
@@ -567,9 +742,49 @@ pub async fn dispatch_method(
             let env_name = api_key_env
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("{}_API_KEY", backend.to_uppercase().replace('-', "_")));
-            // SAFETY: single-threaded dispatch context, no concurrent env reads during write
+            // Set in current process immediately
             unsafe { std::env::set_var(&env_name, api_key); }
-            Ok(json!({ "ok": true, "env_name": env_name, "persisted": false }))
+            // Try OS-level persistence as secondary backup (non-fatal)
+            crate::save_credential(&env_name, api_key);
+
+            // Primary persistence: write the literal API key into every matching
+            // model config's api_key_env field in the DB. This survives restarts
+            // without depending on the OS env var (setx/profile) mechanism.
+            let all_configs = state.orchestrator.model_config_list().await;
+            let backend_val = backend.to_string();
+            for cfg in all_configs {
+                let matches = if api_key_env.is_some() {
+                    // Custom provider: match by the configured env var name
+                    cfg.api_key_env.as_deref() == Some(&env_name)
+                        || cfg.api_key_env.as_deref() == api_key_env
+                } else {
+                    // Preset provider: match by backend type
+                    format!("{:?}", cfg.backend).to_lowercase() == backend_val.to_lowercase()
+                };
+                if matches {
+                    // Merge-update: only change api_key_env, keep all other fields
+                    let prev_name = cfg.name.clone();
+                    let updated = ModelConfig {
+                        api_key_env: Some(api_key.to_string()),
+                        ..cfg
+                    };
+                    let _ = state.orchestrator.model_config_update(updated, &prev_name).await;
+                }
+            }
+
+            Ok(json!({ "ok": true, "env_name": env_name }))
+        }
+
+        "model.check_key" => {
+            let backend = p.get("backend").and_then(|v| v.as_str()).unwrap_or("");
+            let api_key_env = p.get("api_key_env").and_then(|v| v.as_str());
+            let env_name = api_key_env
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("{}_API_KEY", backend.to_uppercase().replace('-', "_")));
+            // Check if env var is set, OR the raw value itself is a non-empty literal key
+            let has_key = std::env::var(&env_name).ok().filter(|v| !v.is_empty()).is_some()
+                || api_key_env.map(|v| !v.is_empty()).unwrap_or(false);
+            Ok(json!({ "set": has_key, "env_name": env_name }))
         }
 
         "model.discover" => {
@@ -581,7 +796,12 @@ pub async fn dispatch_method(
                 return Err(err(ErrorCode::InvalidRequest, "base_url required"));
             }
             let api_key = api_key_env
-                .and_then(|e| std::env::var(e).ok())
+                .and_then(|raw| {
+                    if let Ok(val) = std::env::var(raw) { return Some(val); }
+                    let looks_like_env_var = !raw.is_empty()
+                        && raw.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+                    if !looks_like_env_var && !raw.is_empty() { Some(raw.to_string()) } else { None }
+                })
                 .or_else(|| {
                     let env_name = format!("{}_API_KEY", backend.to_uppercase().replace('-', "_"));
                     std::env::var(&env_name).ok()
@@ -624,7 +844,15 @@ pub async fn dispatch_method(
             let body: Value = resp.json().await
                 .map_err(|e| err(ErrorCode::InternalError, &format!("Parse error: {}", e)))?;
             let raw_models: Vec<Value> = body.get("data")
-                .and_then(|d| d.as_array()).cloned().unwrap_or_default();
+                .and_then(|d| d.as_array())
+                .cloned()
+                .unwrap_or_else(|| {
+                    // Some providers (e.g. Ollama native) use "models" instead of "data"
+                    body.get("models")
+                        .and_then(|d| d.as_array())
+                        .cloned()
+                        .unwrap_or_default()
+                });
 
             // Try native API for local providers — yields accurate context_length
             let native_ctx: std::collections::HashMap<String, u64> = if backend == "lmstudio" || backend == "LmStudio" {
@@ -635,7 +863,7 @@ pub async fn dispatch_method(
                             Ok(v) => v.get("data").and_then(|d| d.as_array()).map(|arr| {
                                 arr.iter().filter_map(|m| {
                                     let id = m.get("id").and_then(|v| v.as_str())?;
-                                    let ctx = m.get("max_context_length").and_then(|v| v.as_u64()).filter(|&n| n > 0);
+                                    let ctx = m.get("max_context_length").and_then(|v| json_value_as_u64(v)).filter(|&n| n > 0);
                                     Some((id.to_string(), ctx.unwrap_or(0)))
                                 }).collect()
                             }).unwrap_or_default(),
@@ -644,22 +872,67 @@ pub async fn dispatch_method(
                     }
                     _ => std::collections::HashMap::new(),
                 }
+            } else if backend == "ollama" || backend == "Ollama" {
+                // Ollama native /api/tags — yields model names then /api/show for context
+                let ollama_host = base_url.trim_end_matches("/v1").trim_end_matches('/');
+                let mut ctx_map = std::collections::HashMap::new();
+                if let Ok(resp) = client.get(format!("{}/api/tags", ollama_host))
+                    .timeout(std::time::Duration::from_secs(5))
+                    .send()
+                    .await
+                {
+                    if resp.status().is_success() {
+                        if let Ok(v) = resp.json::<Value>().await {
+                            if let Some(models) = v.get("models").and_then(|d| d.as_array()) {
+                                for m in models {
+                                    if let Some(name) = m.get("name").and_then(|v| v.as_str()) {
+                                        // Try /api/show for detailed model_info
+                                        if let Ok(show_resp) = client
+                                            .post(format!("{}/api/show", ollama_host))
+                                            .json(&json!({ "name": name }))
+                                            .timeout(std::time::Duration::from_secs(3))
+                                            .send()
+                                            .await
+                                        {
+                                            if show_resp.status().is_success() {
+                                                if let Ok(info) = show_resp.json::<Value>().await {
+                                                    let ctx = info.get("model_info")
+                                                        .and_then(|mi| {
+                                                            mi.get("llama.context_length")
+                                                                .or_else(|| mi.get("context_length"))
+                                                                .or_else(|| mi.get("max_context_length"))
+                                                        })
+                                                        .and_then(|v| json_value_as_u64(v));
+                                                    if let Some(c) = ctx.filter(|&n| n > 0) {
+                                                        ctx_map.insert(name.to_string(), c);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                ctx_map
             } else {
                 std::collections::HashMap::new()
             };
 
             let models: Vec<Value> = raw_models.iter().filter_map(|item| {
                 let id = item.get("id").and_then(|v| v.as_str())?;
-                // Prefer native API context length, then standard API fields
+                // Resolve context length: native API → standard API fields → known lookup
                 let ctx = native_ctx.get(id).copied().filter(|&n| n > 0)
                     .or_else(|| {
                         item.get("context_window")
                             .or_else(|| item.get("context_length"))
                             .or_else(|| item.get("max_input_tokens"))
                             .or_else(|| item.get("max_context_length"))
-                            .and_then(|v| v.as_u64())
+                            .and_then(|v| json_value_as_u64(v))
                             .filter(|&n| n > 0)
-                    });
+                    })
+                    .or_else(|| known_context_window(id));
                 Some(json!({ "id": id, "context_length": ctx }))
             }).collect();
             Ok(json!({ "models": models }))
@@ -1411,6 +1684,24 @@ pub async fn dispatch_method(
             Ok(json!({ "deleted": deleted }))
         }
 
+        // === Token Usage Stats ===
+        "stats.token_summary" => {
+            let from = p.get("from").and_then(|v| v.as_str()).unwrap_or("1970-01-01");
+            let to = p.get("to").and_then(|v| v.as_str()).unwrap_or("2099-12-31");
+            let summary = state.orchestrator.token_summary(from, to).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(summary)
+        }
+
+        "stats.token_history" => {
+            let from = p.get("from").and_then(|v| v.as_str()).unwrap_or("1970-01-01");
+            let to = p.get("to").and_then(|v| v.as_str()).unwrap_or("2099-12-31");
+            let granularity = p.get("granularity").and_then(|v| v.as_str()).unwrap_or("day");
+            let history = state.orchestrator.token_history(from, to, granularity).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(history)
+        }
+
         // Fallback
         _ => Err(err(
             ErrorCode::MethodNotFound,
@@ -1428,6 +1719,8 @@ fn parse_attached_images(p: &Value) -> Vec<ContentPart> {
         .map(|a| a.as_slice())
         .unwrap_or(&[]);
 
+    tracing::info!(file_count = files.len(), "parse_attached_images: entry");
+
     let mut parts = Vec::new();
     for file in files {
         let mime_type = file
@@ -1438,6 +1731,8 @@ fn parse_attached_images(p: &Value) -> Vec<ContentPart> {
         let name = file.get("name").and_then(|v| v.as_str()).unwrap_or("?");
         let has_thumb = file.get("thumbnail").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
         let has_path = file.get("path").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
+
+        tracing::info!(%name, %mime_type, has_thumb, has_path, "parse_attached_images: processing file");
 
         if !mime_type.starts_with("image/") {
             tracing::debug!(%name, %mime_type, "skipped non-image file");
@@ -1484,6 +1779,102 @@ fn parse_attached_images(p: &Value) -> Vec<ContentPart> {
     }
 
     parts
+}
+
+/// Text-based file extensions whose contents can be injected into the prompt.
+fn is_text_extension(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    let text_exts = [
+        ".txt", ".md", ".rs", ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".java",
+        ".c", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".swift", ".kt", ".scala",
+        ".sh", ".bash", ".zsh", ".fish", ".ps1", ".bat",
+        ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
+        ".xml", ".html", ".css", ".scss", ".less", ".svelte", ".vue",
+        ".sql", ".graphql", ".proto", ".env", ".lock", ".dockerfile", ".makefile",
+        ".log", ".csv", ".tsv",
+        ".r", ".m", ".lua", ".pl", ".ex", ".exs", ".erl", ".hrl",
+        ".zig", ".nim", ".v", ".dart", ".jl",
+    ];
+    text_exts.iter().any(|ext| lower.ends_with(ext))
+    || lower.contains("makefile")
+    || lower.contains("dockerfile")
+}
+
+/// Read text-based non-image attached files and return formatted content for the prompt.
+fn parse_attached_file_contents(p: &Value) -> String {
+    let files = p
+        .get("attached_files")
+        .and_then(|v| v.as_array())
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
+
+    let mut result = String::new();
+
+    for file in files {
+        let mime_type = file
+            .get("mime_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let name = file
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        let path = file
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // Images are handled by parse_attached_images separately
+        if mime_type.starts_with("image/") {
+            continue;
+        }
+        if path.is_empty() {
+            continue;
+        }
+
+        // Size check: skip files larger than 500 KB
+        let metadata = match std::fs::metadata(path) {
+            Ok(m) => m,
+            Err(_) => {
+                tracing::debug!(%name, %path, "attached file not found on disk");
+                continue;
+            }
+        };
+        if metadata.len() > 512_000 {
+            tracing::debug!(%name, size = metadata.len(), "attached file too large, skipping");
+            continue;
+        }
+
+        // Only read text-based files (by MIME type or extension)
+        let is_text = mime_type.starts_with("text/")
+            || mime_type == "application/json"
+            || mime_type.contains("xml")
+            || mime_type.contains("javascript")
+            || mime_type.contains("typescript")
+            || is_text_extension(name);
+
+        if !is_text {
+            tracing::debug!(%name, %mime_type, "skipping non-text attached file");
+            continue;
+        }
+
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                if content.is_empty() {
+                    continue;
+                }
+                result.push_str(&format!(
+                    "\n\n<attached_file name=\"{name}\">\n{content}\n</attached_file>",
+                ));
+                tracing::info!(%name, len = content.len(), "attached file content injected");
+            }
+            Err(e) => {
+                tracing::debug!(%name, error = %e, "failed to read attached file");
+            }
+        }
+    }
+
+    result
 }
 
 fn count_skill_files(dir: &std::path::Path, max_depth: u32) -> u32 {

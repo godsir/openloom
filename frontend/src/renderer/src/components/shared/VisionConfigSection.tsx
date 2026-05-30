@@ -3,13 +3,12 @@ import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
 import Select from './Select'
-import type { ModelListItem } from '../../types/bindings'
 import styles from './VisionConfig.module.css'
 
 export default function VisionConfigSection() {
+  const models = useStore((s) => s.models)
   const [enabled, setEnabled] = useState(false)
   const [visionModel, setVisionModel] = useState('')
-  const [models, setModels] = useState<ModelListItem[]>([])
 
   useEffect(() => {
     loomRpc<{ enabled: boolean; model: string | null }>('config.get_vision')
@@ -19,9 +18,15 @@ export default function VisionConfigSection() {
       })
       .catch(() => {})
 
-    loomRpc<{ models: ModelListItem[] }>('model.list')
-      .then(result => setModels(result.models || []))
-      .catch(() => {})
+    // Populate global store on mount if empty (ModelConfigPanel may not have loaded yet)
+    if (useStore.getState().models.length === 0) {
+      loomRpc<{ models: ModelListItem[]; activeModel: string | null }>('model.list')
+        .then(result => {
+          useStore.getState().setModels(result.models || [])
+          if (result.activeModel) useStore.getState().setCurrentModel(result.activeModel)
+        })
+        .catch(() => {})
+    }
   }, [])
 
   const handleToggle = async () => {
@@ -46,7 +51,7 @@ export default function VisionConfigSection() {
       { value: '', label: '选择视觉模型...' },
       ...models
         .filter(m => m.capabilities?.vision || m.backend === 'OpenAI' || m.backend === 'Anthropic')
-        .map(m => ({ value: m.name, label: `${m.name} (${m.backend})` })),
+        .map(m => ({ value: m.name, label: m.name, group: m.backend_label || m.backend })),
     ],
     [models],
   )

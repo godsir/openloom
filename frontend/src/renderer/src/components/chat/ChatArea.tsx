@@ -1,5 +1,5 @@
 import { useStore } from '../../stores'
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useLayoutEffect } from 'react'
 import AssistantMessage from './AssistantMessage'
 import UserMessage from './UserMessage'
 import ImageLightbox from '../shared/ImageLightbox'
@@ -20,10 +20,22 @@ export default function ChatArea() {
   const openLightbox = useStore(s => s.openLightbox)
   const closeLightbox = useStore(s => s.closeLightbox)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [messages[messages.length - 1]?.id, isStreaming])
+  }, [messages.length, isStreaming])
+
+  // Keep scrolled to bottom as content grows during streaming
+  useEffect(() => {
+    if (!isStreaming) return
+    const el = scrollRef.current
+    if (!el) return
+    const observer = new ResizeObserver(() => {
+      el.scrollTop = el.scrollHeight
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [isStreaming])
 
   useEffect(() => {
     // Use document-level delegation so we don't depend on scrollRef being
@@ -69,7 +81,7 @@ export default function ChatArea() {
         {messages.map(msg =>
           msg.role === 'user'
             ? <UserMessage key={msg.id} message={msg} />
-            : <AssistantMessage key={msg.id} message={msg} />
+            : <AssistantMessage key={msg.id} message={msg} sessionId={sessionId} />
         )}
 
         {error && (

@@ -75,27 +75,37 @@ pub async fn prepare_vision_context(
     let api_key = config
         .api_key_env
         .as_deref()
-        .and_then(|env| std::env::var(env).ok())
+        .and_then(|raw| {
+            if let Ok(val) = std::env::var(raw) {
+                return Some(val);
+            }
+            let looks_like_env_var = !raw.is_empty()
+                && raw.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+            if !looks_like_env_var && !raw.is_empty() {
+                Some(raw.to_string())
+            } else {
+                None
+            }
+        })
         .or_else(|| {
-            // Fallback to backend-default env names, matching orchestrator's
-            // try_build_cloud_client behaviour. Without this, a vision model
-            // saved via the UI may fail with 401 because its api_key_env was
-            // never explicitly set.
-            let auto_env = match config.backend {
-                ModelBackend::DeepSeek => "DEEPSEEK_API_KEY",
-                ModelBackend::OpenAI => "OPENAI_API_KEY",
-                ModelBackend::Anthropic => "ANTHROPIC_API_KEY",
-                _ => "OPENLOOM_API_KEY",
+            let well_known = match config.backend {
+                ModelBackend::DeepSeek => std::env::var("DEEPSEEK_API_KEY").ok(),
+                ModelBackend::OpenAI => std::env::var("OPENAI_API_KEY").ok(),
+                ModelBackend::Anthropic => std::env::var("ANTHROPIC_API_KEY").ok(),
+                ModelBackend::Custom | ModelBackend::LmStudio | ModelBackend::Ollama => {
+                    std::env::var("OPENLOOM_API_KEY").ok()
+                }
             };
-            std::env::var(auto_env).ok()
+            well_known
         })
         .unwrap_or_default();
 
     if api_key.is_empty() {
         anyhow::bail!(
-            "Vision model '{}' has no API key (api_key_env='{}'). Save a key for this provider in Settings → Models.",
+            "Vision model '{}' has no API key: api_key_env is not set.\n\
+             Fix: Settings → Models → Edit '{}' → set 'API Key 环境变量' to the env var name that holds the key (e.g. BAILIAN_API_KEY), then Save.",
             vision_model_name,
-            config.api_key_env.as_deref().unwrap_or("<unset>")
+            vision_model_name,
         );
     }
 

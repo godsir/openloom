@@ -1,4 +1,5 @@
 import { useStore } from '../../stores'
+import { loomRpc } from '../../services/jsonrpc'
 import { IconCopy, IconTrash } from '../../utils/icons'
 import styles from './MessageFooterActions.module.css'
 
@@ -24,8 +25,14 @@ export default function MessageFooterActions({ messageId, role, timestamp, usage
     if (text) navigator.clipboard.writeText(text)
   }
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!currentSessionId) return
+    // Find message index in the session to tell the backend which one to delete
+    const msgs = useStore.getState().messagesBySession.get(currentSessionId)
+    const index = msgs?.findIndex(m => m.id === messageId) ?? -1
+    if (index >= 0) {
+      loomRpc('session.delete_message', { session_id: currentSessionId, index }).catch(() => {})
+    }
     deleteMessage(currentSessionId, messageId)
   }
 

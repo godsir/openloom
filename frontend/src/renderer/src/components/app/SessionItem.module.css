@@ -19,6 +19,49 @@
   border-color: var(--border-accent);
 }
 
+.selected {
+  background: var(--bg-card);
+  border-color: rgba(var(--accent-rgb), 0.2);
+}
+
+/* Checkbox */
+.checkbox {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.checkboxVisible {
+  opacity: 1;
+}
+
+.item:hover .checkbox {
+  opacity: 1;
+}
+
+.checkmark {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1.5px solid var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  color: transparent;
+}
+
+.checkmark.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 .content {
   flex: 1;
   min-width: 0;

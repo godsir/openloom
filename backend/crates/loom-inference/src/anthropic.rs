@@ -176,6 +176,10 @@ impl AnthropicClient {
                 ContentPart::Thinking { text } => serde_json::json!({
                     "type": "thinking", "thinking": text
                 }),
+                ContentPart::ImageRef { .. } => {
+                    tracing::warn!("ImageRef leaked to inference layer (anthropic), skipping");
+                    serde_json::json!({"type": "text", "text": "[image omitted]"})
+                }
             }).collect();
             serde_json::json!({"role": anthropic_role, "content": content})
         }).collect();

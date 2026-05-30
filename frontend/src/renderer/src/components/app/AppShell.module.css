@@ -104,6 +104,7 @@
   display: flex;
   flex: 1;
   overflow: hidden;
+  zoom: var(--app-zoom, 1);
 }
 
 .sidebarSlot {

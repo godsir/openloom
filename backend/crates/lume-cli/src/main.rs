@@ -133,11 +133,15 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Serve { host, port } => {
-            let orchestrator = Arc::new(loom_core::Orchestrator::new(3, 20, 300));
-            orchestrator.init_spawn_agent(3, 300).await;
-            // Set up data directory and memory store
             let loom_dir = data_dir();
+            println!("[server] *** openLoom engine v{} [build-2026-05-30-vision-fix] ***", env!("CARGO_PKG_VERSION"));
+            let orchestrator = Arc::new(loom_core::Orchestrator::new(3, 20, 300, loom_dir.clone()));
+            orchestrator.init_spawn_agent(3, 300).await;
+            // Set up data directories
             let _ = std::fs::create_dir_all(loom_dir.join("data"));
+            let _ = std::fs::create_dir_all(loom_dir.join("sessions"));
+            println!("[server] loom dir: {}", loom_dir.display());
+            println!("[server] images:  {}\\sessions\\<id>\\images\\", loom_dir.display());
             let db_path = loom_dir.join("data").join("memory.db");
             match memory::LoomMemoryStore::open(&db_path) {
                 Ok(store) => {
@@ -187,7 +191,7 @@ async fn main() -> anyhow::Result<()> {
             // Reconnect MCP servers previously saved via the UI (DB-persisted),
             // skipping any entry already brought up by the file-based loader.
             orchestrator.autostart_mcp_servers().await;
-            loom_server::serve(&host, port, orchestrator).await?;
+            loom_server::serve(&host, port, orchestrator, &loom_dir).await?;
         }
         Command::Chat {
             model,
@@ -403,20 +407,12 @@ async fn run_chat_demo(
         println!("  base_url: {}", url);
     }
 
-    let orchestrator = Arc::new(loom_core::Orchestrator::new(3, 20, 300));
+    let loom_dir = data_dir();
+    let orchestrator = Arc::new(loom_core::Orchestrator::new(3, 20, 300, loom_dir));
     orchestrator.init_spawn_agent(3, 300).await;
 
     // Cloud client — route to InferenceEngine for local endpoints, or
     // AnthropicClient/OpenAIClient for cloud endpoints.
-    //
-    // Key distinction:
-    //   InferenceEngine  → OpenAI-compatible (POST /v1/chat/completions) + PrefixCache
-    //   AnthropicClient  → Anthropic API     (POST /messages)
-    //   OpenAIClient     → OpenAI-compatible (POST /v1/chat/completions) + retry logic
-    //
-    // For localhost URLs, OpenAI format is always correct (LM Studio / Ollama both
-    // speak it). Only route to AnthropicClient for localhost when the user EXPLICITLY
-    // passed --provider anthropic (custom Anthropic-speaking proxy).
 
     // Snapshot explicit provider before auto-detection overwrites it.
     let explicit_provider = if provider == "auto" {
@@ -486,7 +482,7 @@ async fn run_chat_demo(
             )),
         }
     };
-    orchestrator.set_cloud_client(client).await;
+    orchestrator.set_cloud_client(client.into()).await;
     println!("[model] {} ready", model);
 
     // Ensure ~/.loom/ exists with clean structure

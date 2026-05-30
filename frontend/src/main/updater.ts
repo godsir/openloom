@@ -1,7 +1,18 @@
 import { autoUpdater } from 'electron-updater'
-import { BrowserWindow } from 'electron'
+import { app, BrowserWindow } from 'electron'
+
+let initialized = false
 
 export function setupAutoUpdater(mainWindow: BrowserWindow): void {
+  if (initialized) return
+  initialized = true
+
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: 'godsir',
+    repo: 'openloom',
+  })
+
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false
 
@@ -26,12 +37,13 @@ export function setupAutoUpdater(mainWindow: BrowserWindow): void {
     mainWindow.webContents.send('update-error', err.message)
   })
 
-  // Check for updates every 4 hours
+  // Automatic background checks only in packaged builds
+  if (!app.isPackaged) return
+
   setInterval(() => {
     autoUpdater.checkForUpdates().catch(() => {})
   }, 4 * 60 * 60 * 1000)
 
-  // Initial check after 30 seconds
   setTimeout(() => {
     autoUpdater.checkForUpdates().catch(() => {})
   }, 30000)

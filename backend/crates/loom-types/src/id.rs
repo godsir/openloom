@@ -14,11 +14,7 @@ impl AgentId {
     pub fn new() -> Self {
         Self(format!(
             "agent-{}",
-            uuid::Uuid::now_v7()
-                .to_string()
-                .split('-')
-                .next()
-                .unwrap_or("00000000")
+            uuid::Uuid::now_v7().to_string().replace('-', "")
         ))
     }
 

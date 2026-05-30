@@ -42,6 +42,11 @@ pub enum ContentPart {
         media_type: String,
         data: String,
     },
+    /// On-disk image reference — file stored at sessions/<sid>/images/<file_id>.
+    ImageRef {
+        media_type: String,
+        file_id: String,
+    },
     ToolCall {
         id: String,
         name: String,

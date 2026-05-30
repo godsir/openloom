@@ -340,9 +340,12 @@ impl InferenceEngine {
 pub async fn unload_local_model(base_url: &str, model: &str) {
     let base = base_url.trim_end_matches("/v1");
     let url = format!("{}/api/v1/models/unload", base);
+    // LM Studio newer versions use "identifier"; older ones used "model".
+    // Try with "identifier" first (newer API), silently ignore any failure.
+    let body = serde_json::json!({"identifier": model, "model": model});
     match HttpClient::new()
         .post(&url)
-        .json(&serde_json::json!({"model": model}))
+        .json(&body)
         .timeout(std::time::Duration::from_secs(5))
         .send()
         .await
@@ -637,6 +640,46 @@ fn lower_messages(messages: &[Message]) -> Vec<serde_json::Value> {
                 return obj;
             }
 
+            // Check for image parts — build multipart content if present
+            let has_images = msg.content.iter().any(|p| matches!(p, ContentPart::Image { .. }));
+            if has_images {
+                let mut parts: Vec<serde_json::Value> = Vec::new();
+                let mut tc_vals: Vec<serde_json::Value> = Vec::new();
+                for p in &msg.content {
+                    match p {
+                        ContentPart::Text { text } => {
+                            parts.push(serde_json::json!({"type": "text", "text": text}));
+                        }
+                        ContentPart::Image { source_type: _, media_type, data } => {
+                            parts.push(serde_json::json!({
+                                "type": "image_url",
+                                "image_url": { "url": format!("data:{};base64,{}", media_type, data) }
+                            }));
+                        }
+                        ContentPart::ImageRef { .. } => {
+                            // ImageRef should be stripped by agent loop before reaching here.
+                        }
+                        ContentPart::ToolCall { id, name, arguments } => {
+                            tc_vals.push(serde_json::json!({
+                                "id": id, "type": "function",
+                                "function": {"name": name, "arguments": serde_json::to_string(arguments).unwrap_or_default()},
+                            }));
+                        }
+                        ContentPart::ToolResult { tool_call_id: _, name: _, result } => {
+                            parts.push(serde_json::json!({"type": "text", "text": result}));
+                        }
+                        ContentPart::Thinking { text } => {
+                            parts.push(serde_json::json!({"type": "text", "text": format!("[reasoning]\n{}", text)}));
+                        }
+                    }
+                }
+                obj["content"] = serde_json::json!(parts);
+                if !tc_vals.is_empty() {
+                    obj["tool_calls"] = serde_json::json!(tc_vals);
+                }
+                return obj;
+            }
+
             // Separate text and tool-call parts
             let texts: Vec<&str> = msg
                 .content
@@ -646,30 +689,30 @@ fn lower_messages(messages: &[Message]) -> Vec<serde_json::Value> {
                     _ => None,
                 })
                 .collect();
+            let thinking_texts: Vec<String> = msg.content.iter().filter_map(|p| match p {
+                ContentPart::Thinking { text } => Some(format!("[reasoning]\n{}", text)),
+                _ => None,
+            }).collect();
             let tc_vals: Vec<serde_json::Value> = msg
                 .content
                 .iter()
                 .filter_map(|p| match p {
-                    ContentPart::ToolCall {
-                        id,
-                        name,
-                        arguments,
-                    } => Some(serde_json::json!({
+                    ContentPart::ToolCall { id, name, arguments } => Some(serde_json::json!({
                         "id": id,
                         "type": "function",
-                        "function": {
-                            "name": name,
-                            "arguments": serde_json::to_string(arguments).unwrap_or_default(),
-                        },
+                        "function": {"name": name, "arguments": serde_json::to_string(arguments).unwrap_or_default()},
                     })),
                     _ => None,
                 })
                 .collect();
 
-            if texts.is_empty() && tc_vals.is_empty() {
+            let all_texts: Vec<&str> = texts.iter().map(|s| *s)
+                .chain(thinking_texts.iter().map(|s| s.as_str()))
+                .collect();
+            if all_texts.is_empty() && tc_vals.is_empty() {
                 obj["content"] = serde_json::json!("");
-            } else if !texts.is_empty() {
-                obj["content"] = serde_json::json!(texts.join("\n"));
+            } else if !all_texts.is_empty() {
+                obj["content"] = serde_json::json!(all_texts.join("\n"));
                 if !tc_vals.is_empty() {
                     obj["tool_calls"] = serde_json::json!(tc_vals);
                 }

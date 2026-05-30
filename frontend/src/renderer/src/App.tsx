@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import AppShell from './components/app/AppShell'
 import SettingsModal from './components/shared/SettingsModal'
-import WelcomeScreen from './components/shared/WelcomeScreen'
+
 import Onboarding from './components/shared/Onboarding'
 import ErrorBoundary from './components/shared/ErrorBoundary'
 import ToastContainer from './components/shared/ToastContainer'
 import ConfirmDialog from './components/shared/ConfirmDialog'
 import { bootstrapApp } from './services/bootstrap'
 import { useStore } from './stores'
+import styles from './App.module.css'
 
 export default function App() {
   const [ready, setReady] = useState(false)
@@ -38,6 +39,8 @@ export default function App() {
         if (!pref) setShowOnboarding(true)
         const savedTheme = await window.hana.getPreference('theme', 'dark')
         useStore.getState().setTheme(savedTheme as any)
+        const savedFontSize = await window.hana.getPreference('fontSize', 'default')
+        useStore.getState().setFontSize(savedFontSize as any)
         const savedPinned = await window.hana.getPreference<string[]>('pinnedIds', [])
         if (savedPinned.length) {
           useStore.setState({ pinnedIds: new Set(savedPinned) })
@@ -66,12 +69,11 @@ export default function App() {
   // Error state
   if (error) {
     return (
-      <div className="flex items-center justify-center h-screen bg-[var(--bg)]">
-        <div className="text-center max-w-sm animate-fade-in">
-          <h1 className="text-2xl font-semibold text-[var(--text)] mb-3">启动失败</h1>
-          <p className="text-[var(--red)] mb-5 text-sm">{error}</p>
-          <button onClick={handleRetry}
-            className="px-5 py-2 rounded-[var(--r-sm)] bg-[var(--bg-card)] text-[var(--text-light)] hover:bg-[rgba(255,255,255,0.04)] border border-[var(--border)] text-sm transition-colors">
+      <div className={styles.errorBox}>
+        <div className={styles.errorInner}>
+          <h1 className={styles.errorTitle}>启动失败</h1>
+          <p className={styles.errorMessage}>{error}</p>
+          <button onClick={handleRetry} className={styles.retryBtn}>
             重试
           </button>
         </div>
@@ -82,15 +84,13 @@ export default function App() {
   // Loading state
   if (!ready) {
     return (
-      <div className="flex items-center justify-center h-screen bg-[var(--bg)]">
-        <div className="text-center animate-fade-in">
-          <div className="w-20 h-20 mx-auto mb-6 rounded-[var(--r-sm)] bg-[var(--accent-light)] border border-[rgba(var(--accent-rgb),.15)] flex items-center justify-center shadow-[var(--shadow-glow)] animate-breathe">
-            <span className="text-3xl font-bold text-[var(--accent)]">L</span>
+      <div className={styles.loader}>
+        <div className={styles.loaderInner}>
+          <div className={styles.loaderLogo}>
+            <span className={styles.loaderLogoLetter}>L</span>
           </div>
-          <h1 className="text-[32px] font-semibold text-[var(--text)] tracking-tight">
-            openLoom
-          </h1>
-          <div className="flex items-center gap-2 justify-center mt-4 text-sm text-[var(--text-muted)]">
+          <h1 className={styles.loaderTitle}>openLoom</h1>
+          <div className={styles.loaderStatus}>
             <span className="typing-dots"><span/><span/><span/></span>
           </div>
         </div>
@@ -106,9 +106,10 @@ export default function App() {
   // Main app
   return (
     <ErrorBoundary>
-      <AppShell />
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      <ToastContainer />
+      <AppShell>
+        <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+        <ToastContainer />
+      </AppShell>
       <ConfirmDialog
         open={confirm.open}
         title={confirm.title}

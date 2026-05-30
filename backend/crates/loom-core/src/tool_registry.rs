@@ -151,7 +151,7 @@ impl Default for ToolRegistry {
 
 /// Context needed by spawn_agent to create and run child agents.
 pub struct SpawnContext {
-    pub cloud_client: Arc<RwLock<Option<Box<dyn loom_inference::engine::CloudClient>>>>,
+    pub cloud_client: Arc<RwLock<Option<Arc<dyn loom_inference::engine::CloudClient>>>>,
     pub tool_registry: Arc<RwLock<ToolRegistry>>,
     pub agent_pool: Arc<crate::agent_pool::AgentPool>,
     pub loop_config: Arc<RwLock<crate::agent_loop::AgentLoopConfig>>,
@@ -245,16 +245,18 @@ impl AgentTool for SpawnAgentTool {
             )
             .await;
 
-        // Run the agent loop
-        let client_guard = self.context.cloud_client.read().await;
-        let client = match &*client_guard {
-            Some(c) => c,
-            None => {
-                return Ok(ToolResult {
-                    content: "No model configured.".into(),
-                    is_error: true,
-                    structured_content: None,
-                });
+        // Run the agent loop — clone Arc to release RwLock before long-running turn
+        let client: std::sync::Arc<dyn loom_inference::engine::CloudClient> = {
+            let guard = self.context.cloud_client.read().await;
+            match guard.as_ref() {
+                Some(c) => c.clone(),
+                None => {
+                    return Ok(ToolResult {
+                        content: "No model configured.".into(),
+                        is_error: true,
+                        structured_content: None,
+                    });
+                }
             }
         };
         let registry = self.context.tool_registry.read().await;
@@ -271,7 +273,7 @@ impl AgentTool for SpawnAgentTool {
         .await;
 
         drop(registry);
-        drop(client_guard);
+        drop(client);
 
         match result {
             Ok(turn) => {

@@ -74,7 +74,12 @@ export interface ModelListItem {
   backend: string
   backend_label?: string
   base_url?: string
+  api_key_env?: string
   is_active: boolean
   context_size?: number
   capabilities?: ModelCapabilities
+  input_price?: number
+  output_price?: number
+  cache_read_price?: number
+  cache_write_price?: number
 }

@@ -49,6 +49,16 @@ export async function bootstrapApp(): Promise<() => void> {
             contextWindow: (p.context_window as number) || 0,
           }
           useStore.getState().setSessionUsage(sessionId, usage)
+          // Also aggregate into token stats
+          useStore.getState().recordUsage({
+            session_id: sessionId,
+            model: usage.model,
+            prompt: usage.prompt,
+            completion: usage.completion,
+            cached: (p.cached_tokens as number) || 0,
+            latency_ms: (p.latency_ms as number) || 0,
+            context_window: usage.contextWindow,
+          })
           // Also stash on the streaming assistant message so closing/reopening
           // the session can rehydrate the ring from history.
           const buf = streamBufferManager.snapshot(sessionId)

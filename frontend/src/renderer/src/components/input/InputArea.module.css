@@ -101,6 +101,20 @@
   cursor: not-allowed;
 }
 
+.stopBtn {
+  background: var(--danger, #ef4444);
+  animation: pulse-stop 1.5s ease-in-out infinite;
+}
+
+.stopBtn:hover {
+  background: var(--danger-hover, #dc2626);
+}
+
+@keyframes pulse-stop {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
 .dragOver .composer {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.25), var(--shadow-composer);

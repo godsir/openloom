@@ -460,8 +460,9 @@ impl<'a> ModelConfigStore<'a> {
         self.conn.execute(
             "INSERT OR REPLACE INTO model_configs
              (name, model, model_type, backend, base_url, api_key_env,
-              context_size, max_output_tokens, backend_label, capabilities, api_format, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, datetime('now'))",
+              context_size, max_output_tokens, backend_label, capabilities, api_format,
+              input_price, output_price, cache_read_price, cache_write_price, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, datetime('now'))",
             params![
                 config.name,
                 config.model,
@@ -478,6 +479,10 @@ impl<'a> ModelConfigStore<'a> {
                 config.backend_label,
                 caps_json,
                 config.api_format,
+                config.input_price,
+                config.output_price,
+                config.cache_read_price,
+                config.cache_write_price,
             ],
         )?;
         Ok(())
@@ -486,7 +491,8 @@ impl<'a> ModelConfigStore<'a> {
     pub fn get(&self, name: &str) -> Result<Option<loom_types::ModelConfig>> {
         let mut stmt = self.conn.prepare(
             "SELECT name, model, model_type, backend, base_url, api_key_env,
-                    context_size, max_output_tokens, is_active, backend_label, capabilities, api_format
+                    context_size, max_output_tokens, is_active, backend_label, capabilities, api_format,
+                    input_price, output_price, cache_read_price, cache_write_price
              FROM model_configs WHERE name = ?1",
         )?;
         let row = stmt
@@ -515,6 +521,10 @@ impl<'a> ModelConfigStore<'a> {
                     backend_label: row.get(9).ok().flatten(),
                     capabilities: caps,
                     api_format: row.get(11).ok().flatten(),
+                    input_price: row.get::<_, f64>(12).unwrap_or(0.0),
+                    output_price: row.get::<_, f64>(13).unwrap_or(0.0),
+                    cache_read_price: row.get::<_, f64>(14).unwrap_or(0.0),
+                    cache_write_price: row.get::<_, f64>(15).unwrap_or(0.0),
                 })
             })
             .ok();
@@ -524,7 +534,8 @@ impl<'a> ModelConfigStore<'a> {
     pub fn list(&self) -> Result<Vec<loom_types::ModelConfig>> {
         let mut stmt = self.conn.prepare(
             "SELECT name, model, model_type, backend, base_url, api_key_env,
-                    context_size, max_output_tokens, is_active, backend_label, capabilities, api_format
+                    context_size, max_output_tokens, is_active, backend_label, capabilities, api_format,
+                    input_price, output_price, cache_read_price, cache_write_price
              FROM model_configs ORDER BY name",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -551,6 +562,10 @@ impl<'a> ModelConfigStore<'a> {
                 n_gpu_layers: 0,
                 capabilities: caps,
                 api_format: row.get(11).ok().flatten(),
+                input_price: row.get::<_, f64>(12).unwrap_or(0.0),
+                output_price: row.get::<_, f64>(13).unwrap_or(0.0),
+                cache_read_price: row.get::<_, f64>(14).unwrap_or(0.0),
+                cache_write_price: row.get::<_, f64>(15).unwrap_or(0.0),
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -575,7 +590,8 @@ impl<'a> ModelConfigStore<'a> {
     pub fn get_active(&self) -> Result<Option<loom_types::ModelConfig>> {
         let mut stmt = self.conn.prepare(
             "SELECT name, model, model_type, backend, base_url, api_key_env,
-                    context_size, max_output_tokens, is_active, backend_label, capabilities, api_format
+                    context_size, max_output_tokens, is_active, backend_label, capabilities, api_format,
+                    input_price, output_price, cache_read_price, cache_write_price
              FROM model_configs WHERE is_active = 1 LIMIT 1",
         )?;
         let row = stmt
@@ -604,6 +620,10 @@ impl<'a> ModelConfigStore<'a> {
                     backend_label: row.get(9).ok().flatten(),
                     capabilities: caps,
                     api_format: row.get(11).ok().flatten(),
+                    input_price: row.get::<_, f64>(12).unwrap_or(0.0),
+                    output_price: row.get::<_, f64>(13).unwrap_or(0.0),
+                    cache_read_price: row.get::<_, f64>(14).unwrap_or(0.0),
+                    cache_write_price: row.get::<_, f64>(15).unwrap_or(0.0),
                 })
             })
             .ok();

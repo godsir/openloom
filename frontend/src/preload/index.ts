@@ -22,6 +22,7 @@ export interface HanaApi {
   onUpdateNotAvailable: (cb: () => void) => void
   onUpdateDownloaded: (cb: () => void) => void
   onUpdateError: (cb: (msg: string) => void) => void
+  getLoomDir: () => Promise<string>
 }
 
 contextBridge.exposeInMainWorld('hana', {
@@ -47,4 +48,5 @@ contextBridge.exposeInMainWorld('hana', {
   onUpdateNotAvailable: (cb: () => void) => ipcRenderer.on('update-not-available', () => cb()),
   onUpdateDownloaded: (cb: () => void) => ipcRenderer.on('update-downloaded', () => cb()),
   onUpdateError: (cb: (msg: string) => void) => ipcRenderer.on('update-error', (_e, msg: string) => cb(msg)),
+  getLoomDir: () => ipcRenderer.invoke('get-loom-dir'),
 } satisfies HanaApi)

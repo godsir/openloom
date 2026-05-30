@@ -46,8 +46,48 @@ function katexPlugin(md: MarkdownIt) {
   }
 }
 
+// File path detection — wraps absolute paths with an "open" button
+function filePathPlugin(md: MarkdownIt) {
+  const prev = md.renderer.rules.text || function (tokens, idx) {
+    return md.utils.escapeHtml(tokens[idx].content)
+  }
+
+  // Match Windows (D:\...) and Unix (/...) absolute paths with a file extension
+  const RE = /[A-Za-z]:\\(?:\S+?\\)*\S+\.\w{1,10}|\/(?:\S+\/)+\S+\.\w{1,10}/g
+
+  md.renderer.rules.text = function (tokens, idx, options, env, self) {
+    const content = tokens[idx].content
+
+    // Delegate KaTeX math to the previous renderer (katexPlugin)
+    if (content.startsWith('\\(') && content.endsWith('\\)')) {
+      return prev(tokens, idx, options, env, self)
+    }
+
+    RE.lastIndex = 0
+    if (!RE.test(content)) {
+      return prev(tokens, idx, options, env, self)
+    }
+
+    RE.lastIndex = 0
+    let result = ''
+    let lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = RE.exec(content)) !== null) {
+      result += md.utils.escapeHtml(content.slice(lastIndex, match.index))
+      const path = match[0]
+      const escaped = md.utils.escapeHtml(path)
+      result += `<span class="file-path-wrapper"><code>${escaped}</code>` +
+        `<button class="open-file-btn" data-file-path="${escaped}" title="打开文件">打开</button></span>`
+      lastIndex = match.index + path.length
+    }
+    result += md.utils.escapeHtml(content.slice(lastIndex))
+    return result
+  }
+}
+
 md.use(calloutPlugin)
 md.use(katexPlugin)
+md.use(filePathPlugin)
 
 export function renderMarkdown(text: string): string {
   return md.render(text)

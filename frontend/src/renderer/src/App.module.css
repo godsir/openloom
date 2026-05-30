@@ -1,0 +1,102 @@
+.loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  background: var(--bg);
+}
+
+.loaderInner {
+  text-align: center;
+  animation: fadeIn 0.3s var(--ease-out);
+}
+
+.loaderLogo {
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 24px;
+  border-radius: var(--r-sm);
+  background: var(--accent-subtle);
+  border: 1px solid rgba(var(--accent-rgb), 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-glow);
+  animation: breathe 2s var(--ease-out) infinite;
+}
+
+.loaderLogoLetter {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+
+.loaderTitle {
+  font-size: 32px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+.loaderStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 16px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.errorBox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  background: var(--bg);
+}
+
+.errorInner {
+  text-align: center;
+  max-width: 24rem;
+  animation: fadeIn 0.3s var(--ease-out);
+}
+
+.errorTitle {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+.errorMessage {
+  color: var(--red);
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+
+.retryBtn {
+  padding: 8px 20px;
+  border-radius: var(--r-sm);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.retryBtn:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.6; }
+}

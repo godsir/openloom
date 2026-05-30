@@ -152,6 +152,15 @@ impl AgentPool {
         Ok(())
     }
 
+    /// Get the cancel token for an agent so the agent loop can check for interruption.
+    pub async fn cancel_token(&self, agent_id: &AgentId) -> Result<tokio_util::sync::CancellationToken> {
+        let agents = self.agents.read().await;
+        let agent = agents
+            .get(agent_id)
+            .ok_or_else(|| anyhow!("agent not found: {}", agent_id))?;
+        Ok(agent.cancel_token.clone())
+    }
+
     /// Kill an agent immediately.
     pub async fn kill(&self, agent_id: &AgentId) -> Result<()> {
         let mut agents = self.agents.write().await;

@@ -92,6 +92,26 @@ impl MemoryStore for LoomMemoryStore {
         Ok(event_id)
     }
 
+    async fn delete_message(&self, session_id: &str, index: usize) -> Result<()> {
+        let store = self.store.lock().unwrap();
+        let conn = store.conn();
+        // Delete the message at the given index by seq order
+        let deleted = conn.execute(
+            "DELETE FROM message_history WHERE id IN (
+                SELECT id FROM message_history WHERE session_id = ?1 ORDER BY seq ASC LIMIT 1 OFFSET ?2
+            )",
+            rusqlite::params![session_id, index as i64],
+        )?;
+        if deleted > 0 {
+            conn.execute(
+                "UPDATE sessions SET message_count = MAX(0, message_count - 1) WHERE id = ?1",
+                rusqlite::params![session_id],
+            )?;
+        }
+        tracing::info!(session_id, index, deleted, "delete_message");
+        Ok(())
+    }
+
     async fn load_history(&self, session_id: &str, limit: usize) -> Result<Vec<Message>> {
         let store = self.store.lock().unwrap();
         let mut stmt = store.conn().prepare(
@@ -674,6 +694,15 @@ impl MemoryStore for LoomMemoryStore {
         Ok(())
     }
 
+    async fn rename_session(&self, id: &str, title: &str) -> Result<()> {
+        let store = self.store.lock().unwrap();
+        store.conn().execute(
+            "UPDATE sessions SET title = ?1 WHERE id = ?2",
+            rusqlite::params![title, id],
+        )?;
+        Ok(())
+    }
+
     async fn get_summary(&self, session_id: &str) -> Result<Option<String>> {
         let store = self.store.lock().unwrap();
         let result = store.conn().query_row(
@@ -747,5 +776,122 @@ impl MemoryStore for LoomMemoryStore {
     async fn kg_delete_edge(&self, source: &str, target: &str, relation: &str) -> Result<bool> {
         let store = self.store.lock().unwrap();
         GraphStore::new(store.conn()).delete_edge(source, target, relation)
+    }
+
+    async fn record_token_usage(
+        &self,
+        session_id: &str,
+        model: &str,
+        prompt_tokens: usize,
+        completion_tokens: usize,
+        cached_read_tokens: usize,
+        cached_write_tokens: usize,
+        latency_ms: u64,
+        context_window: usize,
+    ) -> Result<()> {
+        let store = self.store.lock().unwrap();
+        store.conn().execute(
+            "INSERT INTO token_usage (session_id, model, prompt_tokens, completion_tokens, cached_tokens, cached_read_tokens, cached_write_tokens, latency_ms, context_window) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            rusqlite::params![session_id, model, prompt_tokens as i64, completion_tokens as i64, (cached_read_tokens + cached_write_tokens) as i64, cached_read_tokens as i64, cached_write_tokens as i64, latency_ms as i64, context_window as i64],
+        )?;
+        Ok(())
+    }
+
+    async fn get_token_summary(&self, from: &str, to: &str) -> Result<serde_json::Value> {
+        let store = self.store.lock().unwrap();
+        let conn = store.conn();
+
+        let totals: (i64, i64, i64, i64, i64, i64, f64) = conn.query_row(
+            "SELECT COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), COALESCE(SUM(cached_tokens), 0), COALESCE(SUM(cached_read_tokens), 0), COALESCE(SUM(cached_write_tokens), 0), COUNT(*), COALESCE(AVG(latency_ms), 0) FROM token_usage WHERE created_at >= ?1 AND created_at <= ?2",
+            rusqlite::params![from, to],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
+        )?;
+
+        let cache_hit_rate = if totals.0 > 0 { totals.3 as f64 / totals.0 as f64 } else { 0.0 };
+
+        let mut stmt = conn.prepare(
+            "SELECT model, SUM(prompt_tokens) as p, SUM(completion_tokens) as c, SUM(cached_tokens) as ca, SUM(cached_read_tokens) as cr, SUM(cached_write_tokens) as cw, COUNT(*) as r, AVG(latency_ms) as l, AVG(CAST(prompt_tokens AS REAL) / NULLIF(context_window, 0)) as cu FROM token_usage WHERE created_at >= ?1 AND created_at <= ?2 GROUP BY model ORDER BY r DESC",
+        )?;
+        let by_model: Vec<serde_json::Value> = stmt
+            .query_map(rusqlite::params![from, to], |row| {
+                Ok(serde_json::json!({
+                    "model": row.get::<_, String>(0)?,
+                    "prompt": row.get::<_, i64>(1)?,
+                    "completion": row.get::<_, i64>(2)?,
+                    "cached": row.get::<_, i64>(3)?,
+                    "cached_read": row.get::<_, i64>(4)?,
+                    "cached_write": row.get::<_, i64>(5)?,
+                    "requests": row.get::<_, i64>(6)?,
+                    "avg_latency_ms": (row.get::<_, f64>(7)? * 10.0).round() / 10.0,
+                    "avg_context_utilization": (row.get::<_, f64>(8)? * 100.0).round() / 100.0,
+                }))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(serde_json::json!({
+            "total_prompt_tokens": totals.0,
+            "total_completion_tokens": totals.1,
+            "total_cached_tokens": totals.2,
+            "total_cached_read_tokens": totals.3,
+            "total_cached_write_tokens": totals.4,
+            "total_requests": totals.5,
+            "avg_latency_ms": (totals.6 * 10.0).round() / 10.0,
+            "cache_hit_rate": (cache_hit_rate * 100.0).round() / 100.0,
+            "by_model": by_model,
+        }))
+    }
+
+    async fn get_token_history(&self, from: &str, to: &str, granularity: &str) -> Result<serde_json::Value> {
+        let store = self.store.lock().unwrap();
+        let conn = store.conn();
+
+        let date_format = match granularity {
+            "hour" => "%Y-%m-%d %H:00",
+            "week" => "%Y-%W",
+            _ => "%Y-%m-%d",
+        };
+
+        let sql = format!(
+            "SELECT strftime('{}', created_at) as bucket, model, SUM(prompt_tokens) as p, SUM(completion_tokens) as c, SUM(cached_tokens) as ca, COUNT(*) as cnt FROM token_usage WHERE created_at >= ?1 AND created_at <= ?2 GROUP BY bucket, model ORDER BY bucket ASC",
+            date_format
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params![from, to], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })?;
+
+        let mut buckets: std::collections::BTreeMap<String, serde_json::Value> = std::collections::BTreeMap::new();
+        for row in rows {
+            let (bucket, model, p, c, ca, cnt) = row?;
+            let entry = buckets.entry(bucket.clone()).or_insert_with(|| serde_json::json!({
+                "date": bucket,
+                "prompt": 0,
+                "completion": 0,
+                "cached": 0,
+                "requests": 0,
+                "by_model": {},
+            }));
+            entry["prompt"] = serde_json::json!(entry["prompt"].as_i64().unwrap_or(0) + p);
+            entry["completion"] = serde_json::json!(entry["completion"].as_i64().unwrap_or(0) + c);
+            entry["cached"] = serde_json::json!(entry["cached"].as_i64().unwrap_or(0) + ca);
+            entry["requests"] = serde_json::json!(entry["requests"].as_i64().unwrap_or(0) + cnt);
+            entry["by_model"][&model] = serde_json::json!({
+                "prompt": p,
+                "completion": c,
+                "requests": cnt,
+            });
+        }
+
+        Ok(serde_json::json!({
+            "points": buckets.into_values().collect::<Vec<_>>(),
+        }))
     }
 }

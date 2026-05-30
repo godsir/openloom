@@ -8,8 +8,8 @@ import AgentSelector from './AgentSelector'
 import ThinkingLevelButton from './ThinkingLevelButton'
 import PermissionModeButton from './PermissionModeButton'
 import AttachedFiles from './AttachedFiles'
-import TypingIndicator from '../shared/TypingIndicator'
 import { IconSend, IconImage, IconPaperclip } from '../../utils/icons'
+import { escapeHtml } from '../../utils/format'
 import type { AttachedFile } from '../../stores/input'
 import styles from './InputArea.module.css'
 
@@ -149,6 +149,35 @@ export default function InputArea() {
     }
   }
 
+  const handleStop = async () => {
+    if (!sessionId) return
+    // Optimistically clear streaming state immediately so UI unlocks
+    useStore.getState().removeStreamingSession(sessionId)
+    streamBufferManager.clear(sessionId)
+    sendingRef.current = false
+    // Replace any empty assistant placeholder so "思考中" doesn't linger
+    const store = useStore.getState()
+    const msgs = store.messagesBySession.get(sessionId)
+    if (msgs) {
+      const updated = msgs.map(m => {
+        if (m.role === 'assistant' && m.blocks.length === 0) {
+          return { ...m, blocks: [{ type: 'text', html: '<em>已停止生成</em>', source: '' }] as any }
+        }
+        return m
+      })
+      if (updated.some((m, i) => m !== msgs[i])) {
+        const next = new Map(store.messagesBySession)
+        next.set(sessionId, updated)
+        useStore.setState({ messagesBySession: next })
+      }
+    }
+    try {
+      await loomRpc('chat.stop', { session_id: sessionId })
+    } catch {
+      // Already cleaned up above
+    }
+  }
+
   const handleSend = async () => {
     const content = text.trim()
     if ((!content && attachedFiles.length === 0) || sendingRef.current || (sessionId && useStore.getState().streamingSessionIds.has(sessionId))) return
@@ -188,6 +217,18 @@ export default function InputArea() {
       timestamp: new Date().toISOString(),
     })
     streamBufferManager.startStream(sid, aiMsgId)
+
+    // Safety timeout: if stream_end never arrives (e.g. backend deadlock),
+    // auto-unlock the input after 3 minutes so the user isn't permanently stuck.
+    const safetyTimer = setTimeout(() => {
+      const buf = streamBufferManager.snapshot(sid)
+      if (buf && buf.messageId === aiMsgId) {
+        useStore.getState().removeStreamingSession(sid)
+        streamBufferManager.clear(sid)
+      }
+      sendingRef.current = false
+    }, 180_000)
+
     try {
       const { currentModel, thinkingLevel } = useStore.getState()
       await loomRpc('chat.send', {
@@ -206,10 +247,21 @@ export default function InputArea() {
     }
     catch (e: any) {
       useStore.getState().setInlineError(sid, e.message || '发送失败')
-      useStore.getState().removeStreamingSession(sid)
-      streamBufferManager.clear(sid)
     }
-    finally { sendingRef.current = false }
+    finally {
+      clearTimeout(safetyTimer)
+      // Only clean up if a subsequent send hasn't already started a new stream
+      // for this session. A slow chat.send RPC (e.g. entity extraction after
+      // image messages) can complete after the user has already sent the next
+      // message — without this guard, it would destroy the new stream's state
+      // and the next message would appear stuck in "thinking".
+      const buf = streamBufferManager.snapshot(sid)
+      if (buf && buf.messageId === aiMsgId) {
+        useStore.getState().removeStreamingSession(sid)
+        streamBufferManager.clear(sid)
+      }
+      sendingRef.current = false
+    }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -217,6 +269,17 @@ export default function InputArea() {
   }
 
   const streaming = useStore(s => sessionId ? s.streamingSessionIds.has(sessionId) : false)
+
+  // When streaming ends (stream_end event fires before chat.send RPC returns),
+  // reset sendingRef so the user can send the next message immediately.
+  const prevStreamingRef = useRef(false)
+  useEffect(() => {
+    if (prevStreamingRef.current && !streaming) {
+      sendingRef.current = false
+    }
+    prevStreamingRef.current = streaming
+  }, [streaming])
+
   const isConnected = wsState === 'connected'
   const placeholder = !isConnected ? '正在连接...' : !sessionId ? '开始新对话...' : streaming ? 'AI 回复中...' : '输入消息，Enter 发送'
 
@@ -283,18 +346,25 @@ export default function InputArea() {
             <AgentSelector />
             <div className={styles.spacer} />
             <ContextRing />
-            <button
-              onClick={handleSend}
-              disabled={(!text.trim() && attachedFiles.length === 0) || !isConnected || streaming}
-              className={styles.sendBtn}
-            >
-              {streaming ? <TypingIndicator /> : <><IconSend size={12} />发送</>}
-            </button>
+            {streaming ? (
+              <button
+                onClick={handleStop}
+                className={`${styles.sendBtn} ${styles.stopBtn}`}
+              >
+                <IconSend size={12} />停止
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={(!text.trim() && attachedFiles.length === 0) || !isConnected}
+                className={styles.sendBtn}
+              >
+                <IconSend size={12} />发送
+              </button>
+            )}
           </div>
         </div>
       </div>
     </div>
   )
 }
-
-function escapeHtml(s: string): string { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }

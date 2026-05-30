@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { ContentBlock } from '../../stores/chat'
 import { IconZap, IconCheck, IconLoader, IconXCircle, IconChevronRight, IconChevronDown } from '../../utils/icons'
 import styles from './ToolGroupBlock.module.css'
@@ -17,10 +17,25 @@ function toolStatusIcon(s: string) {
 export default function ToolGroupBlock({ block }: { block: ContentBlock }) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const tools = (block.tools as ToolCall[]) || []
+  const collapsed = block.collapsed as boolean | undefined
+  const prevCollapsed = useRef(collapsed)
+
+  // Auto-expand running tools; collapse all when done
+  useEffect(() => {
+    if (!collapsed && prevCollapsed.current !== false) {
+      // Tools just became active — expand the first running one
+      const running = tools.find(t => t.status === 'running')
+      if (running) setExpandedId(running.id)
+    }
+    if (collapsed) {
+      setExpandedId(null)
+    }
+    prevCollapsed.current = collapsed
+  }, [collapsed, tools])
 
   return (
     <div className={styles.block}>
-      {tools.map((tool, idx) => (
+      {tools.map((tool) => (
         <div key={tool.id} className={styles.row}>
           <button
             onClick={() => setExpandedId(expandedId === tool.id ? null : tool.id)}

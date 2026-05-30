@@ -1,6 +1,6 @@
 [package]
 name = "loom-core"
-version = "0.2.15"
+version = "0.2.16"
 edition = "2024"
 description = "Agent orchestrator for openLoom v2 — AgentPool, agent loop, tool dispatch, event bus"
 

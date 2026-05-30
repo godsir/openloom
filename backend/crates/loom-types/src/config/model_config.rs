@@ -74,6 +74,18 @@ pub struct ModelConfig {
     pub capabilities: ModelCapabilities,
     #[serde(default)]
     pub api_format: Option<String>,
+    /// USD per 1M input (prompt) tokens. 0 = not priced / local model.
+    #[serde(default)]
+    pub input_price: f64,
+    /// USD per 1M output (completion) tokens.
+    #[serde(default)]
+    pub output_price: f64,
+    /// USD per 1M cache-read (prompt cache hit) tokens.
+    #[serde(default)]
+    pub cache_read_price: f64,
+    /// USD per 1M cache-write tokens.
+    #[serde(default)]
+    pub cache_write_price: f64,
 }
 
 /// Model capability flags.
@@ -113,6 +125,10 @@ impl Default for ModelConfig {
             base_url: None,
             capabilities: ModelCapabilities::default(),
             api_format: None,
+            input_price: 0.0,
+            output_price: 0.0,
+            cache_read_price: 0.0,
+            cache_write_price: 0.0,
         }
     }
 }

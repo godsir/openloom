@@ -23,14 +23,21 @@ export interface SessionSlice {
   sessions: SessionSummary[]
   currentSessionId: string | null
   pinnedIds: Set<string>
+  selectedSessionIds: Set<string>
   setSessions: (sessions: SessionSummary[]) => void
   setCurrentSessionId: (id: string | null) => void
   createSession: () => Promise<string>
   switchSession: (id: string) => Promise<void>
   renameSession: (id: string, title: string) => Promise<void>
   deleteSession: (id: string) => Promise<void>
+  deleteSessions: (ids: string[]) => Promise<void>
   pinSession: (id: string) => void
   unpinSession: (id: string) => void
+  pinSessions: (ids: string[]) => void
+  unpinSessions: (ids: string[]) => void
+  toggleSessionSelect: (id: string) => void
+  selectAllSessions: () => void
+  deselectAllSessions: () => void
   loadSessions: () => Promise<void>
 }
 
@@ -38,6 +45,7 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
   sessions: [],
   currentSessionId: null,
   pinnedIds: new Set(),
+  selectedSessionIds: new Set(),
 
   setSessions: (sessions) => set({ sessions }),
   setCurrentSessionId: (currentSessionId) => set({ currentSessionId }),
@@ -49,21 +57,23 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
   },
 
   switchSession: async (id) => {
-    // Set immediately so UI responds before RPC completes
+    if (get().selectedSessionIds.size > 0) {
+      get().toggleSessionSelect(id)
+      return
+    }
     set({ currentSessionId: id })
     try {
       await loomRpc('session.switch', { session_id: id })
     } catch {
-      // Non-critical — session might already exist
+      // Non-critical
     }
-    // Load existing messages for this session
     try {
       const result = await loomRpc<{ messages: any[] }>('session.messages', { session_id: id })
       if (result.messages?.length) {
         const msgs = result.messages.map((m: any, i: number) => ({
           id: `hist-${id}-${i}`,
           role: parseRole(m.role),
-          blocks: parseContentParts(m.content),
+          blocks: parseContentParts(m.content, id, get().port),
           timestamp: m.timestamp || new Date().toISOString(),
           usage: m.usage ? {
             prompt: m.usage.prompt_tokens || 0,
@@ -90,6 +100,18 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
     await get().loadSessions()
   },
 
+  deleteSessions: async (ids) => {
+    for (const id of ids) {
+      await loomRpc('session.delete', { session_id: id })
+    }
+    const currentId = get().currentSessionId
+    if (currentId && ids.includes(currentId)) {
+      set({ currentSessionId: null })
+    }
+    set({ selectedSessionIds: new Set() })
+    await get().loadSessions()
+  },
+
   pinSession: (id) => {
     const next = new Set(get().pinnedIds)
     next.add(id)
@@ -102,6 +124,36 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
     next.delete(id)
     set({ pinnedIds: next })
     window.hana.setPreference('pinnedIds', [...next])
+  },
+
+  pinSessions: (ids) => {
+    const next = new Set(get().pinnedIds)
+    for (const id of ids) next.add(id)
+    set({ pinnedIds: next })
+    window.hana.setPreference('pinnedIds', [...next])
+  },
+
+  unpinSessions: (ids) => {
+    const next = new Set(get().pinnedIds)
+    for (const id of ids) next.delete(id)
+    set({ pinnedIds: next })
+    window.hana.setPreference('pinnedIds', [...next])
+  },
+
+  toggleSessionSelect: (id) => {
+    const next = new Set(get().selectedSessionIds)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    set({ selectedSessionIds: next })
+  },
+
+  selectAllSessions: () => {
+    const ids = new Set(get().sessions.map(s => s.path))
+    set({ selectedSessionIds: ids })
+  },
+
+  deselectAllSessions: () => {
+    set({ selectedSessionIds: new Set() })
   },
 
   loadSessions: async () => {
@@ -119,6 +171,14 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
       pinnedAt: null,
     }))
     set({ sessions: mapped })
+    // Restore agent bindings for all sessions
+    const bindings: Record<string, string> = {}
+    for (const s of mapped) {
+      if (s.agentName && s.agentName !== 'default') {
+        bindings[s.path] = s.agentName
+      }
+    }
+    set({ sessionAgentBindings: bindings } as any)
   },
 })
 
@@ -157,7 +217,7 @@ function parseRole(role: any): 'user' | 'assistant' {
  *
  * Or possibly flat objects like { "type": "text", "text": "hello" }.
  */
-function parseContentParts(content: any): any[] {
+function parseContentParts(content: any, sessionId: string, port: number): any[] {
   // If content is a plain string (legacy format), treat as single text block
   if (typeof content === 'string') {
     return [{ type: 'text', html: sanitizeHtml(renderMarkdown(content)), source: content }]
@@ -215,6 +275,18 @@ function parseContentParts(content: any): any[] {
         name: '',
         mimeType,
         thumbnail: data ? `data:${mimeType};base64,${data}` : '',
+      })
+    } else if ('image_ref' in part) {
+      const ir = part.image_ref || {}
+      const mimeType = ir.media_type || 'image/png'
+      const fileId = ir.file_id || ''
+      const url = fileId ? `http://127.0.0.1:${port}/sessions/${sessionId}/images/${fileId}` : ''
+      blocks.push({
+        type: 'image',
+        path: '',
+        name: fileId,
+        mimeType,
+        thumbnail: url,
       })
     }
     // Flat object format: { type: "text", text: "..." }

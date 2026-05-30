@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useStore } from '../../stores'
 import SessionItem from './SessionItem'
-import { IconPlus, IconSearch, IconSettings } from '../../utils/icons'
+import { IconPlus, IconSearch, IconSettings, IconTrash, IconPin, IconPinOff, IconCheck, IconX } from '../../utils/icons'
 import styles from './Sidebar.module.css'
 
 function getDateGroup(modified: string): string {
@@ -20,13 +20,22 @@ function getDateGroup(modified: string): string {
 export default function Sidebar() {
   const sessions = useStore((s) => s.sessions)
   const pinnedIds = useStore((s) => s.pinnedIds)
+  const selectedSessionIds = useStore((s) => s.selectedSessionIds)
   const createSession = useStore((s) => s.createSession)
   const switchSession = useStore((s) => s.switchSession)
   const setSettingsOpen = useStore((s) => s.setSettingsOpen)
+  const deleteSessions = useStore((s) => s.deleteSessions)
+  const pinSessions = useStore((s) => s.pinSessions)
+  const unpinSessions = useStore((s) => s.unpinSessions)
+  const selectAllSessions = useStore((s) => s.selectAllSessions)
+  const deselectAllSessions = useStore((s) => s.deselectAllSessions)
   const [query, setQuery] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { inputRef.current?.focus() }, [])
+
+  const selectedCount = selectedSessionIds.size
+  const selectionMode = selectedCount > 0
 
   const filtered = useMemo(() => {
     if (!query.trim()) return sessions
@@ -53,21 +62,62 @@ export default function Sidebar() {
     if (id) await switchSession(id)
   }
 
+  const handleBatchDelete = async () => {
+    const ids = [...selectedSessionIds]
+    const ok = await useStore.getState().showConfirm('批量删除', `确定删除选中的 ${ids.length} 个会话？`, true)
+    if (ok) await deleteSessions(ids)
+  }
+
+  const selectedPinned = useMemo(() => {
+    return [...selectedSessionIds].filter(id => pinnedIds.has(id))
+  }, [selectedSessionIds, pinnedIds])
+
+  const selectedUnpinned = useMemo(() => {
+    return [...selectedSessionIds].filter(id => !pinnedIds.has(id))
+  }, [selectedSessionIds, pinnedIds])
+
   return (
     <aside className={styles.sidebar}>
-      <div className={styles.search}>
-        <div className={styles.searchBox}>
-          <IconSearch size={13} className={styles.searchIcon} />
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            onKeyDown={e => e.key === 'Escape' && setQuery('')}
-            placeholder="搜索会话..."
-            className={styles.searchInput}
-          />
+      {selectionMode ? (
+        <div className={styles.batchBar}>
+          <span className={styles.batchCount}>已选 {selectedCount} 项</span>
+          <div className={styles.batchActions}>
+            <button onClick={selectAllSessions} className={styles.batchBtn} title="全选">
+              <IconCheck size={13} />
+            </button>
+            <button onClick={deselectAllSessions} className={styles.batchBtn} title="取消选择">
+              <IconX size={13} />
+            </button>
+            {selectedUnpinned.length > 0 && (
+              <button onClick={() => pinSessions(selectedUnpinned)} className={styles.batchBtn} title="置顶">
+                <IconPin size={13} />
+              </button>
+            )}
+            {selectedPinned.length > 0 && (
+              <button onClick={() => unpinSessions(selectedPinned)} className={styles.batchBtn} title="取消置顶">
+                <IconPinOff size={13} />
+              </button>
+            )}
+            <button onClick={handleBatchDelete} className={`${styles.batchBtn} ${styles.batchDanger}`} title="删除">
+              <IconTrash size={13} />
+            </button>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className={styles.search}>
+          <div className={styles.searchBox}>
+            <IconSearch size={13} className={styles.searchIcon} />
+            <input
+              ref={inputRef}
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => e.key === 'Escape' && setQuery('')}
+              placeholder="搜索会话..."
+              className={styles.searchInput}
+            />
+          </div>
+        </div>
+      )}
 
       <div className={styles.sessionList}>
         {filtered.length === 0 ? (

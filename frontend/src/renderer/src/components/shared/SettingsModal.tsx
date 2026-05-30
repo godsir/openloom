@@ -8,7 +8,8 @@ import AgentConfigPanel from './AgentConfigPanel'
 import ModelConfigPanel from './ModelConfigPanel'
 import VisionConfigSection from './VisionConfigSection'
 import KnowledgeGraphPanel from '../kg/KnowledgeGraphPanel'
-import { type ThemeId } from '../../stores/ui'
+import TokenUsagePanel from './TokenUsagePanel'
+import { type ThemeId, type FontSizeId, FONT_SIZE_MAP } from '../../stores/ui'
 import styles from './SettingsModal.module.css'
 
 const THEMES: { id: ThemeId; label: string; bg: string; surface: string; text: string; accent: string }[] = [
@@ -22,7 +23,7 @@ const THEMES: { id: ThemeId; label: string; bg: string; surface: string; text: s
   { id: 'umber-cream', label: '摩卡', bg: '#2D1B14', surface: '#3D271D', text: '#fff8f0', accent: '#D8C7B5' },
 ]
 
-type Tab = 'appearance' | 'software' | 'agent' | 'models' | 'mcp' | 'lsp' | 'skills' | 'plugins' | 'kg' | 'about'
+type Tab = 'software' | 'agent' | 'models' | 'mcp' | 'lsp' | 'skills' | 'plugins' | 'kg' | 'token' | 'about'
 
 interface McpTool {
   name: string
@@ -70,18 +71,18 @@ export default function SettingsModal({
   const theme = useStore((s) => s.theme)
   const setTheme = useStore((s) => s.setTheme)
   const wsState = useStore((s) => s.wsState)
-  const [tab, setTab] = useState<Tab>('appearance')
+  const [tab, setTab] = useState<Tab>('software')
 
   const tabs: { id: Tab; label: string }[] = [
-    { id: 'appearance', label: '外观' },
-    { id: 'software', label: '软件' },
-    { id: 'agent', label: 'Agent' },
+    { id: 'software', label: '通用' },
+    { id: 'agent', label: '智能体' },
     { id: 'models', label: '模型' },
-    { id: 'mcp', label: 'MCP' },
-    { id: 'lsp', label: 'LSP' },
-    { id: 'skills', label: 'Skills' },
-    { id: 'plugins', label: 'Plugins' },
+    { id: 'mcp', label: 'MCP 服务' },
+    { id: 'lsp', label: 'LSP 服务' },
+    { id: 'skills', label: '技能' },
+    { id: 'plugins', label: '插件' },
     { id: 'kg', label: '认知图谱' },
+    { id: 'token', label: 'Token 用量' },
     { id: 'about', label: '关于' },
   ]
 
@@ -102,65 +103,13 @@ export default function SettingsModal({
         </div>
 
         <div className={styles.content}>
-          {tab === 'appearance' && (
-            <>
-              <div className={styles.contentHeader}>
-                <h3 className={styles.sectionTitle}>外观</h3>
-                <p className={styles.sectionDesc}>选择主题和界面偏好</p>
-              </div>
-              <div className={styles.contentBody}>
-                <div className={styles.themeSection}>
-                  <div className={styles.themeLabel}>主题</div>
-                  <div className={styles.themeGrid}>
-                    {THEMES.map((t) => (
-                      <button
-                        key={t.id}
-                                                onClick={() => { setTheme(t.id); useStore.getState().addToast({ type: 'success', message: `主题已切换为${t.label}` }) }}
-                        className={`${styles.themeCard} ${theme === t.id ? styles.themeCardActive : ''}`}
-                      >
-                        <div
-                          className={styles.themePreview}
-                          style={{
-                            '--pv-bg': t.bg,
-                            '--pv-surface': t.surface,
-                            '--pv-accent': t.accent,
-                            '--pv-text-13': t.text + '22',
-                            '--pv-text-27': t.text + '44',
-                          } as React.CSSProperties}
-                        >
-                          <div className={styles.themePreviewInner}>
-                            <div className={styles.themePreviewSidebar}>
-                              <div className={styles.themePreviewAccentBar} />
-                              <div className={styles.themePreviewBarWide} />
-                              <div className={styles.themePreviewBarNarrow} />
-                            </div>
-                            <div className={styles.themePreviewMain}>
-                              <div>
-                                <div className={styles.themePreviewBarTitle} />
-                                <div className={styles.themePreviewBarBody} />
-                              </div>
-                              <div className={styles.themePreviewCard} />
-                            </div>
-                          </div>
-                        </div>
-                        <span className={`${styles.themeName} ${theme === t.id ? styles.themeNameActive : ''}`}>
-                          {t.label}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-
-          {tab === 'software' && <SoftwareTab />}
+          {tab === 'software' && <SoftwareTab theme={theme} setTheme={setTheme} />}
 
           {tab === 'agent' && (
             <>
               <div className={styles.contentHeader}>
-                <h3 className={styles.sectionTitle}>Agent 配置</h3>
-                <p className={styles.sectionDesc}>管理 Agent 角色和行为</p>
+                <h3 className={styles.sectionTitle}>智能体配置</h3>
+                <p className={styles.sectionDesc}>管理智能体角色和行为</p>
               </div>
               <div className={styles.contentBody}>
                 <AgentConfigPanel />
@@ -196,6 +145,17 @@ export default function SettingsModal({
               </div>
             </>
           )}
+          {tab === 'token' && (
+            <>
+              <div className={styles.contentHeader}>
+                <h3 className={styles.sectionTitle}>Token 用量</h3>
+                <p className={styles.sectionDesc}>查看 Token 消耗统计和历史趋势</p>
+              </div>
+              <div className={styles.contentBody}>
+                <TokenUsagePanel />
+              </div>
+            </>
+          )}
           {tab === 'about' && <AboutTab wsState={wsState} />}
         </div>
       </div>
@@ -205,7 +165,9 @@ export default function SettingsModal({
 
 /* ─── Software Tab ─── */
 
-function SoftwareTab() {
+function SoftwareTab({ theme, setTheme }: { theme: string; setTheme: (t: any) => void }) {
+  const fontSize = useStore((s) => s.fontSize)
+  const setFontSize = useStore((s) => s.setFontSize)
   const [autoStart, setAutoStart] = useState(false)
   const [closeToTray, setCloseToTray] = useState(true)
   const [loaded, setLoaded] = useState(false)
@@ -236,56 +198,123 @@ function SoftwareTab() {
   return (
     <>
       <div className={styles.contentHeader}>
-        <h3 className={styles.sectionTitle}>软件设置</h3>
-        <p className={styles.sectionDesc}>启动行为和关闭方式</p>
+        <h3 className={styles.sectionTitle}>通用</h3>
+        <p className={styles.sectionDesc}>主题、字体大小与启动行为</p>
       </div>
       <div className={styles.contentBody}>
-        {!loaded ? (
-          <p className={styles.toolsEmpty}>加载中...</p>
-        ) : (
-          <div className={styles.aboutSection}>
-            <div className={styles.aboutRow}>
-              <div>
-                <span className={styles.aboutLabel}>关闭按钮行为</span>
-                <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>点击标题栏关闭按钮时的操作</p>
-              </div>
-              <div className={styles.mcpTransportToggle}>
-                <button
-                  className={`${styles.mcpTransportBtn} ${closeToTray ? styles.mcpTransportActive : ''}`}
-                  onClick={() => handleCloseToTray(true)}
+        {/* ── Theme ── */}
+        <div className={styles.aboutSection}>
+          <div className={styles.themeLabel}>主题</div>
+          <div className={styles.themeGrid}>
+            {THEMES.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => { setTheme(t.id); useStore.getState().addToast({ type: 'success', message: `主题已切换为${t.label}` }) }}
+                className={`${styles.themeCard} ${theme === t.id ? styles.themeCardActive : ''}`}
+              >
+                <div
+                  className={styles.themePreview}
+                  style={{
+                    '--pv-bg': t.bg,
+                    '--pv-surface': t.surface,
+                    '--pv-accent': t.accent,
+                    '--pv-text-13': t.text + '22',
+                    '--pv-text-27': t.text + '44',
+                  } as React.CSSProperties}
                 >
-                  最小化到托盘
-                </button>
-                <button
-                  className={`${styles.mcpTransportBtn} ${!closeToTray ? styles.mcpTransportActive : ''}`}
-                  onClick={() => handleCloseToTray(false)}
-                >
-                  退出程序
-                </button>
-              </div>
+                  <div className={styles.themePreviewInner}>
+                    <div className={styles.themePreviewSidebar}>
+                      <div className={styles.themePreviewAccentBar} />
+                      <div className={styles.themePreviewBarWide} />
+                      <div className={styles.themePreviewBarNarrow} />
+                    </div>
+                    <div className={styles.themePreviewMain}>
+                      <div>
+                        <div className={styles.themePreviewBarTitle} />
+                        <div className={styles.themePreviewBarBody} />
+                      </div>
+                      <div className={styles.themePreviewCard} />
+                    </div>
+                  </div>
+                </div>
+                <span className={`${styles.themeName} ${theme === t.id ? styles.themeNameActive : ''}`}>
+                  {t.label}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Font Size ── */}
+        <div className={styles.aboutSection} style={{ marginTop: 24 }}>
+          <div className={styles.aboutRow}>
+            <div>
+              <span className={styles.aboutLabel}>字体大小</span>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>调整对话和输入区域的文字大小</p>
             </div>
-            <div className={styles.aboutRow}>
-              <div>
-                <span className={styles.aboutLabel}>开机自启动</span>
-                <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>系统启动时自动运行 openLoom</p>
-              </div>
-              <div className={styles.mcpTransportToggle}>
+            <div className={styles.mcpTransportToggle}>
+              {(Object.entries(FONT_SIZE_MAP) as [FontSizeId, { label: string; px: number }][]).map(([id, { label }]) => (
                 <button
-                  className={`${styles.mcpTransportBtn} ${autoStart ? styles.mcpTransportActive : ''}`}
-                  onClick={() => handleAutoStart(true)}
+                  key={id}
+                  className={`${styles.mcpTransportBtn} ${fontSize === id ? styles.mcpTransportActive : ''}`}
+                  onClick={() => setFontSize(id)}
                 >
-                  开启
+                  {label}
                 </button>
-                <button
-                  className={`${styles.mcpTransportBtn} ${!autoStart ? styles.mcpTransportActive : ''}`}
-                  onClick={() => handleAutoStart(false)}
-                >
-                  关闭
-                </button>
-              </div>
+              ))}
             </div>
           </div>
-        )}
+        </div>
+
+        {/* ── Software behaviors ── */}
+        <div className={styles.aboutSection} style={{ marginTop: 24 }}>
+          {!loaded ? (
+            <p className={styles.toolsEmpty}>加载中...</p>
+          ) : (
+            <>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>关闭按钮行为</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>点击标题栏关闭按钮时的操作</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${closeToTray ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleCloseToTray(true)}
+                  >
+                    最小化到托盘
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!closeToTray ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleCloseToTray(false)}
+                  >
+                    退出程序
+                  </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>开机自启动</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>系统启动时自动运行 openLoom</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${autoStart ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleAutoStart(true)}
+                  >
+                    开启
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!autoStart ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleAutoStart(false)}
+                  >
+                    关闭
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </>
   )
@@ -867,7 +896,7 @@ function LspTab() {
   return (
     <>
       <div className={styles.contentHeader}>
-        <h3 className={styles.sectionTitle}>LSP 语言服务</h3>
+        <h3 className={styles.sectionTitle}>LSP 服务</h3>
         <p className={styles.sectionDesc}>管理语言服务器 — 启动、停止、自定义配置</p>
       </div>
       <div className={styles.contentBody}>
@@ -1100,7 +1129,7 @@ function SkillsTab() {
   return (
     <>
       <div className={styles.contentHeader}>
-        <h3 className={styles.sectionTitle}>Skills</h3>
+        <h3 className={styles.sectionTitle}>技能</h3>
         <p className={styles.sectionDesc}>管理技能定义 — 支持文件夹或 ZIP 导入</p>
       </div>
       <div className={styles.contentBody}>
@@ -1204,7 +1233,7 @@ function PluginsTab() {
   return (
     <>
       <div className={styles.contentHeader}>
-        <h3 className={styles.sectionTitle}>Plugins</h3>
+        <h3 className={styles.sectionTitle}>插件</h3>
         <p className={styles.sectionDesc}>已发现的插件包</p>
       </div>
       <div className={styles.contentBody}>

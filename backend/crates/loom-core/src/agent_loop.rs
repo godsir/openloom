@@ -82,7 +82,7 @@ impl Default for AgentLoopConfig {
 /// models never receive an `image_url` part they cannot deserialize.
 fn strip_image_parts(messages: &mut Vec<Message>) {
     for m in messages.iter_mut() {
-        m.content.retain(|p| !matches!(p, ContentPart::Image { .. }));
+        m.content.retain(|p| !matches!(p, ContentPart::Image { .. } | ContentPart::ImageRef { .. }));
         if m.content.is_empty() {
             m.content.push(ContentPart::Text { text: String::new() });
         }
@@ -195,7 +195,8 @@ pub async fn run_agent_turn(
     allowed_tools: &Option<Vec<String>>,
     disallowed_tools: &Option<Vec<String>>,
 ) -> Result<TurnResult> {
-    run_agent_turn_inner(client, registry, history, user_message, &[], config, allowed_tools, disallowed_tools).await
+    let cancel = tokio_util::sync::CancellationToken::new();
+    run_agent_turn_inner(client, registry, history, user_message, &[], config, allowed_tools, disallowed_tools, &cancel).await
 }
 
 /// Execute one agent turn with attached images.
@@ -209,7 +210,8 @@ pub async fn run_agent_turn_with_images(
     allowed_tools: &Option<Vec<String>>,
     disallowed_tools: &Option<Vec<String>>,
 ) -> Result<TurnResult> {
-    run_agent_turn_inner(client, registry, history, user_message, attached_images, config, allowed_tools, disallowed_tools).await
+    let cancel = tokio_util::sync::CancellationToken::new();
+    run_agent_turn_inner(client, registry, history, user_message, attached_images, config, allowed_tools, disallowed_tools, &cancel).await
 }
 
 async fn run_agent_turn_inner(
@@ -221,6 +223,7 @@ async fn run_agent_turn_inner(
     config: &AgentLoopConfig,
     allowed_tools: &Option<Vec<String>>,
     disallowed_tools: &Option<Vec<String>>,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<TurnResult> {
     client.prefix_cache_reset();
     let mut tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
@@ -233,6 +236,14 @@ async fn run_agent_turn_inner(
         history: history.to_vec(),
     };
     let mut messages = assembler.build(opts)?;
+    // Strip images from history — they were already processed by the vision
+    // model in their original turn. Only the current user message's images
+    // (appended below) should trigger vision auxiliary processing.
+    for msg in messages.iter_mut() {
+        msg.content.retain(|part| !matches!(part, ContentPart::Image { .. } | ContentPart::ImageRef { .. }));
+    }
+    // Drop history messages that became empty after image stripping.
+    messages.retain(|msg| !msg.content.is_empty());
     messages.push(build_user_message(user_message, attached_images));
 
     // Vision auxiliary: if images present and the main model has no vision
@@ -304,6 +315,22 @@ async fn run_agent_turn_inner(
     let mut total_completion = 0usize;
 
     for iteration in 0..config.max_iterations {
+        // Check for user interruption before each iteration
+        if cancel.is_cancelled() {
+            info!("agent turn cancelled by user at iteration {}", iteration);
+            return Ok(TurnResult {
+                response: "[已中断]".into(),
+                thinking: String::new(),
+                tool_calls_made,
+                iterations: iteration,
+                prompt_tokens: total_prompt,
+                completion_tokens: total_completion,
+                cached_tokens: 0,
+                kv_cache_hit: None,
+                content_parts: vec![ContentPart::Text { text: "[已中断]".into() }],
+            });
+        }
+
         // Many providers (Gemini-compat gateways especially) reject requests
         // that combine image input with arbitrary function-calling tools, e.g.
         // "Only google search tool ... is supported for image response".
@@ -514,7 +541,8 @@ pub async fn run_agent_turn_streaming(
     allowed_tools: &Option<Vec<String>>,
     disallowed_tools: &Option<Vec<String>>,
 ) -> Result<TurnResult> {
-    run_agent_turn_streaming_inner(client, registry, history, user_message, &[], config, delta_tx, allowed_tools, disallowed_tools).await
+    let cancel = tokio_util::sync::CancellationToken::new();
+    run_agent_turn_streaming_inner(client, registry, history, user_message, &[], config, delta_tx, allowed_tools, disallowed_tools, &cancel).await
 }
 
 /// Execute one agent turn (streaming) with attached images.
@@ -529,8 +557,9 @@ pub async fn run_agent_turn_streaming_with_images(
     delta_tx: mpsc::Sender<StreamDelta>,
     allowed_tools: &Option<Vec<String>>,
     disallowed_tools: &Option<Vec<String>>,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<TurnResult> {
-    run_agent_turn_streaming_inner(client, registry, history, user_message, attached_images, config, delta_tx, allowed_tools, disallowed_tools).await
+    run_agent_turn_streaming_inner(client, registry, history, user_message, attached_images, config, delta_tx, allowed_tools, disallowed_tools, cancel).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -544,6 +573,7 @@ async fn run_agent_turn_streaming_inner(
     delta_tx: mpsc::Sender<StreamDelta>,
     allowed_tools: &Option<Vec<String>>,
     disallowed_tools: &Option<Vec<String>>,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<TurnResult> {
     client.prefix_cache_reset();
     let all_tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
@@ -561,6 +591,14 @@ async fn run_agent_turn_streaming_inner(
         history: history.to_vec(),
     };
     let mut messages = assembler.build(opts)?;
+    // Strip images from history — they were already processed by the vision
+    // model in their original turn. Only the current user message's images
+    // (appended below) should trigger vision auxiliary processing.
+    for msg in messages.iter_mut() {
+        msg.content.retain(|part| !matches!(part, ContentPart::Image { .. } | ContentPart::ImageRef { .. }));
+    }
+    // Drop history messages that became empty after image stripping.
+    messages.retain(|msg| !msg.content.is_empty());
     tracing::info!(
         sys_chars = config.system_prompt.len(),
         tool_count = tools.len(),
@@ -577,8 +615,25 @@ async fn run_agent_turn_streaming_inner(
 
     // Vision auxiliary: if images present and main model lacks vision capability,
     // call vision model, inject textual context, and strip image parts.
-    if crate::vision::has_images(&messages) {
+    let imgs_in_messages = crate::vision::has_images(&messages);
+    tracing::info!(
+        has_images = imgs_in_messages,
+        active_model = ?config.active_model_name,
+        model_config_count = config.model_configs.len(),
+        "vision check: messages contain images? (streaming)"
+    );
+    if !config.model_configs.is_empty() {
+        for mc in &config.model_configs {
+            tracing::info!(
+                name = %mc.name,
+                vision = mc.capabilities.vision,
+                "model_config (streaming)"
+            );
+        }
+    }
+    if imgs_in_messages {
         let main_has_vision = main_model_has_vision(&config.model_configs, &config.active_model_name);
+        tracing::info!(main_has_vision, "main_model_has_vision result (streaming)");
         if main_has_vision {
             tracing::info!("main model is vision-capable, skipping vision auxiliary (streaming)");
         } else {
@@ -647,7 +702,25 @@ async fn run_agent_turn_streaming_inner(
     let mut captured_thinking = String::new();
     let mut captured_images: Vec<(String, String)> = Vec::new();
 
-    for _iteration in 0..config.max_iterations {
+    for iteration in 0..config.max_iterations {
+        // Check for user interruption before each iteration
+        if cancel.is_cancelled() {
+            tracing::info!("agent turn cancelled by user at iteration {}", iteration);
+            let _ = delta_tx.send(StreamDelta::Text("[已中断]".into())).await;
+            drop(delta_tx);
+            return Ok(TurnResult {
+                response: "[已中断]".into(),
+                thinking: String::new(),
+                tool_calls_made,
+                iterations: iteration,
+                prompt_tokens: total_prompt,
+                completion_tokens: total_completion,
+                cached_tokens: 0,
+                kv_cache_hit: None,
+                content_parts: vec![ContentPart::Text { text: "[已中断]".into() }],
+            });
+        }
+
         // Drop tools on iterations that carry image input — many providers
         // (Gemini-compat gateways) reject image+tools combos. Strip images
         // afterwards so subsequent iterations regain tool access.
@@ -870,7 +943,7 @@ async fn run_agent_turn_streaming_inner(
                     }
                 }
             }
-            if _iteration >= 7 {
+            if iteration >= 7 {
                 tools.clear();
             }
             continue;

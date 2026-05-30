@@ -142,12 +142,14 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
         AgentEvent::ToolCompleted { agent_id: _, call_id, tool_name, success: _ } => {
             json!({ "id": call_id, "name": tool_name })
         }
-        AgentEvent::TokenUsage { agent_id: _, session_id, model, prompt_tokens, completion_tokens, context_window } => {
+        AgentEvent::TokenUsage { agent_id: _, session_id, model, prompt_tokens, completion_tokens, cached_tokens, latency_ms, context_window } => {
             json!({
                 "session_id": session_id,
                 "model": model,
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
+                "cached_tokens": cached_tokens,
+                "latency_ms": latency_ms,
                 "context_window": context_window,
             })
         }

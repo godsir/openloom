@@ -12,6 +12,7 @@ import { createToastSlice, ToastSlice } from './toast'
 import { createConfirmSlice, ConfirmSlice } from './confirm'
 import { createKgSlice, KgSlice } from './kg'
 import { createLightboxSlice, LightboxSlice } from './lightbox'
+import { createTokenStatsSlice, TokenStatsSlice } from './tokenStats'
 
 export type AppStore = ConnectionSlice &
   UiSlice &
@@ -25,7 +26,8 @@ export type AppStore = ConnectionSlice &
   ToastSlice &
   ConfirmSlice &
   KgSlice &
-  LightboxSlice
+  LightboxSlice &
+  TokenStatsSlice
 
 export const useStore = create<AppStore>()((...a) => ({
   ...createConnectionSlice(...a),
@@ -41,4 +43,5 @@ export const useStore = create<AppStore>()((...a) => ({
   ...createConfirmSlice(...a),
   ...createKgSlice(...a),
   ...createLightboxSlice(...a),
+  ...createTokenStatsSlice(...a),
 }))

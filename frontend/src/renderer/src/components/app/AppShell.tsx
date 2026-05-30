@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { useStore } from '../../stores'
 import Sidebar from './Sidebar'
 import WindowControls from './WindowControls'
@@ -8,7 +8,7 @@ import styles from './AppShell.module.css'
 import logoDev from '../../assets/loom_logo_dev.png'
 import logoRelease from '../../assets/loom_logo.png'
 
-export default function AppShell() {
+export default function AppShell({ children }: { children?: ReactNode }) {
   const sidebarOpen = useStore(s => s.sidebarOpen)
   const toggleSidebar = useStore(s => s.toggleSidebar)
   const currentSessionId = useStore(s => s.currentSessionId)
@@ -71,6 +71,7 @@ export default function AppShell() {
         </div>
         <main className={styles.main} data-content>
           <ChatWorkspace />
+          {children}
         </main>
       </div>
     </div>

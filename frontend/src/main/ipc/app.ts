@@ -1,8 +1,13 @@
 import { ipcMain, BrowserWindow, app } from 'electron'
+import * as path from 'path'
 import { getStoreKey, setStoreKey } from '../store'
 import { checkForUpdates, downloadUpdate, installUpdate } from '../updater'
 
 export function registerAppIpc(): void {
+  ipcMain.handle('get-loom-dir', () => {
+    const home = process.env.USERPROFILE || process.env.HOME || ''
+    return path.join(home, '.loom')
+  })
   ipcMain.handle('get-platform', () => process.platform)
 
   ipcMain.handle('get-app-version', () => app.getVersion())

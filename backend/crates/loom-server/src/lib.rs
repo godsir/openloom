@@ -3,15 +3,18 @@
 //!
 //! Provides Axum routes for JSON-RPC dispatch over HTTP POST and WebSocket.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{Json, Router, extract::State, routing::get};
 use loom_core::Orchestrator;
 
+mod credential;
 mod dispatch;
 mod routes;
 mod ws;
 
+pub use credential::save_credential;
 pub use dispatch::SessionStore;
 pub use ws::ws_handler;
 
@@ -19,13 +22,15 @@ pub use ws::ws_handler;
 pub struct AppState {
     pub orchestrator: Arc<Orchestrator>,
     pub sessions: SessionStore,
+    pub data_dir: PathBuf,
 }
 
 impl AppState {
-    pub fn new(orchestrator: Arc<Orchestrator>) -> Self {
+    pub fn new(orchestrator: Arc<Orchestrator>, data_dir: PathBuf) -> Self {
         Self {
             orchestrator,
             sessions: SessionStore::default(),
+            data_dir,
         }
     }
 }
@@ -36,6 +41,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/health", get(routes::health))
         .route("/ws", get(ws::ws_handler))
         .route("/api", axum::routing::post(dispatch_handler_http))
+        .route("/sessions/:session_id/images/:file_id", get(routes::serve_session_image))
         .with_state(state)
 }
 
@@ -48,8 +54,9 @@ async fn dispatch_handler_http(
 }
 
 /// Start the server on the given address.
-pub async fn serve(host: &str, port: u16, orchestrator: Arc<Orchestrator>) -> anyhow::Result<()> {
-    let state = Arc::new(AppState::new(orchestrator));
+pub async fn serve(host: &str, port: u16, orchestrator: Arc<Orchestrator>, data_dir: &std::path::Path) -> anyhow::Result<()> {
+    tracing::info!(data_dir = %data_dir.display(), "loom-server starting");
+    let state = Arc::new(AppState::new(orchestrator, data_dir.to_path_buf()));
     // Hydrate sessions from persisted store
     let sessions = state.orchestrator.list_persisted_sessions().await;
     for (id, created_at, message_count, title) in sessions {

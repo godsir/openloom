@@ -1,6 +1,6 @@
 [package]
 name = "loom-context"
-version = "0.2.15"
+version = "0.2.16"
 edition = "2024"
 description = "Context window assembly for openLoom v2"
 

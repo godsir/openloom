@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import type { Message } from '../../stores/chat'
 import { useStore } from '../../stores'
 import ThinkingBlock from './ThinkingBlock'
@@ -10,15 +11,28 @@ import MessageFooterActions from './MessageFooterActions'
 import TypingIndicator from '../shared/TypingIndicator'
 import styles from './AssistantMessage.module.css'
 
-export default function AssistantMessage({ message }: { message: Message }) {
+export default function AssistantMessage({ message, sessionId }: { message: Message; sessionId: string | null }) {
   const openLightbox = useStore(s => s.openLightbox)
+  const agent = useStore(s => sessionId ? s.getSessionAgent(sessionId) : undefined)
+
+  const isStreaming = useStore(s => sessionId ? s.streamingSessionIds.has(sessionId) : false)
+
+  const avatarContent = useMemo(() => {
+    if (agent?.avatar) {
+      return <img src={agent.avatar} alt={agent.name} className={styles.avatarImg} />
+    }
+    return <span className={styles.avatarText}>L</span>
+  }, [agent?.avatar, agent?.name])
+
+  const displayName = (agent?.name && agent.name !== 'default') ? agent.name : 'Loom'
+
   return (
     <div className={styles.message}>
       <div className={styles.header}>
         <div className={styles.avatar}>
-          <span className={styles.avatarText}>L</span>
+          {avatarContent}
         </div>
-        <span className={styles.name}>Loom</span>
+        <span className={styles.name}>{displayName}</span>
       </div>
 
       <div className={styles.content}>
@@ -57,10 +71,15 @@ export default function AssistantMessage({ message }: { message: Message }) {
               return null
           }
         })}
-        {message.blocks.length === 0 && (
+        {message.blocks.length === 0 && isStreaming && (
           <div className={styles.thinkingHint}>
             <span>思考中</span>
             <TypingIndicator />
+          </div>
+        )}
+        {message.blocks.length === 0 && !isStreaming && (
+          <div className={styles.thinkingHint}>
+            <span>已停止生成</span>
           </div>
         )}
         {message.blocks.length > 0 && (

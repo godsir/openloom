@@ -237,6 +237,10 @@ body{
 .prose-chat li{margin:.15em 0}
 .prose-chat a{color:var(--accent);text-decoration:none}
 .prose-chat a:hover{text-decoration:underline}
+.prose-chat .file-path-wrapper{display:inline-flex;align-items:center;gap:4px;vertical-align:middle}
+.prose-chat .file-path-wrapper code{font-size:11.5px;font-family:var(--font-mono);background:var(--accent-subtle);padding:.1em .4em;border-radius:var(--r-sm);color:var(--accent);white-space:nowrap}
+.prose-chat .open-file-btn{display:inline-flex;align-items:center;font-size:10px;font-family:var(--font);color:var(--accent);background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.15);border-radius:var(--r-sm);padding:1px 6px;cursor:pointer;white-space:nowrap;transition:all var(--dur-fast) var(--ease-out)}
+.prose-chat .open-file-btn:hover{background:rgba(var(--accent-rgb),0.16);border-color:rgba(var(--accent-rgb),0.3);color:var(--accent-hover)}
 
 .md-content,.prose-chat,[data-selectable],input,textarea{user-select:text}
 
