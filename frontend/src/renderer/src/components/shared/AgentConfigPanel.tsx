@@ -378,23 +378,31 @@ export default function AgentConfigPanel() {
           const isActive = editingId === agentId
           return (
             <div key={a.name} className={isActive ? styles.editGroup : ''}>
-              <div className={`${styles.modelItem} ${isActive ? styles.modelItemActive : ''}`}>
-                <div className={styles.agentAvatarSm}>
+              <div className={`${styles.agentCard} ${isActive ? styles.agentCardActive : ''}`}>
+                <div className={styles.agentAvatar}>
                   {a.avatar ? (
                     <img src={a.avatar} alt={a.name} className={styles.agentAvatarImg} />
                   ) : (
                     <span className={styles.agentAvatarLetter}>{a.name[0]?.toUpperCase() || '?'}</span>
                   )}
                 </div>
-                <div className={styles.modelInfo}>
-                  <span className={styles.modelName}>{a.name === 'default' ? 'Loom' : a.name}</span>
-                  {a.persona && <span className={styles.modelId}>{a.persona.slice(0, 40)}{a.persona.length > 40 ? '...' : ''}</span>}
-                  {a.system_prompt_override && <span className={styles.systemPromptBadge}>自定义提示词</span>}
-                  {a.name === 'default' && <span className={styles.systemPromptBadge}>默认</span>}
+                <div className={styles.agentCardBody}>
+                  <div className={styles.agentCardHeader}>
+                    <span className={styles.agentName}>{a.name === 'default' ? 'Loom' : a.name}</span>
+                    <div className={styles.agentBadges}>
+                      {a.name === 'default' && <span className={styles.defaultBadge}>默认</span>}
+                      {a.system_prompt_override && <span className={styles.customBadge}>自定义提示词</span>}
+                      {a.model && <span className={styles.modelBadge}>{a.model}</span>}
+                    </div>
+                  </div>
+                  {a.persona && (
+                    <p className={styles.agentDesc}>
+                      {a.persona.slice(0, 80)}{a.persona.length > 80 ? '...' : ''}
+                    </p>
+                  )}
                 </div>
-                {a.model && <span className={styles.providerBadge}>{a.model}</span>}
-                <div className={styles.actions}>
-                  <button onClick={() => startEdit(a)} className={styles.actionBtn}>编辑</button>
+                <div className={styles.agentActions}>
+                  <button onClick={() => startEdit(a)} className={styles.editBtn}>编辑</button>
                   {a.name !== 'default' && (
                     <button onClick={() => handleDelete(a.name)} className={styles.deleteBtn}>删除</button>
                   )}

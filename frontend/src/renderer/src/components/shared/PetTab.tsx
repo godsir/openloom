@@ -79,13 +79,17 @@ export default function PetTab() {
     setEnabled(on)
     window.loom.setPreference('petEnabled', on)
     window.loom.togglePet(on)
-    if (on) broadcastSize(size)
+    if (on) {
+      broadcastSize(size)
+      window.loom.resizePet(SIZE_MAP[size])
+    }
   }
 
   const changeSize = (sz: PetSize) => {
     setSize(sz)
     window.loom.setPreference('petSize', sz)
     broadcastSize(sz)
+    window.loom.resizePet(SIZE_MAP[sz])
   }
 
   const selectPet = (id: string) => {

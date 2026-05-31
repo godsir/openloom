@@ -101,6 +101,7 @@
   overflow-y: auto;
   margin-bottom: 10px;
   min-height: 0;
+  position: relative;
 }
 
 .nodeItem {
@@ -332,7 +333,7 @@
   z-index: 0;
 }
 
-.canvasWrap > div {
+.canvasWrap > div:not(.canvasEmpty) {
   position: relative;
   z-index: 1;
 }
@@ -347,10 +348,23 @@
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   color: var(--text-muted);
   font-size: 13px;
+  z-index: 1;
+  pointer-events: none;
+  gap: 8px;
+}
+
+.canvasEmptyHint {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.6;
+  max-width: 280px;
+  text-align: center;
+  line-height: 1.6;
 }
 
 /* Tooltip — positioned at clicked node via inline left/top */

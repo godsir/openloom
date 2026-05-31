@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
 import { useStore } from '../../stores'
@@ -26,56 +26,6 @@ const PRESET_PROVIDERS: ProviderEntry[] = [
 ]
 
 const CUSTOM_PROVIDERS_KEY = 'customProviders'
-
-// Pricing reference: model name substring → { input, output } USD per 1M tokens.
-// Matched case-insensitively against the configured model's name or model id.
-// 2026-05 定价 (¥ / 百万 Token).  国际模型按 ~7.2 汇率折算.
-const PRICING_DB: Array<{ key: string; input: number; output: number; cacheRead?: number; cacheWrite?: number }> = [
-  // OpenAI — USD 按 7.2 折算
-  { key: 'gpt-4.1', input: 14.40, output: 57.60 },
-  { key: 'gpt-4.1-mini', input: 2.88, output: 11.52 },
-  { key: 'gpt-4.1-nano', input: 0.72, output: 2.88 },
-  { key: 'gpt-4o', input: 18.00, output: 72.00 },
-  { key: 'gpt-4o-mini', input: 1.08, output: 4.32 },
-  { key: 'o4-mini', input: 7.92, output: 31.68 },
-  { key: 'o3', input: 72.00, output: 288.00 },
-  { key: 'o3-mini', input: 7.92, output: 31.68 },
-  // Anthropic — USD 按 7.2 折算
-  { key: 'claude-opus-4.6', input: 36.00, output: 180.00, cacheWrite: 9.00, cacheRead: 3.60 },
-  { key: 'claude-opus-4.5', input: 36.00, output: 180.00, cacheWrite: 9.00, cacheRead: 3.60 },
-  { key: 'claude-opus-4', input: 36.00, output: 180.00, cacheWrite: 9.00, cacheRead: 3.60 },
-  { key: 'claude-sonnet-4.6', input: 21.60, output: 108.00, cacheWrite: 5.40, cacheRead: 2.16 },
-  { key: 'claude-sonnet-4.5', input: 21.60, output: 108.00, cacheWrite: 5.40, cacheRead: 2.16 },
-  { key: 'claude-sonnet-4', input: 21.60, output: 108.00, cacheWrite: 5.40, cacheRead: 2.16 },
-  { key: 'claude-haiku-4.5', input: 7.20, output: 36.00, cacheWrite: 1.80, cacheRead: 0.72 },
-  { key: 'claude-haiku-4', input: 7.20, output: 36.00, cacheWrite: 1.80, cacheRead: 0.72 },
-  { key: 'claude-3.5', input: 21.60, output: 108.00, cacheWrite: 5.40, cacheRead: 2.16 },
-  { key: 'claude-opus', input: 36.00, output: 180.00, cacheWrite: 9.00, cacheRead: 3.60 },
-  { key: 'claude-sonnet', input: 21.60, output: 108.00, cacheWrite: 5.40, cacheRead: 2.16 },
-  { key: 'claude-haiku', input: 7.20, output: 36.00, cacheWrite: 1.80, cacheRead: 0.72 },
-  // DeepSeek — 官方 ¥ 定价 (deepseek.com)
-  { key: 'deepseek-v4', input: 2.00, output: 3.50, cacheRead: 0.20, cacheWrite: 0.20 },
-  { key: 'deepseek-v3', input: 2.00, output: 8.00, cacheRead: 0.50, cacheWrite: 0.50 },
-  { key: 'deepseek-r1', input: 4.00, output: 16.00, cacheRead: 1.00, cacheWrite: 1.00 },
-  { key: 'deepseek-chat', input: 2.00, output: 8.00, cacheRead: 0.50, cacheWrite: 0.50 },
-  { key: 'deepseek-reasoner', input: 4.00, output: 16.00, cacheRead: 1.00, cacheWrite: 1.00 },
-  // Qwen (通义千问百炼) — 官方 ¥ 定价
-  { key: 'qwen3-vl-plus', input: 1.50, output: 6.00 },
-  { key: 'qwen3-vl-flash', input: 0.00, output: 0.00 },
-  { key: 'qwen3-vl', input: 0.80, output: 3.20 },
-  { key: 'qwen3-plus', input: 2.00, output: 8.00 },
-  { key: 'qwen3-flash', input: 0.00, output: 0.00 },
-  { key: 'qwen3-235b', input: 1.50, output: 6.00 },
-  { key: 'qwen3-coder', input: 2.00, output: 8.00 },
-  { key: 'qwen-plus', input: 2.00, output: 8.00 },
-  { key: 'qwen-turbo', input: 0.80, output: 3.20 },
-  { key: 'qwen-vl', input: 1.50, output: 6.00 },
-  // Google — USD 按 7.2 折算
-  { key: 'gemini-2.5-pro', input: 9.00, output: 72.00 },
-  { key: 'gemini-2.5-flash', input: 1.08, output: 4.32 },
-  { key: 'gemma-4', input: 0.00, output: 0.00 },
-  { key: 'gemma-3', input: 0.00, output: 0.00 },
-]
 
 async function loadCustomProviders(): Promise<ProviderEntry[]> {
   try {
@@ -117,6 +67,7 @@ export default function ModelConfigPanel() {
   const [providers, setProviders] = useState<ProviderEntry[]>(PRESET_PROVIDERS)
   const [selectedId, setSelectedId] = useState<string>('deepseek')
   const [showCustomForm, setShowCustomForm] = useState(false)
+  const [editingCustomId, setEditingCustomId] = useState<string | null>(null)
   const [customName, setCustomName] = useState('')
   const [customUrl, setCustomUrl] = useState('')
   const [customFormat, setCustomFormat] = useState<'openai' | 'anthropic'>('openai')
@@ -331,48 +282,6 @@ export default function ModelConfigPanel() {
     }
   }
 
-  const [fillingPrices, setFillingPrices] = useState(false)
-
-  const handleAutoFillPrices = async () => {
-    setFillingPrices(true)
-    useStore.getState().addToast({ type: 'info', message: '正在匹配模型计费信息...' })
-    let updated = 0
-    let skipped = 0
-    for (const m of models) {
-      const existingInput = (m as any).input_price as number | undefined
-      const existingOutput = (m as any).output_price as number | undefined
-      if ((existingInput ?? 0) > 0 || (existingOutput ?? 0) > 0) { skipped++; continue }
-
-      const searchStr = ((m.model || '') + ' ' + m.name).toLowerCase()
-      const match = PRICING_DB.find(p => searchStr.includes(p.key.toLowerCase()))
-      if (!match) continue
-
-      try {
-        await loomRpc('model.config.update', {
-          name: m.name,
-          prev_name: m.name,
-          input_price: match.input,
-          output_price: match.output,
-          cache_read_price: match.cacheRead ?? 0,
-          cache_write_price: match.cacheWrite ?? 0,
-        })
-        updated++
-      } catch (e: any) {
-        console.warn(`[auto-price] failed for ${m.name}:`, e.message || e)
-      }
-    }
-    setFillingPrices(false)
-    if (updated > 0) {
-      const msg = `已为 ${updated} 个模型补充计费信息` + (skipped > 0 ? `，${skipped} 个已有价格跳过` : '')
-      useStore.getState().addToast({ type: 'success', message: msg })
-    } else if (skipped > 0) {
-      useStore.getState().addToast({ type: 'info', message: `所有 ${skipped} 个模型的计费信息已设置` })
-    } else {
-      useStore.getState().addToast({ type: 'info', message: '未匹配到可补充的模型，请检查模型名称是否在价格表中' })
-    }
-    await refresh()
-  }
-
   const handleDeleteModel = async (name: string) => {
     const ok = await useStore.getState().showConfirm('删除模型', `确定删除 "${name}"？`, true)
     if (!ok) return
@@ -495,8 +404,71 @@ export default function ModelConfigPanel() {
     await refresh()
   }
 
+  const handleStartEditCustom = (entry: ProviderEntry) => {
+    setEditingCustomId(entry.id)
+    setCustomName(entry.label)
+    setCustomUrl(entry.defaultUrl)
+    setCustomFormat(entry.apiFormat)
+    setCustomEnvVar(entry.envVar || 'OPENLOOM_API_KEY')
+    setShowCustomForm(true)
+    setSelectedId(entry.id)
+    setBaseUrl(entry.defaultUrl)
+    setApiFormat(entry.apiFormat)
+  }
+
   const handleAddCustom = async () => {
     if (!customName.trim() || !customUrl.trim()) return
+
+    if (editingCustomId) {
+      // Update existing custom provider
+      const oldEntry = providers.find(p => p.id === editingCustomId)
+      const newLabel = customName.trim()
+      const next = providers.map(p =>
+        p.id === editingCustomId ? {
+          ...p,
+          label: newLabel,
+          defaultUrl: customUrl.trim(),
+          apiFormat: customFormat,
+          envVar: customEnvVar.trim() || 'OPENLOOM_API_KEY',
+        } : p
+      )
+      setProviders(next)
+      await saveCustomProviders(next)
+
+      // Update backend_label on all models that referenced the old label
+      if (oldEntry && oldEntry.label !== newLabel) {
+        const affectedModels = models.filter(m => (m.backend_label || '') === oldEntry.label)
+        for (const m of affectedModels) {
+          try {
+            await loomRpc('model.config.update', {
+              name: m.name,
+              model: m.model || undefined,
+              backend: m.backend as ModelBackend,
+              backend_label: newLabel,
+              base_url: m.base_url || undefined,
+              api_format: (m as any).api_format || undefined,
+              api_key_env: m.api_key_env || undefined,
+              context_size: m.context_size || 4096,
+              capabilities: m.capabilities || {},
+            })
+          } catch { /* best-effort */ }
+        }
+      }
+
+      setBaseUrl(customUrl.trim())
+      setApiFormat(customFormat)
+      setShowCustomForm(false)
+      setEditingCustomId(null)
+      setCustomName('')
+      setCustomUrl('')
+      setCustomFormat('openai')
+      setCustomEnvVar('OPENLOOM_API_KEY')
+      await refresh()
+      useStore.getState().addToast({ type: 'success', message: `供应商 "${newLabel}" 已更新` })
+      return
+    }
+
+    // Create new custom provider
     const entry: ProviderEntry = {
       id: `custom-${Date.now()}`,
       label: customName.trim(),
@@ -516,6 +488,7 @@ export default function ModelConfigPanel() {
     setVerifyStatus('idle')
     setDiscovered([])
     setShowCustomForm(false)
+    setEditingCustomId(null)
     setCustomName('')
     setCustomUrl('')
     setCustomFormat('openai')
@@ -612,6 +585,16 @@ export default function ModelConfigPanel() {
                     {count > 0 && <span className={styles.pvListCount}>{count}</span>}
                   </button>
                   <button
+                    onClick={(e) => { e.stopPropagation(); handleStartEditCustom(p) }}
+                    className={styles.pvListEdit}
+                    title="编辑供应商"
+                  >
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                  </button>
+                  <button
                     onClick={(e) => { e.stopPropagation(); handleDeleteCustom(p) }}
                     className={styles.pvListDelete}
                     title="删除供应商"
@@ -654,8 +637,8 @@ export default function ModelConfigPanel() {
               className={styles.pvCustomInput}
             />
             <div className={styles.pvCustomActions}>
-              <button onClick={() => setShowCustomForm(false)} className={styles.pvCustomBtn}>取消</button>
-              <button onClick={handleAddCustom} disabled={!customName.trim() || !customUrl.trim()} className={styles.pvCustomBtnPrimary}>添加</button>
+              <button onClick={() => { setShowCustomForm(false); setEditingCustomId(null); setCustomName(''); setCustomUrl(''); setCustomFormat('openai'); setCustomEnvVar('OPENLOOM_API_KEY') }} className={styles.pvCustomBtn}>取消</button>
+              <button onClick={handleAddCustom} disabled={!customName.trim() || !customUrl.trim()} className={styles.pvCustomBtnPrimary}>{editingCustomId ? '保存' : '添加'}</button>
             </div>
           </div>
         ) : (
@@ -768,14 +751,6 @@ export default function ModelConfigPanel() {
                 <div className={styles.pvModelSection}>
                   <div className={styles.pvModelSectionHeader}>
                     <span>已配置 ({filteredConfigured.length}){q && <span className={styles.pvModelFilterHint}> — 共 {providerModels.length} 个</span>}</span>
-                    <button
-                      onClick={handleAutoFillPrices}
-                      disabled={fillingPrices}
-                      className={styles.pvAutoPriceBtn}
-                      title="根据内置价格表自动为模型填充计费信息"
-                    >
-                      {fillingPrices ? '填充中...' : '一键补充计费'}
-                    </button>
                   </div>
                   <div className={styles.pvModelList}>
                     {filteredConfigured.map(m => (

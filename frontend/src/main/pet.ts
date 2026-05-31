@@ -4,7 +4,8 @@ import { homedir } from 'os'
 import { existsSync, mkdirSync, readdirSync, readFileSync, copyFileSync } from 'fs'
 import { getStoreKey, setStoreKey } from './store'
 
-const MAX_SIZE = 320 // enough for pet + bubble above
+const SIZE_VALUES: Record<string, number> = { small: 128, medium: 192, large: 256 }
+const PADDING = 48 // extra space for bubble above
 const PETS_DIR = join(homedir(), '.loom', 'pets')
 const MIME: Record<string, string> = { '.webp': 'image/webp', '.png': 'image/png', '.jpg': 'image/jpeg', '.gif': 'image/gif' }
 
@@ -92,6 +93,13 @@ ipcMain.on('pet:move', (_e, dx: number, dy: number) => {
   }
 })
 
+ipcMain.on('pet:resize', (_e, spriteSize: number) => {
+  if (petWindow && !petWindow.isDestroyed()) {
+    const newSize = spriteSize + PADDING
+    petWindow.setSize(newSize, newSize)
+  }
+})
+
 ipcMain.on('pet:context-menu', () => {
   const menu = Menu.buildFromTemplate([
     { label: '大小：小 (128px)', click: () => sendPetCommand('size:small') },
@@ -115,9 +123,8 @@ function posKey(): string { return 'petPosition' }
 function getSavedPos(): { x: number; y: number } | null {
   const saved = getStoreKey(posKey(), null) as { x: number; y: number } | null
   if (!saved || typeof saved.x !== 'number' || typeof saved.y !== 'number') return null
-  // Validate the position is still on-screen
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
-  if (saved.x < -MAX_SIZE + 40 || saved.x > sw - 40 || saved.y < -MAX_SIZE + 40 || saved.y > sh - 40) return null
+  if (saved.x < -200 + 40 || saved.x > sw - 40 || saved.y < -200 + 40 || saved.y > sh - 40) return null
   return saved
 }
 
@@ -125,12 +132,15 @@ function create(): void {
   if (petWindow?.isDestroyed() === false) return
   const d = screen.getPrimaryDisplay()
   const { width: sw, height: sh } = d.workAreaSize
+  const petSize = (getStoreKey('petSize', 'small') as string) || 'small'
+  const spriteSize = SIZE_VALUES[petSize] || 128
+  const winSize = spriteSize + PADDING
   const saved = getSavedPos()
-  const x = saved ? saved.x : sw - MAX_SIZE - 20
-  const y = saved ? saved.y : sh - MAX_SIZE - 80
+  const x = saved ? saved.x : sw - winSize - 20
+  const y = saved ? saved.y : sh - winSize - 80
 
   petWindow = new BrowserWindow({
-    width: MAX_SIZE, height: MAX_SIZE,
+    width: winSize, height: winSize,
     x, y,
     transparent: true, frame: false, resizable: false,
     hasShadow: false, skipTaskbar: true, alwaysOnTop: true,
@@ -140,10 +150,10 @@ function create(): void {
       preload: join(__dirname, '../preload/pet.js'),
     },
   })
+  // Mouse transparent everywhere — canvas element handles its own events
+  petWindow.setIgnoreMouseEvents(true, { forward: true })
   const activePetId = getStoreKey('activePetId', 'homelander-2') as string
-  const petSize = getStoreKey('petSize', 'small') as string
-  const SIZE_VALUES: Record<string, number> = { small: 128, medium: 192, large: 256 }
-  const hash = `${activePetId}&${SIZE_VALUES[petSize] || 128}`
+  const hash = `${activePetId}&${spriteSize}`
   petWindow.setAlwaysOnTop(true, 'normal')
   if (process.env.ELECTRON_RENDERER_URL) {
     petWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}/pet.html#${hash}`)

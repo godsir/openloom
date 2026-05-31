@@ -324,10 +324,34 @@ export default function InputArea() {
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.ctrlKey || e.metaKey) {
+        // Insert newline at cursor position
+        e.preventDefault()
+        const el = e.currentTarget as HTMLTextAreaElement
+        const { selectionStart, selectionEnd, value } = el
+        const next = value.slice(0, selectionStart) + '\n' + value.slice(selectionEnd)
+        setText(next)
+        // Restore cursor after the inserted newline
+        requestAnimationFrame(() => {
+          el.selectionStart = el.selectionEnd = selectionStart + 1
+        })
+        return
+      }
+      e.preventDefault()
+      handleSend()
+    }
   }
 
   const streaming = useStore(s => sessionId ? s.streamingSessionIds.has(sessionId) : false)
+
+  // Auto-resize textarea
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+  }, [text])
 
   // When streaming ends (stream_end event fires before chat.send RPC returns),
   // reset sendingRef so the user can send the next message immediately.
@@ -340,7 +364,7 @@ export default function InputArea() {
   }, [streaming])
 
   const isConnected = wsState === 'connected'
-  const placeholder = !isConnected ? '正在连接...' : !sessionId ? '开始新对话...' : '输入消息，Enter 发送'
+  const placeholder = !isConnected ? '正在连接...' : !sessionId ? '开始新对话...' : '输入消息，Enter 发送 · Ctrl+Enter 换行'
 
   return (
     <div
@@ -458,11 +482,13 @@ export default function InputArea() {
                 </div>
               )}
             </div>
+            <div className={styles.toolbarDivider} />
             <PermissionModeButton />
             <ThinkingLevelButton />
             <ModelSelector />
             <AgentSelector />
             <div className={styles.spacer} />
+            <div className={styles.toolbarDivider} />
             <ContextRing />
             {streaming ? (
               <button

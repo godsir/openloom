@@ -1,6 +1,13 @@
 import { StateCreator } from 'zustand'
 
-export type ThemeId = 'dark' | 'light' | 'midnight' | 'warm-paper' | 'neon-pink' | 'ember' | 'navy-gold' | 'umber-cream'
+export type ThemeId = 'dark' | 'light' | 'midnight' | 'warm-paper' | 'neon-pink' | 'ember' | 'navy-gold' | 'umber-cream' | 'custom'
+
+export interface CustomThemeColors {
+  bg: string
+  surface: string
+  text: string
+  accent: string
+}
 export type FontSizeId = 'small' | 'default' | 'large' | 'xlarge'
 
 export const FONT_SIZE_MAP: Record<FontSizeId, { label: string; px: number }> = {
@@ -45,6 +52,16 @@ export const createUiSlice: StateCreator<UiSlice> = (set, get) => ({
   setTheme: (theme) => {
     document.documentElement.setAttribute('data-theme', theme)
     window.loom.setPreference('theme', theme)
+    if (theme !== 'custom') {
+      // Only clear theme-related inline CSS vars, preserve font/size settings
+      const root = document.documentElement
+      const vars = ['--bg','--bg-surface','--bg-card','--bg-active','--bg-overlay','--bg-input','--bg-tooltip',
+        '--text','--text-secondary','--text-muted','--text-light',
+        '--border','--border-default','--border-accent','--border-light',
+        '--accent','--accent-hover','--accent-rgb','--accent-subtle','--accent-medium','--accent-glow','--accent-light','--accent-strong',
+        '--shadow','--shadow-md','--shadow-lg','--shadow-glass']
+      vars.forEach(v => root.style.removeProperty(v))
+    }
     set({ theme })
   },
 

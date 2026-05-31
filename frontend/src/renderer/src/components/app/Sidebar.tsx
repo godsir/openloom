@@ -115,6 +115,11 @@ export default function Sidebar() {
               placeholder="搜索会话..."
               className={styles.searchInput}
             />
+            {query && (
+              <button onClick={() => setQuery('')} className={styles.searchClear}>
+                <IconX size={11} />
+              </button>
+            )}
           </div>
         </div>
       )}

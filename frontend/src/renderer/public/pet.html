@@ -2,10 +2,10 @@
 <html><head><meta charset="UTF-8">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{width:100%;height:100%;overflow:hidden;background:transparent;user-select:none}
+html,body{width:100%;height:100%;overflow:hidden;background:transparent;user-select:none;pointer-events:none}
 body{display:flex;align-items:flex-end;justify-content:center}
-#wrapper{position:relative;display:flex;flex-direction:column;align-items:center}
-canvas{display:block;flex-shrink:0}
+#wrapper{position:relative;display:flex;flex-direction:column;align-items:center;pointer-events:none}
+canvas{display:block;flex-shrink:0;pointer-events:auto}
 
 /* Bubble — positioned relative to wrapper, above canvas */
 #bubble {
@@ -168,9 +168,9 @@ bc.onmessage = function(e) {
   }
 };
 
-// --- Manual drag ---
+// --- Manual drag (canvas only) ---
 var dragging = false, dragX = 0, dragY = 0;
-document.addEventListener('mousedown', function(e) {
+canvas.addEventListener('mousedown', function(e) {
   if (e.button === 0) { dragging = true; dragX = e.screenX; dragY = e.screenY; }
 });
 document.addEventListener('mousemove', function(e) {

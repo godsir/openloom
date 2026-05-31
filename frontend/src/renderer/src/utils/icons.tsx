@@ -48,6 +48,14 @@ export {
   BookOpen as IconBookOpen,
   Sparkles as IconSparkles,
   Terminal as IconTerminal,
+  // Additional icons for settings tabs
+  Bot as IconBot,
+  Box as IconBox,
+  Network as IconNetwork,
+  BarChart3 as IconBarChart,
+  MessageSquare as IconMessageSquare,
+  PawPrint as IconPawPrint,
+  Info as IconInfo,
 } from 'lucide-react'
 
 export function IconStarFilled({ size = 16, className = '' }: { size?: number; className?: string }) {

@@ -40,6 +40,27 @@ export default function App() {
         if (!pref) setShowOnboarding(true)
         const savedTheme = await window.loom.getPreference('theme', 'dark')
         useStore.getState().setTheme(savedTheme as any)
+        if (savedTheme === 'custom') {
+          const cc = await window.loom.getPreference('customTheme', { bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' })
+          // Re-apply custom theme colors on boot
+          const root = document.documentElement
+          const { bg, surface, text, accent } = cc as any
+          const hexToRgb = (hex: string): [number, number, number] => {
+            const v = parseInt(String(hex).replace('#', ''), 16)
+            return [(v >> 16) & 255, (v >> 8) & 255, v & 255]
+          }
+          const [ar, ag, ab] = hexToRgb(accent)
+          const isLight = bg > '#888'
+          root.style.setProperty('--bg', bg)
+          root.style.setProperty('--bg-surface', surface)
+          root.style.setProperty('--bg-card', surface)
+          root.style.setProperty('--text', text)
+          root.style.setProperty('--accent', accent)
+          root.style.setProperty('--accent-rgb', `${ar},${ag},${ab}`)
+          root.style.setProperty('--accent-subtle', `rgba(${ar},${ag},${ab},0.10)`)
+          root.style.setProperty('--accent-medium', `rgba(${ar},${ag},${ab},0.16)`)
+          root.style.setProperty('--border-accent', `rgba(${ar},${ag},${ab},0.28)`)
+        }
         const savedFontSize = await window.loom.getPreference('fontSize', 'default')
         useStore.getState().setFontSize(savedFontSize as any)
         const savedPinned = await window.loom.getPreference<string[]>('pinnedIds', [])

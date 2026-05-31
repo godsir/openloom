@@ -350,6 +350,21 @@ export default function KnowledgeGraphTab() {
     }
   }
 
+  // Stop force graph animation on unmount to prevent D3 zoom
+  // document-level event listener leaks blocking clicks on the nav
+  const fgInstanceRef = useRef<any>(null)
+  const fgFullscreenInstanceRef = useRef<any>(null)
+  useEffect(() => {
+    fgInstanceRef.current = fgRef.current
+    fgFullscreenInstanceRef.current = fgFullscreenRef.current
+  })
+  useEffect(() => {
+    return () => {
+      fgInstanceRef.current?.stopAnimation?.()
+      fgFullscreenInstanceRef.current?.stopAnimation?.()
+    }
+  }, [])
+
   // Animated star field background for normal view
   useEffect(() => {
     const canvas = starCanvasRef.current
@@ -683,7 +698,12 @@ export default function KnowledgeGraphTab() {
             <canvas ref={starCanvasRef} className={styles.starField} />
             {!hasData ? (
               <div className={styles.canvasEmpty}>
-                {kgNodeList.length > 0 ? '正在加载图谱...' : '暂无实体数据'}
+                <span>{kgNodeList.length > 0 ? '正在加载图谱...' : '星图暂无数据'}</span>
+                {kgNodeList.length === 0 && (
+                  <span className={styles.canvasEmptyHint}>
+                    在与 AI 对话过程中，知识图谱会自动积累实体与关系，构建属于你的认知网络
+                  </span>
+                )}
               </div>
             ) : dimensions.w < 10 || dimensions.h < 10 ? (
               <div className={styles.canvasEmpty}>正在初始化...</div>

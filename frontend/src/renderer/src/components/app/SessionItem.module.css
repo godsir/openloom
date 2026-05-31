@@ -2,11 +2,12 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
-  margin: 2px 0;
+  padding: 8px 12px;
+  margin: 1px 0;
   cursor: pointer;
   border-radius: var(--r-md);
-  border: 1px solid transparent;
+  border: none;
+  border-left: 2px solid transparent;
   transition: all 0.15s ease;
 }
 
@@ -16,12 +17,12 @@
 
 .active {
   background: var(--bg-active);
-  border-color: var(--border-accent);
+  border-left-color: var(--accent);
 }
 
 .selected {
   background: var(--bg-card);
-  border-color: rgba(var(--accent-rgb), 0.2);
+  border-left-color: rgba(var(--accent-rgb), 0.4);
 }
 
 /* Checkbox */
@@ -103,9 +104,13 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-top: 2px;
+  margin-top: 1px;
   font-size: 10px;
   color: var(--text-muted);
+}
+
+.meta span {
+  line-height: 1;
 }
 
 .pinBtn {
