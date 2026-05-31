@@ -1,7 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
 import type { ContentBlock } from '../../stores/chat'
 import { IconChevronRight, IconChevronDown, IconTerminal, IconEdit, IconSearch } from '../../utils/icons'
+import { FileDiffCard } from './FileDiffCard'
 import styles from './ShellBlock.module.css'
+
+const FILE_DIFF_TOOLS = new Set(['file_write', 'file_edit'])
 
 export default function ShellBlock({ block }: { block: ContentBlock }) {
   const [expanded, setExpanded] = useState(true)
@@ -11,6 +14,7 @@ export default function ShellBlock({ block }: { block: ContentBlock }) {
   const args = block.args as Record<string, unknown> | undefined
   const result = block.result as string | undefined
   const status = block.status as string
+  const details = block.details as Record<string, unknown> | undefined
 
   const { label, detail } = formatTool(toolName, args)
 
@@ -19,6 +23,13 @@ export default function ShellBlock({ block }: { block: ContentBlock }) {
       bodyRef.current.scrollTop = bodyRef.current.scrollHeight
     }
   }, [result, expanded])
+
+  // Check if this is a file tool with diff data
+  const hasDiffData = FILE_DIFF_TOOLS.has(toolName)
+    && details
+    && typeof details.oldContent === 'string'
+    && typeof details.newContent === 'string'
+    && details.oldContent !== details.newContent
 
   return (
     <div className={styles.block}>
@@ -33,12 +44,21 @@ export default function ShellBlock({ block }: { block: ContentBlock }) {
       </button>
       {expanded && (
         <div ref={bodyRef} className={styles.body}>
-          <pre className={styles.output}>
-            {status === 'running' && !result && (
-              <span className={styles.cursor} />
-            )}
-            {result || (sealed ? '(no output)' : '')}
-          </pre>
+          {hasDiffData ? (
+            <FileDiffCard
+              fileName={(details.fileName as string) || (detail.split(/[\\/]/).pop() ?? detail)}
+              filePath={(details.filePath as string) || detail}
+              oldContent={details.oldContent as string}
+              newContent={details.newContent as string}
+            />
+          ) : (
+            <pre className={styles.output}>
+              {status === 'running' && !result && (
+                <span className={styles.cursor} />
+              )}
+              {result || (sealed ? '(no output)' : '')}
+            </pre>
+          )}
         </div>
       )}
     </div>

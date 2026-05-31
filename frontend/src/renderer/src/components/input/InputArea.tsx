@@ -37,10 +37,12 @@ export default function InputArea() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const skillPopoverRef = useRef<HTMLDivElement>(null)
   const sessionId = useStore(s => s.currentSessionId)
+  const sessionWorkspaces = useStore(s => s.sessionWorkspaces)
   const createSession = useStore(s => s.createSession)
   const switchSession = useStore(s => s.switchSession)
   const wsState = useStore(s => s.wsState)
   const { saveDraft, restoreDraft } = useStore.getState()
+  const sessionWorkspace = sessionId ? sessionWorkspaces[sessionId] : undefined
 
   // Load available skills (deduplicate by name)
   const refreshSkills = useCallback(async () => {
@@ -338,7 +340,7 @@ export default function InputArea() {
   }, [streaming])
 
   const isConnected = wsState === 'connected'
-  const placeholder = !isConnected ? '正在连接...' : !sessionId ? '开始新对话...' : streaming ? 'AI 回复中...' : '输入消息，Enter 发送'
+  const placeholder = !isConnected ? '正在连接...' : !sessionId ? '开始新对话...' : '输入消息，Enter 发送'
 
   return (
     <div
@@ -364,6 +366,14 @@ export default function InputArea() {
               ))}
             </div>
           )}
+          {sessionWorkspace && (
+            <div className={styles.workspaceBar}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+              </svg>
+              <span className={styles.workspacePath}>{sessionWorkspace}</span>
+            </div>
+          )}
           {attachedFiles.length > 0 && (
             <div className={styles.attachmentsArea}>
               <AttachedFiles files={attachedFiles} onRemove={handleRemoveFile} />
@@ -377,7 +387,7 @@ export default function InputArea() {
             onPaste={handlePaste}
             placeholder={placeholder}
             rows={2}
-            disabled={!isConnected || streaming}
+            disabled={!isConnected}
             className={styles.textarea}
           />
           <div className={styles.toolbar}>

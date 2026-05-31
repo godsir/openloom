@@ -31,6 +31,7 @@ interface BufferState {
     status: 'running' | 'done'
     args: Record<string, unknown>
     result?: string
+    details?: Record<string, unknown>
   }>
   userSkills: string[]
   inThinking: boolean
@@ -227,6 +228,7 @@ class StreamBufferManager {
     toolId: string,
     result?: string,
     toolName?: string,
+    details?: Record<string, unknown>,
   ): void {
     if (!useStore.getState().streamingSessionIds.has(sessionId)) return
     const buf = this.ensureBuffer(sessionId)
@@ -240,6 +242,7 @@ class StreamBufferManager {
     if (shell) {
       shell.status = 'done'
       shell.result = result
+      if (details) shell.details = details
     }
     const skill = buf.skillCalls.find((t) => t.id === toolId)
     if (skill) {
@@ -289,7 +292,7 @@ class StreamBufferManager {
 
   private async maybeAutoTitle(sessionId: string): Promise<void> {
     try {
-      const enabled = await window.hana.getPreference<boolean>('autoTitle', false)
+      const enabled = await window.loom.getPreference<boolean>('autoTitle', false)
       if (!enabled) return
       // Only fire for untitled sessions
       const sessions = useStore.getState().sessions
@@ -417,6 +420,7 @@ class StreamBufferManager {
         status: sc.status,
         args: sc.args || {},
         result: sc.result,
+        details: sc.details,
         sealed: sc.status === 'done',
       })
     }

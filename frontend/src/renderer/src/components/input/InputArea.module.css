@@ -163,6 +163,22 @@
   background: rgba(139, 92, 246, 0.15);
 }
 
+.workspaceBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 20px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.workspacePath {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
 .skillBtnWrap {
   position: relative;
 }

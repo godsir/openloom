@@ -1,4 +1,4 @@
-//! Memory store implementation for the CLI — wraps loom-memory's SqliteEventStore.
+//! Memory store implementation for the CLI — wraps loom-memory's three databases.
 //! Persists chat messages to message_history table, extracts cognitions from
 //! conversation text, and loads persona from accumulated trait data.
 
@@ -6,25 +6,95 @@ use anyhow::Result;
 use loom_core::MemoryStore;
 use loom_memory::{
     AgentConfigStore, CognitionStore, CognitionsPersonaProvider, GraphStore, McpConfigStore,
-    McpServerRow, ModelConfigStore, NewEvent, SqliteEventStore,
+    McpServerRow, ModelConfigStore, NewEvent,
+    config_db::ConfigDb,
+    memory_db::MemoryDb,
+    session_db::SessionDb,
 };
 use loom_types::{AgentConfig, Message, ModelConfig, PersonaProvider};
 
 pub struct LoomMemoryStore {
-    store: std::sync::Mutex<SqliteEventStore>,
+    pub config_db: std::sync::Mutex<ConfigDb>,
+    pub memory_db: std::sync::Mutex<MemoryDb>,
+    pub session_db: std::sync::Mutex<SessionDb>,
 }
 
 impl LoomMemoryStore {
-    pub fn open(path: &std::path::Path) -> Result<Self> {
-        let store = SqliteEventStore::open(path)?;
+    pub fn open(data_dir: &std::path::Path) -> Result<Self> {
+        std::fs::create_dir_all(data_dir)?;
+        let config_db = ConfigDb::open(&data_dir.join("loom.db"))?;
+        let memory_db = MemoryDb::open(&data_dir.join("memory.db"))?;
+        let session_db = SessionDb::open(&data_dir.join("session.db"))?;
         // Ensure a default session row exists
-        store.conn().execute(
+        session_db.conn().execute(
             "INSERT OR IGNORE INTO sessions (id, created_at, message_count) VALUES ('default', datetime('now'), 0)",
             [],
         )?;
+        // Migrate from legacy memory.db if present
+        Self::migrate_legacy(data_dir, &config_db, &memory_db, &session_db);
         Ok(Self {
-            store: std::sync::Mutex::new(store),
+            config_db: std::sync::Mutex::new(config_db),
+            memory_db: std::sync::Mutex::new(memory_db),
+            session_db: std::sync::Mutex::new(session_db),
         })
+    }
+
+    fn migrate_legacy(data_dir: &std::path::Path, config_db: &ConfigDb, memory_db: &MemoryDb, session_db: &SessionDb) {
+        let backup_path = data_dir.join("memory.db备份");
+        if !backup_path.exists() {
+            return;
+        }
+        let backup = backup_path.to_string_lossy();
+        tracing::info!("one-time migration from memory.db备份");
+
+        // Copy config tables from backup to loom.db
+        let _ = config_db.conn().execute(
+            &format!("ATTACH DATABASE '{}' AS backup", backup), [],
+        );
+        config_db.conn().execute_batch(
+            "INSERT OR IGNORE INTO model_configs SELECT * FROM backup.model_configs;
+             INSERT OR IGNORE INTO agent_configs SELECT * FROM backup.agent_configs;
+             INSERT OR IGNORE INTO mcp_servers SELECT * FROM backup.mcp_servers;"
+        ).ok();
+        config_db.conn().execute("DETACH backup", []).ok();
+
+        // Copy memory tables from backup to memory.db (fresh db, so no duplicates)
+        let _ = memory_db.conn().execute(
+            &format!("ATTACH DATABASE '{}' AS backup", backup), [],
+        );
+        memory_db.conn().execute_batch(
+            "INSERT OR IGNORE INTO events SELECT * FROM backup.events;
+             INSERT OR IGNORE INTO cognitions SELECT * FROM backup.cognitions;
+             INSERT OR IGNORE INTO cognition_snapshots SELECT * FROM backup.cognition_snapshots;
+             INSERT OR IGNORE INTO kg_nodes SELECT * FROM backup.kg_nodes;
+             INSERT OR IGNORE INTO kg_edges SELECT * FROM backup.kg_edges;
+             INSERT OR IGNORE INTO kg_aliases SELECT * FROM backup.kg_aliases;
+             INSERT OR IGNORE INTO kg_evidence SELECT * FROM backup.kg_evidence;"
+        ).ok();
+        // Rebuild FTS5 indexes
+        memory_db.conn().execute_batch(
+            "INSERT INTO events_fts (event_type, action, context)
+             SELECT event_type, action, context FROM events;
+             INSERT INTO kg_nodes_fts (name, description)
+             SELECT name, description FROM kg_nodes;"
+        ).ok();
+        memory_db.conn().execute("DETACH backup", []).ok();
+
+        // Copy session tables from backup to session.db
+        let _ = session_db.conn().execute(
+            &format!("ATTACH DATABASE '{}' AS backup", backup), [],
+        );
+        session_db.conn().execute_batch(
+            "INSERT OR IGNORE INTO sessions SELECT * FROM backup.sessions;
+             INSERT OR IGNORE INTO message_history SELECT * FROM backup.message_history;
+             INSERT OR IGNORE INTO token_usage SELECT * FROM backup.token_usage;"
+        ).ok();
+        session_db.conn().execute("DETACH backup", []).ok();
+
+        // One-time migration complete — rename backup so it's not reused
+        let done_path = data_dir.join("memory.db备份.done");
+        let _ = std::fs::rename(&backup_path, &done_path);
+        tracing::info!("migration complete, backup renamed to .done");
     }
 }
 
@@ -46,12 +116,12 @@ impl MemoryStore for LoomMemoryStore {
         prompt_tokens: usize,
         completion_tokens: usize,
     ) -> Result<i64> {
-        let event_id = {
-            let store = self.store.lock().unwrap();
-            let conn = store.conn();
-            let now = chrono::Utc::now().to_rfc3339();
-            let usage_meta = serde_json::json!({"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}).to_string();
-
+        // Write messages to session db
+        let now = chrono::Utc::now().to_rfc3339();
+        let usage_meta = serde_json::json!({"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}).to_string();
+        {
+            let sess = self.session_db.lock().unwrap();
+            let conn = sess.conn();
             let seq: i64 = conn.query_row(
                 "SELECT COALESCE(MAX(seq), 0) + 1 FROM message_history WHERE session_id = ?1",
                 rusqlite::params![session_id],
@@ -69,31 +139,31 @@ impl MemoryStore for LoomMemoryStore {
                 "UPDATE sessions SET message_count = message_count + 2 WHERE id = ?1",
                 rusqlite::params![session_id],
             )?;
-
-            let event = NewEvent {
-                timestamp: chrono::Utc::now(),
-                event_type: "chat_turn".into(),
-                action: "chat".into(),
-                context: format!(
-                    "User: {} | Assistant: {}...",
-                    truncate(user_msg, 200),
-                    truncate(assistant_msg, 200)
-                ),
-                confidence: 1.0,
-                source_session: Some(session_id.to_string()),
-                source_text: user_msg.to_string(),
-                payload: Some(
-                    serde_json::json!({"assistant_response": assistant_msg, "tool_calls": tools, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}),
-                ),
-            };
-            store.insert_event(&event)?
+        }
+        // Write event to memory db
+        let event = NewEvent {
+            timestamp: chrono::Utc::now(),
+            event_type: "chat_turn".into(),
+            action: "chat".into(),
+            context: format!(
+                "User: {} | Assistant: {}...",
+                truncate(user_msg, 200),
+                truncate(assistant_msg, 200)
+            ),
+            confidence: 1.0,
+            source_session: Some(session_id.to_string()),
+            source_text: user_msg.to_string(),
+            payload: Some(
+                serde_json::json!({"assistant_response": assistant_msg, "tool_calls": tools, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}),
+            ),
         };
+        let event_id = self.memory_db.lock().unwrap().insert_event(&event)?;
         tracing::debug!(session_id, event_id, "chat turn saved");
         Ok(event_id)
     }
 
     async fn delete_message(&self, session_id: &str, index: usize) -> Result<()> {
-        let store = self.store.lock().unwrap();
+        let store = self.session_db.lock().unwrap();
         let conn = store.conn();
         // Delete the message at the given index by seq order
         let deleted = conn.execute(
@@ -113,7 +183,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn load_history(&self, session_id: &str, limit: usize) -> Result<Vec<Message>> {
-        let store = self.store.lock().unwrap();
+        let store = self.session_db.lock().unwrap();
         let mut stmt = store.conn().prepare(
             "SELECT role, content, metadata FROM message_history WHERE session_id = ?1 ORDER BY seq ASC LIMIT ?2"
         )?;
@@ -158,7 +228,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn extract_cognitions(&self, session_id: &str, text: &str) -> Result<Vec<String>> {
-        let store = self.store.lock().unwrap();
+        let store = self.memory_db.lock().unwrap();
         let cognition = CognitionStore::new(store.conn());
         let graph = GraphStore::new(store.conn());
         let mut triggered = Vec::new();
@@ -192,13 +262,13 @@ impl MemoryStore for LoomMemoryStore {
         for (keyword, tag) in tech_keywords {
             if lower.contains(keyword) && !lower.contains(&format!("not {}", keyword)) {
                 if cognition
-                    .insert("USER", &format!("uses_{}", tag), keyword, 0.5, 1, "global")
+                    .insert("USER", &format!("uses_{}", tag), keyword, 0.5, 1, session_id)
                     .is_ok()
                 {
                     triggered.push(format!("uses_{}", tag));
                 }
                 // Also upsert to knowledge graph
-                let _ = graph.upsert_node(keyword, "Technology", keyword, 0.5, "global");
+                let _ = graph.upsert_node(keyword, "Technology", keyword, 0.5, session_id);
             }
         }
 
@@ -226,13 +296,13 @@ impl MemoryStore for LoomMemoryStore {
                         kw,
                         0.5,
                         1,
-                        "global",
+                        session_id,
                     )
                     .is_ok()
                 {
                     triggered.push(format!("interest_{}", kw.replace(' ', "_")));
                 }
-                let _ = graph.upsert_node(kw, "Concept", kw, 0.5, "global");
+                let _ = graph.upsert_node(kw, "Concept", kw, 0.5, session_id);
             }
         }
 
@@ -252,7 +322,7 @@ impl MemoryStore for LoomMemoryStore {
             if let Some(pos) = text.find(prefix) {
                 let snippet: String = text[pos..].chars().take(30).collect();
                 if cognition
-                    .insert("USER", trait_name, &snippet, 0.4, 1, "global")
+                    .insert("USER", trait_name, &snippet, 0.4, 1, session_id)
                     .is_ok()
                 {
                     triggered.push(trait_name.to_string());
@@ -263,14 +333,14 @@ impl MemoryStore for LoomMemoryStore {
         // 4. Always record the conversation topic (first 100 chars)
         let topic: String = text.chars().take(100).collect();
         if cognition
-            .insert("USER", "last_topic", &topic, 0.3, 1, "global")
+            .insert("USER", "last_topic", &topic, 0.3, 1, session_id)
             .is_ok()
         {
             triggered.push("last_topic".to_string());
         }
 
         // 5. Link USER node in knowledge graph
-        let _ = graph.upsert_node("USER", "Person", "The user of openLoom", 1.0, "global");
+        let _ = graph.upsert_node("USER", "Person", "The user of openLoom", 1.0, session_id);
 
         if !triggered.is_empty() {
             tracing::info!(?triggered, session_id, "cognitions extracted");
@@ -280,7 +350,7 @@ impl MemoryStore for LoomMemoryStore {
 
     async fn get_persona(&self) -> Result<String> {
         let rows = {
-            let store = self.store.lock().unwrap();
+            let store = self.memory_db.lock().unwrap();
             let cognition = CognitionStore::new(store.conn());
             cognition.query_by_subject("USER", None, 20, 0)?
         };
@@ -293,30 +363,46 @@ impl MemoryStore for LoomMemoryStore {
         entities: &[loom_memory::ExtractedEntity],
         relationships: &[loom_memory::ExtractedRelationship],
         source_event_id: i64,
+        scope: &str,
     ) -> Result<(usize, usize)> {
-        let store = self.store.lock().unwrap();
+        let store = self.memory_db.lock().unwrap();
         let graph = loom_memory::GraphStore::new(store.conn());
         let mut node_ids = std::collections::HashMap::new();
         let mut node_count = 0;
         let mut edge_count = 0;
 
+        // Insert all entities from current batch
         for e in entities {
             if let Ok(id) = graph.upsert_node(
                 &e.name,
                 &e.entity_type,
                 &e.description,
                 e.confidence,
-                &e.scope,
+                scope,
             ) {
                 node_ids.insert(e.name.clone(), id);
                 node_count += 1;
+                tracing::info!(name = %e.name, scope, node_id = id, "KG node upserted with scope");
                 for alias in &e.aliases {
                     let _ = graph.add_alias(id, alias);
                 }
-                // Wire evidence to the most recent event for this session
-                // (best-effort; evidence is non-critical for operation)
             }
         }
+
+        // Also resolve referenced entities that may already exist in DB
+        for r in relationships {
+            if !node_ids.contains_key(&r.source_name) {
+                if let Ok(Some(id)) = graph.resolve_node(&r.source_name) {
+                    node_ids.insert(r.source_name.clone(), id);
+                }
+            }
+            if !node_ids.contains_key(&r.target_name) {
+                if let Ok(Some(id)) = graph.resolve_node(&r.target_name) {
+                    node_ids.insert(r.target_name.clone(), id);
+                }
+            }
+        }
+
         // Wire evidence for nodes
         for (_, node_id) in &node_ids {
             let _ = graph.link_evidence_node(*node_id, source_event_id);
@@ -327,7 +413,7 @@ impl MemoryStore for LoomMemoryStore {
             let tgt = node_ids.get(&r.target_name).copied();
             if let (Some(s), Some(t)) = (src, tgt) {
                 if let Ok(edge_id) =
-                    graph.upsert_edge(s, t, &r.relation_type, &r.fact, r.confidence, &r.scope)
+                    graph.upsert_edge(s, t, &r.relation_type, &r.fact, r.confidence, scope)
                 {
                     edge_count += 1;
                     let _ = graph.link_evidence_edge(edge_id, source_event_id);
@@ -341,8 +427,9 @@ impl MemoryStore for LoomMemoryStore {
         &self,
         entities: &[loom_memory::ExtractedEntity],
         _relationships: &[loom_memory::ExtractedRelationship],
+        scope: &str,
     ) -> Result<()> {
-        let store = self.store.lock().unwrap();
+        let store = self.memory_db.lock().unwrap();
         let cognition = CognitionStore::new(store.conn());
         for e in entities {
             let clean_name = e.name.trim_matches('\'').trim_matches('"');
@@ -358,29 +445,30 @@ impl MemoryStore for LoomMemoryStore {
                 &value,
                 e.confidence,
                 1,
-                "global",
+                scope,
             );
+            tracing::info!(entity = %e.name, scope, "cognition inserted with scope");
         }
         Ok(())
     }
 
     async fn save_agent_config(&self, config: &AgentConfig) -> Result<()> {
-        let store = self.store.lock().unwrap();
+        let store = self.config_db.lock().unwrap();
         AgentConfigStore::new(store.conn()).upsert(config)
     }
 
     async fn get_agent_config(&self, name: &str) -> Result<Option<AgentConfig>> {
-        let store = self.store.lock().unwrap();
+        let store = self.config_db.lock().unwrap();
         AgentConfigStore::new(store.conn()).get(name)
     }
 
     async fn list_agent_configs(&self) -> Result<Vec<AgentConfig>> {
-        let store = self.store.lock().unwrap();
+        let store = self.config_db.lock().unwrap();
         AgentConfigStore::new(store.conn()).list()
     }
 
     async fn delete_agent_config(&self, name: &str) -> Result<()> {
-        let store = self.store.lock().unwrap();
+        let store = self.config_db.lock().unwrap();
         AgentConfigStore::new(store.conn()).delete(name)
     }
 
@@ -389,42 +477,60 @@ impl MemoryStore for LoomMemoryStore {
         session_id: &str,
         agent_config_name: &str,
     ) -> Result<()> {
-        let store = self.store.lock().unwrap();
+        let store = self.session_db.lock().unwrap();
         AgentConfigStore::new(store.conn()).set_session_binding(session_id, agent_config_name)
     }
 
     async fn get_session_agent_name(&self, session_id: &str) -> Result<Option<String>> {
-        let store = self.store.lock().unwrap();
+        let store = self.session_db.lock().unwrap();
         AgentConfigStore::new(store.conn()).get_session_binding(session_id)
     }
 
+    async fn save_session_workspace(&self, session_id: &str, path: &str) -> Result<()> {
+        let store = self.session_db.lock().unwrap();
+        AgentConfigStore::new(store.conn()).set_session_workspace(session_id, path)
+    }
+
+    async fn get_session_workspace(&self, session_id: &str) -> Result<Option<String>> {
+        let store = self.session_db.lock().unwrap();
+        AgentConfigStore::new(store.conn()).get_session_workspace(session_id)
+    }
+
+    async fn get_default_workspace(&self) -> Result<Option<String>> {
+        Ok(loom_memory::store::get_default_workspace())
+    }
+
+    async fn set_default_workspace(&self, path: &str) -> Result<()> {
+        loom_memory::store::set_default_workspace(path)
+    }
+
     async fn save_model_config(&self, config: &ModelConfig) -> Result<()> {
-        let store = self.store.lock().unwrap();
+        let store = self.config_db.lock().unwrap();
         ModelConfigStore::new(store.conn()).upsert(config)
     }
 
     async fn get_model_config(&self, name: &str) -> Result<Option<ModelConfig>> {
-        let store = self.store.lock().unwrap();
+        let store = self.config_db.lock().unwrap();
         ModelConfigStore::new(store.conn()).get(name)
     }
 
     async fn list_model_configs(&self) -> Result<Vec<ModelConfig>> {
-        let store = self.store.lock().unwrap();
+        let store = self.config_db.lock().unwrap();
         ModelConfigStore::new(store.conn()).list()
     }
 
     async fn delete_model_config(&self, name: &str) -> Result<()> {
-        let store = self.store.lock().unwrap();
+        let store = self.config_db.lock().unwrap();
         ModelConfigStore::new(store.conn()).delete(name)
     }
 
     async fn set_active_model(&self, name: &str) -> Result<()> {
-        let store = self.store.lock().unwrap();
+        let store = self.config_db.lock().unwrap();
         ModelConfigStore::new(store.conn()).set_active(name)
     }
 
     async fn get_active_model(&self) -> Result<Option<ModelConfig>> {
-        let store = self.store.lock().unwrap();
+        let store = self.config_db.lock().unwrap();
         ModelConfigStore::new(store.conn()).get_active()
     }
 
@@ -454,12 +560,12 @@ impl MemoryStore for LoomMemoryStore {
                 .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".into())),
             autostart,
         };
-        let store = self.store.lock().unwrap();
+        let store = self.config_db.lock().unwrap();
         McpConfigStore::new(store.conn()).upsert(&row)
     }
 
     async fn list_mcp_servers(&self) -> Result<Vec<(lume_mcp::McpServerConfig, bool)>> {
-        let store = self.store.lock().unwrap();
+        let store = self.config_db.lock().unwrap();
         let rows = McpConfigStore::new(store.conn()).list()?;
         let configs = rows
             .into_iter()
@@ -496,19 +602,20 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn delete_mcp_server(&self, name: &str) -> Result<()> {
-        let store = self.store.lock().unwrap();
+        let store = self.config_db.lock().unwrap();
         McpConfigStore::new(store.conn()).delete(name)
     }
 
-    async fn query_kg_context(&self, entity_names: &[&str], limit: usize) -> Result<String> {
-        let store = self.store.lock().unwrap();
+    async fn query_kg_context(&self, entity_names: &[&str], limit: usize, scope: &str) -> Result<String> {
+        let store = self.memory_db.lock().unwrap();
         let graph = GraphStore::new(store.conn());
         let mut lines: Vec<String> = Vec::new();
         const MIN_CONFIDENCE: f64 = 0.5;
+        let scope_opt = Some(scope);
 
         // Always include the USER node
         if let Ok(Some(_user_id)) = graph.resolve_node("USER") {
-            let neighbors = graph.neighbors("USER", None, limit)?;
+            let neighbors = graph.neighbors("USER", scope_opt, limit)?;
             for n in &neighbors {
                 if n.confidence < MIN_CONFIDENCE {
                     continue;
@@ -526,7 +633,7 @@ impl MemoryStore for LoomMemoryStore {
             if *name == "USER" || name.is_empty() {
                 continue;
             }
-            if let Ok(results) = graph.search_entities(name, 3) {
+            if let Ok(results) = graph.search_entities(name, 3, scope_opt) {
                 for r in &results {
                     if r.name == "USER" || r.confidence < MIN_CONFIDENCE {
                         continue;
@@ -536,7 +643,7 @@ impl MemoryStore for LoomMemoryStore {
                         r.name, r.entity_type, r.description, r.confidence
                     ));
                     // Get immediate neighbors
-                    if let Ok(neighbors) = graph.neighbors(&r.name, None, 3) {
+                    if let Ok(neighbors) = graph.neighbors(&r.name, scope_opt, 3) {
                         for n in &neighbors {
                             if n.name == "USER" || n.name == r.name {
                                 continue;
@@ -561,7 +668,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn list_sessions(&self) -> Result<Vec<(String, String, usize, Option<String>)>> {
-        let store = self.store.lock().unwrap();
+        let store = self.session_db.lock().unwrap();
         let mut stmt = store.conn().prepare(
             "SELECT id, created_at, message_count, title FROM sessions ORDER BY created_at DESC",
         )?;
@@ -577,7 +684,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn ensure_session(&self, id: &str) -> Result<()> {
-        let store = self.store.lock().unwrap();
+        let store = self.session_db.lock().unwrap();
         store.conn().execute(
             "INSERT OR IGNORE INTO sessions (id, created_at, message_count) VALUES (?1, datetime('now'), 0)",
             rusqlite::params![id],
@@ -586,7 +693,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn prune_memory(&self) -> Result<usize> {
-        let store = self.store.lock().unwrap();
+        let store = self.memory_db.lock().unwrap();
         let graph = GraphStore::new(store.conn());
         // Only prune when entity count exceeds threshold
         let count = graph.node_count()?;
@@ -605,9 +712,9 @@ impl MemoryStore for LoomMemoryStore {
         query: &str,
         limit: usize,
     ) -> Result<Vec<(String, String, String, f64)>> {
-        let store = self.store.lock().unwrap();
+        let store = self.memory_db.lock().unwrap();
         let graph = GraphStore::new(store.conn());
-        let results = graph.search_entities(query, limit)?;
+        let results = graph.search_entities(query, limit, None)?;
         Ok(results
             .iter()
             .map(|r| {
@@ -622,17 +729,17 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn kg_node_count(&self) -> Result<usize> {
-        let store = self.store.lock().unwrap();
+        let store = self.memory_db.lock().unwrap();
         GraphStore::new(store.conn()).node_count()
     }
 
     async fn kg_edge_count(&self) -> Result<usize> {
-        let store = self.store.lock().unwrap();
+        let store = self.memory_db.lock().unwrap();
         GraphStore::new(store.conn()).edge_count()
     }
 
     async fn kg_neighbors(&self, node_name: &str, limit: usize) -> Result<loom_types::KgGraph> {
-        let store = self.store.lock().unwrap();
+        let store = self.memory_db.lock().unwrap();
         let graph = GraphStore::new(store.conn());
         let rows = graph.neighbors(node_name, None, limit)?;
         let nodes: Vec<loom_types::KgNode> = rows
@@ -665,11 +772,12 @@ impl MemoryStore for LoomMemoryStore {
         &self,
         start_name: &str,
         max_depth: u8,
+        scope: Option<&str>,
         limit: usize,
     ) -> Result<loom_types::KgGraph> {
-        let store = self.store.lock().unwrap();
+        let store = self.memory_db.lock().unwrap();
         let graph = GraphStore::new(store.conn());
-        let rows = graph.walk(start_name, max_depth, None, limit)?;
+        let rows = graph.walk(start_name, max_depth, scope, limit)?;
 
         // Also include the start node itself
         let start_id: Option<i64> = graph.resolve_node(start_name)?;
@@ -730,19 +838,38 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn delete_session(&self, id: &str) -> Result<()> {
-        let store = self.store.lock().unwrap();
-        store.conn().execute(
+        let store = self.session_db.lock().unwrap();
+        let conn = store.conn();
+
+        // 1. Promote high-confidence session-scoped KG nodes/edges and cognitions to global
+        let graph = GraphStore::new(conn);
+        let cognition = CognitionStore::new(conn);
+        let promoted_nodes = graph.promote_scope_to_global(id, 0.6).unwrap_or(0);
+        let promoted_cogs = cognition.promote_to_global(id, 0.6).unwrap_or(0);
+        if promoted_nodes > 0 || promoted_cogs > 0 {
+            tracing::info!(
+                session_id = id,
+                promoted_nodes,
+                promoted_cogs,
+                "promoted session memories to global on delete"
+            );
+        }
+
+        // 2. Delete remaining session-scoped data (low confidence items)
+        let _ = graph.delete_by_scope(id);
+        let _ = cognition.delete_by_scope(id);
+
+        // 3. Delete message history and session row
+        conn.execute(
             "DELETE FROM message_history WHERE session_id = ?1",
             rusqlite::params![id],
         )?;
-        store
-            .conn()
-            .execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])?;
+        conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])?;
         Ok(())
     }
 
     async fn rename_session(&self, id: &str, title: &str) -> Result<()> {
-        let store = self.store.lock().unwrap();
+        let store = self.session_db.lock().unwrap();
         store.conn().execute(
             "UPDATE sessions SET title = ?1 WHERE id = ?2",
             rusqlite::params![title, id],
@@ -751,7 +878,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn get_summary(&self, session_id: &str) -> Result<Option<String>> {
-        let store = self.store.lock().unwrap();
+        let store = self.session_db.lock().unwrap();
         let result = store.conn().query_row(
             "SELECT summary FROM sessions WHERE id = ?1",
             rusqlite::params![session_id],
@@ -765,7 +892,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn save_summary(&self, session_id: &str, summary: &str) -> Result<()> {
-        let store = self.store.lock().unwrap();
+        let store = self.session_db.lock().unwrap();
         // Also record the current message count so we know when to re-summarize
         let count: i64 = store
             .conn()
@@ -783,7 +910,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn get_summary_at_count(&self, session_id: &str) -> Result<usize> {
-        let store = self.store.lock().unwrap();
+        let store = self.session_db.lock().unwrap();
         let result = store.conn().query_row(
             "SELECT summary_at_count FROM sessions WHERE id = ?1",
             rusqlite::params![session_id],
@@ -793,7 +920,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn get_message_count(&self, session_id: &str) -> Result<usize> {
-        let store = self.store.lock().unwrap();
+        let store = self.session_db.lock().unwrap();
         let result = store.conn().query_row(
             "SELECT message_count FROM sessions WHERE id = ?1",
             rusqlite::params![session_id],
@@ -808,7 +935,7 @@ impl MemoryStore for LoomMemoryStore {
         offset: usize,
         scope: Option<&str>,
     ) -> Result<Vec<loom_types::KgNode>> {
-        let store = self.store.lock().unwrap();
+        let store = self.memory_db.lock().unwrap();
         let graph = GraphStore::new(store.conn());
         let rows = graph.list_nodes(limit, offset, scope)?;
         Ok(rows
@@ -824,13 +951,47 @@ impl MemoryStore for LoomMemoryStore {
             .collect())
     }
 
+    async fn kg_edges_between(&self, node_names: &[String]) -> Result<Vec<loom_types::KgEdge>> {
+        let store = self.memory_db.lock().unwrap();
+        let graph = GraphStore::new(store.conn());
+
+        // Resolve node names to IDs
+        let mut node_ids = Vec::new();
+        let mut name_to_id = std::collections::HashMap::new();
+        for name in node_names {
+            if let Ok(Some(id)) = graph.resolve_node(name) {
+                node_ids.push(id);
+                name_to_id.insert(name.clone(), id);
+            }
+        }
+
+        if node_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Get all edges between these nodes
+        let edges = graph.edges_between(&node_ids)?;
+
+        // Convert to KgEdge format
+        Ok(edges
+            .into_iter()
+            .map(|(source, target, relation_type, confidence)| loom_types::KgEdge {
+                source,
+                target,
+                relation_type,
+                fact: String::new(),
+                confidence,
+            })
+            .collect())
+    }
+
     async fn kg_delete_node(&self, name: &str) -> Result<bool> {
-        let store = self.store.lock().unwrap();
+        let store = self.memory_db.lock().unwrap();
         GraphStore::new(store.conn()).delete_node(name)
     }
 
     async fn kg_delete_edge(&self, source: &str, target: &str, relation: &str) -> Result<bool> {
-        let store = self.store.lock().unwrap();
+        let store = self.memory_db.lock().unwrap();
         GraphStore::new(store.conn()).delete_edge(source, target, relation)
     }
 
@@ -841,7 +1002,7 @@ impl MemoryStore for LoomMemoryStore {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<loom_types::Cognition>> {
-        let store = self.store.lock().unwrap();
+        let store = self.memory_db.lock().unwrap();
         let cognitions = loom_memory::CognitionStore::new(store.conn());
         let rows = cognitions.query_by_subject(subject, scope, limit, offset)?;
         Ok(rows
@@ -862,7 +1023,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn cognition_list_subjects(&self) -> Result<Vec<String>> {
-        let store = self.store.lock().unwrap();
+        let store = self.memory_db.lock().unwrap();
         let cognitions = loom_memory::CognitionStore::new(store.conn());
         cognitions.list_subjects()
     }
@@ -871,7 +1032,7 @@ impl MemoryStore for LoomMemoryStore {
         &self,
         cognition_id: i64,
     ) -> Result<Vec<loom_types::CognitionHistory>> {
-        let store = self.store.lock().unwrap();
+        let store = self.memory_db.lock().unwrap();
         let cognitions = loom_memory::CognitionStore::new(store.conn());
         let snapshots = cognitions.snapshots_for(cognition_id)?;
         Ok(snapshots
@@ -889,7 +1050,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn kg_prune(&self, older_than_days: i64) -> Result<usize> {
-        let store = self.store.lock().unwrap();
+        let store = self.memory_db.lock().unwrap();
         let graph = GraphStore::new(store.conn());
         graph.prune_stale(older_than_days, 1000)
     }
@@ -905,7 +1066,7 @@ impl MemoryStore for LoomMemoryStore {
         latency_ms: u64,
         context_window: usize,
     ) -> Result<()> {
-        let store = self.store.lock().unwrap();
+        let store = self.session_db.lock().unwrap();
         store.conn().execute(
             "INSERT INTO token_usage (session_id, model, prompt_tokens, completion_tokens, cached_tokens, cached_read_tokens, cached_write_tokens, latency_ms, context_window) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![session_id, model, prompt_tokens as i64, completion_tokens as i64, (cached_read_tokens + cached_write_tokens) as i64, cached_read_tokens as i64, cached_write_tokens as i64, latency_ms as i64, context_window as i64],
@@ -914,7 +1075,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn get_token_summary(&self, from: &str, to: &str) -> Result<serde_json::Value> {
-        let store = self.store.lock().unwrap();
+        let store = self.session_db.lock().unwrap();
         let conn = store.conn();
 
         let totals: (i64, i64, i64, i64, i64, i64, f64) = conn.query_row(
@@ -930,7 +1091,7 @@ impl MemoryStore for LoomMemoryStore {
         };
 
         let mut stmt = conn.prepare(
-            "SELECT model, SUM(prompt_tokens) as p, SUM(completion_tokens) as c, SUM(cached_tokens) as ca, SUM(cached_read_tokens) as cr, SUM(cached_write_tokens) as cw, COUNT(*) as r, AVG(latency_ms) as l, AVG(CAST(prompt_tokens AS REAL) / NULLIF(context_window, 0)) as cu FROM token_usage WHERE created_at >= ?1 AND created_at <= ?2 GROUP BY model ORDER BY r DESC",
+            "SELECT model, SUM(prompt_tokens) as p, SUM(completion_tokens) as c, SUM(cached_tokens) as ca, SUM(cached_read_tokens) as cr, SUM(cached_write_tokens) as cw, COUNT(*) as r, COALESCE(AVG(latency_ms), 0) as l, COALESCE(AVG(CAST(prompt_tokens AS REAL) / NULLIF(context_window, 0)), 0) as cu FROM token_usage WHERE created_at >= ?1 AND created_at <= ?2 GROUP BY model ORDER BY r DESC",
         )?;
         let by_model: Vec<serde_json::Value> = stmt
             .query_map(rusqlite::params![from, to], |row| {
@@ -967,7 +1128,7 @@ impl MemoryStore for LoomMemoryStore {
         to: &str,
         granularity: &str,
     ) -> Result<serde_json::Value> {
-        let store = self.store.lock().unwrap();
+        let store = self.session_db.lock().unwrap();
         let conn = store.conn();
 
         let date_format = match granularity {

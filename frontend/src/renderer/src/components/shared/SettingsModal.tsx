@@ -8,10 +8,13 @@ import AgentConfigPanel from './AgentConfigPanel'
 import ModelConfigPanel from './ModelConfigPanel'
 import VisionConfigSection from './VisionConfigSection'
 import AuxiliaryConfigSection from './AuxiliaryConfigSection'
+import WorkspaceTab from './WorkspaceTab'
 import KnowledgeGraphPanel from '../kg/KnowledgeGraphPanel'
 import TokenUsagePanel from './TokenUsagePanel'
 import { type ThemeId, type FontSizeId, FONT_SIZE_MAP } from '../../stores/ui'
 import styles from './SettingsModal.module.css'
+import logoDev from '../../assets/loom_logo_dev.png'
+import logoRelease from '../../assets/loom_logo.png'
 
 const THEMES: { id: ThemeId; label: string; bg: string; surface: string; text: string; accent: string }[] = [
   { id: 'dark', label: '暗色', bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' },
@@ -24,7 +27,7 @@ const THEMES: { id: ThemeId; label: string; bg: string; surface: string; text: s
   { id: 'umber-cream', label: '摩卡', bg: '#2D1B14', surface: '#3D271D', text: '#fff8f0', accent: '#D8C7B5' },
 ]
 
-type Tab = 'software' | 'agent' | 'models' | 'mcp' | 'lsp' | 'skills' | 'plugins' | 'kg' | 'token' | 'about'
+type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'kg' | 'token' | 'about'
 
 interface McpTool {
   name: string
@@ -78,8 +81,8 @@ export default function SettingsModal({
     { id: 'software', label: '通用' },
     { id: 'agent', label: '智能体' },
     { id: 'models', label: '模型' },
-    { id: 'mcp', label: 'MCP 服务' },
-    { id: 'lsp', label: 'LSP 服务' },
+    { id: 'workspace', label: '工作空间' },
+    { id: 'mcp', label: 'MCP / LSP' },
     { id: 'skills', label: '技能' },
     { id: 'plugins', label: '插件' },
     { id: 'kg', label: '记忆系统' },
@@ -132,8 +135,31 @@ export default function SettingsModal({
             </>
           )}
 
-          {tab === 'mcp' && <McpTab />}
-          {tab === 'lsp' && <LspTab />}
+          {tab === 'workspace' && (
+            <>
+              <div className={styles.contentHeader}>
+                <h3 className={styles.sectionTitle}>工作空间</h3>
+                <p className={styles.sectionDesc}>配置文件操作的默认工作目录</p>
+              </div>
+              <div className={styles.contentBody}>
+                <WorkspaceTab />
+              </div>
+            </>
+          )}
+
+          {tab === 'mcp' && (
+            <>
+              <div className={styles.contentHeader}>
+                <h3 className={styles.sectionTitle}>MCP / LSP</h3>
+                <p className={styles.sectionDesc}>外部工具协议和语言服务器</p>
+              </div>
+              <div className={styles.contentBody}>
+                <McpTab />
+                <div style={{ marginTop: 24 }} />
+                <LspTab />
+              </div>
+            </>
+          )}
           {tab === 'skills' && <SkillsTab />}
           {tab === 'plugins' && <PluginsTab />}
           {tab === 'kg' && (
@@ -177,9 +203,9 @@ function SoftwareTab({ theme, setTheme }: { theme: string; setTheme: (t: any) =>
 
   useEffect(() => {
     Promise.all([
-      window.hana.getPreference('autoStart', false),
-      window.hana.getPreference('closeToTray', true),
-      window.hana.getPreference('autoTitle', false),
+      window.loom.getPreference('autoStart', false),
+      window.loom.getPreference('closeToTray', true),
+      window.loom.getPreference('autoTitle', false),
     ]).then(([as, ct, at]) => {
       setAutoStart(as)
       setCloseToTray(ct)
@@ -190,19 +216,19 @@ function SoftwareTab({ theme, setTheme }: { theme: string; setTheme: (t: any) =>
 
   const handleAutoTitle = async (val: boolean) => {
     setAutoTitle(val)
-    await window.hana.setPreference('autoTitle', val)
+    await window.loom.setPreference('autoTitle', val)
     useStore.getState().addToast({ type: 'success', message: val ? '已开启 AI 自动命名' : '已关闭 AI 自动命名' })
   }
 
   const handleAutoStart = async (val: boolean) => {
     setAutoStart(val)
-    await window.hana.setPreference('autoStart', val)
+    await window.loom.setPreference('autoStart', val)
     useStore.getState().addToast({ type: 'success', message: val ? '已开启开机自启动' : '已关闭开机自启动' })
   }
 
   const handleCloseToTray = async (val: boolean) => {
     setCloseToTray(val)
-    await window.hana.setPreference('closeToTray', val)
+    await window.loom.setPreference('closeToTray', val)
     useStore.getState().addToast({ type: 'success', message: val ? '关闭按钮将最小化到托盘' : '关闭按钮将退出程序' })
   }
 
@@ -574,21 +600,15 @@ function McpTab() {
 
   return (
     <>
-      <div className={styles.contentHeader}>
-        <div className={styles.sectionHeaderRow}>
-          <h3 className={styles.sectionTitle}>MCP 服务</h3>
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing || loading}
-            className={styles.refreshBtn}
-            title="重新加载 MCP 配置"
-          >
-            <IconRefresh size={14} />
-          </button>
-        </div>
-        <p className={styles.sectionDesc}>管理 Model Context Protocol 服务器连接（配置自动持久化）</p>
-      </div>
       <div className={styles.contentBody}>
+        <div className={styles.sectionHeaderRow}>
+          <h4 className={styles.sectionSubTitle}>MCP 服务</h4>
+          {!editing && (
+            <button className={styles.mcpAddBtn} onClick={startCreate}>
+              + 添加服务器
+            </button>
+          )}
+        </div>
         {error && <p className={styles.toolsError}>{error}</p>}
         {loading ? (
           <p className={styles.toolsEmpty}>加载中...</p>
@@ -657,11 +677,7 @@ function McpTab() {
               )}
             </div>
 
-            {!editing ? (
-              <button className={styles.mcpAddBtn} onClick={startCreate}>
-                + 添加服务器
-              </button>
-            ) : (
+            {editing && (
               <McpEditor
                 value={editing}
                 onChange={setEditing}
@@ -949,11 +965,15 @@ function LspTab() {
 
   return (
     <>
-      <div className={styles.contentHeader}>
-        <h3 className={styles.sectionTitle}>LSP 服务</h3>
-        <p className={styles.sectionDesc}>管理语言服务器 — 启动、停止、自定义配置</p>
-      </div>
       <div className={styles.contentBody}>
+        <div className={styles.sectionHeaderRow}>
+          <h4 className={styles.sectionSubTitle}>LSP 服务</h4>
+          {!showForm && (
+            <button className={styles.mcpAddBtn} onClick={() => setShowForm(true)}>
+              + 启动语言服务器
+            </button>
+          )}
+        </div>
         {error && <p className={styles.toolsError}>{error}</p>}
         {loading ? (
           <p className={styles.toolsEmpty}>加载中...</p>
@@ -987,11 +1007,7 @@ function LspTab() {
             </div>
 
             {/* Start form */}
-            {!showForm ? (
-              <button className={styles.mcpAddBtn} onClick={() => setShowForm(true)}>
-                + 启动语言服务器
-              </button>
-            ) : (
+            {showForm && (
               <div className={styles.mcpAddForm}>
                 <div className={styles.mcpFormRow}>
                   <label className={styles.mcpFormLabel}>语言 ID</label>
@@ -1370,78 +1386,26 @@ function AboutTab({ wsState }: { wsState: string }) {
   const [health, setHealth] = useState<SystemHealth | null>(null)
   const [healthError, setHealthError] = useState(false)
   const [appVersion, setAppVersion] = useState('...')
-  const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'no-update' | 'error'>('idle')
-  const [updateVersion, setUpdateVersion] = useState<string | null>(null)
-  const [updateError, setUpdateError] = useState<string | null>(null)
+  const [dataDir, setDataDir] = useState('')
+  const update = useStore((s) => s.update)
+  const currentModel = useStore((s) => s.currentModel)
+  const port = useStore((s) => s.port)
+  const checkUpdate = useStore((s) => s.checkUpdate)
+  const downloadUpdate = useStore((s) => s.downloadUpdate)
+  const installUpdate = useStore((s) => s.installUpdate)
+  const simulateUpdateFlow = useStore((s) => s.simulateUpdateFlow)
+  const isDev = !(window.__isPackaged__ ?? true)
+  const connected = wsState === 'connected'
 
   useEffect(() => {
     let cancelled = false
-
-    window.hana.getAppVersion().then((v) => { if (!cancelled) setAppVersion(v) })
-
+    window.loom.getAppVersion().then((v) => { if (!cancelled) setAppVersion(v) })
+    window.loom.getLoomDir().then((d) => { if (!cancelled) setDataDir(d) })
     loomRpc<SystemHealth>('system.health')
       .then((data) => { if (!cancelled) setHealth(data) })
       .catch(() => { if (!cancelled) setHealthError(true) })
-
-    // Listen for update events from main process
-    window.hana.onUpdateAvailable((info: any) => {
-      if (!cancelled) {
-        setUpdateStatus('available')
-        setUpdateVersion(info?.version ?? null)
-      }
-    })
-    window.hana.onUpdateNotAvailable(() => {
-      if (!cancelled) setUpdateStatus('no-update')
-    })
-    window.hana.onUpdateDownloaded(() => {
-      if (!cancelled) setUpdateStatus('downloaded')
-    })
-    window.hana.onUpdateError((msg: string) => {
-      if (!cancelled) {
-        setUpdateStatus('error')
-        setUpdateError(msg)
-      }
-    })
-
     return () => { cancelled = true }
   }, [])
-
-  const handleCheckUpdate = async () => {
-    setUpdateStatus('checking')
-    setUpdateError(null)
-    try {
-      await window.hana.checkForUpdates()
-    } catch {
-      setUpdateStatus('error')
-      setUpdateError('检查更新失败')
-    }
-  }
-
-  const handleDownload = async () => {
-    setUpdateStatus('downloading')
-    try {
-      await window.hana.downloadUpdate()
-    } catch {
-      setUpdateStatus('error')
-      setUpdateError('下载失败')
-    }
-  }
-
-  const handleInstall = () => {
-    window.hana.installUpdate()
-  }
-
-  const updateLabel = () => {
-    switch (updateStatus) {
-      case 'checking': return '正在检查更新...'
-      case 'available': return updateVersion ? `发现新版本 ${updateVersion}` : '发现新版本'
-      case 'downloading': return '正在下载更新...'
-      case 'downloaded': return '更新已就绪，重启后生效'
-      case 'no-update': return '已是最新版本'
-      case 'error': return updateError ?? '检查更新失败'
-      default: return ''
-    }
-  }
 
   return (
     <>
@@ -1451,72 +1415,128 @@ function AboutTab({ wsState }: { wsState: string }) {
       </div>
       <div className={styles.contentBody}>
         <div className={styles.aboutSection}>
-          <div className={styles.aboutRow}>
-            <span className={styles.aboutLabel}>版本</span>
-            <span className={styles.aboutValue}>{appVersion}</span>
-          </div>
-          <div className={styles.aboutRow}>
-            <span className={styles.aboutLabel}>状态</span>
-            <span className={`${styles.aboutValue} ${
-              (health?.status === 'ok' || wsState === 'connected') ? styles.aboutValueGreen : styles.aboutValueAmber
-            }`}>
-              {health ? health.status : wsState === 'connected' ? '已连接' : wsState}
-            </span>
-          </div>
-          {health && (
-            <>
-              <div className={styles.aboutRow}>
-                <span className={styles.aboutLabel}>Agent 数量</span>
-                <span className={styles.aboutValue}>{health.agent_count}</span>
+          {/* App info card */}
+          <div className={styles.aboutCard}>
+            <div className={styles.aboutAppRow}>
+              <img
+                src={isDev ? logoDev : logoRelease}
+                alt="openLoom"
+                className={styles.aboutAppIcon}
+              />
+              <div>
+                <h4 className={styles.aboutAppName}>openLoom</h4>
+                <p className={styles.aboutAppVer}>v{appVersion}</p>
               </div>
-              <div className={styles.aboutRow}>
-                <span className={styles.aboutLabel}>工具数量</span>
-                <span className={styles.aboutValue}>{health.tool_count}</span>
+            </div>
+            <p className={styles.aboutAppTag}>
+              本地优先的私人 AI 助理。所有数据存储在本地。
+            </p>
+            <a
+              className={styles.aboutGitLink}
+              href="https://github.com/godsir/openloom"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => { e.preventDefault(); window.loom.openExternal('https://github.com/godsir/openloom') }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+              </svg>
+              github.com/godsir/openloom
+            </a>
+            {dataDir && (
+              <div className={styles.aboutDataRow}>
+                <span className={styles.aboutDataLabel}>数据目录</span>
+                <span className={styles.aboutDataPath}>{dataDir}</span>
               </div>
-            </>
-          )}
-          <div className={styles.aboutRow}>
-            <span className={styles.aboutLabel}>连接状态</span>
-            <span className={`${styles.aboutValue} ${wsState === 'connected' ? styles.aboutValueGreen : styles.aboutValueAmber}`}>
-              {wsState === 'connected' ? '已连接' : wsState}
-            </span>
+            )}
           </div>
 
-          {/* Auto-update section */}
-          <div className={styles.aboutRow}>
-            <div>
-              <span className={styles.aboutLabel}>自动更新</span>
-              {updateLabel() && (
-                <p style={{ fontSize: 11, color: updateStatus === 'available' || updateStatus === 'downloaded' ? 'var(--accent)' : updateStatus === 'error' ? 'var(--red)' : 'var(--text-muted)', margin: '2px 0 0' }}>
-                  {updateLabel()}
-                </p>
+
+          {/* System status */}
+          <div className={styles.aboutCard}>
+            <h4 className={styles.aboutCardTitle}>系统状态</h4>
+            <div className={styles.aboutStatGrid}>
+              <div className={styles.aboutStatItem}>
+                <span className={styles.aboutStatLabel}>后端连接</span>
+                <span className={`${styles.aboutStatValue} ${connected ? styles.aboutStatOk : styles.aboutStatWarn}`}>
+                  {connected ? `localhost:${port}` : wsState}
+                </span>
+              </div>
+              <div className={styles.aboutStatItem}>
+                <span className={styles.aboutStatLabel}>当前模型</span>
+                <span className={styles.aboutStatValue}>{currentModel || '未选择'}</span>
+              </div>
+              {health && (
+                <>
+                  <div className={styles.aboutStatItem}>
+                    <span className={styles.aboutStatLabel}>Agent 数量</span>
+                    <span className={styles.aboutStatValue}>{health.agent_count}</span>
+                  </div>
+                  <div className={styles.aboutStatItem}>
+                    <span className={styles.aboutStatLabel}>工具数量</span>
+                    <span className={styles.aboutStatValue}>{health.tool_count}</span>
+                  </div>
+                </>
               )}
             </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {(updateStatus === 'idle' || updateStatus === 'no-update' || updateStatus === 'error') && (
-                <button className={styles.mcpDisconnectBtn} onClick={handleCheckUpdate}>
-                  检查更新
-                </button>
+            {healthError && <p className={styles.toolsError}>系统信息加载失败</p>}
+          </div>
+
+          {/* Auto-update */}
+          <div className={styles.aboutCard}>
+            <h4 className={styles.aboutCardTitle}>自动更新</h4>
+            <div className={styles.aboutUpdateBody}>
+              {update.status === 'checking' && (
+                <p className={styles.updateStatusText}>正在检查更新...</p>
               )}
-              {updateStatus === 'available' && (
-                <button className={styles.mcpConnectBtn} onClick={handleDownload}>
+              {update.status === 'available' && (
+                <p className={styles.updateStatusAccent}>
+                  {update.version ? `发现新版本 ${update.version}` : '发现新版本'}
+                </p>
+              )}
+              {update.status === 'downloading' && (
+                <>
+                  <p className={styles.updateStatusAccent}>{update.progress.toFixed(0)}% 下载中</p>
+                  <div className={styles.updateProgressBar}>
+                    <div className={styles.updateProgressFill} style={{ width: `${update.progress}%` }} />
+                  </div>
+                </>
+              )}
+              {update.status === 'downloaded' && (
+                <p className={styles.updateStatusAccent}>更新已就绪，重启后生效</p>
+              )}
+              {(update.status === 'no-update' || update.status === 'idle') && (
+                <p className={styles.updateStatusText}>已是最新版本</p>
+              )}
+              {update.status === 'error' && (
+                <p className={styles.updateStatusError}>{update.error ?? '检查更新失败'}</p>
+              )}
+            </div>
+            <div className={styles.aboutUpdateActions}>
+              {(update.status === 'idle' || update.status === 'no-update' || update.status === 'error') && (
+                <>
+                  <button className={styles.mcpConnectBtn} onClick={checkUpdate}>
+                    检查更新
+                  </button>
+                  {isDev && (
+                    <button className={styles.mcpDisconnectBtn} onClick={simulateUpdateFlow}>
+                      测试更新
+                    </button>
+                  )}
+                </>
+              )}
+              {update.status === 'available' && (
+                <button className={styles.mcpConnectBtn} onClick={downloadUpdate}>
                   下载更新
                 </button>
               )}
-              {updateStatus === 'downloaded' && (
-                <button className={styles.mcpConnectBtn} onClick={handleInstall}>
+              {update.status === 'downloaded' && (
+                <button className={styles.mcpConnectBtn} onClick={installUpdate}>
                   立即重启
                 </button>
               )}
             </div>
           </div>
-
-          {healthError && (
-            <p className={styles.toolsError}>系统信息加载失败</p>
-          )}
-          <p className={styles.aboutFooter}>
-            本地优先的私人 AI 助理。所有数据存储在本地。
-          </p>
         </div>
       </div>
     </>

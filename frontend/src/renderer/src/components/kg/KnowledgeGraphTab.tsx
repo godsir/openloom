@@ -77,6 +77,7 @@ export default function KnowledgeGraphTab() {
   const kgNodeDelete = useStore(s => s.kgNodeDelete)
   const kgEdgeDelete = useStore(s => s.kgEdgeDelete)
   const showConfirm = useStore(s => s.showConfirm)
+  const currentSessionId = useStore(s => s.currentSessionId)
 
   const [query, setQuery] = useState('')
   const [scopeFilter, setScopeFilter] = useState<'all' | 'global' | 'session'>('all')
@@ -122,8 +123,11 @@ export default function KnowledgeGraphTab() {
 
   useEffect(() => {
     kgLoadStats()
-    kgListNodes(scopeFilter === 'all' ? undefined : scopeFilter)
-  }, [kgLoadStats, kgListNodes, scopeFilter])
+    const effectiveScope = scopeFilter === 'all' ? undefined
+      : scopeFilter === 'session' ? (currentSessionId ?? undefined)
+      : scopeFilter
+    kgListNodes(effectiveScope)
+  }, [kgLoadStats, kgListNodes, scopeFilter, currentSessionId])
 
   // Auto-populate graph when switching to graph tab with no data.
   // Walk from the first few listed nodes in parallel and merge results,
@@ -145,13 +149,16 @@ export default function KnowledgeGraphTab() {
       const seeds = ['USER', ...extras]
 
       if (seeds.length > 0) {
-        console.log('[KnowledgeGraphTab] Auto-populating graph from seeds:', seeds)
-        kgLoadGraph(seeds, 2)
+        const effectiveScope = scopeFilter === 'all' ? undefined
+          : scopeFilter === 'session' ? (currentSessionId ?? undefined)
+          : scopeFilter
+        console.log('[KnowledgeGraphTab] Auto-populating graph from seeds:', seeds, 'scope:', effectiveScope)
+        kgLoadGraph(seeds, 2, effectiveScope)
       } else {
         console.log('[KnowledgeGraphTab] No data available to populate graph')
       }
     }
-  }, [activeTab, kgGraph, kgNodeList, kgSearchResults, kgLoadGraph])
+  }, [activeTab, kgGraph, kgNodeList, kgSearchResults, kgLoadGraph, scopeFilter, currentSessionId])
 
   // Debug: log when graph data changes
   useEffect(() => {
@@ -700,13 +707,32 @@ export default function KnowledgeGraphTab() {
                 }}
                 linkCanvasObject={paintLink}
                 linkDirectionalArrowLength={0}
+                linkDistance={(link: any) => {
+                  // Increase distance to prevent nodes from overlapping
+                  const s = link.source as GraphNode
+                  const t = link.target as GraphNode
+                  if (s.scope && t.scope && s.scope === t.scope && s.scope !== 'global') {
+                    return 120 // Tighter cluster for session-scoped nodes
+                  }
+                  return 200 // Larger distance for global/cross-scope links
+                }}
+                linkStrength={(link: any) => {
+                  // Stronger links between same-scope nodes
+                  const s = link.source as GraphNode
+                  const t = link.target as GraphNode
+                  if (s.scope && t.scope && s.scope === t.scope && s.scope !== 'global') {
+                    return 1.5
+                  }
+                  return 1.0
+                }}
                 enableZoomInteraction
                 enablePanInteraction
                 minZoom={0.2}
                 maxZoom={5}
-                cooldownTicks={100}
-                d3AlphaDecay={0.02}
-                d3VelocityDecay={0.3}
+                cooldownTicks={200}
+                d3AlphaDecay={0.01}
+                d3VelocityDecay={0.2}
+                onEngineStop={() => fgRef.current?.zoomToFit(400, 50)}
                 onNodeClick={handleNodeClick}
                 onBackgroundClick={() => setTooltip(null)}
               />
@@ -793,13 +819,30 @@ export default function KnowledgeGraphTab() {
             }}
             linkCanvasObject={paintLink}
             linkDirectionalArrowLength={0}
+            linkDistance={(link: any) => {
+              const s = link.source as GraphNode
+              const t = link.target as GraphNode
+              if (s.scope && t.scope && s.scope === t.scope && s.scope !== 'global') {
+                return 120
+              }
+              return 200
+            }}
+            linkStrength={(link: any) => {
+              const s = link.source as GraphNode
+              const t = link.target as GraphNode
+              if (s.scope && t.scope && s.scope === t.scope && s.scope !== 'global') {
+                return 1.5
+              }
+              return 1.0
+            }}
             enableZoomInteraction
             enablePanInteraction
             minZoom={0.1}
             maxZoom={8}
-            cooldownTicks={100}
-            d3AlphaDecay={0.02}
-            d3VelocityDecay={0.3}
+            cooldownTicks={200}
+            d3AlphaDecay={0.01}
+            d3VelocityDecay={0.2}
+            onEngineStop={() => fgFullscreenRef.current?.zoomToFit(400, 50)}
             onNodeClick={handleNodeClick}
             onBackgroundClick={() => setTooltip(null)}
           />

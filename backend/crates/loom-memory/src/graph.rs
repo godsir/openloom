@@ -192,7 +192,7 @@ impl<'a> GraphStore<'a> {
     /// Full-text search for entities by name or description.
     /// Automatically adds prefix matching (*) to bare ASCII terms.
     /// CJK terms are passed through as-is (FTS5 unicode61 tokenizes per-character).
-    pub fn search_entities(&self, query: &str, limit: usize) -> Result<Vec<GraphRow>> {
+    pub fn search_entities(&self, query: &str, limit: usize, scope: Option<&str>) -> Result<Vec<GraphRow>> {
         let has_ops = query.contains('*')
             || query.contains("AND")
             || query.contains("OR")
@@ -214,12 +214,18 @@ impl<'a> GraphStore<'a> {
                 .collect::<Vec<_>>()
                 .join(" ")
         };
-        let mut stmt = self.conn.prepare(
+        let sql = if scope.is_some() {
             "SELECT n.id, n.name, n.entity_type, n.description, n.confidence, n.scope
              FROM kg_nodes_fts fts JOIN kg_nodes n ON n.id = fts.rowid
-             WHERE kg_nodes_fts MATCH ?1 ORDER BY rank LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![expanded, limit], |row| {
+             WHERE kg_nodes_fts MATCH ?1 AND (n.scope = ?3 OR n.scope = 'global')
+             ORDER BY rank LIMIT ?2"
+        } else {
+            "SELECT n.id, n.name, n.entity_type, n.description, n.confidence, n.scope
+             FROM kg_nodes_fts fts JOIN kg_nodes n ON n.id = fts.rowid
+             WHERE kg_nodes_fts MATCH ?1 ORDER BY rank LIMIT ?2"
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let map_row = |row: &rusqlite::Row<'_>| {
             Ok(GraphRow {
                 node_id: row.get(0)?,
                 name: row.get(1)?,
@@ -230,10 +236,16 @@ impl<'a> GraphStore<'a> {
                 distance: None,
                 scope: row.get(5)?,
             })
-        })?;
-        let results: Vec<GraphRow> = rows.collect::<std::result::Result<Vec<_>, _>>()?;
-        let _ = self.touch_rows(&results);
-        Ok(results)
+        };
+        let rows = if let Some(s) = scope {
+            stmt.query_map(rusqlite::params![expanded, limit, s], map_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map(rusqlite::params![expanded, limit], map_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        let _ = self.touch_rows(&rows);
+        Ok(rows)
     }
 
     /// Resolve an entity name to its node ID (via exact match or alias).
@@ -603,6 +615,52 @@ impl<'a> GraphStore<'a> {
             rusqlite::params![source_name, target_name, relation_type],
         )?;
         Ok(affected > 0)
+    }
+
+    /// Promote all nodes/edges with the given scope to "global", merging duplicates.
+    /// Returns the number of nodes promoted.
+    pub fn promote_scope_to_global(&self, scope: &str, min_confidence: f64) -> Result<usize> {
+        // First promote nodes: change scope to 'global' where no global duplicate exists
+        let promoted = self.conn.execute(
+            "UPDATE kg_nodes SET scope = 'global'
+             WHERE scope = ?1 AND confidence >= ?2
+             AND name NOT IN (SELECT name FROM kg_nodes WHERE scope = 'global')",
+            rusqlite::params![scope, min_confidence],
+        )?;
+        // Delete remaining session-scoped nodes (duplicates or low confidence)
+        self.conn.execute(
+            "DELETE FROM kg_edges WHERE scope = ?1",
+            rusqlite::params![scope],
+        )?;
+        self.conn.execute(
+            "DELETE FROM kg_nodes WHERE scope = ?1",
+            rusqlite::params![scope],
+        )?;
+        Ok(promoted)
+    }
+
+    /// Delete all nodes, edges, and evidence with a given scope.
+    pub fn delete_by_scope(&self, scope: &str) -> Result<()> {
+        // Delete evidence referencing nodes/edges in this scope
+        self.conn.execute(
+            "DELETE FROM kg_evidence WHERE node_id IN (SELECT id FROM kg_nodes WHERE scope = ?1)",
+            rusqlite::params![scope],
+        )?;
+        self.conn.execute(
+            "DELETE FROM kg_evidence WHERE edge_id IN (SELECT id FROM kg_edges WHERE scope = ?1)",
+            rusqlite::params![scope],
+        )?;
+        // Delete edges in this scope
+        self.conn.execute(
+            "DELETE FROM kg_edges WHERE scope = ?1",
+            rusqlite::params![scope],
+        )?;
+        // Delete nodes in this scope
+        self.conn.execute(
+            "DELETE FROM kg_nodes WHERE scope = ?1",
+            rusqlite::params![scope],
+        )?;
+        Ok(())
     }
 
     /// Total entity count (for pruning threshold check).

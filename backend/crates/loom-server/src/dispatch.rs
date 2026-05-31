@@ -614,6 +614,56 @@ pub async fn dispatch_method(
             Ok(json!({ "ok": true }))
         }
 
+        // === Workspace ===
+        "workspace.get" => {
+            let session_id = p
+                .get("session_id")
+                .and_then(|v| v.as_str());
+
+            let workspace = if let Some(sid) = session_id {
+                let session_ws = state.orchestrator.get_session_workspace(sid).await
+                    .ok()
+                    .flatten();
+                if session_ws.is_some() {
+                    session_ws
+                } else {
+                    state.orchestrator.get_default_workspace().await
+                        .ok()
+                        .flatten()
+                }
+            } else {
+                state.orchestrator.get_default_workspace().await
+                    .ok()
+                    .flatten()
+            };
+
+            Ok(json!({ "workspace": workspace }))
+        }
+        "workspace.set_session" => {
+            let session_id = p
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| err(ErrorCode::InvalidRequest, "session_id required"))?;
+            let path = p
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| err(ErrorCode::InvalidRequest, "path required"))?;
+
+            state.orchestrator.set_session_workspace(session_id, path).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "ok": true }))
+        }
+        "workspace.set_default" => {
+            let path = p
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| err(ErrorCode::InvalidRequest, "path required"))?;
+
+            state.orchestrator.set_default_workspace(path).await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "ok": true }))
+        }
+
         // === Config ===
         "config.get" => {
             let key = p.get("key").and_then(|v| v.as_str());
@@ -1878,10 +1928,11 @@ pub async fn dispatch_method(
                 return Err(err(ErrorCode::InvalidRequest, "start_name required"));
             }
             let max_depth = p.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(2) as u8;
+            let scope = p.get("scope").and_then(|v| v.as_str());
             let limit = p.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
             let graph = state
                 .orchestrator
-                .kg_walk(start_name, max_depth, limit)
+                .kg_walk(start_name, max_depth, scope, limit)
                 .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             Ok(serde_json::to_value(graph).unwrap_or_default())
@@ -1897,6 +1948,24 @@ pub async fn dispatch_method(
                 .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             Ok(json!({ "nodes": nodes }))
+        }
+
+        "kg.edges_between" => {
+            let node_names: Vec<String> = p
+                .get("node_names")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let edges = state
+                .orchestrator
+                .kg_edges_between(&node_names)
+                .await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "edges": edges }))
         }
 
         "kg.node.delete" => {

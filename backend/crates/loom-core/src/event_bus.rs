@@ -47,6 +47,7 @@ pub enum AgentEvent {
         tool_name: String,
         success: bool,
         result: Option<String>,
+        structured_content: Option<serde_json::Value>,
     },
     /// LLM token streaming delta.
     StreamDelta {

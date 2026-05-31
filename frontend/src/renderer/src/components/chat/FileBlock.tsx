@@ -14,7 +14,7 @@ export default function FileBlock({ block }: { block: ContentBlock }) {
       <span className="text-[var(--text)] truncate max-w-[200px]">{name}</span>
       {size != null && <span className="text-[10px] text-[var(--text-muted)] tabular-nums">{fmt(size)}</span>}
       {filePath && (
-        <button onClick={() => window.hana.openFile(filePath)}
+        <button onClick={() => window.loom.openFile(filePath)}
           className="flex items-center gap-1 text-[10px] text-[var(--accent)] hover:text-[var(--accent-hover)] transition-colors">
           <IconExternalLink size={9} /> 打开
         </button>

@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use loom_types::{ToolDefinition, ToolProgress};
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::tool_context::ToolContext;
 use crate::tool_registry::{AgentTool, ToolProvenance, ToolResult};
 
 // ============================================================================
@@ -45,6 +46,7 @@ impl AgentTool for ShellTool {
         &self,
         arguments: serde_json::Value,
         _progress: UnboundedSender<ToolProgress>,
+        context: &ToolContext,
     ) -> Result<ToolResult> {
         let command = arguments["command"].as_str().unwrap_or("");
         if command.is_empty() {
@@ -55,18 +57,23 @@ impl AgentTool for ShellTool {
             });
         }
 
-        let cwd = arguments["cwd"].as_str().map(Path::new);
+        let cwd = arguments["cwd"]
+            .as_str()
+            .map(|s| context.resolve_path(s))
+            .or_else(|| context.workspace_path.as_ref().map(|ws| Path::new(ws).to_path_buf()));
         let timeout_secs = arguments["timeout"].as_u64().unwrap_or(60).min(300);
 
         // Use tokio::process::Command for async execution with timeout
         let child_result = if cfg!(windows) {
             // Prefer PowerShell over cmd.exe for better command support
             let pwsh = which_shell("pwsh").or_else(|| which_shell("powershell"));
+            let default_cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
+            let work_dir = cwd.as_deref().unwrap_or(&default_cwd);
             match pwsh {
                 Some(shell_path) => {
                     tokio::process::Command::new(&shell_path)
                         .args(["-NoProfile", "-NonInteractive", "-Command", command])
-                        .current_dir(cwd.unwrap_or(Path::new(".")))
+                        .current_dir(work_dir)
                         .stdout(std::process::Stdio::piped())
                         .stderr(std::process::Stdio::piped())
                         .spawn()
@@ -75,16 +82,18 @@ impl AgentTool for ShellTool {
                     // Fallback to cmd.exe if PowerShell is not found
                     tokio::process::Command::new("cmd")
                         .args(["/c", command])
-                        .current_dir(cwd.unwrap_or(Path::new(".")))
+                        .current_dir(work_dir)
                         .stdout(std::process::Stdio::piped())
                         .stderr(std::process::Stdio::piped())
                         .spawn()
                 }
             }
         } else {
+            let default_cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
+            let work_dir = cwd.as_deref().unwrap_or(&default_cwd);
             tokio::process::Command::new("sh")
                 .args(["-c", command])
-                .current_dir(cwd.unwrap_or(Path::new(".")))
+                .current_dir(work_dir)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()
@@ -278,10 +287,11 @@ impl AgentTool for FileListTool {
         &self,
         arguments: serde_json::Value,
         _progress: UnboundedSender<ToolProgress>,
+        context: &ToolContext,
     ) -> Result<ToolResult> {
         let path_str = arguments["path"].as_str().unwrap_or(".");
         let recursive = arguments["recursive"].as_bool().unwrap_or(false);
-        let path = Path::new(path_str);
+        let path = context.resolve_path(path_str);
 
         if !path.exists() {
             return Ok(ToolResult {
@@ -292,7 +302,7 @@ impl AgentTool for FileListTool {
         }
 
         let mut result = format!("Contents of '{}':\n\n", path.display());
-        match list_dir(path, recursive, 0, if recursive { 3 } else { 1 }) {
+        match list_dir(&path, recursive, 0, if recursive { 3 } else { 1 }) {
             Ok(files) => {
                 for (name, size, is_dir) in &files {
                     let prefix = if *is_dir { "[DIR] " } else { "[FILE]" };
@@ -393,10 +403,11 @@ impl AgentTool for FileReadTool {
         &self,
         arguments: serde_json::Value,
         _progress: UnboundedSender<ToolProgress>,
+        context: &ToolContext,
     ) -> Result<ToolResult> {
         let path_str = arguments["path"].as_str().unwrap_or("");
         let max_lines = arguments["max_lines"].as_u64().unwrap_or(500) as usize;
-        let path = Path::new(path_str);
+        let path = context.resolve_path(path_str);
 
         if !path.exists() {
             return Ok(ToolResult {
@@ -413,7 +424,7 @@ impl AgentTool for FileReadTool {
             });
         }
 
-        match std::fs::read_to_string(path) {
+        match std::fs::read_to_string(&path) {
             Ok(content) => {
                 let lines: Vec<&str> = content.lines().take(max_lines).collect();
                 let total = content.lines().count();
@@ -481,6 +492,7 @@ impl AgentTool for FileWriteTool {
         &self,
         arguments: serde_json::Value,
         _progress: UnboundedSender<ToolProgress>,
+        context: &ToolContext,
     ) -> Result<ToolResult> {
         let path_str = arguments["path"].as_str().unwrap_or("");
         let content = arguments["content"].as_str().unwrap_or("");
@@ -493,13 +505,26 @@ impl AgentTool for FileWriteTool {
             });
         }
 
-        match std::fs::write(Path::new(path_str), content) {
+        let path = context.resolve_path(path_str);
+        let old_content = std::fs::read_to_string(&path).unwrap_or_default();
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        match std::fs::write(&path, content) {
             Ok(_) => {
                 let len = content.len();
                 Ok(ToolResult {
                     content: format!("File written successfully: {} ({} bytes)", path_str, len),
                     is_error: false,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({
+                        "filePath": path_str,
+                        "fileName": file_name,
+                        "oldContent": old_content,
+                        "newContent": content,
+                    })),
                 })
             }
             Err(e) => Ok(ToolResult {
@@ -549,6 +574,7 @@ impl AgentTool for ContentSearchTool {
         &self,
         arguments: serde_json::Value,
         _progress: UnboundedSender<ToolProgress>,
+        context: &ToolContext,
     ) -> Result<ToolResult> {
         let pattern = arguments["pattern"].as_str().unwrap_or("");
         let search_path = arguments["path"].as_str().unwrap_or(".");
@@ -563,8 +589,9 @@ impl AgentTool for ContentSearchTool {
             });
         }
 
+        let resolved_path = context.resolve_path(search_path);
         // Always use recursive walker — more reliable than findstr on Windows
-        match simple_content_search(Path::new(search_path), pattern, max_results) {
+        match simple_content_search(&resolved_path, pattern, max_results) {
             Ok(results) => {
                 if results.is_empty() {
                     Ok(ToolResult {
@@ -662,9 +689,10 @@ impl AgentTool for FileDeleteTool {
         &self,
         arguments: serde_json::Value,
         _progress: UnboundedSender<ToolProgress>,
+        context: &ToolContext,
     ) -> Result<ToolResult> {
         let path_str = arguments["path"].as_str().unwrap_or("");
-        let path = std::path::Path::new(path_str);
+        let path = context.resolve_path(path_str);
         if !path.exists() {
             return Ok(ToolResult {
                 content: format!("Path does not exist: {}", path_str),
@@ -730,6 +758,7 @@ impl AgentTool for UseSkillTool {
         &self,
         arguments: serde_json::Value,
         _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
     ) -> Result<ToolResult> {
         let name = arguments["skill_name"].as_str().unwrap_or("");
         if name.is_empty() {
@@ -804,6 +833,7 @@ impl AgentTool for WebSearchTool {
         &self,
         arguments: serde_json::Value,
         _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
     ) -> Result<ToolResult> {
         let query = arguments["query"].as_str().unwrap_or("");
         let max_results = arguments["max_results"].as_u64().unwrap_or(5).min(10) as usize;
@@ -934,6 +964,7 @@ impl AgentTool for WebFetchTool {
         &self,
         arguments: serde_json::Value,
         _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
     ) -> Result<ToolResult> {
         let url = arguments["url"].as_str().unwrap_or("");
         let max_chars = arguments["max_chars"].as_u64().unwrap_or(5000).min(20000) as usize;

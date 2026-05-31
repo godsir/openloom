@@ -13,8 +13,8 @@ export interface KgSlice {
   cognitionSnapshots: Record<number, CognitionHistory[]>
   kgSearch: (query: string) => Promise<void>
   kgExpandNode: (nodeName: string) => Promise<void>
-  kgWalkFrom: (startName: string, maxDepth?: number) => Promise<void>
-  kgLoadGraph: (seeds: string[], maxDepth?: number) => Promise<void>
+  kgWalkFrom: (startName: string, maxDepth?: number, scope?: string) => Promise<void>
+  kgLoadGraph: (seeds: string[], maxDepth?: number, scope?: string) => Promise<void>
   kgLoadStats: () => Promise<void>
   kgClearGraph: () => void
   kgListNodes: (scope?: string) => Promise<void>
@@ -72,8 +72,8 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
     })
   },
 
-  kgWalkFrom: async (startName, maxDepth = 2) => {
-    const result = await loomRpc<KgGraph>('kg.walk', { start_name: startName, max_depth: maxDepth, limit: 50 })
+  kgWalkFrom: async (startName, maxDepth = 2, scope) => {
+    const result = await loomRpc<KgGraph>('kg.walk', { start_name: startName, max_depth: maxDepth, scope, limit: 50 })
     if (result.nodes?.length) {
       set({ kgGraph: result, kgSelectedNode: null })
     } else {
@@ -89,7 +89,7 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
     }
   },
 
-  kgLoadGraph: async (seeds, maxDepth = 2) => {
+  kgLoadGraph: async (seeds, maxDepth = 2, scope) => {
     // Walk from each seed sequentially. Each walk discovers one "galaxy" —
     // a connected component with all its internal edges. Skip seeds already
     // covered by a previous walk's galaxy.
@@ -109,7 +109,7 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
     for (const name of seeds) {
       if (nodeMap.has(name)) continue
       try {
-        const result = await loomRpc<KgGraph>('kg.walk', { start_name: name, max_depth: maxDepth, limit: 50 })
+        const result = await loomRpc<KgGraph>('kg.walk', { start_name: name, max_depth: maxDepth, scope, limit: 50 })
         addResult(result)
       } catch {
         // skip failed walks
@@ -122,6 +122,23 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
     if (nodeMap.size === 0 || get().kgNodeList.length > nodeMap.size) {
       for (const n of get().kgNodeList) {
         if (!nodeMap.has(n.name)) nodeMap.set(n.name, n)
+      }
+    }
+
+    // Fetch ALL edges between loaded nodes to ensure complete connectivity
+    // This fills in any edges that walk might have missed due to depth/limit constraints
+    if (nodeMap.size > 1) {
+      try {
+        const nodeNames = Array.from(nodeMap.keys())
+        const { edges } = await loomRpc<{ edges: KgEdge[] }>('kg.edges_between', { node_names: nodeNames })
+        for (const e of edges || []) {
+          const key = `${e.source}||${e.target}||${e.relation_type}`
+          if (!edgeMap.has(key)) {
+            edgeMap.set(key, e)
+          }
+        }
+      } catch {
+        // Non-critical: edges_between failed, but we still have edges from walk
       }
     }
 

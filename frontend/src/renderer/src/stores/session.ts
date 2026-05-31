@@ -24,6 +24,7 @@ export interface SessionSlice {
   currentSessionId: string | null
   pinnedIds: Set<string>
   selectedSessionIds: Set<string>
+  sessionWorkspaces: Record<string, string>
   setSessions: (sessions: SessionSummary[]) => void
   setCurrentSessionId: (id: string | null) => void
   createSession: () => Promise<string>
@@ -39,6 +40,7 @@ export interface SessionSlice {
   selectAllSessions: () => void
   deselectAllSessions: () => void
   loadSessions: () => Promise<void>
+  setSessionWorkspace: (id: string, path: string) => void
 }
 
 export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
@@ -46,6 +48,7 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
   currentSessionId: null,
   pinnedIds: new Set(),
   selectedSessionIds: new Set(),
+  sessionWorkspaces: {},
 
   setSessions: (sessions) => set({ sessions }),
   setCurrentSessionId: (currentSessionId) => set({ currentSessionId }),
@@ -116,28 +119,28 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
     const next = new Set(get().pinnedIds)
     next.add(id)
     set({ pinnedIds: next })
-    window.hana.setPreference('pinnedIds', [...next])
+    window.loom.setPreference('pinnedIds', [...next])
   },
 
   unpinSession: (id) => {
     const next = new Set(get().pinnedIds)
     next.delete(id)
     set({ pinnedIds: next })
-    window.hana.setPreference('pinnedIds', [...next])
+    window.loom.setPreference('pinnedIds', [...next])
   },
 
   pinSessions: (ids) => {
     const next = new Set(get().pinnedIds)
     for (const id of ids) next.add(id)
     set({ pinnedIds: next })
-    window.hana.setPreference('pinnedIds', [...next])
+    window.loom.setPreference('pinnedIds', [...next])
   },
 
   unpinSessions: (ids) => {
     const next = new Set(get().pinnedIds)
     for (const id of ids) next.delete(id)
     set({ pinnedIds: next })
-    window.hana.setPreference('pinnedIds', [...next])
+    window.loom.setPreference('pinnedIds', [...next])
   },
 
   toggleSessionSelect: (id) => {
@@ -179,6 +182,25 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
       }
     }
     set({ sessionAgentBindings: bindings } as any)
+    // Load workspace bindings for all sessions
+    const workspaces: Record<string, string> = {}
+    for (const s of mapped) {
+      try {
+        const result = await loomRpc<{ workspace: string | null }>('workspace.get', { session_id: s.path })
+        if (result.workspace) {
+          workspaces[s.path] = result.workspace
+        }
+      } catch {
+        // Ignore errors for individual sessions
+      }
+    }
+    set({ sessionWorkspaces: workspaces })
+  },
+
+  setSessionWorkspace: (id, path) => {
+    set((state) => ({
+      sessionWorkspaces: { ...state.sessionWorkspaces, [id]: path },
+    }))
   },
 })
 

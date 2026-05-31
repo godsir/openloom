@@ -30,11 +30,12 @@ pub struct ExtractedRelationship {
 
 /// Trait for entity+relationship extraction from text.
 pub trait EntityExtractor: Send + Sync {
-    fn extract_entities(&self, text: &str, context: &str) -> Result<Vec<ExtractedEntity>>;
+    fn extract_entities(&self, text: &str, context: &str, scope: &str) -> Result<Vec<ExtractedEntity>>;
     fn extract_relationships(
         &self,
         text: &str,
         entities: &[ExtractedEntity],
+        scope: &str,
     ) -> Result<Vec<ExtractedRelationship>>;
 }
 
@@ -42,7 +43,7 @@ pub trait EntityExtractor: Send + Sync {
 pub struct RuleBasedEntityExtractor;
 
 impl EntityExtractor for RuleBasedEntityExtractor {
-    fn extract_entities(&self, text: &str, _context: &str) -> Result<Vec<ExtractedEntity>> {
+    fn extract_entities(&self, text: &str, _context: &str, scope: &str) -> Result<Vec<ExtractedEntity>> {
         let mut entities = Vec::new();
         let lower = text.to_lowercase();
 
@@ -75,7 +76,7 @@ impl EntityExtractor for RuleBasedEntityExtractor {
                     description: desc.to_string(),
                     confidence: 0.6,
                     aliases: vec![],
-                    scope: "global".into(),
+                    scope: scope.into(),
                 });
             }
         }
@@ -86,6 +87,7 @@ impl EntityExtractor for RuleBasedEntityExtractor {
         &self,
         text: &str,
         entities: &[ExtractedEntity],
+        scope: &str,
     ) -> Result<Vec<ExtractedRelationship>> {
         let mut rels = Vec::new();
         let entity_names: Vec<&str> = entities.iter().map(|e| e.name.as_str()).collect();
@@ -108,7 +110,7 @@ impl EntityExtractor for RuleBasedEntityExtractor {
                                 entity_names[i], entity_names[j]
                             ),
                             confidence: 0.4,
-                            scope: "global".into(),
+                            scope: scope.into(),
                         });
                         break; // one relationship per entity pair
                     }
@@ -160,6 +162,7 @@ Conversation context:"#;
 /// Parse LLM response into extracted entities and relationships.
 pub fn parse_llm_extraction(
     response: &str,
+    scope: &str,
 ) -> Result<(Vec<ExtractedEntity>, Vec<ExtractedRelationship>)> {
     // Extract JSON block from response (may be wrapped in markdown code fences)
     let json_str = if let Some(start) = response.find("```json") {
@@ -196,7 +199,7 @@ pub fn parse_llm_extraction(
                                     .collect()
                             })
                             .unwrap_or_default(),
-                        scope: "global".to_string(),
+                        scope: scope.to_string(),
                     })
                 })
                 .collect()
@@ -217,7 +220,7 @@ pub fn parse_llm_extraction(
                             .to_string(),
                         fact: r["fact"].as_str().unwrap_or("").to_string(),
                         confidence: r["confidence"].as_f64().unwrap_or(0.5),
-                        scope: "global".to_string(),
+                        scope: scope.to_string(),
                     })
                 })
                 .collect()
@@ -237,7 +240,7 @@ mod tests {
             "entities": [{"name": "Rust", "entity_type": "Technology", "description": "PL", "confidence": 0.9, "aliases": []}],
             "relationships": [{"source_name": "USER", "target_name": "Rust", "relation_type": "uses", "fact": "USER uses Rust", "confidence": 0.85}]
         }"#;
-        let (entities, relationships) = parse_llm_extraction(response).unwrap();
+        let (entities, relationships) = parse_llm_extraction(response, "global").unwrap();
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "Rust");
         assert_eq!(relationships.len(), 1);
@@ -248,14 +251,14 @@ mod tests {
     fn test_parse_llm_extraction_code_fence() {
         let response =
             "Here are the results:\n```json\n{\"entities\": [], \"relationships\": []}\n```\nDone.";
-        let (entities, _) = parse_llm_extraction(response).unwrap();
+        let (entities, _) = parse_llm_extraction(response, "global").unwrap();
         assert!(entities.is_empty());
     }
 
     #[test]
     fn test_parse_llm_extraction_invalid() {
         let response = "No JSON here at all.";
-        let (entities, relationships) = parse_llm_extraction(response).unwrap();
+        let (entities, relationships) = parse_llm_extraction(response, "global").unwrap();
         assert!(entities.is_empty());
         assert!(relationships.is_empty());
     }

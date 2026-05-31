@@ -104,6 +104,7 @@ pub enum StreamDelta {
         tool_name: String,
         success: bool,
         result: Option<String>,
+        structured_content: Option<serde_json::Value>,
     },
     Usage {
         prompt_tokens: u64,

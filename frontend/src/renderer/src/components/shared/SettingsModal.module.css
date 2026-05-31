@@ -85,6 +85,22 @@
   margin-top: 2px;
 }
 
+.sectionHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sectionSubTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
 /* Theme grid */
 .themeSection {
   margin-top: 8px;
@@ -215,6 +231,140 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.aboutCard {
+  padding: 16px;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+}
+
+.aboutCardTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 12px;
+}
+
+.aboutAppRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.aboutAppIcon {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--r-lg);
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.aboutAppName {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.aboutAppVer {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 2px 0 0;
+}
+
+.aboutAppTag {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.aboutGitLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.aboutGitLink:hover {
+  color: var(--accent);
+}
+
+.aboutDataRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  font-size: 11px;
+}
+
+.aboutDataLabel {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.aboutDataPath {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aboutStatGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.aboutStatItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--bg-card);
+}
+
+.aboutStatLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.aboutStatValue {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.aboutStatOk {
+  color: var(--green, #22c55e);
+}
+
+.aboutStatWarn {
+  color: var(--amber, #f59e0b);
+}
+
+.aboutUpdateBody {
+  margin-bottom: 12px;
+}
+
+.aboutUpdateActions {
+  display: flex;
+  gap: 8px;
 }
 
 .aboutRow {
@@ -851,4 +1001,64 @@
 
 .lspQuickStart {
   margin-top: 16px;
+}
+
+/* ─── Update Status ─── */
+
+.updateStatusText {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 2px 0 0;
+}
+
+.updateStatusAccent {
+  font-size: 11px;
+  color: var(--accent);
+  margin: 2px 0 0;
+}
+
+.updateStatusError {
+  font-size: 11px;
+  color: var(--red);
+  margin: 2px 0 0;
+}
+
+.updateActions {
+  display: flex;
+  gap: 6px;
+}
+
+.updateProgressBar {
+  width: 140px;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+.updateProgressFill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.updateTestBtn {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.updateTestBtn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  border-style: solid;
 }

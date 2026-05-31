@@ -113,6 +113,7 @@ export default function MaintenanceTab() {
   const kgLoadStats = useStore(s => s.kgLoadStats)
   const kgPrune = useStore(s => s.kgPrune)
   const showConfirm = useStore(s => s.showConfirm)
+  const currentSessionId = useStore(s => s.currentSessionId)
 
   const [subject, setSubject] = useState('USER')
   const [scopeFilter, setScopeFilter] = useState('all')
@@ -124,8 +125,11 @@ export default function MaintenanceTab() {
   }, [cognitionListSubjects, kgLoadStats])
 
   useEffect(() => {
-    cognitionListBySubject(subject, scopeFilter === 'all' ? undefined : scopeFilter)
-  }, [subject, scopeFilter, cognitionListBySubject])
+    const effectiveScope = scopeFilter === 'all' ? undefined
+      : scopeFilter === 'session' ? (currentSessionId ?? undefined)
+      : scopeFilter
+    cognitionListBySubject(subject, effectiveScope)
+  }, [subject, scopeFilter, cognitionListBySubject, currentSessionId])
 
   const handlePrune = async () => {
     const ok = await showConfirm(

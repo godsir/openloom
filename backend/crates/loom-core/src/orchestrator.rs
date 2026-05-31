@@ -69,11 +69,13 @@ pub trait MemoryStore: Send + Sync {
         entities: &[loom_memory::ExtractedEntity],
         relationships: &[loom_memory::ExtractedRelationship],
         source_event_id: i64,
+        scope: &str,
     ) -> Result<(usize, usize)>;
     async fn save_extracted_entities(
         &self,
         entities: &[loom_memory::ExtractedEntity],
         relationships: &[loom_memory::ExtractedRelationship],
+        scope: &str,
     ) -> Result<()>;
     // Agent config CRUD
     async fn save_agent_config(&self, config: &loom_types::AgentConfig) -> Result<()>;
@@ -87,6 +89,11 @@ pub trait MemoryStore: Send + Sync {
         agent_config_name: &str,
     ) -> Result<()>;
     async fn get_session_agent_name(&self, session_id: &str) -> Result<Option<String>>;
+    // Session workspace
+    async fn save_session_workspace(&self, session_id: &str, path: &str) -> Result<()>;
+    async fn get_session_workspace(&self, session_id: &str) -> Result<Option<String>>;
+    async fn get_default_workspace(&self) -> Result<Option<String>>;
+    async fn set_default_workspace(&self, path: &str) -> Result<()>;
     // Model config CRUD
     async fn save_model_config(&self, config: &loom_types::ModelConfig) -> Result<()>;
     async fn get_model_config(&self, name: &str) -> Result<Option<loom_types::ModelConfig>>;
@@ -104,7 +111,7 @@ pub trait MemoryStore: Send + Sync {
     async fn list_mcp_servers(&self) -> Result<Vec<(lume_mcp::McpServerConfig, bool)>>;
     async fn delete_mcp_server(&self, name: &str) -> Result<()>;
     // Knowledge graph read
-    async fn query_kg_context(&self, entity_names: &[&str], limit: usize) -> Result<String>;
+    async fn query_kg_context(&self, entity_names: &[&str], limit: usize, scope: &str) -> Result<String>;
     // Conversation summary (P0 memory optimization)
     async fn get_summary(&self, session_id: &str) -> Result<Option<String>>;
     async fn save_summary(&self, session_id: &str, summary: &str) -> Result<()>;
@@ -125,6 +132,7 @@ pub trait MemoryStore: Send + Sync {
         &self,
         start_name: &str,
         max_depth: u8,
+        scope: Option<&str>,
         limit: usize,
     ) -> Result<loom_types::KgGraph>;
     async fn kg_list_nodes(
@@ -133,6 +141,7 @@ pub trait MemoryStore: Send + Sync {
         offset: usize,
         scope: Option<&str>,
     ) -> Result<Vec<loom_types::KgNode>>;
+    async fn kg_edges_between(&self, node_names: &[String]) -> Result<Vec<loom_types::KgEdge>>;
     async fn kg_delete_node(&self, name: &str) -> Result<bool>;
     async fn kg_delete_edge(&self, source: &str, target: &str, relation: &str) -> Result<bool>;
     // Cognition records
@@ -611,10 +620,11 @@ impl Orchestrator {
         &self,
         start_name: &str,
         max_depth: u8,
+        scope: Option<&str>,
         limit: usize,
     ) -> Result<loom_types::KgGraph> {
         if let Some(ref store) = *self.memory_store.read().await {
-            store.kg_walk(start_name, max_depth, limit).await
+            store.kg_walk(start_name, max_depth, scope, limit).await
         } else {
             Ok(loom_types::KgGraph {
                 nodes: Vec::new(),
@@ -631,6 +641,14 @@ impl Orchestrator {
     ) -> Result<Vec<loom_types::KgNode>> {
         if let Some(ref store) = *self.memory_store.read().await {
             store.kg_list_nodes(limit, offset, scope).await
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    pub async fn kg_edges_between(&self, node_names: &[String]) -> Result<Vec<loom_types::KgEdge>> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.kg_edges_between(node_names).await
         } else {
             Ok(Vec::new())
         }
@@ -1166,6 +1184,48 @@ impl Orchestrator {
         self.agent_config_get(&name).await.unwrap_or_default()
     }
 
+    // === Workspace Management ===
+
+    /// Set the workspace path for a session.
+    pub async fn set_session_workspace(&self, session_id: &str, path: &str) -> Result<()> {
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            s.save_session_workspace(session_id, path).await
+        } else {
+            Err(anyhow::anyhow!("memory store not available"))
+        }
+    }
+
+    /// Get the workspace path for a session.
+    pub async fn get_session_workspace(&self, session_id: &str) -> Result<Option<String>> {
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            s.get_session_workspace(session_id).await
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Set the default workspace path.
+    pub async fn set_default_workspace(&self, path: &str) -> Result<()> {
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            s.set_default_workspace(path).await
+        } else {
+            Err(anyhow::anyhow!("memory store not available"))
+        }
+    }
+
+    /// Get the default workspace path.
+    pub async fn get_default_workspace(&self) -> Result<Option<String>> {
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            s.get_default_workspace().await
+        } else {
+            Ok(None)
+        }
+    }
+
     // === Model Config Management ===
 
     /// Load model configs from the memory store into the in-memory cache.
@@ -1463,6 +1523,85 @@ impl Orchestrator {
             .map(|s| s.to_string())
     }
 
+    /// Build a CloudClient for an auxiliary model task.
+    /// Returns None if no auxiliary model is configured for the task.
+    async fn build_auxiliary_client(&self, task: &str) -> Option<Arc<dyn CloudClient>> {
+        let model_name = self.read_auxiliary_model(task).await?;
+
+        // Find the model config by name
+        let configs = self.model_configs.read().await;
+        let config = configs.get(&model_name)?;
+
+        let model = config.model.clone()?;
+        let is_local = config.backend.is_local_inference();
+        let base_url = config
+            .base_url
+            .clone()
+            .unwrap_or_else(|| match config.backend {
+                loom_types::ModelBackend::LmStudio => "http://localhost:1234/v1".into(),
+                loom_types::ModelBackend::Ollama => "http://localhost:11434/v1".into(),
+                loom_types::ModelBackend::Anthropic => "https://api.anthropic.com".into(),
+                loom_types::ModelBackend::OpenAI => "https://api.openai.com".into(),
+                loom_types::ModelBackend::DeepSeek => "https://api.deepseek.com/v1".into(),
+                loom_types::ModelBackend::Custom => "http://localhost:8080/v1".into(),
+            });
+
+        if is_local {
+            match loom_inference::InferenceEngine::connect(&base_url, &model, config.context_size).await {
+                Ok(engine) => Some(Arc::new(engine) as Arc<dyn CloudClient>),
+                Err(e) => {
+                    tracing::warn!(task, %model, error = %e, "failed to connect auxiliary inference engine");
+                    None
+                }
+            }
+        } else {
+            let api_key = config
+                .api_key_env
+                .as_deref()
+                .and_then(|raw| {
+                    if let Ok(val) = std::env::var(raw) {
+                        return Some(val);
+                    }
+                    let looks_like_env_var = !raw.is_empty()
+                        && raw.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+                    if !looks_like_env_var && !raw.is_empty() {
+                        Some(raw.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| {
+                    let auto_env = match config.backend {
+                        loom_types::ModelBackend::DeepSeek => "DEEPSEEK_API_KEY",
+                        loom_types::ModelBackend::OpenAI => "OPENAI_API_KEY",
+                        loom_types::ModelBackend::Anthropic => "ANTHROPIC_API_KEY",
+                        _ => "OPENLOOM_API_KEY",
+                    };
+                    std::env::var(auto_env).ok()
+                });
+
+            match api_key {
+                Some(key) => {
+                    let is_anthropic = config.api_format.as_deref() == Some("anthropic")
+                        || matches!(config.backend, loom_types::ModelBackend::Anthropic);
+                    if is_anthropic {
+                        Some(Arc::new(loom_inference::AnthropicClient::new(
+                            key, model, base_url,
+                        )) as Arc<dyn CloudClient>)
+                    } else {
+                        Some(Arc::new(loom_inference::OpenAIClient::new(
+                            key, model, base_url, false,
+                        )) as Arc<dyn CloudClient>)
+                    }
+                }
+                None => {
+                    tracing::warn!(task, %model_name, "no API key found for auxiliary model");
+                    None
+                }
+            }
+        }
+    }
+
     // === Agent Loop ===
 
     /// Process a user message through the agent loop and return the response.
@@ -1580,13 +1719,32 @@ impl Orchestrator {
                     entities.push(c.as_str());
                 }
                 entities.truncate(6);
-                match store.query_kg_context(&entities, 5).await {
+                match store.query_kg_context(&entities, 5, session_id).await {
                     Ok(kg) if !kg.is_empty() => {
                         system_prompt.push_str(&format!("\n\n{}", kg));
                     }
                     _ => {}
                 }
             }
+        }
+
+        // Get workspace path for this session
+        let workspace_path = if let Some(ref store) = *self.memory_store.read().await {
+            let session_ws = store.get_session_workspace(session_id).await.ok().flatten();
+            if session_ws.is_some() {
+                session_ws
+            } else {
+                store.get_default_workspace().await.ok().flatten()
+            }
+        } else {
+            None
+        };
+
+        if let Some(ref ws) = workspace_path {
+            system_prompt.push_str(&format!(
+                "\n\n## 工作空间\n当前工作目录：{}\n所有相对路径都基于此目录。创建、读取、修改文件时优先使用此目录。",
+                ws
+            ));
         }
 
         let loop_config = AgentLoopConfig {
@@ -1596,6 +1754,7 @@ impl Orchestrator {
             thinking_budget,
             model_configs: self.model_configs.read().await.values().cloned().collect(),
             active_model_name: self.active_model_name.read().await.clone(),
+            workspace_path,
             ..Default::default()
         };
         tracing::info!(session_id, "[orchestrator] step: loop_config built");
@@ -1718,6 +1877,7 @@ impl Orchestrator {
                         tool_name,
                         success,
                         result,
+                        structured_content,
                     } => {
                         tool_results.insert(call_id.clone(), success);
                         // Emit ToolCompleted immediately so the frontend updates in real-time
@@ -1727,6 +1887,7 @@ impl Orchestrator {
                             tool_name: tool_name.clone(),
                             success,
                             result: result.clone(),
+                            structured_content,
                         });
                         if let Some(r) = result {
                             tool_result_contents.insert(call_id, r);
@@ -1757,8 +1918,17 @@ impl Orchestrator {
                             context_window: usage_ctx,
                         });
                         // Persist token usage to SQLite for historical stats
+                        tracing::info!(
+                            session_id = %forward_session_id,
+                            model = %usage_model,
+                            prompt = prompt_tokens,
+                            completion = completion_tokens,
+                            cache_read = cache_read_tokens,
+                            cache_write = cache_write_tokens,
+                            "[token-stats] received StreamDelta::Usage for main model"
+                        );
                         if let Some(store) = &*memory_store.read().await {
-                            let _ = store
+                            if let Err(e) = store
                                 .record_token_usage(
                                     &forward_session_id,
                                     &usage_model,
@@ -1769,7 +1939,14 @@ impl Orchestrator {
                                     0, // latency not tracked at StreamDelta level
                                     usage_ctx,
                                 )
-                                .await;
+                                .await
+                            {
+                                tracing::warn!(error = %e, model = %usage_model, "[token-stats] failed to record main model token usage");
+                            } else {
+                                tracing::info!(model = %usage_model, prompt = prompt_tokens, completion = completion_tokens, "[token-stats] main model token usage recorded");
+                            }
+                        } else {
+                            tracing::warn!("[token-stats] memory_store is None, cannot record main model usage");
                         }
                     }
                     StreamDelta::AuxiliaryUsage {
@@ -1789,7 +1966,7 @@ impl Orchestrator {
                             context_window: 0,
                         });
                         if let Some(store) = &*memory_store.read().await {
-                            let _ = store
+                            if let Err(e) = store
                                 .record_token_usage(
                                     &forward_session_id,
                                     &model,
@@ -1800,7 +1977,10 @@ impl Orchestrator {
                                     0,
                                     0,
                                 )
-                                .await;
+                                .await
+                            {
+                                tracing::warn!(error = %e, model = %model, "failed to record auxiliary model token usage (stream)");
+                            }
                         }
                     }
                 }
@@ -1832,6 +2012,7 @@ impl Orchestrator {
                     tool_name: tool_name.clone(),
                     success: true,
                     result: None,
+                    structured_content: None,
                 });
             }
             // Send StreamEnd when channel closes
@@ -1890,31 +2071,40 @@ impl Orchestrator {
         let _ = forward_handle.await;
 
         if let Ok(ref turn) = result {
+            let was_interrupted = turn.response == "[已中断]";
             let _ = self
                 .pool
-                .transition(&agent_id, AgentStatus::Completed, None)
+                .transition(
+                    &agent_id,
+                    if was_interrupted { AgentStatus::Killed } else { AgentStatus::Completed },
+                    None,
+                )
                 .await;
 
-            // Convert images to file refs before caching / persisting
-            let user_msg_full = build_user_message(&user_msg, &attached_images);
-            let mut user_parts = user_msg_full.content.clone();
-            if let Err(e) = self
-                .convert_images_to_refs(session_id, &mut user_parts)
-                .await
-            {
-                tracing::warn!(session_id, error = %e, "failed to convert user images to file refs");
-            }
+            if was_interrupted {
+                // Don't persist interrupted responses to history or memory
+                tracing::info!(session_id, "turn was interrupted, skipping persistence");
+            } else {
+                // Convert images to file refs before caching / persisting
+                let user_msg_full = build_user_message(&user_msg, &attached_images);
+                let mut user_parts = user_msg_full.content.clone();
+                if let Err(e) = self
+                    .convert_images_to_refs(session_id, &mut user_parts)
+                    .await
+                {
+                    tracing::warn!(session_id, error = %e, "failed to convert user images to file refs");
+                }
 
-            self.add_to_history(
-                session_id,
-                Message {
-                    role: Role::User,
-                    content: user_parts.clone(),
-                    timestamp: user_msg_full.timestamp,
-                    usage: user_msg_full.usage,
-                },
-            )
-            .await;
+                self.add_to_history(
+                    session_id,
+                    Message {
+                        role: Role::User,
+                        content: user_parts.clone(),
+                        timestamp: user_msg_full.timestamp,
+                        usage: user_msg_full.usage,
+                    },
+                )
+                .await;
 
             let mut assistant_parts = if turn.content_parts.is_empty() {
                 vec![ContentPart::Text {
@@ -1966,18 +2156,26 @@ impl Orchestrator {
 
                 // LLM-based entity extraction (synchronous, runs after response)
                 let msg = user_message.to_string();
-                let client_opt: Option<Arc<dyn CloudClient>> =
-                    self.cloud_client.read().await.clone();
-                let extract_model = match self.read_auxiliary_model("entity").await {
-                    Some(m) => m,
-                    None => self.active_model_name.read().await.clone().unwrap_or_default(),
+
+                // Try auxiliary client first, fall back to main client
+                let (client_opt, extract_model) = if let Some(aux_client) = self.build_auxiliary_client("entity").await {
+                    let model_name = aux_client.model_name().to_string();
+                    (Some(aux_client), model_name)
+                } else {
+                    let main_client: Option<Arc<dyn CloudClient>> = self.cloud_client.read().await.clone();
+                    let model_name = match main_client.as_ref() {
+                        Some(c) => c.model_name().to_string(),
+                        None => self.active_model_name.read().await.clone().unwrap_or_default(),
+                    };
+                    (main_client, model_name)
                 };
+
                 if let Some(ref client) = client_opt {
-                    match llm_extract_entities(client.as_ref(), &msg).await {
+                    match llm_extract_entities(client.as_ref(), &msg, session_id).await {
                         Ok((entities, relationships, ext_prompt, ext_completion)) => {
                             // Record entity extraction token usage
                             if ext_prompt > 0 || ext_completion > 0 {
-                                let _ = store
+                                if let Err(e) = store
                                     .record_token_usage(
                                         session_id,
                                         &extract_model,
@@ -1988,14 +2186,17 @@ impl Orchestrator {
                                         0,
                                         0,
                                     )
-                                    .await;
+                                    .await
+                                {
+                                    tracing::warn!(error = %e, model = %extract_model, "failed to record entity extraction token usage");
+                                }
                             }
                             if let Ok((n, e)) = store
-                                .feed_knowledge_graph(&entities, &relationships, event_id)
+                                .feed_knowledge_graph(&entities, &relationships, event_id, session_id)
                                 .await
                             {
                                 let _ = store
-                                    .save_extracted_entities(&entities, &relationships)
+                                    .save_extracted_entities(&entities, &relationships, session_id)
                                     .await;
                                 if n > 0 || e > 0 {
                                     tracing::info!(n, e, "KG updated via LLM");
@@ -2012,6 +2213,7 @@ impl Orchestrator {
                 }
                 drop(client_opt);
             }
+            } // end else (not interrupted)
         } else {
             let _ = self
                 .pool
@@ -2106,7 +2308,7 @@ impl Orchestrator {
                 }
                 entities.truncate(6);
                 let kg = store
-                    .query_kg_context(&entities, 5)
+                    .query_kg_context(&entities, 5, session_id)
                     .await
                     .unwrap_or_default();
                 (
@@ -2124,9 +2326,19 @@ impl Orchestrator {
             let prompt =
                 loom_memory::SummaryEngine::build_prompt(&history, existing_summary.as_deref());
             let request = loom_memory::SummaryEngine::build_request(&prompt);
-            let saved_hash = client.prefix_hash_snapshot();
-            let result = client.complete(request).await;
-            client.prefix_hash_restore(saved_hash);
+
+            // Try auxiliary client first, fall back to main client
+            let (summary_client, summary_model) = if let Some(aux_client) = self.build_auxiliary_client("summary").await {
+                let model_name = aux_client.model_name().to_string();
+                (aux_client, model_name)
+            } else {
+                let model_name = client.model_name().to_string();
+                (client.clone(), model_name)
+            };
+
+            let saved_hash = summary_client.prefix_hash_snapshot();
+            let result = summary_client.complete(request).await;
+            summary_client.prefix_hash_restore(saved_hash);
             match result {
                 Ok(resp) if !resp.text.is_empty() => {
                     let new_summary = resp.text;
@@ -2134,13 +2346,8 @@ impl Orchestrator {
                     let sum_prompt = resp.prompt_tokens;
                     let sum_completion = resp.completion_tokens;
                     if sum_prompt > 0 || sum_completion > 0 {
-                        // Read auxiliary config for summary model
-                        let summary_model = match self.read_auxiliary_model("summary").await {
-                            Some(m) => m,
-                            None => self.active_model_name.read().await.clone().unwrap_or_default(),
-                        };
                         if let Some(ref store) = *self.memory_store.read().await {
-                            let _ = store
+                            if let Err(e) = store
                                 .record_token_usage(
                                     session_id,
                                     &summary_model,
@@ -2151,7 +2358,10 @@ impl Orchestrator {
                                     0,
                                     0,
                                 )
-                                .await;
+                                .await
+                            {
+                                tracing::warn!(error = %e, model = %summary_model, "failed to record summary token usage");
+                            }
                         }
                     }
                     // Phase 3: save summary (re-acquire lock briefly)
@@ -2167,6 +2377,25 @@ impl Orchestrator {
             existing_summary
         };
 
+        // Get workspace path for this session
+        let workspace_path = if let Some(ref store) = *self.memory_store.read().await {
+            let session_ws = store.get_session_workspace(session_id).await.ok().flatten();
+            if session_ws.is_some() {
+                session_ws
+            } else {
+                store.get_default_workspace().await.ok().flatten()
+            }
+        } else {
+            None
+        };
+
+        if let Some(ref ws) = workspace_path {
+            system_prompt.push_str(&format!(
+                "\n\n## 工作空间\n当前工作目录：{}\n所有相对路径都基于此目录。创建、读取、修改文件时优先使用此目录。",
+                ws
+            ));
+        }
+
         let config = AgentLoopConfig {
             system_prompt,
             // persona already baked into system_prompt via build_system_prompt()
@@ -2175,6 +2404,7 @@ impl Orchestrator {
             kg_context: kg_ctx,
             model_configs: self.model_configs.read().await.values().cloned().collect(),
             active_model_name: self.active_model_name.read().await.clone(),
+            workspace_path,
             ..Default::default()
         };
 
@@ -2193,102 +2423,120 @@ impl Orchestrator {
         drop(registry);
 
         if let Ok(ref turn) = result {
+            let was_interrupted = turn.response == "[已中断]";
             let _ = self
                 .pool
-                .transition(&agent_id, AgentStatus::Completed, None)
-                .await;
-            self.add_to_history(session_id, Message::user(user_message))
+                .transition(
+                    &agent_id,
+                    if was_interrupted { AgentStatus::Killed } else { AgentStatus::Completed },
+                    None,
+                )
                 .await;
 
-            let mut assistant_parts = if turn.content_parts.is_empty() {
-                vec![ContentPart::Text {
-                    text: turn.response.clone(),
-                }]
+            if was_interrupted {
+                tracing::info!(session_id, "streaming turn was interrupted, skipping persistence");
             } else {
-                turn.content_parts.clone()
-            };
-            if let Err(e) = self
-                .convert_images_to_refs(session_id, &mut assistant_parts)
-                .await
-            {
-                tracing::warn!(session_id, error = %e, "failed to convert assistant images to file refs");
-            }
-            let content_json = serde_json::to_string(&assistant_parts)
-                .unwrap_or_else(|_| serde_json::json!([{"text": turn.response}]).to_string());
+                self.add_to_history(session_id, Message::user(user_message))
+                    .await;
 
-            self.add_to_history(
-                session_id,
-                Message {
-                    role: Role::Assistant,
-                    content: assistant_parts.clone(),
-                    timestamp: chrono::Utc::now(),
-                    usage: None,
-                },
-            )
-            .await;
-
-            // Persist to memory store
-            let mem = self.memory_store.read().await;
-            if let Some(ref store) = *mem {
-                let event_id = store
-                    .save_turn(
-                        session_id,
-                        user_message,
-                        &content_json,
-                        turn.tool_calls_made,
-                        turn.prompt_tokens,
-                        turn.completion_tokens,
-                    )
-                    .await?;
-
-                // LLM-based entity extraction (synchronous, runs after response)
-                let msg = user_message.to_string();
-                let client_opt: Option<Arc<dyn CloudClient>> =
-                    self.cloud_client.read().await.clone();
-                let extract_model = match self.read_auxiliary_model("entity").await {
-                    Some(m) => m,
-                    None => self.active_model_name.read().await.clone().unwrap_or_default(),
+                let mut assistant_parts = if turn.content_parts.is_empty() {
+                    vec![ContentPart::Text {
+                        text: turn.response.clone(),
+                    }]
+                } else {
+                    turn.content_parts.clone()
                 };
-                if let Some(ref client) = client_opt {
-                    match llm_extract_entities(client.as_ref(), &msg).await {
-                        Ok((entities, relationships, ext_prompt, ext_completion)) => {
-                            // Record entity extraction token usage
-                            if ext_prompt > 0 || ext_completion > 0 {
-                                let _ = store
-                                    .record_token_usage(
-                                        session_id,
-                                        &extract_model,
-                                        ext_prompt,
-                                        ext_completion,
-                                        0,
-                                        0,
-                                        0,
-                                        0,
-                                    )
-                                    .await;
-                            }
-                            if let Ok((n, e)) = store
-                                .feed_knowledge_graph(&entities, &relationships, event_id)
-                                .await
-                            {
-                                let _ = store
-                                    .save_extracted_entities(&entities, &relationships)
-                                    .await;
-                                if n > 0 || e > 0 {
-                                    tracing::info!(n, e, "KG updated via LLM");
+                if let Err(e) = self
+                    .convert_images_to_refs(session_id, &mut assistant_parts)
+                    .await
+                {
+                    tracing::warn!(session_id, error = %e, "failed to convert assistant images to file refs");
+                }
+                let content_json = serde_json::to_string(&assistant_parts)
+                    .unwrap_or_else(|_| serde_json::json!([{"text": turn.response}]).to_string());
+
+                self.add_to_history(
+                    session_id,
+                    Message {
+                        role: Role::Assistant,
+                        content: assistant_parts.clone(),
+                        timestamp: chrono::Utc::now(),
+                        usage: None,
+                    },
+                )
+                .await;
+
+                // Persist to memory store
+                let mem = self.memory_store.read().await;
+                if let Some(ref store) = *mem {
+                    let event_id = store
+                        .save_turn(
+                            session_id,
+                            user_message,
+                            &content_json,
+                            turn.tool_calls_made,
+                            turn.prompt_tokens,
+                            turn.completion_tokens,
+                        )
+                        .await?;
+
+                    // LLM-based entity extraction (synchronous, runs after response)
+                    let msg = user_message.to_string();
+
+                    // Try auxiliary client first, fall back to main client
+                    let (client_opt, extract_model) = if let Some(aux_client) = self.build_auxiliary_client("entity").await {
+                        let model_name = aux_client.model_name().to_string();
+                        (Some(aux_client), model_name)
+                    } else {
+                        let main_client: Option<Arc<dyn CloudClient>> = self.cloud_client.read().await.clone();
+                        let model_name = match main_client.as_ref() {
+                            Some(c) => c.model_name().to_string(),
+                            None => self.active_model_name.read().await.clone().unwrap_or_default(),
+                        };
+                        (main_client, model_name)
+                    };
+
+                    if let Some(ref client) = client_opt {
+                        match llm_extract_entities(client.as_ref(), &msg, session_id).await {
+                            Ok((entities, relationships, ext_prompt, ext_completion)) => {
+                                // Record entity extraction token usage
+                                if ext_prompt > 0 || ext_completion > 0 {
+                                    let _ = store
+                                        .record_token_usage(
+                                            session_id,
+                                            &extract_model,
+                                            ext_prompt,
+                                            ext_completion,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                        )
+                                        .await;
+                                }
+                                if let Ok((n, e)) = store
+                                    .feed_knowledge_graph(&entities, &relationships, event_id, session_id)
+                                    .await
+                                {
+                                    let _ = store
+                                        .save_extracted_entities(&entities, &relationships, session_id)
+                                        .await;
+                                    if n > 0 || e > 0 {
+                                        tracing::info!(n, e, "KG updated via LLM");
+                                    }
+                                }
+                                if let Ok(persona) = store.get_persona().await
+                                    && !persona.is_empty()
+                                {
+                                    *self.persona_context.write().await = persona;
                                 }
                             }
-                            if let Ok(persona) = store.get_persona().await
-                                && !persona.is_empty()
-                            {
-                                *self.persona_context.write().await = persona;
-                            }
+                            Err(e) => tracing::debug!("LLM extraction: {}", e),
                         }
-                        Err(e) => tracing::debug!("LLM extraction: {}", e),
                     }
+                    drop(client_opt);
                 }
-                drop(client_opt);
-            }
+            } // end else (not interrupted)
         } else {
             let _ = self
                 .pool
@@ -2377,6 +2625,7 @@ impl AgentTool for McpAgentTool {
         &self,
         arguments: serde_json::Value,
         _progress: tokio::sync::mpsc::UnboundedSender<loom_types::ToolProgress>,
+        _context: &crate::tool_context::ToolContext,
     ) -> Result<crate::tool_registry::ToolResult> {
         match self
             .mcp_client
@@ -2435,6 +2684,7 @@ impl AgentTool for McpMetaTool {
         &self,
         arguments: serde_json::Value,
         _progress: tokio::sync::mpsc::UnboundedSender<loom_types::ToolProgress>,
+        _context: &crate::tool_context::ToolContext,
     ) -> Result<crate::tool_registry::ToolResult> {
         let result: Result<serde_json::Value> = match &self.op {
             McpMetaOp::ListResources => {
@@ -2535,28 +2785,31 @@ impl AgentTool for LspTool {
         &self,
         arguments: serde_json::Value,
         _progress: tokio::sync::mpsc::UnboundedSender<loom_types::ToolProgress>,
+        context: &crate::tool_context::ToolContext,
     ) -> Result<crate::tool_registry::ToolResult> {
-        let file_path = arguments
+        let file_path_raw = arguments
             .get("file_path")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        if file_path.is_empty() {
+        if file_path_raw.is_empty() {
             return Ok(crate::tool_registry::ToolResult {
                 content: "Error: 'file_path' parameter is required".into(),
                 is_error: true,
                 structured_content: None,
             });
         }
+        let file_path = context.resolve_path(file_path_raw);
+        let file_path_str = file_path.to_string_lossy().to_string();
 
         let result: Result<serde_json::Value> = match &self.op {
-            LspOp::Diagnostics => self.lsp_client.diagnostics(file_path).await,
+            LspOp::Diagnostics => self.lsp_client.diagnostics(&file_path_str).await,
             LspOp::Completion => {
                 let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
                 let character = arguments
                     .get("character")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0) as u32;
-                self.lsp_client.completion(file_path, line, character).await
+                self.lsp_client.completion(&file_path_str, line, character).await
             }
             LspOp::Hover => {
                 let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
@@ -2564,7 +2817,7 @@ impl AgentTool for LspTool {
                     .get("character")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0) as u32;
-                self.lsp_client.hover(file_path, line, character).await
+                self.lsp_client.hover(&file_path_str, line, character).await
             }
             LspOp::Definition => {
                 let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
@@ -2572,7 +2825,7 @@ impl AgentTool for LspTool {
                     .get("character")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0) as u32;
-                self.lsp_client.definition(file_path, line, character).await
+                self.lsp_client.definition(&file_path_str, line, character).await
             }
             LspOp::References => {
                 let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
@@ -2585,10 +2838,10 @@ impl AgentTool for LspTool {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(true);
                 self.lsp_client
-                    .references(file_path, line, character, include_decl)
+                    .references(&file_path_str, line, character, include_decl)
                     .await
             }
-            LspOp::DocumentSymbols => self.lsp_client.document_symbols(file_path).await,
+            LspOp::DocumentSymbols => self.lsp_client.document_symbols(&file_path_str).await,
         };
 
         match result {
@@ -2673,6 +2926,7 @@ fn register_lsp_tools(registry: &mut ToolRegistry, lsp_client: &Arc<LspClient>) 
 async fn llm_extract_entities(
     client: &dyn CloudClient,
     text: &str,
+    scope: &str,
 ) -> Result<(Vec<ExtractedEntity>, Vec<ExtractedRelationship>, usize, usize)> {
     let prompt = format!("{}\n\nUser message: {}", LLM_EXTRACTION_PROMPT, text);
 
@@ -2692,7 +2946,7 @@ async fn llm_extract_entities(
     let response = client.complete(request).await?;
     let prompt_tokens = response.prompt_tokens;
     let completion_tokens = response.completion_tokens;
-    let (mut entities, mut relationships) = parse_llm_extraction(&response.text)?;
+    let (mut entities, mut relationships) = parse_llm_extraction(&response.text, scope)?;
 
     // Normalize: USER entity should always be "USER"
     for e in &mut entities {

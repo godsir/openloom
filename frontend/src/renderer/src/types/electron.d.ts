@@ -1,8 +1,8 @@
-import type { HanaApi } from '../../preload/index'
+import type { LoomApi } from '../../preload/index'
 
 declare global {
   interface Window {
-    hana: HanaApi
+    loom: LoomApi
     __enginePort__: number
     __isPackaged__: boolean
   }

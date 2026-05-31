@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useStore } from '../../stores'
 import type { SessionSummary } from '../../stores/session'
+import { rpc } from '../../services/rpc-toast'
 import ContextMenu, { ContextMenuItem } from '../shared/ContextMenu'
 import { IconPin, IconPinOff } from '../../utils/icons'
 import styles from './SessionItem.module.css'
@@ -94,6 +95,14 @@ export default function SessionItem({ session }: { session: SessionSummary }) {
       {!selectionMode && (
         <ContextMenu open={menuOpen} x={menuPos.x} y={menuPos.y} onClose={() => setMenuOpen(false)}>
           <ContextMenuItem onClick={()=>{setMenuOpen(false);setRenaming(true);setTitleDraft(session.title||'')}}>重命名</ContextMenuItem>
+          <ContextMenuItem onClick={async ()=>{
+            setMenuOpen(false)
+            const path = await window.loom.selectFolder()
+            if (path) {
+              useStore.getState().setSessionWorkspace(sid, path)
+              await rpc('workspace.set_session', { session_id: sid, path }, '工作区已设置')
+            }
+          }}>设置工作区</ContextMenuItem>
           <ContextMenuItem onClick={async ()=>{setMenuOpen(false); const ok = await useStore.getState().showConfirm('删除会话', '确定删除此会话？', true); if(ok)deleteSession(sid)}} danger>删除</ContextMenuItem>
         </ContextMenu>
       )}

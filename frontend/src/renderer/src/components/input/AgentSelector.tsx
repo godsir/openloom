@@ -17,7 +17,11 @@ export default function AgentSelector() {
   const options = useMemo(
     () => [
       { value: '', label: '默认 Agent' },
-      ...validAgents.map((a) => ({ value: a.name, label: a.name })),
+      ...validAgents.map((a) => ({
+        value: a.name,
+        label: a.name,
+        avatar: (a as any).avatar ?? null,
+      })),
     ],
     [validAgents],
   )

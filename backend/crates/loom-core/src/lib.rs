@@ -10,6 +10,7 @@ pub mod agent_pool;
 pub mod builtin_tools;
 pub mod event_bus;
 pub mod orchestrator;
+pub mod tool_context;
 pub mod tool_registry;
 pub mod vision;
 

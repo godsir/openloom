@@ -185,6 +185,35 @@
   background: var(--bg-surface);
 }
 
+/* Edit group: wraps agent card + inline edit form */
+.editGroup {
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-accent);
+  background: var(--bg-surface);
+  overflow: hidden;
+  animation: slideDown 0.2s ease-out;
+}
+
+.editGroup .modelItem {
+  border: none;
+  border-radius: 0;
+}
+
+/* Inline edit form below the agent card */
+.inlineForm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+@keyframes slideDown {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 800px; }
+}
+
 .formRow {
   display: flex;
   flex-direction: column;

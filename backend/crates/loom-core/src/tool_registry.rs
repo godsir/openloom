@@ -12,6 +12,8 @@ use loom_types::{ToolDefinition, ToolProgress};
 use tokio::sync::RwLock;
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::tool_context::ToolContext;
+
 /// Result of executing a tool.
 #[derive(Debug, Clone)]
 pub struct ToolResult {
@@ -46,6 +48,7 @@ pub trait AgentTool: Send + Sync {
         &self,
         arguments: serde_json::Value,
         progress: UnboundedSender<ToolProgress>,
+        context: &ToolContext,
     ) -> Result<ToolResult>;
 
     /// Whether this tool supports parallel execution with others.
@@ -117,11 +120,12 @@ impl ToolRegistry {
         name: &str,
         arguments: serde_json::Value,
         progress: UnboundedSender<ToolProgress>,
+        context: &ToolContext,
     ) -> Result<ToolResult> {
         let tool = self
             .find(name)
             .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", name))?;
-        tool.execute(arguments, progress).await
+        tool.execute(arguments, progress, context).await
     }
 
     /// List all registered tool names.
@@ -197,6 +201,7 @@ impl AgentTool for SpawnAgentTool {
         &self,
         arguments: serde_json::Value,
         _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
     ) -> Result<ToolResult> {
         let description = arguments["description"].as_str().unwrap_or("subtask");
         let prompt = arguments["prompt"].as_str().unwrap_or("");
@@ -225,6 +230,7 @@ impl AgentTool for SpawnAgentTool {
             thinking_budget: config.thinking_budget,
             model_configs: Vec::new(),
             active_model_name: None,
+            workspace_path: config.workspace_path.clone(),
         };
         drop(config);
 

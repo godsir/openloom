@@ -3,12 +3,8 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use refinery::embed_migrations;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
-
-embed_migrations!("../../../migrations");
 
 // ============================================================================
 // Row types
@@ -65,118 +61,6 @@ pub struct CognitionSnapshot {
     pub snapshot_at: i64,
 }
 
-// ============================================================================
-// SqliteEventStore
-// ============================================================================
-
-pub struct SqliteEventStore {
-    conn: Connection,
-}
-
-impl SqliteEventStore {
-    /// Open (or create) the database with full migrations.
-    pub fn open(path: &Path) -> Result<Self> {
-        let mut conn = Connection::open(path)?;
-        // Force switch from WAL to DELETE — checkpoint first, then switch
-        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-        conn.execute_batch(
-            "PRAGMA journal_mode=DELETE;
-             PRAGMA foreign_keys=ON;",
-        )?;
-        migrations::runner().run(&mut conn)?;
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
-            [],
-            |r| r.get(0),
-        )?;
-        tracing::info!(table_count = count, "db opened");
-        Ok(Self { conn })
-    }
-
-    /// Create from an already-open connection.
-    pub fn from_connection(conn: Connection) -> Self {
-        Self { conn }
-    }
-
-    pub fn conn(&self) -> &Connection {
-        &self.conn
-    }
-
-    /// Insert an event row.
-    pub fn insert_event(&self, event: &NewEvent) -> Result<i64> {
-        let payload = event.payload.as_ref().map(|p| p.to_string());
-        self.conn.execute(
-            "INSERT INTO events (timestamp, type, action, context, confidence, source_session, source_text, payload)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
-                event.timestamp.to_rfc3339(),
-                event.event_type,
-                event.action,
-                event.context,
-                event.confidence,
-                event.source_session,
-                event.source_text,
-                payload,
-            ],
-        )?;
-        Ok(self.conn.last_insert_rowid())
-    }
-
-    /// Query recent events.
-    pub fn query_recent(&self, limit: usize) -> Result<Vec<EventRow>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, timestamp, type, action, context, confidence, source_session, source_text
-             FROM events ORDER BY id DESC LIMIT ?1",
-        )?;
-        let rows = stmt.query_map(params![limit as i64], |row| {
-            Ok(EventRow {
-                id: row.get(0)?,
-                timestamp: row.get(1)?,
-                event_type: row.get(2)?,
-                action: row.get(3)?,
-                context: row.get(4)?,
-                confidence: row.get(5)?,
-                source_session: row.get(6)?,
-                source_text: row.get(7)?,
-            })
-        })?;
-        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-    }
-
-    /// Full-text search (FTS5) across events.
-    pub fn search_fts(&self, query: &str, limit: usize) -> Result<Vec<EventRow>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT e.id, e.timestamp, e.type, e.action, e.context, e.confidence,
-                    e.source_session, e.source_text
-             FROM events e
-             INNER JOIN events_fts fts ON e.id = fts.rowid
-             WHERE events_fts MATCH ?1 ORDER BY rank LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![query, limit as i64], |row| {
-            Ok(EventRow {
-                id: row.get(0)?,
-                timestamp: row.get(1)?,
-                event_type: row.get(2)?,
-                action: row.get(3)?,
-                context: row.get(4)?,
-                confidence: row.get(5)?,
-                source_session: row.get(6)?,
-                source_text: row.get(7)?,
-            })
-        })?;
-        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-    }
-
-    /// Count events by action type.
-    pub fn count_by_action(&self, action: &str) -> Result<usize> {
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM events WHERE action = ?1",
-            params![action],
-            |row| row.get(0),
-        )?;
-        Ok(count as usize)
-    }
-}
 
 // ============================================================================
 // CognitionStore — versioned trait storage
@@ -295,6 +179,34 @@ impl<'a> CognitionStore<'a> {
     pub fn delete(&self, id: i64) -> Result<()> {
         self.conn
             .execute("DELETE FROM cognitions WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    /// Promote cognitions with the given scope to "global" where confidence >= threshold.
+    /// Returns the number of rows promoted.
+    pub fn promote_to_global(&self, scope: &str, min_confidence: f64) -> Result<usize> {
+        // Update scope to 'global' for cognitions that don't already have a global duplicate
+        let promoted = self.conn.execute(
+            "UPDATE cognitions SET scope = 'global'
+             WHERE scope = ?1 AND confidence >= ?2
+             AND (subject || '|' || trait) NOT IN
+                 (SELECT subject || '|' || trait FROM cognitions WHERE scope = 'global')",
+            params![scope, min_confidence],
+        )?;
+        // Delete remaining session-scoped cognitions
+        self.conn.execute(
+            "DELETE FROM cognitions WHERE scope = ?1",
+            params![scope],
+        )?;
+        Ok(promoted)
+    }
+
+    /// Delete all cognitions with a given scope.
+    pub fn delete_by_scope(&self, scope: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM cognitions WHERE scope = ?1",
+            params![scope],
+        )?;
         Ok(())
     }
 
@@ -452,6 +364,30 @@ impl<'a> AgentConfigStore<'a> {
             .conn
             .query_row(
                 "SELECT agent_config_name FROM sessions WHERE id = ?1",
+                params![session_id],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(row)
+    }
+
+    pub fn set_session_workspace(&self, session_id: &str, workspace_path: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO sessions (id, created_at, message_count) VALUES (?1, datetime('now'), 0)",
+            params![session_id],
+        )?;
+        self.conn.execute(
+            "UPDATE sessions SET workspace_path = ?1 WHERE id = ?2",
+            params![workspace_path, session_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_session_workspace(&self, session_id: &str) -> Result<Option<String>> {
+        let row: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT workspace_path FROM sessions WHERE id = ?1",
                 params![session_id],
                 |row| row.get(0),
             )
@@ -770,4 +706,32 @@ impl<'a> McpConfigStore<'a> {
             .execute("DELETE FROM mcp_servers WHERE name = ?1", params![name])?;
         Ok(())
     }
+}
+
+// ============================================================================
+// Default Workspace — stored in ~/.loom/workspace.json
+// ============================================================================
+
+/// Get the default workspace path from ~/.loom/workspace.json
+pub fn get_default_workspace() -> Option<String> {
+    let home = dirs::home_dir()?;
+    let config_path = home.join(".loom").join("workspace.json");
+    let content = std::fs::read_to_string(&config_path).ok()?;
+    let config: serde_json::Value = serde_json::from_str(&content).ok()?;
+    config
+        .get("default_workspace")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Set the default workspace path in ~/.loom/workspace.json
+pub fn set_default_workspace(path: &str) -> Result<()> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot find home directory"))?;
+    let loom_dir = home.join(".loom");
+    std::fs::create_dir_all(&loom_dir)?;
+    let config_path = loom_dir.join("workspace.json");
+    let config = serde_json::json!({ "default_workspace": path });
+    std::fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
+    Ok(())
 }

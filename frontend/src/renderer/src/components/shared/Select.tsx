@@ -7,6 +7,7 @@ export interface SelectOption<T extends string = string> {
   value: T
   label: string
   group?: string
+  avatar?: string | null
 }
 
 interface SelectProps<T extends string> {
@@ -40,7 +41,9 @@ export default function Select<T extends string = string>({
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const [menuPos, setMenuPos] = useState<React.CSSProperties>({})
-  const label = options.find((o) => o.value === value)?.label ?? placeholder ?? ''
+  const selected = options.find((o) => o.value === value)
+  const label = selected?.label ?? placeholder ?? ''
+  const selectedAvatar = selected?.avatar ?? null
 
   const groupHeaders = useMemo(() => {
     const seen = new Set<string>()
@@ -116,6 +119,15 @@ export default function Select<T extends string = string>({
         className={triggerClass}
         disabled={disabled}
       >
+        {isPill && selectedAvatar ? (
+          <span className={styles.triggerAvatar}>
+            {selectedAvatar.startsWith('data:') ? (
+              <img src={selectedAvatar} alt="" className={styles.triggerAvatarImg} />
+            ) : (
+              <span className={styles.triggerAvatarLetter}>{label[0]?.toUpperCase() || '?'}</span>
+            )}
+          </span>
+        ) : null}
         <span className={`${styles.label} ${value ? '' : styles.placeholder}`}>{label}</span>
         <IconChevronDown size={isPill ? 8 : 12} />
       </button>
@@ -139,6 +151,13 @@ export default function Select<T extends string = string>({
                   }}
                   className={`${styles.item} ${opt.value === value ? styles.itemActive : ''}`}
                 >
+                  {opt.avatar ? (
+                    opt.avatar.startsWith('data:') ? (
+                      <img src={opt.avatar} alt="" className={styles.itemAvatar} />
+                    ) : (
+                      <span className={styles.itemAvatarLetter}>{opt.label[0]?.toUpperCase() || '?'}</span>
+                    )
+                  ) : null}
                   <span className={styles.itemLabel} title={opt.label}>{opt.label}</span>
                   {opt.value === value && <IconCheck size={12} className={styles.check} />}
                 </div>

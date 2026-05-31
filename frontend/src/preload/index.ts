@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-export interface HanaApi {
+export interface LoomApi {
   getPlatform: () => Promise<string>
   getAppVersion: () => Promise<string>
   selectFolder: () => Promise<string | null>
@@ -20,12 +20,13 @@ export interface HanaApi {
   installUpdate: () => void
   onUpdateAvailable: (cb: (info: unknown) => void) => void
   onUpdateNotAvailable: (cb: () => void) => void
+  onUpdateDownloadProgress: (cb: (progress: { percent: number; bytesPerSecond: number; transferred: number; total: number }) => void) => void
   onUpdateDownloaded: (cb: () => void) => void
   onUpdateError: (cb: (msg: string) => void) => void
   getLoomDir: () => Promise<string>
 }
 
-contextBridge.exposeInMainWorld('hana', {
+contextBridge.exposeInMainWorld('loom', {
   getPlatform: () => ipcRenderer.invoke('get-platform'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   selectFolder: () => ipcRenderer.invoke('select-folder'),
@@ -46,7 +47,8 @@ contextBridge.exposeInMainWorld('hana', {
   installUpdate: () => ipcRenderer.invoke('install-update'),
   onUpdateAvailable: (cb: (info: unknown) => void) => ipcRenderer.on('update-available', (_e, info) => cb(info)),
   onUpdateNotAvailable: (cb: () => void) => ipcRenderer.on('update-not-available', () => cb()),
+  onUpdateDownloadProgress: (cb) => ipcRenderer.on('update-download-progress', (_e, progress) => cb(progress)),
   onUpdateDownloaded: (cb: () => void) => ipcRenderer.on('update-downloaded', () => cb()),
   onUpdateError: (cb: (msg: string) => void) => ipcRenderer.on('update-error', (_e, msg: string) => cb(msg)),
   getLoomDir: () => ipcRenderer.invoke('get-loom-dir'),
-} satisfies HanaApi)
+} satisfies LoomApi)

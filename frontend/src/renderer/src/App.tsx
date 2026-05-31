@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import AppShell from './components/app/AppShell'
 import SettingsModal from './components/shared/SettingsModal'
+import UpdateModal from './components/shared/UpdateModal'
 
 import Onboarding from './components/shared/Onboarding'
 import ErrorBoundary from './components/shared/ErrorBoundary'
@@ -35,13 +36,13 @@ export default function App() {
         if (cancelled) { cleanup(); return }
         teardown = cleanup
         setReady(true)
-        const pref = await window.hana.getPreference('onboarded', false)
+        const pref = await window.loom.getPreference('onboarded', false)
         if (!pref) setShowOnboarding(true)
-        const savedTheme = await window.hana.getPreference('theme', 'dark')
+        const savedTheme = await window.loom.getPreference('theme', 'dark')
         useStore.getState().setTheme(savedTheme as any)
-        const savedFontSize = await window.hana.getPreference('fontSize', 'default')
+        const savedFontSize = await window.loom.getPreference('fontSize', 'default')
         useStore.getState().setFontSize(savedFontSize as any)
-        const savedPinned = await window.hana.getPreference<string[]>('pinnedIds', [])
+        const savedPinned = await window.loom.getPreference<string[]>('pinnedIds', [])
         if (savedPinned.length) {
           useStore.setState({ pinnedIds: new Set(savedPinned) })
         }
@@ -52,6 +53,25 @@ export default function App() {
     }
     boot()
     return () => { cancelled = true; teardown?.() }
+  }, [])
+
+  // Global update IPC listeners (registered once on mount)
+  useEffect(() => {
+    window.loom.onUpdateAvailable((info: any) => {
+      useStore.getState().onAutoUpdateAvailable(info?.version ?? null)
+    })
+    window.loom.onUpdateNotAvailable(() => {
+      useStore.getState().onAutoUpdateNotAvailable()
+    })
+    window.loom.onUpdateDownloadProgress((p) => {
+      useStore.getState().onAutoDownloadProgress(p)
+    })
+    window.loom.onUpdateDownloaded(() => {
+      useStore.getState().onAutoUpdateDownloaded()
+    })
+    window.loom.onUpdateError((msg: string) => {
+      useStore.getState().onAutoUpdateError(msg)
+    })
   }, [])
 
   const handleRetry = () => {
@@ -100,7 +120,7 @@ export default function App() {
 
   // Onboarding
   if (showOnboarding) {
-    return <Onboarding onComplete={() => { window.hana.setPreference('onboarded', true); setShowOnboarding(false) }} />
+    return <Onboarding onComplete={() => { window.loom.setPreference('onboarded', true); setShowOnboarding(false) }} />
   }
 
   // Main app
@@ -124,6 +144,7 @@ export default function App() {
           set({ confirm: { open: false, title: '', message: '', danger: false, resolve: null } })
         }}
       />
+      <UpdateModal />
     </ErrorBoundary>
   )
 }

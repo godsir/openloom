@@ -220,10 +220,9 @@ export default function AgentConfigPanel() {
         style={{ display: 'none' }}
       />
 
-      {/* Create / Edit form */}
-      {isEditing && (
+      {/* Create form (shown at top when creating new agent) */}
+      {showForm && !editingId && (
         <div className={styles.form}>
-          {/* Avatar */}
           <div className={styles.formRow}>
             <label className={styles.formLabel}>头像</label>
             <div className={styles.avatarRow}>
@@ -245,13 +244,12 @@ export default function AgentConfigPanel() {
           </div>
 
           <div className={styles.formRow}>
-            <label className={styles.formLabel}>名称 {isDefaultAgent ? '' : '*'}</label>
+            <label className={styles.formLabel}>名称 *</label>
             <input
-              value={isDefaultAgent ? 'Loom' : nameDraft}
+              value={nameDraft}
               onChange={(e) => setNameDraft(e.target.value)}
               placeholder="输入 Agent 名称"
               className={styles.formInput}
-              disabled={isDefaultAgent}
             />
           </div>
           <div className={styles.formRow}>
@@ -263,33 +261,31 @@ export default function AgentConfigPanel() {
             />
           </div>
           <div className={styles.formRow}>
-            <label className={styles.formLabel}>Persona{isDefaultAgent ? '（内置）' : ''}</label>
+            <label className={styles.formLabel}>Persona</label>
             <textarea
               value={personaDraft}
               onChange={(e) => setPersonaDraft(e.target.value)}
               placeholder="描述 Agent 的核心身份"
               className={styles.formTextarea}
-              disabled={isDefaultAgent}
             />
           </div>
           <div className={styles.formRow}>
-            <label className={styles.formLabel}>系统提示词{isDefaultAgent ? '（内置）' : ''}</label>
+            <label className={styles.formLabel}>系统提示词</label>
             <textarea
               value={systemPromptDraft}
               onChange={(e) => setSystemPromptDraft(e.target.value)}
               placeholder="自定义系统指令。留空使用默认。"
               className={styles.formTextarea}
-              disabled={isDefaultAgent}
             />
           </div>
           <div className={styles.formActions}>
             <button onClick={resetForm} className={styles.cancelBtn}>取消</button>
             <button
-              onClick={editingId ? handleUpdate : handleCreate}
+              onClick={handleCreate}
               disabled={!nameDraft.trim()}
               className={styles.submitBtn}
             >
-              {editingId ? '保存' : '创建'}
+              创建
             </button>
           </div>
         </div>
@@ -304,30 +300,110 @@ export default function AgentConfigPanel() {
         const defaultAgent = filteredAgents.find((a) => a.name === 'default')
         const userAgents = filteredAgents.filter((a) => a.name !== 'default')
 
-        const renderItem = (a: any) => (
-          <div key={a.name} className={`${styles.modelItem} ${editingId === a.name ? styles.modelItemActive : ''}`}>
-            <div className={styles.agentAvatarSm}>
-              {a.avatar ? (
-                <img src={a.avatar} alt={a.name} className={styles.agentAvatarImg} />
-              ) : (
-                <span className={styles.agentAvatarLetter}>{a.name[0]?.toUpperCase() || '?'}</span>
-              )}
+        const renderEditForm = () => (
+          <div className={styles.inlineForm}>
+            <div className={styles.formRow}>
+              <label className={styles.formLabel}>头像</label>
+              <div className={styles.avatarRow}>
+                <div
+                  className={styles.avatarPreview}
+                  onClick={() => fileInputRef.current?.click()}
+                  title="点击上传头像"
+                >
+                  {avatarDraft ? (
+                    <img src={avatarDraft} alt="avatar" className={styles.avatarPreviewImg} />
+                  ) : (
+                    <span className={styles.avatarPlaceholder}>+</span>
+                  )}
+                </div>
+                {avatarDraft && (
+                  <button onClick={removeAvatar} className={styles.avatarRemoveBtn}>移除</button>
+                )}
+              </div>
             </div>
-            <div className={styles.modelInfo}>
-              <span className={styles.modelName}>{a.name === 'default' ? 'Loom' : a.name}</span>
-              {a.persona && <span className={styles.modelId}>{a.persona.slice(0, 40)}{a.persona.length > 40 ? '...' : ''}</span>}
-              {a.system_prompt_override && <span className={styles.systemPromptBadge}>自定义提示词</span>}
-              {a.name === 'default' && <span className={styles.systemPromptBadge}>默认</span>}
+
+            <div className={styles.formRow}>
+              <label className={styles.formLabel}>名称 {isDefaultAgent ? '' : '*'}</label>
+              <input
+                value={isDefaultAgent ? 'Loom' : nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                placeholder="输入 Agent 名称"
+                className={styles.formInput}
+                disabled={isDefaultAgent}
+              />
             </div>
-            {a.model && <span className={styles.providerBadge}>{a.model}</span>}
-            <div className={styles.actions}>
-              <button onClick={() => startEdit(a)} className={styles.actionBtn}>编辑</button>
-              {a.name !== 'default' && (
-                <button onClick={() => handleDelete(a.name)} className={styles.deleteBtn}>删除</button>
-              )}
+            <div className={styles.formRow}>
+              <label className={styles.formLabel}>模型</label>
+              <Select
+                value={modelDraft}
+                options={modelOptions}
+                onChange={setModelDraft}
+              />
+            </div>
+            <div className={styles.formRow}>
+              <label className={styles.formLabel}>Persona{isDefaultAgent ? '（内置）' : ''}</label>
+              <textarea
+                value={personaDraft}
+                onChange={(e) => setPersonaDraft(e.target.value)}
+                placeholder="描述 Agent 的核心身份"
+                className={styles.formTextarea}
+                disabled={isDefaultAgent}
+              />
+            </div>
+            <div className={styles.formRow}>
+              <label className={styles.formLabel}>系统提示词{isDefaultAgent ? '（内置）' : ''}</label>
+              <textarea
+                value={systemPromptDraft}
+                onChange={(e) => setSystemPromptDraft(e.target.value)}
+                placeholder="自定义系统指令。留空使用默认。"
+                className={styles.formTextarea}
+                disabled={isDefaultAgent}
+              />
+            </div>
+            <div className={styles.formActions}>
+              <button onClick={resetForm} className={styles.cancelBtn}>取消</button>
+              <button
+                onClick={handleUpdate}
+                disabled={!nameDraft.trim()}
+                className={styles.submitBtn}
+              >
+                保存
+              </button>
             </div>
           </div>
         )
+
+        const renderItem = (a: any) => {
+          const agentId = a.name === 'default' ? 'default' : (a.name || a.id)
+          const isActive = editingId === agentId
+          return (
+            <div key={a.name} className={isActive ? styles.editGroup : ''}>
+              <div className={`${styles.modelItem} ${isActive ? styles.modelItemActive : ''}`}>
+                <div className={styles.agentAvatarSm}>
+                  {a.avatar ? (
+                    <img src={a.avatar} alt={a.name} className={styles.agentAvatarImg} />
+                  ) : (
+                    <span className={styles.agentAvatarLetter}>{a.name[0]?.toUpperCase() || '?'}</span>
+                  )}
+                </div>
+                <div className={styles.modelInfo}>
+                  <span className={styles.modelName}>{a.name === 'default' ? 'Loom' : a.name}</span>
+                  {a.persona && <span className={styles.modelId}>{a.persona.slice(0, 40)}{a.persona.length > 40 ? '...' : ''}</span>}
+                  {a.system_prompt_override && <span className={styles.systemPromptBadge}>自定义提示词</span>}
+                  {a.name === 'default' && <span className={styles.systemPromptBadge}>默认</span>}
+                </div>
+                {a.model && <span className={styles.providerBadge}>{a.model}</span>}
+                <div className={styles.actions}>
+                  <button onClick={() => startEdit(a)} className={styles.actionBtn}>编辑</button>
+                  {a.name !== 'default' && (
+                    <button onClick={() => handleDelete(a.name)} className={styles.deleteBtn}>删除</button>
+                  )}
+                </div>
+              </div>
+              {isActive && renderEditForm()}
+            </div>
+          )
+        }
 
         return (
           <div className={styles.list}>

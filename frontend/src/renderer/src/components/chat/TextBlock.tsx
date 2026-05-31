@@ -17,7 +17,7 @@ export default function TextBlock({ block }: { block: ContentBlock }) {
     if (openBtn) {
       e.preventDefault()
       const filePath = (openBtn as HTMLElement).getAttribute('data-file-path')
-      if (filePath) window.hana.openFile(filePath)
+      if (filePath) window.loom.openFile(filePath)
       return
     }
 
@@ -27,7 +27,7 @@ export default function TextBlock({ block }: { block: ContentBlock }) {
       const href = link.getAttribute('href') || ''
       if (/^[A-Za-z]:\\/.test(href) || /^\/\S+\.\w{1,10}$/.test(href)) {
         e.preventDefault()
-        window.hana.openFile(href)
+        window.loom.openFile(href)
       }
     }
   }, [])

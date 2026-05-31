@@ -79,13 +79,13 @@ const PRICING_DB: Array<{ key: string; input: number; output: number; cacheRead?
 
 async function loadCustomProviders(): Promise<ProviderEntry[]> {
   try {
-    return await window.hana.getPreference<ProviderEntry[]>(CUSTOM_PROVIDERS_KEY, [])
+    return await window.loom.getPreference<ProviderEntry[]>(CUSTOM_PROVIDERS_KEY, [])
   } catch { return [] }
 }
 
 async function saveCustomProviders(entries: ProviderEntry[]): Promise<void> {
   const custom = entries.filter(e => e.isCustom)
-  await window.hana.setPreference(CUSTOM_PROVIDERS_KEY, custom)
+  await window.loom.setPreference(CUSTOM_PROVIDERS_KEY, custom)
 }
 
 function buildProviders(customProviders: ProviderEntry[], models: ModelListItem[]): ProviderEntry[] {

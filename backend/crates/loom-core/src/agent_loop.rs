@@ -13,6 +13,7 @@ use loom_types::{CompletionRequest, ContentPart, Message, Role, StreamDelta, Too
 use tokio::sync::mpsc;
 use tracing::info;
 
+use crate::tool_context::ToolContext;
 use crate::tool_registry::ToolRegistry;
 
 /// The result of one agent turn.
@@ -61,6 +62,8 @@ pub struct AgentLoopConfig {
     pub model_configs: Vec<loom_types::ModelConfig>,
     /// Name of the currently active main model (used to look up vision capability).
     pub active_model_name: Option<String>,
+    /// Workspace path for file operations. Relative paths will be resolved against this.
+    pub workspace_path: Option<String>,
 }
 
 impl Default for AgentLoopConfig {
@@ -77,6 +80,7 @@ impl Default for AgentLoopConfig {
             thinking_budget: None,
             model_configs: Vec::new(),
             active_model_name: None,
+            workspace_path: None,
         }
     }
 }
@@ -234,13 +238,6 @@ fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
             if let Some(t) = all.iter().find(|t| t.name == *name) {
                 matched.push(t.clone());
             }
-        }
-    }
-
-    // Always include all MCP tools (mcp__ prefix) so the model can discover them
-    for t in all {
-        if t.name.starts_with("mcp__") && !matched.iter().any(|m| m.name == t.name) {
-            matched.push(t.clone());
         }
     }
 
@@ -445,6 +442,9 @@ async fn run_agent_turn_inner(
     let mut total_prompt = 0usize;
     let mut total_completion = 0usize;
 
+    // Create tool context with workspace path for file operations
+    let tool_context = ToolContext::with_workspace(config.workspace_path.clone());
+
     for iteration in 0..config.max_iterations {
         // Check for user interruption before each iteration
         if cancel.is_cancelled() {
@@ -601,7 +601,7 @@ async fn run_agent_turn_inner(
 
                 let (progress_tx, _progress_rx) = mpsc::unbounded_channel();
                 match registry
-                    .execute(&tc.name, tc.arguments.clone(), progress_tx)
+                    .execute(&tc.name, tc.arguments.clone(), progress_tx, &tool_context)
                     .await
                 {
                     Ok(result) => {
@@ -946,6 +946,9 @@ async fn run_agent_turn_streaming_inner(
     let mut captured_thinking = String::new();
     let mut captured_images: Vec<(String, String)> = Vec::new();
 
+    // Create tool context with workspace path for file operations
+    let tool_context = ToolContext::with_workspace(config.workspace_path.clone());
+
     for iteration in 0..config.max_iterations {
         // Check for user interruption before each iteration
         if cancel.is_cancelled() {
@@ -1024,6 +1027,26 @@ async fn run_agent_turn_streaming_inner(
             let stream_err: Option<anyhow::Error> = loop {
                 tokio::select! {
                     biased;
+                    _ = cancel.cancelled() => {
+                        tracing::info!("agent turn cancelled during LLM stream");
+                        drop(stream_rx);
+                        drop(stream_fut);
+                        let _ = delta_tx.send(StreamDelta::Text("[已中断]".into())).await;
+                        drop(delta_tx);
+                        return Ok(TurnResult {
+                            response: "[已中断]".into(),
+                            thinking: attempt_thinking,
+                            tool_calls_made,
+                            iterations: iteration,
+                            prompt_tokens: total_prompt + attempt_prompt_tokens as usize,
+                            completion_tokens: total_completion + attempt_completion_tokens as usize,
+                            cached_tokens: 0,
+                            kv_cache_hit: None,
+                            content_parts: vec![ContentPart::Text { text: "[已中断]".into() }],
+                            tool_messages: vec![],
+                            vision_usage: None,
+                        });
+                    }
                     delta = stream_rx.recv() => {
                         let Some(delta) = delta else { break None };
                         match delta {
@@ -1057,9 +1080,9 @@ async fn run_agent_turn_streaming_inner(
                                 forwarded_any = true;
                                 let _ = delta_tx.send(StreamDelta::Image { media_type, data }).await;
                             }
-                            StreamDelta::ToolResult { call_id, tool_name, success, result } => {
+                            StreamDelta::ToolResult { call_id, tool_name, success, result, structured_content } => {
                                 forwarded_any = true;
-                                let _ = delta_tx.send(StreamDelta::ToolResult { call_id, tool_name, success, result }).await;
+                                let _ = delta_tx.send(StreamDelta::ToolResult { call_id, tool_name, success, result, structured_content }).await;
                             }
                             StreamDelta::AuxiliaryUsage { .. } => {
                                 // Forward auxiliary usage deltas as-is
@@ -1249,6 +1272,7 @@ async fn run_agent_turn_streaming_inner(
                             tool_name: tc_name.clone(),
                             success: false,
                             result: Some(format!("Permission denied (risk: {:?})", risk)),
+                            structured_content: None,
                         })
                         .await;
                     continue;
@@ -1256,10 +1280,11 @@ async fn run_agent_turn_streaming_inner(
 
                 let arguments = serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}));
                 let (progress_tx, _) = mpsc::unbounded_channel();
-                match registry.execute(tc_name, arguments, progress_tx).await {
+                match registry.execute(tc_name, arguments, progress_tx, &tool_context).await {
                     Ok(result) => {
                         tool_calls_made += 1;
                         let success = !result.is_error;
+                        let structured = result.structured_content;
                         let content = if result.is_error {
                             format!("Error: {}", result.content)
                         } else {
@@ -1274,6 +1299,7 @@ async fn run_agent_turn_streaming_inner(
                                 tool_name: tc_name.clone(),
                                 success,
                                 result: Some(content),
+                                structured_content: structured,
                             })
                             .await;
                     }
@@ -1288,6 +1314,7 @@ async fn run_agent_turn_streaming_inner(
                                 tool_name: tc_name.clone(),
                                 success: false,
                                 result: Some(err_msg),
+                                structured_content: None,
                             })
                             .await;
                     }

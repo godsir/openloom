@@ -158,8 +158,9 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
             tool_name,
             success,
             result,
+            structured_content,
         } => {
-            json!({ "id": call_id, "name": tool_name, "success": success, "result": result })
+            json!({ "id": call_id, "name": tool_name, "success": success, "result": result, "structured_content": structured_content })
         }
         AgentEvent::TokenUsage {
             agent_id: _,

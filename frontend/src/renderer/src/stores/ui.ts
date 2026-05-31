@@ -15,11 +15,15 @@ export interface UiSlice {
   fontSize: FontSizeId
   settingsOpen: boolean
   sidebarOpen: boolean
+  permissionDrawerOpen: boolean
+  thinkingDrawerOpen: boolean
   setTheme: (theme: ThemeId) => void
   setFontSize: (size: FontSizeId) => void
   setSettingsOpen: (open: boolean) => void
   setSidebarOpen: (open: boolean) => void
   toggleSidebar: () => void
+  setPermissionDrawerOpen: (open: boolean) => void
+  setThinkingDrawerOpen: (open: boolean) => void
 }
 
 function applyFontSize(size: FontSizeId) {
@@ -35,20 +39,24 @@ export const createUiSlice: StateCreator<UiSlice> = (set, get) => ({
   fontSize: 'default',
   settingsOpen: false,
   sidebarOpen: true,
+  permissionDrawerOpen: false,
+  thinkingDrawerOpen: false,
 
   setTheme: (theme) => {
     document.documentElement.setAttribute('data-theme', theme)
-    window.hana.setPreference('theme', theme)
+    window.loom.setPreference('theme', theme)
     set({ theme })
   },
 
   setFontSize: (fontSize) => {
     applyFontSize(fontSize)
-    window.hana.setPreference('fontSize', fontSize)
+    window.loom.setPreference('fontSize', fontSize)
     set({ fontSize })
   },
 
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   toggleSidebar: () => set({ sidebarOpen: !get().sidebarOpen }),
+  setPermissionDrawerOpen: (open) => set({ permissionDrawerOpen: open }),
+  setThinkingDrawerOpen: (open) => set({ thinkingDrawerOpen: open }),
 })

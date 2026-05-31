@@ -1,0 +1,102 @@
+.container {
+  padding: 8px 0;
+}
+
+.versionHeader {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.versionSub {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 20px;
+}
+
+.progressSection {
+  margin-bottom: 20px;
+}
+
+.progressBarOuter {
+  width: 100%;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.progressBarInner {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.progressStats {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.progressPercent {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--accent);
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.downloadedInfo {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 20px;
+  line-height: 1.6;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.primaryBtn {
+  padding: 8px 20px;
+  border-radius: var(--r-md);
+  background: var(--accent);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.primaryBtn:hover {
+  opacity: 0.85;
+}
+
+.dismissBtn {
+  padding: 8px 16px;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.dismissBtn:hover {
+  color: var(--text);
+}
+
+.errorMessage {
+  font-size: 13px;
+  color: var(--red);
+  margin-bottom: 16px;
+}

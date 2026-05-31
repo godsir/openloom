@@ -1,0 +1,218 @@
+.diffCard {
+  display: flex;
+  flex-direction: column;
+  margin: 6px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--bg-surface);
+}
+
+.diffCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+.diffCardHeader:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.diffCardTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.diffCardIcon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.diffCardTitle {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.diffCardTitle:hover {
+  text-decoration: underline;
+}
+
+.diffCardStats {
+  font-size: 11px;
+  font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, Consolas, monospace);
+  color: var(--text-muted);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.diffCardArrow {
+  font-size: 13px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+}
+
+.diffCardBody {
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+  overflow-x: auto;
+  font-size: 12px;
+  font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, Consolas, monospace);
+}
+
+.diffHunk {
+  border-bottom: none;
+}
+
+.diffHunkSeparator {
+  padding: 2px 10px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.02);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.diffLine {
+  display: flex;
+  align-items: stretch;
+  min-height: 20px;
+  animation: diffSlideIn 0.15s ease-out both;
+}
+
+@keyframes diffSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.diffLineCtx {
+  background: transparent;
+}
+
+.diffLineAdd {
+  background: rgba(46, 160, 67, 0.1);
+}
+
+.diffLineDel {
+  background: rgba(248, 81, 73, 0.1);
+}
+
+.diffLineNum {
+  display: inline-block;
+  width: 36px;
+  min-width: 36px;
+  padding: 0 4px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.5;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.diffLineAdd .diffLineNum {
+  background: rgba(46, 160, 67, 0.05);
+}
+
+.diffLineDel .diffLineNum {
+  background: rgba(248, 81, 73, 0.05);
+}
+
+.diffLineSign {
+  display: inline-block;
+  width: 16px;
+  min-width: 16px;
+  text-align: center;
+  user-select: none;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.diffLineAdd .diffLineSign {
+  color: #2ea043;
+}
+
+.diffLineDel .diffLineSign {
+  color: #f85149;
+}
+
+.diffLineText {
+  flex: 1;
+  white-space: pre;
+  padding: 0 10px 0 4px;
+  overflow: hidden;
+}
+
+/* highlight.js token colors (dark theme) */
+.diffCardBody :global(.hljs-keyword),
+.diffCardBody :global(.hljs-selector-tag),
+.diffCardBody :global(.hljs-built_in) {
+  color: #ff7b72;
+}
+
+.diffCardBody :global(.hljs-type),
+.diffCardBody :global(.hljs-title),
+.diffCardBody :global(.hljs-title\.class_),
+.diffCardBody :global(.hljs-title\.function_) {
+  color: #d2a8ff;
+}
+
+.diffCardBody :global(.hljs-string),
+.diffCardBody :global(.hljs-template-variable),
+.diffCardBody :global(.hljs-addition) {
+  color: #a5d6ff;
+}
+
+.diffCardBody :global(.hljs-comment),
+.diffCardBody :global(.hljs-quote) {
+  color: #8b949e;
+  font-style: italic;
+}
+
+.diffCardBody :global(.hljs-number),
+.diffCardBody :global(.hljs-literal) {
+  color: #79c0ff;
+}
+
+.diffCardBody :global(.hljs-attr),
+.diffCardBody :global(.hljs-selector-class),
+.diffCardBody :global(.hljs-selector-id) {
+  color: #7ee787;
+}
+
+.diffCardBody :global(.hljs-variable),
+.diffCardBody :global(.hljs-params) {
+  color: #c9d1d9;
+}
+
+.diffCardBody :global(.hljs-regexp) {
+  color: #f85149;
+}
+
+.diffCardBody :global(.hljs-meta) {
+  color: #8b949e;
+}

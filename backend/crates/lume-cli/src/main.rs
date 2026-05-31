@@ -148,8 +148,8 @@ async fn main() -> anyhow::Result<()> {
                 "[server] images:  {}\\sessions\\<id>\\images\\",
                 loom_dir.display()
             );
-            let db_path = loom_dir.join("data").join("memory.db");
-            match memory::LoomMemoryStore::open(&db_path) {
+            let data_dir = loom_dir.join("data");
+            match memory::LoomMemoryStore::open(&data_dir) {
                 Ok(store) => {
                     orchestrator.set_memory_store(Box::new(store)).await;
                     if let Err(e) = orchestrator.load_agent_configs().await {
@@ -158,7 +158,7 @@ async fn main() -> anyhow::Result<()> {
                     if let Err(e) = orchestrator.load_model_configs().await {
                         eprintln!("[server] load model configs failed: {}", e);
                     }
-                    println!("[server] memory store: {}", db_path.display());
+                    println!("[server] memory store: {}", data_dir.join("*.db").display());
                 }
                 Err(e) => println!("[server] memory unavailable: {}", e),
             }
@@ -589,8 +589,8 @@ async fn run_chat_demo(
     } // close if let Some(home)
 
     // === Memory ===
-    let db_path = data_dir_path.join("memory.db");
-    match memory::LoomMemoryStore::open(&db_path) {
+    let data_dir = data_dir_path;
+    match memory::LoomMemoryStore::open(&data_dir) {
         Ok(store) => {
             let persona = store.get_persona().await.unwrap_or_default();
             if !persona.is_empty() {
@@ -621,7 +621,7 @@ async fn run_chat_demo(
                     println!("--- end of history ---\n");
                 }
             }
-            println!("[memory] store opened: {}", db_path.display());
+            println!("[memory] store opened: {}", data_dir.join("*.db").display());
         }
         Err(e) => println!("[memory] unavailable: {}", e),
     }
@@ -942,8 +942,8 @@ async fn run_doctor() {
 // ============================================================================
 
 async fn open_memory_store() -> Option<memory::LoomMemoryStore> {
-    let db_path = data_dir().join("data").join("memory.db");
-    memory::LoomMemoryStore::open(&db_path).ok()
+    let data_dir = data_dir().join("data");
+    memory::LoomMemoryStore::open(&data_dir).ok()
 }
 
 async fn run_kg_search(
