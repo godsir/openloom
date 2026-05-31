@@ -1,0 +1,122 @@
+.container { display: flex; flex-direction: column; gap: 16px; }
+
+.card {
+  padding: 14px;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+}
+
+.cardTitle { font-size: 13px; font-weight: 600; color: var(--text); margin: 0 0 10px; }
+.cardDesc { font-size: 12px; color: var(--text-secondary); margin: 8px 0 0; }
+
+.dirPath {
+  font-size: 12px; font-family: monospace; color: var(--accent);
+  background: var(--bg); padding: 6px 10px; border-radius: var(--r-sm);
+  word-break: break-all;
+}
+
+/* Toggle switch */
+.switchRow { display: flex; align-items: center; justify-content: space-between; }
+.switchLabel { font-size: 14px; font-weight: 500; color: var(--text); }
+
+.toggle {
+  width: 42px; height: 24px; border-radius: 12px;
+  border: none; cursor: pointer; background: var(--border);
+  position: relative; transition: background 0.2s; flex-shrink: 0;
+}
+.toggleOn { background: var(--accent); }
+.toggleKnob {
+  position: absolute; top: 2px; left: 2px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: white; transition: left 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.toggleOn .toggleKnob { left: 20px; }
+
+/* Pet list */
+.petList { display: flex; flex-direction: column; gap: 4px; }
+
+.petItem {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: var(--r-sm);
+  border: 1px solid transparent; background: none;
+  cursor: pointer; text-align: left; width: 100%;
+  transition: all 0.15s;
+}
+.petItem:hover { background: var(--bg); }
+.petItemActive {
+  border-color: var(--accent); background: var(--accent-subtle);
+}
+
+.petThumb {
+  width: 40px; height: 40px; flex-shrink: 0;
+  border-radius: 4px; background-color: var(--bg);
+  background-position: 0 0; background-repeat: no-repeat;
+}
+.petThumbLarge {
+  width: 72px; height: 72px; flex-shrink: 0;
+  border-radius: var(--r-sm); background-color: var(--bg);
+  background-position: 0 0; background-repeat: no-repeat;
+}
+.petItemInfo { flex: 1; min-width: 0; }
+.petItemName { font-size: 13px; font-weight: 500; color: var(--text); }
+.petItemDesc { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Pet info */
+.petInfo { display: flex; gap: 12px; align-items: flex-start; }
+
+.petPreview {
+  width: 72px; height: 72px; flex-shrink: 0;
+  border-radius: var(--r-sm); background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.petMeta { flex: 1; min-width: 0; }
+.petName { font-size: 14px; font-weight: 600; color: var(--text); }
+.petDesc { font-size: 11px; color: var(--text-muted); margin: 2px 0 6px; line-height: 1.4; }
+.petSpecs { font-size: 11px; color: var(--text-secondary); }
+.specSep { margin: 0 4px; color: var(--border); }
+
+/* Size */
+.segRow { display: flex; gap: 6px; }
+.segBtn {
+  flex: 1; padding: 6px 10px; border-radius: var(--r-sm);
+  border: 1px solid var(--border); background: none;
+  color: var(--text-secondary); font-size: 12px; cursor: pointer;
+  transition: all 0.15s;
+}
+.segBtn:hover { border-color: var(--text-muted); }
+.segBtnActive { background: var(--accent-subtle); border-color: var(--accent); color: var(--accent); }
+
+/* State table */
+.stateTable { display: flex; flex-direction: column; }
+
+.stateHeader {
+  display: grid; grid-template-columns: 1fr 32px 32px 56px;
+  gap: 8px; align-items: center; padding: 0 0 8px;
+  font-size: 11px; color: var(--text-muted); text-transform: uppercase;
+}
+
+.stateRow {
+  display: grid; grid-template-columns: 1fr 32px 32px 56px;
+  gap: 8px; align-items: center; padding: 6px 0;
+  border-top: 1px solid var(--border);
+  transition: background 0.15s;
+}
+.stateRowActive {
+  background: var(--accent-subtle);
+  margin: 0 -8px; padding-left: 8px; padding-right: 8px;
+  border-radius: var(--r-sm);
+}
+
+.stateName { font-size: 12px; color: var(--text); }
+.stateMono { font-size: 11px; color: var(--text-secondary); font-family: monospace; }
+
+.playBtn {
+  padding: 3px 10px; border-radius: var(--r-sm);
+  border: 1px solid var(--border); background: none;
+  color: var(--text-secondary); font-size: 11px; cursor: pointer;
+  transition: all 0.15s;
+}
+.playBtn:hover { border-color: var(--accent); color: var(--accent); }
+.stateRowActive .playBtn { border-color: var(--accent); color: var(--accent); }

@@ -1,4 +1,4 @@
-# openLoom v0.2.15
+# openLoom v0.2.17
 
 可配置多 Agent、多对话的私人 AI 助理内核。认知图谱记忆 + Skills/Plugins/MCP 调用 + 外部消息平台接入。
 
@@ -214,6 +214,13 @@ npm run package
 - 工具调用超时保护（默认 60s）
 - 连接健康检查
 
+### 桌面宠物
+
+- 基于 Petdex 精灵图格式的桌面伙伴，兼容 Codex 宠物生态
+- 根据 AI 状态自动切换动画：思考/工作/完成/错误等
+- 支持拖拽移动、右键菜单切换大小、设置面板管理宠物
+- 默认关闭，可在设置 > 桌宠中启用
+
 ### Bridge 外部接入
 
 - `ChannelAdapter` trait 统一抽象
@@ -237,11 +244,14 @@ cargo test -p loom-inference -p loom-memory -p lume-skills -p lume-mcp -p loom-c
 
 ```
 ~/.loom/
-├── data/memory.db   ← SQLite (26 表, V1~V9 迁移)
+├── loom.db          ← 配置库 (model_configs / agent_configs / mcp_servers)
+├── memory.db        ← 记忆库 (events / cognitions / kg_nodes / kg_edges / kg_aliases)
+├── session.db       ← 会话库 (sessions / message_history / token_usage / bridge_*)
 ├── skills/          ← 全局技能 (SKILL.md)
 ├── plugins/         ← 插件目录
+├── pets/            ← 桌宠资源 (Petdex sprite sheet 格式)
 ├── mcp.json         ← MCP 服务配置
-└── config.toml      ← 应用配置
+└── workspace.json   ← 默认工作空间路径
 ```
 
 ## 技术栈

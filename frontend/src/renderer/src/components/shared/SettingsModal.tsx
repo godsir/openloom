@@ -9,6 +9,7 @@ import ModelConfigPanel from './ModelConfigPanel'
 import VisionConfigSection from './VisionConfigSection'
 import AuxiliaryConfigSection from './AuxiliaryConfigSection'
 import WorkspaceTab from './WorkspaceTab'
+import PetTab from './PetTab'
 import KnowledgeGraphPanel from '../kg/KnowledgeGraphPanel'
 import TokenUsagePanel from './TokenUsagePanel'
 import { type ThemeId, type FontSizeId, FONT_SIZE_MAP } from '../../stores/ui'
@@ -27,7 +28,7 @@ const THEMES: { id: ThemeId; label: string; bg: string; surface: string; text: s
   { id: 'umber-cream', label: '摩卡', bg: '#2D1B14', surface: '#3D271D', text: '#fff8f0', accent: '#D8C7B5' },
 ]
 
-type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'kg' | 'token' | 'about'
+type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'about'
 
 interface McpTool {
   name: string
@@ -85,6 +86,7 @@ export default function SettingsModal({
     { id: 'mcp', label: 'MCP / LSP' },
     { id: 'skills', label: '技能' },
     { id: 'plugins', label: '插件' },
+    { id: 'pet', label: '桌宠' },
     { id: 'kg', label: '记忆系统' },
     { id: 'token', label: 'Token 用量' },
     { id: 'about', label: '关于' },
@@ -162,6 +164,17 @@ export default function SettingsModal({
           )}
           {tab === 'skills' && <SkillsTab />}
           {tab === 'plugins' && <PluginsTab />}
+          {tab === 'pet' && (
+            <>
+              <div className={styles.contentHeader}>
+                <h3 className={styles.sectionTitle}>桌宠</h3>
+                <p className={styles.sectionDesc}>桌面宠物伙伴设置</p>
+              </div>
+              <div className={styles.contentBody}>
+                <PetTab />
+              </div>
+            </>
+          )}
           {tab === 'kg' && (
             <>
               <div className={styles.contentHeader}>

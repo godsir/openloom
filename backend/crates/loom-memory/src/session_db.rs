@@ -11,7 +11,7 @@ impl SessionDb {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let mut conn = Connection::open(path)?;
+        let conn = Connection::open(path)?;
         conn.execute_batch(
             "PRAGMA journal_mode=DELETE;
              PRAGMA foreign_keys=ON;",

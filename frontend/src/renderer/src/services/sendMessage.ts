@@ -58,6 +58,10 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
     }
   }, 180_000)
 
+  // Pet: user sends message → run right excitedly → wait for response
+  import('./pet-sync').then(m => m.sendPetState('runRight'))
+  setTimeout(() => import('./pet-sync').then(m => m.sendPetState('wait')), 400)
+
   try {
     const { currentModel, thinkingLevel } = useStore.getState()
     await loomRpc('chat.send', {

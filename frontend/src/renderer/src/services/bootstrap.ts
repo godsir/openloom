@@ -17,6 +17,8 @@ async function waitForPort(maxWait = 10000): Promise<number> {
   throw new Error('Timeout waiting for engine port')
 }
 
+let _streaming = false
+
 export async function bootstrapApp(): Promise<() => void> {
   const port = await waitForPort()
   useStore.getState().setPort(port)
@@ -34,11 +36,21 @@ export async function bootstrapApp(): Promise<() => void> {
       'default'
 
     switch (method) {
-      case 'chat.stream_delta':
+      case 'chat.stream_delta': {
         streamBufferManager.handleStreamDelta(sessionId, (p?.delta as string) || '')
+        // First delta = AI started replying
+        if (!_streaming) {
+          _streaming = true
+          import('./pet-sync').then(m => m.sendPetState('wave'))
+        }
         break
+      }
       case 'chat.stream_end':
         streamBufferManager.handleStreamEnd(sessionId)
+        _streaming = false
+        import('./pet-sync').then(m => m.sendPetState('jump'))
+        setTimeout(() => import('./pet-sync').then(m => m.sendPetState('runLeft')), 1500)
+        setTimeout(() => import('./pet-sync').then(m => m.sendPetState('idle')), 3000)
         break
       case 'chat.token_usage':
         if (p) {
@@ -69,6 +81,7 @@ export async function bootstrapApp(): Promise<() => void> {
         break
       case 'tool.started':
         streamBufferManager.handleToolStarted(sessionId, p as any)
+        import('./pet-sync').then(m => m.sendPetState('dash'))
         break
       case 'tool.completed':
         streamBufferManager.handleToolCompleted(
@@ -78,6 +91,25 @@ export async function bootstrapApp(): Promise<() => void> {
           p?.name as string | undefined,
           p?.structured_content as Record<string, unknown> | undefined,
         )
+        import('./pet-sync').then(m => m.sendPetState('inspect'))
+        break
+        streamBufferManager.handleToolCompleted(
+          sessionId,
+          (p?.id as string) || '',
+          p?.result as string | undefined,
+          p?.name as string | undefined,
+          p?.structured_content as Record<string, unknown> | undefined,
+        )
+        break
+      case 'agent.subagent_spawned':
+        import('./pet-sync').then(m => m.sendPetState('dash'))
+        break
+      case 'agent.subagent_completed':
+        import('./pet-sync').then(m => m.sendPetState('inspect'))
+        break
+      case 'agent.subagent_errored':
+        import('./pet-sync').then(m => m.sendPetState('failed'))
+        setTimeout(() => import('./pet-sync').then(m => m.sendPetState('idle')), 3000)
         break
       case 'agent.state_changed':
         loomRpc('agent.config.list').then((r: any) =>

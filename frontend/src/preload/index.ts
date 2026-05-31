@@ -24,6 +24,22 @@ export interface LoomApi {
   onUpdateDownloaded: (cb: () => void) => void
   onUpdateError: (cb: (msg: string) => void) => void
   getLoomDir: () => Promise<string>
+  togglePet: (on: boolean) => Promise<boolean>
+  listPets: () => Promise<PetMeta[]>
+}
+
+interface PetMeta {
+  id: string
+  displayName: string
+  description: string
+  spritesheetPath: string
+  frameWidth?: number
+  frameHeight?: number
+  columns?: number
+  rows?: number
+  framesPerRow?: number
+  rowFrames?: Record<string, number>
+  states?: Record<string, number>
 }
 
 contextBridge.exposeInMainWorld('loom', {
@@ -51,4 +67,6 @@ contextBridge.exposeInMainWorld('loom', {
   onUpdateDownloaded: (cb: () => void) => ipcRenderer.on('update-downloaded', () => cb()),
   onUpdateError: (cb: (msg: string) => void) => ipcRenderer.on('update-error', (_e, msg: string) => cb(msg)),
   getLoomDir: () => ipcRenderer.invoke('get-loom-dir'),
+  togglePet: (on: boolean) => ipcRenderer.invoke('pet:toggle', on),
+  listPets: () => ipcRenderer.invoke('pets:list'),
 } satisfies LoomApi)

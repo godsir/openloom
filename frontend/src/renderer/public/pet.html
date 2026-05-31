@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:transparent;user-select:none}
+body{display:flex;align-items:flex-end;justify-content:center}
+#wrapper{position:relative;display:flex;flex-direction:column;align-items:center}
+canvas{display:block;flex-shrink:0}
+
+/* Bubble — positioned relative to wrapper, above canvas */
+#bubble {
+  display:none; position:absolute; bottom:calc(100% + 2px); left:50%;
+  transform:translateX(-50%); background:rgba(0,0,0,0.82); color:#fff;
+  padding:5px 10px; border-radius:8px; font-size:11px;
+  white-space:nowrap; pointer-events:none; z-index:10;
+  font-family:-apple-system,BlinkMacSystemFont,sans-serif;
+}
+#bubble::after {
+  content:''; position:absolute; top:100%; left:50%; transform:translateX(-50%);
+  width:0; height:0; border:5px solid transparent;
+  border-top-color:rgba(0,0,0,0.82);
+}
+#bubble.show{display:block}
+</style>
+</head><body>
+<div id="wrapper">
+  <div id="bubble"></div>
+  <canvas id="c"></canvas>
+</div>
+<script>
+var FW = 192, FH = 208, COLS = 9, ROWS = 9, FRAMES = 6;
+var PETDEX_STATES = {
+  idle: 0, runRight: 1, runLeft: 2, wave: 3, jump: 4,
+  failed: 5, wait: 6, dash: 7, inspect: 8
+};
+var PETDEX_ROW_FRAMES = { 0:6, 1:8, 2:8, 3:4, 4:5, 5:8, 6:6, 7:6, 8:6 };
+var rowFrames = {};
+var stateRow = {};
+var currentState = 'idle', frame = 0, tick = 0;
+var ticksPerFrame = 12;
+var canvas = document.getElementById('c');
+var ctx = canvas.getContext('2d');
+var sheet = new Image();
+
+// --- Bubble ---
+var bubble = document.getElementById('bubble');
+var bubbleTimer = null;
+function showBubble(text, duration) {
+  bubble.textContent = text;
+  bubble.classList.add('show');
+  if (bubbleTimer) clearTimeout(bubbleTimer);
+  if (duration) bubbleTimer = setTimeout(function(){ bubble.classList.remove('show') }, duration);
+}
+function hideBubble() {
+  bubble.classList.remove('show');
+  if (bubbleTimer) clearTimeout(bubbleTimer);
+}
+
+// --- Native context menu ---
+document.addEventListener('contextmenu', function(e) {
+  e.preventDefault();
+  hideBubble();
+  window.petApi.showContextMenu(e.clientX, e.clientY);
+});
+
+// --- Handle commands from native menu (via preload IPC) ---
+window.petApi.onCommand(function(cmd) {
+  if (!cmd) return;
+  if (cmd.startsWith('size:')) {
+    var sz = cmd.split(':')[1];
+    bc.postMessage({ type: 'cmd', cmd: 'size', value: sz });
+  } else if (cmd === 'hide') {
+    bc.postMessage({ type: 'cmd', cmd: 'toggle', value: false });
+  } else if (cmd === 'close') {
+    showBubble('我走了');
+    setTimeout(function() {
+      bc.postMessage({ type: 'cmd', cmd: 'toggle', value: false });
+    }, 3000);
+  }
+});
+
+// --- Pet loading & animation ---
+function loadPet(id) {
+  var base = 'loom-pet://' + id + '/';
+  fetch(base + 'pet.json')
+    .then(function(r) { return r.json() })
+    .then(function(meta) {
+      FW = meta.frameWidth || 192;
+      FH = meta.frameHeight || 208;
+      COLS = meta.columns || 9;
+      ROWS = meta.rows || 9;
+      FRAMES = meta.framesPerRow || 6;
+      if (meta.rowFrames) {
+        rowFrames = {};
+        Object.keys(meta.rowFrames).forEach(function(r) { rowFrames[parseInt(r)] = meta.rowFrames[r]; });
+      } else {
+        rowFrames = PETDEX_ROW_FRAMES;
+      }
+      if (meta.states) {
+        stateRow = {};
+        Object.keys(meta.states).forEach(function(k) { stateRow[k] = meta.states[k] });
+      } else {
+        stateRow = PETDEX_STATES;
+      }
+      canvas.width = FW;
+      canvas.height = FH;
+      canvas.style.width = FW + 'px';
+      canvas.style.height = FH + 'px';
+      sheet.src = base + (meta.spritesheetPath || 'spritesheet.webp');
+    })
+    .catch(function(e) { console.error('[pet] loadPet failed:', e) });
+}
+
+sheet.onload = function() {
+  tick = 0; frame = 0;
+};
+
+function loop() {
+  tick++;
+  var row = stateRow[currentState] != null ? stateRow[currentState] : 0;
+  var maxFrames = rowFrames[row] != null ? rowFrames[row] : FRAMES;
+  if (tick % ticksPerFrame === 0) frame = (frame + 1) % maxFrames;
+  var sx = (frame % COLS) * FW;
+  var sy = row * FH;
+  ctx.clearRect(0, 0, FW, FH);
+  ctx.drawImage(sheet, sx, sy, FW, FH, 0, 0, FW, FH);
+  requestAnimationFrame(loop);
+}
+
+function resize(size) {
+  var w = Math.round(size);
+  var h = Math.round(size * (FH / FW));
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+}
+
+// --- State-to-bubble mapping ---
+var STATE_BUBBLES = {
+  wave: '正在回复...',
+  dash: '工作中...',
+  inspect: '检查结果...',
+  jump: '搞定!',
+  failed: '出错了',
+  wait: '等待响应...',
+  runRight: '来了!',
+  runLeft: '溜了~',
+};
+
+// BroadcastChannel
+var bc = new BroadcastChannel('pet');
+bc.onmessage = function(e) {
+  var d = e.data;
+  if (!d || !d.type) return;
+  if (d.type === 'state' && d.state) {
+    if (stateRow[d.state] != null) {
+      currentState = d.state; frame = 0; tick = 0;
+      var msg = d.bubble || STATE_BUBBLES[d.state] || '';
+      if (msg) showBubble(msg, 2500);
+      else hideBubble();
+    }
+  } else if (d.type === 'size' && d.size) {
+    resize(d.size);
+  } else if (d.type === 'pet' && d.petId) {
+    loadPet(d.petId);
+    showBubble('切换宠物', 1500);
+  } else if (d.type === 'bubble' && d.text) {
+    showBubble(d.text, d.duration || 2000);
+  }
+};
+
+// --- Manual drag ---
+var dragging = false, dragX = 0, dragY = 0;
+document.addEventListener('mousedown', function(e) {
+  if (e.button === 0) { dragging = true; dragX = e.screenX; dragY = e.screenY; }
+});
+document.addEventListener('mousemove', function(e) {
+  if (!dragging) return;
+  var dx = e.screenX - dragX;
+  var dy = e.screenY - dragY;
+  if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+    window.petApi.moveWindow(dx, dy);
+    dragX = e.screenX; dragY = e.screenY;
+  }
+});
+document.addEventListener('mouseup', function() { dragging = false; });
+
+// Boot
+var hash = location.hash.slice(1) || 'boba&128';
+var parts = hash.split('&');
+var defaultPet = parts[0] || 'boba';
+var defaultSize = parseInt(parts[1]) || 128;
+loadPet(defaultPet);
+sheet.onload = function() {
+  resize(defaultSize);
+  tick = 0; frame = 0;
+};
+requestAnimationFrame(loop);
+</script>
+</body></html>

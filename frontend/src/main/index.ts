@@ -1,15 +1,21 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, protocol } from 'electron'
 import { createMainWindow, getMainWindow } from './window'
 import { registerIpcHandlers } from './ipc'
 import { startEngine, stopEngine } from './engine'
 import { createTray } from './tray'
 import { setupAutoUpdater, checkForUpdates } from './updater'
-import { getStoreKey, readStore } from './store'
+import { getStoreKey } from './store'
+import { initPet, registerPetProtocol } from './pet'
 
 let port = 0
 let isQuitting = false
 
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'loom-pet', privileges: { standard: true, secure: true, supportFetchAPI: true } },
+])
+
 app.whenReady().then(async () => {
+  registerPetProtocol()
   if (!app.requestSingleInstanceLock()) {
     app.quit()
     return
@@ -40,6 +46,11 @@ app.whenReady().then(async () => {
 
   const win = createMainWindow(port)
   createTray(win)
+  try {
+    initPet() // Desktop pet
+  } catch (e) {
+    console.error('[pet] initPet failed:', e)
+  }
 
   // Auto-updater (only in production)
   if (app.isPackaged) {
