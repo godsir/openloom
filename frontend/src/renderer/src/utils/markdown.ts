@@ -10,21 +10,6 @@ const md = new MarkdownIt({
   typographer: true,
 })
 
-// Obsidian callout support
-const CALLOUT_RE = /^\[!(\w+)\]([+-]?)\s*(.*)$/
-
-function calloutPlugin(md: MarkdownIt) {
-  const defaultRender =
-    md.renderer.rules.blockquote_open ||
-    function (tokens, idx, options, _env, self) {
-      return self.renderToken(tokens, idx, options)
-    }
-
-  md.renderer.rules.blockquote_open = function (tokens, idx, options, env, self) {
-    return defaultRender(tokens, idx, options, env, self)
-  }
-}
-
 // KaTeX math support: \( \) and \[ \]
 function katexPlugin(md: MarkdownIt) {
   const defaultText = md.renderer.rules.text || function (tokens, idx) {
@@ -100,9 +85,27 @@ function filePathPlugin(md: MarkdownIt) {
   }
 }
 
-md.use(calloutPlugin)
+// Mermaid diagram support — outputs a placeholder div that TextBlock's
+// useEffect replaces with a rendered SVG via the lazy-loaded mermaid library.
+function mermaidPlugin(md: MarkdownIt) {
+  const defaultFence = md.renderer.rules.fence || function (tokens, idx, options, env, self) {
+    return self.renderToken(tokens, idx, options)
+  }
+
+  md.renderer.rules.fence = function (tokens, idx, options, env, self) {
+    const token = tokens[idx]
+    const info = token.info.trim()
+    if (info === 'mermaid' || info.startsWith('mermaid ')) {
+      const escaped = md.utils.escapeHtml(token.content)
+      return `<div class="mermaid-placeholder" data-mermaid-source="${escaped}"><pre><code class="language-mermaid">${escaped}</code></pre></div>`
+    }
+    return defaultFence(tokens, idx, options, env, self)
+  }
+}
+
 md.use(katexPlugin)
 md.use(filePathPlugin)
+md.use(mermaidPlugin)
 
 export function renderMarkdown(text: string): string {
   return md.render(text)

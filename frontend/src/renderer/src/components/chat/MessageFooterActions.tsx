@@ -105,7 +105,7 @@ export default function MessageFooterActions({ messageId, role, timestamp, usage
       })),
     ]
 
-    await sendMessage({ sessionId: currentSessionId, content, attachedFiles })
+    await sendMessage({ sessionId: currentSessionId, content, attachedFiles, skipUserMessage: true })
   }
 
   const time = new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })

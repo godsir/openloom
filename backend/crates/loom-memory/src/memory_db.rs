@@ -17,6 +17,23 @@ impl MemoryDb {
              PRAGMA foreign_keys=ON;",
         )?;
         conn.execute_batch(include_str!("../../../../migrations/memory/V1__memory.sql"))?;
+
+        // Migrate old schema: rename `type` column to `event_type`
+        let has_type_column: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('events') WHERE name = 'type'")?
+            .exists([])?;
+        if has_type_column {
+            conn.execute_batch(
+                "DROP TRIGGER IF EXISTS events_ai;
+                 DROP TRIGGER IF EXISTS events_ad;
+                 ALTER TABLE events RENAME COLUMN type TO event_type;
+                 DROP TABLE IF EXISTS events_fts;
+                 CREATE VIRTUAL TABLE events_fts USING fts5(event_type, action, context);
+                 INSERT INTO events_fts (event_type, action, context)
+                 SELECT event_type, action, context FROM events;",
+            )?;
+        }
+
         Ok(Self { conn })
     }
 

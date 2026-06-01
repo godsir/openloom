@@ -64,13 +64,53 @@ pub struct AgentLoopConfig {
     pub active_model_name: Option<String>,
     /// Workspace path for file operations. Relative paths will be resolved against this.
     pub workspace_path: Option<String>,
+    /// Cumulative prompt token budget — stops the loop when exceeded (0 = disabled).
+    /// Default 0 (disabled); set to e.g. 96000 for ~80% of a 120K context window.
+    pub max_prompt_budget: usize,
+    /// Default tool-call permissions applied to every turn.
+    /// Set to `SkillPermissions::default()` for zero trust (deny shell, deny file writes);
+    /// set shell=true / fs_write=Some(vec![]) to restore the old open-everything behaviour.
+    pub default_permissions: SkillPermissions,
 }
 
 impl Default for AgentLoopConfig {
     fn default() -> Self {
         Self {
-            system_prompt: "You are an AI assistant with real access to the user's machine. To use tools (file ops, shell, search, LSP, MCP), call request_tools first with what you need. Then use the loaded tools. For simple questions, just answer directly.".into(),
-            max_iterations: 30,
+            system_prompt: vec![
+                "你是 openLoom，一个运行在用户本机、拥有真实系统访问能力的 AI 助手。",
+                "",
+                "## 核心原则",
+                "- 简洁直接：用最短的话把事说清楚，不要客套废话。",
+                "- 行动优先：能直接动手解决的问题就动手，不要只给建议。",
+                "- 诚实透明：不确定的事明确告知，不要编造。操作前说明风险。",
+                "- 上下文感知：关注当前工作区路径，理解用户的文件结构和项目背景。",
+                "",
+                "## 工具使用",
+                "你拥有以下工具类别，通过 request_tools 按需加载：",
+                "- 文件操作：读取、写入、编辑、删除文件，列出目录",
+                "- Shell：执行终端命令（需关注工作区路径）",
+                "- 搜索：全文搜索文件内容，支持正则",
+                "- 网络：搜索网页、抓取 URL 内容",
+                "- LSP：代码诊断、补全、跳转定义、查找引用（支持 30+ 语言）",
+                "- MCP：通过 MCP 协议连接外部工具服务",
+                "- 技能：加载用户导入的技能模块",
+                "",
+                "工具使用规则：",
+                "1. 简单问题直接回答，不要无意义地调用工具。",
+                "2. 需要工具时先调 request_tools 告知需要哪些工具，加载后再使用。",
+                "3. 批量操作用 shell 一次性完成，不要逐个文件处理。",
+                "4. 修改文件前先读文件确认当前内容，修改后展示 diff。",
+                "5. 长时间操作说明进度，出错时说明原因和恢复方案。",
+                "",
+                "## 子代理",
+                "需要并行处理多个独立子任务时，可以派生子代理并发执行。",
+                "子代理独立运行，完成后汇总结果。",
+                "",
+                "## 知识图谱",
+                "对话中的重要实体和关系会被自动提取到知识图谱。",
+                "长期记忆中存储了你的历史交互和用户偏好，会作为上下文注入。",
+            ].join("\n"),
+            max_iterations: 100,
             max_tokens: 4096,
             temperature: 0.0,
             lazy_tools: true,
@@ -81,6 +121,8 @@ impl Default for AgentLoopConfig {
             model_configs: Vec::new(),
             active_model_name: None,
             workspace_path: None,
+            max_prompt_budget: 0,
+            default_permissions: SkillPermissions::default(),
         }
     }
 }
@@ -446,6 +488,25 @@ async fn run_agent_turn_inner(
     let tool_context = ToolContext::with_workspace(config.workspace_path.clone());
 
     for iteration in 0..config.max_iterations {
+        // Token budget check: stop if cumulative prompt tokens exceed the budget
+        if config.max_prompt_budget > 0 && total_prompt > config.max_prompt_budget {
+            info!(iteration, total_prompt, budget = config.max_prompt_budget, "token budget exceeded");
+            return Ok(TurnResult {
+                response: format!("任务进行中（已用 {} tokens，达到预算上限）。输入「继续」以接着执行。", total_prompt),
+                thinking: String::new(),
+                tool_calls_made,
+                iterations: iteration,
+                prompt_tokens: total_prompt,
+                completion_tokens: total_completion,
+                cached_tokens: 0,
+                kv_cache_hit: None,
+                content_parts: vec![ContentPart::Text {
+                    text: format!("任务进行中（已用 {} tokens）。输入「继续」以接着执行。", total_prompt),
+                }],
+                tool_messages: vec![],
+                vision_usage: None,
+            });
+        }
         // Check for user interruption before each iteration
         if cancel.is_cancelled() {
             info!("agent turn cancelled by user at iteration {}", iteration);
@@ -581,12 +642,8 @@ async fn run_agent_turn_inner(
             for tc in &response.tool_calls {
                 let tool_name = tc.name.clone();
                 info!(name = %tool_name, "executing tool");
-                // Permission check — local personal AI allows shell and file write by default
-                let perms = SkillPermissions {
-                    shell: true,
-                    fs_write: Some(vec![]),
-                    ..Default::default()
-                };
+                // Permission check using configured defaults (or merged skill permissions)
+                let perms = config.default_permissions.clone();
                 let (allowed, risk) = check_permission(&tool_name, &perms);
                 if !allowed {
                     let perm_msg = Message::tool(
@@ -617,9 +674,12 @@ async fn run_agent_turn_inner(
                     }
                     Err(e) => {
                         let err_msg = format!("Tool execution failed: {}", e);
-                        let tool_msg = Message::tool(&tc.id, &tool_name, &err_msg);
-                        messages.push(tool_msg.clone());
-                        tool_messages.push(tool_msg);
+                        // Skip pushing malformed tool messages with empty IDs
+                        if !tc.id.is_empty() && !tool_name.is_empty() {
+                            let tool_msg = Message::tool(&tc.id, &tool_name, &err_msg);
+                            messages.push(tool_msg.clone());
+                            tool_messages.push(tool_msg);
+                        }
                     }
                 }
             }
@@ -950,6 +1010,26 @@ async fn run_agent_turn_streaming_inner(
     let tool_context = ToolContext::with_workspace(config.workspace_path.clone());
 
     for iteration in 0..config.max_iterations {
+        // Token budget check: stop if cumulative prompt tokens exceed the budget
+        if config.max_prompt_budget > 0 && total_prompt > config.max_prompt_budget {
+            tracing::info!(iteration, total_prompt, budget = config.max_prompt_budget, "token budget exceeded (streaming)");
+            let msg = format!("任务进行中（已用 {} tokens，达到预算上限）。输入「继续」以接着执行。", total_prompt);
+            let _ = delta_tx.send(StreamDelta::Text(msg.clone())).await;
+            drop(delta_tx);
+            return Ok(TurnResult {
+                response: msg,
+                thinking: String::new(),
+                tool_calls_made,
+                iterations: iteration,
+                prompt_tokens: total_prompt,
+                completion_tokens: total_completion,
+                cached_tokens: 0,
+                kv_cache_hit: None,
+                content_parts: vec![ContentPart::Text { text: "任务进行中，已达预算上限。".into() }],
+                tool_messages: vec![],
+                vision_usage: None,
+            });
+        }
         // Check for user interruption before each iteration
         if cancel.is_cancelled() {
             tracing::info!("agent turn cancelled by user at iteration {}", iteration);
@@ -1233,10 +1313,14 @@ async fn run_agent_turn_streaming_inner(
                         }
                     }
 
-                    // Fallback: if nothing matched, load all tools
+                    // Fallback: load essential built-in tools only (not all 16)
                     if matched.is_empty() {
+                        let essentials: &[&str] = &[
+                            "shell", "file_read", "file_write", "file_list",
+                            "content_search", "file_delete", "use_skill",
+                        ];
                         matched = all_tools.iter()
-                            .filter(|t| t.name != "request_tools")
+                            .filter(|t| essentials.contains(&t.name.as_str()))
                             .cloned()
                             .collect();
                     }
@@ -1251,12 +1335,8 @@ async fn run_agent_turn_streaming_inner(
                     continue;
                 }
 
-                // Permission check (same as non-streaming path)
-                let perms = loom_types::SkillPermissions {
-                    shell: true,
-                    fs_write: Some(vec![]),
-                    ..Default::default()
-                };
+                // Permission check using configured defaults (or merged skill permissions)
+                let perms = config.default_permissions.clone();
                 let (allowed, risk) = check_permission(tc_name, &perms);
                 if !allowed {
                     let perm_msg = Message::tool(
@@ -1305,9 +1385,13 @@ async fn run_agent_turn_streaming_inner(
                     }
                     Err(e) => {
                         let err_msg = format!("Tool execution failed: {}", e);
-                        let tool_msg = Message::tool(tc_id, tc_name, &err_msg);
-                        messages.push(tool_msg.clone());
-                        tool_messages.push(tool_msg);
+                        // Skip pushing malformed tool messages with empty IDs —
+                        // they cause 400 errors with providers that validate tool_call_id
+                        if !tc_id.is_empty() && !tc_name.is_empty() {
+                            let tool_msg = Message::tool(tc_id, tc_name, &err_msg);
+                            messages.push(tool_msg.clone());
+                            tool_messages.push(tool_msg);
+                        }
                         let _ = delta_tx
                             .send(StreamDelta::ToolResult {
                                 call_id: tc_id.clone(),

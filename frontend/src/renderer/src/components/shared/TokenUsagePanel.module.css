@@ -135,6 +135,23 @@
   color: var(--accent);
 }
 
+.resetBtn {
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  margin-left: auto;
+  transition: all 0.15s;
+}
+.resetBtn:hover {
+  background: #ef444420;
+  color: #ef4444;
+  border-color: #ef444460;
+}
+
 /* ── Section title ── */
 
 .sectionTitle {

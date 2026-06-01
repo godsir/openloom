@@ -90,6 +90,15 @@ impl OpenAIClient {
             body["temperature"] = req.temperature.into();
         }
 
+        // Debug: log request body length for troubleshooting
+        let body_str = serde_json::to_string(&body).unwrap_or_default();
+        tracing::debug!(
+            body_len = body_str.len(),
+            msg_count = messages.len(),
+            tool_count = if req.tools.is_empty() { 0 } else { req.tools.len() },
+            "OpenAI API request"
+        );
+
         let resp = self
             .http
             .post(format!("{}/chat/completions", self.base_url))
@@ -98,6 +107,18 @@ impl OpenAIClient {
             .send()
             .await?;
         if !resp.status().is_success() {
+            // Log just the tools and last 2 messages for debugging
+            let tools_json = serde_json::to_string_pretty(&req.tools).unwrap_or_default();
+            let last_msgs: Vec<_> = messages.iter().rev().take(2).collect();
+            let msgs_json = serde_json::to_string_pretty(&last_msgs).unwrap_or_default();
+            tracing::error!(
+                status = %resp.status(),
+                body_len = serde_json::to_string(&body).unwrap_or_default().len(),
+                tool_count = req.tools.len(),
+                "API 400 — tools:\n{}\nlast_msgs:\n{}",
+                tools_json,
+                msgs_json
+            );
             anyhow::bail!(
                 "API error {}: {}",
                 resp.status(),
@@ -152,9 +173,11 @@ impl OpenAIClient {
             .map(|arr| {
                 arr.iter()
                     .filter_map(|tc| {
+                        let id = tc["id"].as_str().filter(|s| !s.is_empty())?;
+                        let name = tc["function"]["name"].as_str().filter(|s| !s.is_empty())?;
                         Some(ToolCall {
-                            id: tc["id"].as_str()?.to_string(),
-                            name: tc["function"]["name"].as_str()?.to_string(),
+                            id: id.to_string(),
+                            name: name.to_string(),
                             arguments: serde_json::from_str(
                                 tc["function"]["arguments"].as_str().unwrap_or("{}"),
                             )
@@ -192,11 +215,20 @@ impl OpenAIClient {
         messages.iter().map(|msg| {
             let role = msg.role.as_str();
             let mut obj = serde_json::json!({"role": role});
-            if role == "assistant" { obj["reasoning_content"] = serde_json::json!(""); }
             if role == "tool" {
-                if let Some(ContentPart::ToolResult { tool_call_id, name: _, result }) = msg.content.first() {
+                if let Some(ContentPart::ToolResult { tool_call_id, name, result }) = msg.content.first() {
+                    // Skip malformed tool messages with empty tool_call_id —
+                    // these cause 400 errors with providers that validate the field
+                    if tool_call_id.is_empty() {
+                        obj["role"] = serde_json::json!("user");
+                        obj["content"] = serde_json::json!(format!("[system note: a tool call failed — {}] {}", result, if name.is_empty() { "" } else { name }));
+                        return obj;
+                    }
                     obj["tool_call_id"] = serde_json::json!(tool_call_id);
                     obj["content"] = serde_json::json!(result);
+                    if !name.is_empty() {
+                        obj["name"] = serde_json::json!(name);
+                    }
                 }
                 return obj;
             }
@@ -314,6 +346,18 @@ impl CloudClient for OpenAIClient {
             .send()
             .await?;
         if !resp.status().is_success() {
+            // Log just the tools and last 2 messages for debugging
+            let tools_json = serde_json::to_string_pretty(&req.tools).unwrap_or_default();
+            let last_msgs: Vec<_> = messages.iter().rev().take(2).collect();
+            let msgs_json = serde_json::to_string_pretty(&last_msgs).unwrap_or_default();
+            tracing::error!(
+                status = %resp.status(),
+                body_len = serde_json::to_string(&body).unwrap_or_default().len(),
+                tool_count = req.tools.len(),
+                "API 400 — tools:\n{}\nlast_msgs:\n{}",
+                tools_json,
+                msgs_json
+            );
             anyhow::bail!(
                 "API error {}: {}",
                 resp.status(),
@@ -402,6 +446,18 @@ impl CloudClient for OpenAIClient {
             .send()
             .await?;
         if !resp.status().is_success() {
+            // Log just the tools and last 2 messages for debugging
+            let tools_json = serde_json::to_string_pretty(&req.tools).unwrap_or_default();
+            let last_msgs: Vec<_> = messages.iter().rev().take(2).collect();
+            let msgs_json = serde_json::to_string_pretty(&last_msgs).unwrap_or_default();
+            tracing::error!(
+                status = %resp.status(),
+                body_len = serde_json::to_string(&body).unwrap_or_default().len(),
+                tool_count = req.tools.len(),
+                "API 400 — tools:\n{}\nlast_msgs:\n{}",
+                tools_json,
+                msgs_json
+            );
             anyhow::bail!(
                 "API error {}: {}",
                 resp.status(),
@@ -445,6 +501,7 @@ impl CloudClient for OpenAIClient {
                                     let idx = tc["index"].as_u64().unwrap_or(0) as usize;
                                     if let (Some(id), Some(name)) =
                                         (tc["id"].as_str(), tc["function"]["name"].as_str())
+                                        && !id.is_empty() && !name.is_empty()
                                         && tx
                                             .send(StreamDelta::ToolCallBegin {
                                                 index: idx,

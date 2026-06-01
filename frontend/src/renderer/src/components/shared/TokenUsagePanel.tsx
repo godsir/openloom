@@ -56,8 +56,8 @@ export default function TokenUsagePanel() {
   const modelLookup = useMemo(() => {
     const map = new Map<string, { backend: string; backendLabel?: string }>()
     for (const m of models) {
-      map.set(m.name, { backend: m.backend, backendLabel: m.backend_label })
-      if (m.model) map.set(m.model, { backend: m.backend, backendLabel: m.backend_label })
+      map.set(m.name.trim(), { backend: m.backend, backendLabel: m.backend_label })
+      if (m.model) map.set(m.model.trim(), { backend: m.backend, backendLabel: m.backend_label })
     }
     return map
   }, [models])
@@ -143,6 +143,18 @@ export default function TokenUsagePanel() {
               {r === 'all' ? '全部' : r === '7d' ? '近7天' : '近30天'}
             </button>
           ))}
+          {hasData && (
+            <button
+              className={styles.resetBtn}
+              onClick={async () => {
+                const ok = await useStore.getState().showConfirm('重置用量', '确定要清除所有 Token 用量记录吗？此操作不可撤销。', true)
+                if (ok) useStore.getState().resetTokenUsage()
+              }}
+              title="清除所有记录"
+            >
+              重置
+            </button>
+          )}
         </div>
       </div>
 

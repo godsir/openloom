@@ -68,25 +68,23 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
     try {
       await loomRpc('session.switch', { session_id: id })
     } catch {
-      // Non-critical
+      ;(get() as any).addToast?.({ type: 'warning', message: '会话切换失败，部分功能可能异常' })
     }
     try {
       const result = await loomRpc<{ messages: any[] }>('session.messages', { session_id: id })
-      if (result.messages?.length) {
-        const msgs = result.messages.map((m: any, i: number) => ({
-          id: `hist-${id}-${i}`,
-          role: parseRole(m.role),
-          blocks: parseContentParts(m.content, id, get().port),
-          timestamp: m.timestamp || new Date().toISOString(),
-          usage: m.usage ? {
-            prompt: m.usage.prompt_tokens || 0,
-            completion: m.usage.completion_tokens || 0,
-          } : undefined,
-        }))
-        ;(get() as any).hydrateMessages?.(id, msgs)
-      }
+      const msgs = (result.messages || []).map((m: any, i: number) => ({
+        id: `hist-${id}-${i}`,
+        role: parseRole(m.role),
+        blocks: parseContentParts(m.content, id, get().port),
+        timestamp: m.timestamp || new Date().toISOString(),
+        usage: m.usage ? {
+          prompt: m.usage.prompt_tokens || 0,
+          completion: m.usage.completion_tokens || 0,
+        } : undefined,
+      }))
+      ;(get() as any).hydrateMessages?.(id, msgs)
     } catch {
-      // No persisted messages
+      ;(get() as any).addToast?.({ type: 'error', message: '加载消息历史失败' })
     }
   },
 
@@ -252,6 +250,9 @@ function parseContentParts(content: any, sessionId: string, port: number): any[]
   }
 
   const blocks: any[] = []
+  // Track pending use_skill block so we can pair it with its tool_result
+  let pendingSkillBlock: any = null
+  let pendingSkillCallId: string | null = null
 
   for (const part of content) {
     if (!part || typeof part !== 'object') continue
@@ -273,12 +274,14 @@ function parseContentParts(content: any, sessionId: string, port: number): any[]
         args = tc.arguments as Record<string, unknown>
       }
       if (tc.name === 'use_skill') {
-        blocks.push({
+        // Defer push — wait for matching tool_result to capture the result content
+        pendingSkillCallId = tc.id || null
+        pendingSkillBlock = {
           type: 'skill',
           name: (args.skill_name as string) || 'unknown',
           status: 'done',
           sealed: true,
-        })
+        }
       } else if (tc.name === 'request_tools') {
         // meta-tool — skip
       } else {
@@ -291,7 +294,16 @@ function parseContentParts(content: any, sessionId: string, port: number): any[]
         })
       }
     } else if ('tool_result' in part) {
-      // Skip — already represented by the corresponding ToolCall block
+      const tr = part.tool_result
+      // Pair use_skill tool_call with its tool_result: capture result content
+      if (pendingSkillBlock && pendingSkillCallId && tr.tool_call_id === pendingSkillCallId) {
+        const content = tr.content
+        pendingSkillBlock.result = typeof content === 'string' ? content : (content != null ? JSON.stringify(content) : '')
+        blocks.push(pendingSkillBlock)
+        pendingSkillBlock = null
+        pendingSkillCallId = null
+      }
+      // Non-skill tool_results are skipped (already represented by their ToolCall block)
       continue
     } else if ('image' in part) {
       const img = part.image || {}
@@ -329,12 +341,14 @@ function parseContentParts(content: any, sessionId: string, port: number): any[]
         args = part.arguments as Record<string, unknown>
       }
       if (part.name === 'use_skill') {
-        blocks.push({
+        // Defer push — wait for matching tool_result to capture the result content
+        pendingSkillCallId = part.id || null
+        pendingSkillBlock = {
           type: 'skill',
           name: (args.skill_name as string) || 'unknown',
           status: 'done',
           sealed: true,
-        })
+        }
       } else if (part.name === 'request_tools') {
         // meta-tool — skip
       } else {
@@ -347,12 +361,27 @@ function parseContentParts(content: any, sessionId: string, port: number): any[]
         })
       }
     } else if (part.type === 'tool_result' || part.type === 'ToolResult') {
+      // Pair use_skill tool_call with its tool_result: capture result content
+      const toolCallId = part.tool_call_id || ''
+      if (pendingSkillBlock && pendingSkillCallId && toolCallId === pendingSkillCallId) {
+        const content = part.content
+        pendingSkillBlock.result = typeof content === 'string' ? content : (content != null ? JSON.stringify(content) : '')
+        blocks.push(pendingSkillBlock)
+        pendingSkillBlock = null
+        pendingSkillCallId = null
+      }
+      // Non-skill tool_results are skipped (already represented by their ToolCall block)
       continue
     } else {
       // Unknown format — render as text
       const text = JSON.stringify(part)
       blocks.push({ type: 'text', html: sanitizeHtml(renderMarkdown(text)), source: text })
     }
+  }
+
+  // If a use_skill block was never paired with a tool_result, push it anyway
+  if (pendingSkillBlock) {
+    blocks.push(pendingSkillBlock)
   }
 
   // If no blocks were produced, return a fallback empty text block

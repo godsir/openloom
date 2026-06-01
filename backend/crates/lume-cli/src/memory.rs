@@ -162,6 +162,28 @@ impl MemoryStore for LoomMemoryStore {
         Ok(event_id)
     }
 
+    async fn save_interrupted_turn(&self, session_id: &str, user_msg: &str) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        {
+            let sess = self.session_db.lock().unwrap();
+            let conn = sess.conn();
+            let seq: i64 = conn.query_row(
+                "SELECT COALESCE(MAX(seq), 0) + 1 FROM message_history WHERE session_id = ?1",
+                rusqlite::params![session_id],
+                |r| r.get(0),
+            )?;
+            conn.execute(
+                "INSERT INTO message_history (session_id, seq, role, content, timestamp) VALUES (?1, ?2, 'user', ?3, ?4)",
+                rusqlite::params![session_id, seq, user_msg, now],
+            )?;
+            conn.execute(
+                "UPDATE sessions SET message_count = message_count + 1 WHERE id = ?1",
+                rusqlite::params![session_id],
+            )?;
+        }
+        Ok(())
+    }
+
     async fn delete_message(&self, session_id: &str, index: usize) -> Result<()> {
         let store = self.session_db.lock().unwrap();
         let conn = store.conn();
@@ -1067,6 +1089,7 @@ impl MemoryStore for LoomMemoryStore {
         context_window: usize,
     ) -> Result<()> {
         let store = self.session_db.lock().unwrap();
+        let model = model.trim();
         store.conn().execute(
             "INSERT INTO token_usage (session_id, model, prompt_tokens, completion_tokens, cached_tokens, cached_read_tokens, cached_write_tokens, latency_ms, context_window) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![session_id, model, prompt_tokens as i64, completion_tokens as i64, (cached_read_tokens + cached_write_tokens) as i64, cached_read_tokens as i64, cached_write_tokens as i64, latency_ms as i64, context_window as i64],
@@ -1091,7 +1114,7 @@ impl MemoryStore for LoomMemoryStore {
         };
 
         let mut stmt = conn.prepare(
-            "SELECT model, SUM(prompt_tokens) as p, SUM(completion_tokens) as c, SUM(cached_tokens) as ca, SUM(cached_read_tokens) as cr, SUM(cached_write_tokens) as cw, COUNT(*) as r, COALESCE(AVG(latency_ms), 0) as l, COALESCE(AVG(CAST(prompt_tokens AS REAL) / NULLIF(context_window, 0)), 0) as cu FROM token_usage WHERE created_at >= ?1 AND created_at <= ?2 GROUP BY model ORDER BY r DESC",
+            "SELECT TRIM(model) as model, SUM(prompt_tokens) as p, SUM(completion_tokens) as c, SUM(cached_tokens) as ca, SUM(cached_read_tokens) as cr, SUM(cached_write_tokens) as cw, COUNT(*) as r, COALESCE(AVG(latency_ms), 0) as l, COALESCE(AVG(CAST(prompt_tokens AS REAL) / NULLIF(context_window, 0)), 0) as cu FROM token_usage WHERE created_at >= ?1 AND created_at <= ?2 GROUP BY TRIM(model) ORDER BY r DESC",
         )?;
         let by_model: Vec<serde_json::Value> = stmt
             .query_map(rusqlite::params![from, to], |row| {
@@ -1182,5 +1205,11 @@ impl MemoryStore for LoomMemoryStore {
         Ok(serde_json::json!({
             "points": buckets.into_values().collect::<Vec<_>>(),
         }))
+    }
+
+    async fn reset_token_usage(&self) -> Result<()> {
+        let store = self.session_db.lock().unwrap();
+        store.conn().execute("DELETE FROM token_usage", [])?;
+        Ok(())
     }
 }

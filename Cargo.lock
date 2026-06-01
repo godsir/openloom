@@ -1192,6 +1192,7 @@ dependencies = [
  "loom-types",
  "lume-lsp",
  "lume-mcp",
+ "lume-skills",
  "regex",
  "reqwest",
  "scraper",
@@ -1245,6 +1246,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "loom-types",
+ "lume-skills",
  "serde",
  "serde_json",
  "tracing",
@@ -1373,6 +1375,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "toml 0.9.12+spec-1.1.0",
  "tracing",
  "which",
 ]

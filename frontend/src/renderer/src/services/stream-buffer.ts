@@ -10,14 +10,6 @@ interface BufferState {
   thinkingAcc: string
   imageAcc: Array<{ mimeType: string; data: string }>
   moodAcc: { yuan: string; text: string }
-  toolCalls: Array<{
-    id: string
-    name: string
-    status: 'running' | 'done'
-    elapsed: number
-    args: Record<string, unknown>
-    result?: string
-  }>
   skillCalls: Array<{
     id: string
     name: string
@@ -46,7 +38,6 @@ interface BufferState {
   flushTimer: ReturnType<typeof setTimeout> | null
   _lastTextLen: number
   _lastThinkLen: number
-  _lastToolCount: number
 }
 
 class StreamBufferManager {
@@ -65,7 +56,6 @@ class StreamBufferManager {
     buf.textAcc = ''
     buf.thinkingAcc = ''
     buf.imageAcc = []
-    buf.toolCalls = []
     buf.skillCalls = []
     buf.shellCalls = []
     buf.userSkills = userSkills ?? []
@@ -97,7 +87,6 @@ class StreamBufferManager {
         textAcc: '',
         thinkingAcc: '',
         moodAcc: { yuan: '', text: '' },
-        toolCalls: [],
         skillCalls: [],
         shellCalls: [],
         userSkills: [],
@@ -108,7 +97,6 @@ class StreamBufferManager {
         flushTimer: null,
         _lastTextLen: 0,
         _lastThinkLen: 0,
-        _lastToolCount: 0,
       })
     }
     return this.buffers.get(sessionId)!
@@ -201,7 +189,7 @@ class StreamBufferManager {
     if (!buf.messageId) return
     console.log('[stream-buffer] Tool started:', tool.name, tool.id)
     if (tool.name === 'use_skill') {
-      const skillName = (tool.args?.skill_name as string) || 'unknown'
+      const skillName = (tool.args?.skill_name as string) || 'loading...'
       buf.skillCalls.push({
         id: tool.id,
         name: skillName,
@@ -233,11 +221,6 @@ class StreamBufferManager {
     if (!useStore.getState().streamingSessionIds.has(sessionId)) return
     const buf = this.ensureBuffer(sessionId)
     if (!buf.messageId) return
-    const tool = buf.toolCalls.find((t) => t.id === toolId)
-    if (tool) {
-      tool.status = 'done'
-      tool.result = result
-    }
     const shell = buf.shellCalls.find((t) => t.id === toolId)
     if (shell) {
       shell.status = 'done'
@@ -250,14 +233,14 @@ class StreamBufferManager {
       skill.result = result
       // Fix unknown name: ToolStarted args are often incomplete (first chunk only),
       // so extract the real skill name from the use_skill result content.
-      if (skill.name === 'unknown' && result) {
+      if ((skill.name === 'unknown' || skill.name === 'loading...') && result) {
         const m = result.match(/^## Skill: ([^\n]+)/)
         if (m) skill.name = m[1].trim()
       }
     }
     // Fallback: if neither tool nor skill was tracked (started event missed),
     // create a completed entry based on the tool name from the completed event
-    if (!tool && !skill && toolName === 'use_skill') {
+    if (!skill && toolName === 'use_skill') {
       let skillName = 'unknown'
       if (result) {
         const m = result.match(/^## Skill: ([^\n]+)/)
@@ -354,7 +337,6 @@ class StreamBufferManager {
 
     console.log('[stream-buffer] Flushing buffer:', {
       skillCalls: buf.skillCalls.length,
-      toolCalls: buf.toolCalls.length,
       thinking: buf.thinkingAcc.length > 0,
       text: buf.textAcc.length > 0,
     })
@@ -407,11 +389,6 @@ class StreamBufferManager {
       blocks.push({ type: 'mood', ...buf.moodAcc })
     }
 
-    // User-selected skills
-    for (const name of buf.userSkills) {
-      blocks.push({ type: 'skill', name, status: 'done', sealed: true })
-    }
-
     // Terminal-style blocks for shell/file tools — rendered below thinking
     for (const sc of buf.shellCalls) {
       blocks.push({
@@ -433,14 +410,6 @@ class StreamBufferManager {
         status: sc.status,
         result: sc.result,
         sealed: sc.status === 'done',
-      })
-    }
-
-    if (buf.toolCalls.length > 0) {
-      blocks.push({
-        type: 'tool_group',
-        tools: buf.toolCalls,
-        collapsed: buf.toolCalls.every((t) => t.status === 'done'),
       })
     }
 

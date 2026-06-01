@@ -10,17 +10,19 @@ use loom_inference::engine::CloudClient;
 use loom_memory::{
     ExtractedEntity, ExtractedRelationship, LLM_EXTRACTION_PROMPT, parse_llm_extraction,
 };
+use loom_security::merge_multi_permissions;
 use loom_types::{
-    AgentConfig, CompletionRequest, ContentPart, Message, Role, SessionId, StreamDelta,
+    AgentConfig, CompletionRequest, ContentPart, Message, Role, SessionId, SkillPermissions,
+    StreamDelta,
 };
 use lume_lsp::LspClient;
 use lume_mcp::McpClient;
+use lume_skills::SkillPermissionConfig;
 use tokio::sync::{RwLock, mpsc};
 
 use crate::agent::AgentStatus;
 use crate::agent_loop::{
-    AgentLoopConfig, TurnResult, build_user_message, run_agent_turn_streaming,
-    run_agent_turn_streaming_with_images,
+    AgentLoopConfig, TurnResult, build_user_message, run_agent_turn_streaming_with_images,
 };
 use crate::agent_pool::{AgentPool, AgentSummary};
 use crate::event_bus::{AgentEvent, EventBus};
@@ -38,6 +40,7 @@ pub struct Orchestrator {
     skill_context: Arc<RwLock<String>>,
     persona_context: Arc<RwLock<String>>,
     skill_bodies: Arc<RwLock<std::collections::HashMap<String, String>>>,
+    skill_permissions: Arc<RwLock<std::collections::HashMap<String, SkillPermissionConfig>>>,
     memory_store: Arc<RwLock<Option<Box<dyn crate::MemoryStore>>>>,
     agent_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::AgentConfig>>>,
     model_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::ModelConfig>>>,
@@ -60,6 +63,11 @@ pub trait MemoryStore: Send + Sync {
         prompt_tokens: usize,
         completion_tokens: usize,
     ) -> Result<i64>;
+    async fn save_interrupted_turn(
+        &self,
+        session_id: &str,
+        user_msg: &str,
+    ) -> Result<()>;
     async fn load_history(&self, session_id: &str, limit: usize) -> Result<Vec<Message>>;
     async fn delete_message(&self, session_id: &str, index: usize) -> Result<()>;
     async fn extract_cognitions(&self, session_id: &str, text: &str) -> Result<Vec<String>>;
@@ -184,6 +192,7 @@ pub trait MemoryStore: Send + Sync {
         to: &str,
         granularity: &str,
     ) -> Result<serde_json::Value>;
+    async fn reset_token_usage(&self) -> Result<()>;
 }
 
 // ── Entity extraction helper (English + Chinese) ─────────────────────────
@@ -293,6 +302,7 @@ impl Orchestrator {
         let _ = registry.register(Arc::new(crate::builtin_tools::FileDeleteTool));
 
         let skill_bodies = Arc::new(RwLock::new(std::collections::HashMap::new()));
+        let skill_permissions = Arc::new(RwLock::new(std::collections::HashMap::new()));
         let _ = registry.register(Arc::new(crate::builtin_tools::UseSkillTool {
             skill_bodies: skill_bodies.clone(),
         }));
@@ -314,6 +324,7 @@ impl Orchestrator {
             skill_context: Arc::new(RwLock::new(String::new())),
             persona_context: Arc::new(RwLock::new(String::new())),
             skill_bodies,
+            skill_permissions,
             memory_store: Arc::new(RwLock::new(None)),
             agent_configs: Arc::new(RwLock::new(std::collections::HashMap::from([(
                 "default".to_string(),
@@ -542,6 +553,31 @@ impl Orchestrator {
     /// Set full skill bodies (name → full markdown body) for use_skill tool.
     pub async fn set_skill_bodies(&self, bodies: std::collections::HashMap<String, String>) {
         *self.skill_bodies.write().await = bodies;
+    }
+
+    /// Set skill permissions (name → SkillPermissionConfig) parsed from SKILL.md manifests.
+    pub async fn set_skill_permissions(
+        &self,
+        perms: std::collections::HashMap<String, SkillPermissionConfig>,
+    ) {
+        *self.skill_permissions.write().await = perms;
+    }
+
+    /// Atomic skill state update — sets context, bodies, and permissions together
+    /// from the caller's perspective, avoiding a window where one is updated
+    /// but the others are not.
+    pub async fn set_skills(
+        &self,
+        context: String,
+        bodies: std::collections::HashMap<String, String>,
+        permissions: std::collections::HashMap<String, SkillPermissionConfig>,
+    ) {
+        let mut ctx = self.skill_context.write().await;
+        let mut b = self.skill_bodies.write().await;
+        let mut p = self.skill_permissions.write().await;
+        *ctx = context;
+        *b = bodies;
+        *p = permissions;
     }
 
     /// Look up a skill's full body by name.
@@ -988,6 +1024,13 @@ impl Orchestrator {
         match &*self.memory_store.read().await {
             Some(store) => store.get_token_history(from, to, granularity).await,
             None => Ok(serde_json::json!({ "points": [] })),
+        }
+    }
+
+    pub async fn reset_token_usage(&self) -> Result<(), anyhow::Error> {
+        match &*self.memory_store.read().await {
+            Some(store) => store.reset_token_usage().await,
+            None => Err(anyhow::anyhow!("memory store not available")),
         }
     }
 
@@ -1618,6 +1661,92 @@ impl Orchestrator {
         .await
     }
 
+    /// Build the full system prompt by assembling agent persona, system instructions,
+    /// user profile, selected skills, available skills, KG context, and workspace path.
+    /// Shared by both `process_message_with_config` and `process_message_streaming`
+    /// to eliminate code duplication.
+    async fn build_full_system_prompt(
+        &self,
+        agent_config: &loom_types::AgentConfig,
+        user_persona: &str,
+        available_skills: &str,
+        selected_skills: &[String],
+        user_message: &str,
+        session_id: &str,
+        workspace_path: &Option<String>,
+    ) -> String {
+        let mut system_prompt = String::new();
+
+        // 1. Agent persona — the agent's core identity, placed first for maximum effect
+        if !agent_config.persona.is_empty() {
+            system_prompt.push_str(&agent_config.persona);
+        }
+        // 2. System instructions — base prompt or agent-specific override
+        if let Some(ref override_prompt) = agent_config.system_prompt_override
+            && !override_prompt.is_empty()
+        {
+            if !system_prompt.is_empty() {
+                system_prompt.push_str("\n\n");
+            }
+            system_prompt.push_str(override_prompt);
+        } else {
+            let base = self.build_system_prompt().await;
+            if !base.is_empty() {
+                if !system_prompt.is_empty() {
+                    system_prompt.push_str("\n\n");
+                }
+                system_prompt.push_str(&base);
+            }
+        }
+        // 3. User profile — learned facts about the user (context, not identity)
+        if !user_persona.is_empty() {
+            system_prompt.push_str(&format!("\n\n## User Profile\n{}", user_persona));
+        }
+        // 4a. Selected skills — inject full SKILL.md content for user-chosen skills
+        if !selected_skills.is_empty() {
+            let bodies = self.skill_bodies.read().await;
+            system_prompt.push_str("\n\n## Active Skills (User Selected)\nThe following skills are activated for this conversation. Follow their instructions directly — do NOT call use_skill for these.\n");
+            for name in selected_skills {
+                if let Some(body) = bodies.get(name) {
+                    system_prompt.push_str(&format!("\n\n### Skill: {}\n{}", name, body));
+                }
+            }
+        }
+        // 4b. Available skills — name-only list for LLM autonomous use_skill calls
+        if !available_skills.is_empty() {
+            system_prompt.push_str(&format!("\n\n## Available Skills\n{}", available_skills));
+        }
+
+        // Inject knowledge graph context
+        {
+            let mem_guard = self.memory_store.read().await;
+            if let Some(ref store) = *mem_guard {
+                let candidates = extract_entity_candidates(user_message);
+                let mut entities: Vec<&str> = vec!["USER"];
+                for c in &candidates {
+                    entities.push(c.as_str());
+                }
+                entities.truncate(6);
+                match store.query_kg_context(&entities, 5, session_id).await {
+                    Ok(kg) if !kg.is_empty() => {
+                        system_prompt.push_str(&format!("\n\n{}", kg));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Workspace path
+        if let Some(ws) = workspace_path {
+            system_prompt.push_str(&format!(
+                "\n\n## 工作空间\n当前工作目录：{}\n所有相对路径都基于此目录。创建、读取、修改文件时优先使用此目录。",
+                ws
+            ));
+        }
+
+        system_prompt
+    }
+
     /// Process a user message with a specific session and agent config.
     /// Uses the Agent state machine: Idle → Thinking → Completed (or Errored).
     /// `attached_images` are ContentPart::Image items to send directly to the model.
@@ -1661,69 +1790,13 @@ impl Orchestrator {
             .await?;
 
         // ── System prompt assembly ──
-        // Order: Agent Identity → Instructions → Context → Tools
-        let mut system_prompt = String::new();
-
-        // 1. Agent persona — the agent's core identity, placed first for maximum effect
-        if !agent_config.persona.is_empty() {
-            system_prompt.push_str(&agent_config.persona);
-        }
-        // 2. System instructions — base prompt or agent-specific override
-        if let Some(ref override_prompt) = agent_config.system_prompt_override
-            && !override_prompt.is_empty()
-        {
-            if !system_prompt.is_empty() {
-                system_prompt.push_str("\n\n");
-            }
-            system_prompt.push_str(override_prompt);
-        } else {
-            let base = self.build_system_prompt().await;
-            if !base.is_empty() {
-                if !system_prompt.is_empty() {
-                    system_prompt.push_str("\n\n");
-                }
-                system_prompt.push_str(&base);
-            }
-        }
-        // 3. User profile — learned facts about the user (context, not identity)
-        if !user_persona.is_empty() {
-            system_prompt.push_str(&format!("\n\n## User Profile\n{}", user_persona));
-        }
-        // 4a. Selected skills — inject full SKILL.md content for user-chosen skills
+        // Collect skill permissions for merged tool-call permissions.
+        let mut merged_skill_permissions: Vec<SkillPermissionConfig> = Vec::new();
         if !selected_skills.is_empty() {
-            let bodies = self.skill_bodies.read().await;
-            system_prompt.push_str("\n\n## Active Skills (User Selected)\nThe following skills are activated for this conversation. Follow their instructions directly — do NOT call use_skill for these.\n");
+            let perm_map = self.skill_permissions.read().await;
             for name in &selected_skills {
-                if let Some(body) = bodies.get(name) {
-                    system_prompt.push_str(&format!("\n\n### Skill: {}\n{}", name, body));
-                }
-            }
-        }
-        // 4b. Available skills — name-only list for LLM autonomous use_skill calls
-        if !skills.is_empty() {
-            system_prompt.push_str(&format!("\n\n## Available Skills\n{}", skills));
-        }
-
-        // Inject knowledge graph context
-        {
-            tracing::info!(
-                session_id,
-                "[orchestrator] step: reading memory_store for KG"
-            );
-            let mem_guard = self.memory_store.read().await;
-            tracing::info!(session_id, "[orchestrator] step: memory_store KG read done");
-            if let Some(ref store) = *mem_guard {
-                let candidates = extract_entity_candidates(user_message);
-                let mut entities: Vec<&str> = vec!["USER"];
-                for c in &candidates {
-                    entities.push(c.as_str());
-                }
-                entities.truncate(6);
-                match store.query_kg_context(&entities, 5, session_id).await {
-                    Ok(kg) if !kg.is_empty() => {
-                        system_prompt.push_str(&format!("\n\n{}", kg));
-                    }
-                    _ => {}
+                if let Some(perms) = perm_map.get(name) {
+                    merged_skill_permissions.push(perms.clone());
                 }
             }
         }
@@ -1740,21 +1813,58 @@ impl Orchestrator {
             None
         };
 
-        if let Some(ref ws) = workspace_path {
-            system_prompt.push_str(&format!(
-                "\n\n## 工作空间\n当前工作目录：{}\n所有相对路径都基于此目录。创建、读取、修改文件时优先使用此目录。",
-                ws
-            ));
-        }
+        // Build full system prompt via shared method (persona, instructions, profile,
+        // selected skills, available skills, KG context, workspace path).
+        let system_prompt = self
+            .build_full_system_prompt(
+                agent_config,
+                &user_persona,
+                &skills,
+                &selected_skills,
+                user_message,
+                session_id,
+                &workspace_path,
+            )
+            .await;
+
+        // Build default permissions: start with the old allow-everything baseline,
+        // then merge in any selected skill permissions (most restrictive wins).
+        let base_permissions = SkillPermissions {
+            shell: true,
+            fs_write: Some(vec![]),
+            ..Default::default()
+        };
+        let default_permissions = if merged_skill_permissions.is_empty() {
+            base_permissions
+        } else {
+            merge_multi_permissions(
+                merged_skill_permissions.iter().map(Some),
+                &base_permissions,
+            )
+        };
+
+        // Compute smart prompt budget: 80% of the active model's context window
+        let max_prompt_budget = {
+            let configs = self.model_configs.read().await;
+            let active = self.active_model_name.read().await;
+            let ctx_window = active
+                .as_deref()
+                .and_then(|name| configs.values().find(|c| c.name == name))
+                .map(|c| c.context_size)
+                .unwrap_or(128_000); // default: 128K
+            (ctx_window as f64 * 0.8) as usize
+        };
 
         let loop_config = AgentLoopConfig {
             system_prompt,
             temperature: agent_config.temperature.unwrap_or(0.0),
-            max_iterations: agent_config.max_iterations.unwrap_or(10),
+            max_iterations: 100, // safety net — LLM decides when done
             thinking_budget,
             model_configs: self.model_configs.read().await.values().cloned().collect(),
             active_model_name: self.active_model_name.read().await.clone(),
             workspace_path,
+            default_permissions,
+            max_prompt_budget,
             ..Default::default()
         };
         tracing::info!(session_id, "[orchestrator] step: loop_config built");
@@ -2082,8 +2192,28 @@ impl Orchestrator {
                 .await;
 
             if was_interrupted {
-                // Don't persist interrupted responses to history or memory
-                tracing::info!(session_id, "turn was interrupted, skipping persistence");
+                // Save user message so it isn't lost, skip the partial assistant response
+                let user_msg_full = build_user_message(&user_msg, &attached_images);
+                let mut user_parts = user_msg_full.content.clone();
+                let _ = self
+                    .convert_images_to_refs(session_id, &mut user_parts)
+                    .await;
+                self.add_to_history(
+                    session_id,
+                    Message {
+                        role: Role::User,
+                        content: user_parts.clone(),
+                        timestamp: user_msg_full.timestamp,
+                        usage: user_msg_full.usage,
+                    },
+                )
+                .await;
+                let mem = self.memory_store.read().await;
+                if let Some(ref store) = *mem {
+                    let user_json =
+                        serde_json::to_string(&user_parts).unwrap_or_else(|_| user_msg.clone());
+                    let _ = store.save_interrupted_turn(session_id, &user_json).await;
+                }
             } else {
                 // Convert images to file refs before caching / persisting
                 let user_msg_full = build_user_message(&user_msg, &attached_images);
@@ -2244,6 +2374,9 @@ impl Orchestrator {
         user_message: &str,
         delta_tx: mpsc::Sender<StreamDelta>,
         session_id: &str,
+        thinking_budget: Option<usize>,
+        attached_images: Vec<ContentPart>,
+        selected_skills: Vec<String>,
     ) -> Result<TurnResult> {
         // Read shared contexts BEFORE pool.spawn (same reason as
         // process_message_with_config).
@@ -2256,10 +2389,17 @@ impl Orchestrator {
             s.clone()
         };
 
+        // Resolve agent config for this session (falls back to "default")
+        let agent_config = self.resolve_session_agent_config(session_id).await;
+
         // Register agent in pool
         let agent_id = self
             .pool
-            .spawn(AgentConfig::default(), None, SessionId::new())
+            .spawn(
+                agent_config.clone(),
+                None,
+                SessionId::from(session_id.to_string()),
+            )
             .await?;
 
         // Transition: Idle → Thinking
@@ -2278,18 +2418,22 @@ impl Orchestrator {
         let registry = self.tool_registry.read().await;
         let history = self.session_history(session_id).await;
 
-        let mut system_prompt = self.build_system_prompt().await;
-        // Inject persona + skills (already read before pool.spawn)
-        if !user_persona.is_empty() {
-            system_prompt.push_str(&format!("\n\n## User Profile\n{}", user_persona));
-        }
-        if !skills.is_empty() {
-            system_prompt.push_str(&format!("\n\n## Available Skills\n{}", skills));
-        }
+        // Get workspace path for this session
+        let workspace_path = if let Some(ref store) = *self.memory_store.read().await {
+            let session_ws = store.get_session_workspace(session_id).await.ok().flatten();
+            if session_ws.is_some() {
+                session_ws
+            } else {
+                store.get_default_workspace().await.ok().flatten()
+            }
+        } else {
+            None
+        };
 
         // ── Summary check (P0 memory optimization) ──
-        // Phase 1: read existing summary + KG context (lock held briefly)
-        let (existing_summary, kg_ctx, should_summarize) = {
+        // Phase 1: read existing summary (lock held briefly)
+        // KG context is handled by build_full_system_prompt below.
+        let (existing_summary, should_summarize) = {
             let mem = self.memory_store.read().await;
             if let Some(ref store) = *mem {
                 let existing = store.get_summary(session_id).await.unwrap_or(None);
@@ -2301,23 +2445,9 @@ impl Orchestrator {
                     .unwrap_or(history.len());
                 let do_summarize =
                     loom_memory::SummaryEngine::should_summarize(total_msgs, last_at, 12, 6);
-                let candidates = extract_entity_candidates(user_message);
-                let mut entities: Vec<&str> = vec!["USER"];
-                for c in &candidates {
-                    entities.push(c.as_str());
-                }
-                entities.truncate(6);
-                let kg = store
-                    .query_kg_context(&entities, 5, session_id)
-                    .await
-                    .unwrap_or_default();
-                (
-                    existing,
-                    if kg.is_empty() { None } else { Some(kg) },
-                    do_summarize,
-                )
+                (existing, do_summarize)
             } else {
-                (None, None, false)
+                (None, false)
             }
         }; // lock dropped here
 
@@ -2377,46 +2507,85 @@ impl Orchestrator {
             existing_summary
         };
 
-        // Get workspace path for this session
-        let workspace_path = if let Some(ref store) = *self.memory_store.read().await {
-            let session_ws = store.get_session_workspace(session_id).await.ok().flatten();
-            if session_ws.is_some() {
-                session_ws
-            } else {
-                store.get_default_workspace().await.ok().flatten()
+        // ── System prompt assembly (shared method) ──
+        let system_prompt = self
+            .build_full_system_prompt(
+                &agent_config,
+                &user_persona,
+                &skills,
+                &selected_skills,
+                user_message,
+                session_id,
+                &workspace_path,
+            )
+            .await;
+
+        // Collect skill permissions for merged tool-call permissions
+        let mut merged_skill_permissions: Vec<SkillPermissionConfig> = Vec::new();
+        if !selected_skills.is_empty() {
+            let perm_map = self.skill_permissions.read().await;
+            for name in &selected_skills {
+                if let Some(perms) = perm_map.get(name) {
+                    merged_skill_permissions.push(perms.clone());
+                }
             }
+        }
+        let base_permissions = SkillPermissions {
+            shell: true,
+            fs_write: Some(vec![]),
+            ..Default::default()
+        };
+        let default_permissions = if merged_skill_permissions.is_empty() {
+            base_permissions
         } else {
-            None
+            merge_multi_permissions(
+                merged_skill_permissions.iter().map(Some),
+                &base_permissions,
+            )
         };
 
-        if let Some(ref ws) = workspace_path {
-            system_prompt.push_str(&format!(
-                "\n\n## 工作空间\n当前工作目录：{}\n所有相对路径都基于此目录。创建、读取、修改文件时优先使用此目录。",
-                ws
-            ));
-        }
+        let allowed = agent_config.allowed_tools.clone();
+        let disallowed = agent_config.disallowed_tools.clone();
+        let cancel = self.pool.cancel_token(&agent_id).await?;
+
+        // Compute smart prompt budget: 80% of active model's context window
+        let max_prompt_budget = {
+            let configs = self.model_configs.read().await;
+            let active = self.active_model_name.read().await;
+            let ctx_window = active
+                .as_deref()
+                .and_then(|name| configs.values().find(|c| c.name == name))
+                .map(|c| c.context_size)
+                .unwrap_or(128_000);
+            (ctx_window as f64 * 0.8) as usize
+        };
 
         let config = AgentLoopConfig {
             system_prompt,
-            // persona already baked into system_prompt via build_system_prompt()
+            // persona already baked into system_prompt via build_full_system_prompt
             persona: None,
             summary,
-            kg_context: kg_ctx,
+            kg_context: None,
+            thinking_budget,
             model_configs: self.model_configs.read().await.values().cloned().collect(),
             active_model_name: self.active_model_name.read().await.clone(),
             workspace_path,
+            default_permissions,
+            max_prompt_budget,
             ..Default::default()
         };
 
-        let result = run_agent_turn_streaming(
+        let result = run_agent_turn_streaming_with_images(
             client.as_ref(),
             &registry,
             &history,
             user_message,
+            &attached_images,
             &config,
             delta_tx,
-            &None,
-            &None,
+            &allowed,
+            &disallowed,
+            &cancel,
         )
         .await;
 
@@ -2434,10 +2603,49 @@ impl Orchestrator {
                 .await;
 
             if was_interrupted {
-                tracing::info!(session_id, "streaming turn was interrupted, skipping persistence");
-            } else {
-                self.add_to_history(session_id, Message::user(user_message))
+                // Save user message so it isn't lost, skip the partial assistant response
+                let user_msg_full = build_user_message(user_message, &attached_images);
+                let mut user_parts = user_msg_full.content.clone();
+                let _ = self
+                    .convert_images_to_refs(session_id, &mut user_parts)
                     .await;
+                self.add_to_history(
+                    session_id,
+                    Message {
+                        role: Role::User,
+                        content: user_parts.clone(),
+                        timestamp: user_msg_full.timestamp,
+                        usage: user_msg_full.usage,
+                    },
+                )
+                .await;
+                let mem = self.memory_store.read().await;
+                if let Some(ref store) = *mem {
+                    let user_json =
+                        serde_json::to_string(&user_parts).unwrap_or_else(|_| user_message.to_string());
+                    let _ = store.save_interrupted_turn(session_id, &user_json).await;
+                }
+            } else {
+                // Convert images to file refs before caching / persisting
+                let user_msg_full = build_user_message(user_message, &attached_images);
+                let mut user_parts = user_msg_full.content.clone();
+                if let Err(e) = self
+                    .convert_images_to_refs(session_id, &mut user_parts)
+                    .await
+                {
+                    tracing::warn!(session_id, error = %e, "failed to convert user images to file refs");
+                }
+
+                self.add_to_history(
+                    session_id,
+                    Message {
+                        role: Role::User,
+                        content: user_parts.clone(),
+                        timestamp: user_msg_full.timestamp,
+                        usage: user_msg_full.usage,
+                    },
+                )
+                .await;
 
                 let mut assistant_parts = if turn.content_parts.is_empty() {
                     vec![ContentPart::Text {
@@ -2466,13 +2674,20 @@ impl Orchestrator {
                 )
                 .await;
 
+                // Persist intermediate tool-call and tool-result messages to history
+                for tool_msg in &turn.tool_messages {
+                    self.add_to_history(session_id, tool_msg.clone()).await;
+                }
+
                 // Persist to memory store
                 let mem = self.memory_store.read().await;
                 if let Some(ref store) = *mem {
+                    let user_content_json =
+                        serde_json::to_string(&user_parts).unwrap_or_else(|_| user_message.to_string());
                     let event_id = store
                         .save_turn(
                             session_id,
-                            user_message,
+                            &user_content_json,
                             &content_json,
                             turn.tool_calls_made,
                             turn.prompt_tokens,

@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback } from 'react'
 import type { ContentBlock } from '../../stores/chat'
 import { renderMarkdown } from '../../utils/markdown'
 import { sanitizeHtml } from '../../utils/markdown-sanitizer'
+import { renderMermaidDiagram } from '../../utils/mermaid-renderer'
 
 export default function TextBlock({ block }: { block: ContentBlock }) {
   const html = (block.html as string) || ''
@@ -38,6 +39,19 @@ export default function TextBlock({ block }: { block: ContentBlock }) {
     el.addEventListener('click', handleClick)
     return () => el.removeEventListener('click', handleClick)
   }, [handleClick])
+
+  // Render mermaid diagrams after the HTML is in the DOM
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const placeholders = el.querySelectorAll<HTMLElement>('.mermaid-placeholder')
+    placeholders.forEach((ph) => {
+      const source = ph.getAttribute('data-mermaid-source')
+      if (source) {
+        renderMermaidDiagram(ph, source)
+      }
+    })
+  }, [displayHtml])
 
   return (
     <div

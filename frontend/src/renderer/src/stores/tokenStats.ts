@@ -56,6 +56,7 @@ export interface TokenStatsSlice {
   loadSummary: (from: string, to: string) => Promise<void>
   loadHistory: (from: string, to: string, granularity: string) => Promise<void>
   setTimeRange: (range: 'all' | '7d' | '30d') => void
+  resetTokenUsage: () => Promise<void>
 }
 
 export const createTokenStatsSlice: StateCreator<TokenStatsSlice> = (set, get) => ({
@@ -117,5 +118,17 @@ export const createTokenStatsSlice: StateCreator<TokenStatsSlice> = (set, get) =
       : now.toISOString().slice(0, 10) + 'T23:59:59'
     get().loadSummary(from, to)
     get().loadHistory(from, to, 'day')
+  },
+
+  resetTokenUsage: async () => {
+    await loomRpc('stats.reset')
+    set({
+      sessionTotal: { prompt: 0, completion: 0, cached: 0, requests: 0 },
+      sessionByModel: {},
+      summary: null,
+      history: [],
+    })
+    // Reload to show empty state
+    get().setTimeRange(get().timeRange)
   },
 })

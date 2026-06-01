@@ -29,7 +29,7 @@ export async function bootstrapApp(): Promise<() => void> {
   )
 
   const unsub = loomSubscribe((method, params) => {
-    const p = unwrapEvent(method, params as Record<string, unknown> | undefined)
+    const p = params as Record<string, unknown> | undefined
     const sessionId =
       (p?.session_id as string) ||
       useStore.getState().currentSessionId ||
@@ -93,14 +93,6 @@ export async function bootstrapApp(): Promise<() => void> {
         )
         import('./pet-sync').then(m => m.sendPetState('inspect'))
         break
-        streamBufferManager.handleToolCompleted(
-          sessionId,
-          (p?.id as string) || '',
-          p?.result as string | undefined,
-          p?.name as string | undefined,
-          p?.structured_content as Record<string, unknown> | undefined,
-        )
-        break
       case 'agent.subagent_spawned':
         import('./pet-sync').then(m => m.sendPetState('dash'))
         break
@@ -134,25 +126,3 @@ export async function bootstrapApp(): Promise<() => void> {
   return unsub
 }
 
-/** Method name → serde external-tag variant name mapping */
-const EVENT_VARIANTS: Record<string, string> = {
-  'chat.stream_delta': 'StreamDelta',
-  'chat.stream_end': 'StreamEnd',
-  'chat.token_usage': 'TokenUsage',
-  'tool.started': 'ToolStarted',
-  'tool.completed': 'ToolCompleted',
-  'agent.subagent_spawned': 'SubagentSpawned',
-  'agent.subagent_completed': 'SubagentCompleted',
-  'agent.subagent_errored': 'SubagentErrored',
-  'agent.state_changed': 'StateChanged',
-}
-
-/** Unwrap tagged-enum params like {"StreamDelta": {"delta": "..."}} into flat {"delta": "..."}. */
-function unwrapEvent(method: string, params: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-  if (!params) return undefined
-  const variant = EVENT_VARIANTS[method]
-  if (variant && params[variant] && typeof params[variant] === 'object') {
-    return params[variant] as Record<string, unknown>
-  }
-  return params
-}

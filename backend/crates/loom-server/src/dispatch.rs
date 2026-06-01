@@ -358,10 +358,16 @@ pub async fn dispatch_method(
                 )
                 .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
-            state
-                .sessions
-                .add_message(session_id, "user", content)
-                .await;
+            let skip_user_message = p
+                .get("skip_user_message")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if !skip_user_message {
+                state
+                    .sessions
+                    .add_message(session_id, "user", content)
+                    .await;
+            }
             state
                 .sessions
                 .add_message(session_id, "assistant", &result.response)
@@ -663,13 +669,6 @@ pub async fn dispatch_method(
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             Ok(json!({ "ok": true }))
         }
-
-        // === Config ===
-        "config.get" => {
-            let key = p.get("key").and_then(|v| v.as_str());
-            Ok(json!({ "config": { "key": key } }))
-        }
-        "config.set" => Ok(json!({ "ok": true })),
 
         // === Model ===
         "model.list" => {
@@ -1776,6 +1775,8 @@ pub async fn dispatch_method(
                     .map_err(|e| err(ErrorCode::InternalError, &format!("write failed: {}", e)))?;
                 wrote += 1;
             }
+            // Refresh orchestrator skill state
+            let _ = reload_skills_into_orchestrator(&state.orchestrator).await;
             Ok(
                 json!({ "ok": true, "path": skill_dir.display().to_string(), "files_written": wrote }),
             )
@@ -1791,6 +1792,8 @@ pub async fn dispatch_method(
                 std::fs::remove_dir_all(&skill_dir)
                     .map_err(|e| err(ErrorCode::InternalError, &format!("delete failed: {}", e)))?;
             }
+            // Refresh orchestrator skill state
+            let _ = reload_skills_into_orchestrator(&state.orchestrator).await;
             Ok(json!({ "ok": true }))
         }
 
@@ -1863,30 +1866,12 @@ pub async fn dispatch_method(
 
         "plugins.reload" => {
             // Re-scan plugins + standard skill dirs and update orchestrator
-            let home = dirs::home_dir().unwrap_or_default();
-            let data_dir = home.join(".loom");
-            let mut loader = SkillLoader::new();
-            loader.add_standard_paths(&data_dir);
-            match loader.discover() {
-                Ok(skills) => {
-                    let ctx: String = skills
-                        .iter()
-                        .map(|s| format!("- {}", s.manifest.name))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    state.orchestrator.set_skill_context(ctx).await;
-                    let bodies: std::collections::HashMap<String, String> = skills
-                        .iter()
-                        .map(|s| (s.manifest.name.clone(), s.body.clone()))
-                        .collect();
-                    state.orchestrator.set_skill_bodies(bodies).await;
-                    tracing::info!("[plugins.reload] {} skills reloaded", skills.len());
-                    Ok(json!({ "ok": true, "skill_count": skills.len() }))
+            match reload_skills_into_orchestrator(&state.orchestrator).await {
+                Ok(count) => {
+                    tracing::info!("[plugins.reload] {} skills reloaded", count);
+                    Ok(json!({ "ok": true, "skill_count": count }))
                 }
-                Err(e) => Err(err(
-                    ErrorCode::InternalError,
-                    &format!("skill discovery failed: {}", e),
-                )),
+                Err(e) => Err(err(ErrorCode::InternalError, &e)),
             }
         }
 
@@ -2070,6 +2055,15 @@ pub async fn dispatch_method(
                 .await
                 .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             Ok(history)
+        }
+
+        "stats.reset" => {
+            state
+                .orchestrator
+                .reset_token_usage()
+                .await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            Ok(json!({ "ok": true }))
         }
 
         // Fallback
@@ -2317,6 +2311,67 @@ fn count_skill_files(dir: &std::path::Path, max_depth: u32) -> u32 {
         }
     }
     count
+}
+
+/// Reload skills from all standard paths into the orchestrator.
+/// Used by plugins.reload, skills.import, and skills.delete to keep
+/// orchestrator skill state in sync with the filesystem.
+async fn reload_skills_into_orchestrator(
+    orchestrator: &Arc<loom_core::Orchestrator>,
+) -> Result<usize, String> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let data_dir = home.join(".loom");
+    let mut loader = SkillLoader::new();
+    loader.add_standard_paths(&data_dir);
+
+    // Also discover plugins and feed their skill paths to the loader
+    let mut plugin_manager = lume_skills::plugins::PluginManager::new();
+    if let Ok(n) = plugin_manager.discover(&home) {
+        if n > 0 {
+            tracing::info!(plugin_count = n, "plugins discovered during skill reload");
+            for path in plugin_manager.skill_paths() {
+                if path.exists() {
+                    loader.add_path(path, "plugin");
+                }
+            }
+        }
+    }
+
+    loader
+        .discover()
+        .map(|skills| {
+            let ctx: String = skills
+                .iter()
+                .map(|s| {
+                    format!(
+                        "- {}: {}",
+                        s.manifest.name.replace('\n', " ").replace('\r', ""),
+                        s.manifest.description
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let bodies: std::collections::HashMap<String, String> = skills
+                .iter()
+                .map(|s| (s.manifest.name.replace('\n', " ").replace('\r', ""), s.body.clone()))
+                .collect();
+            let permissions: std::collections::HashMap<String, lume_skills::SkillPermissionConfig> = skills
+                .iter()
+                .filter_map(|s| {
+                    s.manifest.permissions.clone().map(|p| {
+                        (s.manifest.name.replace('\n', " ").replace('\r', ""), p)
+                    })
+                })
+                .collect();
+            let count = skills.len();
+            // Use tokio::spawn to avoid holding locks across await
+            let orch = orchestrator.clone();
+            tokio::spawn(async move {
+                orch.set_skills(ctx, bodies, permissions).await;
+            });
+            count
+        })
+        .map_err(|e| format!("skill discovery failed: {}", e))
 }
 
 fn err(code: ErrorCode, msg: &str) -> JsonRpcError {

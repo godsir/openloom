@@ -4,8 +4,27 @@
 //! Parses SKILL.md files (Claude Code / OpenClaw format) and plugin manifests.
 //! Supports progressive disclosure: discovery → activation → execution.
 
+pub mod plugins;
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+
+/// Skill permission configuration — parsed from SKILL.md YAML frontmatter.
+/// Mirrors the fields in `loom_types::SkillPermissions` but all optional,
+/// so a skill can declare only the capabilities it needs.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SkillPermissionConfig {
+    #[serde(default)]
+    pub shell: Option<bool>,
+    #[serde(default)]
+    pub fs_write: Option<Vec<String>>,
+    #[serde(default)]
+    pub fs_read: Option<Vec<String>>,
+    #[serde(default)]
+    pub network: Option<Vec<String>>,
+    #[serde(default)]
+    pub subprocess: Option<bool>,
+}
 
 /// Complete parsed metadata from a SKILL.md YAML frontmatter.
 /// Union of Claude Code, OpenClaw, and agentskills.io fields.
@@ -19,37 +38,59 @@ pub struct CanonicalSkillMetadata {
     #[serde(default)]
     pub version: Option<String>,
     #[serde(default)]
+    #[allow(dead_code)]
+    // TODO: Planned — license identifier for skill marketplace filtering
     pub license: Option<String>,
     #[serde(default)]
+    #[allow(dead_code)]
+    // TODO: Forward compatibility — compatibility constraint string (e.g. ">=1.0")
     pub compatibility: Option<String>,
     #[serde(default)]
+    #[allow(dead_code)]
+    // TODO: Forward compatibility — project homepage or source URL
     pub homepage: Option<String>,
 
-    // Claude Code extension fields
+    // Claude Code / OpenClaw extension fields (parsed for forward compatibility;
+    // most are not yet consumed — see #[allow(dead_code)] annotations below)
     #[serde(default)]
+    #[allow(dead_code)]
+    // TODO: Planned — gate tool access per skill at runtime
     pub allowed_tools: Vec<String>,
     #[serde(default)]
+    #[allow(dead_code)]
+    // TODO: Planned — skill-specific model override
     pub model: Option<String>,
     #[serde(default)]
+    #[allow(dead_code)]
+    // TODO: Planned — effort level for reasoning (Claude Code parity)
     pub effort: Option<String>,
     #[serde(default)]
+    #[allow(dead_code)]
+    // TODO: Planned — context window mode (e.g. "full" vs "compact")
     pub context_mode: Option<String>,
     #[serde(default, alias = "agent")]
+    #[allow(dead_code)]
+    // TODO: Planned — agent subprocess type for skill execution
     pub fork_agent_type: Option<String>,
     #[serde(default, alias = "disable-model-invocation")]
+    #[allow(dead_code)]
+    // TODO: Planned — skill that uses tools without model invocation
     pub disable_model_invocation: bool,
     #[serde(default, alias = "user-invocable")]
     pub user_invocable: bool,
     #[serde(default, alias = "argument-hint")]
+    #[allow(dead_code)]
+    // TODO: Planned — help text displayed when prompting for arguments
     pub argument_hint: Option<String>,
     #[serde(default)]
+    #[allow(dead_code)]
+    // TODO: Planned — predefined argument list for skill invocation
     pub arguments: Vec<String>,
     #[serde(default, alias = "when_to_use")]
+    #[allow(dead_code)]
+    // TODO: Planned — guidance text for when this skill should be selected
     pub when_to_use: Option<String>,
-    #[serde(default)]
-    pub paths: Vec<String>,
-    #[serde(default)]
-    pub shell: Option<String>,
+    // NOTE: `paths` and `shell` removed — OpenClaw-specific fields not needed by this codebase.
 
     // OpenClaw runtime gating
     #[serde(default)]
@@ -64,6 +105,9 @@ pub struct CanonicalSkillMetadata {
     pub os_restriction: Vec<String>,
     #[serde(default)]
     pub always_active: bool,
+
+    #[serde(default)]
+    pub permissions: Option<SkillPermissionConfig>,
 
     #[serde(default, flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
@@ -204,7 +248,20 @@ impl SkillLoader {
                     let skill_md = skill_dir.join("SKILL.md");
                     if skill_md.exists() {
                         match Self::parse_skill_file(&skill_md, &skill_dir) {
-                            Ok(skill) => {
+                            Ok(mut skill) => {
+                                // Set correct source based on search path label
+                                skill.source = match _label.as_str() {
+                                    s if s.contains("Project") => SkillSource::Project {
+                                        cwd: std::env::current_dir().unwrap_or_default(),
+                                    },
+                                    s if s.contains("Plugin") => SkillSource::Plugin {
+                                        plugin_name: String::new(),
+                                        plugin_dir: skill_dir.clone(),
+                                    },
+                                    _ => SkillSource::UserGlobal {
+                                        data_dir: skill_dir.clone(),
+                                    },
+                                };
                                 // Runtime gating
                                 if let Err(reason) = skill.manifest.validate_runtime() {
                                     tracing::info!(name=%skill.manifest.name, %reason, "skill skipped");

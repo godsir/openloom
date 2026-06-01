@@ -12,13 +12,15 @@ export interface SendMessageOptions {
   content: string
   attachedFiles?: AttachedFile[]
   skills?: string[]
+  /** For retry: skip appending a new user message (content is already in history). */
+  skipUserMessage?: boolean
 }
 
 /**
  * Send a message to the backend and manage the streaming state.
  * This is extracted from InputArea so it can be reused by resend/retry buttons.
  */
-export async function sendMessage({ sessionId, content, attachedFiles = [], skills }: SendMessageOptions): Promise<void> {
+export async function sendMessage({ sessionId, content, attachedFiles = [], skills, skipUserMessage }: SendMessageOptions): Promise<void> {
   const sid = sessionId
   useStore.getState().ensureSession(sid)
 
@@ -35,11 +37,13 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
     }
   }
 
-  useStore.getState().appendMessage(sid, {
-    id: msgId, role: 'user',
-    blocks,
-    timestamp: new Date().toISOString(),
-  })
+  if (!skipUserMessage) {
+    useStore.getState().appendMessage(sid, {
+      id: msgId, role: 'user',
+      blocks,
+      timestamp: new Date().toISOString(),
+    })
+  }
 
   const aiMsgId = crypto.randomUUID()
   useStore.getState().addStreamingSession(sid)
@@ -48,7 +52,7 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
     blocks: [],
     timestamp: new Date().toISOString(),
   })
-  streamBufferManager.startStream(sid, aiMsgId)
+  streamBufferManager.startStream(sid, aiMsgId, skills)
 
   const safetyTimer = setTimeout(() => {
     const buf = streamBufferManager.snapshot(sid)
@@ -64,12 +68,32 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
 
   try {
     const { currentModel, thinkingLevel } = useStore.getState()
+    // Validate skill names before sending
+    let validSkills = skills
+    if (skills && skills.length > 0) {
+      try {
+        const res = await loomRpc<{ skills: { name: string }[] }>('skills.list')
+        const known = new Set((res.skills ?? []).map(s => s.name))
+        validSkills = skills.filter(s => known.has(s))
+        const filtered = skills.filter(s => !known.has(s))
+        if (filtered.length > 0) {
+          useStore.getState().addToast({
+            type: 'warning',
+            message: `Unknown skill${filtered.length > 1 ? 's' : ''} ignored: ${filtered.join(', ')}`,
+          })
+        }
+      } catch {
+        // If skills.list fails, pass skills through as-is (backend will validate)
+      }
+    }
+
     await loomRpc('chat.send', {
       session_id: sid,
       content,
       model: currentModel || undefined,
       thinking_level: thinkingLevel || 'off',
-      skills: skills && skills.length > 0 ? skills : undefined,
+      skills: validSkills && validSkills.length > 0 ? validSkills : undefined,
+      skip_user_message: skipUserMessage || undefined,
       attached_files: attachedFiles.map(f => ({
         path: f.path,
         name: f.name,

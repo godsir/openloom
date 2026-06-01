@@ -205,19 +205,104 @@ async fn main() -> anyhow::Result<()> {
                     Ok(skills) if !skills.is_empty() => {
                         let ctx: String = skills
                             .iter()
-                            .map(|s| format!("- {}", s.manifest.name))
+                            .map(|s| format!("- {}: {}", s.manifest.name.replace('\n', " ").replace('\r', ""), s.manifest.description))
                             .collect::<Vec<_>>()
                             .join("\n");
-                        orchestrator.set_skill_context(ctx).await;
                         let bodies: std::collections::HashMap<String, String> = skills
                             .iter()
-                            .map(|s| (s.manifest.name.clone(), s.body.clone()))
+                            .map(|s| (s.manifest.name.replace('\n', " ").replace('\r', ""), s.body.clone()))
                             .collect();
-                        orchestrator.set_skill_bodies(bodies).await;
+                        let permissions: std::collections::HashMap<String, lume_skills::SkillPermissionConfig> = skills
+                            .iter()
+                            .filter_map(|s| {
+                                s.manifest.permissions.clone().map(|p| {
+                                    (s.manifest.name.replace('\n', " ").replace('\r', ""), p)
+                                })
+                            })
+                            .collect();
+                        orchestrator.set_skills(ctx, bodies, permissions).await;
                         println!("[server] {} skills loaded", skills.len());
                     }
                     Ok(_) => println!("[server] 0 skills loaded"),
                     Err(e) => eprintln!("[server] skills error: {}", e),
+                }
+            }
+            // === Plugins ===
+            {
+                let home = loom_dir.parent().unwrap_or(&loom_dir);
+                let mut plugin_manager = plugins::PluginManager::new();
+                match plugin_manager.discover(home) {
+                    Ok(n) if n > 0 => {
+                        println!("[server] {} plugins discovered:", n);
+                        for (name, desc, source) in plugin_manager.list() {
+                            println!(
+                                "  - {} [{}]: {}",
+                                name,
+                                source,
+                                if desc.is_empty() {
+                                    "(no description)"
+                                } else {
+                                    desc
+                                }
+                            );
+                        }
+                        // Reload skills with plugin paths included
+                        let mut skill_loader = lume_skills::SkillLoader::new();
+                        skill_loader.add_standard_paths(&loom_dir);
+                        for path in plugin_manager.skill_paths() {
+                            if path.exists() {
+                                skill_loader.add_path(path, "plugin");
+                            }
+                        }
+                        match skill_loader.discover() {
+                            Ok(new_skills) if !new_skills.is_empty() => {
+                                let ctx: String = new_skills
+                                    .iter()
+                                    .map(|s| format!("- {}: {}", s.manifest.name.replace('\n', " ").replace('\r', ""), s.manifest.description))
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                let bodies: std::collections::HashMap<String, String> = new_skills
+                                    .iter()
+                                    .map(|s| (s.manifest.name.replace('\n', " ").replace('\r', ""), s.body.clone()))
+                                    .collect();
+                                let permissions: std::collections::HashMap<String, lume_skills::SkillPermissionConfig> = new_skills
+                                    .iter()
+                                    .filter_map(|s| {
+                                        s.manifest.permissions.clone().map(|p| {
+                                            (s.manifest.name.replace('\n', " ").replace('\r', ""), p)
+                                        })
+                                    })
+                                    .collect();
+                                orchestrator.set_skills(ctx, bodies, permissions).await;
+                                println!("[server] {} skills loaded (with plugins)", new_skills.len());
+                            }
+                            _ => {}
+                        }
+                        // Connect plugin MCP servers
+                        for mcp in plugin_manager.mcp_configs() {
+                            let config = lume_mcp::McpServerConfig {
+                                name: mcp.name.clone(),
+                                transport: mcp.transport.clone(),
+                                command: mcp.command.clone(),
+                                args: mcp.args.clone(),
+                                url: mcp.url.clone(),
+                                headers: mcp.headers.clone(),
+                                env: Default::default(),
+                                cwd: None,
+                                startup_timeout_secs: 30,
+                                tool_timeout_secs: 60,
+                                enabled_tools: None,
+                                disabled_tools: None,
+                            };
+                            println!("[server] connecting plugin MCP '{}'...", mcp.name);
+                            match orchestrator.connect_mcp_server(config).await {
+                                Ok(name) => println!("[server] plugin MCP '{}' connected", name),
+                                Err(e) => println!("[server] plugin MCP '{}' failed: {:.120}", mcp.name, e),
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => eprintln!("[server] plugins error: {}", e),
                 }
             }
             loom_server::serve(&host, port, orchestrator, &loom_dir).await?;
@@ -567,20 +652,24 @@ async fn run_chat_demo(
         }
         match skill_loader.discover() {
             Ok(skills) if !skills.is_empty() => {
-                // Names-only: save ~80% token overhead vs full descriptions.
-                // LLM calls use_skill(name) to fetch the full SKILL.md body on demand.
                 let ctx: String = skills
                     .iter()
-                    .map(|s| format!("- {}", s.manifest.name))
+                    .map(|s| format!("- {}: {}", s.manifest.name.replace('\n', " ").replace('\r', ""), s.manifest.description))
                     .collect::<Vec<_>>()
                     .join("\n");
-                orchestrator.set_skill_context(ctx).await;
-                // Store full skill bodies for use_skill tool
                 let bodies: std::collections::HashMap<String, String> = skills
                     .iter()
-                    .map(|s| (s.manifest.name.clone(), s.body.clone()))
+                    .map(|s| (s.manifest.name.replace('\n', " ").replace('\r', ""), s.body.clone()))
                     .collect();
-                orchestrator.set_skill_bodies(bodies).await;
+                let permissions: std::collections::HashMap<String, lume_skills::SkillPermissionConfig> = skills
+                    .iter()
+                    .filter_map(|s| {
+                        s.manifest.permissions.clone().map(|p| {
+                            (s.manifest.name.replace('\n', " ").replace('\r', ""), p)
+                        })
+                    })
+                    .collect();
+                orchestrator.set_skills(ctx, bodies, permissions).await;
                 println!("[skills] {} loaded", skills.len());
             }
             Ok(_) => println!("[skills] 0 loaded (no SKILL.md found)"),
@@ -716,15 +805,22 @@ async fn run_chat_demo(
                 Ok(new_skills) if !new_skills.is_empty() => {
                     let ctx: String = new_skills
                         .iter()
-                        .map(|s| format!("- {}", s.manifest.name))
+                        .map(|s| format!("- {}: {}", s.manifest.name.replace('\n', " ").replace('\r', ""), s.manifest.description))
                         .collect::<Vec<_>>()
                         .join("\n");
-                    orchestrator.set_skill_context(ctx).await;
                     let bodies: std::collections::HashMap<String, String> = new_skills
                         .iter()
-                        .map(|s| (s.manifest.name.clone(), s.body.clone()))
+                        .map(|s| (s.manifest.name.replace('\n', " ").replace('\r', ""), s.body.clone()))
                         .collect();
-                    orchestrator.set_skill_bodies(bodies).await;
+                    let permissions: std::collections::HashMap<String, lume_skills::SkillPermissionConfig> = new_skills
+                        .iter()
+                        .filter_map(|s| {
+                            s.manifest.permissions.clone().map(|p| {
+                                (s.manifest.name.replace('\n', " ").replace('\r', ""), p)
+                            })
+                        })
+                        .collect();
+                    orchestrator.set_skills(ctx, bodies, permissions).await;
                     println!("[plugins] {} skills loaded", new_skills.len());
                 }
                 _ => {}
@@ -833,7 +929,7 @@ async fn run_chat_demo(
 
         use loom_types::StreamDelta;
         let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamDelta>(256);
-        let mut fut = std::pin::pin!(orchestrator.process_message_streaming(&line, tx, session));
+        let mut fut = std::pin::pin!(orchestrator.process_message_streaming(&line, tx, session, None, vec![], vec![]));
         let mut tool_idx = 0usize;
         let mut think_buf = String::new();
         let (mut prompt, mut completion, mut cache_read, mut cache_write) =

@@ -17,12 +17,18 @@ export interface ToastSlice {
   removeToast: (id: string) => void
 }
 
+const MAX_TOASTS = 8
+
 export const createToastSlice: StateCreator<ToastSlice> = (set, get) => ({
   toasts: [],
   addToast: (toast) => {
     const id = crypto.randomUUID()
     const t: Toast = { ...toast, id }
-    set((s: any) => ({ toasts: [...s.toasts, t] }))
+    set((s: any) => {
+      const next = [...s.toasts, t]
+      if (next.length > MAX_TOASTS) next.splice(0, next.length - MAX_TOASTS)
+      return { toasts: next }
+    })
     const duration = toast.duration ?? 4000
     if (duration > 0) {
       setTimeout(() => {

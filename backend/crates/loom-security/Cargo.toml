@@ -6,6 +6,7 @@ description = "Security layer for openLoom v2 — sandbox, approval, audit"
 
 [dependencies]
 loom-types = { path = "../loom-types" }
+lume-skills = { path = "../lume-skills" }
 anyhow = "1"
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }

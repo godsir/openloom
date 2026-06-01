@@ -113,6 +113,7 @@ export function getWs(): WebSocket | null {
 
 export function disconnectWebSocket(): void {
   if (ws) {
+    ws.onclose = null
     ws.close()
     ws = null
   }

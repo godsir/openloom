@@ -167,9 +167,11 @@ impl InferenceEngine {
             .map(|arr| {
                 arr.iter()
                     .filter_map(|tc| {
+                        let id = tc["id"].as_str().filter(|s| !s.is_empty())?;
+                        let name = tc["function"]["name"].as_str().filter(|s| !s.is_empty())?;
                         Some(ToolCall {
-                            id: tc["id"].as_str()?.to_string(),
-                            name: tc["function"]["name"].as_str()?.to_string(),
+                            id: id.to_string(),
+                            name: name.to_string(),
                             arguments: serde_json::from_str(
                                 tc["function"]["arguments"].as_str().unwrap_or("{}"),
                             )
@@ -468,6 +470,7 @@ impl CloudClient for InferenceEngine {
                                     let idx = tc["index"].as_u64().unwrap_or(0) as usize;
                                     if let (Some(id), Some(name)) =
                                         (tc["id"].as_str(), tc["function"]["name"].as_str())
+                                        && !id.is_empty() && !name.is_empty()
                                         && tx
                                             .send(StreamDelta::ToolCallBegin {
                                                 index: idx,
@@ -630,12 +633,21 @@ fn lower_messages(messages: &[Message]) -> Vec<serde_json::Value> {
             if role == "tool" {
                 if let Some(ContentPart::ToolResult {
                     tool_call_id,
-                    name: _,
+                    name,
                     result,
                 }) = msg.content.first()
                 {
+                    // Skip malformed tool messages with empty tool_call_id
+                    if tool_call_id.is_empty() {
+                        obj["role"] = serde_json::json!("user");
+                        obj["content"] = serde_json::json!(format!("[system note: a tool call failed — {}] {}", result, if name.is_empty() { "" } else { name }));
+                        return obj;
+                    }
                     obj["tool_call_id"] = serde_json::json!(tool_call_id);
                     obj["content"] = serde_json::json!(result);
+                    if !name.is_empty() {
+                        obj["name"] = serde_json::json!(name);
+                    }
                 }
                 return obj;
             }

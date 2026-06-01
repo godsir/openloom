@@ -231,6 +231,8 @@ impl AgentTool for SpawnAgentTool {
             model_configs: Vec::new(),
             active_model_name: None,
             workspace_path: config.workspace_path.clone(),
+            max_prompt_budget: 0, // sub-agents: no budget limit
+            default_permissions: config.default_permissions.clone(),
         };
         drop(config);
 

@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { streamBufferManager } from '../../services/stream-buffer'
+import { sendMessage } from '../../services/sendMessage'
 import ContextRing from './ContextRing'
 import ModelSelector from './ModelSelector'
 import AgentSelector from './AgentSelector'
@@ -9,7 +10,6 @@ import ThinkingLevelButton from './ThinkingLevelButton'
 import PermissionModeButton from './PermissionModeButton'
 import AttachedFiles from './AttachedFiles'
 import { IconSend, IconImage, IconPaperclip, IconSparkles, IconX, IconCheck } from '../../utils/icons'
-import { escapeHtml } from '../../utils/format'
 import type { AttachedFile } from '../../stores/input'
 import styles from './InputArea.module.css'
 
@@ -243,82 +243,12 @@ export default function InputArea() {
     setText('')
     const filesToSend = attachedFiles
     setAttachedFiles([])
-    const sid = await ensureSession()
-    if (!sid) { sendingRef.current = false; setText(content); setAttachedFiles(filesToSend); return }
-
-    const msgId = crypto.randomUUID()
-    useStore.getState().ensureSession(sid)
-
-    const blocks: any[] = []
-    if (content) {
-      blocks.push({ type: 'text', html: escapeHtml(content), source: content })
-    }
-    for (const f of filesToSend) {
-      if (f.mimeType.startsWith('image/')) {
-        blocks.push({ type: 'image', path: f.path, name: f.name, mimeType: f.mimeType, thumbnail: f.thumbnail })
-      } else {
-        blocks.push({ type: 'file', path: f.path, name: f.name, mimeType: f.mimeType, size: f.size })
-      }
-    }
-
-    useStore.getState().appendMessage(sid, {
-      id: msgId, role: 'user',
-      blocks,
-      timestamp: new Date().toISOString(),
-    })
-
-    const aiMsgId = crypto.randomUUID()
-    useStore.getState().addStreamingSession(sid)
-    useStore.getState().appendMessage(sid, {
-      id: aiMsgId, role: 'assistant',
-      blocks: [],
-      timestamp: new Date().toISOString(),
-    })
-    streamBufferManager.startStream(sid, aiMsgId, selectedSkills)
-
-    // Safety timeout: if stream_end never arrives (e.g. backend deadlock),
-    // auto-unlock the input after 3 minutes so the user isn't permanently stuck.
-    const safetyTimer = setTimeout(() => {
-      const buf = streamBufferManager.snapshot(sid)
-      if (buf && buf.messageId === aiMsgId) {
-        useStore.getState().removeStreamingSession(sid)
-        streamBufferManager.clear(sid)
-      }
-      sendingRef.current = false
-    }, 180_000)
 
     try {
-      const { currentModel, thinkingLevel } = useStore.getState()
-      await loomRpc('chat.send', {
-        session_id: sid,
-        content,
-        model: currentModel || undefined,
-        thinking_level: thinkingLevel || 'off',
-        skills: selectedSkills.length > 0 ? selectedSkills : undefined,
-        attached_files: filesToSend.map(f => ({
-          path: f.path,
-          name: f.name,
-          size: f.size,
-          mime_type: f.mimeType,
-          thumbnail: f.thumbnail,
-        })),
-      })
-    }
-    catch (e: any) {
-      useStore.getState().setInlineError(sid, e.message || '发送失败')
-    }
-    finally {
-      clearTimeout(safetyTimer)
-      // Only clean up if a subsequent send hasn't already started a new stream
-      // for this session. A slow chat.send RPC (e.g. entity extraction after
-      // image messages) can complete after the user has already sent the next
-      // message — without this guard, it would destroy the new stream's state
-      // and the next message would appear stuck in "thinking".
-      const buf = streamBufferManager.snapshot(sid)
-      if (buf && buf.messageId === aiMsgId) {
-        useStore.getState().removeStreamingSession(sid)
-        streamBufferManager.clear(sid)
-      }
+      const sid = await ensureSession()
+      if (!sid) { sendingRef.current = false; setText(content); setAttachedFiles(filesToSend); return }
+      await sendMessage({ sessionId: sid, content, attachedFiles: filesToSend, skills: selectedSkills.length > 0 ? selectedSkills : undefined })
+    } finally {
       sendingRef.current = false
     }
   }

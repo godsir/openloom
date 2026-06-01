@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import type { ContentBlock } from '../../stores/chat'
-import { IconChevronRight, IconChevronDown, IconTerminal, IconEdit, IconSearch } from '../../utils/icons'
+import { IconChevronRight, IconChevronDown, IconTerminal } from '../../utils/icons'
 import { FileDiffCard } from './FileDiffCard'
 import styles from './ShellBlock.module.css'
 

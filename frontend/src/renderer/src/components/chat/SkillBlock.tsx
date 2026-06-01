@@ -14,7 +14,11 @@ export default function SkillBlock({ block }: { block: ContentBlock }) {
   const rawResult = block.result as string | undefined
 
   // Strip the "## Skill: {name}\n\n" prefix from use_skill result
-  const content = rawResult?.replace(/^## Skill: [^\n]*\n\n/, '') || ''
+  const content = rawResult
+    ?.replace(/^## Skill: [^\n]*\n\n?/, '')  // Accept 1 or 2 newlines
+    ?.replace(/^### Skill: [^\n]*\n\n?/, '')  // Also handle ### variant
+    || rawResult  // Fallback: if no header matched, use raw result
+    || ''
   const renderedHtml = content ? sanitizeHtml(renderMarkdown(content)) : ''
 
   // Auto-scroll when streaming

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
-import { IconFolder, IconPackage, IconRefresh, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo } from '../../utils/icons'
+import { IconFolder, IconPackage, IconRefresh, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconSearch, IconChevronRight, IconChevronDown } from '../../utils/icons'
 import Overlay from './Overlay'
 import Select from './Select'
 import AgentConfigPanel from './AgentConfigPanel'
@@ -14,6 +14,8 @@ import PetTab from './PetTab'
 import KnowledgeGraphPanel from '../kg/KnowledgeGraphPanel'
 import TokenUsagePanel from './TokenUsagePanel'
 import { type ThemeId, type FontSizeId, FONT_SIZE_MAP } from '../../stores/ui'
+import { renderMarkdown } from '../../utils/markdown'
+import { sanitizeHtml } from '../../utils/markdown-sanitizer'
 import styles from './SettingsModal.module.css'
 import logoDev from '../../assets/loom_logo_dev.png'
 import logoRelease from '../../assets/loom_logo.png'
@@ -1309,6 +1311,18 @@ function LspTab() {
 
 /* ─── Skills Tab ─── */
 
+/** Derive a source category from a skill's on-disk path. */
+function skillSource(path: string | undefined): { group: string; icon: string } {
+  if (!path) return { group: '其他', icon: 'M' }
+  const p = path.replace(/\\/g, '/')
+  if (p.includes('.claude/plugins') || p.includes('.claude/skills')) return { group: 'Claude Code', icon: 'C' }
+  if (p.includes('.openclaw')) return { group: 'OpenClaw', icon: 'O' }
+  if (p.includes('.codex')) return { group: 'Codex', icon: 'X' }
+  if (p.includes('.loom/skills')) return { group: 'openLoom 用户', icon: 'L' }
+  if (p.includes('.loom/plugins')) return { group: 'openLoom 插件', icon: 'P' }
+  return { group: '其他', icon: 'M' }
+}
+
 function SkillsTab() {
   const [skills, setSkills] = useState<SkillInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -1318,6 +1332,17 @@ function SkillsTab() {
   const [loadingContent, setLoadingContent] = useState(false)
   const [importing, setImporting] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+
+  const toggleGroup = (group: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(group)) next.delete(group)
+      else next.add(group)
+      return next
+    })
+  }
 
   const loadSkills = useCallback(async () => {
     setLoading(true)
@@ -1331,6 +1356,18 @@ function SkillsTab() {
       setLoading(false)
     }
   }, [])
+
+  // Filter + Group
+  const q = searchQuery.toLowerCase().trim()
+  const filtered = q
+    ? skills.filter(s => s.name.toLowerCase().includes(q) || (s.description ?? '').toLowerCase().includes(q))
+    : skills
+  const grouped: Record<string, { icon: string; skills: SkillInfo[] }> = {}
+  for (const s of filtered) {
+    const { group, icon } = skillSource(s.path)
+    if (!grouped[group]) grouped[group] = { icon, skills: [] }
+    grouped[group].skills.push(s)
+  }
 
   useEffect(() => { loadSkills() }, [loadSkills])
 
@@ -1426,11 +1463,19 @@ function SkillsTab() {
     } catch { /* toast already shown */ }
   }
 
+  const renderBody = (raw: string) => {
+    const cleaned = raw
+      .replace(/^## Skill: [^\n]*\n\n?/, '')
+      .replace(/^### Skill: [^\n]*\n\n?/, '')
+    return sanitizeHtml(renderMarkdown(cleaned || raw))
+  }
+
   return (
     <>
       <div className={styles.contentHeader}>
         <div className={styles.sectionHeaderRow}>
           <h3 className={styles.sectionTitle}>技能</h3>
+          <span className={styles.skillCountBadge}>{skills.length} 个</span>
           <button
             onClick={async () => { setRefreshing(true); await loadSkills(); setRefreshing(false) }}
             disabled={refreshing || loading}
@@ -1454,15 +1499,48 @@ function SkillsTab() {
           </button>
         </div>
 
+        {/* Search */}
+        <div className={styles.skillSearchWrap}>
+          <IconSearch size={13} className={styles.skillSearchIcon} />
+          <input
+            type="text"
+            className={styles.skillSearchInput}
+            placeholder="搜索技能名称或描述..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+          />
+          {searchQuery && (
+            <button className={styles.skillSearchClear} onClick={() => setSearchQuery('')}>&times;</button>
+          )}
+        </div>
+
         {loading ? (
           <p className={styles.toolsEmpty}>加载中...</p>
         ) : (
           <>
             <div className={styles.skillList}>
-              {skills.length === 0 ? (
-                <p className={styles.toolsEmpty}>暂无已发现的 Skill</p>
+              {filtered.length === 0 ? (
+                <p className={styles.toolsEmpty}>{searchQuery ? '无匹配结果' : '暂无已发现的 Skill'}</p>
               ) : (
-                skills.map((skill, i) => (
+                Object.entries(grouped).map(([group, { icon, skills: groupSkills }]) => (
+                  <div key={group} className={styles.skillGroup}>
+                    <div
+                      className={styles.skillGroupHeader}
+                      onClick={() => toggleGroup(group)}
+                    >
+                      {collapsedGroups.has(group)
+                        ? <IconChevronRight size={10} className={styles.skillGroupChevron} />
+                        : <IconChevronDown size={10} className={styles.skillGroupChevron} />
+                      }
+                      <span className={styles.skillGroupIcon}>{icon}</span>
+                      <span className={styles.skillGroupName}>{group}</span>
+                      <span className={styles.skillGroupCount}>{groupSkills.length}</span>
+                    </div>
+                    <div className={`${styles.skillGroupBody} ${collapsedGroups.has(group) ? styles.skillGroupBodyCollapsed : ''}`}>
+                      <div className={styles.skillGroupBodyInner}>
+                    {groupSkills.map((skill, i) => {
+                    const isSelected = selectedSkill === skill.name
+                    return (
                   <div key={skill.path || `${skill.name}-${i}`}>
                     <div
                       className={`${styles.skillCard} ${selectedSkill === skill.name ? styles.skillCardActive : ''}`}
@@ -1492,18 +1570,21 @@ function SkillsTab() {
                         <p className={styles.skillCardDesc}>{skill.description}</p>
                       )}
                     </div>
-                    {selectedSkill === skill.name && (
+                    {isSelected && (
                       <div className={styles.skillDetail}>
                         {loadingContent ? (
                           <p className={styles.toolsEmpty}>加载中...</p>
                         ) : (
-                          <pre className={styles.skillDetailContent}>{skillContent}</pre>
+                          <div className={styles.skillDetailRendered} dangerouslySetInnerHTML={{ __html: renderBody(skillContent!) }} />
                         )}
                       </div>
                     )}
                   </div>
-                ))
-              )}
+                )})}
+                      </div>
+                    </div>
+              </div>
+              )))}
             </div>
             <p className={styles.lspInfoText}>
               Skills 从 ~/.loom/skills/ 和插件目录自动发现。点击查看完整定义。
