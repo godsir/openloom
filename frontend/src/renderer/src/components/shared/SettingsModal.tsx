@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
-import { IconFolder, IconPackage, IconRefresh, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconSearch, IconChevronRight, IconChevronDown } from '../../utils/icons'
+import { IconFolder, IconPackage, IconRefresh, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconSearch, IconChevronRight, IconChevronDown, IconChevronUp, IconPuzzle, IconGlobe, IconFile, IconServer, IconZap, IconStore, IconCommand, IconMessageSquare, IconClock } from '../../utils/icons'
 import Overlay from './Overlay'
 import Select from './Select'
 import AgentConfigPanel from './AgentConfigPanel'
@@ -73,7 +73,7 @@ function applyCustomTheme(c: { bg: string; surface: string; text: string; accent
   root.style.setProperty('--shadow-glass', isLight ? '0 8px 32px rgba(0,0,0,0.06)' : '0 8px 32px rgba(0,0,0,0.5)')
 }
 
-type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'about'
+type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'marketplace' | 'pet' | 'kg' | 'token' | 'about'
 
 interface McpTool {
   name: string
@@ -102,13 +102,33 @@ interface SkillInfo {
   always_active?: boolean
 }
 
+interface HookHandlerInfo {
+  type: string  // 'command' | 'prompt' | 'agent'
+  command?: string
+  prompt?: string
+  timeout: number
+  matcher?: string
+}
+
+interface HookEventDetail {
+  event: string
+  handler_count: number
+  handlers: HookHandlerInfo[]
+}
+
 interface PluginInfo {
   name: string
   version?: string
   description?: string
   path?: string
+  source: string
   skill_count?: number
+  hook_count?: number
   mcp_server_count?: number
+  has_settings: boolean
+  skills?: Array<{name: string, path?: string}>
+  mcp_servers?: Array<{name: string, transport: string}>
+  hooks?: HookEventDetail[]
 }
 
 export default function SettingsModal({
@@ -133,6 +153,7 @@ export default function SettingsModal({
     { id: 'mcp', label: 'MCP / LSP', icon: <IconTerminal size={14} /> },
     { id: 'skills', label: '技能', icon: <IconSparkles size={14} /> },
     { id: 'plugins', label: '插件', icon: <IconPackage size={14} /> },
+    { id: 'marketplace', label: '市场', icon: <IconStore size={14} /> },
     { id: 'pet', label: '桌宠', icon: <IconPawPrint size={14} /> },
     { id: 'about', label: '关于', icon: <IconInfo size={14} /> },
   ]
@@ -210,6 +231,7 @@ export default function SettingsModal({
           )}
           {tab === 'skills' && <SkillsTab />}
           {tab === 'plugins' && <PluginsTab />}
+          {tab === 'marketplace' && <MarketplaceTab />}
           {tab === 'pet' && (
             <>
               <div className={styles.contentHeader}>
@@ -1598,11 +1620,40 @@ function SkillsTab() {
 
 /* ─── Plugins Tab ─── */
 
+function getSourceColor(source: string): string {
+  if (source.startsWith('claude')) return 'blue'
+  if (source === 'openclaw') return 'green'
+  if (source === 'loom') return 'purple'
+  return 'gray'
+}
+
+function getGroupKey(source: string): string {
+  if (source.startsWith('claude')) return 'claude'
+  if (source === 'openclaw') return 'openclaw'
+  if (source === 'loom') return 'loom'
+  return source || 'other'
+}
+
+const GROUP_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
+  claude: { label: 'Claude Code', icon: <IconBot size={14} /> },
+  openclaw: { label: 'OpenClaw', icon: <IconGlobe size={14} /> },
+  loom: { label: 'openLoom', icon: <IconPuzzle size={14} /> },
+}
+
+function hasDetails(plugin: PluginInfo): boolean {
+  return (plugin.skills && plugin.skills.length > 0) ||
+    (plugin.mcp_servers && plugin.mcp_servers.length > 0) ||
+    (plugin.hooks && plugin.hooks.length > 0)
+}
+
 function PluginsTab() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [expandedPlugin, setExpandedPlugin] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -1628,63 +1679,496 @@ function PluginsTab() {
     setRefreshing(false)
   }
 
+  const toggleExpand = (name: string) => {
+    setExpandedPlugin(prev => prev === name ? null : name)
+  }
+
+  const filteredPlugins = useMemo(() => {
+    if (!searchQuery.trim()) return plugins
+    const q = searchQuery.trim().toLowerCase()
+    return plugins.filter(p =>
+      p.name.toLowerCase().includes(q) ||
+      (p.description && p.description.toLowerCase().includes(q))
+    )
+  }, [plugins, searchQuery])
+
+  const grouped = useMemo(() => {
+    const g: Record<string, PluginInfo[]> = {}
+    for (const p of filteredPlugins) {
+      const key = getGroupKey(p.source)
+      if (!g[key]) g[key] = []
+      g[key].push(p)
+    }
+    return g
+  }, [filteredPlugins])
+
+  const toggleGroup = (groupKey: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(groupKey)) next.delete(groupKey)
+      else next.add(groupKey)
+      return next
+    })
+  }
+
+  const groupOrder = ['claude', 'openclaw', 'loom']
+
   return (
     <>
       <div className={styles.contentHeader}>
-        <div className={styles.sectionHeaderRow}>
-          <h3 className={styles.sectionTitle}>插件</h3>
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing || loading}
-            className={styles.refreshBtn}
-            title="重新扫描插件"
-          >
-            <IconRefresh size={14} />
-          </button>
+        <div className={styles.pluginsHeader}>
+          <div className={styles.sectionHeaderRow}>
+            <h3 className={styles.sectionTitle}>
+              插件
+              <span className={styles.pluginsCountBadge}>{filteredPlugins.length}</span>
+            </h3>
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing || loading}
+              className={styles.refreshBtn}
+              title="重新扫描插件"
+            >
+              <IconRefresh size={14} />
+            </button>
+          </div>
+          <div className={styles.pluginsSearchWrap}>
+            <IconSearch size={14} className={styles.pluginsSearchIcon} />
+            <input
+              className={styles.pluginsSearchInput}
+              type="text"
+              placeholder="搜索插件..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <p className={styles.pluginsDesc}>
+            从插件目录自动发现，点击展开查看详情
+          </p>
         </div>
-        <p className={styles.sectionDesc}>已发现的插件包</p>
       </div>
       <div className={styles.contentBody}>
         {error && <p className={styles.toolsError}>{error}</p>}
         {loading ? (
           <p className={styles.toolsEmpty}>加载中...</p>
+        ) : filteredPlugins.length === 0 ? (
+          <div className={styles.pluginsEmptyState}>
+            <p className={styles.pluginsEmptyTitle}>未发现插件</p>
+            <p className={styles.pluginsEmptyHelp}>
+              将插件放入 ~/.claude/plugins/、~/.openclaw/plugins/ 或 ~/.loom/plugins/ 目录
+            </p>
+          </div>
         ) : (
           <>
-            <div className={styles.pluginList}>
-              {plugins.length === 0 ? (
-                <p className={styles.toolsEmpty}>暂无已发现的插件</p>
-              ) : (
-                plugins.map((plugin) => (
-                  <div key={plugin.name} className={styles.pluginCard}>
-                    <div className={styles.pluginCardHeader}>
-                      <span className={styles.pluginCardName}>{plugin.name}</span>
-                      {plugin.version && (
-                        <span className={styles.skillBadge}>{plugin.version}</span>
-                      )}
-                    </div>
-                    {plugin.description && (
-                      <p className={styles.pluginCardDesc}>{plugin.description}</p>
-                    )}
-                    <div className={styles.pluginCardMeta}>
-                      {plugin.skill_count != null && (
-                        <span className={styles.pluginMetaItem}>Skills: {plugin.skill_count}</span>
-                      )}
-                      {plugin.mcp_server_count != null && (
-                        <span className={styles.pluginMetaItem}>MCP: {plugin.mcp_server_count}</span>
-                      )}
-                    </div>
-                    {plugin.path && (
-                      <div className={styles.pluginPath}>{plugin.path}</div>
-                    )}
+            {groupOrder.map(groupKey => {
+              const groupPlugins = grouped[groupKey]
+              if (!groupPlugins || groupPlugins.length === 0) return null
+              const cfg = GROUP_CONFIG[groupKey]
+              const colorClass = groupKey === 'claude' ? styles.dotBlue :
+                groupKey === 'openclaw' ? styles.dotGreen :
+                groupKey === 'loom' ? styles.dotPurple : styles.dotGray
+
+              return (
+                <div key={groupKey} className={styles.pluginsGroup}>
+                  <div
+                    className={styles.pluginsGroupHeader}
+                    onClick={() => toggleGroup(groupKey)}
+                  >
+                    <span className={`${styles.pluginsGroupDot} ${colorClass}`} />
+                    {cfg && <span className={styles.pluginsGroupIcon}>{cfg.icon}</span>}
+                    <span className={styles.pluginsGroupLabel}>{cfg ? cfg.label : groupKey}</span>
+                    <span className={styles.pluginsGroupCount}>{groupPlugins.length}</span>
+                    <span className={`${styles.pluginsGroupChevron} ${collapsedGroups.has(groupKey) ? '' : styles.pluginsGroupChevronOpen}`}>
+                      <IconChevronDown size={14} />
+                    </span>
                   </div>
-                ))
-              )}
-            </div>
-            <p className={styles.lspInfoText}>
-              插件从 ~/.loom/skills/ 目录递归发现（最深 4 层）。支持 Claude Code 和 OpenClaw SKILL.md 格式。
-            </p>
+                  {!collapsedGroups.has(groupKey) && (
+                  <div className={styles.pluginList}>
+                    {groupPlugins.map(plugin => {
+                      const pluginKey = `${groupKey}-${plugin.name}-${plugin.path || ''}`
+                      const isExpanded = expandedPlugin === pluginKey
+                      const expandable = hasDetails(plugin)
+                      const dotColor = getSourceColor(plugin.source)
+                      const dotClass = dotColor === 'blue' ? styles.dotBlue :
+                        dotColor === 'green' ? styles.dotGreen :
+                        dotColor === 'purple' ? styles.dotPurple : styles.dotGray
+
+                      return (
+                        <div
+                          key={pluginKey}
+                          className={`${styles.pluginCard} ${isExpanded ? styles.pluginCardExpanded : ''}`}
+                          onClick={() => toggleExpand(pluginKey)}
+                        >
+                          <div className={styles.pluginCardMain}>
+                            <div className={styles.pluginCardTop}>
+                              <span className={`${styles.pluginCardDot} ${dotClass}`} />
+                              <div className={styles.pluginCardInfo}>
+                                <div className={styles.pluginCardNameRow}>
+                                  <span className={styles.pluginCardName}>{plugin.name}</span>
+                                  {plugin.version && (
+                                    <span className={styles.pluginVersionBadge}>{plugin.version}</span>
+                                  )}
+                                </div>
+                                {plugin.description && (
+                                  <p className={styles.pluginCardDesc}>{plugin.description}</p>
+                                )}
+                              </div>
+                              <div className={styles.pluginCardRight}>
+                                {plugin.has_settings && (
+                                  <span className={styles.pluginCardSettingsIcon} title="含设置项">
+                                    <IconSettings size={12} />
+                                  </span>
+                                )}
+                                <span className={`${styles.pluginCardChevron} ${isExpanded ? styles.pluginCardChevronOpen : ''}`}>
+                                  <IconChevronDown size={16} />
+                                </span>
+                              </div>
+                            </div>
+                            <div className={styles.pluginCardStats}>
+                              {plugin.skill_count != null && (
+                                <span className={styles.pluginCardStat}>
+                                  <IconFile size={10} />
+                                  {plugin.skill_count} skills
+                                </span>
+                              )}
+                              {plugin.hook_count != null && (
+                                <span className={styles.pluginCardStat}>
+                                  <IconZap size={10} />
+                                  {plugin.hook_count} hooks
+                                </span>
+                              )}
+                              {plugin.mcp_server_count != null && (
+                                <span className={styles.pluginCardStat}>
+                                  <IconServer size={10} />
+                                  {plugin.mcp_server_count} MCP
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {expandable && (
+                            <>
+                              <div className={styles.pluginCardDivider} />
+                              <div className={`${styles.pluginCardExpand} ${isExpanded ? styles.pluginCardExpandOpen : ''}`}>
+                                <div className={styles.pluginDetailBody}>
+                                  {plugin.skills && plugin.skills.length > 0 && (
+                                    <div className={styles.pluginDetailSection}>
+                                      <div className={styles.pluginDetailLabel}>
+                                        <IconFile size={11} />
+                                        Skills ({plugin.skills.length})
+                                      </div>
+                                      <div className={styles.pluginDetailItems}>
+                                        {plugin.skills.map(skill => (
+                                          <div key={skill.name} className={styles.pluginDetailItem}>
+                                            <IconFile size={10} className={styles.pluginDetailItemIcon} />
+                                            {skill.name}
+                                            {skill.path && (
+                                              <span className={styles.pluginDetailItemMeta}>{skill.path}</span>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {plugin.mcp_servers && plugin.mcp_servers.length > 0 && (
+                                    <div className={styles.pluginDetailSection}>
+                                      <div className={styles.pluginDetailLabel}>
+                                        <IconServer size={11} />
+                                        MCP Servers ({plugin.mcp_servers.length})
+                                      </div>
+                                      <div className={styles.pluginDetailItems}>
+                                        {plugin.mcp_servers.map(srv => (
+                                          <div key={srv.name} className={styles.pluginDetailItem}>
+                                            <IconServer size={10} className={styles.pluginDetailItemIcon} />
+                                            {srv.name}
+                                            <span className={styles.pluginDetailItemMeta}>{srv.transport}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {plugin.hooks && plugin.hooks.length > 0 && (
+                                    <div className={styles.pluginDetailSection}>
+                                      <div className={styles.pluginDetailLabel}>
+                                        <IconZap size={11} />
+                                        Hooks ({plugin.hooks.length})
+                                      </div>
+                                      <div className={styles.pluginDetailItems}>
+                                        {plugin.hooks.map(hook => (
+                                          <div key={hook.event} className={styles.pluginDetailItem}>
+                                            <IconZap size={10} className={styles.pluginDetailItemIcon} />
+                                            <span className={styles.pluginDetailItemName}>{hook.event}</span>
+                                            <span className={styles.pluginDetailItemMeta}>{hook.handler_count} handlers</span>
+                                            {hook.handlers && hook.handlers.length > 0 && (
+                                              <div className={styles.hookHandlerList}>
+                                                {hook.handlers.map((h, hi) => (
+                                                  <div key={hi} className={styles.hookHandlerItem}>
+                                                    <span className={`${styles.hookHandlerBadge} ${h.type === 'command' ? styles.hookHandlerBadgeCmd : h.type === 'prompt' ? styles.hookHandlerBadgePrompt : styles.hookHandlerBadgeAgent}`}>
+                                                      {h.type === 'command' ? <IconCommand size={9} /> : h.type === 'prompt' ? <IconMessageSquare size={9} /> : <IconBot size={9} />}
+                                                      {h.type}
+                                                    </span>
+                                                    {h.matcher && (
+                                                      <span className={styles.hookHandlerMatcher} title="Matcher regex">
+                                                        {h.matcher}
+                                                      </span>
+                                                    )}
+                                                    {h.command && (
+                                                      <code className={styles.hookHandlerCode}>{h.command}</code>
+                                                    )}
+                                                    {h.prompt && (
+                                                      <code className={styles.hookHandlerCode}>{h.prompt.length > 60 ? h.prompt.slice(0, 60) + '...' : h.prompt}</code>
+                                                    )}
+                                                    <span className={styles.hookHandlerTimeout}>
+                                                      <IconClock size={9} />
+                                                      {h.timeout}s
+                                                    </span>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                  )}
+                </div>
+              )
+            })}
+            {/* Other groups (non-standard sources) */}
+            {Object.keys(grouped).filter(k => !groupOrder.includes(k)).map(groupKey => {
+              const groupPlugins = grouped[groupKey]
+              if (!groupPlugins || groupPlugins.length === 0) return null
+
+              return (
+                <div key={groupKey} className={styles.pluginsGroup}>
+                  <div
+                    className={styles.pluginsGroupHeader}
+                    onClick={() => toggleGroup(groupKey)}
+                  >
+                    <span className={`${styles.pluginsGroupDot} ${styles.dotGray}`} />
+                    <span className={styles.pluginsGroupIcon}><IconPackage size={14} /></span>
+                    <span className={styles.pluginsGroupLabel}>{groupKey}</span>
+                    <span className={styles.pluginsGroupCount}>{groupPlugins.length}</span>
+                    <span className={`${styles.pluginsGroupChevron} ${collapsedGroups.has(groupKey) ? '' : styles.pluginsGroupChevronOpen}`}>
+                      <IconChevronDown size={14} />
+                    </span>
+                  </div>
+                  {!collapsedGroups.has(groupKey) && (
+                  <div className={styles.pluginList}>
+                    {groupPlugins.map(plugin => {
+                      const pluginKey = `${groupKey}-${plugin.name}-${plugin.path || ''}`
+                      const isExpanded = expandedPlugin === pluginKey
+                      const expandable = hasDetails(plugin)
+
+                      return (
+                        <div
+                          key={pluginKey}
+                          className={`${styles.pluginCard} ${isExpanded ? styles.pluginCardExpanded : ''}`}
+                          onClick={() => toggleExpand(pluginKey)}
+                        >
+                          <div className={styles.pluginCardMain}>
+                            <div className={styles.pluginCardTop}>
+                              <span className={`${styles.pluginCardDot} ${styles.dotGray}`} />
+                              <div className={styles.pluginCardInfo}>
+                                <div className={styles.pluginCardNameRow}>
+                                  <span className={styles.pluginCardName}>{plugin.name}</span>
+                                  {plugin.version && (
+                                    <span className={styles.pluginVersionBadge}>{plugin.version}</span>
+                                  )}
+                                </div>
+                                {plugin.description && (
+                                  <p className={styles.pluginCardDesc}>{plugin.description}</p>
+                                )}
+                              </div>
+                              <div className={styles.pluginCardRight}>
+                                {plugin.has_settings && (
+                                  <span className={styles.pluginCardSettingsIcon} title="含设置项">
+                                    <IconSettings size={12} />
+                                  </span>
+                                )}
+                                <span className={`${styles.pluginCardChevron} ${isExpanded ? styles.pluginCardChevronOpen : ''}`}>
+                                  <IconChevronDown size={16} />
+                                </span>
+                              </div>
+                            </div>
+                            <div className={styles.pluginCardStats}>
+                              {plugin.skill_count != null && (
+                                <span className={styles.pluginCardStat}>
+                                  <IconFile size={10} />
+                                  {plugin.skill_count} skills
+                                </span>
+                              )}
+                              {plugin.hook_count != null && (
+                                <span className={styles.pluginCardStat}>
+                                  <IconZap size={10} />
+                                  {plugin.hook_count} hooks
+                                </span>
+                              )}
+                              {plugin.mcp_server_count != null && (
+                                <span className={styles.pluginCardStat}>
+                                  <IconServer size={10} />
+                                  {plugin.mcp_server_count} MCP
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {expandable && (
+                            <>
+                              <div className={styles.pluginCardDivider} />
+                              <div className={`${styles.pluginCardExpand} ${isExpanded ? styles.pluginCardExpandOpen : ''}`}>
+                                <div className={styles.pluginDetailBody}>
+                                  {plugin.skills && plugin.skills.length > 0 && (
+                                    <div className={styles.pluginDetailSection}>
+                                      <div className={styles.pluginDetailLabel}>
+                                        <IconFile size={11} />
+                                        Skills ({plugin.skills.length})
+                                      </div>
+                                      <div className={styles.pluginDetailItems}>
+                                        {plugin.skills.map(skill => (
+                                          <div key={skill.name} className={styles.pluginDetailItem}>
+                                            <IconFile size={10} className={styles.pluginDetailItemIcon} />
+                                            {skill.name}
+                                            {skill.path && (
+                                              <span className={styles.pluginDetailItemMeta}>{skill.path}</span>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {plugin.mcp_servers && plugin.mcp_servers.length > 0 && (
+                                    <div className={styles.pluginDetailSection}>
+                                      <div className={styles.pluginDetailLabel}>
+                                        <IconServer size={11} />
+                                        MCP Servers ({plugin.mcp_servers.length})
+                                      </div>
+                                      <div className={styles.pluginDetailItems}>
+                                        {plugin.mcp_servers.map(srv => (
+                                          <div key={srv.name} className={styles.pluginDetailItem}>
+                                            <IconServer size={10} className={styles.pluginDetailItemIcon} />
+                                            {srv.name}
+                                            <span className={styles.pluginDetailItemMeta}>{srv.transport}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {plugin.hooks && plugin.hooks.length > 0 && (
+                                    <div className={styles.pluginDetailSection}>
+                                      <div className={styles.pluginDetailLabel}>
+                                        <IconZap size={11} />
+                                        Hooks ({plugin.hooks.length})
+                                      </div>
+                                      <div className={styles.pluginDetailItems}>
+                                        {plugin.hooks.map(hook => (
+                                          <div key={hook.event} className={styles.pluginDetailItem}>
+                                            <IconZap size={10} className={styles.pluginDetailItemIcon} />
+                                            <span className={styles.pluginDetailItemName}>{hook.event}</span>
+                                            <span className={styles.pluginDetailItemMeta}>{hook.handler_count} handlers</span>
+                                            {hook.handlers && hook.handlers.length > 0 && (
+                                              <div className={styles.hookHandlerList}>
+                                                {hook.handlers.map((h, hi) => (
+                                                  <div key={hi} className={styles.hookHandlerItem}>
+                                                    <span className={`${styles.hookHandlerBadge} ${h.type === 'command' ? styles.hookHandlerBadgeCmd : h.type === 'prompt' ? styles.hookHandlerBadgePrompt : styles.hookHandlerBadgeAgent}`}>
+                                                      {h.type === 'command' ? <IconCommand size={9} /> : h.type === 'prompt' ? <IconMessageSquare size={9} /> : <IconBot size={9} />}
+                                                      {h.type}
+                                                    </span>
+                                                    {h.matcher && (
+                                                      <span className={styles.hookHandlerMatcher} title="Matcher regex">
+                                                        {h.matcher}
+                                                      </span>
+                                                    )}
+                                                    {h.command && (
+                                                      <code className={styles.hookHandlerCode}>{h.command}</code>
+                                                    )}
+                                                    {h.prompt && (
+                                                      <code className={styles.hookHandlerCode}>{h.prompt.length > 60 ? h.prompt.slice(0, 60) + '...' : h.prompt}</code>
+                                                    )}
+                                                    <span className={styles.hookHandlerTimeout}>
+                                                      <IconClock size={9} />
+                                                      {h.timeout}s
+                                                    </span>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                  )}
+                </div>
+              )
+            })}
           </>
         )}
+      </div>
+    </>
+  )
+}
+
+/* ─── Marketplace Tab ─── */
+
+function MarketplaceTab() {
+  return (
+    <>
+      <div className={styles.contentHeader}>
+        <div className={styles.pluginsHeader}>
+          <div className={styles.sectionHeaderRow}>
+            <h3 className={styles.sectionTitle}>
+              插件市场
+            </h3>
+          </div>
+          <p className={styles.pluginsDesc}>
+            浏览和安装社区插件，扩展 AI 助手的能力
+          </p>
+        </div>
+      </div>
+      <div className={styles.contentBody}>
+        <div className={styles.marketplacePlaceholder}>
+          <div className={styles.marketplacePlaceholderIcon}>
+            <IconStore size={40} />
+          </div>
+          <h3 className={styles.marketplacePlaceholderTitle}>即将推出</h3>
+          <p className={styles.marketplacePlaceholderDesc}>
+            插件市场正在开发中。届时您将能够在此处搜索、浏览和安装来自社区的插件，
+            包括 Claude Code 和 OpenClaw 兼容的插件。
+          </p>
+          <div className={styles.marketplaceFeatureList}>
+            <div className={styles.marketplaceFeature}>
+              <IconSearch size={14} />
+              <span>搜索和发现插件</span>
+            </div>
+            <div className={styles.marketplaceFeature}>
+              <IconGlobe size={14} />
+              <span>从 GitHub 或 URL 安装</span>
+            </div>
+            <div className={styles.marketplaceFeature}>
+              <IconRefresh size={14} />
+              <span>一键更新已安装插件</span>
+            </div>
+            <div className={styles.marketplaceFeature}>
+              <IconFile size={14} />
+              <span>查看插件详情和文档</span>
+            </div>
+          </div>
+        </div>
       </div>
     </>
   )

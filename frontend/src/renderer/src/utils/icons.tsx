@@ -8,6 +8,7 @@ export {
   Star as IconStar,
   ChevronRight as IconChevronRight,
   ChevronDown as IconChevronDown,
+  ChevronUp as IconChevronUp,
   SendHorizonal as IconSend,
   Trash2 as IconTrash,
   Copy as IconCopy,
@@ -56,6 +57,11 @@ export {
   MessageSquare as IconMessageSquare,
   PawPrint as IconPawPrint,
   Info as IconInfo,
+  Puzzle as IconPuzzle,
+  Globe as IconGlobe,
+  Server as IconServer,
+  Store as IconStore,
+  Clock as IconClock,
 } from 'lucide-react'
 
 export function IconStarFilled({ size = 16, className = '' }: { size?: number; className?: string }) {

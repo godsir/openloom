@@ -51,7 +51,7 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
     if (!prev) {
       const center: KgNode = (get().kgSearchResults.find(n => n.name === nodeName))
         ?? get().kgNodeList.find(n => n.name === nodeName)
-        ?? { node_id: 0, name: nodeName, entity_type: 'Unknown', description: '', confidence: 1.0 }
+        ?? { node_id: 0, name: nodeName, entity_type: 'Unknown', description: '', confidence: 1.0, scope: 'global' }
       set({ kgGraph: { nodes: [center, ...graph.nodes], edges: graph.edges } })
       return
     }
@@ -81,7 +81,7 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
       const startNode = get().kgNodeList.find(n => n.name === startName)
       set({
         kgGraph: {
-          nodes: startNode ? [startNode] : [{ node_id: 0, name: startName, entity_type: 'Unknown', description: '', confidence: 1.0 }],
+          nodes: startNode ? [startNode] : [{ node_id: 0, name: startName, entity_type: 'Unknown', description: '', confidence: 1.0, scope: 'global' }],
           edges: [],
         },
         kgSelectedNode: null,
@@ -111,8 +111,8 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
       try {
         const result = await loomRpc<KgGraph>('kg.walk', { start_name: name, max_depth: maxDepth, scope, limit: 50 })
         addResult(result)
-      } catch {
-        // skip failed walks
+      } catch (err) {
+        console.error('[kgLoadGraph] walk failed for seed:', name, err)
       }
     }
 
@@ -137,8 +137,8 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
             edgeMap.set(key, e)
           }
         }
-      } catch {
-        // Non-critical: edges_between failed, but we still have edges from walk
+      } catch (err) {
+        console.error('[kgLoadGraph] edges_between failed:', err)
       }
     }
 

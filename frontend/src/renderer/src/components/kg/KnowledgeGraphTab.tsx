@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import ForceGraph2D from 'react-force-graph-2d'
+import { forceCollide, forceManyBody } from 'd3-force'
 import { useStore } from '../../stores'
 import Select from '../shared/Select'
 import type { KgNode } from '../../types/bindings'
@@ -47,6 +48,7 @@ interface GraphNode {
   entity_type: string
   description: string
   confidence: number
+  scope: string
   color: string
   val: number
 }
@@ -93,6 +95,9 @@ export default function KnowledgeGraphTab() {
   const fullscreenStarCanvasRef = useRef<HTMLCanvasElement>(null)
   const [dimensions, setDimensions] = useState({ w: 600, h: 400 })
   const [fullscreenDimensions, setFullscreenDimensions] = useState({ w: 1200, h: 800 })
+  /** Suppresses auto-populate after user intentionally clears the graph */
+  const userClearedGraph = useRef(false)
+  const initialFitDone = useRef(false)
 
   // Read theme colors for canvas rendering
   const [themeColors, setThemeColors] = useState({
@@ -132,8 +137,15 @@ export default function KnowledgeGraphTab() {
   // Auto-populate graph when switching to graph tab with no data.
   // Walk from the first few listed nodes in parallel and merge results,
   // so all connected components and their edges appear.
+  // Skip if user intentionally cleared the graph.
   useEffect(() => {
-    if (activeTab === 'graph' && !kgGraph) {
+    if (activeTab !== 'graph') {
+      // Reset the clear-flag when user leaves the graph tab,
+      // so auto-populate works again when they return.
+      userClearedGraph.current = false
+      return
+    }
+    if (!kgGraph && !userClearedGraph.current) {
       // Always include USER as the central seed, then pick distinct
       // seeds from across the list so all galaxies get discovered.
       const list = kgSearchResults.length > 0 ? kgSearchResults : kgNodeList
@@ -397,6 +409,7 @@ export default function KnowledgeGraphTab() {
         entity_type: n.entity_type,
         description: n.description,
         confidence: n.confidence,
+        scope: n.scope,
         color: entityColor(n.entity_type),
         val: n.name === 'USER' ? 18 : 3 + n.confidence * 8,
       })
@@ -441,11 +454,13 @@ export default function KnowledgeGraphTab() {
   }, [handleSearch])
 
   const handleExpand = useCallback((name: string) => {
+    userClearedGraph.current = false
     setTooltip(null)
     kgExpandNode(name)
   }, [kgExpandNode])
 
   const handleWalk = useCallback((name: string) => {
+    userClearedGraph.current = false
     setTooltip(null)
     kgWalkFrom(name)
   }, [kgWalkFrom])
@@ -457,7 +472,7 @@ export default function KnowledgeGraphTab() {
     // Guard: skip if coordinates not yet computed by force simulation
     if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) return
 
-    const r = Math.max(2, n.val) / globalScale
+    const r = Math.max(2, n.val)
     const fontSize = Math.max(9, 11 / globalScale)
     const label = n.name.length > 10 ? n.name.slice(0, 10) + '..' : n.name
 
@@ -584,11 +599,18 @@ export default function KnowledgeGraphTab() {
     kgNodeDelete(name)
   }, [kgNodeDelete, showConfirm])
 
+  const handleClearGraph = useCallback(() => {
+    userClearedGraph.current = true
+    kgClearGraph()
+  }, [kgClearGraph])
+
   const handleDeleteEdge = useCallback(async (source: string, target: string, relation: string) => {
     kgEdgeDelete(source, target, relation)
   }, [kgEdgeDelete])
 
   const hasData = graphData.nodes.length > 0
+  // Reset zoom-to-fit when graph data changes (expand/walk/delete)
+  useEffect(() => { initialFitDone.current = false }, [graphData])
   // search results overlay on top of node list; clear when query is empty
   const displayNodes = query && kgSearchResults.length > 0 ? kgSearchResults : kgNodeList
 
@@ -649,7 +671,7 @@ export default function KnowledgeGraphTab() {
               {isFullscreen ? '⤓' : '⤢'}
             </button>
             {kgGraph && (
-              <button className={styles.clearBtn} onClick={kgClearGraph}>清除图谱</button>
+              <button className={styles.clearBtn} onClick={handleClearGraph}>清除图谱</button>
             )}
           </>
         )}
@@ -718,8 +740,8 @@ export default function KnowledgeGraphTab() {
                 nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
                   const n = node as GraphNode
                   if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) return
-                  // Match the visible glow extent (inner glow is r*3, use r*4 for comfortable click/drag area)
-                  const r = Math.max(2, n.val) * 4
+                  // Match visible glow extent (inner glow is r*3)
+                  const r = Math.max(2, n.val) * 3
                   ctx.beginPath()
                   ctx.arc(n.x!, n.y!, r, 0, Math.PI * 2)
                   ctx.fillStyle = color
@@ -728,31 +750,42 @@ export default function KnowledgeGraphTab() {
                 linkCanvasObject={paintLink}
                 linkDirectionalArrowLength={0}
                 linkDistance={(link: any) => {
-                  // Increase distance to prevent nodes from overlapping
                   const s = link.source as GraphNode
                   const t = link.target as GraphNode
                   if (s.scope && t.scope && s.scope === t.scope && s.scope !== 'global') {
-                    return 120 // Tighter cluster for session-scoped nodes
+                    return 1200
                   }
-                  return 200 // Larger distance for global/cross-scope links
+                  return 1800
                 }}
                 linkStrength={(link: any) => {
-                  // Stronger links between same-scope nodes
                   const s = link.source as GraphNode
                   const t = link.target as GraphNode
                   if (s.scope && t.scope && s.scope === t.scope && s.scope !== 'global') {
-                    return 1.5
+                    return 0.8
                   }
-                  return 1.0
+                  return 0.4
                 }}
                 enableZoomInteraction
                 enablePanInteraction
                 minZoom={0.2}
                 maxZoom={5}
-                cooldownTicks={200}
-                d3AlphaDecay={0.01}
-                d3VelocityDecay={0.2}
-                onEngineStop={() => fgRef.current?.zoomToFit(400, 50)}
+                cooldownTicks={400}
+                d3AlphaDecay={0.003}
+                d3VelocityDecay={0.4}
+                d3Force={(engine: any) => {
+                  // Kill center force — it pulls everything together
+                  engine.force('center', null)
+                  // Anti-collision
+                  engine.force('collide', forceCollide((n: GraphNode) => Math.max(2, n.val) * 20))
+                  // Strong repulsion between all nodes (galaxy-like spread)
+                  engine.force('charge', forceManyBody().strength(-1200).distanceMin(80).distanceMax(4000))
+                }}
+                onEngineStop={() => {
+                  if (!initialFitDone.current) {
+                    initialFitDone.current = true
+                    fgRef.current?.zoomToFit(400, 120)
+                  }
+                }}
                 onNodeClick={handleNodeClick}
                 onBackgroundClick={() => setTooltip(null)}
               />
@@ -862,7 +895,12 @@ export default function KnowledgeGraphTab() {
             cooldownTicks={200}
             d3AlphaDecay={0.01}
             d3VelocityDecay={0.2}
-            onEngineStop={() => fgFullscreenRef.current?.zoomToFit(400, 50)}
+            onEngineStop={() => {
+              if (!initialFitDone.current) {
+                initialFitDone.current = true
+                fgFullscreenRef.current?.zoomToFit(400, 50)
+              }
+            }}
             onNodeClick={handleNodeClick}
             onBackgroundClick={() => setTooltip(null)}
           />
