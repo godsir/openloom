@@ -16,6 +16,7 @@ loom-inference = { path = "../loom-inference" }
 loom-memory = { path = "../loom-memory" }
 lume-mcp = { path = "../lume-mcp" }
 lume-skills = { path = "../lume-skills" }
+lume-plugins = { path = "../lume-plugins" }
 lume-bridge = { path = "../lume-bridge" }
 rusqlite = "0.32"
 anyhow = "1"

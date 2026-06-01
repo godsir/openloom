@@ -13,6 +13,7 @@ loom-memory = { path = "../loom-memory" }
 loom-context = { path = "../loom-context" }
 loom-security = { path = "../loom-security" }
 lume-skills = { path = "../lume-skills" }
+lume-plugins = { path = "../lume-plugins" }
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }
 anyhow = "1"
 tracing = "0.1"

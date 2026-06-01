@@ -5,6 +5,8 @@
 //! Accepts plugin.toml (our format) and manifest.json / package.json (theirs).
 //! Auto-discovers: any directory with a SKILL.md is treated as an implicit plugin.
 
+pub mod hooks;
+
 use anyhow::Result;
 use serde::Deserialize;
 
@@ -18,6 +20,10 @@ pub struct PluginManifest {
     pub description: String,
     pub skills: Option<PluginSkillsSection>,
     pub mcp_servers: Option<Vec<PluginMcpServer>>,
+    /// Pre-configured settings for the plugin (Claude Code compatible).
+    /// e.g. `{ "alwaysThinkingEnabled": true }`
+    #[allow(dead_code)]
+    pub settings: serde_json::Value,
 }
 
 /// Our native plugin.toml format.
@@ -33,6 +39,8 @@ struct TomlManifest {
     skills: Option<PluginSkillsSection>,
     #[serde(default)]
     mcp_servers: Option<Vec<PluginMcpServer>>,
+    #[serde(default)]
+    settings: Option<serde_json::Value>,
 }
 
 /// Claude Code / OpenClaw manifest.json / package.json format.
@@ -51,6 +59,8 @@ struct JsonManifest {
     #[serde(default)]
     #[serde(alias = "mcpServers")]
     mcp_servers: Option<std::collections::HashMap<String, JsonMcpEntry>>,
+    #[serde(default)]
+    settings: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,6 +102,10 @@ pub struct PluginMcpServer {
     pub url: Option<String>,
     #[serde(default)]
     pub headers: std::collections::HashMap<String, String>,
+    /// Environment variables to set for the MCP server process.
+    /// `${CLAUDE_PLUGIN_ROOT}` and `${PLUGIN_ROOT}` are auto-set for `.claude-plugin/plugin.json` manifests.
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
 }
 
 fn default_transport() -> String {
@@ -164,10 +178,19 @@ impl PluginManager {
             // Try loading a manifest at this level
             if let Some(mut manifest) = self
                 .try_load_toml(&plugin_dir)
+                .or_else(|| self.try_load_claude_plugin_json(&plugin_dir))
                 .or_else(|| self.try_load_json(&plugin_dir))
             {
                 if manifest.name.is_empty() {
                     manifest.name = dir_name.clone();
+                }
+                // Inject CLAUDE_PLUGIN_ROOT env into all MCP servers
+                let root = plugin_dir.to_string_lossy().to_string();
+                if let Some(ref mut servers) = manifest.mcp_servers {
+                    for s in servers.iter_mut() {
+                        s.env.entry("CLAUDE_PLUGIN_ROOT".into()).or_insert_with(|| root.clone());
+                        s.env.entry("PLUGIN_ROOT".into()).or_insert_with(|| root.clone());
+                    }
                 }
                 self.plugins.push(DiscoveredPlugin {
                     manifest,
@@ -209,6 +232,52 @@ impl PluginManager {
             description: tm.description,
             skills: tm.skills,
             mcp_servers: tm.mcp_servers,
+            settings: tm.settings.unwrap_or(serde_json::Value::Null),
+        })
+    }
+
+    fn try_load_claude_plugin_json(&self, dir: &std::path::Path) -> Option<PluginManifest> {
+        let path = dir.join(".claude-plugin").join("plugin.json");
+        let content = std::fs::read_to_string(&path).ok()?;
+        let jm: JsonManifest = serde_json::from_str(&content).ok()?;
+        let skills = jm.skills.map(|entries| {
+            let paths: Vec<String> = entries
+                .iter()
+                .map(|e| e.path.clone().unwrap_or_else(|| e.name.clone()))
+                .collect();
+            PluginSkillsSection { paths }
+        });
+        let mcp_servers = jm.mcp_servers.map(|map| {
+            map.into_iter()
+                .map(|(name, entry)| PluginMcpServer {
+                    name,
+                    transport: entry.transport.unwrap_or_else(|| {
+                        if entry.url.is_some() { "http".into() } else { "stdio".into() }
+                    }),
+                    command: entry.command,
+                    args: entry.args,
+                    url: entry.url,
+                    headers: Default::default(),
+                    env: Default::default(),
+                })
+                .collect()
+        });
+        // Set CLAUDE_PLUGIN_ROOT env for all MCP servers in this plugin
+        let plugin_root = dir.to_string_lossy().to_string();
+        let mcp_servers = mcp_servers.map(|servers: Vec<PluginMcpServer>| {
+            servers.into_iter().map(|mut s| {
+                s.env.insert("CLAUDE_PLUGIN_ROOT".into(), plugin_root.clone());
+                s.env.insert("PLUGIN_ROOT".into(), plugin_root.clone());
+                s
+            }).collect()
+        });
+        Some(PluginManifest {
+            name: jm.name,
+            version: jm.version,
+            description: jm.description,
+            skills,
+            mcp_servers,
+            settings: jm.settings.unwrap_or(serde_json::Value::Null),
         })
     }
 
@@ -250,6 +319,7 @@ impl PluginManager {
                     args: entry.args,
                     url: entry.url,
                     headers: Default::default(),
+                    env: Default::default(),
                 })
                 .collect()
         });
@@ -260,6 +330,7 @@ impl PluginManager {
             description: jm.description,
             skills,
             mcp_servers,
+            settings: jm.settings.unwrap_or(serde_json::Value::Null),
         })
     }
 
@@ -317,5 +388,71 @@ impl PluginManager {
             }
         }
         configs
+    }
+
+    /// Return iterator over (plugin_dir_path, plugin_name) for hook loading.
+    pub fn plugin_dirs(&self) -> impl Iterator<Item = (&std::path::Path, &str)> {
+        self.plugins
+            .iter()
+            .map(|p| (p.path.as_path(), p.manifest.name.as_str()))
+    }
+
+    /// Return a reference to all discovered plugins.
+    pub fn discovered(&self) -> &[DiscoveredPlugin] {
+        &self.plugins
+    }
+}
+
+impl Default for PluginManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_plugin_manager_new_empty() {
+        let manager = PluginManager::new();
+        let list = manager.list();
+        assert!(list.is_empty(), "new PluginManager should have empty plugin list");
+    }
+
+    #[test]
+    fn test_mcp_configs_empty() {
+        let manager = PluginManager::new();
+        let configs = manager.mcp_configs();
+        assert!(configs.is_empty(), "new PluginManager should have no MCP configs");
+    }
+
+    #[test]
+    fn test_skill_paths_empty() {
+        let manager = PluginManager::new();
+        let paths = manager.skill_paths();
+        assert!(paths.is_empty(), "new PluginManager should have no skill paths");
+    }
+
+    #[test]
+    fn test_plugin_mcp_server_env_default() {
+        let server = PluginMcpServer {
+            name: "test-server".into(),
+            transport: "stdio".into(),
+            command: "echo".into(),
+            args: vec![],
+            url: None,
+            headers: Default::default(),
+            env: Default::default(),
+        };
+        assert!(server.env.is_empty(), "PluginMcpServer env should default to empty HashMap");
+    }
+
+    #[test]
+    fn test_discover_nonexistent_dir() {
+        let mut manager = PluginManager::new();
+        let result = manager.discover(std::path::Path::new("/nonexistent_plugin_dir_12345"));
+        assert!(result.is_ok(), "discover should return Ok even for non-existent dirs");
+        assert_eq!(result.unwrap(), 0, "discover on non-existent dir should find 0 plugins");
     }
 }

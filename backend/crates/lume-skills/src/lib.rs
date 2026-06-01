@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Skill/plugin loading for openLoom v2.
+//! Skill loading for openLoom v2.
 //!
-//! Parses SKILL.md files (Claude Code / OpenClaw format) and plugin manifests.
-//! Supports progressive disclosure: discovery → activation → execution.
-
-pub mod plugins;
+//! Parses SKILL.md files (Claude Code / OpenClaw format).
+//! For plugin manifest discovery, see the `lume-plugins` crate.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -37,18 +35,6 @@ pub struct CanonicalSkillMetadata {
     // Common optional
     #[serde(default)]
     pub version: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    // TODO: Planned — license identifier for skill marketplace filtering
-    pub license: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    // TODO: Forward compatibility — compatibility constraint string (e.g. ">=1.0")
-    pub compatibility: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    // TODO: Forward compatibility — project homepage or source URL
-    pub homepage: Option<String>,
 
     // Claude Code / OpenClaw extension fields (parsed for forward compatibility;
     // most are not yet consumed — see #[allow(dead_code)] annotations below)
@@ -114,6 +100,16 @@ pub struct CanonicalSkillMetadata {
 }
 
 impl CanonicalSkillMetadata {
+    /// Build a one-line summary for skill context injection.
+    /// Includes version when present: `"- name (v1.2.3): description"`.
+    pub fn summary_line(&self) -> String {
+        let name = self.name.replace('\n', " ").replace('\r', "");
+        match &self.version {
+            Some(v) => format!("- {} (v{}): {}", name, v, self.description),
+            None => format!("- {}: {}", name, self.description),
+        }
+    }
+
     /// Check if this skill passes runtime gating: OS, required binaries, required env vars.
     /// Returns `Ok(())` if valid, `Err(reason)` if it should be skipped.
     pub fn validate_runtime(&self) -> Result<(), String> {
@@ -196,6 +192,85 @@ pub enum SkillSource {
         plugin_dir: std::path::PathBuf,
     },
     Marketplace,
+}
+
+// ============================================================================
+// SkillState — unified snapshot of all loaded skills
+// ============================================================================
+
+/// Unified in-memory snapshot of all loaded skills.
+///
+/// Replaces three separate maps (context string, bodies, permissions) with a single
+/// struct behind one `Arc<RwLock<>>`. Includes lightweight summaries for
+/// `skills.list` RPC responses.
+#[derive(Debug, Clone, Default)]
+pub struct SkillState {
+    /// Pre-formatted context string injected into the system prompt
+    /// (one `"- name: description"` line per skill).
+    pub context: String,
+    /// Skill name → full SKILL.md body.
+    pub bodies: std::collections::HashMap<String, String>,
+    /// Skill name → parsed permission config.
+    pub permissions: std::collections::HashMap<String, SkillPermissionConfig>,
+    /// Lightweight metadata for all loaded skills (for RPC list responses).
+    pub summaries: Vec<SkillSummary>,
+}
+
+/// Lightweight skill metadata for `skills.list` RPC responses.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SkillSummary {
+    pub name: String,
+    pub description: String,
+    pub source_path: String,
+    pub version: Option<String>,
+    pub user_invocable: bool,
+    pub always_active: bool,
+}
+
+impl SkillState {
+    /// Build a unified `SkillState` from a slice of loaded skills.
+    ///
+    /// Centralises the `name.replace('\n', " ").replace('\r', "")` normalisation
+    /// that was previously duplicated at every call site.
+    pub fn from_skills(skills: &[LoadedSkill]) -> Self {
+        let mut context = String::new();
+        let mut bodies = std::collections::HashMap::new();
+        let mut permissions = std::collections::HashMap::new();
+        let mut summaries = Vec::with_capacity(skills.len());
+
+        for s in skills {
+            let name = s.manifest.name.replace('\n', " ").replace('\r', "");
+            let desc = s.manifest.description.clone();
+            let path = s.source_path.display().to_string();
+            let ver = s.manifest.version.clone();
+
+            // Context line
+            if !context.is_empty() {
+                context.push('\n');
+            }
+            context.push_str(&format!("- {}: {}", name, desc));
+
+            // Body
+            bodies.insert(name.clone(), s.body.clone());
+
+            // Permissions
+            if let Some(ref p) = s.manifest.permissions {
+                permissions.insert(name.clone(), p.clone());
+            }
+
+            // Summary
+            summaries.push(SkillSummary {
+                name,
+                description: desc,
+                source_path: path,
+                version: ver,
+                user_invocable: s.manifest.user_invocable,
+                always_active: s.manifest.always_active,
+            });
+        }
+
+        Self { context, bodies, permissions, summaries }
+    }
 }
 
 // ============================================================================
@@ -400,5 +475,112 @@ mod tests {
         assert_eq!(manifest.requires_bins.len(), 2);
         assert_eq!(manifest.os_restriction.len(), 2);
         assert!(manifest.always_active);
+    }
+
+    #[test]
+    fn test_skill_state_from_skills() {
+        let skills = vec![
+            LoadedSkill {
+                manifest: CanonicalSkillMetadata {
+                    name: "alpha".into(),
+                    description: "Alpha skill".into(),
+                    version: Some("1.0".into()),
+                    user_invocable: true,
+                    always_active: false,
+                    permissions: Some(SkillPermissionConfig {
+                        shell: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                body: "Alpha body".into(),
+                source_path: std::path::PathBuf::from("/tmp/alpha/SKILL.md"),
+                skill_root: std::path::PathBuf::from("/tmp/alpha"),
+                source: SkillSource::UserGlobal {
+                    data_dir: std::path::PathBuf::from("/tmp/alpha"),
+                },
+            },
+            LoadedSkill {
+                manifest: CanonicalSkillMetadata {
+                    name: "beta".into(),
+                    description: "Beta skill".into(),
+                    version: None,
+                    user_invocable: false,
+                    always_active: true,
+                    permissions: None,
+                    ..Default::default()
+                },
+                body: "Beta body".into(),
+                source_path: std::path::PathBuf::from("/tmp/beta/SKILL.md"),
+                skill_root: std::path::PathBuf::from("/tmp/beta"),
+                source: SkillSource::UserGlobal {
+                    data_dir: std::path::PathBuf::from("/tmp/beta"),
+                },
+            },
+        ];
+
+        let state = SkillState::from_skills(&skills);
+
+        // Context contains both skill names
+        assert!(state.context.contains("alpha"));
+        assert!(state.context.contains("beta"));
+
+        // Bodies map has 2 entries
+        assert_eq!(state.bodies.len(), 2);
+        assert_eq!(state.bodies.get("alpha").map(|s| s.as_str()), Some("Alpha body"));
+        assert_eq!(state.bodies.get("beta").map(|s| s.as_str()), Some("Beta body"));
+
+        // Permissions map has only 1 entry (the one with permissions)
+        assert_eq!(state.permissions.len(), 1);
+        assert!(state.permissions.contains_key("alpha"));
+        assert!(state.permissions.get("alpha").unwrap().shell.unwrap());
+
+        // Summaries has 2 entries with correct fields
+        assert_eq!(state.summaries.len(), 2);
+        let alpha_summary = state.summaries.iter().find(|s| s.name == "alpha").unwrap();
+        assert_eq!(alpha_summary.description, "Alpha skill");
+        assert_eq!(alpha_summary.version.as_deref(), Some("1.0"));
+        assert!(alpha_summary.user_invocable);
+        assert!(!alpha_summary.always_active);
+
+        let beta_summary = state.summaries.iter().find(|s| s.name == "beta").unwrap();
+        assert_eq!(beta_summary.description, "Beta skill");
+        assert_eq!(beta_summary.version, None);
+        assert!(!beta_summary.user_invocable);
+        assert!(beta_summary.always_active);
+    }
+
+    #[test]
+    fn test_skill_state_empty() {
+        let state = SkillState::from_skills(&[]);
+
+        assert!(state.context.is_empty());
+        assert!(state.bodies.is_empty());
+        assert!(state.permissions.is_empty());
+        assert!(state.summaries.is_empty());
+    }
+
+    #[test]
+    fn test_skill_summary_line_with_version() {
+        let meta = CanonicalSkillMetadata {
+            name: "test".into(),
+            description: "desc".into(),
+            version: Some("1.0".into()),
+            ..Default::default()
+        };
+        let line = meta.summary_line();
+        assert!(line.contains("(v1.0)"));
+    }
+
+    #[test]
+    fn test_skill_summary_line_without_version() {
+        let meta = CanonicalSkillMetadata {
+            name: "test".into(),
+            description: "desc".into(),
+            version: None,
+            ..Default::default()
+        };
+        let line = meta.summary_line();
+        assert!(!line.contains("(v"));
     }
 }

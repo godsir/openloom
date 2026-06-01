@@ -27,8 +27,6 @@ pub struct ToolResult {
 pub enum ToolProvenance {
     Builtin,
     Mcp { server: String },
-    PluginMcp { plugin_id: String, server: String },
-    CliBridge { binary: String },
 }
 
 /// Unified trait for all tool-like things the agent can call.
@@ -83,6 +81,46 @@ impl ToolRegistry {
         tracing::debug!(name = %name, "tool registered");
         self.tools.insert(name, tool);
         Ok(())
+    }
+
+    /// Remove a tool by its model-visible name. Returns the removed tool or None.
+    pub fn remove(&mut self, name: &str) -> Option<Arc<dyn AgentTool>> {
+        let removed = self.tools.remove(name);
+        if removed.is_some() {
+            tracing::debug!(name = %name, "tool unregistered");
+        }
+        removed
+    }
+
+    /// Remove all tools whose name starts with the given prefix.
+    /// Useful for cleaning up MCP server tools (prefixed "mcp__<server>__").
+    pub fn remove_by_prefix(&mut self, prefix: &str) -> Vec<Arc<dyn AgentTool>> {
+        let keys: Vec<String> = self
+            .tools
+            .keys()
+            .filter(|k| k.starts_with(prefix))
+            .cloned()
+            .collect();
+        let mut removed = Vec::new();
+        for key in keys {
+            if let Some(tool) = self.tools.remove(&key) {
+                tracing::debug!(name = %key, "tool unregistered by prefix");
+                removed.push(tool);
+            }
+        }
+        removed
+    }
+
+    /// Build a model-visible tool name for an MCP server tool.
+    /// Format: `mcp__<server>__<tool>`.
+    pub fn mcp_tool_name(server: &str, tool: &str) -> String {
+        format!("mcp__{}__{}", server, tool)
+    }
+
+    /// Build the prefix that all tools from a given MCP server share.
+    /// Format: `mcp__<server>__`.
+    pub fn mcp_tool_prefix(server: &str) -> String {
+        format!("mcp__{}__", server)
     }
 
     /// Look up a tool by its model-visible name.
@@ -233,6 +271,9 @@ impl AgentTool for SpawnAgentTool {
             workspace_path: config.workspace_path.clone(),
             max_prompt_budget: 0, // sub-agents: no budget limit
             default_permissions: config.default_permissions.clone(),
+            hook_registry: None,
+            session_id: String::new(),
+            agent_id: String::new(),
         };
         drop(config);
 
@@ -324,5 +365,117 @@ impl AgentTool for SpawnAgentTool {
 
     fn provenance(&self) -> ToolProvenance {
         ToolProvenance::Builtin
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+
+    /// Minimal AgentTool stub for unit-testing ToolRegistry.
+    struct TestTool {
+        name: String,
+    }
+
+    impl TestTool {
+        fn new(name: &str) -> Self {
+            Self {
+                name: name.to_string(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AgentTool for TestTool {
+        fn tool_name(&self) -> &str {
+            &self.name
+        }
+
+        fn tool_definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                name: self.name.clone(),
+                description: format!("Test tool: {}", self.name),
+                input_schema: json!({"type": "object", "properties": {}}),
+                tags: vec![],
+            }
+        }
+
+        async fn execute(
+            &self,
+            _arguments: serde_json::Value,
+            _progress: UnboundedSender<ToolProgress>,
+            _context: &ToolContext,
+        ) -> Result<ToolResult> {
+            Ok(ToolResult {
+                content: format!("{} executed", self.name),
+                is_error: false,
+                structured_content: None,
+            })
+        }
+
+        fn provenance(&self) -> ToolProvenance {
+            ToolProvenance::Builtin
+        }
+    }
+
+    #[test]
+    fn test_mcp_tool_name_format() {
+        let name = ToolRegistry::mcp_tool_name("github", "create_issue");
+        assert_eq!(name, "mcp__github__create_issue");
+    }
+
+    #[test]
+    fn test_mcp_tool_prefix() {
+        let prefix = ToolRegistry::mcp_tool_prefix("github");
+        assert_eq!(prefix, "mcp__github__");
+    }
+
+    #[test]
+    fn test_remove_existing() {
+        let mut registry = ToolRegistry::new();
+        let tool = Arc::new(TestTool::new("my_tool"));
+        registry.register(tool).unwrap();
+
+        let removed = registry.remove("my_tool");
+        assert!(removed.is_some());
+        assert!(registry.find("my_tool").is_none());
+    }
+
+    #[test]
+    fn test_remove_nonexistent() {
+        let mut registry = ToolRegistry::new();
+        let removed = registry.remove("nonexistent");
+        assert!(removed.is_none());
+    }
+
+    #[test]
+    fn test_remove_by_prefix() {
+        let mut registry = ToolRegistry::new();
+
+        // Register 3 tools with prefix "mcp__foo__" and 1 with "mcp__bar__"
+        for name in &["mcp__foo__a", "mcp__foo__b", "mcp__foo__c"] {
+            registry
+                .register(Arc::new(TestTool::new(name)))
+                .unwrap();
+        }
+        registry
+            .register(Arc::new(TestTool::new("mcp__bar__x")))
+            .unwrap();
+
+        assert_eq!(registry.len(), 4);
+
+        let removed = registry.remove_by_prefix("mcp__foo__");
+        assert_eq!(removed.len(), 3, "should remove 3 foo tools");
+        assert_eq!(registry.len(), 1, "1 bar tool should remain");
+        assert!(registry.find("mcp__bar__x").is_some());
+    }
+
+    #[test]
+    fn test_remove_by_prefix_no_match() {
+        let mut registry = ToolRegistry::new();
+        let removed = registry.remove_by_prefix("nonexistent_prefix");
+        assert!(removed.is_empty());
     }
 }

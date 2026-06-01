@@ -1,4 +1,4 @@
-//! Plugin system re-exports from lume-skills crate.
+//! Plugin system re-exports from lume-plugins crate.
 //! PluginManager is now shared between CLI and server paths.
 
-pub use lume_skills::plugins::*;
+pub use lume_plugins::*;

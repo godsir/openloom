@@ -9,6 +9,7 @@ loom-types = { path = "../loom-types" }
 loom-core = { path = "../loom-core" }
 lume-mcp = { path = "../lume-mcp" }
 lume-skills = { path = "../lume-skills" }
+lume-plugins = { path = "../lume-plugins" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 anyhow = "1"
 tracing = "0.1"
