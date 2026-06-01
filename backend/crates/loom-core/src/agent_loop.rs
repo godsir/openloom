@@ -9,10 +9,12 @@ use loom_context::{AssembleOptions, ContextAssembler};
 use loom_inference::engine::CloudClient;
 use loom_security::check_permission;
 use loom_types::SkillPermissions;
-use loom_types::{CompletionRequest, ContentPart, Message, Role, StreamDelta, ToolDefinition};
+use loom_types::{CompletionRequest, CompletionResponse, ContentPart, Message, Role, StreamDelta, ToolDefinition};
+use lume_plugins::hooks::HookEvent;
 use tokio::sync::mpsc;
 use tracing::info;
 
+use crate::hooks::HookContext;
 use crate::tool_context::ToolContext;
 use crate::tool_registry::ToolRegistry;
 
@@ -71,6 +73,13 @@ pub struct AgentLoopConfig {
     /// Set to `SkillPermissions::default()` for zero trust (deny shell, deny file writes);
     /// set shell=true / fs_write=Some(vec![]) to restore the old open-everything behaviour.
     pub default_permissions: SkillPermissions,
+    /// Hook registry for firing PreToolUse / PostToolUse / PostToolUseFailure events.
+    /// None when hooks are not loaded (default).
+    pub hook_registry: Option<std::sync::Arc<tokio::sync::RwLock<crate::hooks::HookRegistry>>>,
+    /// Session ID for hook context.
+    pub session_id: String,
+    /// Agent ID for hook context.
+    pub agent_id: String,
 }
 
 impl Default for AgentLoopConfig {
@@ -123,6 +132,9 @@ impl Default for AgentLoopConfig {
             workspace_path: None,
             max_prompt_budget: 0,
             default_permissions: SkillPermissions::default(),
+            hook_registry: None,
+            session_id: String::new(),
+            agent_id: String::new(),
         }
     }
 }
@@ -491,6 +503,21 @@ async fn run_agent_turn_inner(
         // Token budget check: stop if cumulative prompt tokens exceed the budget
         if config.max_prompt_budget > 0 && total_prompt > config.max_prompt_budget {
             info!(iteration, total_prompt, budget = config.max_prompt_budget, "token budget exceeded");
+
+            // Fire Notification hook
+            if let Some(ref hook_reg) = config.hook_registry {
+                let mut hook_ctx = HookContext {
+                    session_id: config.session_id.clone(),
+                    agent_id: config.agent_id.clone(),
+                    ..Default::default()
+                };
+                let _ = hook_reg
+                    .read()
+                    .await
+                    .fire(&HookEvent::Notification, Some("token_budget"), &mut hook_ctx)
+                    .await;
+            }
+
             return Ok(TurnResult {
                 response: format!("任务进行中（已用 {} tokens，达到预算上限）。输入「继续」以接着执行。", total_prompt),
                 thinking: String::new(),
@@ -509,6 +536,19 @@ async fn run_agent_turn_inner(
         }
         // Check for user interruption before each iteration
         if cancel.is_cancelled() {
+            // Fire Stop hook
+            if let Some(ref hook_reg) = config.hook_registry {
+                let mut hook_ctx = HookContext {
+                    session_id: config.session_id.clone(),
+                    agent_id: config.agent_id.clone(),
+                    ..Default::default()
+                };
+                let _ = hook_reg
+                    .read()
+                    .await
+                    .fire(&HookEvent::Stop, None, &mut hook_ctx)
+                    .await;
+            }
             info!("agent turn cancelled by user at iteration {}", iteration);
             return Ok(TurnResult {
                 response: "[已中断]".into(),
@@ -570,24 +610,63 @@ async fn run_agent_turn_inner(
                 "agent turn iteration"
             );
 
-            match client.complete(request).await {
-                Ok(r) => break r,
-                Err(e) => {
-                    let msg = e.to_string();
-                    let is_image_tool_conflict = !force_no_tools
-                        && !tools.is_empty()
-                        && (msg.contains("image response")
-                            || msg.contains("Only google search tool"));
-                    if is_image_tool_conflict {
-                        tracing::warn!(
-                            error = %msg,
-                            "upstream rejected tools for image-response model, retrying without tools"
-                        );
-                        force_no_tools = true;
-                        continue;
+            // Transient error retry counter scoped to this LLM attempt
+            let mut transient_retries: u32 = 0;
+
+            let inner_result: Option<CompletionResponse> = loop {
+                match client.complete(request.clone()).await {
+                    Ok(r) => break Some(r),
+                    Err(e) => {
+                        let msg = e.to_string();
+                        let is_image_tool_conflict = !force_no_tools
+                            && !tools.is_empty()
+                            && (msg.contains("image response")
+                                || msg.contains("Only google search tool"));
+                        if is_image_tool_conflict {
+                            tracing::warn!(
+                                error = %msg,
+                                "upstream rejected tools for image-response model, retrying without tools"
+                            );
+                            // Fire Notification hook
+                            if let Some(ref hook_reg) = config.hook_registry {
+                                let mut hook_ctx = HookContext {
+                                    session_id: config.session_id.clone(),
+                                    agent_id: config.agent_id.clone(),
+                                    ..Default::default()
+                                };
+                                let _ = hook_reg
+                                    .read()
+                                    .await
+                                    .fire(
+                                        &HookEvent::Notification,
+                                        Some("image_tool_retry"),
+                                        &mut hook_ctx,
+                                    )
+                                    .await;
+                            }
+                            force_no_tools = true;
+                            break None;
+                        }
+                        // Retry transient errors with exponential backoff
+                        if is_transient_error(&msg) && transient_retries < 3 {
+                            transient_retries += 1;
+                            let delay_ms = 1000 * 2u64.pow(transient_retries - 1);
+                            tracing::warn!(
+                                retry = transient_retries,
+                                delay_ms,
+                                error = %msg,
+                                "transient LLM error, retrying with backoff"
+                            );
+                            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                            continue;
+                        }
+                        return Err(e);
                     }
-                    return Err(e);
                 }
+            };
+            match inner_result {
+                Some(r) => break r,
+                None => continue, // restart outer loop with force_no_tools = true
             }
         };
         total_prompt += response.prompt_tokens;
@@ -615,6 +694,20 @@ async fn run_agent_turn_inner(
         // If the LLM returned tool calls, dispatch them
         if !response.tool_calls.is_empty() {
             info!(count = response.tool_calls.len(), names = ?response.tool_calls.iter().map(|t| &t.name).collect::<Vec<_>>(), "tool calls received");
+
+            // Fire Notification hook for tool dispatch
+            if let Some(ref hook_reg) = config.hook_registry {
+                let mut hook_ctx = HookContext {
+                    session_id: config.session_id.clone(),
+                    agent_id: config.agent_id.clone(),
+                    ..Default::default()
+                };
+                let _ = hook_reg
+                    .read()
+                    .await
+                    .fire(&HookEvent::Notification, Some("tool_calls"), &mut hook_ctx)
+                    .await;
+            }
 
             // Add assistant message with tool calls + thinking (if any)
             let mut assistant_content: Vec<ContentPart> = Vec::new();
@@ -646,6 +739,24 @@ async fn run_agent_turn_inner(
                 let perms = config.default_permissions.clone();
                 let (allowed, risk) = check_permission(&tool_name, &perms);
                 if !allowed {
+                    // Fire PermissionRequest hook
+                    if let Some(ref hook_reg) = config.hook_registry {
+                        let mut hook_ctx = HookContext {
+                            session_id: config.session_id.clone(),
+                            agent_id: config.agent_id.clone(),
+                            tool_name: Some(tool_name.clone()),
+                            ..Default::default()
+                        };
+                        let _ = hook_reg
+                            .read()
+                            .await
+                            .fire(
+                                &HookEvent::PermissionRequest,
+                                Some(&tool_name),
+                                &mut hook_ctx,
+                            )
+                            .await;
+                    }
                     let perm_msg = Message::tool(
                         &tc.id,
                         &tool_name,
@@ -656,7 +767,28 @@ async fn run_agent_turn_inner(
                     continue;
                 }
 
-                let (progress_tx, _progress_rx) = mpsc::unbounded_channel();
+                let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+                // Drain progress updates in background to avoid SendError in tool implementations
+                tokio::spawn(async move {
+                    while let Some(_) = progress_rx.recv().await {}
+                });
+
+                // Fire PreToolUse hook
+                if let Some(ref hook_reg) = config.hook_registry {
+                    let mut hook_ctx = HookContext {
+                        session_id: config.session_id.clone(),
+                        agent_id: config.agent_id.clone(),
+                        tool_name: Some(tool_name.clone()),
+                        tool_args: Some(tc.arguments.clone()),
+                        ..Default::default()
+                    };
+                    let _result = hook_reg
+                        .read()
+                        .await
+                        .fire(&HookEvent::PreToolUse, Some(&tool_name), &mut hook_ctx)
+                        .await;
+                }
+
                 match registry
                     .execute(&tc.name, tc.arguments.clone(), progress_tx, &tool_context)
                     .await
@@ -668,12 +800,54 @@ async fn run_agent_turn_inner(
                         } else {
                             result.content
                         };
+
+                        // Fire PostToolUse hook
+                        if let Some(ref hook_reg) = config.hook_registry {
+                            let mut hook_ctx = HookContext {
+                                session_id: config.session_id.clone(),
+                                agent_id: config.agent_id.clone(),
+                                tool_name: Some(tool_name.clone()),
+                                tool_args: Some(tc.arguments.clone()),
+                                tool_result: Some(content.clone()),
+                                tool_success: Some(!result.is_error),
+                                ..Default::default()
+                            };
+                            let _result = hook_reg
+                                .read()
+                                .await
+                                .fire(&HookEvent::PostToolUse, Some(&tool_name), &mut hook_ctx)
+                                .await;
+                        }
+
                         let tool_msg = Message::tool(&tc.id, &tool_name, &content);
                         messages.push(tool_msg.clone());
                         tool_messages.push(tool_msg);
                     }
                     Err(e) => {
                         let err_msg = format!("Tool execution failed: {}", e);
+
+                        // Fire PostToolUseFailure hook
+                        if let Some(ref hook_reg) = config.hook_registry {
+                            let mut hook_ctx = HookContext {
+                                session_id: config.session_id.clone(),
+                                agent_id: config.agent_id.clone(),
+                                tool_name: Some(tool_name.clone()),
+                                tool_args: Some(tc.arguments.clone()),
+                                tool_result: Some(err_msg.clone()),
+                                tool_success: Some(false),
+                                ..Default::default()
+                            };
+                            let _result = hook_reg
+                                .read()
+                                .await
+                                .fire(
+                                    &HookEvent::PostToolUseFailure,
+                                    Some(&tool_name),
+                                    &mut hook_ctx,
+                                )
+                                .await;
+                        }
+
                         // Skip pushing malformed tool messages with empty IDs
                         if !tc.id.is_empty() && !tool_name.is_empty() {
                             let tool_msg = Message::tool(&tc.id, &tool_name, &err_msg);
@@ -1005,6 +1179,7 @@ async fn run_agent_turn_streaming_inner(
     let mut content_parts: Vec<ContentPart> = Vec::new();
     let mut captured_thinking = String::new();
     let mut captured_images: Vec<(String, String)> = Vec::new();
+    let mut completed_iterations = 0usize;
 
     // Create tool context with workspace path for file operations
     let tool_context = ToolContext::with_workspace(config.workspace_path.clone());
@@ -1013,6 +1188,21 @@ async fn run_agent_turn_streaming_inner(
         // Token budget check: stop if cumulative prompt tokens exceed the budget
         if config.max_prompt_budget > 0 && total_prompt > config.max_prompt_budget {
             tracing::info!(iteration, total_prompt, budget = config.max_prompt_budget, "token budget exceeded (streaming)");
+
+            // Fire Notification hook
+            if let Some(ref hook_reg) = config.hook_registry {
+                let mut hook_ctx = HookContext {
+                    session_id: config.session_id.clone(),
+                    agent_id: config.agent_id.clone(),
+                    ..Default::default()
+                };
+                let _ = hook_reg
+                    .read()
+                    .await
+                    .fire(&HookEvent::Notification, Some("token_budget"), &mut hook_ctx)
+                    .await;
+            }
+
             let msg = format!("任务进行中（已用 {} tokens，达到预算上限）。输入「继续」以接着执行。", total_prompt);
             let _ = delta_tx.send(StreamDelta::Text(msg.clone())).await;
             drop(delta_tx);
@@ -1032,6 +1222,19 @@ async fn run_agent_turn_streaming_inner(
         }
         // Check for user interruption before each iteration
         if cancel.is_cancelled() {
+            // Fire Stop hook
+            if let Some(ref hook_reg) = config.hook_registry {
+                let mut hook_ctx = HookContext {
+                    session_id: config.session_id.clone(),
+                    agent_id: config.agent_id.clone(),
+                    ..Default::default()
+                };
+                let _ = hook_reg
+                    .read()
+                    .await
+                    .fire(&HookEvent::Stop, None, &mut hook_ctx)
+                    .await;
+            }
             tracing::info!("agent turn cancelled by user at iteration {}", iteration);
             let _ = delta_tx.send(StreamDelta::Text("[已中断]".into())).await;
             drop(delta_tx);
@@ -1068,7 +1271,9 @@ async fn run_agent_turn_streaming_inner(
         // Inner retry loop: some upstreams (Gemini image-gen) reject tools when
         // returning image responses with errors like "Only google search tool
         // ... is supported for image response". Detect and retry without tools.
+        // Also retries transient errors (rate limiting, 5xx, network) with backoff.
         loop {
+            let mut transient_retries: u32 = 0;
             let effective_tools = if strip_tools_for_images || force_no_tools {
                 Vec::new()
             } else {
@@ -1109,6 +1314,19 @@ async fn run_agent_turn_streaming_inner(
                     biased;
                     _ = cancel.cancelled() => {
                         tracing::info!("agent turn cancelled during LLM stream");
+                        // Fire Stop hook
+                        if let Some(ref hook_reg) = config.hook_registry {
+                            let mut hook_ctx = HookContext {
+                                session_id: config.session_id.clone(),
+                                agent_id: config.agent_id.clone(),
+                                ..Default::default()
+                            };
+                            let _ = hook_reg
+                                .read()
+                                .await
+                                .fire(&HookEvent::Stop, None, &mut hook_ctx)
+                                .await;
+                        }
                         drop(stream_rx);
                         drop(stream_fut);
                         let _ = delta_tx.send(StreamDelta::Text("[已中断]".into())).await;
@@ -1142,7 +1360,6 @@ async fn run_agent_turn_streaming_inner(
                             }
                             StreamDelta::ToolCallBegin { index, id, name } => {
                                 attempt_pending.push((index, id.clone(), name.clone(), String::new()));
-                                forwarded_any = true;
                                 let _ = delta_tx.send(StreamDelta::ToolCallBegin { index, id, name }).await;
                             }
                             StreamDelta::ToolCallArgsChunk { index, chunk } => {
@@ -1157,7 +1374,6 @@ async fn run_agent_turn_streaming_inner(
                             }
                             StreamDelta::Image { media_type, data } => {
                                 attempt_images.push((media_type.clone(), data.clone()));
-                                forwarded_any = true;
                                 let _ = delta_tx.send(StreamDelta::Image { media_type, data }).await;
                             }
                             StreamDelta::ToolResult { call_id, tool_name, success, result, structured_content } => {
@@ -1173,29 +1389,48 @@ async fn run_agent_turn_streaming_inner(
                     r = &mut stream_fut => {
                         match r {
                             Ok(()) => {
-                                while let Ok(delta) = stream_rx.try_recv() {
-                                    match delta {
-                                        StreamDelta::Text(t) => {
-                                            attempt_text.push_str(&t);
-                                            forwarded_any = true;
-                                            let _ = delta_tx.send(StreamDelta::Text(t)).await;
-                                        }
-                                        StreamDelta::Reasoning(t) => {
-                                            attempt_thinking.push_str(&t);
-                                            forwarded_any = true;
-                                            let _ = delta_tx.send(StreamDelta::Reasoning(t)).await;
-                                        }
-                                        StreamDelta::Image { media_type, data } => {
-                                            attempt_images.push((media_type.clone(), data.clone()));
-                                            forwarded_any = true;
-                                            let _ = delta_tx.send(StreamDelta::Image { media_type, data }).await;
-                                        }
-                                        StreamDelta::Usage { prompt_tokens, completion_tokens, .. } => {
-                                            attempt_prompt_tokens += prompt_tokens;
-                                            attempt_completion_tokens += completion_tokens;
-                                            let _ = delta_tx.send(StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens: 0, cache_write_tokens: 0 }).await;
-                                        }
-                                        _ => {}
+                                // Drain remaining deltas with short timeout to catch racing sends.
+                                loop {
+                                    match tokio::time::timeout(
+                                        std::time::Duration::from_millis(50),
+                                        stream_rx.recv(),
+                                    )
+                                    .await
+                                    {
+                                        Ok(Some(delta)) => match delta {
+                                            StreamDelta::Text(t) => {
+                                                attempt_text.push_str(&t);
+                                                let _ = delta_tx.send(StreamDelta::Text(t)).await;
+                                            }
+                                            StreamDelta::Reasoning(t) => {
+                                                attempt_thinking.push_str(&t);
+                                                let _ = delta_tx.send(StreamDelta::Reasoning(t)).await;
+                                            }
+                                            StreamDelta::Image { media_type, data } => {
+                                                attempt_images.push((media_type.clone(), data.clone()));
+                                                let _ = delta_tx
+                                                    .send(StreamDelta::Image { media_type, data })
+                                                    .await;
+                                            }
+                                            StreamDelta::Usage {
+                                                prompt_tokens,
+                                                completion_tokens,
+                                                ..
+                                            } => {
+                                                attempt_prompt_tokens += prompt_tokens;
+                                                attempt_completion_tokens += completion_tokens;
+                                                let _ = delta_tx
+                                                    .send(StreamDelta::Usage {
+                                                        prompt_tokens,
+                                                        completion_tokens,
+                                                        cache_read_tokens: 0,
+                                                        cache_write_tokens: 0,
+                                                    })
+                                                    .await;
+                                            }
+                                            _ => {}
+                                        },
+                                        _ => break,
                                     }
                                 }
                                 break None;
@@ -1218,6 +1453,20 @@ async fn run_agent_turn_streaming_inner(
                         "upstream rejected tools for image-response model, retrying without tools"
                     );
                     force_no_tools = true;
+                    continue;
+                }
+                // Retry transient errors with exponential backoff, but only
+                // when no visible content has been forwarded yet.
+                if !forwarded_any && is_transient_error(&msg) && transient_retries < 3 {
+                    transient_retries += 1;
+                    let delay_ms = 1000 * 2u64.pow(transient_retries - 1);
+                    tracing::warn!(
+                        retry = transient_retries,
+                        delay_ms,
+                        error = %msg,
+                        "transient LLM error (streaming), retrying with backoff"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                     continue;
                 }
                 return Err(err);
@@ -1258,6 +1507,20 @@ async fn run_agent_turn_streaming_inner(
         }
 
         if !pending_tool_calls.is_empty() {
+            // Fire Notification hook for tool dispatch
+            if let Some(ref hook_reg) = config.hook_registry {
+                let mut hook_ctx = HookContext {
+                    session_id: config.session_id.clone(),
+                    agent_id: config.agent_id.clone(),
+                    ..Default::default()
+                };
+                let _ = hook_reg
+                    .read()
+                    .await
+                    .fire(&HookEvent::Notification, Some("tool_calls"), &mut hook_ctx)
+                    .await;
+            }
+
             let mut assistant_content: Vec<ContentPart> = Vec::new();
             if !this_thinking.is_empty() {
                 assistant_content.push(ContentPart::Thinking {
@@ -1339,6 +1602,24 @@ async fn run_agent_turn_streaming_inner(
                 let perms = config.default_permissions.clone();
                 let (allowed, risk) = check_permission(tc_name, &perms);
                 if !allowed {
+                    // Fire PermissionRequest hook
+                    if let Some(ref hook_reg) = config.hook_registry {
+                        let mut hook_ctx = HookContext {
+                            session_id: config.session_id.clone(),
+                            agent_id: config.agent_id.clone(),
+                            tool_name: Some(tc_name.to_string()),
+                            ..Default::default()
+                        };
+                        let _ = hook_reg
+                            .read()
+                            .await
+                            .fire(
+                                &HookEvent::PermissionRequest,
+                                Some(tc_name),
+                                &mut hook_ctx,
+                            )
+                            .await;
+                    }
                     let perm_msg = Message::tool(
                         tc_id,
                         tc_name,
@@ -1359,7 +1640,28 @@ async fn run_agent_turn_streaming_inner(
                 }
 
                 let arguments = serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}));
-                let (progress_tx, _) = mpsc::unbounded_channel();
+                let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+                // Drain progress updates in background to avoid SendError in tool implementations
+                tokio::spawn(async move {
+                    while let Some(_) = progress_rx.recv().await {}
+                });
+
+                // Fire PreToolUse hook
+                if let Some(ref hook_reg) = config.hook_registry {
+                    let mut hook_ctx = HookContext {
+                        session_id: config.session_id.clone(),
+                        agent_id: config.agent_id.clone(),
+                        tool_name: Some(tc_name.to_string()),
+                        tool_args: Some(arguments.clone()),
+                        ..Default::default()
+                    };
+                    let _result = hook_reg
+                        .read()
+                        .await
+                        .fire(&HookEvent::PreToolUse, Some(tc_name), &mut hook_ctx)
+                        .await;
+                }
+
                 match registry.execute(tc_name, arguments, progress_tx, &tool_context).await {
                     Ok(result) => {
                         tool_calls_made += 1;
@@ -1370,6 +1672,25 @@ async fn run_agent_turn_streaming_inner(
                         } else {
                             result.content
                         };
+
+                        // Fire PostToolUse hook
+                        if let Some(ref hook_reg) = config.hook_registry {
+                            let mut hook_ctx = HookContext {
+                                session_id: config.session_id.clone(),
+                                agent_id: config.agent_id.clone(),
+                                tool_name: Some(tc_name.to_string()),
+                                tool_args: Some(serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}))),
+                                tool_result: Some(content.clone()),
+                                tool_success: Some(success),
+                                ..Default::default()
+                            };
+                            let _result = hook_reg
+                                .read()
+                                .await
+                                .fire(&HookEvent::PostToolUse, Some(tc_name), &mut hook_ctx)
+                                .await;
+                        }
+
                         let tool_msg = Message::tool(tc_id, tc_name, &content);
                         messages.push(tool_msg.clone());
                         tool_messages.push(tool_msg);
@@ -1385,6 +1706,29 @@ async fn run_agent_turn_streaming_inner(
                     }
                     Err(e) => {
                         let err_msg = format!("Tool execution failed: {}", e);
+
+                        // Fire PostToolUseFailure hook
+                        if let Some(ref hook_reg) = config.hook_registry {
+                            let mut hook_ctx = HookContext {
+                                session_id: config.session_id.clone(),
+                                agent_id: config.agent_id.clone(),
+                                tool_name: Some(tc_name.to_string()),
+                                tool_args: Some(serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}))),
+                                tool_result: Some(err_msg.clone()),
+                                tool_success: Some(false),
+                                ..Default::default()
+                            };
+                            let _result = hook_reg
+                                .read()
+                                .await
+                                .fire(
+                                    &HookEvent::PostToolUseFailure,
+                                    Some(tc_name),
+                                    &mut hook_ctx,
+                                )
+                                .await;
+                        }
+
                         // Skip pushing malformed tool messages with empty IDs —
                         // they cause 400 errors with providers that validate tool_call_id
                         if !tc_id.is_empty() && !tc_name.is_empty() {
@@ -1418,6 +1762,7 @@ async fn run_agent_turn_streaming_inner(
         content_parts.push(ContentPart::Text {
             text: final_text.clone(),
         });
+        completed_iterations = iteration + 1;
         break;
     }
 
@@ -1435,7 +1780,7 @@ async fn run_agent_turn_streaming_inner(
         thinking: captured_thinking,
         content_parts,
         tool_calls_made,
-        iterations: 1,
+        iterations: if completed_iterations > 0 { completed_iterations } else { config.max_iterations },
         prompt_tokens: total_prompt,
         completion_tokens: total_completion,
         cached_tokens: client.estimated_cache_tokens(),
@@ -1443,4 +1788,32 @@ async fn run_agent_turn_streaming_inner(
         tool_messages,
         vision_usage: vision_usage.clone(),
     })
+}
+
+/// Returns true if the error message indicates a transient failure that
+/// should be retried with backoff (rate limiting, 5xx, network errors).
+fn is_transient_error(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    // Rate limiting
+    lower.contains("rate limit")
+        || lower.contains("429")
+        || lower.contains("too many requests")
+        // 5xx server errors
+        || lower.contains("500")
+        || lower.contains("502")
+        || lower.contains("503")
+        || lower.contains("504")
+        || lower.contains("server error")
+        || lower.contains("internal server error")
+        || lower.contains("service unavailable")
+        // Transient network errors
+        || lower.contains("connection reset")
+        || lower.contains("connection refused")
+        || lower.contains("connection closed")
+        || lower.contains("broken pipe")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("eof")
+        || lower.contains("try again")
+        || lower.contains("temporarily unavailable")
 }
