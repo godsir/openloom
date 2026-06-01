@@ -70,6 +70,16 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
     } catch {
       ;(get() as any).addToast?.({ type: 'warning', message: '会话切换失败，部分功能可能异常' })
     }
+    // If this session is currently streaming and we already have its messages
+    // cached locally, skip fetching from backend. The backend may not have
+    // persisted the in-progress assistant message yet, and overwriting the
+    // local state would drop accumulated streaming content + break the flush
+    // mechanism (message ID mismatch after hydrateMessages replaces IDs).
+    const isStreaming = (get() as any).streamingSessionIds?.has(id)
+    const hasCached = (get() as any).messagesBySession?.has(id)
+    if (isStreaming && hasCached) {
+      return
+    }
     try {
       const result = await loomRpc<{ messages: any[] }>('session.messages', { session_id: id })
       const msgs = (result.messages || []).map((m: any, i: number) => ({

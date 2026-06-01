@@ -27,6 +27,17 @@ impl AnthropicClient {
             .timeout(std::time::Duration::from_secs(180))
             .build()
             .unwrap_or_default();
+        // Normalize base_url: strip any /v1 suffix so we don't double it when appending /v1/messages.
+        // e.g. "https://api.deepseek.com/v1" -> "https://api.deepseek.com"
+        let base_url = base_url
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
+        let base_url = if base_url.ends_with("/v1") {
+            base_url[..base_url.len() - 3].to_string()
+        } else {
+            base_url
+        };
         Self {
             api_key,
             model,
@@ -34,6 +45,10 @@ impl AnthropicClient {
             http,
             prefix_cache: PrefixCache::new(2),
         }
+    }
+
+    fn messages_url(&self) -> String {
+        format!("{}/v1/messages", self.base_url)
     }
 
     async fn complete_with_retry(
@@ -94,9 +109,10 @@ impl AnthropicClient {
             body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget});
         }
 
+        let url = self.messages_url();
         let resp = self
             .http
-            .post(format!("{}/v1/messages", self.base_url))
+            .post(&url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .json(&body)
@@ -106,7 +122,7 @@ impl AnthropicClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("Anthropic API error {}: {}", status, text);
+            anyhow::bail!("Anthropic API error {} {}: {}", status, url, text);
         }
 
         let body_text = resp.text().await?;
@@ -271,9 +287,10 @@ impl CloudClient for AnthropicClient {
             body["tools"] = serde_json::json!(tools);
         }
 
+        let url = self.messages_url();
         let resp = self
             .http
-            .post(format!("{}/v1/messages", self.base_url))
+            .post(&url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .json(&body)
@@ -282,8 +299,9 @@ impl CloudClient for AnthropicClient {
 
         if !resp.status().is_success() {
             anyhow::bail!(
-                "Anthropic API error {}: {}",
+                "Anthropic API error {} {}: {}",
                 resp.status(),
+                url,
                 resp.text().await.unwrap_or_default()
             );
         }
@@ -364,9 +382,10 @@ impl CloudClient for AnthropicClient {
             body["tools"] = serde_json::json!(tools);
         }
 
+        let url = self.messages_url();
         let resp = self
             .http
-            .post(format!("{}/v1/messages", self.base_url))
+            .post(&url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .json(&body)
@@ -375,8 +394,9 @@ impl CloudClient for AnthropicClient {
 
         if !resp.status().is_success() {
             anyhow::bail!(
-                "Anthropic API error {}: {}",
+                "Anthropic API error {} {}: {}",
                 resp.status(),
+                url,
                 resp.text().await.unwrap_or_default()
             );
         }
