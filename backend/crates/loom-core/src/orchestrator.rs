@@ -26,6 +26,7 @@ use crate::agent_loop::{
 };
 use crate::agent_pool::{AgentPool, AgentSummary};
 use crate::event_bus::{AgentEvent, EventBus};
+use crate::hooks::{HookContext, HookRegistry};
 use crate::tool_registry::{AgentTool, SpawnAgentTool, SpawnContext, ToolRegistry};
 
 /// The central orchestrator for openLoom v2.
@@ -37,10 +38,8 @@ pub struct Orchestrator {
     cloud_client: Arc<RwLock<Option<Arc<dyn CloudClient>>>>,
     loop_config: Arc<RwLock<AgentLoopConfig>>,
     session_histories: Arc<RwLock<std::collections::HashMap<String, Vec<Message>>>>,
-    skill_context: Arc<RwLock<String>>,
+    skill_state: Arc<RwLock<lume_skills::SkillState>>,
     persona_context: Arc<RwLock<String>>,
-    skill_bodies: Arc<RwLock<std::collections::HashMap<String, String>>>,
-    skill_permissions: Arc<RwLock<std::collections::HashMap<String, SkillPermissionConfig>>>,
     memory_store: Arc<RwLock<Option<Box<dyn crate::MemoryStore>>>>,
     agent_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::AgentConfig>>>,
     model_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::ModelConfig>>>,
@@ -48,6 +47,8 @@ pub struct Orchestrator {
     /// Serialises concurrent model-switch calls so `model.switch` and
     /// the per-message model override in `chat.send` never race.
     model_switch_lock: tokio::sync::Mutex<()>,
+    /// Compiled hook registry from plugin hook configs.
+    hook_registry: Arc<RwLock<HookRegistry>>,
     data_dir: PathBuf,
 }
 
@@ -301,10 +302,9 @@ impl Orchestrator {
         let _ = registry.register(Arc::new(crate::builtin_tools::ContentSearchTool));
         let _ = registry.register(Arc::new(crate::builtin_tools::FileDeleteTool));
 
-        let skill_bodies = Arc::new(RwLock::new(std::collections::HashMap::new()));
-        let skill_permissions = Arc::new(RwLock::new(std::collections::HashMap::new()));
+        let skill_state = Arc::new(RwLock::new(lume_skills::SkillState::default()));
         let _ = registry.register(Arc::new(crate::builtin_tools::UseSkillTool {
-            skill_bodies: skill_bodies.clone(),
+            skill_state: skill_state.clone(),
         }));
         let _ = registry.register(Arc::new(crate::builtin_tools::WebSearchTool));
         let _ = registry.register(Arc::new(crate::builtin_tools::WebFetchTool));
@@ -313,18 +313,20 @@ impl Orchestrator {
         let lsp_client = Arc::new(LspClient::new());
         register_lsp_tools(&mut registry, &lsp_client);
 
+        let hook_registry = Arc::new(RwLock::new(HookRegistry::new()));
+        let mut pool = AgentPool::new(max_depth, default_max_iterations, default_timeout_secs);
+        pool.set_hook_registry(Some(hook_registry.clone()));
+
         Self {
-            pool: AgentPool::new(max_depth, default_max_iterations, default_timeout_secs),
+            pool,
             tool_registry: Arc::new(RwLock::new(registry)),
             mcp_client: Arc::new(McpClient::new()),
             lsp_client,
             cloud_client: Arc::new(RwLock::new(None)),
             loop_config: Arc::new(RwLock::new(AgentLoopConfig::default())),
             session_histories: Arc::new(RwLock::new(std::collections::HashMap::new())),
-            skill_context: Arc::new(RwLock::new(String::new())),
+            skill_state,
             persona_context: Arc::new(RwLock::new(String::new())),
-            skill_bodies,
-            skill_permissions,
             memory_store: Arc::new(RwLock::new(None)),
             agent_configs: Arc::new(RwLock::new(std::collections::HashMap::from([(
                 "default".to_string(),
@@ -333,16 +335,19 @@ impl Orchestrator {
             model_configs: Arc::new(RwLock::new(std::collections::HashMap::new())),
             active_model_name: Arc::new(RwLock::new(None)),
             model_switch_lock: tokio::sync::Mutex::new(()),
+            hook_registry,
             data_dir,
         }
     }
 
     /// Must be called after construction to wire spawn_agent (needs self references).
     pub async fn init_spawn_agent(self: &Arc<Self>, max_depth: usize, default_timeout_secs: u64) {
+        let mut spawn_pool = AgentPool::new(max_depth, 20, default_timeout_secs);
+        spawn_pool.set_hook_registry(Some(self.hook_registry.clone()));
         let ctx = Arc::new(SpawnContext {
             cloud_client: self.cloud_client.clone(),
             tool_registry: self.tool_registry.clone(),
-            agent_pool: Arc::new(AgentPool::new(max_depth, 20, default_timeout_secs)),
+            agent_pool: Arc::new(spawn_pool),
             loop_config: self.loop_config.clone(),
             event_bus: self.pool.event_bus().clone(),
         });
@@ -388,7 +393,7 @@ impl Orchestrator {
         let mut registry = self.tool_registry.write().await;
         for tool in tools {
             let server = name.clone();
-            let tool_name = format!("mcp__{}__{}", server, tool.name);
+            let tool_name = ToolRegistry::mcp_tool_name(&server, &tool.name);
             let definition = loom_types::ToolDefinition {
                 name: tool_name.clone(),
                 description: format!("[MCP:{}] {}", server, tool.description),
@@ -414,7 +419,7 @@ impl Orchestrator {
             server_name: server.clone(),
             op: McpMetaOp::ListResources,
             tool_definition: loom_types::ToolDefinition {
-                name: format!("mcp__{}__list_resources", server),
+                name: ToolRegistry::mcp_tool_name(&server, "list_resources"),
                 description: format!("[MCP:{}] List available resources from this server", server),
                 input_schema: serde_json::json!({"type":"object","properties":{},"required":[]}),
                 tags: vec!["mcp".into(), "resource".into()],
@@ -427,7 +432,7 @@ impl Orchestrator {
             server_name: server.clone(),
             op: McpMetaOp::ReadResource,
             tool_definition: loom_types::ToolDefinition {
-                name: format!("mcp__{}__read_resource", server),
+                name: ToolRegistry::mcp_tool_name(&server, "read_resource"),
                 description: format!("[MCP:{}] Read a resource by URI. Use list_resources first to discover URIs.", server),
                 input_schema: serde_json::json!({"type":"object","properties":{"uri":{"type":"string","description":"Resource URI to read"}},"required":["uri"]}),
                 tags: vec!["mcp".into(), "resource".into()],
@@ -440,7 +445,7 @@ impl Orchestrator {
             server_name: server.clone(),
             op: McpMetaOp::ListPrompts,
             tool_definition: loom_types::ToolDefinition {
-                name: format!("mcp__{}__list_prompts", server),
+                name: ToolRegistry::mcp_tool_name(&server, "list_prompts"),
                 description: format!(
                     "[MCP:{}] List available prompt templates from this server",
                     server
@@ -456,7 +461,7 @@ impl Orchestrator {
             server_name: server.clone(),
             op: McpMetaOp::GetPrompt,
             tool_definition: loom_types::ToolDefinition {
-                name: format!("mcp__{}__get_prompt", server),
+                name: ToolRegistry::mcp_tool_name(&server, "get_prompt"),
                 description: format!("[MCP:{}] Get a prompt template with arguments filled in. Use list_prompts first to see available prompts and their argument schemas.", server),
                 input_schema: serde_json::json!({"type":"object","properties":{"name":{"type":"string","description":"Prompt name"},"arguments":{"type":"object","description":"Prompt arguments (key-value pairs)"}},"required":["name"]}),
                 tags: vec!["mcp".into(), "prompt".into()],
@@ -497,6 +502,10 @@ impl Orchestrator {
     pub async fn delete_saved_mcp_server(&self, name: &str) -> Result<()> {
         // Best-effort disconnect — ignore "not connected" errors.
         let _ = self.mcp_client.disconnect(name).await;
+        // Unregister all tools belonging to this MCP server
+        let prefix = ToolRegistry::mcp_tool_prefix(name);
+        let removed = self.tool_registry.write().await.remove_by_prefix(&prefix);
+        tracing::info!(server = %name, count = removed.len(), "unregistered MCP tools");
         if let Some(ref store) = *self.memory_store.read().await {
             store.delete_mcp_server(name).await?;
         }
@@ -545,44 +554,59 @@ impl Orchestrator {
 
     // === Skills / Persona / Memory ===
 
-    /// Set loaded skill context (injected into system prompt).
-    pub async fn set_skill_context(&self, ctx: String) {
-        *self.skill_context.write().await = ctx;
-    }
-
-    /// Set full skill bodies (name → full markdown body) for use_skill tool.
-    pub async fn set_skill_bodies(&self, bodies: std::collections::HashMap<String, String>) {
-        *self.skill_bodies.write().await = bodies;
-    }
-
-    /// Set skill permissions (name → SkillPermissionConfig) parsed from SKILL.md manifests.
-    pub async fn set_skill_permissions(
-        &self,
-        perms: std::collections::HashMap<String, SkillPermissionConfig>,
-    ) {
-        *self.skill_permissions.write().await = perms;
-    }
-
-    /// Atomic skill state update — sets context, bodies, and permissions together
-    /// from the caller's perspective, avoiding a window where one is updated
-    /// but the others are not.
-    pub async fn set_skills(
-        &self,
-        context: String,
-        bodies: std::collections::HashMap<String, String>,
-        permissions: std::collections::HashMap<String, SkillPermissionConfig>,
-    ) {
-        let mut ctx = self.skill_context.write().await;
-        let mut b = self.skill_bodies.write().await;
-        let mut p = self.skill_permissions.write().await;
-        *ctx = context;
-        *b = bodies;
-        *p = permissions;
+    /// Atomically replace all skill state (context, bodies, permissions, summaries).
+    pub async fn set_skills(&self, state: lume_skills::SkillState) {
+        *self.skill_state.write().await = state;
     }
 
     /// Look up a skill's full body by name.
     pub async fn get_skill_body(&self, name: &str) -> Option<String> {
-        self.skill_bodies.read().await.get(name).cloned()
+        self.skill_state.read().await.bodies.get(name).cloned()
+    }
+
+    /// Return lightweight summaries for all cached skills (for `skills.list` RPC).
+    pub async fn get_skill_summaries(&self) -> Vec<lume_skills::SkillSummary> {
+        self.skill_state.read().await.summaries.clone()
+    }
+
+    /// Return all cached skill names.
+    pub async fn get_skill_names(&self) -> Vec<String> {
+        self.skill_state.read().await.bodies.keys().cloned().collect()
+    }
+
+    // === Hook Registry ===
+
+    /// Load hook configs from discovered plugins into the runtime registry.
+    /// Called once at startup after PluginManager discovery.
+    pub async fn load_hooks_from_plugins(&self, plugin_manager: &lume_plugins::PluginManager) {
+        let registry = HookRegistry::load_from_plugins(plugin_manager).await;
+        *self.hook_registry.write().await = registry;
+    }
+
+    /// Reload the hook registry from plugins (when plugins are installed/removed).
+    pub async fn reload_hooks(&self, plugin_manager: &lume_plugins::PluginManager) {
+        self.hook_registry
+            .read()
+            .await
+            .reload(plugin_manager)
+            .await;
+    }
+
+    /// Get a clone of the hook registry for external access.
+    pub fn hook_registry(&self) -> Arc<RwLock<HookRegistry>> {
+        self.hook_registry.clone()
+    }
+
+    /// Fire hooks for a given event with the provided context.
+    /// Returns a summary of what happened. Never panics.
+    pub async fn fire_hooks(
+        &self,
+        event: &lume_plugins::hooks::HookEvent,
+        subject: Option<&str>,
+        ctx: &mut HookContext,
+    ) -> crate::hooks::HookFireResult {
+        let registry = self.hook_registry.read().await;
+        registry.fire(event, subject, ctx).await
     }
 
     /// Set persona summary (injected into system prompt).
@@ -1704,7 +1728,7 @@ impl Orchestrator {
         }
         // 4a. Selected skills — inject full SKILL.md content for user-chosen skills
         if !selected_skills.is_empty() {
-            let bodies = self.skill_bodies.read().await;
+            let bodies = self.skill_state.read().await.bodies.clone();
             system_prompt.push_str("\n\n## Active Skills (User Selected)\nThe following skills are activated for this conversation. Follow their instructions directly — do NOT call use_skill for these.\n");
             for name in selected_skills {
                 if let Some(body) = bodies.get(name) {
@@ -1775,8 +1799,8 @@ impl Orchestrator {
             p.clone()
         };
         let skills = {
-            let s = self.skill_context.read().await;
-            s.clone()
+            let state = self.skill_state.read().await;
+            state.context.clone()
         };
 
         // Register agent in pool
@@ -1793,9 +1817,9 @@ impl Orchestrator {
         // Collect skill permissions for merged tool-call permissions.
         let mut merged_skill_permissions: Vec<SkillPermissionConfig> = Vec::new();
         if !selected_skills.is_empty() {
-            let perm_map = self.skill_permissions.read().await;
+            let state = self.skill_state.read().await;
             for name in &selected_skills {
-                if let Some(perms) = perm_map.get(name) {
+                if let Some(perms) = state.permissions.get(name) {
                     merged_skill_permissions.push(perms.clone());
                 }
             }
@@ -1865,6 +1889,9 @@ impl Orchestrator {
             workspace_path,
             default_permissions,
             max_prompt_budget,
+            hook_registry: Some(self.hook_registry.clone()),
+            session_id: session_id.to_string(),
+            agent_id: agent_id.to_string(),
             ..Default::default()
         };
         tracing::info!(session_id, "[orchestrator] step: loop_config built");
@@ -1891,6 +1918,58 @@ impl Orchestrator {
             .transition(&agent_id, AgentStatus::Thinking, Some("processing".into()))
             .await;
         tracing::info!(session_id, "[orchestrator] step: pool.transition done");
+
+        // Fire SessionStart hook
+        {
+            let mut hook_ctx = HookContext {
+                session_id: sid.clone(),
+                agent_id: agent_id.to_string(),
+                ..Default::default()
+            };
+            tracing::debug!(session_id = %sid, agent_id = %agent_id, "firing SessionStart hook");
+            let _ = self
+                .hook_registry
+                .read()
+                .await
+                .fire(
+                    &lume_plugins::hooks::HookEvent::SessionStart,
+                    None,
+                    &mut hook_ctx,
+                )
+                .await;
+        }
+
+        // Fire UserPromptSubmit hook
+        {
+            let mut hook_ctx = HookContext {
+                session_id: sid.clone(),
+                agent_id: agent_id.to_string(),
+                user_message: Some(user_msg.clone()),
+                ..Default::default()
+            };
+            let _result = self
+                .hook_registry
+                .read()
+                .await
+                .fire(
+                    &lume_plugins::hooks::HookEvent::UserPromptSubmit,
+                    None,
+                    &mut hook_ctx,
+                )
+                .await;
+            // Inject prompt hook output into system prompt
+            if !hook_ctx.prompt_injections.is_empty() {
+                let injections = hook_ctx.prompt_injections.join("\n");
+                tracing::info!(
+                    count = hook_ctx.prompt_injections.len(),
+                    "hook prompt injections added to context"
+                );
+                // Note: injections would be appended to system prompt here.
+                // For now, log them at debug level so they are visible but not
+                // injected (future phase: pass to agent loop).
+                tracing::debug!(injections = %injections, "hook prompt injections");
+            }
+        }
 
         tracing::info!(
             session_id,
@@ -2182,6 +2261,9 @@ impl Orchestrator {
 
         if let Ok(ref turn) = result {
             let was_interrupted = turn.response == "[已中断]";
+
+            // Stop hook is already fired by agent_loop on cancellation; do not double-fire.
+
             let _ = self
                 .pool
                 .transition(
@@ -2343,6 +2425,26 @@ impl Orchestrator {
                 }
                 drop(client_opt);
             }
+
+            // Fire TaskCompleted hook
+            {
+                let mut hook_ctx = HookContext {
+                    session_id: sid.clone(),
+                    agent_id: agent_id.to_string(),
+                    ..Default::default()
+                };
+                tracing::debug!(session_id = %sid, agent_id = %agent_id, "firing TaskCompleted hook");
+                let _ = self
+                    .hook_registry
+                    .read()
+                    .await
+                    .fire(
+                        &lume_plugins::hooks::HookEvent::TaskCompleted,
+                        None,
+                        &mut hook_ctx,
+                    )
+                    .await;
+            }
             } // end else (not interrupted)
         } else {
             let _ = self
@@ -2353,6 +2455,26 @@ impl Orchestrator {
                         message: "LLM error".into(),
                     },
                     None,
+                )
+                .await;
+        }
+
+        // Fire SessionEnd hook
+        {
+            let mut hook_ctx = HookContext {
+                session_id: sid.clone(),
+                agent_id: agent_id.to_string(),
+                ..Default::default()
+            };
+            tracing::debug!(session_id = %sid, agent_id = %agent_id, "firing SessionEnd hook");
+            let _ = self
+                .hook_registry
+                .read()
+                .await
+                .fire(
+                    &lume_plugins::hooks::HookEvent::SessionEnd,
+                    None,
+                    &mut hook_ctx,
                 )
                 .await;
         }
@@ -2385,8 +2507,8 @@ impl Orchestrator {
             p.clone()
         };
         let skills = {
-            let s = self.skill_context.read().await;
-            s.clone()
+            let state = self.skill_state.read().await;
+            state.context.clone()
         };
 
         // Resolve agent config for this session (falls back to "default")
@@ -2407,6 +2529,51 @@ impl Orchestrator {
             .pool
             .transition(&agent_id, AgentStatus::Thinking, Some("processing".into()))
             .await;
+
+        let sid = session_id.to_string();
+        let user_msg = user_message.to_string();
+
+        // Fire SessionStart hook
+        {
+            let mut hook_ctx = HookContext {
+                session_id: sid.clone(),
+                agent_id: agent_id.to_string(),
+                ..Default::default()
+            };
+            tracing::debug!(session_id = %sid, agent_id = %agent_id, "firing SessionStart hook");
+            let _ = self
+                .hook_registry
+                .read()
+                .await
+                .fire(&lume_plugins::hooks::HookEvent::SessionStart, None, &mut hook_ctx)
+                .await;
+        }
+
+        // Fire UserPromptSubmit hook
+        {
+            let mut hook_ctx = HookContext {
+                session_id: sid.clone(),
+                agent_id: agent_id.to_string(),
+                user_message: Some(user_msg.clone()),
+                ..Default::default()
+            };
+            let _ = self
+                .hook_registry
+                .read()
+                .await
+                .fire(
+                    &lume_plugins::hooks::HookEvent::UserPromptSubmit,
+                    None,
+                    &mut hook_ctx,
+                )
+                .await;
+            if !hook_ctx.prompt_injections.is_empty() {
+                tracing::debug!(
+                    count = hook_ctx.prompt_injections.len(),
+                    "hook prompt injections"
+                );
+            }
+        }
 
         let client: Arc<dyn CloudClient> = {
             let guard = self.cloud_client.read().await;
@@ -2450,6 +2617,26 @@ impl Orchestrator {
                 (None, false)
             }
         }; // lock dropped here
+
+        // Fire PreCompact hook before summarization
+        if should_summarize {
+            let mut hook_ctx = HookContext {
+                session_id: sid.clone(),
+                agent_id: agent_id.to_string(),
+                ..Default::default()
+            };
+            tracing::debug!(session_id = %sid, "firing PreCompact hook");
+            let _ = self
+                .hook_registry
+                .read()
+                .await
+                .fire(
+                    &lume_plugins::hooks::HookEvent::PreCompact,
+                    None,
+                    &mut hook_ctx,
+                )
+                .await;
+        }
 
         // Phase 2: call LLM for summary if needed (no lock held)
         let summary = if should_summarize {
@@ -2523,9 +2710,9 @@ impl Orchestrator {
         // Collect skill permissions for merged tool-call permissions
         let mut merged_skill_permissions: Vec<SkillPermissionConfig> = Vec::new();
         if !selected_skills.is_empty() {
-            let perm_map = self.skill_permissions.read().await;
+            let state = self.skill_state.read().await;
             for name in &selected_skills {
-                if let Some(perms) = perm_map.get(name) {
+                if let Some(perms) = state.permissions.get(name) {
                     merged_skill_permissions.push(perms.clone());
                 }
             }
@@ -2572,6 +2759,9 @@ impl Orchestrator {
             workspace_path,
             default_permissions,
             max_prompt_budget,
+            hook_registry: Some(self.hook_registry.clone()),
+            session_id: session_id.to_string(),
+            agent_id: agent_id.to_string(),
             ..Default::default()
         };
 
@@ -2593,6 +2783,9 @@ impl Orchestrator {
 
         if let Ok(ref turn) = result {
             let was_interrupted = turn.response == "[已中断]";
+
+            // Stop hook is already fired by agent_loop on cancellation; do not double-fire.
+
             let _ = self
                 .pool
                 .transition(
@@ -2751,6 +2944,26 @@ impl Orchestrator {
                     }
                     drop(client_opt);
                 }
+
+            // Fire TaskCompleted hook
+            {
+                let mut hook_ctx = HookContext {
+                    session_id: sid.clone(),
+                    agent_id: agent_id.to_string(),
+                    ..Default::default()
+                };
+                tracing::debug!(session_id = %sid, agent_id = %agent_id, "firing TaskCompleted hook");
+                let _ = self
+                    .hook_registry
+                    .read()
+                    .await
+                    .fire(
+                        &lume_plugins::hooks::HookEvent::TaskCompleted,
+                        None,
+                        &mut hook_ctx,
+                    )
+                    .await;
+            }
             } // end else (not interrupted)
         } else {
             let _ = self
@@ -2765,13 +2978,31 @@ impl Orchestrator {
                 .await;
         }
 
+        // Fire SessionEnd hook
+        {
+            let mut hook_ctx = HookContext {
+                session_id: sid.clone(),
+                agent_id: agent_id.to_string(),
+                ..Default::default()
+            };
+            tracing::debug!(session_id = %sid, agent_id = %agent_id, "firing SessionEnd hook");
+            let _ = self
+                .hook_registry
+                .read()
+                .await
+                .fire(
+                    &lume_plugins::hooks::HookEvent::SessionEnd,
+                    None,
+                    &mut hook_ctx,
+                )
+                .await;
+        }
+
         // Clean up agent from pool
         let _ = self.pool.remove(&agent_id).await;
 
         result
     }
-
-    // === Agent Pool (delegated) ===
 
     pub fn event_bus(&self) -> &EventBus {
         self.pool.event_bus()

@@ -9,6 +9,7 @@ pub mod agent_loop;
 pub mod agent_pool;
 pub mod builtin_tools;
 pub mod event_bus;
+pub mod hooks;
 pub mod orchestrator;
 pub mod tool_context;
 pub mod tool_registry;

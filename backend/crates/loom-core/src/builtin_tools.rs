@@ -729,8 +729,7 @@ impl AgentTool for FileDeleteTool {
 // ============================================================================
 
 pub struct UseSkillTool {
-    pub skill_bodies:
-        std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
+    pub skill_state: std::sync::Arc<tokio::sync::RwLock<lume_skills::SkillState>>,
 }
 
 #[async_trait]
@@ -768,8 +767,8 @@ impl AgentTool for UseSkillTool {
                 structured_content: None,
             });
         }
-        let bodies = self.skill_bodies.read().await;
-        if let Some(body) = bodies.get(name) {
+        let state = self.skill_state.read().await;
+        if let Some(body) = state.bodies.get(name) {
             let content = format!(
                 "## Skill: {}\n\n{}\n\n---\nThe skill instructions above are now loaded and active. Do NOT call use_skill for \"{}\" again in this conversation — the skill is already loaded and its instructions persist.",
                 name, body, name
@@ -784,7 +783,7 @@ impl AgentTool for UseSkillTool {
                 })),
             })
         } else {
-            let available: Vec<&String> = bodies.keys().collect();
+            let available: Vec<&String> = state.bodies.keys().collect();
             Ok(ToolResult {
                 content: format!("Skill '{}' not found. Available: {:?}", name, available),
                 is_error: true,

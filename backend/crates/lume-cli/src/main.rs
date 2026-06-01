@@ -203,29 +203,15 @@ async fn main() -> anyhow::Result<()> {
                 skill_loader.add_standard_paths(&loom_dir);
                 match skill_loader.discover() {
                     Ok(skills) if !skills.is_empty() => {
-                        let ctx: String = skills
-                            .iter()
-                            .map(|s| format!("- {}: {}", s.manifest.name.replace('\n', " ").replace('\r', ""), s.manifest.description))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        let bodies: std::collections::HashMap<String, String> = skills
-                            .iter()
-                            .map(|s| (s.manifest.name.replace('\n', " ").replace('\r', ""), s.body.clone()))
-                            .collect();
-                        let permissions: std::collections::HashMap<String, lume_skills::SkillPermissionConfig> = skills
-                            .iter()
-                            .filter_map(|s| {
-                                s.manifest.permissions.clone().map(|p| {
-                                    (s.manifest.name.replace('\n', " ").replace('\r', ""), p)
-                                })
-                            })
-                            .collect();
-                        orchestrator.set_skills(ctx, bodies, permissions).await;
+                        orchestrator.set_skills(lume_skills::SkillState::from_skills(&skills)).await;
                         println!("[server] {} skills loaded", skills.len());
                     }
                     Ok(_) => println!("[server] 0 skills loaded"),
                     Err(e) => eprintln!("[server] skills error: {}", e),
                 }
+                // Load hooks from plugins (empty registry — will be updated when plugins are discovered below)
+                let hook_pm = plugins::PluginManager::new();
+                orchestrator.load_hooks_from_plugins(&hook_pm).await;
             }
             // === Plugins ===
             {
@@ -256,28 +242,13 @@ async fn main() -> anyhow::Result<()> {
                         }
                         match skill_loader.discover() {
                             Ok(new_skills) if !new_skills.is_empty() => {
-                                let ctx: String = new_skills
-                                    .iter()
-                                    .map(|s| format!("- {}: {}", s.manifest.name.replace('\n', " ").replace('\r', ""), s.manifest.description))
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                let bodies: std::collections::HashMap<String, String> = new_skills
-                                    .iter()
-                                    .map(|s| (s.manifest.name.replace('\n', " ").replace('\r', ""), s.body.clone()))
-                                    .collect();
-                                let permissions: std::collections::HashMap<String, lume_skills::SkillPermissionConfig> = new_skills
-                                    .iter()
-                                    .filter_map(|s| {
-                                        s.manifest.permissions.clone().map(|p| {
-                                            (s.manifest.name.replace('\n', " ").replace('\r', ""), p)
-                                        })
-                                    })
-                                    .collect();
-                                orchestrator.set_skills(ctx, bodies, permissions).await;
+                                orchestrator.set_skills(lume_skills::SkillState::from_skills(&new_skills)).await;
                                 println!("[server] {} skills loaded (with plugins)", new_skills.len());
                             }
                             _ => {}
                         }
+                        // Load hooks from discovered plugins
+                        orchestrator.load_hooks_from_plugins(&plugin_manager).await;
                         // Connect plugin MCP servers
                         for mcp in plugin_manager.mcp_configs() {
                             let config = lume_mcp::McpServerConfig {
@@ -287,7 +258,7 @@ async fn main() -> anyhow::Result<()> {
                                 args: mcp.args.clone(),
                                 url: mcp.url.clone(),
                                 headers: mcp.headers.clone(),
-                                env: Default::default(),
+                                env: mcp.env.clone(),
                                 cwd: None,
                                 startup_timeout_secs: 30,
                                 tool_timeout_secs: 60,
@@ -652,29 +623,15 @@ async fn run_chat_demo(
         }
         match skill_loader.discover() {
             Ok(skills) if !skills.is_empty() => {
-                let ctx: String = skills
-                    .iter()
-                    .map(|s| format!("- {}: {}", s.manifest.name.replace('\n', " ").replace('\r', ""), s.manifest.description))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let bodies: std::collections::HashMap<String, String> = skills
-                    .iter()
-                    .map(|s| (s.manifest.name.replace('\n', " ").replace('\r', ""), s.body.clone()))
-                    .collect();
-                let permissions: std::collections::HashMap<String, lume_skills::SkillPermissionConfig> = skills
-                    .iter()
-                    .filter_map(|s| {
-                        s.manifest.permissions.clone().map(|p| {
-                            (s.manifest.name.replace('\n', " ").replace('\r', ""), p)
-                        })
-                    })
-                    .collect();
-                orchestrator.set_skills(ctx, bodies, permissions).await;
+                orchestrator.set_skills(lume_skills::SkillState::from_skills(&skills)).await;
                 println!("[skills] {} loaded", skills.len());
             }
             Ok(_) => println!("[skills] 0 loaded (no SKILL.md found)"),
             Err(e) => println!("[skills] error: {}", e),
         }
+        // Load hooks from plugins (empty registry — will be updated when plugins are discovered below)
+        let hook_pm = plugins::PluginManager::new();
+        orchestrator.load_hooks_from_plugins(&hook_pm).await;
     } // close if let Some(home)
 
     // === Memory ===
@@ -803,28 +760,13 @@ async fn run_chat_demo(
             // Re-discover skills with plugin paths included
             match skill_loader.discover() {
                 Ok(new_skills) if !new_skills.is_empty() => {
-                    let ctx: String = new_skills
-                        .iter()
-                        .map(|s| format!("- {}: {}", s.manifest.name.replace('\n', " ").replace('\r', ""), s.manifest.description))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let bodies: std::collections::HashMap<String, String> = new_skills
-                        .iter()
-                        .map(|s| (s.manifest.name.replace('\n', " ").replace('\r', ""), s.body.clone()))
-                        .collect();
-                    let permissions: std::collections::HashMap<String, lume_skills::SkillPermissionConfig> = new_skills
-                        .iter()
-                        .filter_map(|s| {
-                            s.manifest.permissions.clone().map(|p| {
-                                (s.manifest.name.replace('\n', " ").replace('\r', ""), p)
-                            })
-                        })
-                        .collect();
-                    orchestrator.set_skills(ctx, bodies, permissions).await;
+                    orchestrator.set_skills(lume_skills::SkillState::from_skills(&new_skills)).await;
                     println!("[plugins] {} skills loaded", new_skills.len());
                 }
                 _ => {}
             }
+            // Load hooks from discovered plugins
+            orchestrator.load_hooks_from_plugins(&plugin_manager).await;
             // Connect plugin MCP servers
             for mcp in plugin_manager.mcp_configs() {
                 let config = lume_mcp::McpServerConfig {

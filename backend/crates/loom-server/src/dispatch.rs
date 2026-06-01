@@ -1699,21 +1699,17 @@ pub async fn dispatch_method(
 
         // === Skills ===
         "skills.list" => {
-            let home = dirs::home_dir().unwrap_or_default();
-            let data_dir = home.join(".loom");
-            let mut loader = SkillLoader::new();
-            loader.add_standard_paths(&data_dir);
-            let skills = loader.discover().unwrap_or_default();
-            let list: Vec<Value> = skills
+            let summaries = state.orchestrator.get_skill_summaries().await;
+            let list: Vec<Value> = summaries
                 .iter()
                 .map(|s| {
                     json!({
-                        "name": s.manifest.name,
-                        "description": s.manifest.description,
-                        "path": s.source_path.display().to_string(),
-                        "version": s.manifest.version,
-                        "user_invocable": s.manifest.user_invocable,
-                        "always_active": s.manifest.always_active,
+                        "name": s.name,
+                        "description": s.description,
+                        "path": s.source_path,
+                        "version": s.version,
+                        "user_invocable": s.user_invocable,
+                        "always_active": s.always_active,
                     })
                 })
                 .collect();
@@ -1724,15 +1720,8 @@ pub async fn dispatch_method(
             if name.is_empty() {
                 return Err(err(ErrorCode::InvalidRequest, "name required"));
             }
-            // Discover from disk — the orchestrator's in-memory map is only
-            // populated by the CLI, not the server.
-            let home = dirs::home_dir().unwrap_or_default();
-            let data_dir = home.join(".loom");
-            let mut loader = SkillLoader::new();
-            loader.add_standard_paths(&data_dir);
-            let skills = loader.discover().unwrap_or_default();
-            match skills.iter().find(|s| s.manifest.name == name) {
-                Some(skill) => Ok(json!({ "content": skill.body })),
+            match state.orchestrator.get_skill_body(name).await {
+                Some(content) => Ok(json!({ "content": content })),
                 None => Err(err(
                     ErrorCode::MethodNotFound,
                     &format!("skill '{}' not found", name),
@@ -1800,66 +1789,133 @@ pub async fn dispatch_method(
         // === Plugins ===
         "plugins.list" => {
             let home = dirs::home_dir().unwrap_or_default();
-            let search_dirs = vec![
-                home.join(".loom").join("plugins"),
-                home.join(".claude").join("plugins"),
-            ];
+            let mut plugin_manager = lume_plugins::PluginManager::new();
+            let _ = plugin_manager.discover(&home);
+
             let mut plugins: Vec<Value> = Vec::new();
-            for dir in &search_dirs {
-                if !dir.exists() {
-                    continue;
-                }
-                if let Ok(entries) = std::fs::read_dir(dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if !path.is_dir() {
-                            continue;
-                        }
-                        // Every subdirectory under plugins/ counts as a plugin
-                        let mut skill_count = count_skill_files(&path, 4);
-                        let name = path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-                        let mut version: Option<String> = None;
-                        let mut description: Option<String> = None;
-                        let mut mcp_server_count = 0u32;
+            for plugin in plugin_manager.discovered() {
+                let skill_count = plugin
+                    .manifest
+                    .skills
+                    .as_ref()
+                    .map(|s| s.paths.len())
+                    .unwrap_or(0) as u64;
+                let mcp_server_count = plugin
+                    .manifest
+                    .mcp_servers
+                    .as_ref()
+                    .map(|s| s.len())
+                    .unwrap_or(0) as u64;
+                let hook_config =
+                    lume_plugins::hooks::HookConfig::from_plugin_dir(&plugin.path)
+                        .unwrap_or_default();
+                let hook_count = hook_config.hooks.len() as u64;
+                let has_settings = !plugin.manifest.settings.is_null();
 
-                        // Try reading manifest.json
-                        if let Ok(content) = std::fs::read_to_string(path.join("manifest.json")) {
-                            if let Ok(manifest) = serde_json::from_str::<Value>(&content) {
-                                version = manifest
-                                    .get("version")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string());
-                                description = manifest
-                                    .get("description")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string());
-                                skill_count = manifest
-                                    .get("skills")
-                                    .and_then(|v| v.as_array())
-                                    .map(|a| a.len() as u32)
-                                    .unwrap_or(skill_count);
-                                mcp_server_count = manifest
-                                    .get("mcp_servers")
-                                    .and_then(|v| v.as_array())
-                                    .map(|a| a.len() as u32)
-                                    .unwrap_or(0);
+                // Per-skill details: {name, path}
+                let skills: Vec<Value> = plugin
+                    .manifest
+                    .skills
+                    .as_ref()
+                    .map(|s| {
+                        s.paths
+                            .iter()
+                            .map(|rel_path| {
+                                let full_path = plugin.path.join(rel_path);
+                                let name = if rel_path == "." {
+                                    plugin.manifest.name.clone()
+                                } else {
+                                    rel_path
+                                        .rsplit('/')
+                                        .next()
+                                        .unwrap_or(rel_path)
+                                        .to_string()
+                                };
+                                json!({
+                                    "name": name,
+                                    "path": full_path.display().to_string(),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                // Per-MCP-server details: {name, transport}
+                let mcp_servers: Vec<Value> = plugin
+                    .manifest
+                    .mcp_servers
+                    .as_ref()
+                    .map(|servers| {
+                        servers
+                            .iter()
+                            .map(|s| {
+                                json!({
+                                    "name": s.name,
+                                    "transport": s.transport,
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                // Per-hook-event details: {event, handler_count, handlers: [{type, command?, prompt?, timeout, matcher?}]}
+                let mut hook_event_details: HashMap<String, (usize, Vec<Value>)> = HashMap::new();
+                for entry in &hook_config.hooks {
+                    let event_name = serde_json::to_string(&entry.event)
+                        .unwrap_or_default()
+                        .trim_matches('"')
+                        .to_string();
+                    let handlers: Vec<Value> = entry
+                        .hooks
+                        .iter()
+                        .map(|h| {
+                            let mut handler_json = json!({
+                                "type": h.handler_type,
+                                "timeout": h.timeout,
+                            });
+                            if let Some(ref cmd) = h.command {
+                                handler_json["command"] = json!(cmd);
                             }
-                        }
-
-                        plugins.push(json!({
-                            "name": name,
-                            "version": version,
-                            "description": description,
-                            "path": path.display().to_string(),
-                            "skill_count": skill_count,
-                            "mcp_server_count": mcp_server_count,
-                        }));
-                    }
+                            if let Some(ref prompt) = h.prompt {
+                                handler_json["prompt"] = json!(prompt);
+                            }
+                            if let Some(ref matcher) = entry.matcher {
+                                handler_json["matcher"] = json!(matcher);
+                            }
+                            handler_json
+                        })
+                        .collect();
+                    let entry_detail = hook_event_details
+                        .entry(event_name)
+                        .or_insert_with(|| (0, Vec::new()));
+                    entry_detail.0 += entry.hooks.len();
+                    entry_detail.1.extend(handlers);
                 }
+                let hooks: Vec<Value> = hook_event_details
+                    .into_iter()
+                    .map(|(event, (handler_count, handlers))| {
+                        json!({
+                            "event": event,
+                            "handler_count": handler_count,
+                            "handlers": handlers,
+                        })
+                    })
+                    .collect();
+
+                plugins.push(json!({
+                    "name": plugin.manifest.name,
+                    "version": plugin.manifest.version,
+                    "description": plugin.manifest.description,
+                    "source": plugin.source,
+                    "path": plugin.path.display().to_string(),
+                    "skill_count": skill_count,
+                    "mcp_server_count": mcp_server_count,
+                    "hook_count": hook_count,
+                    "has_settings": has_settings,
+                    "skills": skills,
+                    "mcp_servers": mcp_servers,
+                    "hooks": hooks,
+                }));
             }
             Ok(json!({ "plugins": plugins }))
         }
@@ -1868,8 +1924,14 @@ pub async fn dispatch_method(
             // Re-scan plugins + standard skill dirs and update orchestrator
             match reload_skills_into_orchestrator(&state.orchestrator).await {
                 Ok(count) => {
-                    tracing::info!("[plugins.reload] {} skills reloaded", count);
-                    Ok(json!({ "ok": true, "skill_count": count }))
+                    let home = dirs::home_dir().unwrap_or_default();
+                    let mut plugin_manager = lume_plugins::PluginManager::new();
+                    let n = plugin_manager.discover(&home).unwrap_or(0);
+                    if n > 0 {
+                        state.orchestrator.load_hooks_from_plugins(&plugin_manager).await;
+                    }
+                    tracing::info!("[plugins.reload] {} skills reloaded, {} plugins", count, n);
+                    Ok(json!({ "ok": true, "skill_count": count, "plugin_count": n }))
                 }
                 Err(e) => Err(err(ErrorCode::InternalError, &e)),
             }
@@ -2294,25 +2356,6 @@ fn parse_attached_file_contents(p: &Value) -> String {
     result
 }
 
-fn count_skill_files(dir: &std::path::Path, max_depth: u32) -> u32 {
-    if max_depth == 0 || !dir.is_dir() {
-        return 0;
-    }
-    let mut count = 0u32;
-    if dir.join("SKILL.md").exists() {
-        count += 1;
-    }
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                count += count_skill_files(&path, max_depth - 1);
-            }
-        }
-    }
-    count
-}
-
 /// Reload skills from all standard paths into the orchestrator.
 /// Used by plugins.reload, skills.import, and skills.delete to keep
 /// orchestrator skill state in sync with the filesystem.
@@ -2325,7 +2368,7 @@ async fn reload_skills_into_orchestrator(
     loader.add_standard_paths(&data_dir);
 
     // Also discover plugins and feed their skill paths to the loader
-    let mut plugin_manager = lume_skills::plugins::PluginManager::new();
+    let mut plugin_manager = lume_plugins::PluginManager::new();
     if let Ok(n) = plugin_manager.discover(&home) {
         if n > 0 {
             tracing::info!(plugin_count = n, "plugins discovered during skill reload");
@@ -2337,37 +2380,45 @@ async fn reload_skills_into_orchestrator(
         }
     }
 
+    // Reconnect plugin MCP servers — kept in sync with plugin manifests
+    let mcp_configs = plugin_manager.mcp_configs();
+    if !mcp_configs.is_empty() {
+        let orch = orchestrator.clone();
+        tokio::spawn(async move {
+            for mcp in mcp_configs {
+                let config = lume_mcp::McpServerConfig {
+                    name: mcp.name.clone(),
+                    transport: mcp.transport.clone(),
+                    command: mcp.command.clone(),
+                    args: mcp.args.clone(),
+                    url: mcp.url.clone(),
+                    headers: mcp.headers.clone(),
+                    env: mcp.env.clone(),
+                    cwd: None,
+                    startup_timeout_secs: 10,
+                    tool_timeout_secs: 60,
+                    enabled_tools: None,
+                    disabled_tools: None,
+                };
+                match orch.connect_mcp_server(config).await {
+                    Ok(_) => tracing::info!(server = %mcp.name, "plugin MCP server reconnected"),
+                    Err(e) => tracing::warn!(server = %mcp.name, error = %e, "plugin MCP server reconnect failed"),
+                }
+            }
+        });
+    }
+
+    // Reload hook registry from plugins after MCP reconnection
+    orchestrator.reload_hooks(&plugin_manager).await;
+
     loader
         .discover()
         .map(|skills| {
-            let ctx: String = skills
-                .iter()
-                .map(|s| {
-                    format!(
-                        "- {}: {}",
-                        s.manifest.name.replace('\n', " ").replace('\r', ""),
-                        s.manifest.description
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let bodies: std::collections::HashMap<String, String> = skills
-                .iter()
-                .map(|s| (s.manifest.name.replace('\n', " ").replace('\r', ""), s.body.clone()))
-                .collect();
-            let permissions: std::collections::HashMap<String, lume_skills::SkillPermissionConfig> = skills
-                .iter()
-                .filter_map(|s| {
-                    s.manifest.permissions.clone().map(|p| {
-                        (s.manifest.name.replace('\n', " ").replace('\r', ""), p)
-                    })
-                })
-                .collect();
             let count = skills.len();
-            // Use tokio::spawn to avoid holding locks across await
+            let state = lume_skills::SkillState::from_skills(&skills);
             let orch = orchestrator.clone();
             tokio::spawn(async move {
-                orch.set_skills(ctx, bodies, permissions).await;
+                orch.set_skills(state).await;
             });
             count
         })
