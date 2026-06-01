@@ -6,6 +6,21 @@ const SIZE_MAP: Record<PetSize, number> = { small: 128, medium: 192, large: 256 
 const SIZE_LABELS: Record<PetSize, string> = { small: '小', medium: '中', large: '大' }
 const SIZE_KEYS: PetSize[] = ['small', 'medium', 'large']
 
+const IDLE_INTERVALS: { value: number; label: string }[] = [
+  { value: 15, label: '15秒' },
+  { value: 30, label: '30秒' },
+  { value: 60, label: '1分钟' },
+  { value: 120, label: '2分钟' },
+  { value: 300, label: '5分钟' },
+]
+
+const BREAK_INTERVALS: { value: number; label: string }[] = [
+  { value: 0, label: '关闭' },
+  { value: 25, label: '25分钟' },
+  { value: 45, label: '45分钟' },
+  { value: 60, label: '60分钟' },
+]
+
 interface PetMeta {
   id: string
   displayName: string
@@ -43,6 +58,8 @@ export default function PetTab() {
   const [pets, setPets] = useState<PetMeta[]>([])
   const [activePetId, setActivePetId] = useState('homelander-2')
   const [activeState, setActiveState] = useState<string | null>(null)
+  const [idleInterval, setIdleInterval] = useState(30)
+  const [breakInterval, setBreakInterval] = useState(0)
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
@@ -50,12 +67,16 @@ export default function PetTab() {
       window.loom.getPreference('petEnabled', false),
       window.loom.getPreference('petSize', 'small'),
       window.loom.getPreference('activePetId', 'homelander-2'),
+      window.loom.getPreference('petIdleInterval', 30),
+      window.loom.getPreference('petBreakInterval', 0),
       window.loom.getLoomDir(),
       window.loom.listPets(),
-    ]).then(([on, sz, petId, dir, petList]: [boolean, string, string, string, PetMeta[]]) => {
+    ]).then(([on, sz, petId, idleInt, breakInt, dir, petList]: [boolean, string, string, number, number, string, PetMeta[]]) => {
       setEnabled(on)
       setSize(sz as PetSize)
       setActivePetId(petId)
+      setIdleInterval(idleInt)
+      setBreakInterval(breakInt)
       setPetsDir(dir + '/pets')
       setPets(petList)
       setReady(true)
@@ -101,6 +122,18 @@ export default function PetTab() {
   const testAnim = (s: string) => {
     setActiveState(s)
     bc.postMessage({ type: 'state', state: s })
+  }
+
+  const changeIdleInterval = (val: number) => {
+    setIdleInterval(val)
+    window.loom.setPreference('petIdleInterval', val)
+    bc.postMessage({ type: 'config', idleInterval: val })
+  }
+
+  const changeBreakInterval = (val: number) => {
+    setBreakInterval(val)
+    window.loom.setPreference('petBreakInterval', val)
+    bc.postMessage({ type: 'config', breakInterval: val })
   }
 
   if (!ready) return null
@@ -189,6 +222,40 @@ export default function PetTab() {
               onClick={() => changeSize(sz)}
             >
               {SIZE_LABELS[sz]} ({SIZE_MAP[sz]}px)
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Idle Interval */}
+      <div className={styles.card}>
+        <h4 className={styles.cardTitle}>发呆间隔</h4>
+        <p className={styles.cardDesc}>多久不理桌宠后，它开始自己玩耍</p>
+        <div className={styles.segRow}>
+          {IDLE_INTERVALS.map(iv => (
+            <button
+              key={iv.value}
+              className={`${styles.segBtn} ${idleInterval === iv.value ? styles.segBtnActive : ''}`}
+              onClick={() => changeIdleInterval(iv.value)}
+            >
+              {iv.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Break Reminder */}
+      <div className={styles.card}>
+        <h4 className={styles.cardTitle}>休息提醒</h4>
+        <p className={styles.cardDesc}>持续工作多久后提醒休息（0 = 关闭）</p>
+        <div className={styles.segRow}>
+          {BREAK_INTERVALS.map(iv => (
+            <button
+              key={iv.value}
+              className={`${styles.segBtn} ${breakInterval === iv.value ? styles.segBtnActive : ''}`}
+              onClick={() => changeBreakInterval(iv.value)}
+            >
+              {iv.label}
             </button>
           ))}
         </div>

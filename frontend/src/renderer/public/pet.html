@@ -76,6 +76,10 @@ window.petApi.onCommand(function(cmd) {
     setTimeout(function() {
       bc.postMessage({ type: 'cmd', cmd: 'toggle', value: false });
     }, 3000);
+  } else if (cmd === 'dnd:on') {
+    dndMode = true; resetUnlock(); showBubble('好，不吵你了~', 2000);
+  } else if (cmd === 'dnd:off') {
+    dndMode = false; resetUnlock(); showBubble('我回来啦！', 2000);
   }
 });
 
@@ -153,6 +157,7 @@ bc.onmessage = function(e) {
   if (!d || !d.type) return;
   if (d.type === 'state' && d.state) {
     if (stateRow[d.state] != null) {
+      bumpActivity();
       currentState = d.state; frame = 0; tick = 0;
       var msg = d.bubble || STATE_BUBBLES[d.state] || '';
       if (msg) showBubble(msg, 2500);
@@ -164,14 +169,113 @@ bc.onmessage = function(e) {
     loadPet(d.petId);
     showBubble('切换宠物', 1500);
   } else if (d.type === 'bubble' && d.text) {
+    bumpActivity();
     showBubble(d.text, d.duration || 2000);
+  } else if (d.type === 'config') {
+    if (d.idleInterval) { idleIntervalSec = d.idleInterval; bumpActivity(); }
+    if (typeof d.dnd === 'boolean') { dndMode = d.dnd; resetUnlock(); }
+    if (typeof d.breakInterval === 'number') { breakIntervalMin = d.breakInterval; lastBreakReminder = Date.now(); }
   }
 };
 
-// --- Manual drag (canvas only) ---
+// --- Manual drag (canvas only) with pixel hit-testing ---
 var dragging = false, dragX = 0, dragY = 0;
+var mouseIgnored = true; // matches initial window state
+var lastHitCheck = 0;
+
+function getPixelAlpha(e) {
+  var rect = canvas.getBoundingClientRect();
+  var scaleX = canvas.width / rect.width;
+  var scaleY = canvas.height / rect.height;
+  var cx = Math.floor((e.clientX - rect.left) * scaleX);
+  var cy = Math.floor((e.clientY - rect.top) * scaleY);
+  if (cx < 0 || cy < 0 || cx >= canvas.width || cy >= canvas.height) return 0;
+  try {
+    return ctx.getImageData(cx, cy, 1, 1).data[3];
+  } catch (_) { return 0; }
+}
+
+function setMouseIgnored(v) {
+  if (mouseIgnored === v) return;
+  mouseIgnored = v;
+  window.petApi.setIgnoreMouse(v);
+}
+
+canvas.addEventListener('mousemove', function(e) {
+  if (dragging) return;
+  var now = Date.now();
+  if (now - lastHitCheck < 50) return;
+  lastHitCheck = now;
+  if (dndMode) {
+    var alpha = getPixelAlpha(e);
+    if (alpha >= 10) {
+      if (!unlockHoverStart) {
+        unlockHoverStart = now;
+        unlockTimer = setTimeout(function() {
+          unlockActive = true;
+          setMouseIgnored(false);
+          showBubble('点击退出勿扰', 0);
+          unlockDismissTimer = setTimeout(resetUnlock, 5000);
+        }, 2000);
+      }
+    } else {
+      resetUnlock();
+    }
+  } else {
+    setMouseIgnored(getPixelAlpha(e) < 10);
+  }
+});
+
+canvas.addEventListener('mouseleave', function() {
+  if (!dragging) { setMouseIgnored(true); resetUnlock(); }
+});
+
+// --- DnD unlock ---
+var unlockHoverStart = 0;
+var unlockActive = false;
+var unlockTimer = null;
+var unlockDismissTimer = null;
+
+function resetUnlock() {
+  unlockHoverStart = 0;
+  unlockActive = false;
+  if (unlockTimer) { clearTimeout(unlockTimer); unlockTimer = null; }
+  if (unlockDismissTimer) { clearTimeout(unlockDismissTimer); unlockDismissTimer = null; }
+  hideBubble();
+  if (dndMode) setMouseIgnored(true);
+}
+
+function exitDnd() {
+  dndMode = false;
+  resetUnlock();
+  window.petApi.setDnd(false);
+}
+
+canvas.addEventListener('click', function(e) {
+  if (unlockActive) {
+    e.stopPropagation();
+    exitDnd();
+  }
+});
+
+// --- Click vs drag ---
+var CLICK_LINES = [
+  '你好呀！', '今天写代码了吗？', '休息一下吧~', '加油！', '你最棒了！',
+  '有 bug 别慌，慢慢来', '喝杯水吧', '记得站起来活动活动',
+  '今天的你很努力！', '代码写得不错哦', '我在看着你呢',
+  '有什么需要帮忙的吗？', '累了就摸摸我~', '冲冲冲！',
+  '保持专注！', '你是最厉害的程序员', '该起来走走了',
+  '要不要来杯咖啡？', '别卷了别卷了', '嘿嘿~',
+  '一切都会好起来的', '相信自己！', '今天天气不错',
+  '记得吃午饭哦', '再写一行就休息！', '我陪你一起加班',
+  '这个需求做完了吗？', '你头发还在吗', '摸鱼摸鱼~',
+  '给你一朵小花花', '能量满满！', '今晚吃什么？',
+  '右键可以开勿扰模式哦~', '觉得我碍事就开勿扰吧', '想安静一会？试试勿扰模式'
+];
+var startX = 0, startY = 0;
+
 canvas.addEventListener('mousedown', function(e) {
-  if (e.button === 0) { dragging = true; dragX = e.screenX; dragY = e.screenY; }
+  if (e.button === 0) { dragging = true; dragX = startX = e.screenX; dragY = startY = e.screenY; bumpActivity(); }
 });
 document.addEventListener('mousemove', function(e) {
   if (!dragging) return;
@@ -182,18 +286,138 @@ document.addEventListener('mousemove', function(e) {
     dragX = e.screenX; dragY = e.screenY;
   }
 });
-document.addEventListener('mouseup', function() { dragging = false; });
+var CLICK_STATES = ['wave', 'jump', 'runRight', 'runLeft', 'dash', 'inspect'];
+var clickReturnTimer = null;
+
+// --- Idle autonomous behavior ---
+var IDLE_STATES = ['wave', 'jump', 'runRight', 'runLeft', 'inspect'];
+var IDLE_LINES = [
+  '主人在吗？', '好无聊呀...', '咕噜咕噜...', '喵~', '今天天气不错',
+  '什么时候下班呀？', '想去外面看看', '肚子有点饿了', '要不要摸我一下？',
+  '发会儿呆...', '数数窗外的云', '该起来走走啦', '想念代码的味道',
+  '要不要写点什么呢？', '你的咖啡凉了哦', '我有点困了...',
+  '外面是不是有人叫我？', '帮你盯着屏幕呢', '键盘声真好听',
+  '什么时候再写代码呀？', '桌上的小零食可以吃吗', '这个bug我来帮你抓',
+  '思考中...', '咪啾~', '偷偷打个哈欠', '翻个身继续躺'
+];
+var lastActivity = Date.now();
+var nextIdleAt = lastActivity + 30000;
+var idleTimer = null;
+
+// --- Break reminder ---
+var lastBreakReminder = Date.now();
+var breakCheckInterval = null;
+
+function checkBreakReminder() {
+  if (!breakIntervalMin) return;
+  if (Date.now() - lastBreakReminder > breakIntervalMin * 60000) {
+    lastBreakReminder = Date.now();
+    currentState = 'wave'; frame = 0; tick = 0;
+    showBubble('该休息一下啦！站起来走走~', 5000);
+    if (clickReturnTimer) clearTimeout(clickReturnTimer);
+    clickReturnTimer = setTimeout(function() { currentState = 'idle'; frame = 0; tick = 0; }, 3000);
+  }
+}
+
+function startBreakTimer() {
+  if (breakCheckInterval) return;
+  breakCheckInterval = setInterval(checkBreakReminder, 30000);
+}
+
+function bumpActivity() {
+  lastActivity = Date.now();
+  nextIdleAt = lastActivity + idleIntervalSec * 1000;
+}
+
+function triggerIdle() {
+  // 30% chance: follow cursor; 70%: in-place animation
+  if (Math.random() < 0.3) {
+    tryFollowCursor();
+  } else {
+    playIdleAnim();
+  }
+}
+
+function playIdleAnim() {
+  var st = IDLE_STATES[Math.floor(Math.random() * IDLE_STATES.length)];
+  var line = IDLE_LINES[Math.floor(Math.random() * IDLE_LINES.length)];
+  currentState = st; frame = 0; tick = 0;
+  showBubble(line, 3000);
+  if (clickReturnTimer) clearTimeout(clickReturnTimer);
+  clickReturnTimer = setTimeout(function() { currentState = 'idle'; frame = 0; tick = 0; }, 2500);
+  nextIdleAt = Date.now() + idleIntervalSec * 1000 * (0.75 + Math.random() * 0.5);
+}
+
+function tryFollowCursor() {
+  window.petApi.getPositions().then(function(pos) {
+    if (!pos) { playIdleAnim(); return; }
+    // canvas is centered horizontally, at bottom vertically in the window
+    var cx = pos.winX + pos.winW / 2;
+    var cy = pos.winY + pos.winH - canvas.clientHeight / 2;
+    var dx = pos.cursorX - cx;
+    var dy = pos.cursorY - cy;
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 60) { playIdleAnim(); return; }
+    // Smooth movement: 3-5s (60-100 steps at 50ms)
+    var steps = 60 + Math.floor(Math.random() * 40);
+    var stepDx = Math.round(dx / steps);
+    var stepDy = Math.round(dy / steps);
+    if (stepDx === 0 && stepDy === 0) { playIdleAnim(); return; }
+    var line = IDLE_LINES[Math.floor(Math.random() * IDLE_LINES.length)];
+    showBubble(line, 2500);
+    currentState = dx > 0 ? 'runRight' : 'runLeft'; frame = 0; tick = 0;
+    var s = 0;
+    var moveTimer = setInterval(function() {
+      s++;
+      if (s >= steps) {
+        clearInterval(moveTimer);
+        currentState = 'idle'; frame = 0; tick = 0;
+        nextIdleAt = Date.now() + idleIntervalSec * 1000 * (0.75 + Math.random() * 0.5);
+        return;
+      }
+      window.petApi.moveWindow(stepDx, stepDy);
+    }, 50);
+  }).catch(function() { playIdleAnim(); });
+}
+
+function startIdleTimer() {
+  if (idleTimer) return;
+  idleTimer = setInterval(function() {
+    if (currentState !== 'idle') return;
+    if (dndMode) return;
+    if (Date.now() >= nextIdleAt) triggerIdle();
+  }, 8000);
+}
+
+document.addEventListener('mouseup', function() {
+  if (dragging && dragX === startX && dragY === startY && !(dndMode && unlockActive)) {
+    bumpActivity();
+    lastBreakReminder = Date.now();
+    var line = CLICK_LINES[Math.floor(Math.random() * CLICK_LINES.length)];
+    showBubble(line, 3000);
+    var st = CLICK_STATES[Math.floor(Math.random() * CLICK_STATES.length)];
+    currentState = st; frame = 0; tick = 0;
+    if (clickReturnTimer) clearTimeout(clickReturnTimer);
+    clickReturnTimer = setTimeout(function() { currentState = 'idle'; frame = 0; tick = 0; }, 2500);
+  }
+  dragging = false;
+});
 
 // Boot
 var hash = location.hash.slice(1) || 'boba&128';
 var parts = hash.split('&');
 var defaultPet = parts[0] || 'boba';
 var defaultSize = parseInt(parts[1]) || 128;
+var idleIntervalSec = parseInt(parts[2]) || 30;
+var dndMode = parts[3] === '1';
+var breakIntervalMin = parseInt(parts[4]) || 0;
 loadPet(defaultPet);
 sheet.onload = function() {
   resize(defaultSize);
   tick = 0; frame = 0;
 };
 requestAnimationFrame(loop);
+startIdleTimer();
+startBreakTimer();
 </script>
 </body></html>

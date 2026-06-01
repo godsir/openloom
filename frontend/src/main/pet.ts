@@ -11,6 +11,8 @@ const MIME: Record<string, string> = { '.webp': 'image/webp', '.png': 'image/png
 
 let petWindow: BrowserWindow | null = null
 let petEnabled = false
+let dndEnabled = false
+let onDndChanged: (() => void) | null = null
 
 export function registerPetProtocol(): void {
   protocol.handle('loom-pet', (request) => {
@@ -88,8 +90,21 @@ function sendPetCommand(cmd: string): void {
 ipcMain.on('pet:move', (_e, dx: number, dy: number) => {
   if (petWindow && !petWindow.isDestroyed()) {
     const [x, y] = petWindow.getPosition()
-    petWindow.setPosition(x + dx, y + dy)
-    setStoreKey(posKey(), { x: x + dx, y: y + dy })
+    const [ww, wh] = petWindow.getSize()
+    // Compute virtual desktop bounds across all displays
+    const displays = screen.getAllDisplays()
+    let vMinX = Infinity, vMinY = Infinity, vMaxX = -Infinity, vMaxY = -Infinity
+    for (const d of displays) {
+      const wa = d.workArea
+      vMinX = Math.min(vMinX, wa.x)
+      vMinY = Math.min(vMinY, wa.y)
+      vMaxX = Math.max(vMaxX, wa.x + wa.width)
+      vMaxY = Math.max(vMaxY, wa.y + wa.height)
+    }
+    const newX = Math.max(vMinX - ww + 40, Math.min(vMaxX - 40, x + dx))
+    const newY = Math.max(vMinY - wh + 40, Math.min(vMaxY - 40, y + dy))
+    petWindow.setPosition(newX, newY)
+    setStoreKey(posKey(), { x: newX, y: newY })
   }
 })
 
@@ -106,9 +121,41 @@ ipcMain.on('pet:context-menu', () => {
     { label: '大小：中 (192px)', click: () => sendPetCommand('size:medium') },
     { label: '大小：大 (256px)', click: () => sendPetCommand('size:large') },
     { type: 'separator' },
+    { label: dndEnabled ? '关闭勿扰模式' : '开启勿扰模式', click: () => { togglePetDnd() } },
+    { type: 'separator' },
     { label: '关闭桌宠', click: () => sendPetCommand('close') },
   ])
   menu.popup({ window: petWindow! })
+})
+
+// Pixel-level hit testing: toggle click-through so transparent pixels pass through
+// but the actual sprite captures mouse events for drag and right-click.
+ipcMain.on('pet:set-ignore-mouse', (_e, ignore: boolean) => {
+  if (petWindow && !petWindow.isDestroyed()) {
+    if (ignore) {
+      petWindow.setIgnoreMouseEvents(true, { forward: true })
+    } else {
+      petWindow.setIgnoreMouseEvents(false)
+    }
+  }
+})
+
+// DnD toggle from renderer (hover unlock)
+ipcMain.on('pet:set-dnd', (_e, on: boolean) => {
+  dndEnabled = on
+  setStoreKey('petDnd', on)
+  if (onDndChanged) onDndChanged()
+})
+
+// Cursor following — return window + cursor screen positions
+ipcMain.handle('pet:get-positions', () => {
+  if (petWindow && !petWindow.isDestroyed()) {
+    const [wx, wy] = petWindow.getPosition()
+    const [ww, wh] = petWindow.getSize()
+    const cp = screen.getCursorScreenPoint()
+    return { winX: wx, winY: wy, winW: ww, winH: wh, cursorX: cp.x, cursorY: cp.y }
+  }
+  return null
 })
 
 ipcMain.handle('pet:toggle', (_e, on: boolean) => {
@@ -153,7 +200,11 @@ function create(): void {
   // Mouse transparent everywhere — canvas element handles its own events
   petWindow.setIgnoreMouseEvents(true, { forward: true })
   const activePetId = getStoreKey('activePetId', 'homelander-2') as string
-  const hash = `${activePetId}&${spriteSize}`
+  const idleInterval = (getStoreKey('petIdleInterval', 30) as number) || 30
+  const breakInterval = (getStoreKey('petBreakInterval', 0) as number) || 0
+  dndEnabled = getStoreKey('petDnd', false) as boolean
+  const dnd = dndEnabled ? '1' : '0'
+  const hash = `${activePetId}&${spriteSize}&${idleInterval}&${dnd}&${breakInterval}`
   petWindow.setAlwaysOnTop(true, 'normal')
   if (process.env.ELECTRON_RENDERER_URL) {
     petWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}/pet.html#${hash}`)
@@ -173,3 +224,18 @@ function create(): void {
 function close(): void {
   petWindow?.close()
 }
+
+// Tray integration
+export function togglePetDnd(): boolean {
+  dndEnabled = !dndEnabled
+  setStoreKey('petDnd', dndEnabled)
+  if (petWindow && !petWindow.isDestroyed()) {
+    sendPetCommand(dndEnabled ? 'dnd:on' : 'dnd:off')
+  }
+  if (onDndChanged) onDndChanged()
+  return dndEnabled
+}
+
+export function getPetDnd(): boolean { return dndEnabled }
+
+export function setOnDndChanged(cb: (() => void) | null): void { onDndChanged = cb }
