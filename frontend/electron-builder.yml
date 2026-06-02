@@ -9,6 +9,8 @@ extraResources:
 win:
   target: nsis
   icon: resources/icon.ico
+  artifactName: ${productName}.Setup.${version}.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  artifactName: ${productName}.Setup.${version}.${ext}
