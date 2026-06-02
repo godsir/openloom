@@ -1,5 +1,6 @@
 appId: com.openloom.app
 productName: openLoom
+artifactName: ${productName}.Setup.${version}.${ext}
 directories:
   output: dist
   buildResources: resources
@@ -13,4 +14,3 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  artifactName: ${productName}.Setup.${version}.${ext}
