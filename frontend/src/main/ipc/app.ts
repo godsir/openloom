@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow, app } from 'electron'
 import * as path from 'path'
 import { getStoreKey, setStoreKey } from '../store'
 import { checkForUpdates, downloadUpdate, installUpdate } from '../updater'
+import { restartEngine } from '../engine'
 
 export function registerAppIpc(): void {
   ipcMain.handle('get-loom-dir', () => {
@@ -62,5 +63,10 @@ export function registerAppIpc(): void {
 
   ipcMain.handle('install-update', () => {
     installUpdate()
+  })
+
+  // Engine restart
+  ipcMain.handle('engine:restart', async () => {
+    return restartEngine()
   })
 }

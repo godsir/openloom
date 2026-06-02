@@ -32,6 +32,10 @@ export interface ModelConfig {
   max_output_tokens?: number
   is_active?: boolean
   capabilities?: ModelCapabilities
+  input_price?: number
+  output_price?: number
+  cache_read_price?: number
+  cache_write_price?: number
 }
 
 export interface ModelCapabilities {
@@ -76,6 +80,7 @@ export interface ModelListItem {
   backend_label?: string
   base_url?: string
   api_key_env?: string
+  api_format?: string
   is_active: boolean
   context_size?: number
   capabilities?: ModelCapabilities

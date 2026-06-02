@@ -17,6 +17,10 @@ pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
+    // Reject new WebSocket connections during shutdown
+    if state.shutdown_token.is_cancelled() {
+        return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 

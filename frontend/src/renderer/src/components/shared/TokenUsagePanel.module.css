@@ -93,6 +93,54 @@
   color: #22d3ee;
 }
 
+/* ── Key metrics row ── */
+
+.metricsRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.metricCard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.metricIcon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.metricBody {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.metricValue {
+  font-size: 15px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text);
+  line-height: 1;
+}
+
+.metricLabel {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
 /* ── Time range ── */
 
 .timeRangeRow {
@@ -160,6 +208,315 @@
   color: var(--text-secondary);
   margin: 0 0 16px;
   letter-spacing: 0.4px;
+}
+
+/* ── Loading states ── */
+
+.loadingWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.loadingOverlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.loadingSpinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loadingText {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Skeleton placeholders */
+.skeleton {
+  border-radius: var(--r-md);
+  background: linear-gradient(90deg, rgba(255,255,255,0.02) 25%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.02) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeletonHero {
+  height: 80px;
+  width: 100%;
+}
+
+.skeletonRow {
+  display: flex;
+  gap: 10px;
+}
+
+.skeletonPill {
+  height: 28px;
+  width: 80px;
+  border-radius: var(--r-sm);
+}
+
+.skeletonChart {
+  height: 160px;
+  width: 100%;
+}
+
+.skeletonList {
+  height: 200px;
+  width: 100%;
+}
+
+/* ── Error state ── */
+
+.errorState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  text-align: center;
+  border: 1px solid rgba(239, 68, 68, 0.15);
+  border-radius: var(--r-md);
+  background: rgba(239, 68, 68, 0.03);
+}
+
+.errorIcon {
+  margin-bottom: 12px;
+  color: #ef4444;
+  opacity: 0.7;
+}
+
+.errorTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 4px;
+}
+
+.errorDesc {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0 0 14px;
+}
+
+.errorRetryBtn {
+  height: 28px;
+  padding: 0 16px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border: 1px solid rgba(var(--accent-rgb), 0.20);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.errorRetryBtn:hover {
+  background: var(--accent-medium);
+}
+
+/* ── Trend chart ── */
+
+.chartContainer {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 20px 20px 16px;
+  background: rgba(255, 255, 255, 0.01);
+  position: relative;
+}
+
+.chartHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.chartHeader .sectionTitle {
+  margin-bottom: 0;
+}
+
+.chartLegend {
+  display: flex;
+  gap: 14px;
+}
+
+.chartLegendItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.chartLegendDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.chartScroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.chartScroll::-webkit-scrollbar {
+  height: 4px;
+}
+
+.chartScroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chartScroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.chartSvg {
+  display: block;
+}
+
+.chartBarGroup {
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.chartBarGroup:hover .chartBarRect {
+  opacity: 0.8;
+}
+
+.chartBarRect {
+  transition: opacity 0.15s ease;
+}
+
+/* ── Tooltip ── */
+
+.tooltip {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  background: var(--bg-popup, #1e293b);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  line-height: 1.6;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  min-width: 140px;
+}
+
+.tooltipDate {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+
+.tooltipRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.tooltipDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Provider cost section ── */
+
+.providerCostSection {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.providerCostList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.providerCostItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.providerCostHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.providerCostName {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.providerCostValue {
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: #34d399;
+}
+
+.providerCostBarTrack {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+}
+
+.providerCostBarFill {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #34d399, #22d3ee);
+  transition: width 0.4s ease;
+  min-width: 2px;
+}
+
+.providerCostMeta {
+  display: flex;
+  gap: 16px;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
 }
 
 /* ── Leaderboard ranking ── */
@@ -339,9 +696,28 @@
   background: rgba(255, 255, 255, 0.01);
 }
 
+.modelTableScroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.modelTableScroll::-webkit-scrollbar {
+  height: 4px;
+}
+
+.modelTableScroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.modelTableScroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
 .modelTable {
   width: 100%;
   border-collapse: collapse;
+  min-width: 600px;
 }
 
 .modelTable th {
@@ -384,6 +760,10 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
 }
 
 .providerCell {
@@ -433,4 +813,72 @@
   font-size: 11px;
   color: var(--text-muted);
   margin: 0;
+}
+
+.emptyHint {
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.5;
+  margin: 8px 0 0;
+}
+
+/* ── Responsive ── */
+
+@media (max-width: 640px) {
+  .heroNumbers {
+    flex-direction: column;
+    gap: 20px;
+    align-items: center;
+  }
+
+  .totalHeroValue {
+    font-size: 32px;
+  }
+
+  .costValue {
+    font-size: 28px;
+  }
+
+  .totalHeroBreakdown {
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+  }
+
+  .timeRangeRow {
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-start;
+  }
+
+  .metricsRow {
+    grid-template-columns: 1fr;
+  }
+
+  .rankHeader {
+    flex-wrap: wrap;
+  }
+
+  .rankTokens {
+    font-size: 11px;
+    gap: 4px;
+  }
+
+  .rankMeta {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .providerCostMeta {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .modelTableWrapper {
+    padding: 12px;
+  }
+
+  .leaderboard {
+    padding: 12px;
+  }
 }

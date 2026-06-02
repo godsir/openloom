@@ -72,10 +72,44 @@ struct McpConnection {
     next_id: u64,
 }
 
+/// On Windows, .sh files are not natively executable. If the command is a
+/// .sh script, try to locate Git Bash or WSL to run it. Falls back to the
+/// original command if no interpreter is found (may trigger the OS file
+/// association dialog, but that's better than silently breaking).
+fn prepare_command(raw_cmd: &str, raw_args: &[String]) -> (String, Vec<String>) {
+    #[cfg(windows)]
+    {
+        if raw_cmd.ends_with(".sh") {
+            let bash = find_bash();
+            if let Some(b) = bash {
+                let mut args = vec![raw_cmd.to_string()];
+                args.extend_from_slice(raw_args);
+                return (b, args);
+            }
+        }
+    }
+    (raw_cmd.to_string(), raw_args.to_vec())
+}
+
+#[cfg(windows)]
+fn find_bash() -> Option<String> {
+    let git_bash = r"C:\Program Files\Git\bin\bash.exe";
+    if std::path::Path::new(git_bash).exists() {
+        return Some(git_bash.to_string());
+    }
+    if let Ok(output) = std::process::Command::new("where").arg("wsl.exe").output() {
+        if output.status.success() {
+            return Some("wsl.exe".to_string());
+        }
+    }
+    None
+}
+
 impl McpConnection {
     async fn handshake(config: McpServerConfig) -> Result<Self> {
-        let mut cmd = Command::new(&config.command);
-        cmd.args(&config.args);
+        let (program, args) = prepare_command(&config.command, &config.args);
+        let mut cmd = Command::new(&program);
+        cmd.args(&args);
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());

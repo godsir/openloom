@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from 'child_process'
 import { join } from 'path'
 import { app } from 'electron'
 import { existsSync } from 'fs'
+import { getMainWindow } from './window'
 
 let engineProcess: ChildProcess | null = null
 let enginePort: number | null = null
@@ -9,6 +10,13 @@ let restartCount = 0
 const MAX_RESTARTS = 5
 const RESTART_DELAYS = [1000, 2000, 4000, 8000, 16000]
 const START_TIMEOUT = 30000
+
+function notifyRenderer(state: 'running' | 'stopped' | 'starting', port?: number): void {
+  const win = getMainWindow()
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('engine:state-changed', { state, port: port ?? null })
+  }
+}
 
 function findProjectRoot(): string {
   let dir = process.cwd()
@@ -46,6 +54,7 @@ export function startEngine(): Promise<number> {
     }
 
     console.log(`[engine] starting: ${exePath}`)
+    notifyRenderer('starting')
 
     engineProcess = spawn(exePath, ['serve', '--port', '0'], {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -76,6 +85,7 @@ export function startEngine(): Promise<number> {
           enginePort = port
           restartCount = 0
           console.log(`[engine] ready on port ${port}`)
+          notifyRenderer('running', port)
           resolve(port)
           return
         }
@@ -93,12 +103,14 @@ export function startEngine(): Promise<number> {
       if (restartCount < MAX_RESTARTS) {
         const delay = RESTART_DELAYS[restartCount]
         console.log(`[engine] restarting in ${delay}ms (attempt ${restartCount + 1}/${MAX_RESTARTS})`)
+        notifyRenderer('starting')
         restartCount++
         setTimeout(() => {
           startEngine().then((p) => { enginePort = p }).catch(console.error)
         }, delay)
       } else {
         console.error('[engine] crashed too many times, giving up')
+        notifyRenderer('stopped')
       }
     })
   })
@@ -121,4 +133,12 @@ export async function stopEngine(): Promise<void> {
       resolve()
     })
   })
+}
+
+export async function restartEngine(): Promise<number> {
+  restartCount = 0
+  await stopEngine()
+  // Small delay to let the OS release the port
+  await new Promise(r => setTimeout(r, 500))
+  return startEngine()
 }

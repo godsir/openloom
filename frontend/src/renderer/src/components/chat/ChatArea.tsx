@@ -1,5 +1,5 @@
 import { useStore } from '../../stores'
-import { useRef, useEffect, useLayoutEffect, useMemo } from 'react'
+import { useRef, useEffect, useMemo, useCallback } from 'react'
 import AssistantMessage from './AssistantMessage'
 import UserMessage from './UserMessage'
 import ImageLightbox from '../shared/ImageLightbox'
@@ -18,39 +18,41 @@ export default function ChatArea() {
   const inlineErrors = useStore(s => s.inlineErrors)
   const error = sessionId ? inlineErrors.get(sessionId)?.text : null
   const scrollRef = useRef<HTMLDivElement>(null)
+  const autoScrollRef = useRef(true)
   const timelineAnchors = useMemo(() => buildTimelineAnchors(messages as any[]), [messages])
   const lightboxSrc = useStore(s => s.lightbox.lightboxSrc)
   const openLightbox = useStore(s => s.openLightbox)
   const closeLightbox = useStore(s => s.closeLightbox)
 
-  useLayoutEffect(() => {
-    const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [messages.length, isStreaming])
-
-  // Keep scrolled to bottom as content grows during streaming
+  // Auto-scroll to bottom on new messages when at bottom
   useEffect(() => {
-    if (!isStreaming) return
+    if (!autoScrollRef.current || !scrollRef.current) return
+    scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+  }, [messages])
+
+  // Reset auto-scroll flag on session switch
+  useEffect(() => {
+    autoScrollRef.current = true
+  }, [sessionId])
+
+  const handleScroll = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
-    const observer = new ResizeObserver(() => {
-      el.scrollTop = el.scrollHeight
-    })
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [isStreaming])
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    autoScrollRef.current = atBottom
+  }, [])
 
+  // Lightbox click handler — only opens for successfully loaded images
   useEffect(() => {
-    // Use document-level delegation so we don't depend on scrollRef being
-    // mounted at the time this effect runs (the empty-state branch returns
-    // early before scrollRef is attached).
     const docHandler = (e: MouseEvent) => {
       const target = e.target as HTMLElement
       if (!target || target.tagName !== 'IMG') return
-      // Only react to images inside the chat area
-      const inChat = target.closest('[class*="chatScroll"]') || target.closest('[class*="message"]')
+      // Skip clicks inside the lightbox overlay (prevent close → reopen loop)
+      if (target.closest('[class*="overlay"]')) return
+      const inChat = target.closest('[class*="chatWrapper"]') || target.closest('[class*="message"]')
       if (!inChat) return
       const img = target as HTMLImageElement
+      if (img.naturalWidth < 20 || img.naturalHeight < 20) return
       const blocked = img.getAttribute('data-blocked-src')
       if (blocked) {
         img.src = blocked
@@ -59,7 +61,9 @@ export default function ChatArea() {
         img.removeAttribute('title')
         return
       }
-      if (img.src) openLightbox(img.src)
+      if (img.complete && img.naturalWidth > 0 && img.src) {
+        openLightbox(img.src)
+      }
     }
     document.addEventListener('click', docHandler, true)
     return () => document.removeEventListener('click', docHandler, true)
@@ -77,27 +81,24 @@ export default function ChatArea() {
           </div>
         </div>
       ) : (
-        <div ref={scrollRef} className={styles.chatScroll}>
-          <div className={styles.messageList}>
-            {messages.map(msg =>
-              msg.role === 'user'
-                ? <UserMessage key={msg.id} message={msg} />
-                : <AssistantMessage key={msg.id} message={msg} sessionId={sessionId} />
-            )}
-
-            {error && (
-              <div className={styles.errorBlock}>
-                <span className={styles.errorIcon}>!</span>
-                <span>{error}</span>
-              </div>
-            )}
-          </div>
+        <div className={styles.chatScroll} ref={scrollRef} onScroll={handleScroll}>
+          {messages.map(msg => (
+            <div key={msg.id} className={styles.messageGap} data-message-id={msg.id}>
+              {msg.role === 'user'
+                ? <UserMessage message={msg} />
+                : <AssistantMessage message={msg} sessionId={sessionId} />
+              }
+            </div>
+          ))}
+          {error && (
+            <div className={styles.errorBlock}>
+              <span className={styles.errorIcon}>!</span>
+              <span>{error}</span>
+            </div>
+          )}
         </div>
       )}
-      <ChatTimelineNavigator
-        anchors={timelineAnchors}
-        scrollRef={scrollRef as React.RefObject<HTMLDivElement | null>}
-      />
+      <ChatTimelineNavigator anchors={timelineAnchors} scrollRef={scrollRef} onManualNavigate={() => { autoScrollRef.current = false }} />
       <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
     </div>
   )

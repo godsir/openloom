@@ -113,6 +113,15 @@ export const createTokenStatsSlice: StateCreator<TokenStatsSlice> = (set, get) =
     set({ timeRange: range })
     const now = new Date()
     let from = '1970-01-01'
+    if (range === '7d') {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 7);
+      from = d.toISOString().slice(0, 10) + 'T00:00:00'
+    } else if (range === '30d') {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 30);
+      from = d.toISOString().slice(0, 10) + 'T00:00:00'
+    }
     const to = range === 'all'
       ? '2099-12-31'
       : now.toISOString().slice(0, 10) + 'T23:59:59'

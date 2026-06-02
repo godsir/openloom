@@ -274,6 +274,8 @@ impl AgentTool for SpawnAgentTool {
             hook_registry: None,
             session_id: String::new(),
             agent_id: String::new(),
+            key_store: None,
+            loom_dir: config.loom_dir.clone(),
         };
         drop(config);
 

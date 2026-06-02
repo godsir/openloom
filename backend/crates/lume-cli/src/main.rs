@@ -143,18 +143,28 @@ async fn main() -> anyhow::Result<()> {
             // Set up data directories
             let _ = std::fs::create_dir_all(loom_dir.join("data"));
             let _ = std::fs::create_dir_all(loom_dir.join("sessions"));
+            let _ = std::fs::create_dir_all(loom_dir.join("skills"));
+            let _ = std::fs::create_dir_all(loom_dir.join("plugins"));
             println!("[server] loom dir: {}", loom_dir.display());
             println!(
                 "[server] images:  {}\\sessions\\<id>\\images\\",
                 loom_dir.display()
             );
             let data_dir = loom_dir.join("data");
+            // Load persisted API keys so the orchestrator can build cloud clients.
+            let key_store = {
+                let ks_map = loom_server::load_credentials(&loom_dir).await;
+                Arc::new(tokio::sync::RwLock::new(ks_map))
+            };
+            orchestrator.set_key_store(key_store).await;
+
             match memory::LoomMemoryStore::open(&data_dir) {
                 Ok(store) => {
                     orchestrator.set_memory_store(Box::new(store)).await;
                     if let Err(e) = orchestrator.load_agent_configs().await {
                         eprintln!("[server] load agent configs failed: {}", e);
                     }
+                    // load_model_configs calls try_build_cloud_client which needs the key_store.
                     if let Err(e) = orchestrator.load_model_configs().await {
                         eprintln!("[server] load model configs failed: {}", e);
                     }
@@ -276,7 +286,49 @@ async fn main() -> anyhow::Result<()> {
                     Err(e) => eprintln!("[server] plugins error: {}", e),
                 }
             }
-            loom_server::serve(&host, port, orchestrator, &loom_dir).await?;
+            // === Graceful shutdown: wire SIGTERM/SIGINT/Ctrl+C ===
+            let shutdown_token = tokio_util::sync::CancellationToken::new();
+            {
+                let token = shutdown_token.clone();
+                tokio::spawn(async move {
+                    #[cfg(unix)]
+                    {
+                        use tokio::signal::unix::{signal, SignalKind};
+                        let mut sigterm = signal(SignalKind::terminate())
+                            .expect("failed to register SIGTERM handler");
+                        let mut sigint = signal(SignalKind::interrupt())
+                            .expect("failed to register SIGINT handler");
+                        tokio::select! {
+                            _ = sigterm.recv() => {
+                                tracing::info!("SIGTERM received — initiating graceful shutdown");
+                            }
+                            _ = sigint.recv() => {
+                                tracing::info!("SIGINT received — initiating graceful shutdown");
+                            }
+                        }
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = tokio::signal::ctrl_c().await;
+                        tracing::info!("Ctrl+C received — initiating graceful shutdown");
+                    }
+                    token.cancel();
+                });
+            }
+            loom_server::serve(
+                &host, port,
+                orchestrator.clone(),
+                &loom_dir,
+                shutdown_token,
+            ).await?;
+
+            // Drain inflight agent loops (10s timeout) + close SQLite
+            tracing::info!("server loop exited — draining inflight agents");
+            orchestrator.shutdown().await;
+
+            // Drop Arc to release remaining resources (MCP connections, etc.)
+            drop(orchestrator);
+            tracing::info!("openLoom shutdown complete — goodbye");
         }
         Command::Chat {
             model,

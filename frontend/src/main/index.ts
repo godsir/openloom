@@ -6,6 +6,7 @@ import { createTray } from './tray'
 import { setupAutoUpdater, checkForUpdates } from './updater'
 import { getStoreKey } from './store'
 import { initPet, registerPetProtocol } from './pet'
+import { startConfigWatcher } from './config-watcher'
 
 let port = 0
 let isQuitting = false
@@ -51,6 +52,9 @@ app.whenReady().then(async () => {
   } catch (e) {
     console.error('[pet] initPet failed:', e)
   }
+
+  // Start 30-second config directory poll watcher for model config hot-reload
+  startConfigWatcher()
 
   // Auto-updater (only in production)
   if (app.isPackaged) {

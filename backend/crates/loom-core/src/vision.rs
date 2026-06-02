@@ -2,11 +2,15 @@
 //! main model lacks vision capabilities.
 
 use anyhow::Result;
+use base64::Engine;
 use chrono::Utc;
 use loom_inference::engine::CloudClient;
 use loom_inference::openai::OpenAIClient;
 use loom_types::{CompletionRequest, ContentPart, Message, ModelBackend, Role};
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[derive(Debug, Deserialize)]
 pub struct VisionConfig {
@@ -48,23 +52,53 @@ pub fn load_vision_config() -> VisionConfig {
 
 pub fn has_images(messages: &[Message]) -> bool {
     messages.iter().any(|m| {
-        m.content
-            .iter()
-            .any(|part| matches!(part, ContentPart::Image { .. }))
+        m.content.iter().any(|part| {
+            matches!(part, ContentPart::Image { .. } | ContentPart::ImageRef { .. })
+        })
     })
 }
 
-pub fn extract_images(messages: &[Message]) -> Vec<(String, String, String)> {
+pub fn extract_images_from_messages(
+    messages: &[Message],
+    loom_dir: Option<&std::path::Path>,
+) -> Vec<(String, String, String)> {
     let mut images = Vec::new();
     for msg in messages.iter().rev() {
         for part in &msg.content {
-            if let ContentPart::Image {
-                source_type,
-                media_type,
-                data,
-            } = part
-            {
-                images.push((source_type.clone(), media_type.clone(), data.clone()));
+            match part {
+                ContentPart::Image {
+                    source_type: st,
+                    media_type: mt,
+                    data: d,
+                } => {
+                    images.push((st.clone(), mt.clone(), d.clone()));
+                }
+                ContentPart::ImageRef {
+                    media_type: mt,
+                    file_id: fid,
+                } => {
+                    // Reconstruct file path: loom_dir/sessions/*/images/fid
+                    let mut found = false;
+                    if let Some(base) = loom_dir {
+                        if let Ok(sessions_dir) = std::fs::read_dir(base.join("sessions")) {
+                            for entry in sessions_dir.flatten() {
+                                let img_path = entry.path().join("images").join(fid);
+                                if img_path.exists() {
+                                    if let Ok(data) = std::fs::read(&img_path) {
+                                        let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+                                        images.push(("base64".to_string(), mt.clone(), encoded));
+                                        found = true;
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if !found {
+                        tracing::warn!(file_id = %fid, "could not resolve ImageRef to file on disk");
+                    }
+                }
+                _ => {}
             }
         }
         if !images.is_empty() {
@@ -102,6 +136,7 @@ pub async fn prepare_vision_context(
     user_text: &str,
     vision_model_name: &str,
     model_configs: &[loom_types::ModelConfig],
+    key_store: &Arc<RwLock<HashMap<String, String>>>,
     progress_tx: Option<tokio::sync::mpsc::Sender<VisionBatchProgress>>,
 ) -> Result<VisionResult> {
     let config = model_configs
@@ -111,12 +146,13 @@ pub async fn prepare_vision_context(
             anyhow::anyhow!("Vision model '{}' not found in configs", vision_model_name)
         })?;
 
+    let guard = key_store.read().await;
     let api_key = config
         .api_key_env
         .as_deref()
         .and_then(|raw| {
-            if let Ok(val) = std::env::var(raw) {
-                return Some(val);
+            if let Some(val) = guard.get(raw) {
+                return Some(val.clone());
             }
             let looks_like_env_var = !raw.is_empty()
                 && raw
@@ -125,21 +161,26 @@ pub async fn prepare_vision_context(
             if !looks_like_env_var && !raw.is_empty() {
                 Some(raw.to_string())
             } else {
-                None
+                std::env::var(raw).ok().filter(|v| !v.is_empty())
             }
         })
         .or_else(|| {
             let well_known = match config.backend {
-                ModelBackend::DeepSeek => std::env::var("DEEPSEEK_API_KEY").ok(),
-                ModelBackend::OpenAI => std::env::var("OPENAI_API_KEY").ok(),
-                ModelBackend::Anthropic => std::env::var("ANTHROPIC_API_KEY").ok(),
+                ModelBackend::DeepSeek => guard.get("DEEPSEEK_API_KEY").cloned()
+                    .or_else(|| std::env::var("DEEPSEEK_API_KEY").ok()),
+                ModelBackend::OpenAI => guard.get("OPENAI_API_KEY").cloned()
+                    .or_else(|| std::env::var("OPENAI_API_KEY").ok()),
+                ModelBackend::Anthropic => guard.get("ANTHROPIC_API_KEY").cloned()
+                    .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()),
                 ModelBackend::Custom | ModelBackend::LmStudio | ModelBackend::Ollama => {
-                    std::env::var("OPENLOOM_API_KEY").ok()
+                    guard.get("OPENLOOM_API_KEY").cloned()
+                        .or_else(|| std::env::var("OPENLOOM_API_KEY").ok())
                 }
             };
             well_known
         })
         .unwrap_or_default();
+    drop(guard);
 
     if api_key.is_empty() {
         anyhow::bail!(

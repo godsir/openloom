@@ -588,18 +588,7 @@ fn truncate(s: &str, n: usize) -> &str {
     s.char_indices().nth(n).map(|(i, _)| &s[..i]).unwrap_or(s)
 }
 
-pub fn create_cloud_client(config: &ModelConfig) -> Result<Box<dyn CloudClient>> {
-    let api_key = config
-        .api_key_env
-        .as_deref()
-        .and_then(|e| {
-            if e.is_empty() {
-                None
-            } else {
-                std::env::var(e).ok()
-            }
-        })
-        .unwrap_or_default();
+pub fn create_cloud_client(config: &ModelConfig, api_key: &str) -> Result<Box<dyn CloudClient>> {
     if api_key.is_empty()
         && matches!(
             config.backend,
@@ -637,10 +626,10 @@ pub fn create_cloud_client(config: &ModelConfig) -> Result<Box<dyn CloudClient>>
         });
     match config.backend {
         ModelBackend::Anthropic => Ok(Box::new(crate::AnthropicClient::new(
-            api_key, model, base_url,
+            api_key.to_string(), model, base_url,
         ))),
         _ => Ok(Box::new(OpenAIClient::new(
-            api_key,
+            api_key.to_string(),
             model,
             base_url,
             matches!(

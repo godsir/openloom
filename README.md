@@ -1,11 +1,11 @@
 # openLoom
 
-本地优先的私人 AI 助理内核。认知图谱记忆、多 Agent 编排、Skills/Plugins/MCP/LSP 工具链、桌面宠物，支持云端和本地模型。
+本地优先的私人 AI 助理内核。多 Agent 编排、认知图谱记忆、Skills/Plugins/MCP/LSP 工具链、插件市场、桌面宠物，支持云端和本地模型。
 
 ## 架构
 
 ```
-backend/crates/                   12 个 crate，Rust 2024 + Tokio
+backend/crates/                   14 个 crate，Rust 2024 + Tokio
 ├── loom-types        ← 统一类型系统（Agent / Message / Tool / MCP / KG / Session）
 ├── loom-inference    ← 推理引擎分发（Anthropic / OpenAI / DeepSeek / LM Studio / Ollama）
 ├── loom-memory       ← 记忆内核（SQLite + FTS5，三库拆分，认知图谱，人格演化）
@@ -17,6 +17,8 @@ backend/crates/                   12 个 crate，Rust 2024 + Tokio
 ├── lume-mcp          ← MCP 客户端（stdio + HTTP/SSE，resources/prompts 协议）
 ├── lume-lsp          ← LSP 客户端（30+ 语言，diagnostics/hover/completion/definition/references）
 ├── lume-skills       ← Skills 解析（Claude Code + OpenClaw SKILL.md 兼容）
+├── lume-plugins      ← 插件发现与 manifest 加载（manifest.json + plugin.toml）
+├── lume-marketplace  ← 插件市场（目录、安装、卸载、更新）
 └── lume-bridge       ← 外部消息平台接入（Telegram + WeChat iLink）
 
 frontend/                        Electron 38 + React 19
@@ -126,6 +128,7 @@ lume kg stats
 - 每轮对话自动注入相关 KG 上下文到系统提示
 - 对话后自动提取实体和关系写入图谱（规则 + LLM）
 - 会话删除时自动提升高置信度记忆到全局
+- 前端星图可视化面板，支持 2D 力导向图浏览与交互
 
 ### 认知演化
 
@@ -149,6 +152,12 @@ lume kg stats
 - 支持捆绑 Skills + MCP 配置
 - 前端插件列表和重载
 
+### 插件市场
+
+- 在线目录浏览，按分类筛选和搜索
+- 一键安装 / 卸载 / 更新插件
+- 前端市场面板，集成于设置侧栏
+
 ### MCP 调用
 
 - 双传输：stdio 子进程 + HTTP/SSE
@@ -169,6 +178,11 @@ lume kg stats
 - 拖拽移动、右键菜单切换大小（小/中/大）、前端 PetTab 管理面板
 - 支持多宠物切换，从 `~/.loom/pets/` 自动发现
 - 默认关闭，设置 > 桌宠中启用
+
+### 主题
+
+- 9 套内置主题：暗色、亮色、星夜、素笺、紫夜、熔岩、鎏金、摩卡、自定义
+- 自定义主题支持自主配色，CSS 变量驱动即时切换
 
 ### Bridge 外部接入
 
@@ -206,6 +220,7 @@ lume kg stats
 | LSP | 10 | diagnostics、completion、hover、definition、references、symbols 等 |
 | Skills | 4 | list、get、import、delete |
 | Plugins | 2 | list、reload |
+| Marketplace | 4 | list、install、uninstall、update |
 | KG | 8 | search、stats、neighbors、walk、list、edges_between、node/edge delete、prune |
 | Cognitions | 3 | list、snapshots、subjects |
 | Token | 2 | summary、history |
@@ -262,6 +277,9 @@ npm run build
 | CLI | clap + tracing-subscriber |
 | 前端 | React 19 + TypeScript + Tailwind CSS 4 + Vite 6 + Zustand 5 |
 | 桌面 | Electron 38 + electron-updater + electron-store |
+| 图表 | ECharts 6 (Token 趋势) + react-force-graph-2d (KG 星图) |
+| 编辑器 | CodeMirror 6 + TipTap 3 (富文本编辑) |
+| 渲染 | markdown-it + KaTeX + Mermaid + highlight.js |
 
 ## 许可证
 

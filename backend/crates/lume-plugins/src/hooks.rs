@@ -1,16 +1,17 @@
-//! Hook type definitions for openLoom v2 — Claude Code compatible.
+//! Hook type definitions for openLoom — agent lifecycle events and handlers.
 //!
-//! Defines the 14 hook events, 3 handler types, and the hooks.json config format.
-//! The execution engine will be added in a future phase.
+//! Defines 14 hook events, 3 handler types, and the hooks.json config format.
+//! Compatible with Claude Code hook plugins (both array and map JSON formats).
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ============================================================================
 // Hook Events
 // ============================================================================
 
-/// All hook events in the Claude Code lifecycle.
+/// All hook events in the agent lifecycle.
 ///
 /// Plugins register handlers for specific events in `hooks/hooks.json`.
 /// Each event fires at a well-defined point in the agent loop or session lifecycle.
@@ -23,21 +24,21 @@ pub enum HookEvent {
     PostToolUse,
     /// Fires after a tool fails (non-zero exit, exception, etc.).
     PostToolUseFailure,
-    /// Fires when Claude requests user permission for an operation.
+    /// Fires when the agent requests user permission for an operation.
     PermissionRequest,
     /// Fires when the user submits a prompt (before processing).
     UserPromptSubmit,
     /// Fires when a system notification is generated.
     Notification,
-    /// Fires when Claude is asked to stop (user interrupt).
+    /// Fires when the agent is asked to stop (user interrupt).
     Stop,
     /// Fires when a sub-agent is spawned (before execution).
     SubagentStart,
     /// Fires when a sub-agent completes (success or failure).
     SubagentStop,
-    /// Fires when a Claude Code session begins.
+    /// Fires when an agent session begins.
     SessionStart,
-    /// Fires when a Claude Code session ends.
+    /// Fires when an agent session ends.
     SessionEnd,
     /// Fires when a teammate (parallel agent) becomes idle.
     TeammateIdle,
@@ -51,7 +52,7 @@ pub enum HookEvent {
 // Hook Handler Types
 // ============================================================================
 
-/// The three types of hook handlers supported by Claude Code.
+/// The three types of hook handlers supported by the hook system.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum HookHandlerType {
@@ -124,11 +125,118 @@ pub struct HookEntry {
 
 /// Top-level hook configuration, typically loaded from `hooks/hooks.json`
 /// in a plugin directory.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+///
+/// Accepts two JSON formats:
+/// 1. **Array format** (our canonical format):
+///    `{ "hooks": [ { "event": "PreToolUse", "matcher": "...", "hooks": [...] } ] }`
+/// 2. **Claude Code map format** (events as object keys):
+///    `{ "hooks": { "PreToolUse": [ { "matcher": "...", "hooks": [...] } ] } }`
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct HookConfig {
+    /// Optional human-readable description of this hook configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     /// All registered hook entries.
     #[serde(default)]
     pub hooks: Vec<HookEntry>,
+}
+
+// ============================================================================
+// Deserialization helpers — accept both Claude Code map format and array format
+// ============================================================================
+
+/// Raw hook entry without the `event` field.
+/// Used when parsing the map format where event names are the object keys.
+#[derive(Debug, Clone, Deserialize)]
+struct HookEntryRaw {
+    #[serde(default)]
+    pub matcher: Option<String>,
+    #[serde(default)]
+    pub hooks: Vec<HookHandler>,
+}
+
+/// Intermediate representation that accepts either the Claude Code map
+/// format or the array format from a hooks.json file.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum HookConfigRaw {
+    /// Claude Code format: hooks keyed by event name.
+    /// `{ "description": "...", "hooks": { "PreToolUse": [ ... ] } }`
+    Map {
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        hooks: HashMap<String, Vec<HookEntryRaw>>,
+    },
+    /// Array format: each entry has an explicit "event" field.
+    /// `{ "description": "...", "hooks": [ { "event": "PreToolUse", ... } ] }`
+    Array {
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        hooks: Vec<HookEntry>,
+    },
+}
+
+/// Parse a hook event from a JSON object key. Handles both camelCase and PascalCase.
+fn event_from_key(key: &str) -> Option<HookEvent> {
+    match key.to_lowercase().as_str() {
+        "pretooluse" => Some(HookEvent::PreToolUse),
+        "posttooluse" => Some(HookEvent::PostToolUse),
+        "posttoolusefailure" => Some(HookEvent::PostToolUseFailure),
+        "permissionrequest" => Some(HookEvent::PermissionRequest),
+        "userpromptsubmit" => Some(HookEvent::UserPromptSubmit),
+        "notification" => Some(HookEvent::Notification),
+        "stop" => Some(HookEvent::Stop),
+        "subagentstart" => Some(HookEvent::SubagentStart),
+        "subagentstop" => Some(HookEvent::SubagentStop),
+        "sessionstart" => Some(HookEvent::SessionStart),
+        "sessionend" => Some(HookEvent::SessionEnd),
+        "teammateidle" => Some(HookEvent::TeammateIdle),
+        "taskcompleted" => Some(HookEvent::TaskCompleted),
+        "precompact" => Some(HookEvent::PreCompact),
+        _ => None,
+    }
+}
+
+impl From<HookConfigRaw> for HookConfig {
+    fn from(raw: HookConfigRaw) -> Self {
+        match raw {
+            HookConfigRaw::Map { description, hooks } => {
+                let mut entries = Vec::new();
+                for (event_name, raw_entries) in hooks {
+                    let Some(event) = event_from_key(&event_name) else {
+                        tracing::warn!(
+                            event_name = %event_name,
+                            "unknown hook event in hooks.json, skipping entries"
+                        );
+                        continue;
+                    };
+                    for raw_entry in raw_entries {
+                        entries.push(HookEntry {
+                            event: event.clone(),
+                            matcher: raw_entry.matcher,
+                            hooks: raw_entry.hooks,
+                        });
+                    }
+                }
+                HookConfig { description, hooks: entries }
+            }
+            HookConfigRaw::Array { description, hooks } => {
+                HookConfig { description, hooks }
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for HookConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = HookConfigRaw::deserialize(deserializer)?;
+        Ok(HookConfig::from(raw))
+    }
 }
 
 // ============================================================================
@@ -169,9 +277,12 @@ impl HookConfig {
 /// );
 /// assert_eq!(result, "bash /home/user/.claude/plugins/my-plugin/scripts/check.sh");
 /// ```
+///
+/// Also supports the loom-native `${LOOM_PLUGIN_ROOT}` alias.
 pub fn expand_plugin_root(s: &str, plugin_dir: &str) -> String {
     s.replace("${CLAUDE_PLUGIN_ROOT}", plugin_dir)
         .replace("${PLUGIN_ROOT}", plugin_dir)
+        .replace("${LOOM_PLUGIN_ROOT}", plugin_dir)
 }
 
 // ============================================================================
@@ -267,5 +378,82 @@ mod tests {
             // Verify it parsed without panicking
             assert!(!event_str.is_empty());
         }
+    }
+
+    #[test]
+    fn test_deserialize_hook_config_map_format() {
+        // Claude Code native format — events as object keys
+        let json = r#"{
+            "description": "Security guidance hooks",
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Edit|Write|MultiEdit",
+                    "hooks": [{
+                        "type": "command",
+                        "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/security_reminder_hook.py"
+                    }]
+                }]
+            }
+        }"#;
+        let config: HookConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.description.as_deref(), Some("Security guidance hooks"));
+        assert_eq!(config.hooks.len(), 1);
+        let entry = &config.hooks[0];
+        assert_eq!(entry.event, HookEvent::PreToolUse);
+        assert_eq!(entry.matcher.as_deref(), Some("Edit|Write|MultiEdit"));
+        assert_eq!(entry.hooks.len(), 1);
+        assert_eq!(entry.hooks[0].handler_type, HookHandlerType::Command);
+        assert_eq!(
+            entry.hooks[0].command.as_deref(),
+            Some("python3 ${CLAUDE_PLUGIN_ROOT}/hooks/security_reminder_hook.py")
+        );
+    }
+
+    #[test]
+    fn test_deserialize_hook_config_map_format_camelcase() {
+        // Map format with camelCase event keys (as per HookEvent serialization)
+        let json = r#"{
+            "hooks": {
+                "preToolUse": [{
+                    "matcher": "Edit",
+                    "hooks": [{ "type": "command", "command": "echo hi" }]
+                }],
+                "sessionStart": [{
+                    "hooks": [{ "type": "prompt", "prompt": "Ready." }]
+                }]
+            }
+        }"#;
+        let config: HookConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.hooks.len(), 2);
+        assert_eq!(config.hooks[0].event, HookEvent::PreToolUse);
+        assert_eq!(config.hooks[1].event, HookEvent::SessionStart);
+    }
+
+    #[test]
+    fn test_deserialize_hook_config_map_format_mixed_case() {
+        // PascalCase keys — should be normalized to lowercase for matching
+        let json = r#"{
+            "hooks": {
+                "postToolUse": [{ "hooks": [{ "type": "command", "command": "echo done" }] }],
+                "PreToolUse": [{ "hooks": [{ "type": "command", "command": "echo check" }] }],
+                "SESSIONSTART": [{ "hooks": [{ "type": "command", "command": "echo init" }] }]
+            }
+        }"#;
+        let config: HookConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.hooks.len(), 3);
+    }
+
+    #[test]
+    fn test_deserialize_hook_config_map_format_unknown_event() {
+        let json = r#"{
+            "hooks": {
+                "preToolUse": [{ "hooks": [{ "type": "command", "command": "echo ok" }] }],
+                "UnknownEventXYZ": [{ "hooks": [{ "type": "command", "command": "echo bad" }] }]
+            }
+        }"#;
+        // Unknown events are skipped with a warning, not a hard error
+        let config: HookConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.hooks.len(), 1);
+        assert_eq!(config.hooks[0].event, HookEvent::PreToolUse);
     }
 }

@@ -305,7 +305,6 @@ impl SkillLoader {
             self.add_path(home.join(".agents/skills"), "User (Agents)");
         }
         self.add_path(data_dir.join("plugins"), "Plugins");
-        self.add_path(data_dir.join("skills"), "User Skills");
     }
 
     pub fn discover(&self) -> Result<Vec<LoadedSkill>> {
@@ -314,46 +313,61 @@ impl SkillLoader {
             if !path.exists() {
                 continue;
             }
-            if let Ok(entries) = std::fs::read_dir(path) {
-                for entry in entries.flatten() {
-                    let skill_dir = entry.path();
-                    if !skill_dir.is_dir() {
-                        continue;
-                    }
-                    let skill_md = skill_dir.join("SKILL.md");
-                    if skill_md.exists() {
-                        match Self::parse_skill_file(&skill_md, &skill_dir) {
-                            Ok(mut skill) => {
-                                // Set correct source based on search path label
-                                skill.source = match _label.as_str() {
-                                    s if s.contains("Project") => SkillSource::Project {
-                                        cwd: std::env::current_dir().unwrap_or_default(),
-                                    },
-                                    s if s.contains("Plugin") => SkillSource::Plugin {
-                                        plugin_name: String::new(),
-                                        plugin_dir: skill_dir.clone(),
-                                    },
-                                    _ => SkillSource::UserGlobal {
-                                        data_dir: skill_dir.clone(),
-                                    },
-                                };
-                                // Runtime gating
-                                if let Err(reason) = skill.manifest.validate_runtime() {
-                                    tracing::info!(name=%skill.manifest.name, %reason, "skill skipped");
-                                    continue;
-                                }
-                                skills.push(skill);
-                            }
-                            Err(e) => {
-                                tracing::warn!(path = %skill_md.display(), error = %e, "failed to parse skill")
-                            }
-                        }
-                    }
-                }
-            }
+            // Walk up to 2 levels deep to find SKILL.md files
+            // (handles monorepo clones like skills-official where skills are in subdirectories)
+            Self::scan_dir(path, _label, 0, 2, &mut skills);
         }
         tracing::info!(count = skills.len(), "skills discovered");
         Ok(skills)
+    }
+
+    fn scan_dir(
+        dir: &std::path::Path,
+        label: &str,
+        depth: usize,
+        max_depth: usize,
+        skills: &mut Vec<LoadedSkill>,
+    ) {
+        if depth > max_depth {
+            return;
+        }
+        let skill_md = dir.join("SKILL.md");
+        if skill_md.exists() {
+            match Self::parse_skill_file(&skill_md, dir) {
+                Ok(mut skill) => {
+                    skill.source = match label {
+                        s if s.contains("Project") => SkillSource::Project {
+                            cwd: std::env::current_dir().unwrap_or_default(),
+                        },
+                        s if s.contains("Plugin") => SkillSource::Plugin {
+                            plugin_name: String::new(),
+                            plugin_dir: dir.to_path_buf(),
+                        },
+                        _ => SkillSource::UserGlobal {
+                            data_dir: dir.to_path_buf(),
+                        },
+                    };
+                    if let Err(reason) = skill.manifest.validate_runtime() {
+                        tracing::info!(name=%skill.manifest.name, %reason, "skill skipped");
+                        return;
+                    }
+                    skills.push(skill);
+                    return; // Found SKILL.md here, don't recurse into this dir
+                }
+                Err(e) => {
+                    tracing::warn!(path = %skill_md.display(), error = %e, "failed to parse skill")
+                }
+            }
+        }
+        // Recurse into subdirectories
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let sub = entry.path();
+                if sub.is_dir() {
+                    Self::scan_dir(&sub, label, depth + 1, max_depth, skills);
+                }
+            }
+        }
     }
 
     pub fn parse_skill_file(

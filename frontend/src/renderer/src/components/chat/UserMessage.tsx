@@ -2,7 +2,10 @@ import type { Message } from '../../stores/chat'
 import { useStore } from '../../stores'
 import FileBlock from './FileBlock'
 import MessageFooterActions from './MessageFooterActions'
+import { useCallback, useRef, useEffect } from 'react'
 import styles from './UserMessage.module.css'
+
+const IMAGE_EXT = /\.(png|jpg|jpeg|gif|webp|svg|bmp|ico)(\?.*)?$/i
 
 export default function UserMessage({ message }: { message: Message }) {
   const textBlock = message.blocks.find((b) => b.type === 'text')
@@ -10,6 +13,43 @@ export default function UserMessage({ message }: { message: Message }) {
   const fileBlocks = message.blocks.filter((b) => b.type === 'file')
   const hasVisualBlocks = imageBlocks.length > 0 || fileBlocks.length > 0
   const openLightbox = useStore(s => s.openLightbox)
+  const textRef = useRef<HTMLDivElement>(null)
+
+  const handleTextClick = useCallback((e: MouseEvent) => {
+    const target = e.target as HTMLElement
+    if (target.tagName === 'IMG') {
+      const img = target as HTMLImageElement
+      if (img.complete && img.naturalWidth > 0 && img.src) {
+        e.preventDefault()
+        openLightbox(img.src)
+        return
+      }
+    }
+    const link = target.closest('a')
+    if (link) {
+      const href = link.getAttribute('href') || ''
+      if (/^https?:\/\//i.test(href)) {
+        e.preventDefault()
+        if (IMAGE_EXT.test(href)) {
+          openLightbox(href)
+        } else {
+          window.loom.openExternal(href)
+        }
+        return
+      }
+      if (/^[A-Za-z]:\\/.test(href) || /^\/\S+\.\w{1,10}$/.test(href)) {
+        e.preventDefault()
+        window.loom.openFile(href)
+      }
+    }
+  }, [openLightbox])
+
+  useEffect(() => {
+    const el = textRef.current
+    if (!el) return
+    el.addEventListener('click', handleTextClick)
+    return () => el.removeEventListener('click', handleTextClick)
+  }, [handleTextClick])
 
   return (
     <div className={styles.wrapper} data-message-id={message.id}>
@@ -37,6 +77,7 @@ export default function UserMessage({ message }: { message: Message }) {
           )}
           {textBlock ? (
             <div
+              ref={textRef}
               className={styles.text}
               dangerouslySetInnerHTML={{
                 __html: (textBlock.html as string) || escapeHtml(textBlock.source as string) || '',

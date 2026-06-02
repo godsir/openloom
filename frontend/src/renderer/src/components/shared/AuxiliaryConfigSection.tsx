@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
+import { useStore } from '../../stores'
 import Select from './Select'
 import styles from './VisionConfig.module.css'
 
@@ -36,20 +37,16 @@ function sortModels(models: ModelListItem[]): ModelListItem[] {
 }
 
 export default function AuxiliaryConfigSection() {
-  const [models, setModels] = useState<ModelListItem[]>([])
+  const models = useStore(s => s.models) as ModelListItem[]
   const [summaryModel, setSummaryModel] = useState('')
   const [entityModel, setEntityModel] = useState('')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    Promise.all([
-      loomRpc<AuxiliaryConfig>('config.get_auxiliary'),
-      loomRpc<{ models: ModelListItem[] }>('model.list'),
-    ])
-      .then(([config, modelResult]) => {
+    loomRpc<AuxiliaryConfig>('config.get_auxiliary')
+      .then(config => {
         setSummaryModel(config.summary_model || '')
         setEntityModel(config.entity_model || '')
-        setModels(modelResult.models || [])
         setLoading(false)
       })
       .catch(() => setLoading(false))

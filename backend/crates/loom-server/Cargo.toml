@@ -10,7 +10,9 @@ loom-core = { path = "../loom-core" }
 lume-mcp = { path = "../lume-mcp" }
 lume-skills = { path = "../lume-skills" }
 lume-plugins = { path = "../lume-plugins" }
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+lume-marketplace = { path = "../lume-marketplace" }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "signal"] }
+tokio-util = { workspace = true }
 anyhow = "1"
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
 import { useStore } from '../../stores'
@@ -6,6 +6,24 @@ import { IconEye, IconWrench, IconBrain, IconX, IconSearch } from '../../utils/i
 import Select from './Select'
 import type { ModelConfig, ModelListItem, ModelBackend } from '../../types/bindings'
 import styles from './ModelConfig.module.css'
+
+/** Auto-append the correct API path suffix based on the selected format:
+ *  - OpenAI  → ensure /v1
+ *  - Anthropic → bare host (backend appends /v1/messages itself)
+ */
+function normalizeBaseUrl(url: string, apiFormat: 'openai' | 'anthropic'): string {
+  let u = url.trim().replace(/\/+$/, '')
+  if (!u) return u
+  if (apiFormat === 'openai' && !u.endsWith('/v1')) {
+    u = u + '/v1'
+  }
+  return u
+}
+
+function getProviderModels(selected: ProviderEntry, models: ModelListItem[]): ModelListItem[] {
+  if (selected.isCustom) return models.filter(m => (m.backend_label || '') === selected.label)
+  return models.filter(m => m.backend === selected.backend)
+}
 
 interface ProviderEntry {
   id: string
@@ -49,7 +67,7 @@ function buildProviders(customProviders: ProviderEntry[], models: ModelListItem[
         label: m.backend_label,
         backend: 'Custom',
         defaultUrl: m.base_url || '',
-        apiFormat: (m as any).api_format === 'anthropic' ? 'anthropic' : 'openai',
+        apiFormat: m.api_format === 'anthropic' ? 'anthropic' : 'openai',
         isCustom: true,
       })
     }
@@ -64,6 +82,8 @@ function formatContext(n: number): string {
 
 export default function ModelConfigPanel() {
   const [models, setModels] = useState<ModelListItem[]>([])
+  const [initialLoading, setInitialLoading] = useState(true)
+  const mountedRef = useRef(true)
   const [providers, setProviders] = useState<ProviderEntry[]>(PRESET_PROVIDERS)
   const [selectedId, setSelectedId] = useState<string>('deepseek')
   const [showCustomForm, setShowCustomForm] = useState(false)
@@ -95,11 +115,11 @@ export default function ModelConfigPanel() {
   const [editingModel, setEditingModel] = useState<string | null>(null)
   const [editForm, setEditForm] = useState<{
     name: string; model: string; backend: ModelBackend; base_url: string;
-    context_size: number; max_output_tokens: string
+    context_size: number; max_output_tokens?: number
     backend_label?: string; api_format?: string; api_key_env?: string
     vision: boolean; reasoning: boolean; function_calling: boolean
     input_price?: number; output_price?: number; cache_read_price?: number; cache_write_price?: number
-  }>({ name: '', model: '', backend: 'DeepSeek', base_url: '', context_size: 4096, max_output_tokens: '', vision: false, reasoning: false, function_calling: false, input_price: undefined, output_price: undefined, cache_read_price: undefined, cache_write_price: undefined })
+  }>({ name: '', model: '', backend: 'DeepSeek', base_url: '', context_size: 4096, max_output_tokens: undefined, vision: false, reasoning: false, function_calling: false, input_price: undefined, output_price: undefined, cache_read_price: undefined, cache_write_price: undefined })
 
   const selected = providers.find(p => p.id === selectedId)
 
@@ -109,6 +129,7 @@ export default function ModelConfigPanel() {
         loomRpc<{ models: ModelListItem[]; activeModel: string | null }>('model.list'),
         loadCustomProviders(),
       ])
+      if (!mountedRef.current) return
       const items = result.models || []
       setModels(items)
       setProviders(buildProviders(customProviders, items))
@@ -116,16 +137,29 @@ export default function ModelConfigPanel() {
       if (result.activeModel) useStore.getState().setCurrentModel(result.activeModel)
     } catch (e) {
       console.error('Failed to list models:', e)
+    } finally {
+      if (mountedRef.current) setInitialLoading(false)
     }
   }
 
-  useEffect(() => { refresh() }, [])
+  useEffect(() => {
+    mountedRef.current = true
+    refresh()
+    return () => { mountedRef.current = false }
+  }, [])
 
   const [keyAlreadySet, setKeyAlreadySet] = useState(false)
 
+  // Check API key on initial mount for the default provider
+  useEffect(() => {
+    loomRpc<{ set: boolean }>('model.check_key', { backend: 'DeepSeek' })
+      .then(r => { if (r && r.set && mountedRef.current) setKeyAlreadySet(true) })
+      .catch(() => {})
+  }, [])
+
   const handleSelect = async (p: ProviderEntry) => {
     setSelectedId(p.id)
-    setBaseUrl(p.defaultUrl)
+    setBaseUrl(normalizeBaseUrl(p.defaultUrl, p.apiFormat))
     setApiFormat(p.apiFormat)
     setApiKey('')
     setVerifyStatus('idle')
@@ -133,13 +167,10 @@ export default function ModelConfigPanel() {
     setDiscovered([])
     setModelQuery('')
     // Override with saved base_url / api_format from existing models
-    const existing = models.filter(m => {
-      if (p.isCustom) return (m.backend_label || '') === p.label
-      return m.backend === p.backend
-    })
+    const existing = getProviderModels(p, models)
     if (existing.length > 0) {
       if (existing[0].base_url) setBaseUrl(existing[0].base_url!)
-      const fmt = (existing[0] as any).api_format
+      const fmt = existing[0].api_format
       if (fmt === 'openai' || fmt === 'anthropic') setApiFormat(fmt)
     }
     try {
@@ -161,16 +192,12 @@ export default function ModelConfigPanel() {
       const result = await loomRpc<{ ok: boolean; env_name: string }>('model.save_key', {
         backend: selected.backend,
         api_key: apiKey.trim(),
-        base_url: baseUrl.trim(),
+        base_url: normalizeBaseUrl(baseUrl, apiFormat),
         api_key_env: selected.isCustom ? selected.envVar : undefined,
       })
-      const { useStore } = await import('../../stores')
       useStore.getState().addToast({ type: 'success', message: `API Key 已保存 (${result.env_name})` })
       const envVarName = result.env_name
-      const providerModels = models.filter(m => {
-        if (selected.isCustom) return (m.backend_label || '') === selected.label
-        return m.backend === selected.backend
-      })
+      const providerModels = getProviderModels(selected, models)
       for (const m of providerModels) {
         if (m.api_key_env !== envVarName) {
           try {
@@ -178,9 +205,9 @@ export default function ModelConfigPanel() {
               name: m.name,
               model: m.model || undefined,
               backend: m.backend as ModelBackend,
-              backend_label: (m as any).backend_label || undefined,
+              backend_label: m.backend_label || undefined,
               base_url: m.base_url || undefined,
-              api_format: (m as any).api_format || undefined,
+              api_format: m.api_format || undefined,
               api_key_env: envVarName,
               context_size: m.context_size || 4096,
               capabilities: m.capabilities || {},
@@ -201,10 +228,7 @@ export default function ModelConfigPanel() {
     if (!selected) return
     setUrlSaveStatus('saving')
     try {
-      const providerModels = models.filter(m => {
-        if (selected.isCustom) return (m.backend_label || '') === selected.label
-        return m.backend === selected.backend
-      })
+      const providerModels = getProviderModels(selected, models)
       if (providerModels.length > 0) {
         for (const m of providerModels) {
           try {
@@ -212,8 +236,8 @@ export default function ModelConfigPanel() {
               name: m.name,
               model: m.model || undefined,
               backend: m.backend as ModelBackend,
-              backend_label: (m as any).backend_label || undefined,
-              base_url: baseUrl.trim() || undefined,
+              backend_label: m.backend_label || undefined,
+              base_url: normalizeBaseUrl(baseUrl, apiFormat) || undefined,
               api_format: apiFormat,
               api_key_env: m.api_key_env || undefined,
               context_size: m.context_size || 4096,
@@ -243,13 +267,14 @@ export default function ModelConfigPanel() {
     try {
       const result = await loomRpc<{ models: Array<{ id: string; context_length?: number }> }>('model.discover', {
         backend: selected.backend,
-        base_url: baseUrl.trim(),
+        base_url: normalizeBaseUrl(baseUrl, apiFormat),
         api_format: apiFormat,
         api_key_env: selected.isCustom ? selected.envVar : undefined,
       })
       setDiscovered(result.models || [])
     } catch (e: any) {
       console.error('Failed to discover models:', e)
+      useStore.getState().addToast({ type: 'error', message: '模型发现失败: ' + (e.message || e) })
       setDiscovered([])
     } finally {
       setDiscovering(false)
@@ -260,6 +285,8 @@ export default function ModelConfigPanel() {
     if (!selected) return
     const modelId = model.id
     const name = modelId.split('/').pop() || modelId
+    const ok = await useStore.getState().showConfirm('添加模型', `确认添加模型 "${name}"？`, false)
+    if (!ok) return
     const envName = selected.isCustom
       ? selected.envVar || 'OPENLOOM_API_KEY'
       : `${selected.backend.toUpperCase()}_API_KEY`
@@ -270,7 +297,7 @@ export default function ModelConfigPanel() {
         model_type: 'Router',
         backend: selected.backend,
         backend_label: selected.isCustom ? selected.label : undefined,
-        base_url: baseUrl.trim() || null,
+        base_url: normalizeBaseUrl(baseUrl, apiFormat) || null,
         api_key_env: envName,
         api_format: apiFormat,
         context_size: model.context_length || 4096,
@@ -307,17 +334,17 @@ export default function ModelConfigPanel() {
       backend: m.backend as ModelBackend,
       base_url: m.base_url || '',
       context_size: m.context_size || 4096,
-      max_output_tokens: '',
-      backend_label: (m as any).backend_label,
-      api_format: (m as any).api_format,
+      max_output_tokens: undefined,
+      backend_label: m.backend_label,
+      api_format: m.api_format,
       api_key_env: m.api_key_env || undefined,
       vision: m.capabilities?.vision ?? false,
       reasoning: m.capabilities?.reasoning ?? false,
       function_calling: m.capabilities?.function_calling ?? false,
       input_price: m.input_price ?? undefined,
       output_price: m.output_price ?? undefined,
-      cache_read_price: (m as any).cache_read_price ?? undefined,
-      cache_write_price: (m as any).cache_write_price ?? undefined,
+      cache_read_price: m.cache_read_price ?? undefined,
+      cache_write_price: m.cache_write_price ?? undefined,
     })
   }
 
@@ -339,9 +366,9 @@ export default function ModelConfigPanel() {
         name: newName,
         model: m.model || undefined,
         backend: m.backend as ModelBackend,
-        backend_label: (m as any).backend_label || undefined,
+        backend_label: m.backend_label || undefined,
         base_url: m.base_url || undefined,
-        api_format: (m as any).api_format || undefined,
+        api_format: m.api_format || undefined,
         api_key_env: m.api_key_env || undefined,
         context_size: m.context_size || 4096,
         capabilities: m.capabilities || {},
@@ -359,12 +386,12 @@ export default function ModelConfigPanel() {
         prev_name: editingModel,
         model: editForm.model || undefined,
         backend: editForm.backend,
-        base_url: editForm.base_url.trim() || undefined,
+        base_url: normalizeBaseUrl(editForm.base_url, (editForm.api_format as 'openai' | 'anthropic') || 'openai') || undefined,
         backend_label: editForm.backend_label || undefined,
         api_format: editForm.api_format || undefined,
         api_key_env: editForm.api_key_env || undefined,
         context_size: editForm.context_size,
-        max_output_tokens: editForm.max_output_tokens ? parseInt(editForm.max_output_tokens, 10) : undefined,
+        max_output_tokens: editForm.max_output_tokens,
         capabilities: {
           vision: editForm.vision,
           reasoning: editForm.reasoning,
@@ -406,6 +433,7 @@ export default function ModelConfigPanel() {
 
   const handleStartEditCustom = (entry: ProviderEntry) => {
     setEditingCustomId(entry.id)
+    setEditingModel(null)
     setCustomName(entry.label)
     setCustomUrl(entry.defaultUrl)
     setCustomFormat(entry.apiFormat)
@@ -446,7 +474,7 @@ export default function ModelConfigPanel() {
               backend: m.backend as ModelBackend,
               backend_label: newLabel,
               base_url: m.base_url || undefined,
-              api_format: (m as any).api_format || undefined,
+              api_format: m.api_format || undefined,
               api_key_env: m.api_key_env || undefined,
               context_size: m.context_size || 4096,
               capabilities: m.capabilities || {},
@@ -455,7 +483,7 @@ export default function ModelConfigPanel() {
         }
       }
 
-      setBaseUrl(customUrl.trim())
+      setBaseUrl(normalizeBaseUrl(customUrl.trim(), customFormat))
       setApiFormat(customFormat)
       setShowCustomForm(false)
       setEditingCustomId(null)
@@ -546,6 +574,10 @@ export default function ModelConfigPanel() {
   const envVarName = selected
     ? (selected.isCustom ? (selected.envVar || 'OPENLOOM_API_KEY') : `${selected.backend.toUpperCase()}_API_KEY`)
     : ''
+
+  if (initialLoading) {
+    return <div className={styles.pvLayout}><div className={styles.pvEmpty} style={{ padding: 40, textAlign: 'center' }}>加载中...</div></div>
+  }
 
   return (
     <div className={styles.pvLayout}>
@@ -682,6 +714,7 @@ export default function ModelConfigPanel() {
                 <input
                   value={baseUrl}
                   onChange={e => { setBaseUrl(e.target.value); setUrlSaveStatus('idle') }}
+                  onBlur={() => { const n = normalizeBaseUrl(baseUrl, apiFormat); if (n !== baseUrl) setBaseUrl(n) }}
                   placeholder="https://api.example.com/v1"
                   className={styles.pvCredInput}
                 />
@@ -698,13 +731,13 @@ export default function ModelConfigPanel() {
                 <div className={styles.pvToggle}>
                   <button
                     className={`${styles.pvToggleBtn} ${apiFormat === 'openai' ? styles.pvToggleActive : ''}`}
-                    onClick={() => { setApiFormat('openai'); setUrlSaveStatus('idle') }}
+                    onClick={() => { setApiFormat('openai'); setUrlSaveStatus('idle'); setBaseUrl(u => normalizeBaseUrl(u, 'openai')) }}
                   >
                     OpenAI
                   </button>
                   <button
                     className={`${styles.pvToggleBtn} ${apiFormat === 'anthropic' ? styles.pvToggleActive : ''}`}
-                    onClick={() => { setApiFormat('anthropic'); setUrlSaveStatus('idle') }}
+                    onClick={() => { setApiFormat('anthropic'); setUrlSaveStatus('idle'); setBaseUrl(u => normalizeBaseUrl(u, 'anthropic')) }}
                   >
                     Anthropic
                   </button>
@@ -843,8 +876,8 @@ export default function ModelConfigPanel() {
                                 <input
                                   className={styles.pvEditInput}
                                   type="number"
-                                  value={editForm.max_output_tokens}
-                                  onChange={e => setEditForm(f => ({ ...f, max_output_tokens: e.target.value }))}
+                                  value={editForm.max_output_tokens ?? ''}
+                                  onChange={e => setEditForm(f => ({ ...f, max_output_tokens: e.target.value ? Number(e.target.value) : undefined }))}
                                   placeholder="默认"
                                 />
                               </div>

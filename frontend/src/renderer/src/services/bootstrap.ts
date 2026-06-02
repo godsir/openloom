@@ -114,6 +114,8 @@ export async function bootstrapApp(): Promise<() => void> {
   // onWsReconnect fires on initial connect AND on every reconnect
   onWsReconnect(async () => {
     await useStore.getState().loadSessions()
+    // Load plugins into cache on startup / reconnect
+    useStore.getState().loadPlugins().catch(() => {})
     try {
       const configs = await loomRpc<{ configs: unknown[] }>('agent.config.list')
       useStore.getState().setAgents(configs.configs as any[] || [])
@@ -122,6 +124,7 @@ export async function bootstrapApp(): Promise<() => void> {
 
   // Connect — onopen triggers onReconnect which loads data
   await connectWebSocket(port)
+  useStore.getState().setEngineState('running')
 
   return unsub
 }

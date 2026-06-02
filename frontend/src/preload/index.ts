@@ -27,6 +27,10 @@ export interface LoomApi {
   togglePet: (on: boolean) => Promise<boolean>
   resizePet: (spriteSize: number) => void
   listPets: () => Promise<PetMeta[]>
+  restartEngine: () => Promise<number>
+  onEngineStateChanged: (cb: (payload: { state: string; port: number | null }) => void) => void
+  /** Model config files changed on disk — renderer should refresh via model.list. */
+  onModelConfigChanged: (cb: () => void) => void
 }
 
 interface PetMeta {
@@ -71,4 +75,7 @@ contextBridge.exposeInMainWorld('loom', {
   togglePet: (on: boolean) => ipcRenderer.invoke('pet:toggle', on),
   resizePet: (spriteSize: number) => ipcRenderer.send('pet:resize', spriteSize),
   listPets: () => ipcRenderer.invoke('pets:list'),
+  restartEngine: () => ipcRenderer.invoke('engine:restart'),
+  onEngineStateChanged: (cb) => ipcRenderer.on('engine:state-changed', (_e, payload) => cb(payload)),
+  onModelConfigChanged: (cb: () => void) => ipcRenderer.on('model-config-changed', () => cb()),
 } satisfies LoomApi)

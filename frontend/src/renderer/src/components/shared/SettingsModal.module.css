@@ -13,10 +13,11 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overflow-y: auto;
 }
 
 .navLabel {
-  padding: 8px 12px;
+  padding: 8px 12px 4px;
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
@@ -24,15 +25,15 @@
   color: var(--text-muted);
 }
 
-.navFooter {
-  margin-top: auto;
-  padding: 8px 12px;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-muted);
-  border-top: 1px solid var(--border);
+.navGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.navGroup:last-of-type {
+  margin-bottom: 0;
 }
 
 .navIcon {
@@ -1221,7 +1222,7 @@
   background: rgba(255, 255, 255, 0.04);
   padding: 1px 6px;
   border-radius: 8px;
-  margin-left: auto;
+  flex-shrink: 0;
 }
 
 /* Plugin list */
@@ -1750,58 +1751,376 @@
 
 /* ─── Marketplace Tab ─── */
 
-.marketplacePlaceholder {
-  display: flex;
-  flex-direction: column;
+/* Installed summary badge next to count in header */
+.marketplaceInstalledSummary {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  padding: 48px 24px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.10);
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-left: 4px;
+}
+
+/* Kind toggle: Plugins / Skills */
+.marketplaceKindToggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  width: fit-content;
+}
+
+.marketplaceKindBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.marketplaceKindBtn:last-child {
+  border-right: none;
+}
+
+.marketplaceKindBtn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.marketplaceKindActive {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.08);
+}
+
+.marketplaceKindCount {
+  font-size: 10px;
+  color: inherit;
+  opacity: 0.6;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 0 5px;
+  border-radius: 6px;
+  min-width: 16px;
   text-align: center;
 }
 
-.marketplacePlaceholderIcon {
-  width: 80px;
-  height: 80px;
+/* Category filter pills */
+.marketplaceCategories {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(var(--accent-rgb), 0.08);
-  border-radius: 20px;
-  margin-bottom: 20px;
-  color: var(--accent);
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
 }
 
-.marketplacePlaceholderTitle {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text);
-  margin: 0 0 10px;
-}
-
-.marketplacePlaceholderDesc {
-  font-size: 12px;
+.marketplaceCategoryBtn {
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
   color: var(--text-muted);
-  line-height: 1.6;
-  max-width: 440px;
-  margin: 0 0 28px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  cursor: pointer;
+  transition: all 0.12s ease;
 }
 
-.marketplaceFeatureList {
+.marketplaceCategoryBtn:hover {
+  color: var(--text);
+  border-color: rgba(var(--accent-rgb), 0.3);
+}
+
+.marketplaceCategoryActive {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.10);
+  border-color: rgba(var(--accent-rgb), 0.25);
+}
+
+/* Card grid */
+.marketplaceGrid {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  align-items: flex-start;
 }
 
-.marketplaceFeature {
+/* Individual plugin card */
+.marketplaceCard {
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  transition: border-color 0.12s ease;
+}
+
+.marketplaceCard:hover {
+  border-color: rgba(var(--accent-rgb), 0.15);
+}
+
+.marketplaceCardInstalled {
+  border-color: rgba(34, 197, 94, 0.15);
+}
+
+.marketplaceCardHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 8px;
+}
+
+.marketplaceCardTitleRow {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
-  color: var(--text-secondary);
 }
 
-.marketplaceFeature svg {
+.marketplaceCardName {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.marketplaceCardVersion {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.marketplaceCardAuthor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.marketplaceCardDesc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+
+.marketplaceCardTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 12px;
+}
+
+.marketplaceCardCategory {
+  font-size: 10px;
+  font-weight: 500;
   color: var(--accent);
-  flex-shrink: 0;
+  background: rgba(var(--accent-rgb), 0.10);
+  padding: 2px 7px;
+  border-radius: 8px;
+}
+
+.marketplaceCardTag {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 2px 7px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+/* Card footer: status + actions */
+.marketplaceCardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.marketplaceCardMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.marketplaceInstalledBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.08);
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.marketplaceNotInstalled {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.marketplaceUpdateBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.10);
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.marketplaceCardActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.marketplaceCardLinkBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.marketplaceCardLinkBtn:hover {
+  color: var(--text);
+  border-color: rgba(var(--accent-rgb), 0.3);
+}
+
+.marketplaceInstallBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 0.12s ease;
+}
+
+.marketplaceInstallBtn:hover {
+  opacity: 0.85;
+}
+
+.marketplaceInstallBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.marketplaceUninstallBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.10);
+  border: 1px solid rgba(239, 68, 68, 0.20);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.marketplaceUninstallBtn:hover {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.marketplaceUninstallBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Empty state */
+.marketplaceEmptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  text-align: center;
+}
+
+.marketplaceEmptyIcon {
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(var(--accent-rgb), 0.06);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  color: var(--text-muted);
+}
+
+/* ── Responsive ── */
+
+@media (max-width: 640px) {
+  .layout {
+    flex-direction: column;
+  }
+
+  .nav {
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 10px 8px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .navGroup {
+    flex-direction: row;
+    margin-bottom: 0;
+    margin-right: 4px;
+  }
+
+  .navItem {
+    font-size: 11px;
+    padding: 6px 10px;
+    white-space: nowrap;
+  }
+
+  .navLabel {
+    display: none;
+  }
+
+  .navIcon {
+    margin-right: 4px;
+  }
+
+  .contentBody {
+    padding: 12px 16px 16px;
+  }
+
+  .contentHeader {
+    padding: 14px 16px 10px;
+  }
 }

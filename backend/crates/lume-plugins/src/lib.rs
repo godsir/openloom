@@ -103,7 +103,7 @@ pub struct PluginMcpServer {
     #[serde(default)]
     pub headers: std::collections::HashMap<String, String>,
     /// Environment variables to set for the MCP server process.
-    /// `${CLAUDE_PLUGIN_ROOT}` and `${PLUGIN_ROOT}` are auto-set for `.claude-plugin/plugin.json` manifests.
+    /// `${CLAUDE_PLUGIN_ROOT}`, `${LOOM_PLUGIN_ROOT}`, and `${PLUGIN_ROOT}` are auto-set for manifests.
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,
 }
@@ -134,9 +134,9 @@ impl PluginManager {
     /// Scan all known plugin directories.
     pub fn discover(&mut self, home_dir: &std::path::Path) -> Result<usize> {
         let search: &[(&str, &str)] = &[
-            ("~/.claude/plugins", "claude"),
-            ("~/.openclaw/plugins", "openclaw"),
             ("~/.loom/plugins", "loom"),
+            ("~/.openclaw/plugins", "openclaw"),
+            ("~/.claude/plugins", "claude"),
         ];
         for (label, source) in search {
             let path = home_dir.join(label.strip_prefix("~/").unwrap_or(label));
@@ -184,12 +184,13 @@ impl PluginManager {
                 if manifest.name.is_empty() {
                     manifest.name = dir_name.clone();
                 }
-                // Inject CLAUDE_PLUGIN_ROOT env into all MCP servers
+                // Inject CLAUDE_PLUGIN_ROOT / LOOM_PLUGIN_ROOT env into all MCP servers
                 let root = plugin_dir.to_string_lossy().to_string();
                 if let Some(ref mut servers) = manifest.mcp_servers {
                     for s in servers.iter_mut() {
                         s.env.entry("CLAUDE_PLUGIN_ROOT".into()).or_insert_with(|| root.clone());
                         s.env.entry("PLUGIN_ROOT".into()).or_insert_with(|| root.clone());
+                        s.env.entry("LOOM_PLUGIN_ROOT".into()).or_insert_with(|| root.clone());
                     }
                 }
                 self.plugins.push(DiscoveredPlugin {
@@ -262,12 +263,13 @@ impl PluginManager {
                 })
                 .collect()
         });
-        // Set CLAUDE_PLUGIN_ROOT env for all MCP servers in this plugin
+        // Set CLAUDE_PLUGIN_ROOT / LOOM_PLUGIN_ROOT env for all MCP servers in this plugin
         let plugin_root = dir.to_string_lossy().to_string();
         let mcp_servers = mcp_servers.map(|servers: Vec<PluginMcpServer>| {
             servers.into_iter().map(|mut s| {
                 s.env.insert("CLAUDE_PLUGIN_ROOT".into(), plugin_root.clone());
                 s.env.insert("PLUGIN_ROOT".into(), plugin_root.clone());
+                s.env.insert("LOOM_PLUGIN_ROOT".into(), plugin_root.clone());
                 s
             }).collect()
         });

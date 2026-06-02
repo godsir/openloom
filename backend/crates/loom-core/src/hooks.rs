@@ -273,9 +273,39 @@ impl HookRegistry {
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(timeout_secs),
             tokio::task::spawn_blocking(move || {
-                let output = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" })
-                    .arg(if cfg!(windows) { "/C" } else { "-c" })
-                    .arg(&cmd_owned)
+                // On Windows, .sh files are not natively executable. Try to find
+                // a bash interpreter; if not available, skip to avoid the
+                // "How do you want to open this file?" dialog.
+                #[cfg(windows)]
+                let (shell, shell_arg, command) = {
+                    let trimmed = cmd_owned.trim();
+                    // Check if the first token (the program) is a .sh file path
+                    let first_token = trimmed.split_whitespace().next().unwrap_or("");
+                    if first_token.ends_with(".sh") {
+                        // Try git bash, then wsl, then WSL default bash
+                        let bash = which_bash();
+                        if let Some(b) = bash {
+                            (b, "/c".to_string(), trimmed.to_string())
+                        } else {
+                            tracing::warn!(
+                                "skipping .sh hook — no bash interpreter found on Windows: {}",
+                                trimmed
+                            );
+                            return Err(anyhow::anyhow!(
+                                "Cannot run .sh scripts on Windows without Git Bash or WSL"
+                            ));
+                        }
+                    } else {
+                        ("cmd".to_string(), "/C".to_string(), trimmed.to_string())
+                    }
+                };
+                #[cfg(not(windows))]
+                let (shell, shell_arg, command) =
+                    ("sh".to_string(), "-c".to_string(), cmd_owned.clone());
+
+                let output = std::process::Command::new(&shell)
+                    .arg(&shell_arg)
+                    .arg(&command)
                     .output();
 
                 match output {
@@ -299,6 +329,23 @@ impl HookRegistry {
             )),
         }
     }
+}
+
+/// Try to locate a bash interpreter on Windows (Git Bash or WSL).
+#[cfg(windows)]
+fn which_bash() -> Option<String> {
+    // 1. Try Git Bash (common: C:\Program Files\Git\bin\bash.exe)
+    let git_bash = r"C:\Program Files\Git\bin\bash.exe";
+    if std::path::Path::new(git_bash).exists() {
+        return Some(git_bash.to_string());
+    }
+    // 2. Try WSL
+    if let Ok(output) = std::process::Command::new("where").arg("wsl.exe").output() {
+        if output.status.success() {
+            return Some("wsl.exe".to_string());
+        }
+    }
+    None
 }
 
 impl Default for HookRegistry {
@@ -395,7 +442,7 @@ mod tests {
 
     #[test]
     fn test_hook_config_no_hooks_returns_default() {
-        let config = HookConfig { hooks: vec![] };
+        let config = HookConfig { description: None, hooks: vec![] };
         assert!(config.hooks.is_empty());
     }
 
@@ -412,6 +459,7 @@ mod tests {
             }],
         };
         let config = HookConfig {
+            description: None,
             hooks: vec![entry],
         };
         assert_eq!(config.hooks.len(), 1);

@@ -1,62 +1,65 @@
-//! Credential persistence — saves API keys as permanent user environment variables.
-//! On Windows: uses `setx` to set user-level env var (survives restarts).
-//! On Unix: appends to ~/.profile for shell-level persistence.
+//! Credential persistence — stores API keys in a JSON file at
+//! <data_dir>/credentials.json. The in-memory key_map is the primary
+//! source of truth; the file is a secondary copy that survives restarts.
+//!
+//! No unsafe code. No environment variable manipulation.
 
-/// Set the env var for the current process (always instant).
-/// Spawns a background thread to persist via setx / ~/.profile.
-/// Returns the env var name that was set.
-pub fn save_credential(env_name: &str, api_key: &str) -> String {
-    unsafe {
-        std::env::set_var(env_name, api_key);
+use std::collections::HashMap;
+use std::path::Path;
+use tokio::sync::RwLock;
+
+/// Load persisted credentials from <data_dir>/credentials.json.
+/// Returns an empty map if the file does not exist or is malformed.
+pub async fn load_credentials(data_dir: &Path) -> HashMap<String, String> {
+    let path = data_dir.join("credentials.json");
+    let content = match tokio::fs::read_to_string(&path).await {
+        Ok(c) => c,
+        Err(_) => {
+            tracing::debug!(path = %path.display(), "no credentials file (fresh start)");
+            return HashMap::new();
+        }
+    };
+    match serde_json::from_str::<HashMap<String, String>>(&content) {
+        Ok(map) => {
+            tracing::info!(count = map.len(), path = %path.display(), "credentials loaded");
+            map
+        }
+        Err(e) => {
+            tracing::warn!(path = %path.display(), error = %e, "credentials file corrupt, starting empty");
+            HashMap::new()
+        }
     }
+}
 
-    let name = env_name.to_string();
-    let key = api_key.to_string();
-    let ret = name.clone();
+/// Persist the full key map to <data_dir>/credentials.json.
+pub async fn persist_credentials(data_dir: &Path, map: &HashMap<String, String>) {
+    let _ = tokio::fs::create_dir_all(data_dir).await;
+    let path = data_dir.join("credentials.json");
+    let content = match serde_json::to_string_pretty(map) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to serialize credentials");
+            return;
+        }
+    };
+    if let Err(e) = tokio::fs::write(&path, &content).await {
+        tracing::error!(path = %path.display(), error = %e, "failed to write credentials file");
+    } else {
+        tracing::info!(count = map.len(), path = %path.display(), "credentials persisted");
+    }
+}
 
-    #[cfg(target_os = "windows")]
+/// Save a single API key into the in-memory key_store and persist to disk.
+/// This is the main entry point called from dispatch handlers.
+pub async fn save_key(
+    data_dir: &Path,
+    key_store: &RwLock<HashMap<String, String>>,
+    env_name: &str,
+    api_key: &str,
+) {
     {
-        std::thread::spawn(move || {
-            match std::process::Command::new("cmd")
-                .args(["/c", "setx", &name, &key])
-                .output()
-            {
-                Ok(o) if o.status.success() => {
-                    tracing::info!(%name, "credential persisted via setx")
-                }
-                Ok(o) => {
-                    tracing::warn!(%name, stdout=%String::from_utf8_lossy(&o.stdout).trim(), stderr=%String::from_utf8_lossy(&o.stderr).trim(), "setx failed");
-                }
-                Err(e) => tracing::warn!(%name, error=%e, "failed to run setx"),
-            }
-        });
+        let mut map = key_store.write().await;
+        map.insert(env_name.to_string(), api_key.to_string());
+        persist_credentials(data_dir, &map).await;
     }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::thread::spawn(move || {
-            if let Err(e) = (|| -> anyhow::Result<()> {
-                let home = std::env::var("HOME").unwrap_or_default();
-                let profile = std::path::PathBuf::from(&home).join(".profile");
-                let line = format!("\n# openLoom credential\nexport {}=\"{}\"\n", name, key);
-                let mut c = std::fs::read_to_string(&profile).unwrap_or_default();
-                if let Some(s) = c.find(&format!("export {}=", name)) {
-                    if let Some(e) = c[s..].find('\n') {
-                        c.replace_range(s..s + e + 1, &line);
-                    } else {
-                        c.replace_range(s.., &line);
-                    }
-                } else {
-                    c.push_str(&line);
-                }
-                std::fs::write(&profile, &c)?;
-                tracing::info!(%name, "credential persisted to ~/.profile");
-                Ok(())
-            })() {
-                tracing::warn!(%name, error=%e, "failed to persist credential");
-            }
-        });
-    }
-
-    ret
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
+import { useStore } from '../../stores'
 import Select from './Select'
 import styles from './VisionConfig.module.css'
 
@@ -33,17 +34,14 @@ function sortModels(models: ModelListItem[]): ModelListItem[] {
 export default function VisionConfigSection() {
   const [enabled, setEnabled] = useState(false)
   const [visionModel, setVisionModel] = useState('')
-  const [models, setModels] = useState<ModelListItem[]>([])
+  // Subscribe to the global model list kept in sync by ModelConfigPanel
+  const models = useStore(s => s.models) as ModelListItem[]
 
   useEffect(() => {
-    Promise.all([
-      loomRpc<{ enabled: boolean; model: string | null }>('config.get_vision'),
-      loomRpc<{ models: ModelListItem[] }>('model.list'),
-    ])
-      .then(([visionConfig, modelResult]) => {
-        setEnabled(visionConfig.enabled ?? false)
-        setVisionModel(visionConfig.model ?? '')
-        setModels(modelResult.models || [])
+    loomRpc<{ enabled: boolean; model: string | null }>('config.get_vision')
+      .then(vc => {
+        setEnabled(vc.enabled ?? false)
+        setVisionModel(vc.model ?? '')
       })
       .catch(() => {})
   }, [])

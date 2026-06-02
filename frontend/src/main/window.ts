@@ -1,4 +1,4 @@
-import { BrowserWindow, screen, app } from 'electron'
+import { BrowserWindow, screen, app, shell } from 'electron'
 import { join } from 'path'
 
 let mainWindow: BrowserWindow | null = null
@@ -39,6 +39,20 @@ export function createMainWindow(port: number): BrowserWindow {
 
   mainWindow.on('closed', () => {
     mainWindow = null
+  })
+
+  // Prevent any link click from hijacking the app window
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    // Allow only the initial load; block all other navigations
+    const isInitialLoad = mainWindow?.webContents.getURL() === '' || mainWindow?.webContents.getURL() === 'about:blank'
+    if (!isInitialLoad) {
+      event.preventDefault()
+      shell.openExternal(url)
+    }
   })
 
   // Inject port and isPackaged AFTER page loads (dev mode loadURL resets pre-load context)

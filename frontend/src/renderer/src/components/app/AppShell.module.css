@@ -123,6 +123,70 @@
   50% { opacity: 0.3; }
 }
 
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Crash / disconnect banner */
+.crashBanner {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border-radius: var(--r-lg);
+  background: #1a1018;
+  border: 1px solid #4a1a3a;
+  color: var(--text-muted);
+  font-size: 13px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 50, 100, 0.08);
+  z-index: 20;
+  user-select: none;
+}
+
+.crashBanner svg {
+  color: #f43f5e;
+  flex-shrink: 0;
+}
+
+.crashMessage {
+  white-space: nowrap;
+}
+
+.crashBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--r-md);
+  border: 1px solid #4a1a3a;
+  background: rgba(244, 63, 94, 0.12);
+  color: #f43f5e;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.crashBtn:hover:not(:disabled) {
+  background: rgba(244, 63, 94, 0.22);
+  border-color: #6b2449;
+}
+
+.crashBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
 /* Body */
 .body {
   display: flex;

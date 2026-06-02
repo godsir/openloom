@@ -31,10 +31,16 @@ function doSend<T>(method: string, params: Record<string, unknown>): Promise<T> 
   }
 
   return new Promise((resolve, reject) => {
-    const timeout = method === 'chat.send' ? 180000 : 30000
+    // chat.send can run for many minutes (agent loops up to 100 iterations).
+    // Use a very long timeout; keep the pending entry so late responses still resolve.
+    const timeout = method === 'chat.send' ? 1_800_000 : 30_000 // 30 min
     const timer = setTimeout(() => {
-      pending.delete(id)
-      reject(new Error(`RPC timeout: ${method}`))
+      // Don't delete from pending — if the response eventually arrives, deliver it
+      const entry = pending.get(id)
+      if (entry) {
+        pending.delete(id)
+        entry.reject(new Error(`RPC timeout: ${method}`))
+      }
     }, timeout)
 
     pending.set(id, {

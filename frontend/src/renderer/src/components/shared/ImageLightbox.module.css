@@ -6,6 +6,7 @@
   align-items: center;
   justify-content: center;
   animation: fadeIn 0.15s ease;
+  overflow: hidden;
 }
 
 .backdrop {
@@ -23,30 +24,81 @@
   border-radius: var(--r-md);
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
   z-index: 1;
+  transform-origin: center center;
+  transition: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
-.closeBtn {
+.toolbar {
   position: absolute;
   top: 20px;
   right: 20px;
+  display: flex;
+  gap: 6px;
+  z-index: 3;
+}
+
+.toolBtn {
   width: 36px;
   height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 18px;
+  font-weight: 500;
   color: rgba(255, 255, 255, 0.7);
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--r-md);
   cursor: pointer;
   transition: all 0.15s ease;
-  z-index: 2;
+  font-family: inherit;
+}
+
+.toolBtn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.closeBtn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 500;
+  font-family: inherit;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
 .closeBtn:hover {
   color: #fff;
   background: rgba(255, 255, 255, 0.14);
+}
+
+.hint {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.3);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.errorMsg {
+  position: relative;
+  z-index: 1;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 14px;
 }
 
 @keyframes fadeIn {

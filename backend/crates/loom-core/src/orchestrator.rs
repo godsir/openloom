@@ -1,6 +1,7 @@
 //! Top-level orchestrator — wires AgentPool, ToolRegistry, McpClient,
 //! inference, and the agent loop into a single entry point.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -12,7 +13,7 @@ use loom_memory::{
 };
 use loom_security::merge_multi_permissions;
 use loom_types::{
-    AgentConfig, CompletionRequest, ContentPart, Message, Role, SessionId, SkillPermissions,
+    AgentConfig, CompletionRequest, ContentPart, Message, ModelBackend, Role, SessionId, SkillPermissions,
     StreamDelta,
 };
 use lume_lsp::LspClient;
@@ -49,6 +50,10 @@ pub struct Orchestrator {
     model_switch_lock: tokio::sync::Mutex<()>,
     /// Compiled hook registry from plugin hook configs.
     hook_registry: Arc<RwLock<HookRegistry>>,
+    /// In-memory API key store shared with the server's AppState.
+    /// Maps env-var names (e.g. "OPENAI_API_KEY") to their values.
+    /// Set via set_key_store() after construction, before any cloud client is built.
+    key_store: Arc<RwLock<HashMap<String, String>>>,
     data_dir: PathBuf,
 }
 
@@ -336,6 +341,7 @@ impl Orchestrator {
             active_model_name: Arc::new(RwLock::new(None)),
             model_switch_lock: tokio::sync::Mutex::new(()),
             hook_registry,
+            key_store: Arc::new(RwLock::new(HashMap::new())),
             data_dir,
         }
     }
@@ -367,6 +373,77 @@ impl Orchestrator {
     /// Set the cloud client (call after configuring a model).
     pub async fn set_cloud_client(&self, client: Arc<dyn CloudClient>) {
         *self.cloud_client.write().await = Some(client);
+    }
+
+    /// Set the API key store shared with the server layer.
+    /// Must be called before any cloud client is built (i.e., before
+    /// load_model_configs or model.switch).
+    pub async fn set_key_store(
+        &self,
+        ks: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
+    ) {
+        let mut target = self.key_store.write().await;
+        let source = ks.read().await;
+        target.clear();
+        for (k, v) in source.iter() {
+            target.insert(k.clone(), v.clone());
+        }
+        tracing::info!(count = target.len(), "key_store populated");
+    }
+
+    /// Resolve an API key from the key_store given an api_key_env hint.
+    /// 1. If api_key_env matches a key in the store, return its value.
+    /// 2. If api_key_env doesn't look like an env var name (not ALL_CAPS_UNDERSCORE),
+    ///    treat it as a literal key value.
+    /// 3. Fall back to well-known backend env var names.
+
+    /// Get a clone of the shared key_store Arc for direct access.
+    pub fn key_store_arc(&self) -> Arc<RwLock<HashMap<String, String>>> {
+        self.key_store.clone()
+    }
+
+    /// Returns the data directory path.
+    pub fn data_dir_path(&self) -> &std::path::Path {
+        &self.data_dir
+    }
+
+    pub async fn resolve_api_key(
+        &self,
+        api_key_env: Option<&str>,
+        backend: &ModelBackend,
+    ) -> Option<String> {
+        let guard = self.key_store.read().await;
+        // 1. Try env var name from config
+        if let Some(raw) = api_key_env {
+            if let Some(val) = guard.get(raw) {
+                return Some(val.clone());
+            }
+            // Only treat as literal key if it doesn't look like an env var name
+            let looks_like_env_var = !raw.is_empty()
+                && raw
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+            if !looks_like_env_var && !raw.is_empty() {
+                return Some(raw.to_string());
+            }
+            // Fall back to OS environment variable
+            if let Ok(val) = std::env::var(raw) {
+                if !val.is_empty() {
+                    return Some(val);
+                }
+            }
+        }
+        // 3. Fallback to well-known backend env vars
+        let auto_env = match backend {
+            ModelBackend::DeepSeek => "DEEPSEEK_API_KEY",
+            ModelBackend::OpenAI => "OPENAI_API_KEY",
+            ModelBackend::Anthropic => "ANTHROPIC_API_KEY",
+            _ => "OPENLOOM_API_KEY",
+        };
+        guard
+            .get(auto_env)
+            .cloned()
+            .or_else(|| std::env::var(auto_env).ok().filter(|v| !v.is_empty()))
     }
 
     /// Get a reference to the cloud client for direct access.
@@ -978,6 +1055,14 @@ impl Orchestrator {
         }
     }
 
+    /// Persist a session-agent binding to the memory store.
+    pub async fn bind_agent_persisted(&self, session_id: &str, agent_config_name: &str) {
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            let _ = s.save_session_agent_name(session_id, agent_config_name).await;
+        }
+    }
+
     /// Query token usage summary for a time range.
     pub async fn token_summary(
         &self,
@@ -1508,41 +1593,10 @@ impl Orchestrator {
                 }
             }
         } else {
-            // Cloud provider — resolve API key:
-            // 1. If api_key_env is set, try it as an env-var name first.
-            // 2. Only use the raw value as a literal key if it doesn't look like
-            //    an env var name (env var names are ALL_CAPS_WITH_UNDERSCORES).
-            //    This prevents "BAILIAN_API_KEY" from being sent as the key itself.
-            // 3. Fallback to well-known backend env vars.
-            let api_key = config
-                .api_key_env
-                .as_deref()
-                .and_then(|raw| {
-                    // Try as env var name first
-                    if let Ok(val) = std::env::var(raw) {
-                        return Some(val);
-                    }
-                    // Only use as literal key if it looks like an actual key,
-                    // not an env var name (ALL_CAPS_WITH_UNDERSCORES_AND_DIGITS)
-                    let looks_like_env_var = !raw.is_empty()
-                        && raw
-                            .chars()
-                            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
-                    if !looks_like_env_var && !raw.is_empty() {
-                        Some(raw.to_string())
-                    } else {
-                        None
-                    }
-                })
-                .or_else(|| {
-                    let auto_env = match config.backend {
-                        loom_types::ModelBackend::DeepSeek => "DEEPSEEK_API_KEY",
-                        loom_types::ModelBackend::OpenAI => "OPENAI_API_KEY",
-                        loom_types::ModelBackend::Anthropic => "ANTHROPIC_API_KEY",
-                        _ => "OPENLOOM_API_KEY",
-                    };
-                    std::env::var(auto_env).ok()
-                });
+            // Cloud provider — resolve API key from the in-memory key_store.
+            let api_key = self
+                .resolve_api_key(config.api_key_env.as_deref(), &config.backend)
+                .await;
             let model_id = model.clone();
             match api_key {
                 Some(key) => {
@@ -1622,30 +1676,9 @@ impl Orchestrator {
                 }
             }
         } else {
-            let api_key = config
-                .api_key_env
-                .as_deref()
-                .and_then(|raw| {
-                    if let Ok(val) = std::env::var(raw) {
-                        return Some(val);
-                    }
-                    let looks_like_env_var = !raw.is_empty()
-                        && raw.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
-                    if !looks_like_env_var && !raw.is_empty() {
-                        Some(raw.to_string())
-                    } else {
-                        None
-                    }
-                })
-                .or_else(|| {
-                    let auto_env = match config.backend {
-                        loom_types::ModelBackend::DeepSeek => "DEEPSEEK_API_KEY",
-                        loom_types::ModelBackend::OpenAI => "OPENAI_API_KEY",
-                        loom_types::ModelBackend::Anthropic => "ANTHROPIC_API_KEY",
-                        _ => "OPENLOOM_API_KEY",
-                    };
-                    std::env::var(auto_env).ok()
-                });
+            let api_key = self
+                .resolve_api_key(config.api_key_env.as_deref(), &config.backend)
+                .await;
 
             match api_key {
                 Some(key) => {
@@ -1892,6 +1925,8 @@ impl Orchestrator {
             hook_registry: Some(self.hook_registry.clone()),
             session_id: session_id.to_string(),
             agent_id: agent_id.to_string(),
+            key_store: Some(self.key_store.clone()),
+            loom_dir: Some(self.data_dir_path().to_path_buf()),
             ..Default::default()
         };
         tracing::info!(session_id, "[orchestrator] step: loop_config built");
@@ -2762,6 +2797,8 @@ impl Orchestrator {
             hook_registry: Some(self.hook_registry.clone()),
             session_id: session_id.to_string(),
             agent_id: agent_id.to_string(),
+            key_store: Some(self.key_store.clone()),
+            loom_dir: Some(self.data_dir_path().to_path_buf()),
             ..Default::default()
         };
 
@@ -3030,6 +3067,58 @@ impl Orchestrator {
         }
         Ok(killed)
     }
+    /// Graceful shutdown: cancel all inflight agents, drain with 10s timeout,
+    /// close SQLite memory store, then drop MCP connections.
+    pub async fn shutdown(&self) {
+        // 1. Cancel all non-terminal agents so their loops exit
+        let agents = self.pool.list().await;
+        for a in &agents {
+            if !a.status.is_terminal() {
+                tracing::info!(
+                    agent_id = %a.id,
+                    session_id = %a.session_id,
+                    status = ?a.status,
+                    "shutdown: cancelling inflight agent"
+                );
+                if let Ok(token) = self.pool.cancel_token(&a.id).await {
+                    token.cancel();
+                }
+            }
+        }
+
+        // 2. Wait up to 10 seconds for agents to reach terminal state
+        let drain_timeout = tokio::time::Duration::from_secs(10);
+        let drain_start = tokio::time::Instant::now();
+        loop {
+            let agents = self.pool.list().await;
+            let inflight: Vec<_> = agents.iter().filter(|a| !a.status.is_terminal()).collect();
+            if inflight.is_empty() {
+                tracing::info!("shutdown: all agents drained");
+                break;
+            }
+            if drain_start.elapsed() >= drain_timeout {
+                tracing::warn!(
+                    remaining = inflight.len(),
+                    "shutdown: drain timeout — {} agents still inflight, forcing shutdown",
+                    inflight.len()
+                );
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+
+        // 3. Close SQLite by dropping the memory store
+        {
+            let mut store = self.memory_store.write().await;
+            if store.is_some() {
+                tracing::info!("shutdown: closing memory store (SQLite)");
+                *store = None;
+            }
+        }
+
+        tracing::info!("shutdown: complete");
+    }
+
     pub async fn list_agents(&self) -> Vec<AgentSummary> {
         self.pool.list().await
     }

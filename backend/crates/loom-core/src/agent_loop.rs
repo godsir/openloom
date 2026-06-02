@@ -8,6 +8,9 @@ use anyhow::Result;
 use loom_context::{AssembleOptions, ContextAssembler};
 use loom_inference::engine::CloudClient;
 use loom_security::check_permission;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use loom_types::SkillPermissions;
 use loom_types::{CompletionRequest, CompletionResponse, ContentPart, Message, Role, StreamDelta, ToolDefinition};
 use lume_plugins::hooks::HookEvent;
@@ -80,6 +83,10 @@ pub struct AgentLoopConfig {
     pub session_id: String,
     /// Agent ID for hook context.
     pub agent_id: String,
+    /// In-memory API key store for resolving API keys in auxiliary models (vision, etc.).
+    pub key_store: Option<Arc<RwLock<HashMap<String, String>>>>,
+    /// Base data directory (~/.loom) for resolving file-based resources.
+    pub loom_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for AgentLoopConfig {
@@ -135,6 +142,8 @@ impl Default for AgentLoopConfig {
             hook_registry: None,
             session_id: String::new(),
             agent_id: String::new(),
+            key_store: None,
+            loom_dir: None,
         }
     }
 }
@@ -432,14 +441,20 @@ async fn run_agent_turn_inner(
             let vision_cfg = crate::vision::load_vision_config();
             if vision_cfg.enabled {
                 if let Some(vision_model) = &vision_cfg.model {
-                    let images = crate::vision::extract_images(&messages);
+                    // Resolve ImageRef back to base64 for vision model
+                    let images = crate::vision::extract_images_from_messages(
+                        &messages,
+                        config.loom_dir.as_deref(),
+                    );
                     if !images.is_empty() {
                         let model_configs = config.model_configs.clone();
+                        let ks = config.key_store.clone().unwrap_or_else(|| Arc::new(RwLock::new(HashMap::new())));
                         let vision_fut = crate::vision::prepare_vision_context(
                             &images,
                             user_message,
                             vision_model,
                             &model_configs,
+                            &ks,
                             None, // no progress reporting in non-streaming
                         );
                         let vision_result =
@@ -1071,7 +1086,11 @@ async fn run_agent_turn_streaming_inner(
             let vision_cfg = crate::vision::load_vision_config();
             if vision_cfg.enabled {
                 if let Some(vision_model) = &vision_cfg.model {
-                    let images = crate::vision::extract_images(&messages);
+                    // Resolve ImageRef back to base64 for vision model
+                    let images = crate::vision::extract_images_from_messages(
+                        &messages,
+                        config.loom_dir.as_deref(),
+                    );
                     if !images.is_empty() {
                         let _ = delta_tx
                             .send(StreamDelta::Text("\x02VISION_START\x02".into()))
@@ -1102,11 +1121,13 @@ async fn run_agent_turn_streaming_inner(
                             }
                         });
 
+                        let ks = config.key_store.clone().unwrap_or_else(|| Arc::new(RwLock::new(HashMap::new())));
                         let vision_fut = crate::vision::prepare_vision_context(
                             &images,
                             &user_message,
                             &vision_model,
                             &model_configs,
+                            &ks,
                             Some(progress_tx),
                         );
                         let vision_result =

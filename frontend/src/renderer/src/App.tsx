@@ -8,6 +8,7 @@ import ErrorBoundary from './components/shared/ErrorBoundary'
 import ToastContainer from './components/shared/ToastContainer'
 import ConfirmDialog from './components/shared/ConfirmDialog'
 import { bootstrapApp } from './services/bootstrap'
+import { handleModelsChanged } from './services/app-event-actions'
 import { useStore } from './stores'
 import styles from './App.module.css'
 
@@ -92,6 +93,18 @@ export default function App() {
     })
     window.loom.onUpdateError((msg: string) => {
       useStore.getState().onAutoUpdateError(msg)
+    })
+
+    // Listen for engine state changes from main process
+    window.loom.onEngineStateChanged((payload) => {
+      useStore.getState().setEngineState(payload.state as 'running' | 'stopped' | 'starting')
+      if (payload.state === 'running' && payload.port != null) {
+        useStore.getState().setPort(payload.port)
+      }
+    })
+    // Hot-reload model config when config directory files change on disk
+    window.loom.onModelConfigChanged(() => {
+      handleModelsChanged()
     })
   }, [])
 
