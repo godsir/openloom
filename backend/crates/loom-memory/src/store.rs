@@ -590,7 +590,7 @@ impl<'a> ModelConfigStore<'a> {
 // ============================================================================
 
 /// Wire shape for persisted MCP server rows. The store is intentionally type-
-/// agnostic about `McpServerConfig` (which lives in `lume-mcp`) — callers
+/// agnostic about `McpServerConfig` (which lives in `loom-mcp`) — callers
 /// serialise the live config into this shape and back, keeping `loom-memory`
 /// free of higher-level crate deps.
 #[derive(Debug, Clone)]

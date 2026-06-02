@@ -1,16 +1,16 @@
 [package]
 name = "loom-server"
-version = "0.2.17"
+version = "0.2.18"
 edition = "2024"
 description = "HTTP/WebSocket server for openLoom v2 — Axum routes, JSON-RPC dispatch, SSE"
 
 [dependencies]
 loom-types = { path = "../loom-types" }
 loom-core = { path = "../loom-core" }
-lume-mcp = { path = "../lume-mcp" }
-lume-skills = { path = "../lume-skills" }
-lume-plugins = { path = "../lume-plugins" }
-lume-marketplace = { path = "../lume-marketplace" }
+loom-mcp = { path = "../loom-mcp" }
+loom-skills = { path = "../loom-skills" }
+loom-plugins = { path = "../loom-plugins" }
+loom-marketplace = { path = "../loom-marketplace" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "signal"] }
 tokio-util = { workspace = true }
 anyhow = "1"
@@ -24,5 +24,7 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["cors"] }
 futures = "0.3"
 reqwest = { version = "0.12", features = ["json"] }
+zip = "2"
+urlencoding = "2"
 dirs = "6"
 base64 = { workspace = true }

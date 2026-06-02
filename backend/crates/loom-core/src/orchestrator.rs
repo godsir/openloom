@@ -16,9 +16,9 @@ use loom_types::{
     AgentConfig, CompletionRequest, ContentPart, Message, ModelBackend, Role, SessionId, SkillPermissions,
     StreamDelta,
 };
-use lume_lsp::LspClient;
-use lume_mcp::McpClient;
-use lume_skills::SkillPermissionConfig;
+use loom_lsp::LspClient;
+use loom_mcp::McpClient;
+use loom_skills::SkillPermissionConfig;
 use tokio::sync::{RwLock, mpsc};
 
 use crate::agent::AgentStatus;
@@ -39,7 +39,7 @@ pub struct Orchestrator {
     cloud_client: Arc<RwLock<Option<Arc<dyn CloudClient>>>>,
     loop_config: Arc<RwLock<AgentLoopConfig>>,
     session_histories: Arc<RwLock<std::collections::HashMap<String, Vec<Message>>>>,
-    skill_state: Arc<RwLock<lume_skills::SkillState>>,
+    skill_state: Arc<RwLock<loom_skills::SkillState>>,
     persona_context: Arc<RwLock<String>>,
     memory_store: Arc<RwLock<Option<Box<dyn crate::MemoryStore>>>>,
     agent_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::AgentConfig>>>,
@@ -54,6 +54,8 @@ pub struct Orchestrator {
     /// Maps env-var names (e.g. "OPENAI_API_KEY") to their values.
     /// Set via set_key_store() after construction, before any cloud client is built.
     key_store: Arc<RwLock<HashMap<String, String>>>,
+    /// Pending permission approvals for "ask" mode (call_id → oneshot sender).
+    pending_permissions: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
     data_dir: PathBuf,
 }
 
@@ -119,10 +121,10 @@ pub trait MemoryStore: Send + Sync {
     // to re-enter command/URL/headers/etc. every time the backend restarts.
     async fn save_mcp_server(
         &self,
-        config: &lume_mcp::McpServerConfig,
+        config: &loom_mcp::McpServerConfig,
         autostart: bool,
     ) -> Result<()>;
-    async fn list_mcp_servers(&self) -> Result<Vec<(lume_mcp::McpServerConfig, bool)>>;
+    async fn list_mcp_servers(&self) -> Result<Vec<(loom_mcp::McpServerConfig, bool)>>;
     async fn delete_mcp_server(&self, name: &str) -> Result<()>;
     // Knowledge graph read
     async fn query_kg_context(&self, entity_names: &[&str], limit: usize, scope: &str) -> Result<String>;
@@ -307,7 +309,7 @@ impl Orchestrator {
         let _ = registry.register(Arc::new(crate::builtin_tools::ContentSearchTool));
         let _ = registry.register(Arc::new(crate::builtin_tools::FileDeleteTool));
 
-        let skill_state = Arc::new(RwLock::new(lume_skills::SkillState::default()));
+        let skill_state = Arc::new(RwLock::new(loom_skills::SkillState::default()));
         let _ = registry.register(Arc::new(crate::builtin_tools::UseSkillTool {
             skill_state: skill_state.clone(),
         }));
@@ -342,6 +344,7 @@ impl Orchestrator {
             model_switch_lock: tokio::sync::Mutex::new(()),
             hook_registry,
             key_store: Arc::new(RwLock::new(HashMap::new())),
+            pending_permissions: Arc::new(RwLock::new(HashMap::new())),
             data_dir,
         }
     }
@@ -463,7 +466,7 @@ impl Orchestrator {
     // === MCP ===
 
     /// Connect to an MCP server and register its tools in the registry.
-    pub async fn connect_mcp_server(&self, config: lume_mcp::McpServerConfig) -> Result<String> {
+    pub async fn connect_mcp_server(&self, config: loom_mcp::McpServerConfig) -> Result<String> {
         let name = self.mcp_client.connect(config).await?;
         // Register MCP tools into the tool registry
         let tools = self.mcp_client.server_tools(&name).await?;
@@ -558,7 +561,7 @@ impl Orchestrator {
     /// Persist (or upsert) an MCP server config. Does not touch live state.
     pub async fn save_mcp_server(
         &self,
-        config: &lume_mcp::McpServerConfig,
+        config: &loom_mcp::McpServerConfig,
         autostart: bool,
     ) -> Result<()> {
         if let Some(ref store) = *self.memory_store.read().await {
@@ -568,7 +571,7 @@ impl Orchestrator {
     }
 
     /// List persisted MCP server configs + autostart flag.
-    pub async fn list_saved_mcp_servers(&self) -> Result<Vec<(lume_mcp::McpServerConfig, bool)>> {
+    pub async fn list_saved_mcp_servers(&self) -> Result<Vec<(loom_mcp::McpServerConfig, bool)>> {
         if let Some(ref store) = *self.memory_store.read().await {
             return store.list_mcp_servers().await;
         }
@@ -632,7 +635,7 @@ impl Orchestrator {
     // === Skills / Persona / Memory ===
 
     /// Atomically replace all skill state (context, bodies, permissions, summaries).
-    pub async fn set_skills(&self, state: lume_skills::SkillState) {
+    pub async fn set_skills(&self, state: loom_skills::SkillState) {
         *self.skill_state.write().await = state;
     }
 
@@ -642,7 +645,7 @@ impl Orchestrator {
     }
 
     /// Return lightweight summaries for all cached skills (for `skills.list` RPC).
-    pub async fn get_skill_summaries(&self) -> Vec<lume_skills::SkillSummary> {
+    pub async fn get_skill_summaries(&self) -> Vec<loom_skills::SkillSummary> {
         self.skill_state.read().await.summaries.clone()
     }
 
@@ -655,13 +658,13 @@ impl Orchestrator {
 
     /// Load hook configs from discovered plugins into the runtime registry.
     /// Called once at startup after PluginManager discovery.
-    pub async fn load_hooks_from_plugins(&self, plugin_manager: &lume_plugins::PluginManager) {
+    pub async fn load_hooks_from_plugins(&self, plugin_manager: &loom_plugins::PluginManager) {
         let registry = HookRegistry::load_from_plugins(plugin_manager).await;
         *self.hook_registry.write().await = registry;
     }
 
     /// Reload the hook registry from plugins (when plugins are installed/removed).
-    pub async fn reload_hooks(&self, plugin_manager: &lume_plugins::PluginManager) {
+    pub async fn reload_hooks(&self, plugin_manager: &loom_plugins::PluginManager) {
         self.hook_registry
             .read()
             .await
@@ -678,7 +681,7 @@ impl Orchestrator {
     /// Returns a summary of what happened. Never panics.
     pub async fn fire_hooks(
         &self,
-        event: &lume_plugins::hooks::HookEvent,
+        event: &loom_plugins::hooks::HookEvent,
         subject: Option<&str>,
         ctx: &mut HookContext,
     ) -> crate::hooks::HookFireResult {
@@ -1714,6 +1717,7 @@ impl Orchestrator {
             None,
             vec![],
             vec![],
+            "operate",
         )
         .await
     }
@@ -1816,6 +1820,7 @@ impl Orchestrator {
         thinking_budget: Option<usize>,
         attached_images: Vec<ContentPart>,
         selected_skills: Vec<String>,
+        permission_mode: &str,
     ) -> Result<TurnResult> {
         tracing::info!(
             session_id,
@@ -1884,12 +1889,26 @@ impl Orchestrator {
             )
             .await;
 
-        // Build default permissions: start with the old allow-everything baseline,
-        // then merge in any selected skill permissions (most restrictive wins).
-        let base_permissions = SkillPermissions {
-            shell: true,
-            fs_write: Some(vec![]),
-            ..Default::default()
+        // Build default permissions based on permission_mode:
+        // - "operate": allow everything (legacy behavior)
+        // - "ask": allow everything but agent loop will prompt for medium/high risk
+        // - "read_only": deny all writes and shell, allow reads only
+        tracing::info!(
+            session_id,
+            permission_mode,
+            "building base_permissions from permission_mode"
+        );
+        let base_permissions = match permission_mode {
+            "read_only" => SkillPermissions {
+                shell: false,
+                fs_write: None,
+                ..Default::default()
+            },
+            _ => SkillPermissions {
+                shell: true,
+                fs_write: Some(vec![]),
+                ..Default::default()
+            },
         };
         let default_permissions = if merged_skill_permissions.is_empty() {
             base_permissions
@@ -1927,6 +1946,9 @@ impl Orchestrator {
             agent_id: agent_id.to_string(),
             key_store: Some(self.key_store.clone()),
             loom_dir: Some(self.data_dir_path().to_path_buf()),
+            permission_mode: permission_mode.to_string(),
+            event_bus: Some(self.pool.event_bus().clone()),
+            pending_permissions: Some(self.pending_permissions.clone()),
             ..Default::default()
         };
         tracing::info!(session_id, "[orchestrator] step: loop_config built");
@@ -1967,7 +1989,7 @@ impl Orchestrator {
                 .read()
                 .await
                 .fire(
-                    &lume_plugins::hooks::HookEvent::SessionStart,
+                    &loom_plugins::hooks::HookEvent::SessionStart,
                     None,
                     &mut hook_ctx,
                 )
@@ -1987,7 +2009,7 @@ impl Orchestrator {
                 .read()
                 .await
                 .fire(
-                    &lume_plugins::hooks::HookEvent::UserPromptSubmit,
+                    &loom_plugins::hooks::HookEvent::UserPromptSubmit,
                     None,
                     &mut hook_ctx,
                 )
@@ -2053,6 +2075,13 @@ impl Orchestrator {
             let mut announced_tools: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
             let mut delta_seq: u64 = 0;
+            // Anthropic sends Usage split across message_start (input_tokens only) and
+            // message_delta (output_tokens only).  Accumulate partials until we have a
+            // complete picture, otherwise the front-end ContextRing flashes between
+            // prompt-only and completion-only states.
+            let mut partial_prompt: u64 = 0;
+            let mut partial_cache_read: u64 = 0;
+            let mut usage_pending = false;
 
             while let Some(delta) = delta_rx.recv().await {
                 match delta {
@@ -2131,13 +2160,51 @@ impl Orchestrator {
                         cache_write_tokens,
                         ..
                     } => {
+                        // Merge Anthropic split-usage deltas (message_start + message_delta).
+                        // OpenAI / local engines send complete usage in a single delta.
+                        let (p_tokens, c_tokens, cr_tokens, cw_tokens) =
+                            if prompt_tokens > 0 && completion_tokens == 0 {
+                                // Anthropic message_start — store partial, don't publish yet
+                                partial_prompt = prompt_tokens;
+                                partial_cache_read = cache_read_tokens;
+                                usage_pending = true;
+                                tracing::debug!(
+                                    prompt = prompt_tokens,
+                                    "[token-stats] partial usage (message_start), waiting for message_delta"
+                                );
+                                continue;
+                            } else if prompt_tokens == 0 && completion_tokens > 0 && usage_pending {
+                                // Anthropic message_delta — merge with stored partial
+                                usage_pending = false;
+                                let merged = (
+                                    partial_prompt,
+                                    completion_tokens,
+                                    partial_cache_read,
+                                    cache_write_tokens,
+                                );
+                                tracing::debug!(
+                                    prompt = partial_prompt,
+                                    completion = completion_tokens,
+                                    "[token-stats] merged partial usage (message_delta)"
+                                );
+                                merged
+                            } else {
+                                // OpenAI / local engine complete delta, or no pending partial
+                                usage_pending = false;
+                                (
+                                    prompt_tokens,
+                                    completion_tokens,
+                                    cache_read_tokens,
+                                    cache_write_tokens,
+                                )
+                            };
                         let _ = event_bus.publish(AgentEvent::TokenUsage {
                             agent_id: forward_agent_id.clone(),
                             session_id: forward_session_id.clone(),
                             model: usage_model.clone(),
-                            prompt_tokens: prompt_tokens as usize,
-                            completion_tokens: completion_tokens as usize,
-                            cached_tokens: (cache_read_tokens + cache_write_tokens) as usize,
+                            prompt_tokens: p_tokens as usize,
+                            completion_tokens: c_tokens as usize,
+                            cached_tokens: (cr_tokens + cw_tokens) as usize,
                             latency_ms: 0,
                             context_window: usage_ctx,
                         });
@@ -2145,10 +2212,10 @@ impl Orchestrator {
                         tracing::info!(
                             session_id = %forward_session_id,
                             model = %usage_model,
-                            prompt = prompt_tokens,
-                            completion = completion_tokens,
-                            cache_read = cache_read_tokens,
-                            cache_write = cache_write_tokens,
+                            prompt = p_tokens,
+                            completion = c_tokens,
+                            cache_read = cr_tokens,
+                            cache_write = cw_tokens,
                             "[token-stats] received StreamDelta::Usage for main model"
                         );
                         if let Some(store) = &*memory_store.read().await {
@@ -2156,10 +2223,10 @@ impl Orchestrator {
                                 .record_token_usage(
                                     &forward_session_id,
                                     &usage_model,
-                                    prompt_tokens as usize,
-                                    completion_tokens as usize,
-                                    cache_read_tokens as usize,
-                                    cache_write_tokens as usize,
+                                    p_tokens as usize,
+                                    c_tokens as usize,
+                                    cr_tokens as usize,
+                                    cw_tokens as usize,
                                     0, // latency not tracked at StreamDelta level
                                     usage_ctx,
                                 )
@@ -2167,7 +2234,7 @@ impl Orchestrator {
                             {
                                 tracing::warn!(error = %e, model = %usage_model, "[token-stats] failed to record main model token usage");
                             } else {
-                                tracing::info!(model = %usage_model, prompt = prompt_tokens, completion = completion_tokens, "[token-stats] main model token usage recorded");
+                                tracing::info!(model = %usage_model, prompt = p_tokens, completion = c_tokens, "[token-stats] main model token usage recorded");
                             }
                         } else {
                             tracing::warn!("[token-stats] memory_store is None, cannot record main model usage");
@@ -2474,7 +2541,7 @@ impl Orchestrator {
                     .read()
                     .await
                     .fire(
-                        &lume_plugins::hooks::HookEvent::TaskCompleted,
+                        &loom_plugins::hooks::HookEvent::TaskCompleted,
                         None,
                         &mut hook_ctx,
                     )
@@ -2507,7 +2574,7 @@ impl Orchestrator {
                 .read()
                 .await
                 .fire(
-                    &lume_plugins::hooks::HookEvent::SessionEnd,
+                    &loom_plugins::hooks::HookEvent::SessionEnd,
                     None,
                     &mut hook_ctx,
                 )
@@ -2580,7 +2647,7 @@ impl Orchestrator {
                 .hook_registry
                 .read()
                 .await
-                .fire(&lume_plugins::hooks::HookEvent::SessionStart, None, &mut hook_ctx)
+                .fire(&loom_plugins::hooks::HookEvent::SessionStart, None, &mut hook_ctx)
                 .await;
         }
 
@@ -2597,7 +2664,7 @@ impl Orchestrator {
                 .read()
                 .await
                 .fire(
-                    &lume_plugins::hooks::HookEvent::UserPromptSubmit,
+                    &loom_plugins::hooks::HookEvent::UserPromptSubmit,
                     None,
                     &mut hook_ctx,
                 )
@@ -2666,7 +2733,7 @@ impl Orchestrator {
                 .read()
                 .await
                 .fire(
-                    &lume_plugins::hooks::HookEvent::PreCompact,
+                    &loom_plugins::hooks::HookEvent::PreCompact,
                     None,
                     &mut hook_ctx,
                 )
@@ -2799,6 +2866,9 @@ impl Orchestrator {
             agent_id: agent_id.to_string(),
             key_store: Some(self.key_store.clone()),
             loom_dir: Some(self.data_dir_path().to_path_buf()),
+            permission_mode: "operate".to_string(), // CLI always uses operate mode
+            event_bus: Some(self.pool.event_bus().clone()),
+            pending_permissions: Some(self.pending_permissions.clone()),
             ..Default::default()
         };
 
@@ -2995,7 +3065,7 @@ impl Orchestrator {
                     .read()
                     .await
                     .fire(
-                        &lume_plugins::hooks::HookEvent::TaskCompleted,
+                        &loom_plugins::hooks::HookEvent::TaskCompleted,
                         None,
                         &mut hook_ctx,
                     )
@@ -3028,7 +3098,7 @@ impl Orchestrator {
                 .read()
                 .await
                 .fire(
-                    &lume_plugins::hooks::HookEvent::SessionEnd,
+                    &loom_plugins::hooks::HookEvent::SessionEnd,
                     None,
                     &mut hook_ctx,
                 )
@@ -3044,6 +3114,14 @@ impl Orchestrator {
     pub fn event_bus(&self) -> &EventBus {
         self.pool.event_bus()
     }
+
+    /// Get a clone of the pending permissions map for "ask" mode tool approval.
+    pub async fn pending_permissions(
+        &self,
+    ) -> tokio::sync::RwLockWriteGuard<'_, HashMap<String, tokio::sync::oneshot::Sender<bool>>> {
+        self.pending_permissions.write().await
+    }
+
     pub async fn spawn_agent(
         &self,
         config: AgentConfig,

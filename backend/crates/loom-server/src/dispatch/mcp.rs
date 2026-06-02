@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use lume_mcp::McpServerConfig;
+use loom_mcp::McpServerConfig;
 use loom_types::{ErrorCode, JsonRpcError};
 use serde_json::{Value, json};
 

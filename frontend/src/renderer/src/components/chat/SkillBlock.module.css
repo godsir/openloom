@@ -41,6 +41,7 @@
   background: rgba(139, 92, 246, 0.8);
   margin-left: auto;
   animation: pulse 1.5s ease-in-out infinite;
+  will-change: opacity;
 }
 
 @keyframes pulse {

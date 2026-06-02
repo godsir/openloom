@@ -48,7 +48,9 @@
   margin-left: auto;
   flex-shrink: 0;
   animation: pulse 1.5s ease-in-out infinite;
+  will-change: opacity;
 }
+/* running indicator */
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
@@ -80,6 +82,7 @@
   height: 14px;
   background: var(--accent);
   animation: blink 1s step-end infinite;
+  will-change: opacity;
   vertical-align: text-bottom;
 }
 

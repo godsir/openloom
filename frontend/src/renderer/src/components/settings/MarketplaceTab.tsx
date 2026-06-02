@@ -6,13 +6,13 @@ import styles from '../shared/SettingsModal.module.css'
 
 const MARKETPLACE_CATEGORIES = ['全部', 'Security', 'Development', 'Productivity', 'Workflow', 'Research', 'Design']
 
-export default function MarketplaceTab() {
+export default function MarketplaceTab({ mode }: { mode?: 'plugin' }) {
   const [plugins, setPlugins] = useState<MarketPlugin[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [activeCategory, setActiveCategory] = useState<string>('全部')
-  const [activeKind, setActiveKind] = useState<string>('plugin')
+  const [activeKind, setActiveKind] = useState<string>(mode === 'plugin' ? 'plugin' : 'plugin')
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set())
   const [refreshing, setRefreshing] = useState(false)
 
@@ -143,25 +143,26 @@ export default function MarketplaceTab() {
       <div className={styles.contentBody}>
         {error && <p className={styles.toolsError}>{error}</p>}
 
-        {/* Kind toggle: Plugins / Skills */}
-        <div className={styles.marketplaceKindToggle}>
-          <button
-            className={`${styles.marketplaceKindBtn} ${activeKind === 'plugin' ? styles.marketplaceKindActive : ''}`}
-            onClick={() => { setActiveKind('plugin'); setActiveCategory('全部') }}
-          >
-            <IconPackage size={13} />
-            插件
-            <span className={styles.marketplaceKindCount}>{kindCounts.plugin}</span>
-          </button>
-          <button
-            className={`${styles.marketplaceKindBtn} ${activeKind === 'skill' ? styles.marketplaceKindActive : ''}`}
-            onClick={() => { setActiveKind('skill'); setActiveCategory('全部') }}
-          >
-            <IconSparkles size={13} />
-            技能
-            <span className={styles.marketplaceKindCount}>{kindCounts.skill}</span>
-          </button>
-        </div>
+        {!mode && (
+          <div className={styles.marketplaceKindToggle}>
+            <button
+              className={`${styles.marketplaceKindBtn} ${activeKind === 'plugin' ? styles.marketplaceKindActive : ''}`}
+              onClick={() => { setActiveKind('plugin'); setActiveCategory('全部') }}
+            >
+              <IconPackage size={13} />
+              插件
+              <span className={styles.marketplaceKindCount}>{kindCounts.plugin}</span>
+            </button>
+            <button
+              className={`${styles.marketplaceKindBtn} ${activeKind === 'skill' ? styles.marketplaceKindActive : ''}`}
+              onClick={() => { setActiveKind('skill'); setActiveCategory('全部') }}
+            >
+              <IconSparkles size={13} />
+              技能
+              <span className={styles.marketplaceKindCount}>{kindCounts.skill}</span>
+            </button>
+          </div>
+        )}
 
         {/* Category filter pills */}
         <div className={styles.marketplaceCategories}>

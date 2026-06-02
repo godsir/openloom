@@ -51,17 +51,17 @@ fn default_mcp_type() -> String {
 /// Load MCP servers from config files.
 ///
 /// Scans in priority order:
-/// 1. Project-level: `<cwd>/.lume/mcp.json`
+/// 1. Project-level: `<cwd>/.loom/mcp.json`
 /// 2. User-level: `<data_dir>/mcp.json`
 pub fn load_mcp_configs(
     data_dir: &PathBuf,
-) -> Result<(Vec<lume_mcp::McpServerConfig>, Vec<String>)> {
+) -> Result<(Vec<loom_mcp::McpServerConfig>, Vec<String>)> {
     let mut configs = Vec::new();
     let mut sources = Vec::new();
 
     // Project config
     if let Ok(cwd) = std::env::current_dir() {
-        let project_path = cwd.join(".lume").join("mcp.json");
+        let project_path = cwd.join(".loom").join("mcp.json");
         if project_path.exists() {
             match load_config_file(&project_path) {
                 Ok(mut cfgs) => {
@@ -92,7 +92,7 @@ pub fn load_mcp_configs(
     Ok((configs, sources))
 }
 
-fn load_config_file(path: &std::path::Path) -> Result<Vec<lume_mcp::McpServerConfig>> {
+fn load_config_file(path: &std::path::Path) -> Result<Vec<loom_mcp::McpServerConfig>> {
     let content = std::fs::read_to_string(path)?;
     let parsed: McpConfigFile = serde_json::from_str(&content)?;
     let mut configs = Vec::new();
@@ -102,7 +102,7 @@ fn load_config_file(path: &std::path::Path) -> Result<Vec<lume_mcp::McpServerCon
             "streamableHttp" | "sse" | "http" => "http",
             _ => "stdio",
         };
-        configs.push(lume_mcp::McpServerConfig {
+        configs.push(loom_mcp::McpServerConfig {
             name: name.clone(),
             transport: transport.to_string(),
             url: entry.url.clone(),
@@ -123,7 +123,7 @@ fn load_config_file(path: &std::path::Path) -> Result<Vec<lume_mcp::McpServerCon
 }
 
 /// Merge CLI mcp-args into the configs list.
-pub fn parse_mcp_args(args: &str) -> Result<lume_mcp::McpServerConfig> {
+pub fn parse_mcp_args(args: &str) -> Result<loom_mcp::McpServerConfig> {
     let parts: Vec<&str> = args.split_whitespace().collect();
     if parts.is_empty() {
         anyhow::bail!("empty mcp-args");
@@ -139,7 +139,7 @@ pub fn parse_mcp_args(args: &str) -> Result<lume_mcp::McpServerConfig> {
                 headers.insert(k.to_string(), v.to_string());
             }
         }
-        Ok(lume_mcp::McpServerConfig {
+        Ok(loom_mcp::McpServerConfig {
             name,
             transport: "http".into(),
             url: Some(url),
@@ -158,7 +158,7 @@ pub fn parse_mcp_args(args: &str) -> Result<lume_mcp::McpServerConfig> {
             .last()
             .map(|s| s.rsplit(&['\\', '/']).next().unwrap_or(s))
             .unwrap_or("mcp");
-        Ok(lume_mcp::McpServerConfig {
+        Ok(loom_mcp::McpServerConfig {
             name: name.to_string(),
             transport: "stdio".into(),
             command: parts[0].into(),

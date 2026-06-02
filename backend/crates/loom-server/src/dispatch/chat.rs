@@ -103,6 +103,12 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
         .await
         .unwrap_or_default();
 
+    // Parse permission mode
+    let permission_mode = p
+        .get("permission_mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("operate");
+
     let result = state
         .orchestrator
         .process_message_with_config(
@@ -112,6 +118,7 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
             thinking_budget,
             attached_images,
             selected_skills,
+            permission_mode,
         )
         .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;

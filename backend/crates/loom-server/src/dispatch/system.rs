@@ -43,7 +43,7 @@ pub async fn handle(
 
 async fn handle_system_health(state: &AppState) -> Result<Value, JsonRpcError> {
     Ok(json!({
-        "status": "ok", "version": "0.2.17",
+        "status": "ok", "version": "0.2.18",
         "agent_count": state.orchestrator.list_agents().await.len(),
         "tool_count": state.orchestrator.tool_registry().await.len(),
     }))
@@ -245,7 +245,7 @@ async fn handle_marketplace_list(state: &AppState) -> Result<Value, JsonRpcError
     let home = dirs::home_dir().unwrap_or_default();
     let plugins_dir = home.join(".loom").join("plugins");
     let skills_dir = home.join(".loom").join("skills");
-    let results = lume_marketplace::list_with_status(&plugins_dir, &skills_dir);
+    let results = loom_marketplace::list_with_status(&plugins_dir, &skills_dir);
     let results_json: Vec<serde_json::Value> = results
         .iter()
         .map(|p| serde_json::to_value(p).unwrap_or_default())
@@ -263,9 +263,9 @@ async fn handle_marketplace_install(state: &AppState, p: &Value) -> Result<Value
     let home = dirs::home_dir().unwrap_or_default();
     let plugins_dir = home.join(".loom").join("plugins");
     let skills_dir = home.join(".loom").join("skills");
-    match lume_marketplace::install_from_catalog(entry_id, &plugins_dir, &skills_dir).await {
+    match loom_marketplace::install_from_catalog(entry_id, &plugins_dir, &skills_dir).await {
         Ok(target) => {
-            let mut pm = lume_plugins::PluginManager::new();
+            let mut pm = loom_plugins::PluginManager::new();
             let n = pm.discover(&home).unwrap_or(0);
             if n > 0 {
                 state.orchestrator.load_hooks_from_plugins(&pm).await;
@@ -304,9 +304,9 @@ async fn handle_marketplace_uninstall(state: &AppState, p: &Value) -> Result<Val
     } else {
         return Err(err(ErrorCode::InternalError, &format!("'{}' is not installed", entry_id)));
     };
-    match lume_marketplace::uninstall(entry_id, target_dir) {
+    match loom_marketplace::uninstall(entry_id, target_dir) {
         Ok(()) => {
-            let mut pm = lume_plugins::PluginManager::new();
+            let mut pm = loom_plugins::PluginManager::new();
             let n = pm.discover(&home).unwrap_or(0);
             if n > 0 {
                 state.orchestrator.load_hooks_from_plugins(&pm).await;
@@ -333,9 +333,9 @@ async fn handle_marketplace_update(state: &AppState, p: &Value) -> Result<Value,
     let home = dirs::home_dir().unwrap_or_default();
     let plugins_dir = home.join(".loom").join("plugins");
     let skills_dir = home.join(".loom").join("skills");
-    match lume_marketplace::update_from_catalog(entry_id, &plugins_dir, &skills_dir).await {
+    match loom_marketplace::update_from_catalog(entry_id, &plugins_dir, &skills_dir).await {
         Ok(()) => {
-            let mut pm = lume_plugins::PluginManager::new();
+            let mut pm = loom_plugins::PluginManager::new();
             let n = pm.discover(&home).unwrap_or(0);
             if n > 0 {
                 state.orchestrator.load_hooks_from_plugins(&pm).await;

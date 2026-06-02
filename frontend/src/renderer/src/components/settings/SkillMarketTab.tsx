@@ -1,0 +1,227 @@
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useStore } from '../../stores'
+import { IconRefresh, IconSearch, IconSparkles, IconCheck, IconTrash, IconExternalLink } from '../../utils/icons'
+import { loomRpc } from '../../services/jsonrpc'
+import styles from '../shared/SettingsModal.module.css'
+
+interface ClawhubSkill {
+  id: string
+  name: string
+  description: string
+  version: string
+  author: string
+  downloads: number
+  stars: number
+  tags: Record<string, string> | null
+  installed: boolean
+  installed_version: string | null
+  has_update: boolean
+  source: string
+}
+
+export default function SkillMarketTab() {
+  const [skills, setSkills] = useState<ClawhubSkill[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set())
+  const [refreshing, setRefreshing] = useState(false)
+
+  const load = useCallback(async (search?: string, force = false) => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await loomRpc<{ skills: ClawhubSkill[]; cached?: boolean }>(
+        'clawhub.list',
+        { ...(search ? { search } : {}), force }
+      )
+      setSkills(res.skills ?? [])
+    } catch (e: any) {
+      setError(`加载失败: ${e.message || e}`)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  // Debounced search
+  useEffect(() => {
+    const timer = setTimeout(() => load(searchQuery || undefined), 400)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    await load(undefined, true) // force refresh
+    setRefreshing(false)
+  }
+
+  const handleInstall = async (slug: string) => {
+    setBusyIds(prev => new Set(prev).add(slug))
+    try {
+      await loomRpc('clawhub.install', { slug })
+      useStore.getState().addToast({ type: 'success', message: `技能 "${slug}" 安装成功` })
+      await load(searchQuery || undefined)
+    } catch (e: any) {
+      useStore.getState().addToast({ type: 'error', message: `安装失败: ${e.message || e}` })
+    } finally {
+      setBusyIds(prev => { const next = new Set(prev); next.delete(slug); return next })
+    }
+  }
+
+  const handleUninstall = async (slug: string) => {
+    setBusyIds(prev => new Set(prev).add(slug))
+    try {
+      await loomRpc('clawhub.uninstall', { slug })
+      useStore.getState().addToast({ type: 'success', message: `技能 "${slug}" 已卸载` })
+      await load(searchQuery || undefined)
+    } catch (e: any) {
+      useStore.getState().addToast({ type: 'error', message: `卸载失败: ${e.message || e}` })
+    } finally {
+      setBusyIds(prev => { const next = new Set(prev); next.delete(slug); return next })
+    }
+  }
+
+  const filtered = useMemo(() => {
+    if (!searchQuery) return skills
+    const q = searchQuery.toLowerCase()
+    return skills.filter(s =>
+      s.name.toLowerCase().includes(q) ||
+      s.description.toLowerCase().includes(q) ||
+      s.id.toLowerCase().includes(q) ||
+      (s.tags && Object.keys(s.tags).some(t => t.toLowerCase().includes(q)))
+    )
+  }, [skills, searchQuery])
+
+  const installedCount = useMemo(() => skills.filter(s => s.installed).length, [skills])
+
+  return (
+    <>
+      <div className={styles.contentHeader}>
+        <div className={styles.sectionHeaderRow}>
+          <div>
+            <h3 className={styles.sectionTitle}>技能市场</h3>
+            <p className={styles.sectionDesc}>
+              Clawhub 社区技能注册表 · {skills.length} 个技能
+              {installedCount > 0 && (
+                <span className={styles.marketplaceInstalledSummary}>
+                  {installedCount} 已安装
+                </span>
+              )}
+            </p>
+          </div>
+          <button onClick={handleRefresh} disabled={refreshing} className={styles.refreshBtn} title="刷新">
+            <IconRefresh size={14} />
+          </button>
+        </div>
+      </div>
+
+      <div className={styles.contentBody}>
+        {error && <p className={styles.toolsError}>{error}</p>}
+
+        {/* Search */}
+        <div className={styles.pluginsSearchWrap}>
+          <span className={styles.pluginsSearchIcon}><IconSearch size={14} /></span>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="搜索 Clawhub 技能..."
+            className={styles.pluginsSearchInput}
+          />
+        </div>
+
+        {loading && !refreshing && <p className={styles.toolsEmpty}>加载中...</p>}
+
+        {!loading && filtered.length === 0 && (
+          <div className={styles.marketplaceEmptyState}>
+            <div className={styles.marketplaceEmptyIcon}><IconSparkles size={28} /></div>
+            <p className={styles.pluginsEmptyTitle}>
+              {searchQuery ? '未找到匹配的技能' : '暂无技能'}
+            </p>
+            <p className={styles.pluginsEmptyHelp}>
+              {searchQuery ? '尝试其他关键词搜索' : '点击刷新按钮重新加载'}
+            </p>
+          </div>
+        )}
+
+        {/* Skill list */}
+        <div className={styles.marketplaceGrid}>
+          {filtered.map(skill => (
+            <div key={skill.id} className={`${styles.marketplaceCard} ${skill.installed ? styles.marketplaceCardInstalled : ''}`}>
+              <div className={styles.marketplaceCardHeader}>
+                <div className={styles.marketplaceCardTitleRow}>
+                  <span className={styles.marketplaceCardName}>{skill.name}</span>
+                  {skill.version && <span className={styles.marketplaceCardVersion}>v{skill.version}</span>}
+                </div>
+                {skill.description && (
+                  <p className={styles.marketplaceCardDesc}>{skill.description.slice(0, 160)}</p>
+                )}
+              </div>
+
+              {/* Tags */}
+              {skill.tags && Object.keys(skill.tags).length > 0 && (
+                <div className={styles.marketplaceCardTags}>
+                  {Object.entries(skill.tags).slice(0, 5).map(([tag, ver]) => (
+                    <span key={tag} className={styles.marketplaceCardTag}>{tag}{ver !== 'latest' ? ` ${ver}` : ''}</span>
+                  ))}
+                </div>
+              )}
+
+              {/* Stats & actions */}
+              <div className={styles.marketplaceCardFooter}>
+                <div className={styles.marketplaceCardMeta}>
+                  {skill.downloads > 0 && (
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>↓ {skill.downloads.toLocaleString()}</span>
+                  )}
+                  {skill.stars > 0 && (
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>★ {skill.stars}</span>
+                  )}
+                  {skill.installed && (
+                    <span className={styles.marketplaceInstalledBadge}>
+                      <IconCheck size={11} />
+                      已安装{skill.installed_version ? ` v${skill.installed_version}` : ''}
+                    </span>
+                  )}
+                  {skill.has_update && (
+                    <span className={styles.marketplaceUpdateBadge}>有更新</span>
+                  )}
+                </div>
+                <div className={styles.marketplaceCardActions}>
+                  <a
+                    href={`https://clawhub.ai/skills/${skill.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={styles.marketplaceCardLinkBtn}
+                    title="在 Clawhub 查看"
+                  >
+                    <IconExternalLink size={13} />
+                  </a>
+                  {skill.installed ? (
+                    <button
+                      onClick={() => handleUninstall(skill.id)}
+                      disabled={busyIds.has(skill.id)}
+                      className={styles.marketplaceUninstallBtn}
+                    >
+                      <IconTrash size={12} />
+                      卸载
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleInstall(skill.id)}
+                      disabled={busyIds.has(skill.id)}
+                      className={styles.marketplaceInstallBtn}
+                    >
+                      {busyIds.has(skill.id) ? '安装中...' : '安装'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  )
+}

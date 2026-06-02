@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use lume_skills::SkillLoader;
+use loom_skills::SkillLoader;
 use loom_types::{ErrorCode, JsonRpcError};
 use serde_json::{Value, json};
 
@@ -139,7 +139,7 @@ pub(crate) async fn reload_skills_into_orchestrator(
     loader.add_standard_paths(&data_dir);
 
     // Also discover plugins and feed their skill paths to the loader
-    let mut plugin_manager = lume_plugins::PluginManager::new();
+    let mut plugin_manager = loom_plugins::PluginManager::new();
     if let Ok(n) = plugin_manager.discover(&home) {
         if n > 0 {
             tracing::info!(plugin_count = n, "plugins discovered during skill reload");
@@ -157,7 +157,7 @@ pub(crate) async fn reload_skills_into_orchestrator(
         let orch = orchestrator.clone();
         tokio::spawn(async move {
             for mcp in mcp_configs {
-                let config = lume_mcp::McpServerConfig {
+                let config = loom_mcp::McpServerConfig {
                     name: mcp.name.clone(),
                     transport: mcp.transport.clone(),
                     command: mcp.command.clone(),
@@ -186,7 +186,7 @@ pub(crate) async fn reload_skills_into_orchestrator(
         .discover()
         .map(|skills| {
             let count = skills.len();
-            let state = lume_skills::SkillState::from_skills(&skills);
+            let state = loom_skills::SkillState::from_skills(&skills);
             // Use block_in_place to finish the update before returning
             let orch = orchestrator.clone();
             let _ = tokio::task::block_in_place(|| {

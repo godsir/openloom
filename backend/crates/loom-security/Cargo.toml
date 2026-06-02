@@ -1,12 +1,12 @@
 [package]
 name = "loom-security"
-version = "0.2.17"
+version = "0.2.18"
 edition = "2024"
 description = "Security layer for openLoom v2 — sandbox, approval, audit"
 
 [dependencies]
 loom-types = { path = "../loom-types" }
-lume-skills = { path = "../lume-skills" }
+loom-skills = { path = "../loom-skills" }
 anyhow = "1"
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }

@@ -499,7 +499,10 @@ impl AgentTool for FileWriteTool {
 
         if path_str.is_empty() {
             return Ok(ToolResult {
-                content: "No path provided.".into(),
+                content: format!(
+                    "No path provided. Usage: file_write(path=\"/path/to/file\", content=\"...\"). Received: {}",
+                    arguments
+                ),
                 is_error: true,
                 structured_content: None,
             });
@@ -729,7 +732,7 @@ impl AgentTool for FileDeleteTool {
 // ============================================================================
 
 pub struct UseSkillTool {
-    pub skill_state: std::sync::Arc<tokio::sync::RwLock<lume_skills::SkillState>>,
+    pub skill_state: std::sync::Arc<tokio::sync::RwLock<loom_skills::SkillState>>,
 }
 
 #[async_trait]

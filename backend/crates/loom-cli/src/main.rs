@@ -1,11 +1,11 @@
 //! openLoom v2 CLI — unified entry point.
 //!
 //! Commands:
-//!   lume serve     Start the HTTP/WebSocket server
-//!   lume chat      Interactive chat demo
-//!   lume mcp add   Add an MCP server to config
-//!   lume mcp list  List configured MCP servers
-//!   lume doctor    Diagnose environment
+//!   loom serve     Start the HTTP/WebSocket server
+//!   loom chat      Interactive chat demo
+//!   loom mcp add   Add an MCP server to config
+//!   loom mcp list  List configured MCP servers
+//!   loom doctor    Diagnose environment
 
 mod mcp_config;
 mod memory;
@@ -23,7 +23,7 @@ fn data_dir() -> std::path::PathBuf {
 }
 
 #[derive(Parser)]
-#[command(name = "lume", version, about = "openLoom v2 — personal AI kernel")]
+#[command(name = "loom", version, about = "openLoom v2 — personal AI kernel")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -172,7 +172,7 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Err(e) => println!("[server] memory unavailable: {}", e),
             }
-            // Load MCP servers from config files (~/.loom/mcp.json, .lume/mcp.json)
+            // Load MCP servers from config files (~/.loom/mcp.json, .loom/mcp.json)
             match mcp_config::load_mcp_configs(&loom_dir) {
                 Ok((configs, sources)) => {
                     for src in &sources {
@@ -209,11 +209,11 @@ async fn main() -> anyhow::Result<()> {
             orchestrator.autostart_mcp_servers().await;
             // === Skills ===
             {
-                let mut skill_loader = lume_skills::SkillLoader::new();
+                let mut skill_loader = loom_skills::SkillLoader::new();
                 skill_loader.add_standard_paths(&loom_dir);
                 match skill_loader.discover() {
                     Ok(skills) if !skills.is_empty() => {
-                        orchestrator.set_skills(lume_skills::SkillState::from_skills(&skills)).await;
+                        orchestrator.set_skills(loom_skills::SkillState::from_skills(&skills)).await;
                         println!("[server] {} skills loaded", skills.len());
                     }
                     Ok(_) => println!("[server] 0 skills loaded"),
@@ -243,7 +243,7 @@ async fn main() -> anyhow::Result<()> {
                             );
                         }
                         // Reload skills with plugin paths included
-                        let mut skill_loader = lume_skills::SkillLoader::new();
+                        let mut skill_loader = loom_skills::SkillLoader::new();
                         skill_loader.add_standard_paths(&loom_dir);
                         for path in plugin_manager.skill_paths() {
                             if path.exists() {
@@ -252,7 +252,7 @@ async fn main() -> anyhow::Result<()> {
                         }
                         match skill_loader.discover() {
                             Ok(new_skills) if !new_skills.is_empty() => {
-                                orchestrator.set_skills(lume_skills::SkillState::from_skills(&new_skills)).await;
+                                orchestrator.set_skills(loom_skills::SkillState::from_skills(&new_skills)).await;
                                 println!("[server] {} skills loaded (with plugins)", new_skills.len());
                             }
                             _ => {}
@@ -261,7 +261,7 @@ async fn main() -> anyhow::Result<()> {
                         orchestrator.load_hooks_from_plugins(&plugin_manager).await;
                         // Connect plugin MCP servers
                         for mcp in plugin_manager.mcp_configs() {
-                            let config = lume_mcp::McpServerConfig {
+                            let config = loom_mcp::McpServerConfig {
                                 name: mcp.name.clone(),
                                 transport: mcp.transport.clone(),
                                 command: mcp.command.clone(),
@@ -450,7 +450,7 @@ fn mcp_list() -> anyhow::Result<()> {
     let config_path = dir.join("mcp.json");
     if !config_path.exists() {
         println!(
-            "No MCP config found at {}\n  Use 'lume mcp add' to add servers.",
+            "No MCP config found at {}\n  Use 'loom mcp add' to add servers.",
             config_path.display()
         );
         return Ok(());
@@ -654,7 +654,7 @@ async fn run_chat_demo(
     }
 
     // === Skills ===
-    let mut skill_loader = lume_skills::SkillLoader::new();
+    let mut skill_loader = loom_skills::SkillLoader::new();
     if let Some(home) = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .ok()
@@ -675,7 +675,7 @@ async fn run_chat_demo(
         }
         match skill_loader.discover() {
             Ok(skills) if !skills.is_empty() => {
-                orchestrator.set_skills(lume_skills::SkillState::from_skills(&skills)).await;
+                orchestrator.set_skills(loom_skills::SkillState::from_skills(&skills)).await;
                 println!("[skills] {} loaded", skills.len());
             }
             Ok(_) => println!("[skills] 0 loaded (no SKILL.md found)"),
@@ -812,7 +812,7 @@ async fn run_chat_demo(
             // Re-discover skills with plugin paths included
             match skill_loader.discover() {
                 Ok(new_skills) if !new_skills.is_empty() => {
-                    orchestrator.set_skills(lume_skills::SkillState::from_skills(&new_skills)).await;
+                    orchestrator.set_skills(loom_skills::SkillState::from_skills(&new_skills)).await;
                     println!("[plugins] {} skills loaded", new_skills.len());
                 }
                 _ => {}
@@ -821,7 +821,7 @@ async fn run_chat_demo(
             orchestrator.load_hooks_from_plugins(&plugin_manager).await;
             // Connect plugin MCP servers
             for mcp in plugin_manager.mcp_configs() {
-                let config = lume_mcp::McpServerConfig {
+                let config = loom_mcp::McpServerConfig {
                     name: mcp.name.clone(),
                     transport: mcp.transport.clone(),
                     command: mcp.command.clone(),
@@ -847,25 +847,25 @@ async fn run_chat_demo(
     }
 
     // === Bridge ===
-    let bridge_manager = std::sync::Arc::new(lume_bridge::BridgeManager::new());
+    let bridge_manager = std::sync::Arc::new(loom_bridge::BridgeManager::new());
     if let Ok(token) = std::env::var("TELEGRAM_BOT_TOKEN") {
         if !token.is_empty() {
-            let tg = lume_bridge::TelegramAdapter::new(token);
+            let tg = loom_bridge::TelegramAdapter::new(token);
             let mgr = bridge_manager.clone();
             let _handle = tokio::spawn(async move {
                 mgr.register(Box::new(tg)).await;
-                let _ = mgr.start_platform(lume_bridge::Platform::Telegram).await;
+                let _ = mgr.start_platform(loom_bridge::Platform::Telegram).await;
                 println!("[bridge] Telegram connected");
             });
         }
     }
     if let Ok(key) = std::env::var("ILINK_API_KEY") {
         if !key.is_empty() {
-            let wx = lume_bridge::WechatAdapter::new(key);
+            let wx = loom_bridge::WechatAdapter::new(key);
             let mgr = bridge_manager.clone();
             let _handle = tokio::spawn(async move {
                 mgr.register(Box::new(wx)).await;
-                let _ = mgr.start_platform(lume_bridge::Platform::Wechat).await;
+                let _ = mgr.start_platform(loom_bridge::Platform::Wechat).await;
                 println!("[bridge] WeChat (iLink) connected");
             });
         }
@@ -1021,8 +1021,8 @@ async fn run_doctor() {
     println!("  loom-core:       ok (AgentPool + ToolRegistry + AgentLoop)");
     println!("  loom-memory:     ok (SQLite + FTS5 + KG)");
     println!("  loom-server:     ok (Axum HTTP/WS)");
-    println!("  lume-mcp:        ok (stdio + HTTP MCP client)");
-    println!("  lume-skills:     ok (SKILL.md parser)");
+    println!("  loom-mcp:        ok (stdio + HTTP MCP client)");
+    println!("  loom-skills:     ok (SKILL.md parser)");
     println!("  loom-context:    ok");
     println!("  loom-security:   ok");
 }
@@ -1045,7 +1045,7 @@ async fn run_kg_search(
 ) {
     use loom_core::MemoryStore;
     let Some(store) = open_memory_store().await else {
-        println!("Cannot open memory store. Run lume chat first to initialize.");
+        println!("Cannot open memory store. Run loom chat first to initialize.");
         return;
     };
 

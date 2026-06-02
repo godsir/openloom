@@ -23,6 +23,7 @@
   justify-content: center;
   box-shadow: var(--shadow-glow);
   animation: breathe 2s var(--ease-out) infinite;
+  will-change: opacity;
 }
 
 .loaderLogoLetter {

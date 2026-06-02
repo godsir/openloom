@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* ── Tailwind animation GPU promotion (Win11 DWM compositor fix) ── */
+.animate-pulse { will-change: opacity; }
+.animate-spin { will-change: transform; }
+
 /* ================================================================
    openLoom — Cyan Edge Design
    Glassmorphism · Cyan accent · Deep navy · Apple easing
@@ -136,7 +140,7 @@ body{
 .animate-scale-in{animation:scale-in var(--dur-normal) var(--ease-out)}
 .animate-pop-in{animation:pop-in var(--dur-fast) var(--ease-out)}
 .animate-slide-left{animation:slide-left var(--dur-fast) var(--ease-out)}
-.animate-breathe{animation:breathe 3s var(--ease-out) infinite}
+.animate-breathe{animation:breathe 3s var(--ease-out) infinite;will-change:opacity}
 
 .stagger-1{animation-delay:0ms}.stagger-2{animation-delay:50ms}.stagger-3{animation-delay:100ms}
 
@@ -145,7 +149,7 @@ body{
    ================================================================ */
 
 .typing-dots{display:inline-flex;gap:3px;align-items:center}
-.typing-dots span{width:5px;height:5px;border-radius:50%;background:var(--accent);animation:bounce-dot 1.4s var(--ease-out) infinite}
+.typing-dots span{width:5px;height:5px;border-radius:50%;background:var(--accent);animation:bounce-dot 1.4s var(--ease-out) infinite;will-change:transform,opacity}
 .typing-dots span:nth-child(2){animation-delay:.2s}
 .typing-dots span:nth-child(3){animation-delay:.4s}
 
@@ -158,8 +162,8 @@ body{
 .transition-opacity{transition:opacity var(--dur-fast) var(--ease-out)}
 .transition-colors-fast,.transition-colors{transition:background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out),border-color var(--dur-fast) var(--ease-out)}
 .transition-opacity-fast,.transition-opacity{transition:opacity var(--dur-fast) var(--ease-out)}
-.animate-pulse-soft{animation:breathe 2s var(--ease-out) infinite}
-.animate-pulse-dot{animation:breathe 1.5s var(--ease-out) infinite}
+.animate-pulse-soft{animation:breathe 2s var(--ease-out) infinite;will-change:opacity}
+.animate-pulse-dot{animation:breathe 1.5s var(--ease-out) infinite;will-change:opacity}
 
 /* ================================================================
    SHARED COMPONENT PATTERNS
@@ -196,6 +200,8 @@ body{
   backdrop-filter:blur(12px);
   border:1px solid var(--border);
   border-radius:var(--r-md);
+  transform:translateZ(0);
+  backface-visibility:hidden;
 }
 .card-interactive{
   background:var(--bg-card);
@@ -203,6 +209,8 @@ body{
   border:1px solid var(--border);
   border-radius:var(--r-md);
   transition:all var(--dur-fast) var(--ease-out);
+  transform:translateZ(0);
+  backface-visibility:hidden;
 }
 .card-interactive:hover{
   border-color:var(--border-accent);
@@ -340,4 +348,19 @@ body{
 
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}
+}
+
+/* ================================================================
+   GPU COMPOSITE LAYER PROMOTION
+   Prevents Win11 DWM flickering: backdrop-filter + opacity
+   animations on the same page trigger a Chromium compositor bug
+   on Windows 11. Forcing each animated/blurred element onto its
+   own composite layer isolates the damage.
+   ================================================================ */
+
+[data-platform="win32"] * {
+  /* Disable backdrop-filter globally on Windows — Chromium DWM
+     compositor bug causes severe flickering with CSS animations.
+     Using !important to override CSS Module hashed class names. */
+  backdrop-filter: none !important;
 }

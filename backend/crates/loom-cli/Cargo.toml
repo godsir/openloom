@@ -1,11 +1,11 @@
 [package]
-name = "lume-cli"
-version = "0.2.17"
+name = "loom-cli"
+version = "0.2.18"
 edition = "2024"
 description = "CLI entry point for openLoom v2 — serve, chat demo, doctor"
 
 [[bin]]
-name = "lume"
+name = "loom"
 path = "src/main.rs"
 
 [dependencies]
@@ -14,10 +14,10 @@ loom-core = { path = "../loom-core" }
 loom-server = { path = "../loom-server" }
 loom-inference = { path = "../loom-inference" }
 loom-memory = { path = "../loom-memory" }
-lume-mcp = { path = "../lume-mcp" }
-lume-skills = { path = "../lume-skills" }
-lume-plugins = { path = "../lume-plugins" }
-lume-bridge = { path = "../lume-bridge" }
+loom-mcp = { path = "../loom-mcp" }
+loom-skills = { path = "../loom-skills" }
+loom-plugins = { path = "../loom-plugins" }
+loom-bridge = { path = "../loom-bridge" }
 rusqlite = "0.32"
 anyhow = "1"
 async-trait = "0.1"

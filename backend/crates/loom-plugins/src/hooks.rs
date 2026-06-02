@@ -270,7 +270,7 @@ impl HookConfig {
 ///
 /// # Example
 /// ```
-/// # use lume_plugins::hooks::expand_plugin_root;
+/// # use loom_plugins::hooks::expand_plugin_root;
 /// let result = expand_plugin_root(
 ///     "bash ${CLAUDE_PLUGIN_ROOT}/scripts/check.sh",
 ///     "/home/user/.claude/plugins/my-plugin",

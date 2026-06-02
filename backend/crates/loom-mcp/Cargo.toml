@@ -1,6 +1,6 @@
 [package]
-name = "lume-mcp"
-version = "0.2.17"
+name = "loom-mcp"
+version = "0.2.18"
 edition = "2024"
 description = "MCP client for openLoom v2 — connect to MCP servers, list tools, call tools"
 

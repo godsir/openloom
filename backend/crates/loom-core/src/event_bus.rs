@@ -73,6 +73,15 @@ pub enum AgentEvent {
         /// Model context window in tokens. 0 if unknown.
         context_window: usize,
     },
+    /// Permission request for "ask" mode — frontend should show confirmation dialog.
+    PermissionRequest {
+        agent_id: AgentId,
+        session_id: String,
+        call_id: String,
+        tool_name: String,
+        args: serde_json::Value,
+        risk: String,
+    },
 }
 
 /// A lightweight event bus using tokio broadcast.

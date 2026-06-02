@@ -35,6 +35,7 @@
   background: var(--accent);
   margin-left: auto;
   animation: pulse 1.5s ease-in-out infinite;
+  will-change: opacity;
 }
 
 @keyframes pulse {

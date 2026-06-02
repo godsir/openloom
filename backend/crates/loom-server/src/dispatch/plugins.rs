@@ -24,7 +24,7 @@ pub async fn handle(
 async fn handle_plugins_list(state: &AppState) -> Result<Value, JsonRpcError> {
     let _ = state; // uses direct filesystem + PluginManager
     let home = dirs::home_dir().unwrap_or_default();
-    let mut plugin_manager = lume_plugins::PluginManager::new();
+    let mut plugin_manager = loom_plugins::PluginManager::new();
     let _ = plugin_manager.discover(&home);
 
     let mut plugins: Vec<Value> = Vec::new();
@@ -42,7 +42,7 @@ async fn handle_plugins_list(state: &AppState) -> Result<Value, JsonRpcError> {
             .map(|s| s.len())
             .unwrap_or(0) as u64;
         let hook_config =
-            lume_plugins::hooks::HookConfig::from_plugin_dir(&plugin.path)
+            loom_plugins::hooks::HookConfig::from_plugin_dir(&plugin.path)
                 .unwrap_or_default();
         let hook_count = hook_config.hooks.len() as u64;
         let has_settings = !plugin.manifest.settings.is_null();
@@ -161,7 +161,7 @@ async fn handle_plugins_reload(state: &AppState) -> Result<Value, JsonRpcError> 
     match super::skills::reload_skills_into_orchestrator(&state.orchestrator).await {
         Ok(count) => {
             let home = dirs::home_dir().unwrap_or_default();
-            let mut plugin_manager = lume_plugins::PluginManager::new();
+            let mut plugin_manager = loom_plugins::PluginManager::new();
             let n = plugin_manager.discover(&home).unwrap_or(0);
             if n > 0 {
                 state.orchestrator.load_hooks_from_plugins(&plugin_manager).await;

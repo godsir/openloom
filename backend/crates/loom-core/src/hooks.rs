@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use lume_plugins::hooks::{expand_plugin_root, HookEntry, HookEvent, HookHandlerType};
-use lume_plugins::PluginManager;
+use loom_plugins::hooks::{expand_plugin_root, HookEntry, HookEvent, HookHandlerType};
+use loom_plugins::PluginManager;
 use regex::Regex;
 use tokio::sync::RwLock;
 use tracing;
@@ -101,7 +101,7 @@ impl HookRegistry {
         let mut hooks: HashMap<HookEvent, Vec<CompiledHook>> = HashMap::new();
 
         for (plugin_dir, _name) in plugin_manager.plugin_dirs() {
-            let config = match lume_plugins::hooks::HookConfig::from_plugin_dir(plugin_dir) {
+            let config = match loom_plugins::hooks::HookConfig::from_plugin_dir(plugin_dir) {
                 Ok(c) => c,
                 Err(e) => {
                     tracing::warn!(
@@ -359,7 +359,7 @@ impl Default for HookRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lume_plugins::hooks::{HookConfig, HookHandler};
+    use loom_plugins::hooks::{HookConfig, HookHandler};
 
     #[tokio::test]
     async fn test_empty_registry_fire_returns_default() {

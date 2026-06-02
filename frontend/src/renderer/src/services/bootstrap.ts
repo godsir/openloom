@@ -103,6 +103,41 @@ export async function bootstrapApp(): Promise<() => void> {
         import('./pet-sync').then(m => m.sendPetState('failed'))
         setTimeout(() => import('./pet-sync').then(m => m.sendPetState('idle')), 3000)
         break
+      case 'tool.permission_request': {
+        // Show confirmation dialog for "ask" permission mode
+        const callId = p?.call_id as string
+        const toolName = p?.tool_name as string
+        const risk = p?.risk as string
+        const toolArgs = p?.args as Record<string, unknown> | undefined
+        if (callId && toolName) {
+          const store = useStore.getState()
+          const riskLabel = risk === 'High' ? '⚠ 高风险操作' : risk === 'Medium' ? '● 中风险操作' : ''
+          // Show key args (path/command) so user knows what's being approved
+          const detail = toolArgs
+            ? (toolArgs.path || toolArgs.command || toolArgs.file_path || '')
+            : ''
+          const detailStr = detail ? `目标: ${detail}` : ''
+          const msg = [
+            riskLabel,
+            detailStr,
+            `AI 想要执行 "${toolName}"，是否允许？`,
+          ].filter(Boolean).join('\n')
+          store.showConfirm(
+            `工具权限: ${toolName}`,
+            msg,
+            risk === 'High',
+          ).then((approved: boolean) => {
+            loomRpc('tool.respond', { call_id: callId, approved }).catch((e) => {
+              console.error('[perm] tool.respond failed:', e)
+            })
+          }).catch(() => {
+            loomRpc('tool.respond', { call_id: callId, approved: false }).catch((e) => {
+              console.error('[perm] tool.respond fallback failed:', e)
+            })
+          })
+        }
+        break
+      }
       case 'agent.state_changed':
         loomRpc('agent.config.list').then((r: any) =>
           useStore.getState().setAgents(r.configs || [])

@@ -1,6 +1,6 @@
 [package]
-name = "lume-plugins"
-version = "0.2.17"
+name = "loom-plugins"
+version = "0.2.18"
 edition = "2024"
 description = "Plugin discovery and manifest loading for openLoom v2 — Claude Code / OpenClaw compatible"
 

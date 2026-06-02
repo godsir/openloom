@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use loom_types::{AgentConfig, AgentId, SessionId};
-use lume_plugins::hooks::HookEvent;
+use loom_plugins::hooks::HookEvent;
 use tokio::sync::RwLock;
 
 use crate::agent::{Agent, AgentStatus};

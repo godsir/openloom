@@ -1,6 +1,6 @@
 [package]
-name = "lume-bridge"
-version = "0.2.17"
+name = "loom-bridge"
+version = "0.2.18"
 edition = "2024"
 description = "Bridge system for openLoom v2 — external messaging platform adapters"
 

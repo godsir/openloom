@@ -276,6 +276,9 @@ impl AgentTool for SpawnAgentTool {
             agent_id: String::new(),
             key_store: None,
             loom_dir: config.loom_dir.clone(),
+            permission_mode: "operate".to_string(), // sub-agents always operate
+            event_bus: None,
+            pending_permissions: None,
         };
         drop(config);
 

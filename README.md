@@ -13,13 +13,13 @@ backend/crates/                   14 个 crate，Rust 2024 + Tokio
 ├── loom-context      ← 上下文组装（稳定前缀 + 动态后缀，Token 感知截断）
 ├── loom-security     ← 权限检查（风险等级 + 沙箱策略）
 ├── loom-server       ← HTTP/WebSocket 服务（Axum 0.7 + JSON-RPC 2.0）
-├── lume-cli          ← CLI 入口（serve / chat / mcp / kg / doctor）
-├── lume-mcp          ← MCP 客户端（stdio + HTTP/SSE，resources/prompts 协议）
-├── lume-lsp          ← LSP 客户端（30+ 语言，diagnostics/hover/completion/definition/references）
-├── lume-skills       ← Skills 解析（Claude Code + OpenClaw SKILL.md 兼容）
-├── lume-plugins      ← 插件发现与 manifest 加载（manifest.json + plugin.toml）
-├── lume-marketplace  ← 插件市场（目录、安装、卸载、更新）
-└── lume-bridge       ← 外部消息平台接入（Telegram + WeChat iLink）
+├── loom-cli          ← CLI 入口（serve / chat / mcp / kg / doctor）
+├── loom-mcp          ← MCP 客户端（stdio + HTTP/SSE，resources/prompts 协议）
+├── loom-lsp          ← LSP 客户端（30+ 语言，diagnostics/hover/completion/definition/references）
+├── loom-skills       ← Skills 解析（Claude Code + OpenClaw SKILL.md 兼容）
+├── loom-plugins      ← 插件发现与 manifest 加载（manifest.json + plugin.toml）
+├── loom-marketplace  ← 插件市场（目录、安装、卸载、更新）
+└── loom-bridge       ← 外部消息平台接入（Telegram + WeChat iLink）
 
 frontend/                        Electron 38 + React 19
 ├── src/main/         ← 主进程（窗口管理、引擎生命周期、自动更新、系统托盘、桌宠）
@@ -40,7 +40,7 @@ frontend/                        Electron 38 + React 19
 
 ```powershell
 # 后端 CLI
-cargo build -p lume-cli --release
+cargo build -p loom-cli --release
 
 # 桌面客户端（需要先启动后端服务）
 cd frontend
@@ -52,19 +52,19 @@ npm run dev
 
 ```powershell
 # 环境诊断
-.\target\release\lume.exe doctor
+.\target\release\loom.exe doctor
 
 # 启动服务（前端通过 WebSocket 连接）
-.\target\release\lume.exe serve --port 8080
+.\target\release\loom.exe serve --port 8080
 
 # 终端聊天
 $env:DEEPSEEK_API_KEY = "sk-xxx"
-.\target\release\lume.exe chat
+.\target\release\loom.exe chat
 ```
 
 ## CLI 参考
 
-### lume chat
+### loom chat
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
@@ -78,7 +78,7 @@ $env:DEEPSEEK_API_KEY = "sk-xxx"
 | `--resume` | — | 恢复指定会话 |
 | `-c` / `--continue` | — | 继续上次会话 |
 
-### lume serve
+### loom serve
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
@@ -93,22 +93,22 @@ $env:DEEPSEEK_API_KEY = "sk-xxx"
 | `/api` | HTTP POST | JSON-RPC 2.0（无推送） |
 | `/health` | HTTP GET | 健康检查 |
 
-### lume mcp
+### loom mcp
 
 ```powershell
-lume mcp add --name my-server --transport http --url http://localhost:3000
-lume mcp list
+loom mcp add --name my-server --transport http --url http://localhost:3000
+loom mcp list
 ```
 
-### lume kg
+### loom kg
 
 ```powershell
-lume kg search "trading" --limit 20
-lume kg search "偏好" --expand
-lume kg stats
+loom kg search "trading" --limit 20
+loom kg search "偏好" --expand
+loom kg stats
 ```
 
-### lume doctor
+### loom doctor
 
 诊断运行环境：检查 Rust 工具链、数据库、推理端点可达性。
 
@@ -253,8 +253,8 @@ lume kg stats
 cargo check --workspace
 
 # 运行测试
-cargo test -p loom-inference -p loom-memory -p lume-skills -p lume-mcp \
-           -p loom-core -p loom-context -p loom-security -p lume-bridge
+cargo test -p loom-inference -p loom-memory -p loom-skills -p loom-mcp \
+           -p loom-core -p loom-context -p loom-security -p loom-bridge
 
 # 代码风格
 cargo fmt --all

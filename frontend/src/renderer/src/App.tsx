@@ -28,6 +28,13 @@ export default function App() {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
 
+  // Set platform attribute for CSS targeting (Win11 animation fix)
+  useEffect(() => {
+    window.loom.getPlatform().then(platform => {
+      document.documentElement.setAttribute('data-platform', platform)
+    })
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     let teardown: (() => void) | null = null

@@ -237,6 +237,7 @@
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
+  will-change: transform;
 }
 
 @keyframes spin {
@@ -254,6 +255,7 @@
   background: linear-gradient(90deg, rgba(255,255,255,0.02) 25%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.02) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s ease-in-out infinite;
+  will-change: transform;
 }
 
 @keyframes shimmer {

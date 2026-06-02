@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn test_check_installed_not_found() {
-        let tmp = std::env::temp_dir().join("lume-marketplace-test-nonexistent");
+        let tmp = std::env::temp_dir().join("loom-marketplace-test-nonexistent");
         let (installed, version, path) = check_installed("no-such-entry", &tmp);
         assert!(!installed);
         assert!(version.is_none());
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn test_list_with_status() {
-        let tmp = std::env::temp_dir().join("lume-marketplace-test-list");
+        let tmp = std::env::temp_dir().join("loom-marketplace-test-list");
         let results = list_with_status(&tmp, &tmp);
         assert!(!results.is_empty());
         for r in &results {

@@ -115,6 +115,7 @@
 .stopBtn {
   background: var(--danger, #ef4444);
   animation: pulse-stop 1.5s ease-in-out infinite;
+  will-change: opacity;
 }
 
 .stopBtn:hover {

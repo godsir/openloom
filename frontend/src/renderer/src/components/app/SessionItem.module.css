@@ -88,6 +88,7 @@
   box-shadow: 0 0 4px rgba(34, 197, 94, 0.5);
   flex-shrink: 0;
   animation: pulse 1.5s ease-in-out infinite;
+  will-change: opacity;
 }
 
 @keyframes pulse {

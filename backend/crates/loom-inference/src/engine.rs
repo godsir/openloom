@@ -169,13 +169,17 @@ impl InferenceEngine {
                     .filter_map(|tc| {
                         let id = tc["id"].as_str().filter(|s| !s.is_empty())?;
                         let name = tc["function"]["name"].as_str().filter(|s| !s.is_empty())?;
+                        let raw_args = &tc["function"]["arguments"];
+                        tracing::info!(
+                            tool_name = %name,
+                            args_type = if raw_args.is_string() { "string" } else if raw_args.is_object() { "object" } else { "other" },
+                            args_preview = %format!("{:?}", raw_args).chars().take(200).collect::<String>(),
+                            "parsing tool call arguments (engine)"
+                        );
                         Some(ToolCall {
                             id: id.to_string(),
                             name: name.to_string(),
-                            arguments: serde_json::from_str(
-                                tc["function"]["arguments"].as_str().unwrap_or("{}"),
-                            )
-                            .unwrap_or_default(),
+                            arguments: parse_tool_arguments(raw_args),
                         })
                     })
                     .collect()
@@ -621,6 +625,21 @@ pub trait CloudClient: Send + Sync {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────
+
+/// Parse tool call arguments from the LLM response.
+/// Handles both the standard OpenAI string format ("{\"path\":\"...\"}")
+/// and the object format used by some proxies/gateways ({"path":"..."}).
+fn parse_tool_arguments(args: &serde_json::Value) -> serde_json::Value {
+    // Standard OpenAI format: arguments is a JSON-encoded string
+    if let Some(s) = args.as_str() {
+        return serde_json::from_str(s).unwrap_or_default();
+    }
+    // Some gateways/proxies return arguments as a JSON object directly
+    if args.is_object() {
+        return args.clone();
+    }
+    serde_json::Value::Object(serde_json::Map::new())
+}
 
 fn lower_messages(messages: &[Message]) -> Vec<serde_json::Value> {
     messages

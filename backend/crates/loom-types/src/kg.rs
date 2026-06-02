@@ -1,5 +1,5 @@
 //! Knowledge graph wire types — serializable equivalents of loom-memory GraphRow/ScoredEntity.
-//! Consumers: loom-server (RPC responses), frontend (bindings), lume-cli (display).
+//! Consumers: loom-server (RPC responses), frontend (bindings), loom-cli (display).
 
 use serde::{Deserialize, Serialize};
 

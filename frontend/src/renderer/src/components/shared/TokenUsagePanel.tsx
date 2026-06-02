@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useCallback, useState, useRef } from 'react'
+import { useEffect, useMemo, useCallback, useState } from 'react'
 import { BarChart3, TrendingUp, Zap, Database, AlertCircle } from 'lucide-react'
 import { onWsConnected } from '../../services/websocket'
 import { useStore } from '../../stores'
@@ -110,7 +110,6 @@ interface TrendChartProps {
 }
 
 function TrendChart({ history }: TrendChartProps) {
-  const svgRef = useRef<SVGSVGElement>(null)
   const [tooltip, setTooltip] = useState<TooltipData>({
     x: 0, y: 0, visible: false, date: '', prompt: 0, completion: 0, cached: 0,
   })
@@ -138,12 +137,8 @@ function TrendChart({ history }: TrendChartProps) {
   const chartW = bars.length * (barW + BAR_GAP) - BAR_GAP
 
   const handleBarHover = useCallback((e: React.MouseEvent, bar: typeof bars[0], idx: number) => {
-    const svg = svgRef.current
-    if (!svg) return
-    const rect = svg.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-    setTooltip({ x, y, visible: true, date: bar.date, prompt: bar.prompt, completion: bar.completion, cached: 0 })
+    // Position: fixed is relative to the viewport — use clientX/Y directly
+    setTooltip({ x: e.clientX, y: e.clientY, visible: true, date: bar.date, prompt: bar.prompt, completion: bar.completion, cached: 0 })
   }, [])
 
   const handleBarLeave = useCallback(() => {
@@ -182,7 +177,6 @@ function TrendChart({ history }: TrendChartProps) {
       </div>
       <div className={styles.chartScroll} style={{ overflowX: 'auto', overflowY: 'hidden' }}>
         <svg
-          ref={svgRef}
           className={styles.chartSvg}
           viewBox={`0 0 ${Math.max(chartW + CHART_PADDING_LEFT + CHART_PADDING_RIGHT, 100)} ${CHART_HEIGHT}`}
           width={Math.max(chartW + CHART_PADDING_LEFT + CHART_PADDING_RIGHT, 100)}

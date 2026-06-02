@@ -29,14 +29,14 @@ function findProjectRoot(): string {
 
 function findLoomExe(): string {
   if (app.isPackaged) {
-    return join(process.resourcesPath, 'engine', 'lume.exe')
+    return join(process.resourcesPath, 'engine', 'loom.exe')
   }
   const root = findProjectRoot()
-  const release = join(root, 'target', 'release', 'lume.exe')
+  const release = join(root, 'target', 'release', 'loom.exe')
   if (existsSync(release)) return release
-  const debug = join(root, 'target', 'debug', 'lume.exe')
+  const debug = join(root, 'target', 'debug', 'loom.exe')
   if (existsSync(debug)) return debug
-  throw new Error(`lume.exe not found in ${root}/target/release or debug`)
+  throw new Error(`loom.exe not found in ${root}/target/release or debug`)
 }
 
 export function getEnginePort(): number | null {

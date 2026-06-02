@@ -94,6 +94,7 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
       thinking_level: thinkingLevel || 'off',
       skills: validSkills && validSkills.length > 0 ? validSkills : undefined,
       skip_user_message: skipUserMessage || undefined,
+      permission_mode: useStore.getState().permissionMode,
       attached_files: attachedFiles.map(f => ({
         path: f.path,
         name: f.name,

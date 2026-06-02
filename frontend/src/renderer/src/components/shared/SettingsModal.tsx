@@ -12,11 +12,12 @@ import McpLspTab from '../settings/McpTab'
 import SkillsTab from '../settings/SkillsTab'
 import PluginsTab from '../settings/PluginsTab'
 import MarketplaceTab from '../settings/MarketplaceTab'
+import SkillMarketTab from '../settings/SkillMarketTab'
 import AboutTab from '../settings/AboutTab'
 import TokenTab from '../settings/TokenTab'
 import KgTab from '../settings/KgTab'
 
-type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'marketplace' | 'pet' | 'kg' | 'token' | 'about'
+type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pluginMarket' | 'skillMarket' | 'pet' | 'kg' | 'token' | 'about'
 
 const tabGroups: { label: string; items: { id: Tab; label: string; icon: React.ReactNode }[] }[] = [
   {
@@ -33,9 +34,15 @@ const tabGroups: { label: string; items: { id: Tab; label: string; icon: React.R
     items: [
       { id: 'workspace', label: '工作空间', icon: <IconFolder size={14} /> },
       { id: 'mcp', label: 'MCP / LSP', icon: <IconTerminal size={14} /> },
-      { id: 'skills', label: '技能', icon: <IconSparkles size={14} /> },
-      { id: 'plugins', label: '插件', icon: <IconPackage size={14} /> },
-      { id: 'marketplace', label: '市场', icon: <IconStore size={14} /> },
+      { id: 'skills', label: '本地技能', icon: <IconSparkles size={14} /> },
+      { id: 'plugins', label: '本地插件', icon: <IconPackage size={14} /> },
+    ],
+  },
+  {
+    label: '市场',
+    items: [
+      { id: 'pluginMarket', label: '插件市场', icon: <IconPackage size={14} /> },
+      { id: 'skillMarket', label: '技能市场', icon: <IconStore size={14} /> },
     ],
   },
   {
@@ -124,7 +131,8 @@ export default function SettingsModal({
 
           {tab === 'skills' && <SkillsTab />}
           {tab === 'plugins' && <PluginsTab />}
-          {tab === 'marketplace' && <MarketplaceTab />}
+          {tab === 'pluginMarket' && <MarketplaceTab mode="plugin" />}
+          {tab === 'skillMarket' && <SkillMarketTab />}
 
           {tab === 'pet' && (
             <>

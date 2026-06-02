@@ -1,11 +1,11 @@
 [package]
-name = "lume-marketplace"
-version = "0.2.17"
+name = "loom-marketplace"
+version = "0.2.18"
 edition = "2024"
 description = "Plugin marketplace for openLoom — catalog, install, uninstall"
 
 [dependencies]
-lume-plugins = { path = "../lume-plugins" }
+loom-plugins = { path = "../loom-plugins" }
 tokio = { version = "1", features = ["process"] }
 anyhow = "1"
 tracing = "0.1"

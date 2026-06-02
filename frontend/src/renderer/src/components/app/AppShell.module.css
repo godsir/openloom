@@ -90,6 +90,7 @@
 .connectionDot[data-state="reconnecting"] {
   background: var(--amber);
   animation: pulse 1.5s ease-in-out infinite;
+  will-change: opacity;
 }
 
 .connectionStatus {
@@ -185,6 +186,7 @@
 
 .spin {
   animation: spin 1s linear infinite;
+  will-change: transform;
 }
 
 /* Body */

@@ -128,6 +128,7 @@ fn agent_event_method(event: &AgentEvent) -> &'static str {
         AgentEvent::StreamDelta { .. } => "chat.stream_delta",
         AgentEvent::StreamEnd { .. } => "chat.stream_end",
         AgentEvent::TokenUsage { .. } => "chat.token_usage",
+        AgentEvent::PermissionRequest { .. } => "tool.permission_request",
     }
 }
 
@@ -184,6 +185,22 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
                 "cached_tokens": cached_tokens,
                 "latency_ms": latency_ms,
                 "context_window": context_window,
+            })
+        }
+        AgentEvent::PermissionRequest {
+            agent_id: _,
+            session_id,
+            call_id,
+            tool_name,
+            args,
+            risk,
+        } => {
+            json!({
+                "session_id": session_id,
+                "call_id": call_id,
+                "tool_name": tool_name,
+                "args": args,
+                "risk": risk,
             })
         }
         _ => json!({}),

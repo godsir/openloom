@@ -2,7 +2,7 @@
 //! Skill loading for openLoom v2.
 //!
 //! Parses SKILL.md files (Claude Code / OpenClaw format).
-//! For plugin manifest discovery, see the `lume-plugins` crate.
+//! For plugin manifest discovery, see the `loom-plugins` crate.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

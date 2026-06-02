@@ -13,10 +13,11 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use loom_types::SkillPermissions;
 use loom_types::{CompletionRequest, CompletionResponse, ContentPart, Message, Role, StreamDelta, ToolDefinition};
-use lume_plugins::hooks::HookEvent;
+use loom_plugins::hooks::HookEvent;
 use tokio::sync::mpsc;
 use tracing::info;
 
+use crate::event_bus::EventBus;
 use crate::hooks::HookContext;
 use crate::tool_context::ToolContext;
 use crate::tool_registry::ToolRegistry;
@@ -87,6 +88,12 @@ pub struct AgentLoopConfig {
     pub key_store: Option<Arc<RwLock<HashMap<String, String>>>>,
     /// Base data directory (~/.loom) for resolving file-based resources.
     pub loom_dir: Option<std::path::PathBuf>,
+    /// Permission mode: "operate" | "ask" | "read_only"
+    pub permission_mode: String,
+    /// Event bus for publishing permission requests (for "ask" mode)
+    pub event_bus: Option<EventBus>,
+    /// Pending permission approvals keyed by call_id
+    pub pending_permissions: Option<Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>>,
 }
 
 impl Default for AgentLoopConfig {
@@ -144,6 +151,9 @@ impl Default for AgentLoopConfig {
             agent_id: String::new(),
             key_store: None,
             loom_dir: None,
+            permission_mode: "operate".to_string(),
+            event_bus: None,
+            pending_permissions: None,
         }
     }
 }
@@ -752,7 +762,19 @@ async fn run_agent_turn_inner(
                 info!(name = %tool_name, "executing tool");
                 // Permission check using configured defaults (or merged skill permissions)
                 let perms = config.default_permissions.clone();
-                let (allowed, risk) = check_permission(&tool_name, &perms);
+                let (mut allowed, risk) = check_permission(&tool_name, &perms);
+
+                // "ask" mode: for medium/high risk tools, request user approval
+                if allowed && config.permission_mode == "ask" && risk != loom_types::RiskLevel::Low {
+                    allowed = request_user_approval(
+                        &tc.id,
+                        &tool_name,
+                        &tc.arguments,
+                        &risk,
+                        config,
+                    ).await;
+                }
+
                 if !allowed {
                     // Fire PermissionRequest hook
                     if let Some(ref hook_reg) = config.hook_registry {
@@ -772,10 +794,28 @@ async fn run_agent_turn_inner(
                             )
                             .await;
                     }
+                    let reason = match config.permission_mode.as_str() {
+                        "read_only" => format!(
+                            "【只读模式】当前处于 Read Only 模式，不允许执行 {} 操作。\
+                             请告知用户：需要切换到 Ask（询问）或 Operate（操作）模式后才能执行写入/删除/shell 等操作。\
+                             不要重试此操作，直接告诉用户如何切换模式。",
+                            tool_name
+                        ),
+                        "ask" if risk != loom_types::RiskLevel::Low => format!(
+                            "【需要确认】用户未批准此 {} 操作 (风险等级: {:?})。\
+                             请告知用户：切换到 Operate 模式可跳过确认，或下次弹出确认框时点击允许。\
+                             不要用相同参数重试此操作。",
+                            tool_name, risk
+                        ),
+                        _ => format!(
+                            "【权限不足】{} 操作被拒绝 (风险等级: {:?})。不要重试。",
+                            tool_name, risk
+                        ),
+                    };
                     let perm_msg = Message::tool(
                         &tc.id,
                         &tool_name,
-                        format!("Permission denied (risk: {:?})", risk),
+                        reason,
                     );
                     messages.push(perm_msg.clone());
                     tool_messages.push(perm_msg);
@@ -1621,7 +1661,20 @@ async fn run_agent_turn_streaming_inner(
 
                 // Permission check using configured defaults (or merged skill permissions)
                 let perms = config.default_permissions.clone();
-                let (allowed, risk) = check_permission(tc_name, &perms);
+                let (mut allowed, risk) = check_permission(tc_name, &perms);
+
+                // "ask" mode: for medium/high risk tools, request user approval
+                if allowed && config.permission_mode == "ask" && risk != loom_types::RiskLevel::Low {
+                    let args: serde_json::Value = serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}));
+                    allowed = request_user_approval(
+                        tc_id,
+                        tc_name,
+                        &args,
+                        &risk,
+                        config,
+                    ).await;
+                }
+
                 if !allowed {
                     // Fire PermissionRequest hook
                     if let Some(ref hook_reg) = config.hook_registry {
@@ -1641,10 +1694,28 @@ async fn run_agent_turn_streaming_inner(
                             )
                             .await;
                     }
+                    let reason = match config.permission_mode.as_str() {
+                        "read_only" => format!(
+                            "【只读模式】当前处于 Read Only 模式，不允许执行 {} 操作。\
+                             请告知用户：需要切换到 Ask（询问）或 Operate（操作）模式后才能执行写入/删除/shell 等操作。\
+                             不要重试此操作，直接告诉用户如何切换模式。",
+                            tc_name
+                        ),
+                        "ask" if risk != loom_types::RiskLevel::Low => format!(
+                            "【需要确认】用户未批准此 {} 操作 (风险等级: {:?})。\
+                             请告知用户：切换到 Operate 模式可跳过确认，或下次弹出确认框时点击允许。\
+                             不要用相同参数重试此操作。",
+                            tc_name, risk
+                        ),
+                        _ => format!(
+                            "【权限不足】{} 操作被拒绝 (风险等级: {:?})。不要重试。",
+                            tc_name, risk
+                        ),
+                    };
                     let perm_msg = Message::tool(
                         tc_id,
                         tc_name,
-                        format!("Permission denied (risk: {:?})", risk),
+                        reason.clone(),
                     );
                     messages.push(perm_msg.clone());
                     tool_messages.push(perm_msg);
@@ -1653,7 +1724,7 @@ async fn run_agent_turn_streaming_inner(
                             call_id: tc_id.clone(),
                             tool_name: tc_name.clone(),
                             success: false,
-                            result: Some(format!("Permission denied (risk: {:?})", risk)),
+                            result: Some(reason),
                             structured_content: None,
                         })
                         .await;
@@ -1809,6 +1880,65 @@ async fn run_agent_turn_streaming_inner(
         tool_messages,
         vision_usage: vision_usage.clone(),
     })
+}
+
+/// Request user approval for a tool call in "ask" permission mode.
+/// Returns true if approved, false if denied or timed out.
+async fn request_user_approval(
+    call_id: &str,
+    tool_name: &str,
+    args: &serde_json::Value,
+    risk: &loom_types::RiskLevel,
+    config: &AgentLoopConfig,
+) -> bool {
+    let (bus, pending) = match (&config.event_bus, &config.pending_permissions) {
+        (Some(b), Some(p)) => (b, p),
+        _ => {
+            tracing::warn!("ask mode enabled but no event_bus/pending_permissions configured — denying tool");
+            return false;
+        }
+    };
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    {
+        let mut map = pending.write().await;
+        map.insert(call_id.to_string(), tx);
+    }
+
+    bus.publish(crate::event_bus::AgentEvent::PermissionRequest {
+        agent_id: loom_types::AgentId(config.agent_id.clone()),
+        session_id: config.session_id.clone(),
+        call_id: call_id.to_string(),
+        tool_name: tool_name.to_string(),
+        args: args.clone(),
+        risk: format!("{:?}", risk),
+    });
+
+    tracing::info!(
+        call_id = %call_id,
+        tool_name = %tool_name,
+        risk = ?risk,
+        "waiting for user approval"
+    );
+
+    // Wait up to 60 seconds for user response
+    match tokio::time::timeout(std::time::Duration::from_secs(60), rx).await {
+        Ok(Ok(approved)) => {
+            tracing::info!(call_id = %call_id, approved, "user responded to permission request");
+            approved
+        }
+        Ok(Err(_)) => {
+            tracing::warn!(call_id = %call_id, "permission request sender dropped");
+            false
+        }
+        Err(_) => {
+            tracing::warn!(call_id = %call_id, "permission request timed out");
+            // Clean up the pending entry
+            let mut map = pending.write().await;
+            map.remove(call_id);
+            false
+        }
+    }
 }
 
 /// Returns true if the error message indicates a transient failure that

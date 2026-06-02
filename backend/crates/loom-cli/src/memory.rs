@@ -558,7 +558,7 @@ impl MemoryStore for LoomMemoryStore {
 
     async fn save_mcp_server(
         &self,
-        config: &lume_mcp::McpServerConfig,
+        config: &loom_mcp::McpServerConfig,
         autostart: bool,
     ) -> Result<()> {
         let row = McpServerRow {
@@ -586,7 +586,7 @@ impl MemoryStore for LoomMemoryStore {
         McpConfigStore::new(store.conn()).upsert(&row)
     }
 
-    async fn list_mcp_servers(&self) -> Result<Vec<(lume_mcp::McpServerConfig, bool)>> {
+    async fn list_mcp_servers(&self) -> Result<Vec<(loom_mcp::McpServerConfig, bool)>> {
         let store = self.config_db.lock().unwrap();
         let rows = McpConfigStore::new(store.conn()).list()?;
         let configs = rows
@@ -603,7 +603,7 @@ impl MemoryStore for LoomMemoryStore {
                     .disabled_tools_json
                     .as_deref()
                     .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
-                let config = lume_mcp::McpServerConfig {
+                let config = loom_mcp::McpServerConfig {
                     name: r.name,
                     transport: r.transport,
                     command: r.command,

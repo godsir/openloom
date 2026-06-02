@@ -53,8 +53,8 @@
         "to": "."
       },
       {
-        "from": "../target/release/lume.exe",
-        "to": "engine/lume.exe"
+        "from": "../target/release/loom.exe",
+        "to": "engine/loom.exe"
       }
     ],
     "publish": {

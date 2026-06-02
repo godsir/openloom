@@ -175,13 +175,17 @@ impl OpenAIClient {
                     .filter_map(|tc| {
                         let id = tc["id"].as_str().filter(|s| !s.is_empty())?;
                         let name = tc["function"]["name"].as_str().filter(|s| !s.is_empty())?;
+                        let raw_args = &tc["function"]["arguments"];
+                        tracing::info!(
+                            tool_name = %name,
+                            args_type = if raw_args.is_string() { "string" } else if raw_args.is_object() { "object" } else { "other" },
+                            args_preview = %format!("{:?}", raw_args).chars().take(200).collect::<String>(),
+                            "parsing tool call arguments"
+                        );
                         Some(ToolCall {
                             id: id.to_string(),
                             name: name.to_string(),
-                            arguments: serde_json::from_str(
-                                tc["function"]["arguments"].as_str().unwrap_or("{}"),
-                            )
-                            .unwrap_or_default(),
+                            arguments: parse_tool_arguments(raw_args),
                         })
                     })
                     .collect()
@@ -692,6 +696,32 @@ pub async fn ensure_lm_studio_model(
         tracing::debug!(%model, status=%resp.status(), "LM Studio load (non-fatal)");
     }
     Ok(())
+}
+
+/// Parse tool call arguments from the LLM response.
+/// Handles both the standard OpenAI string format ("{\"path\":\"...\"}")
+/// and the object format used by some proxies/gateways ({"path":"..."}).
+pub(crate) fn parse_tool_arguments(args: &serde_json::Value) -> serde_json::Value {
+    // Standard OpenAI format: arguments is a JSON-encoded string
+    if let Some(s) = args.as_str() {
+        match serde_json::from_str(s) {
+            Ok(v) => return v,
+            Err(e) => {
+                tracing::warn!(raw = %s, error = %e, "failed to parse tool arguments string");
+                return serde_json::Value::Object(serde_json::Map::new());
+            }
+        }
+    }
+    // Some gateways/proxies return arguments as a JSON object directly
+    if args.is_object() {
+        return args.clone();
+    }
+    // Log unexpected format for debugging
+    tracing::warn!(
+        args_type = %format!("{:?}", args),
+        "unexpected tool arguments format — received neither string nor object"
+    );
+    serde_json::Value::Object(serde_json::Map::new())
 }
 
 pub fn parse_inline_tool_calls(text: &str) -> (String, Vec<ToolCall>) {

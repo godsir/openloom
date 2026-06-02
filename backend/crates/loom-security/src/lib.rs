@@ -2,26 +2,32 @@
 //! Security layer — permission check, approval, audit.
 
 use loom_types::{RiskLevel, SkillPermissions};
-use lume_skills::SkillPermissionConfig;
+use loom_skills::SkillPermissionConfig;
 
 /// Check if a tool call is allowed under current permissions.
+/// Returns (allowed, risk_level) where:
+/// - allowed: whether the tool may execute (false = blocked)
+/// - risk_level: the tool's inherent danger level (used for "ask" mode confirmation)
 pub fn check_permission(tool_name: &str, permissions: &SkillPermissions) -> (bool, RiskLevel) {
-    // Read-only tools are always Low risk
-    let read_only = ["file_read", "file_search", "content_search"];
+    // Read-only tools — always allowed, always low risk
+    let read_only = ["file_read", "file_search", "content_search", "file_list"];
     if read_only.contains(&tool_name) {
         return (true, RiskLevel::Low);
     }
 
-    // Shell and file-write tools require explicit permission
-    if tool_name == "shell" && !permissions.shell {
-        return (false, RiskLevel::High);
+    // Shell tools — high risk, denied if shell permission is false
+    if tool_name == "shell" {
+        let allowed = permissions.shell;
+        return (allowed, RiskLevel::High);
     }
 
-    // File write tools
-    if ["file_write", "file_edit"].contains(&tool_name) && permissions.fs_write.is_none() {
-        return (false, RiskLevel::Medium);
+    // File write/edit/delete — medium risk, denied if fs_write is None
+    if ["file_write", "file_edit", "file_delete"].contains(&tool_name) {
+        let allowed = permissions.fs_write.is_some();
+        return (allowed, RiskLevel::Medium);
     }
 
+    // Unknown / meta tools (request_tools, use_skill, web_search, etc.)
     (true, RiskLevel::Low)
 }
 
