@@ -29,6 +29,10 @@ CLAUDE.md
 # Logs
 *.log
 
+# AI-generated temp files
+/search*.png
+/pinterest_results.png
+
 # Node / Electron
 node_modules/
 dist/
