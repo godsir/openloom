@@ -19,9 +19,10 @@ export default function UpdateModal() {
   const modalOpen = useStore((s) => s.updateModalOpen)
   const dismissUpdate = useStore((s) => s.dismissUpdate)
   const downloadUpdate = useStore((s) => s.downloadUpdate)
+  const backgroundDownload = useStore((s) => s.backgroundDownload)
   const installUpdate = useStore((s) => s.installUpdate)
 
-  const { status, version, progress, bytesPerSecond, transferred, total, error } = update
+  const { status, version, releaseNotes, progress, bytesPerSecond, transferred, total, error } = update
 
   const show = modalOpen && (status === 'available' || status === 'downloading' || status === 'downloaded' || status === 'error')
 
@@ -38,9 +39,13 @@ export default function UpdateModal() {
             <div className={styles.versionHeader}>
               发现新版本 {version}
             </div>
-            <div className={styles.versionSub}>当前版本已是最新，但有可用更新</div>
+            <div className={styles.versionSub}>建议更新到最新版本以获得新功能与安全修复</div>
+            {releaseNotes && (
+              <div className={styles.releaseNotes}>{releaseNotes}</div>
+            )}
             <div className={styles.actions}>
               <button className={styles.dismissBtn} onClick={dismissUpdate}>稍后再说</button>
+              <button className={styles.secondaryBtn} onClick={backgroundDownload}>后台下载</button>
               <button className={styles.primaryBtn} onClick={downloadUpdate}>下载更新</button>
             </div>
           </>

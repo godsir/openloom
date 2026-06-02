@@ -2079,6 +2079,92 @@
   color: var(--text-muted);
 }
 
+/* Pagination */
+.marketplacePagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.marketplacePaginationInfo {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.marketplacePaginationControls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.marketplacePageBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.marketplacePageBtn:hover:not(:disabled):not(.marketplacePageBtnActive) {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.marketplacePageBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.marketplacePageBtnActive {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  font-weight: 600;
+  cursor: default;
+}
+
+.marketplacePageEllipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 30px;
+  font-size: 12px;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.marketplacePageSizeSelect {
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  margin-left: 8px;
+}
+
+.marketplacePageSizeSelect:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 /* ── Responsive ── */
 
 @media (max-width: 640px) {

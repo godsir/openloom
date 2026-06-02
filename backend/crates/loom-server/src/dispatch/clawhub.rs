@@ -219,25 +219,44 @@ async fn build_http_client() -> Result<reqwest::Client, JsonRpcError> {
 
 async fn fetch_skill_list() -> Result<Vec<Value>, JsonRpcError> {
     let client = build_http_client().await?;
-    let url = format!("{}/api/v1/skills", CLAWHUB_BASE);
+    let base_url = format!("{}/api/v1/skills", CLAWHUB_BASE);
 
-    let resp = client
-        .get(&url)
-        .header("User-Agent", "openLoom/0.2")
-        .send()
-        .await
-        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    let mut all_items: Vec<ClawhubSkillItem> = Vec::new();
+    let mut cursor: Option<String> = None;
 
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    // Paginate through all pages using the nextCursor field
+    loop {
+        let mut url = base_url.clone();
+        if let Some(ref c) = cursor {
+            url = format!("{}?cursor={}", url, urlencoding::encode(c));
+        }
 
-    let list: ClawhubListResponse = serde_json::from_str(&body)
-        .map_err(|e| err(ErrorCode::InternalError, &format!("parse error: {}", e)))?;
+        let resp = client
+            .get(&url)
+            .header("User-Agent", "openLoom/0.2")
+            .send()
+            .await
+            .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
 
-    let skills: Vec<Value> = list
-        .items
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+
+        let list: ClawhubListResponse = serde_json::from_str(&body)
+            .map_err(|e| err(ErrorCode::InternalError, &format!("parse error: {}", e)))?;
+
+        all_items.extend(list.items);
+
+        // Continue if there's a next page, otherwise break
+        if list.next_cursor.is_some() && !list.next_cursor.as_deref().unwrap_or("").is_empty() {
+            cursor = list.next_cursor;
+        } else {
+            break;
+        }
+    }
+
+    let skills: Vec<Value> = all_items
         .into_iter()
         .map(|item| {
             let latest_ver = item

@@ -87,7 +87,7 @@ export default function App() {
   // Global update IPC listeners (registered once on mount)
   useEffect(() => {
     window.loom.onUpdateAvailable((info: any) => {
-      useStore.getState().onAutoUpdateAvailable(info?.version ?? null)
+      useStore.getState().onAutoUpdateAvailable(info?.version ?? null, info?.releaseNotes ?? null)
     })
     window.loom.onUpdateNotAvailable(() => {
       useStore.getState().onAutoUpdateNotAvailable()

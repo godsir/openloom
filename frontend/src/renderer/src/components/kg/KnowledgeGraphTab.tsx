@@ -1,18 +1,10 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import ReactEChartsCore from 'echarts-for-react/lib/core'
-import * as echarts from 'echarts/core'
-import { GraphChart } from 'echarts/charts'
-import { TooltipComponent, LegendComponent } from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import GalaxyGraph from './GalaxyGraph'
 import { useStore } from '../../stores'
 import Select from '../shared/Select'
 import type { KgNode } from '../../types/bindings'
 import StarField from './StarField'
 import styles from './KnowledgeGraphPanel.module.css'
-
-echarts.use([GraphChart, TooltipComponent, LegendComponent, CanvasRenderer])
-
-const DEFAULT_COLOR = '#9ca3af'
 
 // Hash entity type → stable hue, so each type gets a distinct color.
 function hashHue(s: string): number {
@@ -44,13 +36,6 @@ interface GraphNode {
   confidence: number
   scope: string
   color: string
-}
-
-interface GraphLink {
-  source: string
-  target: string
-  relation_type: string
-  confidence: number
 }
 
 export default function KnowledgeGraphTab() {
@@ -158,219 +143,6 @@ export default function KnowledgeGraphTab() {
     return () => ro.disconnect()
   }, [activeTab])
 
-  // Compute connected components ("galaxies") and assign each a distinct hue.
-  // Nodes in the same galaxy share a base hue; USER is always warm gold.
-  const galaxyColors = useMemo(() => {
-    if (!kgGraph || kgGraph.nodes.length === 0) return new Map<string, { hue: number; galaxyIndex: number }>()
-
-    // Build adjacency for BFS
-    const adj = new Map<string, Set<string>>()
-    for (const n of kgGraph.nodes) adj.set(n.name, new Set())
-    for (const e of kgGraph.edges) {
-      adj.get(e.source)?.add(e.target)
-      adj.get(e.target)?.add(e.source)
-    }
-
-    // BFS over all nodes to find connected components
-    const visited = new Set<string>()
-    const component: string[][] = []
-    for (const name of adj.keys()) {
-      if (visited.has(name)) continue
-      const queue = [name]
-      const comp: string[] = []
-      visited.add(name)
-      while (queue.length > 0) {
-        const cur = queue.shift()!
-        comp.push(cur)
-        for (const nb of adj.get(cur) ?? []) {
-          if (!visited.has(nb)) { visited.add(nb); queue.push(nb) }
-        }
-      }
-      component.push(comp)
-    }
-
-    // Assign hues: golden-ratio spacing for max colour separation
-    const result = new Map<string, { hue: number; galaxyIndex: number }>()
-    component.forEach((comp, ci) => {
-      const hue = (ci * 137.508) % 360 // golden angle
-      for (const name of comp) result.set(name, { hue, galaxyIndex: ci })
-    })
-    return result
-  }, [kgGraph])
-
-  // Convert KgGraph to graph-data format used by edge list and tooltip look-ups.
-  const graphData = useMemo(() => {
-    if (!kgGraph || kgGraph.nodes.length === 0) return { nodes: [] as GraphNode[], links: [] as GraphLink[] }
-
-    const nodeMap = new Map<string, GraphNode>()
-    for (const n of kgGraph.nodes) {
-      const gc = galaxyColors.get(n.name)
-      // USER is always gold; other nodes inherit their galaxy hue
-      const color = n.name === 'USER'
-        ? '#fbbf24'
-        : gc
-          ? `hsl(${gc.hue}, 68%, 62%)`
-          : entityColor(n.entity_type) // fallback for isolated nodes without edges
-
-      nodeMap.set(n.name, {
-        id: n.name,
-        node_id: n.node_id,
-        name: n.name,
-        entity_type: n.entity_type,
-        description: n.description,
-        confidence: n.confidence,
-        scope: n.scope,
-        color,
-      })
-    }
-
-    const links: GraphLink[] = []
-    for (const e of kgGraph.edges) {
-      if (nodeMap.has(e.source) && nodeMap.has(e.target)) {
-        links.push({
-          source: e.source,
-          target: e.target,
-          relation_type: e.relation_type,
-          confidence: e.confidence,
-        })
-      }
-    }
-
-    return { nodes: [...nodeMap.values()], links }
-  }, [kgGraph])
-
-  // Build ECharts option from graphData.
-  const chartOption = useMemo(() => {
-    const nodes = graphData.nodes.map(n => ({
-      id: n.id,
-      name: n.name,
-      symbolSize: n.name === 'USER' ? 36 : 6 + n.confidence * 16,
-      itemStyle: { color: n.color },
-      label: { show: showLabels, color: '#e2e8f0', fontSize: 11 },
-      // extra fields carried through for tooltip / click handler
-      node_id: n.node_id,
-      entity_type: n.entity_type,
-      description: n.description,
-      confidence: n.confidence,
-      scope: n.scope,
-    }))
-
-    const links = graphData.links.map(l => ({
-      source: l.source,
-      target: l.target,
-      value: l.relation_type,
-      label: {
-        show: showLabels,
-        color: 'rgba(255,255,255,0.5)',
-        fontSize: 9,
-        formatter: (p: any) => translateRelation(p.data?.value ?? p.value ?? ''),
-      },
-    }))
-
-    return {
-      backgroundColor: 'transparent',
-      tooltip: {
-        trigger: 'item',
-        formatter: (params: any) => {
-          if (params.dataType === 'node') {
-            const d = params.data
-            let html = `<div style="max-width:260px;text-align:left">
-              <div style="font-weight:600;font-size:13px;margin-bottom:4px;color:#e2e8f0">${d.name}</div>
-              <div style="font-size:11px;color:#94a3b8;margin-bottom:4px">${d.entity_type}</div>`
-            if (d.description) {
-              html += `<div style="font-size:11px;color:#cbd5e1;margin-bottom:4px;line-height:1.5;word-break:break-word">${d.description}</div>`
-            }
-            html += `<div style="font-size:10px;color:#64748b">确信度 ${(d.confidence * 100).toFixed(0)}%</div>
-            </div>`
-            return html
-          }
-          if (params.dataType === 'edge') {
-            return translateRelation(params.data?.value ?? params.value ?? '')
-          }
-          return ''
-        },
-      },
-      series: [
-        {
-          type: 'graph',
-          layout: 'force',
-          roam: true,
-          draggable: true,
-          data: nodes,
-          links,
-          force: {
-            repulsion: 3000,
-            edgeLength: [400, 800],
-            gravity: 0.1,
-            friction: 0.6,
-          },
-          label: {
-            show: showLabels,
-            color: '#e2e8f0',
-            fontSize: 11,
-            position: 'bottom',
-          },
-          edgeLabel: {
-            show: showLabels,
-            color: 'rgba(255,255,255,0.5)',
-            fontSize: 9,
-            formatter: (p: any) => translateRelation(p.data?.value ?? p.value ?? ''),
-          },
-          lineStyle: {
-            color: 'rgba(255,255,255,0.15)',
-            curveness: 0.3,
-          },
-          emphasis: {
-            focus: 'adjacency',
-            lineStyle: { width: 3 },
-          },
-          animation: true,
-          animationDuration: 800,
-          animationDurationUpdate: 300,
-          animationEasingUpdate: 'linearInOut',
-        },
-      ],
-    }
-  }, [graphData, showLabels])
-
-  // ECharts event handlers.
-  const onChartEvents = useMemo(
-    () => ({
-      click: (params: any) => {
-        if (params.dataType === 'node') {
-          const d = params.data
-          setTooltip(prev => {
-            if (prev?.node.id === d.id) return null
-            const node: GraphNode = {
-              id: d.id,
-              node_id: d.node_id,
-              name: d.name,
-              entity_type: d.entity_type,
-              description: d.description,
-              confidence: d.confidence,
-              scope: d.scope,
-              color: entityColor(d.entity_type),
-            }
-            const ev: MouseEvent = params.event?.event ?? params.event
-            return { node, x: ev?.clientX ?? 0, y: ev?.clientY ?? 0 }
-          })
-        }
-      },
-    }),
-    [],
-  )
-
-  // Set up zr-level click handler to dismiss tooltip on background click.
-  const handleChartReady = useCallback((instance: any) => {
-    const zr = instance.getZr()
-    zr.off('click')
-    zr.on('click', (params: any) => {
-      if (!params.target) {
-        setTooltip(null)
-      }
-    })
-  }, [])
-
   const handleSearch = useCallback(() => {
     if (!query.trim()) return
     kgSearch(query.trim())
@@ -422,7 +194,7 @@ export default function KnowledgeGraphTab() {
     [kgEdgeDelete],
   )
 
-  const hasData = graphData.nodes.length > 0
+  const hasData = !!(kgGraph && kgGraph.nodes.length > 0)
   // search results overlay on top of node list; clear when query is empty
   const displayNodes = query && kgSearchResults.length > 0 ? kgSearchResults : kgNodeList
 
@@ -563,34 +335,32 @@ export default function KnowledgeGraphTab() {
                 )}
               </div>
             ) : (
-              <ReactEChartsCore
-                echarts={echarts}
-                option={chartOption}
-                style={{ width: '100%', height: '100%' }}
-                onChartReady={handleChartReady}
-                onEvents={onChartEvents}
-                notMerge={true}
-                lazyUpdate={true}
+              <GalaxyGraph
+                nodes={kgGraph.nodes}
+                edges={kgGraph.edges}
+                showLabels={showLabels}
+                onNodeClick={(node, cx, cy) => setTooltip({ node, x: cx, y: cy })}
+                onBackgroundClick={() => setTooltip(null)}
               />
             )}
           </div>
 
           {/* Edge list */}
-          {hasData && (
+          {hasData && kgGraph && (
             <div className={styles.edgeList}>
-              <div className={styles.edgeListTitle}>关系列表 ({graphData.links.length})</div>
-              {graphData.links.map((l, i) => {
-                const srcName = typeof l.source === 'object' ? (l.source as any).name || (l.source as any).id : l.source
-                const tgtName = typeof l.target === 'object' ? (l.target as any).name || (l.target as any).id : l.target
+              <div className={styles.edgeListTitle}>关系列表 ({kgGraph.edges.length})</div>
+              {kgGraph.edges.map((e, i) => {
+                const srcName = e.source
+                const tgtName = e.target
                 return (
                   <div key={i} className={styles.edgeItem}>
                     <span className={styles.edgeNode}>{srcName}</span>
-                    <span className={styles.edgeRel}>{translateRelation(l.relation_type) || '相关'}</span>
+                    <span className={styles.edgeRel}>{translateRelation(e.relation_type) || '相关'}</span>
                     <span className={styles.edgeNode}>{tgtName}</span>
                     <button
                       className={styles.edgeDelBtn}
                       onClick={() =>
-                        handleDeleteEdge(srcName as string, tgtName as string, l.relation_type)
+                        handleDeleteEdge(srcName, tgtName, e.relation_type)
                       }
                       title="删除关系"
                     >
@@ -606,7 +376,7 @@ export default function KnowledgeGraphTab() {
 
       <div className={styles.legend}>
         {(() => {
-          const types = [...new Set(graphData.nodes.map(n => n.entity_type))]
+          const types = [...new Set(kgGraph ? kgGraph.nodes.map(n => n.entity_type) : [])]
           return types.map(type => (
             <div key={type} className={styles.legendItem}>
               <span className={styles.legendDot} style={{ background: entityColor(type) }} />
@@ -653,14 +423,12 @@ export default function KnowledgeGraphTab() {
       {isFullscreen && activeTab === 'graph' && hasData && (
         <div className={styles.fullscreenOverlay} ref={fullscreenWrapRef} style={{ display: 'block' }}>
           <StarField width={window.innerWidth} height={window.innerHeight} className={styles.starField} />
-          <ReactEChartsCore
-            echarts={echarts}
-            option={chartOption}
-            style={{ width: '100%', height: '100%' }}
-            onChartReady={handleChartReady}
-            onEvents={onChartEvents}
-            notMerge={true}
-            lazyUpdate={true}
+          <GalaxyGraph
+            nodes={kgGraph.nodes}
+            edges={kgGraph.edges}
+            showLabels={showLabels}
+            onNodeClick={(node, cx, cy) => setTooltip({ node, x: cx, y: cy })}
+            onBackgroundClick={() => setTooltip(null)}
           />
           <button
             className={styles.fullscreenLabelBtn}

@@ -3,6 +3,7 @@ import { StateCreator } from 'zustand'
 export interface UpdateState {
   status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'no-update' | 'error'
   version: string | null
+  releaseNotes: string | null
   progress: number
   bytesPerSecond: number
   transferred: number
@@ -13,6 +14,7 @@ export interface UpdateState {
 const initialUpdate: UpdateState = {
   status: 'idle',
   version: null,
+  releaseNotes: null,
   progress: 0,
   bytesPerSecond: 0,
   transferred: 0,
@@ -25,7 +27,7 @@ export interface UpdateSlice {
   updateModalOpen: boolean
   dismissedVersion: string | null
 
-  onAutoUpdateAvailable: (version: string | null) => void
+  onAutoUpdateAvailable: (version: string | null, releaseNotes?: string | null) => void
   onAutoUpdateNotAvailable: () => void
   onAutoDownloadProgress: (progress: { percent: number; bytesPerSecond: number; transferred: number; total: number }) => void
   onAutoUpdateDownloaded: () => void
@@ -35,6 +37,8 @@ export interface UpdateSlice {
   downloadUpdate: () => Promise<void>
   installUpdate: () => void
   dismissUpdate: () => void
+  closeUpdateModal: () => void
+  backgroundDownload: () => Promise<void>
   simulateUpdateFlow: () => void
 }
 
@@ -54,10 +58,10 @@ export const createUpdateSlice: StateCreator<UpdateSlice> = (set, get) => ({
   updateModalOpen: false,
   dismissedVersion: null,
 
-  onAutoUpdateAvailable: (version: string | null) => {
+  onAutoUpdateAvailable: (version: string | null, releaseNotes?: string | null) => {
     const dismissed = get().dismissedVersion
     set({
-      update: { ...initialUpdate, status: 'available', version },
+      update: { ...initialUpdate, status: 'available', version, releaseNotes: releaseNotes ?? null },
       updateModalOpen: version !== dismissed,
     })
   },
@@ -82,6 +86,7 @@ export const createUpdateSlice: StateCreator<UpdateSlice> = (set, get) => ({
   onAutoUpdateDownloaded: () => {
     set({
       update: { ...get().update, status: 'downloaded', progress: 100 },
+      updateModalOpen: true,
     })
   },
 
@@ -157,11 +162,20 @@ export const createUpdateSlice: StateCreator<UpdateSlice> = (set, get) => ({
     set({ updateModalOpen: false, dismissedVersion: version })
   },
 
+  closeUpdateModal: () => {
+    set({ updateModalOpen: false })
+  },
+
+  backgroundDownload: async () => {
+    get().downloadUpdate()
+    set({ updateModalOpen: false })
+  },
+
   simulateUpdateFlow: () => {
     clearSimulateTimer()
     _isSimulating = true
     set({
-      update: { ...initialUpdate, status: 'available', version: '9.9.9-test' },
+      update: { ...initialUpdate, status: 'available', version: '9.9.9-test', releaseNotes: '## What\'s Changed\n\n- 新增后台下载功能\n- 修复更新提示文案\n- 性能优化与稳定性改进\n\n**Full Changelog**: https://github.com/godsir/openloom/compare/v0.2.18...v9.9.9-test' },
       updateModalOpen: true,
       dismissedVersion: null,
     })

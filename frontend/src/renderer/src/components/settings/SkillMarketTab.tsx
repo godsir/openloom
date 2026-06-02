@@ -26,6 +26,8 @@ export default function SkillMarketTab() {
   const [searchQuery, setSearchQuery] = useState('')
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set())
   const [refreshing, setRefreshing] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
 
   const load = useCallback(async (search?: string, force = false) => {
     setLoading(true)
@@ -36,6 +38,7 @@ export default function SkillMarketTab() {
         { ...(search ? { search } : {}), force }
       )
       setSkills(res.skills ?? [])
+      setCurrentPage(1)
     } catch (e: any) {
       setError(`加载失败: ${e.message || e}`)
     } finally {
@@ -94,6 +97,45 @@ export default function SkillMarketTab() {
     )
   }, [skills, searchQuery])
 
+  // Reset to page 1 when search query changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery])
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const safePage = Math.min(currentPage, totalPages)
+  const paginatedSkills = useMemo(() => {
+    const start = (safePage - 1) * pageSize
+    return filtered.slice(start, start + pageSize)
+  }, [filtered, safePage, pageSize])
+
+  // Generate page numbers with ellipsis
+  const pageNumbers = useMemo(() => {
+    const pages: (number | 'ellipsis')[] = []
+    const total = totalPages
+    if (total <= 7) {
+      for (let i = 1; i <= total; i++) pages.push(i)
+    } else {
+      pages.push(1)
+      if (safePage > 3) pages.push('ellipsis')
+      const start = Math.max(2, safePage - 1)
+      const end = Math.min(total - 1, safePage + 1)
+      for (let i = start; i <= end; i++) pages.push(i)
+      if (safePage < total - 2) pages.push('ellipsis')
+      pages.push(total)
+    }
+    return pages
+  }, [totalPages, safePage])
+
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size)
+    setCurrentPage(1)
+  }
+
+  const startItem = filtered.length === 0 ? 0 : (safePage - 1) * pageSize + 1
+  const endItem = Math.min(safePage * pageSize, filtered.length)
+
   const installedCount = useMemo(() => skills.filter(s => s.installed).length, [skills])
 
   return (
@@ -148,7 +190,7 @@ export default function SkillMarketTab() {
 
         {/* Skill list */}
         <div className={styles.marketplaceGrid}>
-          {filtered.map(skill => (
+          {paginatedSkills.map(skill => (
             <div key={skill.id} className={`${styles.marketplaceCard} ${skill.installed ? styles.marketplaceCardInstalled : ''}`}>
               <div className={styles.marketplaceCardHeader}>
                 <div className={styles.marketplaceCardTitleRow}>
@@ -221,6 +263,53 @@ export default function SkillMarketTab() {
             </div>
           ))}
         </div>
+
+        {/* Pagination */}
+        {!loading && filtered.length > 0 && (
+          <div className={styles.marketplacePagination}>
+            <div className={styles.marketplacePaginationInfo}>
+              {startItem}-{endItem} / {filtered.length} 个技能
+            </div>
+            <div className={styles.marketplacePaginationControls}>
+              <button
+                className={styles.marketplacePageBtn}
+                disabled={safePage <= 1}
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              >
+                &lt;
+              </button>
+              {pageNumbers.map((p, i) =>
+                p === 'ellipsis' ? (
+                  <span key={`ellipsis-${i}`} className={styles.marketplacePageEllipsis}>...</span>
+                ) : (
+                  <button
+                    key={p}
+                    className={`${styles.marketplacePageBtn} ${p === safePage ? styles.marketplacePageBtnActive : ''}`}
+                    onClick={() => setCurrentPage(p)}
+                  >
+                    {p}
+                  </button>
+                )
+              )}
+              <button
+                className={styles.marketplacePageBtn}
+                disabled={safePage >= totalPages}
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              >
+                &gt;
+              </button>
+              <select
+                className={styles.marketplacePageSizeSelect}
+                value={pageSize}
+                onChange={e => handlePageSizeChange(Number(e.target.value))}
+              >
+                <option value={25}>25/页</option>
+                <option value={50}>50/页</option>
+                <option value={100}>100/页</option>
+              </select>
+            </div>
+          </div>
+        )}
       </div>
     </>
   )
