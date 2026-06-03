@@ -13,7 +13,7 @@ use loom_memory::{
 };
 use loom_security::merge_multi_permissions;
 use loom_types::{
-    AgentConfig, CompletionRequest, ContentPart, Message, ModelBackend, Role, SessionId, SkillPermissions,
+    AgentConfig, CompletionRequest, ContentPart, Message, ModelBackend, Role, SandboxConfig, SessionId, SkillPermissions,
     StreamDelta,
 };
 use loom_lsp::LspClient;
@@ -61,6 +61,8 @@ pub struct Orchestrator {
     default_max_iterations: Arc<RwLock<usize>>,
     /// Global default: cumulative prompt token budget, 0 = disabled.
     default_max_prompt_budget: Arc<RwLock<usize>>,
+    /// Sandbox configuration for file and shell access control.
+    sandbox_config: Arc<RwLock<loom_types::config::SandboxConfig>>,
 }
 
 /// Trait for memory backends (SqliteEventStore, etc.)
@@ -352,6 +354,7 @@ impl Orchestrator {
             data_dir,
             default_max_iterations: Arc::new(RwLock::new(30)),
             default_max_prompt_budget: Arc::new(RwLock::new(0)),
+            sandbox_config: Arc::new(RwLock::new(loom_types::config::SandboxConfig::default())),
         }
     }
 
@@ -400,6 +403,16 @@ impl Orchestrator {
 
     pub async fn set_default_max_prompt_budget(&self, val: usize) {
         *self.default_max_prompt_budget.write().await = val;
+    }
+
+    /// Get the current sandbox configuration (defaults to disabled).
+    pub async fn sandbox_config(&self) -> loom_types::config::SandboxConfig {
+        self.sandbox_config.read().await.clone()
+    }
+
+    /// Set the sandbox configuration.
+    pub async fn set_sandbox_config(&self, config: loom_types::config::SandboxConfig) {
+        *self.sandbox_config.write().await = config;
     }
 
     /// Set the API key store shared with the server layer.
@@ -955,7 +968,7 @@ impl Orchestrator {
             .unwrap_or_default()
     }
 
-    /// Generate a 2-7 character title for a session using the LLM.
+    /// Generate a 5-10 character title for a session using the LLM.
     /// Reads the first user message and assistant response, then asks the LLM to
     /// summarize the topic concisely.
     pub async fn auto_title(&self, session_id: &str) -> Result<String> {
@@ -985,7 +998,7 @@ impl Orchestrator {
         }
 
         let prompt = format!(
-            "你是一位标题编辑。根据以下对话内容，生成一个 2-7 个汉字的简短会话标题。\n\
+            "你是一位标题编辑。根据以下对话内容，生成一个 5-10 个汉字的简短会话标题。\n\
              只输出标题本身，不要加引号、不要解释、不要换行。\n\n\
              用户: {}\nAI: {}",
             truncate_str(&user_text, 200),
@@ -1142,16 +1155,23 @@ impl Orchestrator {
                     .get("cached_write")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0) as f64;
-                let cache_cost = (cached_read * cache_read_price
-                    + cached_write * cache_write_price)
-                    / 1_000_000.0;
-                let cost =
-                    (prompt * input_price + completion * output_price) / 1_000_000.0 + cache_cost;
+                // prompt = cache-hit + cache-miss; split so cached tokens
+                // are NOT double-charged (previously: prompt * input_price PLUS
+                // cached_read * cache_read_price — cached tokens paid twice).
+                let cache_miss = (prompt - cached_read).max(0.0);
+                let cache_hit_cost = cached_read * cache_read_price / 1_000_000.0;
+                let cache_write_cost = cached_write * cache_write_price / 1_000_000.0;
+                let input_cost = cache_miss * input_price / 1_000_000.0;
+                let output_cost = completion * output_price / 1_000_000.0;
+                let cost = input_cost + cache_hit_cost + cache_write_cost + output_cost;
                 total_cost += cost;
                 entry["input_price"] = serde_json::json!(input_price);
                 entry["output_price"] = serde_json::json!(output_price);
                 entry["cache_read_price"] = serde_json::json!(cache_read_price);
                 entry["cache_write_price"] = serde_json::json!(cache_write_price);
+                entry["cache_miss_tokens"] = serde_json::json!(cache_miss as i64);
+                entry["cache_hit_tokens"] = serde_json::json!(cached_read as i64);
+                entry["cache_write_tokens"] = serde_json::json!(cached_write as i64);
                 entry["cost"] = serde_json::json!((cost * 10000.0).round() / 10000.0);
             }
         }
@@ -1758,9 +1778,13 @@ impl Orchestrator {
     }
 
     /// Build the full system prompt by assembling agent persona, system instructions,
-    /// user profile, selected skills, available skills, KG context, and workspace path.
+    /// user profile, selected skills, KG context, and workspace path.
     /// Shared by both `process_message_with_config` and `process_message_streaming`
     /// to eliminate code duplication.
+    ///
+    /// Note: available_skills is a pre-formatted "- name: description" list
+    /// injected into the system prompt so the LLM can discover skills before
+    /// loading them via the `use_skill` tool.
     async fn build_full_system_prompt(
         &self,
         agent_config: &loom_types::AgentConfig,
@@ -1808,9 +1832,68 @@ impl Orchestrator {
                 }
             }
         }
-        // 4b. Available skills — name-only list for LLM autonomous use_skill calls
+        // 4a-bis. Always-active skills — auto-inject full SKILL.md content for
+        // skills whose manifest declares always_active: true. These activate
+        // automatically without user or LLM action.
+        {
+            let always_active_names: Vec<String> = {
+                let state = self.skill_state.read().await;
+                state.summaries.iter()
+                    .filter(|s| s.always_active)
+                    .map(|s| s.name.clone())
+                    .collect()
+            };
+            if !always_active_names.is_empty() {
+                let first_time = selected_skills.is_empty();
+                let bodies = self.skill_state.read().await.bodies.clone();
+                system_prompt.push_str(&format!(
+                    "\n\n## Active Skills ({})\nThe following skills are activated automatically for this conversation. Follow their instructions directly — do NOT call use_skill for these.\n",
+                    if first_time { "Auto-Activated" } else { "Also Auto-Activated" }
+                ));
+                for name in &always_active_names {
+                    if !selected_skills.contains(name) {
+                        if let Some(body) = bodies.get(name) {
+                            system_prompt.push_str(&format!("\n\n### Skill: {}\n{}", name, body));
+                        }
+                    }
+                }
+            }
+        }
+        // 4b. Available skills — loaded on-demand via the use_skill tool.
+        // Inject the list (excluding already-active ones to avoid confusion)
+        // so the LLM can discover skills without guessing.
         if !available_skills.is_empty() {
-            system_prompt.push_str(&format!("\n\n## Available Skills\n{}", available_skills));
+            // Build exclusion set: user-selected + always_active
+            let active_set: std::collections::HashSet<String> = {
+                let state = self.skill_state.read().await;
+                selected_skills.iter().cloned()
+                    .chain(state.summaries.iter().filter(|s| s.always_active).map(|s| s.name.clone()))
+                    .collect()
+            };
+            let filtered: String = available_skills
+                .lines()
+                .filter(|line| {
+                    // Lines look like "- name: description"
+                    if let Some(rest) = line.strip_prefix("- ") {
+                        if let Some((name, _)) = rest.split_once(':') {
+                            return !active_set.contains(name.trim());
+                        }
+                    }
+                    true
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !filtered.trim().is_empty() {
+                system_prompt.push_str(
+                    "\n\n## Available Skills (load on-demand)\n\
+                    When the user's request matches one of these skills, you MUST call \
+                    `use_skill(skill_name=\"<name>\")` BEFORE attempting the task. \
+                    The skill's instructions will then be loaded and you must follow them. \
+                    Match by the skill description below — do not guess names.\n\n\
+                    Skills:\n"
+                );
+                system_prompt.push_str(&filtered);
+            }
         }
 
         // Inject knowledge graph context
@@ -2039,7 +2122,7 @@ impl Orchestrator {
             thinking_budget,
             model_configs: self.model_configs.read().await.values().cloned().collect(),
             active_model_name: self.active_model_name.read().await.clone(),
-            workspace_path,
+            workspace_path: workspace_path.clone(),
             default_permissions,
             max_prompt_budget,
             hook_registry: Some(self.hook_registry.clone()),
@@ -2050,6 +2133,17 @@ impl Orchestrator {
             permission_mode: permission_mode.to_string(),
             event_bus: Some(self.pool.event_bus().clone()),
             pending_permissions: Some(self.pending_permissions.clone()),
+            sandbox: {
+                let sc = self.sandbox_config.read().await.clone();
+                if sc.enabled {
+                    let ws_path = workspace_path
+                        .as_ref()
+                        .map(|p| std::path::PathBuf::from(p));
+                    Some(Arc::new(loom_security::sandbox::SandboxGuard::new(sc, ws_path)))
+                } else {
+                    None
+                }
+            },
             ..Default::default()
         };
         let user_msg = user_message.to_string();
@@ -2426,7 +2520,84 @@ impl Orchestrator {
         let disallowed = agent_config.disallowed_tools.clone();
         let cancel = self.pool.cancel_token(&agent_id).await?;
 
-        let result = {
+        // ── Intent classifier: does this message need tools at all? ──
+        // Skips the agent loop for simple conversation, saving latency & tokens.
+        //
+        // SHORT-CIRCUIT: if the user explicitly selected skills OR any skill
+        // declares always_active, we MUST run the full agent path so the
+        // skill instructions (injected into system_prompt by
+        // build_full_system_prompt) actually reach the model. Otherwise the
+        // direct-reply path below rebuilds system_prompt from base_prompt and
+        // silently drops every skill, persona, and KG injection — making the
+        // UI skill toggle a no-op.
+        let has_active_skills = !selected_skills.is_empty() || {
+            let state = self.skill_state.read().await;
+            state.summaries.iter().any(|s| s.always_active)
+        };
+        let needs_tools = if has_active_skills {
+            tracing::info!(
+                session_id,
+                selected = selected_skills.len(),
+                "active skills present — bypassing intent classifier, forcing agent path"
+            );
+            true
+        } else {
+            let classify_prompt = format!(
+                "用户消息：「{}」\n\n这条消息是否需要获取实时/外部信息（股票行情、天气、新闻、网页内容、文件等）或执行系统操作？如果用已有知识可以直接回答，回答 NO。只回答 YES 或 NO。",
+                user_msg,
+            );
+            let classify_req = CompletionRequest {
+                messages: vec![build_user_message(&classify_prompt, &[])],
+                max_tokens: 4,
+                temperature: 0.0,
+                stream: false,
+                ..Default::default()
+            };
+            match client.complete(classify_req).await {
+                Ok(resp) => {
+                    let upper = resp.text.trim().to_uppercase();
+                    let yes = upper.starts_with("YES") || upper.starts_with('Y');
+                    tracing::info!(session_id, classifier = %resp.text.trim(), needs_tools = yes, "intent classifier");
+                    yes
+                }
+                Err(e) => {
+                    tracing::warn!(session_id, error = %e, "classifier failed, defaulting to tools");
+                    true // safety: fall back to full agent loop
+                }
+            }
+        };
+
+        let result = if !needs_tools {
+            // Direct reply — single completion, no tools at all.
+            // Use a minimal system prompt: no persona, no skill catalog, no KG.
+            let slim_history: Vec<Message> = history.iter().rev().take(4).rev().cloned().collect();
+            let reg = registry.read().await;
+            let base_prompt = self.loop_config.read().await.system_prompt.clone();
+            let direct_config = AgentLoopConfig {
+                system_prompt: base_prompt, // base instructions only, no persona/skills/KG
+                persona: None,
+                summary: None,
+                kg_context: None,
+                lazy_tools: false,
+                max_iterations: 1,
+                model_configs: loop_config.model_configs.clone(),
+                active_model_name: loop_config.active_model_name.clone(),
+                thinking_budget: loop_config.thinking_budget,
+                ..Default::default()
+            };
+            run_agent_turn_streaming_with_images(
+                client.as_ref(),
+                &reg,
+                &slim_history,
+                &user_msg,
+                &attached_images,
+                &direct_config,
+                delta_tx,
+                &Some(vec![]), // no tools at all
+                &disallowed,
+                &cancel,
+            ).await
+        } else {
             let reg = registry.read().await;
             run_agent_turn_streaming_with_images(
                 client.as_ref(),
@@ -2739,6 +2910,7 @@ impl Orchestrator {
         thinking_budget: Option<usize>,
         attached_images: Vec<ContentPart>,
         selected_skills: Vec<String>,
+        permission_mode: &str,
     ) -> Result<TurnResult> {
         // Read shared contexts BEFORE pool.spawn (same reason as
         // process_message_with_config).
@@ -2992,7 +3164,7 @@ impl Orchestrator {
             thinking_budget,
             model_configs: self.model_configs.read().await.values().cloned().collect(),
             active_model_name: self.active_model_name.read().await.clone(),
-            workspace_path,
+            workspace_path: workspace_path.clone(),
             default_permissions,
             max_prompt_budget,
             hook_registry: Some(self.hook_registry.clone()),
@@ -3000,10 +3172,21 @@ impl Orchestrator {
             agent_id: agent_id.to_string(),
             key_store: Some(self.key_store.clone()),
             loom_dir: Some(self.data_dir_path().to_path_buf()),
-            permission_mode: "operate".to_string(), // CLI always uses operate mode
+            permission_mode: permission_mode.to_string(),
             event_bus: Some(self.pool.event_bus().clone()),
             pending_permissions: Some(self.pending_permissions.clone()),
             max_iterations: default_max_iters,
+            sandbox: {
+                let sc = self.sandbox_config.read().await.clone();
+                if sc.enabled {
+                    let ws_path = workspace_path
+                        .as_ref()
+                        .map(|p| std::path::PathBuf::from(p));
+                    Some(Arc::new(loom_security::sandbox::SandboxGuard::new(sc, ws_path)))
+                } else {
+                    None
+                }
+            },
             ..Default::default()
         };
 
@@ -3394,6 +3577,37 @@ impl Orchestrator {
         message: Option<String>,
     ) -> Result<()> {
         self.pool.transition(agent_id, status, message).await
+    }
+
+    // === Sandbox Config ===
+
+    /// Load sandbox configuration from `data_dir/sandbox.json`.
+    /// Returns default if the file does not exist or cannot be parsed.
+    pub async fn load_sandbox_config(&self) -> SandboxConfig {
+        let path = self.data_dir.join("sandbox.json");
+        match tokio::fs::read_to_string(&path).await {
+            Ok(contents) => {
+                serde_json::from_str(&contents).unwrap_or_default()
+            }
+            Err(_) => SandboxConfig::default(),
+        }
+    }
+
+    /// Save sandbox configuration to `data_dir/sandbox.json`.
+    pub async fn save_sandbox_config(
+        &self,
+        config: &SandboxConfig,
+    ) -> Result<()> {
+        let _ = tokio::fs::create_dir_all(&self.data_dir).await;
+        let path = self.data_dir.join("sandbox.json");
+        let contents = serde_json::to_string_pretty(config)
+            .context("failed to serialize sandbox config")?;
+        tokio::fs::write(&path, &contents)
+            .await
+            .context("failed to write sandbox.json")?;
+        // Update in-memory state so enforcement uses the new config immediately
+        *self.sandbox_config.write().await = config.clone();
+        Ok(())
     }
 }
 

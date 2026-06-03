@@ -570,13 +570,13 @@ export default function TokenUsagePanel() {
                           />
                         </div>
                         <div className={styles.rankMeta}>
-                          <span>P: {formatNumber(m.prompt)}</span>
-                          <span>C: {formatNumber(m.completion)}</span>
-                          <span>Cache: {formatNumber(m.cached)}</span>
+                          <span>输入: {formatNumber(m.prompt)}</span>
+                          <span>命中: {formatNumber((m as any).cache_hit_tokens ?? 0)}</span>
+                          <span>输出: {formatNumber(m.completion)}</span>
                           <span>{m.requests} 次</span>
                           {hasPrice && (
                             <span className={styles.rankMetaPrice}>
-                              ¥{m.input_price}/¥{m.output_price} /百万
+                              输入 ¥{m.input_price} | 命中 ¥{m.cache_read_price} | 写入 ¥{m.cache_write_price} | 输出 ¥{m.output_price} /百万
                             </span>
                           )}
                         </div>
@@ -600,10 +600,11 @@ export default function TokenUsagePanel() {
                       <th>模型</th>
                       <th>供应商</th>
                       <th>请求</th>
-                      <th>Prompt</th>
-                      <th>Completion</th>
+                      <th>输入(未命中)</th>
+                      <th>输入(命中)</th>
+                      <th>缓写</th>
+                      <th>输出</th>
                       <th>合计</th>
-                      <th>占比</th>
                       <th>费用</th>
                     </tr>
                   </thead>
@@ -612,6 +613,9 @@ export default function TokenUsagePanel() {
                       const info = modelLookup.get(m.model)
                       const local = info ? isLocalModel(info.backend) : false
                       const provider = info ? getProviderLabel(info.backend, info.backendLabel) : ''
+                      const cacheHit = (m as any).cache_hit_tokens ?? 0
+                      const cacheMiss = (m as any).cache_miss_tokens ?? (m.prompt - cacheHit || 0)
+                      const cacheWrite = (m as any).cache_write_tokens ?? m.cached ?? 0
                       return (
                         <tr key={m.model}>
                           <td className={styles.rankCell}>{i + 1}</td>
@@ -625,10 +629,11 @@ export default function TokenUsagePanel() {
                             {provider && <span className={styles.modelBadgeProvider}>{provider}</span>}
                           </td>
                           <td>{m.requests}</td>
-                          <td>{formatNumber(m.prompt)}</td>
+                          <td>{formatNumber(cacheMiss)}</td>
+                          <td>{formatNumber(cacheHit)}</td>
+                          <td>{formatNumber(cacheWrite)}</td>
                           <td>{formatNumber(m.completion)}</td>
                           <td className={styles.totalCell}>{formatNumber(m.total)}</td>
-                          <td className={styles.pctCell}>{grandTotal > 0 ? ((m.total / grandTotal) * 100).toFixed(1) : '0'}%</td>
                           <td className={styles.costCell}>{m.cost > 0 ? formatCost(m.cost) : '—'}</td>
                         </tr>
                       )

@@ -8,6 +8,8 @@ export interface SelectOption<T extends string = string> {
   label: string
   group?: string
   avatar?: string | null
+  /** Font family applied to the option item for live preview */
+  fontFamily?: string
 }
 
 interface SelectProps<T extends string> {
@@ -128,7 +130,7 @@ export default function Select<T extends string = string>({
             )}
           </span>
         ) : null}
-        <span className={`${styles.label} ${value ? '' : styles.placeholder}`}>{label}</span>
+        <span className={`${styles.label} ${value ? '' : styles.placeholder}`} style={selected?.fontFamily ? { fontFamily: selected.fontFamily } : undefined}>{label}</span>
         <IconChevronDown size={isPill ? 8 : 12} />
       </button>
       {open &&
@@ -142,6 +144,7 @@ export default function Select<T extends string = string>({
                   {opt.group}
                 </div>
               ) : null
+              const itemStyle = opt.fontFamily ? { fontFamily: opt.fontFamily } : undefined
               const itemEl = (
                 <div
                   key={opt.value}
@@ -150,6 +153,7 @@ export default function Select<T extends string = string>({
                     setOpen(false)
                   }}
                   className={`${styles.item} ${opt.value === value ? styles.itemActive : ''}`}
+                  style={itemStyle}
                 >
                   {opt.avatar ? (
                     opt.avatar.startsWith('data:') ? (

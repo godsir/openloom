@@ -1,130 +1,44 @@
-.container {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.loading {
-  padding: 16px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-  margin: 0;
-}
-
-.description {
-  font-size: 12px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-  margin: 0;
-}
-
-.pathRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-}
-
-.pathLabel {
-  font-size: 12px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.pathValue {
-  font-size: 12px;
-  color: var(--text);
-  font-family: var(--font-mono);
-  word-break: break-all;
-}
-
-.actions {
-  display: flex;
-  gap: 8px;
-}
-
-.selectBtn,
-.clearBtn {
-  padding: 6px 14px;
-  border-radius: var(--r-md);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  border: none;
-}
-
-.selectBtn {
-  background: var(--accent);
-  color: white;
-}
-
-.selectBtn:hover {
-  opacity: 0.9;
-}
-
-.clearBtn {
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
-}
-
-.clearBtn:hover {
-  background: var(--bg-hover);
-}
-
-.sessionList {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.sessionRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+.pathsTextarea {
   padding: 8px 10px;
-  background: var(--bg-surface);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  line-height: 1.6;
+  resize: vertical;
+  width: 100%;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+
+.pathsTextarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.pathsTextarea::placeholder {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+.builtinNote {
+  padding: 8px 12px;
+  background: var(--accent-subtle);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-}
-
-.sessionInfo {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  flex: 1;
-}
-
-.sessionTitle {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text);
-}
-
-.sessionPath {
   font-size: 11px;
-  font-family: var(--font-mono);
   color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.6;
+}
+
+.builtinLabel {
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.builtinPatterns {
+  font-family: var(--font-mono);
+  color: var(--accent);
 }

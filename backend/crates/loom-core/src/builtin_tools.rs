@@ -63,12 +63,25 @@ impl AgentTool for ShellTool {
             .or_else(|| context.workspace_path.as_ref().map(|ws| Path::new(ws).to_path_buf()));
         let timeout_secs = arguments["timeout"].as_u64().unwrap_or(60).min(300);
 
+        // Resolve actual working directory once, used for both sandbox check and shell execution
+        let default_cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
+        let work_dir = cwd.as_deref().unwrap_or(&default_cwd);
+
+        // Sandbox guard: check exec permission
+        if let Some(ref guard) = context.sandbox {
+            if let Err(reason) = guard.check_exec(work_dir) {
+                return Ok(ToolResult {
+                    content: format!("沙盒拒绝: {}", reason),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        }
+
         // Use tokio::process::Command for async execution with timeout
         let child_result = if cfg!(windows) {
             // Prefer PowerShell over cmd.exe for better command support
             let pwsh = which_shell("pwsh").or_else(|| which_shell("powershell"));
-            let default_cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
-            let work_dir = cwd.as_deref().unwrap_or(&default_cwd);
             match pwsh {
                 Some(shell_path) => {
                     tokio::process::Command::new(&shell_path)
@@ -293,6 +306,17 @@ impl AgentTool for FileListTool {
         let recursive = arguments["recursive"].as_bool().unwrap_or(false);
         let path = context.resolve_path(path_str);
 
+        // Sandbox guard: check read permission
+        if let Some(ref guard) = context.sandbox {
+            if let Err(reason) = guard.check_read(&path) {
+                return Ok(ToolResult {
+                    content: format!("沙盒拒绝: {}", reason),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        }
+
         if !path.exists() {
             return Ok(ToolResult {
                 content: format!("Path does not exist: {}", path_str),
@@ -409,6 +433,17 @@ impl AgentTool for FileReadTool {
         let max_lines = arguments["max_lines"].as_u64().unwrap_or(500) as usize;
         let path = context.resolve_path(path_str);
 
+        // Sandbox guard: check read permission
+        if let Some(ref guard) = context.sandbox {
+            if let Err(reason) = guard.check_read(&path) {
+                return Ok(ToolResult {
+                    content: format!("沙盒拒绝: {}", reason),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        }
+
         if !path.exists() {
             return Ok(ToolResult {
                 content: format!("File does not exist: {}", path_str),
@@ -509,6 +544,17 @@ impl AgentTool for FileWriteTool {
         }
 
         let path = context.resolve_path(path_str);
+
+        // Sandbox guard: check write permission
+        if let Some(ref guard) = context.sandbox {
+            if let Err(reason) = guard.check_write(&path) {
+                return Ok(ToolResult {
+                    content: format!("沙盒拒绝: {}", reason),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        }
         let old_content = std::fs::read_to_string(&path).unwrap_or_default();
         let file_name = path
             .file_name()
@@ -593,6 +639,17 @@ impl AgentTool for ContentSearchTool {
         }
 
         let resolved_path = context.resolve_path(search_path);
+
+        // Sandbox guard: check read permission on the search directory
+        if let Some(ref guard) = context.sandbox {
+            if let Err(reason) = guard.check_read(&resolved_path) {
+                return Ok(ToolResult {
+                    content: format!("沙盒拒绝: {}", reason),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        }
         // Always use recursive walker — more reliable than findstr on Windows
         match simple_content_search(&resolved_path, pattern, max_results) {
             Ok(results) => {
@@ -696,6 +753,17 @@ impl AgentTool for FileDeleteTool {
     ) -> Result<ToolResult> {
         let path_str = arguments["path"].as_str().unwrap_or("");
         let path = context.resolve_path(path_str);
+
+        // Sandbox guard: check write permission (delete is a destructive write)
+        if let Some(ref guard) = context.sandbox {
+            if let Err(reason) = guard.check_write(&path) {
+                return Ok(ToolResult {
+                    content: format!("沙盒拒绝: {}", reason),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        }
         if !path.exists() {
             return Ok(ToolResult {
                 content: format!("Path does not exist: {}", path_str),
@@ -744,11 +812,11 @@ impl AgentTool for UseSkillTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "use_skill".into(),
-            description: "Activate an available skill by name to get its full instructions. Use when a task requires a skill you know is available (e.g. from the system prompt skills list).".into(),
+            description: "Load a skill's full instructions into context. Call this WHENEVER the user's request matches a skill listed in '## Available Skills' section of your system prompt — for example, if a 'browser' skill is listed and the user asks to open a webpage, call use_skill(skill_name=\"browser\") FIRST, then follow the loaded instructions. Do NOT attempt skill-related tasks using only general knowledge when a matching skill is available. If you don't know the exact skill name, call with any name and the error will list all available skills.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "skill_name": { "type": "string", "description": "Name of the skill to activate" }
+                    "skill_name": { "type": "string", "description": "Exact name from the Available Skills list" }
                 },
                 "required": ["skill_name"]
             }),
@@ -763,10 +831,19 @@ impl AgentTool for UseSkillTool {
         _context: &ToolContext,
     ) -> Result<ToolResult> {
         let name = arguments["skill_name"].as_str().unwrap_or("");
-        if name.is_empty() {
+        if name.is_empty() || name == "list" {
+            let state = self.skill_state.read().await;
+            let available: Vec<&String> = state.bodies.keys().collect();
+            if available.is_empty() {
+                return Ok(ToolResult {
+                    content: "没有安装任何技能。你可以在技能市场导入技能。".into(),
+                    is_error: false,
+                    structured_content: None,
+                });
+            }
             return Ok(ToolResult {
-                content: "No skill name provided.".into(),
-                is_error: true,
+                content: format!("可用技能: {}", available.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")),
+                is_error: false,
                 structured_content: None,
             });
         }

@@ -1,8 +1,80 @@
 import { useState, useEffect } from 'react'
 import { useStore } from '../../stores'
 import { type ThemeId, type FontSizeId, FONT_SIZE_MAP } from '../../stores/ui'
-import Select from '../shared/Select'
+import Select, { type SelectOption } from '../shared/Select'
 import styles from '../shared/SettingsModal.module.css'
+
+// ── Static font lists (bundled + system fallbacks) ──
+
+/** UI fonts: each option shows its own font face in the dropdown */
+const UI_FONT_OPTIONS: SelectOption[] = [
+  { value: '', label: '系统默认' },
+  {
+    value: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif',
+    label: 'Inter — 现代无衬线',
+    fontFamily: 'Inter, sans-serif',
+  },
+  {
+    value: '"Microsoft YaHei", "微软雅黑", "PingFang SC", sans-serif',
+    label: '微软雅黑',
+    fontFamily: '"Microsoft YaHei", sans-serif',
+  },
+  {
+    value: '"PingFang SC", "苹方", "Microsoft YaHei", sans-serif',
+    label: '苹方 (PingFang SC)',
+    fontFamily: '"PingFang SC", sans-serif',
+  },
+  {
+    value: '"LXGW WenKai", "霞鹜文楷", "KaiTi", "楷体", serif',
+    label: '霞鹜文楷 — 楷体',
+    fontFamily: '"LXGW WenKai", "KaiTi", serif',
+  },
+  {
+    value: '"Noto Sans SC", "Microsoft YaHei", sans-serif',
+    label: 'Noto Sans SC — 思源黑体',
+    fontFamily: '"Noto Sans SC", sans-serif',
+  },
+]
+
+/** Code / monospace fonts */
+const CODE_FONT_OPTIONS: SelectOption[] = [
+  { value: '', label: '系统默认' },
+  {
+    value: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", monospace',
+    label: 'JetBrains Mono',
+    fontFamily: '"JetBrains Mono", monospace',
+  },
+  {
+    value: '"Fira Code", "JetBrains Mono", "Cascadia Code", "Consolas", monospace',
+    label: 'Fira Code',
+    fontFamily: '"Fira Code", monospace',
+  },
+  {
+    value: '"Cascadia Code", "JetBrains Mono", "Fira Code", "Consolas", monospace',
+    label: 'Cascadia Code',
+    fontFamily: '"Cascadia Code", monospace',
+  },
+  {
+    value: '"IBM Plex Mono", "JetBrains Mono", "Consolas", monospace',
+    label: 'IBM Plex Mono',
+    fontFamily: '"IBM Plex Mono", monospace',
+  },
+  {
+    value: '"Source Code Pro", "JetBrains Mono", "Fira Code", monospace',
+    label: 'Source Code Pro',
+    fontFamily: '"Source Code Pro", monospace',
+  },
+  {
+    value: '"Inconsolata", "JetBrains Mono", "Consolas", monospace',
+    label: 'Inconsolata',
+    fontFamily: 'Inconsolata, monospace',
+  },
+  {
+    value: '"Consolas", "JetBrains Mono", "Fira Code", monospace',
+    label: 'Consolas',
+    fontFamily: 'Consolas, monospace',
+  },
+]
 
 export const THEMES: { id: ThemeId; label: string; bg: string; surface: string; text: string; accent: string }[] = [
   { id: 'dark', label: '暗色', bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' },
@@ -56,31 +128,6 @@ export function applyCustomTheme(c: { bg: string; surface: string; text: string;
   root.style.setProperty('--shadow-lg', isLight ? '0 8px 32px rgba(0,0,0,0.10)' : '0 8px 32px rgba(0,0,0,0.7)')
   root.style.setProperty('--shadow-glass', isLight ? '0 8px 32px rgba(0,0,0,0.06)' : '0 8px 32px rgba(0,0,0,0.5)')
 }
-
-const UI_FONTS = [
-  { value: '', label: '系统默认' },
-  { value: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', label: 'Inter' },
-  { value: '"Microsoft YaHei", "微软雅黑", sans-serif', label: '微软雅黑' },
-  { value: '"Microsoft YaHei UI", "微软雅黑 UI", sans-serif', label: '微软雅黑 UI' },
-  { value: '"Noto Sans SC", "思源黑体", sans-serif', label: '思源黑体' },
-  { value: '"Noto Serif SC", "思源宋体", serif', label: '思源宋体' },
-  { value: '"PingFang SC", "苹方", -apple-system, sans-serif', label: 'PingFang SC' },
-  { value: '"HarmonyOS Sans SC", "鸿蒙字体", sans-serif', label: '鸿蒙字体' },
-  { value: '"Segoe UI", system-ui, sans-serif', label: 'Segoe UI' },
-  { value: '"SF Pro", -apple-system, BlinkMacSystemFont, sans-serif', label: 'SF Pro' },
-  { value: 'system-ui, -apple-system, sans-serif', label: '系统 UI 字体' },
-]
-
-const CODE_FONTS = [
-  { value: '', label: '系统默认' },
-  { value: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", monospace', label: 'JetBrains Mono' },
-  { value: '"Cascadia Code", "JetBrains Mono", "Fira Code", "Consolas", monospace', label: 'Cascadia Code' },
-  { value: '"Fira Code", "JetBrains Mono", "Cascadia Code", "Consolas", monospace', label: 'Fira Code' },
-  { value: '"Consolas", "JetBrains Mono", "Cascadia Code", monospace', label: 'Consolas' },
-  { value: '"Source Code Pro", "JetBrains Mono", "Consolas", monospace', label: 'Source Code Pro' },
-  { value: '"SF Mono", "JetBrains Mono", "Consolas", monospace', label: 'SF Mono' },
-  { value: '"Sarasa Mono SC", "更纱黑体等宽", "JetBrains Mono", monospace', label: '更纱黑体等宽' },
-]
 
 export default function SoftwareTab({ theme, setTheme }: { theme: string; setTheme: (t: any) => void }) {
   const fontSize = useStore((s) => s.fontSize)
@@ -308,10 +355,10 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                   <span className={styles.aboutLabel}>界面字体</span>
                   <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>菜单、对话和通用文本的字体</p>
                 </div>
-                <div style={{ width: 170 }}>
+                <div style={{ width: 240 }}>
                   <Select
                     value={uiFont}
-                    options={UI_FONTS}
+                    options={UI_FONT_OPTIONS}
                     onChange={(v) => handleUiFont(v)}
                     variant="form"
                   />
@@ -322,10 +369,10 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                   <span className={styles.aboutLabel}>代码字体</span>
                   <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>代码块、Shell 输出等位置的等宽字体</p>
                 </div>
-                <div style={{ width: 170 }}>
+                <div style={{ width: 240 }}>
                   <Select
                     value={codeFont}
-                    options={CODE_FONTS}
+                    options={CODE_FONT_OPTIONS}
                     onChange={(v) => handleCodeFont(v)}
                     variant="form"
                   />

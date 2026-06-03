@@ -233,7 +233,7 @@ function McpTab() {
 
   return (
     <>
-      <div className={styles.contentBody}>
+      <div className={styles.aboutSection}>
         <div className={styles.sectionHeaderRow}>
           <h4 className={styles.sectionSubTitle}>MCP 服务</h4>
           {!editing && (
@@ -598,7 +598,7 @@ function LspTab() {
 
   return (
     <>
-      <div className={styles.contentBody}>
+      <div className={styles.aboutSection}>
         <div className={styles.sectionHeaderRow}>
           <h4 className={styles.sectionSubTitle}>LSP 服务</h4>
           {!showForm && (
@@ -715,7 +715,7 @@ export default function McpLspTab() {
   return (
     <>
       <McpTab />
-      <div style={{ marginTop: 24 }} />
+      <hr className={styles.sectionDivider} />
       <LspTab />
     </>
   )

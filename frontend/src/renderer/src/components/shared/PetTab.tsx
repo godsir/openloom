@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import settingsStyles from './SettingsModal.module.css'
 import styles from './PetTab.module.css'
 
 type PetSize = 'small' | 'medium' | 'large'
@@ -35,7 +36,6 @@ interface PetMeta {
   states?: Record<string, number>
 }
 
-// PetDex standard states
 const PETDEX_STATES: Record<string, number> = {
   idle: 0, runRight: 1, runLeft: 2, wave: 3, jump: 4,
   failed: 5, wait: 6, dash: 7, inspect: 8,
@@ -45,7 +45,6 @@ const PETDEX_ROW_FRAMES: Record<string, number> = { '0': 6, '1': 8, '2': 8, '3':
 const STATE_LABELS: Record<string, string> = {
   idle: '待机', runRight: '向右跑', runLeft: '向左跑', wave: '挥手', jump: '跳跃',
   failed: '失败', wait: '等待', dash: '奔跑', inspect: '审视',
-  // Boba-specific labels
   talking: '回复', working: '工作中', thinking: '思考中', happy: '完成', error: '错误',
 }
 
@@ -92,9 +91,7 @@ export default function PetTab() {
   const cols = currentPet?.columns ?? 9
   const rows = currentPet?.rows ?? 8
 
-  const broadcastSize = (sz: PetSize) => {
-    bc.postMessage({ type: 'size', size: SIZE_MAP[sz] })
-  }
+  const broadcastSize = (sz: PetSize) => bc.postMessage({ type: 'size', size: SIZE_MAP[sz] })
 
   const toggle = (on: boolean) => {
     setEnabled(on)
@@ -136,28 +133,42 @@ export default function PetTab() {
     bc.postMessage({ type: 'config', breakInterval: val })
   }
 
-  if (!ready) return null
+  if (!ready) return <p className={settingsStyles.toolsEmpty}>加载中...</p>
 
   return (
-    <div className={styles.container}>
-      {/* Enable/Disable */}
-      <div className={styles.card}>
-        <label className={styles.switchRow}>
-          <span className={styles.switchLabel}>启用桌宠</span>
+    <div className={settingsStyles.aboutSection}>
+      {/* ── 开关 ── */}
+      <div className={settingsStyles.themeLabel}>桌宠</div>
+
+      <div className={settingsStyles.aboutRow}>
+        <div>
+          <span className={settingsStyles.aboutLabel}>启用桌宠</span>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
+            基于 Petdex 精灵图格式，兼容 Codex 宠物生态
+          </p>
+        </div>
+        <div className={settingsStyles.mcpTransportToggle}>
           <button
-            className={`${styles.toggle} ${enabled ? styles.toggleOn : ''}`}
-            onClick={() => toggle(!enabled)}
+            className={`${settingsStyles.mcpTransportBtn} ${enabled ? settingsStyles.mcpTransportActive : ''}`}
+            onClick={() => toggle(true)}
           >
-            <span className={styles.toggleKnob} />
+            开启
           </button>
-        </label>
-        <p className={styles.cardDesc}>基于 Petdex 精灵图格式，兼容 Codex 宠物生态</p>
+          <button
+            className={`${settingsStyles.mcpTransportBtn} ${!enabled ? settingsStyles.mcpTransportActive : ''}`}
+            onClick={() => toggle(false)}
+          >
+            关闭
+          </button>
+        </div>
       </div>
 
-      {/* Pet list */}
+      <hr className={settingsStyles.sectionDivider} />
+
+      {/* ── 宠物列表 ── */}
       {pets.length > 0 && (
-        <div className={styles.card}>
-          <h4 className={styles.cardTitle}>宠物列表</h4>
+        <>
+          <div className={settingsStyles.themeLabel}>宠物列表</div>
           <div className={styles.petList}>
             {pets.map(pet => (
               <button
@@ -179,46 +190,46 @@ export default function PetTab() {
               </button>
             ))}
           </div>
-        </div>
-      )}
 
-      {/* Active pet info */}
-      {currentPet && (
-        <div className={styles.card}>
-          <h4 className={styles.cardTitle}>当前宠物</h4>
-          <div className={styles.petInfo}>
-            <div className={styles.petPreview}>
-              <div
-                className={styles.petThumbLarge}
-                style={{
-                  backgroundImage: `url(loom-pet://${currentPet.id}/${currentPet.spritesheetPath || 'spritesheet.webp'})`,
-                  backgroundSize: `${(currentPet.columns || 9) * 72}px auto`,
-                }}
-              />
-            </div>
-            <div className={styles.petMeta}>
-              <div className={styles.petName}>{currentPet.displayName}</div>
-              <div className={styles.petDesc}>{currentPet.description}</div>
-              <div className={styles.petSpecs}>
-                {frameW} x {frameH}
-                <span className={styles.specSep}>/</span>
-                {cols} x {rows} 格
-                <span className={styles.specSep}>/</span>
-                {states.length} 状态
+          {currentPet && (
+            <div className={styles.petInfo}>
+              <div className={styles.petPreview}>
+                <div
+                  className={styles.petThumbLarge}
+                  style={{
+                    backgroundImage: `url(loom-pet://${currentPet.id}/${currentPet.spritesheetPath || 'spritesheet.webp'})`,
+                    backgroundSize: `${(currentPet.columns || 9) * 72}px auto`,
+                  }}
+                />
+              </div>
+              <div className={styles.petMeta}>
+                <div className={styles.petName}>{currentPet.displayName}</div>
+                <div className={styles.petDesc}>{currentPet.description}</div>
+                <div className={styles.petSpecs}>
+                  {frameW} x {frameH}
+                  <span className={styles.specSep}>/</span>
+                  {cols} x {rows} 格
+                  <span className={styles.specSep}>/</span>
+                  {states.length} 状态
+                </div>
               </div>
             </div>
-          </div>
-        </div>
+          )}
+          <hr className={settingsStyles.sectionDivider} />
+        </>
       )}
 
-      {/* Size */}
-      <div className={styles.card}>
-        <h4 className={styles.cardTitle}>显示大小</h4>
-        <div className={styles.segRow}>
+      {/* ── 显示大小 ── */}
+      <div className={settingsStyles.aboutRow}>
+        <div>
+          <span className={settingsStyles.aboutLabel}>显示大小</span>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>桌宠的像素尺寸</p>
+        </div>
+        <div className={settingsStyles.mcpTransportToggle}>
           {SIZE_KEYS.map(sz => (
             <button
               key={sz}
-              className={`${styles.segBtn} ${size === sz ? styles.segBtnActive : ''}`}
+              className={`${settingsStyles.mcpTransportBtn} ${size === sz ? settingsStyles.mcpTransportActive : ''}`}
               onClick={() => changeSize(sz)}
             >
               {SIZE_LABELS[sz]} ({SIZE_MAP[sz]}px)
@@ -227,15 +238,19 @@ export default function PetTab() {
         </div>
       </div>
 
-      {/* Idle Interval */}
-      <div className={styles.card}>
-        <h4 className={styles.cardTitle}>发呆间隔</h4>
-        <p className={styles.cardDesc}>多久不理桌宠后，它开始自己玩耍</p>
-        <div className={styles.segRow}>
+      <hr className={settingsStyles.sectionDivider} />
+
+      {/* ── 发呆间隔 ── */}
+      <div className={settingsStyles.aboutRow}>
+        <div>
+          <span className={settingsStyles.aboutLabel}>发呆间隔</span>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>多久不理桌宠后它开始自己玩耍</p>
+        </div>
+        <div className={settingsStyles.mcpTransportToggle}>
           {IDLE_INTERVALS.map(iv => (
             <button
               key={iv.value}
-              className={`${styles.segBtn} ${idleInterval === iv.value ? styles.segBtnActive : ''}`}
+              className={`${settingsStyles.mcpTransportBtn} ${idleInterval === iv.value ? settingsStyles.mcpTransportActive : ''}`}
               onClick={() => changeIdleInterval(iv.value)}
             >
               {iv.label}
@@ -244,15 +259,19 @@ export default function PetTab() {
         </div>
       </div>
 
-      {/* Break Reminder */}
-      <div className={styles.card}>
-        <h4 className={styles.cardTitle}>休息提醒</h4>
-        <p className={styles.cardDesc}>持续工作多久后提醒休息（0 = 关闭）</p>
-        <div className={styles.segRow}>
+      <hr className={settingsStyles.sectionDivider} />
+
+      {/* ── 休息提醒 ── */}
+      <div className={settingsStyles.aboutRow}>
+        <div>
+          <span className={settingsStyles.aboutLabel}>休息提醒</span>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>持续工作多久后提醒休息（关闭 = 不提醒）</p>
+        </div>
+        <div className={settingsStyles.mcpTransportToggle}>
           {BREAK_INTERVALS.map(iv => (
             <button
               key={iv.value}
-              className={`${styles.segBtn} ${breakInterval === iv.value ? styles.segBtnActive : ''}`}
+              className={`${settingsStyles.mcpTransportBtn} ${breakInterval === iv.value ? settingsStyles.mcpTransportActive : ''}`}
               onClick={() => changeBreakInterval(iv.value)}
             >
               {iv.label}
@@ -261,21 +280,26 @@ export default function PetTab() {
         </div>
       </div>
 
-      {/* Pets directory */}
+      {/* ── 宠物目录 ── */}
       {petsDir && (
-        <div className={styles.card}>
-          <h4 className={styles.cardTitle}>宠物目录</h4>
-          <p className={styles.dirPath}>{petsDir}</p>
-          <p className={styles.cardDesc}>
-            将 Petdex 宠物放入该目录即可自动识别
-          </p>
-        </div>
+        <>
+          <hr className={settingsStyles.sectionDivider} />
+          <div className={settingsStyles.aboutRow}>
+            <div>
+              <span className={settingsStyles.aboutLabel}>宠物目录</span>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, fontFamily: 'var(--font-mono)' }}>
+                {petsDir}
+              </p>
+            </div>
+          </div>
+        </>
       )}
 
-      {/* Animation States */}
+      {/* ── 动画状态 ── */}
       {states.length > 0 && (
-        <div className={styles.card}>
-          <h4 className={styles.cardTitle}>动画状态</h4>
+        <>
+          <hr className={settingsStyles.sectionDivider} />
+          <div className={settingsStyles.themeLabel}>动画状态</div>
           <div className={styles.stateTable}>
             <div className={styles.stateHeader}>
               <span>状态</span>
@@ -299,7 +323,7 @@ export default function PetTab() {
               )
             })}
           </div>
-        </div>
+        </>
       )}
     </div>
   )

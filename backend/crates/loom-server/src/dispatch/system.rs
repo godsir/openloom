@@ -1,6 +1,6 @@
 //! System dispatch handlers — system.health / agent.* / tools.list / config.* / marketplace.*
 
-use loom_types::{AgentConfig, ErrorCode, JsonRpcError};
+use loom_types::{AgentConfig, ErrorCode, JsonRpcError, SandboxConfig};
 use serde_json::{Value, json};
 
 use crate::AppState;
@@ -30,6 +30,9 @@ pub async fn handle(
         "config.set_vision" => Some(handle_config_set_vision(p)),
         "config.get_auxiliary" => Some(handle_config_get_auxiliary()),
         "config.set_auxiliary" => Some(handle_config_set_auxiliary(p)),
+        // Sandbox
+        "config.get_sandbox" => Some(handle_config_get_sandbox(state).await),
+        "config.set_sandbox" => Some(handle_config_set_sandbox(state, p).await),
         // Global defaults
         "config.get_defaults" => Some(handle_config_get_defaults(state).await),
         "config.set_defaults" => Some(handle_config_set_defaults(state, p).await),
@@ -238,6 +241,26 @@ fn handle_config_set_auxiliary(p: &Value) -> Result<Value, JsonRpcError> {
         serde_json::to_string_pretty(&config).unwrap_or_default(),
     )
     .map_err(|e| err(ErrorCode::InternalError, &format!("Write error: {}", e)))?;
+    Ok(json!({ "ok": true }))
+}
+
+// --- config.get_sandbox ---
+
+async fn handle_config_get_sandbox(state: &AppState) -> Result<Value, JsonRpcError> {
+    let config = state.orchestrator.load_sandbox_config().await;
+    Ok(serde_json::to_value(config).unwrap_or_default())
+}
+
+// --- config.set_sandbox ---
+
+async fn handle_config_set_sandbox(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let config: SandboxConfig = serde_json::from_value(p.clone())
+        .map_err(|e| err(ErrorCode::InvalidRequest, &e.to_string()))?;
+    state
+        .orchestrator
+        .save_sandbox_config(&config)
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
     Ok(json!({ "ok": true }))
 }
 

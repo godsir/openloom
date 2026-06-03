@@ -281,8 +281,6 @@ class StreamBufferManager {
       const sessions = useStore.getState().sessions
       const session = sessions.find(s => s.path === sessionId)
       if (session?.title) return
-      // Must have at least some content
-      if (!session?.firstMessage && session?.messageCount === 0) return
       // Call backend
       const { loomRpc: rpc } = await import('../services/jsonrpc')
       const result = await rpc<{ title: string }>('session.auto_title', { session_id: sessionId })

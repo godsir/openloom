@@ -273,7 +273,7 @@ impl CloudClient for AnthropicClient {
             tracing::info!("KV cache miss (stream)");
         }
         let (system_prompt, messages) = self.lower_messages(&eff);
-        let mut body = serde_json::json!({"model": self.model, "max_tokens": req.max_tokens, "messages": messages, "stream": true});
+        let mut body = serde_json::json!({"model": self.model, "max_tokens": req.max_tokens, "temperature": req.temperature, "messages": messages, "stream": true});
         if let Some(sys) = system_prompt {
             body["system"] = serde_json::json!(sys);
         }
@@ -368,7 +368,7 @@ impl CloudClient for AnthropicClient {
             tracing::info!("KV cache miss (structured stream)");
         }
         let (system_prompt, messages) = self.lower_messages(&eff);
-        let mut body = serde_json::json!({"model": self.model, "max_tokens": req.max_tokens, "messages": messages, "stream": true});
+        let mut body = serde_json::json!({"model": self.model, "max_tokens": req.max_tokens, "temperature": req.temperature, "messages": messages, "stream": true});
         if let Some(sys) = system_prompt {
             body["system"] = serde_json::json!(sys);
         }

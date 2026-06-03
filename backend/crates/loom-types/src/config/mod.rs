@@ -141,6 +141,47 @@ pub struct RateLimitConfig {
     pub min_interval_ms: u64,
 }
 
+// === Sandbox ===
+
+/// File-system sandbox configuration.
+///
+/// Controls which paths the engine may read, write, or execute from.
+/// Used by `loom_security::sandbox::SandboxGuard` to enforce
+/// filesystem boundaries at runtime.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxConfig {
+    /// Master switch — when false, all checks pass through.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// When true, restrict all file operations to the workspace directory.
+    /// `allowed_paths` still apply for paths outside the workspace.
+    #[serde(default)]
+    pub workspace_only: bool,
+
+    /// Additional paths allowed beyond the workspace root.
+    /// Supports `~` for home directory and environment-variable
+    /// placeholders (e.g. `$HOME/projects`).
+    #[serde(default)]
+    pub allowed_paths: Vec<String>,
+
+    /// Paths always denied regardless of other rules.
+    /// Takes precedence over `allowed_paths` and workspace.
+    #[serde(default)]
+    pub denied_paths: Vec<String>,
+}
+
+impl Default for SandboxConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            workspace_only: true,
+            allowed_paths: Vec::new(),
+            denied_paths: Vec::new(),
+        }
+    }
+}
+
 fn default_min_interval() -> u64 {
     100
 }

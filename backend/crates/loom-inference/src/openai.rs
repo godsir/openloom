@@ -477,6 +477,8 @@ impl CloudClient for OpenAIClient {
         use futures::StreamExt;
         let mut stream = resp.bytes_stream();
         let mut buf: Vec<u8> = Vec::new();
+        let mut acc_text = String::new();
+        let mut in_xml_tool_calls = false;
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result?;
             buf.extend_from_slice(&chunk);
@@ -502,9 +504,30 @@ impl CloudClient for OpenAIClient {
                             }
                             if let Some(t) = d["content"].as_str()
                                 && !t.is_empty()
-                                && tx.send(StreamDelta::Text(t.to_string())).await.is_err()
                             {
-                                return Ok(());
+                                acc_text.push_str(t);
+                                // Suppress XML/HTML tool call text from appearing in chat
+                                let has_xml = acc_text.contains("<tool_calls")
+                                    || acc_text.contains("<invoke")
+                                    || acc_text.contains("<request_tools")
+                                    || acc_text.contains("<function_call");
+                                if !in_xml_tool_calls && has_xml {
+                                    in_xml_tool_calls = true;
+                                }
+                                if !in_xml_tool_calls {
+                                    if tx.send(StreamDelta::Text(t.to_string())).await.is_err() {
+                                        return Ok(());
+                                    }
+                                } else {
+                                    // Check for any closing XML tool tag
+                                    let has_close = acc_text.contains("</tool_calls>")
+                                        || acc_text.contains("</invoke>")
+                                        || acc_text.contains("</request_tools>")
+                                        || acc_text.contains("</function_call>");
+                                    if has_close {
+                                        in_xml_tool_calls = false;
+                                    }
+                                }
                             }
                             if let Some(tcs) = d["tool_calls"].as_array() {
                                 for tc in tcs {

@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Security layer — permission check, approval, audit.
+//! Security layer — permission check, approval, audit, file-system sandbox.
+
+pub mod sandbox;
+
+pub use sandbox::SandboxGuard;
 
 use loom_types::{RiskLevel, SkillPermissions};
 use loom_skills::SkillPermissionConfig;

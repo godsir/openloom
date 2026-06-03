@@ -45,6 +45,7 @@ pub struct TurnResult {
 }
 
 /// Configuration for the agent loop.
+#[derive(Clone)]
 pub struct AgentLoopConfig {
     /// System prompt injected at the start of every turn.
     pub system_prompt: String,
@@ -94,6 +95,9 @@ pub struct AgentLoopConfig {
     pub event_bus: Option<EventBus>,
     /// Pending permission approvals keyed by call_id
     pub pending_permissions: Option<Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>>,
+    /// Optional sandbox guard for file/path access control.
+    /// When None, no sandbox checks are performed (backward compatible).
+    pub sandbox: Option<Arc<loom_security::sandbox::SandboxGuard>>,
 }
 
 impl Default for AgentLoopConfig {
@@ -106,6 +110,9 @@ impl Default for AgentLoopConfig {
                 "可用工具（通过 request_tools 按需加载）：",
                 "文件/Shell/搜索/网络/LSP/MCP/技能/子代理。",
                 "批量操作用 shell 一次性完成；改文件前先读确认。",
+                "如果系统提示中出现 ## Available Skills 列表，且用户请求匹配某个 skill 的描述，",
+                "必须先调用 use_skill(skill_name=\"<exact-name>\") 加载完整指令，再按指令行事。",
+                "不要用通用知识完成本应由 skill 处理的任务。",
             ).to_string(),
             max_iterations: 30,
             max_tokens: 4096,
@@ -128,6 +135,7 @@ impl Default for AgentLoopConfig {
             permission_mode: "operate".to_string(),
             event_bus: None,
             pending_permissions: None,
+            sandbox: None,
         }
     }
 }
@@ -239,7 +247,7 @@ fn load_image_as_content_part(path: &str) -> Result<ContentPart> {
 fn request_tools_definition() -> ToolDefinition {
     ToolDefinition {
         name: "request_tools".into(),
-        description: "MUST call this first before any file/shell/search operation. You can either describe what you need to do, or specify tool names directly. The matching tools will load and become available.".into(),
+        description: "MUST call this first before any file/shell/search/skill operation. You can either describe what you need to do, or specify tool names directly. The matching tools will load and become available. IMPORTANT: if you need to use a skill listed in the Available Skills section, you must first request the use_skill tool through this meta-tool, then call use_skill(skill_name=\"<name>\").".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -251,22 +259,87 @@ fn request_tools_definition() -> ToolDefinition {
     }
 }
 
-/// Match tool names/descriptions against keywords in the reason string.
-/// Only returns tools that actually matched — the caller is responsible for
-/// providing a fallback when nothing matches (see request_tools handler).
+/// Truncate tool output to prevent single huge results from dominating the
+/// conversation context. Classification:
+/// - < 2 KB   → keep full
+/// - 2-10 KB  → keep first 40 % + last 40 %, mark truncated
+/// - > 10 KB  → keep first 2 KB + last 2 KB, mark truncated with original size
+fn truncate_tool_content(raw: &str) -> String {
+    const SMALL: usize = 2_000;   // chars, not bytes
+    const MEDIUM: usize = 10_000;
+    const HEAD_TAIL_FRAC: usize = 40; // percent
+    const LARGE_HEAD: usize = 2_000;
+
+    let chars: Vec<char> = raw.chars().collect();
+    let len = chars.len();
+    if len <= SMALL {
+        return raw.to_string();
+    }
+    if len <= MEDIUM {
+        let head = len * HEAD_TAIL_FRAC / 100;
+        let tail = len - head;
+        let head_str: String = chars[..head].iter().collect();
+        let tail_str: String = chars[tail..].iter().collect();
+        return format!(
+            "{}\n\n[...{} 字已省略...]\n\n{}",
+            head_str,
+            len.saturating_sub(head + (len - tail)),
+            tail_str,
+        );
+    }
+    // Large: head + tail
+    let head_str: String = chars.iter().take(LARGE_HEAD).collect();
+    let tail_start = len.saturating_sub(LARGE_HEAD);
+    let tail_str: String = chars[tail_start..].iter().collect();
+    format!(
+        "{}\n\n[...{} 字已省略（共 {} 字）...]\n\n{}",
+        head_str,
+        len.saturating_sub(LARGE_HEAD * 2),
+        len,
+        tail_str,
+    )
+}
+
+/// Match tool names/descriptions against the reason string.
+/// Uses semantic keyword mapping + substring matching for higher precision.
 fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
     let r = reason.to_lowercase();
-    let keywords: Vec<&str> = r.split_whitespace().filter(|w| w.len() >= 3).collect();
+
+    // Semantic intent → tool name mapping (CJK + English)
+    let intent_map: &[(&[&str], &str)] = &[
+        (&["读", "read", "查看", "打开", "open", "cat", "view"], "file_read"),
+        (&["写", "write", "保存", "save", "创建", "create", "生成", "generate", "新建"], "file_write"),
+        (&["删", "delete", "remove", "rm", "清除"], "file_delete"),
+        (&["搜", "search", "find", "grep", "查找", "寻找", "搜索", "检索"], "content_search"),
+        (&["列", "list", "ls", "dir", "目录", "文件列表", "列出"], "file_list"),
+        (&["执行", "运行", "run", "exec", "shell", "命令", "command", "终端", "terminal", "bash", "cmd", "编译", "build", "测试", "test", "安装", "install"], "shell"),
+        (&["网络", "搜索", "网页", "web", "search", "http", "https", "查询", "api", "fetch", "抓取", "爬", "股票", "行情", "天气", "新闻", "news", "股价"], "web_search"),
+        (&["lsp", "补全", "诊断", "跳转", "定义", "引用", "hover", "completion", "diagnostic", "definition", "reference"], "lsp_diagnostics"),
+        (&["技能", "skill", "use_skill"], "use_skill"),
+    ];
+
+    let mut matched_names = std::collections::HashSet::new();
+
+    // 1. Semantic intent matching
+    for (keywords, tool_name) in intent_map {
+        if keywords.iter().any(|kw| r.contains(kw)) {
+            matched_names.insert(*tool_name);
+        }
+    }
+
+    // 2. Substring matching on tool name/description as fallback
+    let keywords: Vec<&str> = r.split_whitespace().filter(|w| w.len() >= 2).collect();
+    for t in all {
+        if t.name == "request_tools" { continue; }
+        let nl = t.name.to_lowercase();
+        let dl = t.description.to_lowercase();
+        if keywords.iter().any(|kw| nl.contains(kw) || dl.contains(kw)) {
+            matched_names.insert(t.name.as_str());
+        }
+    }
 
     all.iter()
-        .filter(|t| {
-            if t.name == "request_tools" {
-                return false;
-            }
-            let nl = t.name.to_lowercase();
-            let dl = t.description.to_lowercase();
-            keywords.iter().any(|kw| nl.contains(kw) || dl.contains(kw))
-        })
+        .filter(|t| matched_names.contains(t.name.as_str()))
         .cloned()
         .collect()
 }
@@ -356,7 +429,7 @@ async fn run_agent_turn_inner(
 ) -> Result<TurnResult> {
     client.prefix_cache_reset();
     let tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
-    let assembler = ContextAssembler::new(&config.system_prompt, 8192);
+    let assembler = ContextAssembler::new(&config.system_prompt, 16384);
     let opts = AssembleOptions {
         persona: config.persona.clone(),
         summary: config.summary.clone(),
@@ -475,8 +548,11 @@ async fn run_agent_turn_inner(
     let mut total_prompt = 0usize;
     let mut total_completion = 0usize;
 
-    // Create tool context with workspace path for file operations
-    let tool_context = ToolContext::with_workspace(config.workspace_path.clone());
+    // Create tool context with workspace path and optional sandbox guard
+    let tool_context = ToolContext::with_workspace_and_sandbox(
+        config.workspace_path.clone(),
+        config.sandbox.clone(),
+    );
 
     for iteration in 0..config.max_iterations {
         // Token budget check: stop if cumulative prompt tokens exceed the budget
@@ -777,6 +853,24 @@ async fn run_agent_turn_inner(
                     continue;
                 }
 
+                // Skill-first routing: if the LLM calls web_search or web_fetch,
+                // and use_skill has not been used yet in this turn, intercept
+                // and suggest loading skills first (matching the streaming path).
+                if tool_name == "web_search" || tool_name == "web_fetch" {
+                    let skill_used = tool_messages.iter().any(|msg| {
+                        msg.content.iter().any(|part| {
+                            matches!(part, ContentPart::ToolResult { name, .. } if name == "use_skill")
+                        })
+                    });
+                    if !skill_used {
+                        let content = "内置搜索已禁用，因为技能更准确。调用 use_skill('list') 查看可用技能，或安装浏览器技能后加载。如确需内置搜索，可重试。";
+                        let skill_msg = Message::tool(&tc.id, &tool_name, content);
+                        messages.push(skill_msg.clone());
+                        tool_messages.push(skill_msg);
+                        continue;
+                    }
+                }
+
                 let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
                 // Drain progress updates in background to avoid SendError in tool implementations
                 tokio::spawn(async move {
@@ -808,7 +902,7 @@ async fn run_agent_turn_inner(
                         let content = if result.is_error {
                             format!("Error: {}", result.content)
                         } else {
-                            result.content
+                            truncate_tool_content(&result.content)
                         };
 
                         // Fire PostToolUse hook
@@ -1000,11 +1094,19 @@ async fn run_agent_turn_streaming_inner(
     client.prefix_cache_reset();
     let all_tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
     let mut tools = if config.lazy_tools {
-        vec![request_tools_definition()]
+        // First-turn surface: request_tools (meta) + use_skill (skill loader).
+        // Including use_skill directly avoids the two-hop dance
+        // (request_tools → use_skill → use_skill), which most models skip,
+        // making selected/available skills effectively unusable.
+        let mut initial = vec![request_tools_definition()];
+        if let Some(skill_tool) = all_tools.iter().find(|t| t.name == "use_skill") {
+            initial.push(skill_tool.clone());
+        }
+        initial
     } else {
         all_tools.clone()
     };
-    let assembler = ContextAssembler::new(&config.system_prompt, 8192);
+    let assembler = ContextAssembler::new(&config.system_prompt, 16384);
     let opts = AssembleOptions {
         persona: config.persona.clone(),
         summary: config.summary.clone(),
@@ -1197,8 +1299,11 @@ async fn run_agent_turn_streaming_inner(
     let mut captured_images: Vec<(String, String)> = Vec::new();
     let mut completed_iterations = 0usize;
 
-    // Create tool context with workspace path for file operations
-    let tool_context = ToolContext::with_workspace(config.workspace_path.clone());
+    // Create tool context with workspace path and optional sandbox guard
+    let tool_context = ToolContext::with_workspace_and_sandbox(
+        config.workspace_path.clone(),
+        config.sandbox.clone(),
+    );
 
     for iteration in 0..config.max_iterations {
         // Token budget check: stop if cumulative prompt tokens exceed the budget
@@ -1683,6 +1788,29 @@ async fn run_agent_turn_streaming_inner(
                             .collect();
                     }
 
+                    // Always include use_skill so the LLM can discover and load skills
+                    if let Some(skill_tool) = all_tools.iter().find(|t| t.name == "use_skill") {
+                        if !matched.iter().any(|t| t.name == "use_skill") {
+                            matched.push(skill_tool.clone());
+                        }
+                    }
+
+                    // Skill-first routing: if the LLM wants web_search/web_fetch,
+                    // intercept and push use_skill instead — unless use_skill is
+                    // already loaded (LLM saw the skill list and chose to retry).
+                    let wants_web = matched.iter().any(|t| t.name == "web_search" || t.name == "web_fetch");
+                    let skill_already_loaded = tools.iter().any(|t| t.name == "use_skill");
+                    if wants_web && !skill_already_loaded {
+                        // Keep only use_skill + essential non-web tools
+                        matched.retain(|t| t.name == "use_skill" || t.name == "shell" || t.name == "file_read" || t.name == "file_write");
+                        let content = "内置搜索已禁用，因为技能更准确。调用 use_skill('list') 查看可用技能，或安装浏览器技能后加载。如确需内置搜索，再次调用 request_tools。";
+                        messages.push(Message::tool(tc_id, tc_name, content));
+                        tool_messages.push(messages.last().unwrap().clone());
+                        tools = matched;
+                        tool_calls_made += 1;
+                        continue;
+                    }
+
                     let names: Vec<&str> = matched.iter().map(|t| t.name.as_str()).collect();
                     tracing::info!(%reason, ?names, "request_tools matched");
                     let content = format!("Tools loaded: {}", names.join(", "));
@@ -1796,7 +1924,7 @@ async fn run_agent_turn_streaming_inner(
                         let content = if result.is_error {
                             format!("Error: {}", result.content)
                         } else {
-                            result.content
+                            truncate_tool_content(&result.content)
                         };
 
                         // Fire PostToolUse hook

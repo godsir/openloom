@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import './services/pet-commands' // always-on pet context menu handler
 import './styles/base.css'
+import './styles/fonts.css'
 import './themes/light.css'
 import './themes/midnight.css'
 import './themes/warm-paper.css'

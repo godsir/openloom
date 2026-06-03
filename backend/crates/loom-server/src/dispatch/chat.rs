@@ -90,6 +90,12 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
                 .collect()
         })
         .unwrap_or_default();
+    tracing::info!(
+        session_id = %p.get("session_id").and_then(|v| v.as_str()).unwrap_or("default"),
+        skill_count = selected_skills.len(),
+        skills = ?selected_skills,
+        "[dispatch] chat.send selected_skills"
+    );
 
     // Resolve agent config for this session
     let config_name = state

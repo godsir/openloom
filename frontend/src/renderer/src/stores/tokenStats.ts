@@ -24,6 +24,9 @@ export interface TokenSummary {
     prompt: number
     completion: number
     cached: number
+    cache_miss_tokens: number
+    cache_hit_tokens: number
+    cache_write_tokens: number
     requests: number
     avg_latency_ms: number
     avg_context_utilization: number

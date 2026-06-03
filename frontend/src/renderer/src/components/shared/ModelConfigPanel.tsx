@@ -900,50 +900,50 @@ export default function ModelConfigPanel() {
                               </div>
                             </div>
                             <div className={styles.pvField}>
-                              <label className={styles.pvEditLabel}>Input 价格 (¥/百万 Token)</label>
+                              <label className={styles.pvEditLabel}>输入价格 — 未命中缓存 (¥/百万 Token)</label>
                               <input
                                 type="number"
                                 min="0"
                                 step="0.01"
                                 value={editForm.input_price ?? ''}
-                                placeholder="0.00"
+                                placeholder="如 DeepSeek: 7.26"
                                 onChange={e => setEditForm(f => ({ ...f, input_price: parseFloat(e.target.value) || 0 }))}
                                 className={styles.pvEditInput}
                               />
                             </div>
                             <div className={styles.pvField}>
-                              <label className={styles.pvEditLabel}>Output 价格 (¥/百万 Token)</label>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={editForm.output_price ?? ''}
-                                placeholder="0.00"
-                                onChange={e => setEditForm(f => ({ ...f, output_price: parseFloat(e.target.value) || 0 }))}
-                                className={styles.pvEditInput}
-                              />
-                            </div>
-                            <div className={styles.pvField}>
-                              <label className={styles.pvEditLabel}>Cache Read 价格 (¥/百万 Token)</label>
+                              <label className={styles.pvEditLabel}>输入价格 — 缓存命中 (¥/百万 Token)</label>
                               <input
                                 type="number"
                                 min="0"
                                 step="0.01"
                                 value={editForm.cache_read_price ?? ''}
-                                placeholder="0.00"
+                                placeholder="如 DeepSeek: 1.45"
                                 onChange={e => setEditForm(f => ({ ...f, cache_read_price: parseFloat(e.target.value) || 0 }))}
                                 className={styles.pvEditInput}
                               />
                             </div>
                             <div className={styles.pvField}>
-                              <label className={styles.pvEditLabel}>Cache Write 价格 (¥/百万 Token)</label>
+                              <label className={styles.pvEditLabel}>缓存写入价格 (¥/百万 Token)</label>
                               <input
                                 type="number"
                                 min="0"
                                 step="0.01"
                                 value={editForm.cache_write_price ?? ''}
-                                placeholder="0.00"
+                                placeholder="如 DeepSeek: 7.26"
                                 onChange={e => setEditForm(f => ({ ...f, cache_write_price: parseFloat(e.target.value) || 0 }))}
+                                className={styles.pvEditInput}
+                              />
+                            </div>
+                            <div className={styles.pvField}>
+                              <label className={styles.pvEditLabel}>输出价格 (¥/百万 Token)</label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={editForm.output_price ?? ''}
+                                placeholder="如 DeepSeek: 29.04"
+                                onChange={e => setEditForm(f => ({ ...f, output_price: parseFloat(e.target.value) || 0 }))}
                                 className={styles.pvEditInput}
                               />
                             </div>

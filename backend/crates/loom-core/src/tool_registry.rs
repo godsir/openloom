@@ -279,6 +279,7 @@ impl AgentTool for SpawnAgentTool {
             permission_mode: "operate".to_string(), // sub-agents always operate
             event_bus: None,
             pending_permissions: None,
+            sandbox: config.sandbox.clone(),
         };
         drop(config);
 

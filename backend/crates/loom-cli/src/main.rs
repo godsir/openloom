@@ -172,6 +172,12 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Err(e) => println!("[server] memory unavailable: {}", e),
             }
+            // Load sandbox config from disk into memory
+            {
+                let sc = orchestrator.load_sandbox_config().await;
+                orchestrator.set_sandbox_config(sc).await;
+                println!("[server] sandbox: {}", if orchestrator.sandbox_config().await.enabled { "enabled" } else { "disabled" });
+            }
             // Load MCP servers from config files (~/.loom/mcp.json, .loom/mcp.json)
             match mcp_config::load_mcp_configs(&loom_dir) {
                 Ok((configs, sources)) => {
@@ -911,10 +917,13 @@ async fn run_chat_demo(
             continue;
         }
         if line == "/skills" {
-            let ctx = orchestrator.build_system_prompt().await;
-            // Extract the skills section
-            if let Some(pos) = ctx.find("## Available Skills") {
-                println!("\n{}", &ctx[pos..]);
+            let summaries = orchestrator.get_skill_summaries().await;
+            if !summaries.is_empty() {
+                println!("\n## Available Skills ({})", summaries.len());
+                for s in &summaries {
+                    let flag = if s.always_active { " [auto]" } else { "" };
+                    println!("  - {}:{}\n    {}", s.name, flag, s.description);
+                }
             } else {
                 println!("\n[skills] none loaded");
             }
@@ -923,7 +932,7 @@ async fn run_chat_demo(
 
         use loom_types::StreamDelta;
         let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamDelta>(256);
-        let mut fut = std::pin::pin!(orchestrator.process_message_streaming(&line, tx, session, None, vec![], vec![]));
+        let mut fut = std::pin::pin!(orchestrator.process_message_streaming(&line, tx, session, None, vec![], vec![], "operate"));
         let mut tool_idx = 0usize;
         let mut think_buf = String::new();
         let (mut prompt, mut completion, mut cache_read, mut cache_write) =

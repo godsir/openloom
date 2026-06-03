@@ -182,17 +182,13 @@ pub(crate) async fn reload_skills_into_orchestrator(
     // Reload hook registry from plugins after MCP reconnection
     orchestrator.reload_hooks(&plugin_manager).await;
 
-    loader
-        .discover()
-        .map(|skills| {
+    match loader.discover() {
+        Ok(skills) => {
             let count = skills.len();
             let state = loom_skills::SkillState::from_skills(&skills);
-            // Use block_in_place to finish the update before returning
-            let orch = orchestrator.clone();
-            let _ = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async { orch.set_skills(state).await })
-            });
-            count
-        })
-        .map_err(|e| format!("skill discovery failed: {}", e))
+            orchestrator.set_skills(state).await;
+            Ok(count)
+        }
+        Err(e) => Err(format!("skill discovery failed: {}", e)),
+    }
 }

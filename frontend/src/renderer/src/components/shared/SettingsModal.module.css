@@ -259,7 +259,7 @@
 .aboutSection {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
 }
 
 .aboutCard {
@@ -406,7 +406,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 6px 10px;
   border-radius: var(--r-md);
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid var(--border);
@@ -614,7 +614,7 @@
 .sectionDivider {
   border: none;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
-  margin: 24px 0;
+  margin: 10px 0;
 }
 
 .mcpAddForm {
