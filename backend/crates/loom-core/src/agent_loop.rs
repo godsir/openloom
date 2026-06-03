@@ -56,7 +56,23 @@ pub struct AgentLoopConfig {
     /// Model temperature.
     pub temperature: f32,
     /// If true, start with only request_tools and load real tools on demand.
+    /// When `selected_skills` is non-empty this flag is effectively ignored:
+    /// skill body is already in the system prompt so all tools are exposed
+    /// upfront so the LLM can act on the skill instructions immediately.
     pub lazy_tools: bool,
+    /// If true, use Claude Code-style dispatch: all tools sent eagerly (no
+    /// request_tools meta-tool), slash commands intercepted by harness before
+    /// the model sees them, and pure LLM semantic matching (no keyword table).
+    /// Default: false (existing lazy-tools + match_tools behavior).
+    pub cc_dispatch: bool,
+    /// Names of skills already injected into the system prompt.
+    /// When non-empty, lazy_tools is bypassed so the LLM can act on skill
+    /// instructions without needing to call request_tools first.
+    pub selected_skills: Vec<String>,
+    /// Number of available (installable but not yet selected) skills.
+    /// Used by the request_tools handler to decide whether to soft-intercept
+    /// web_search requests and suggest loading a skill first.
+    pub available_skill_count: usize,
     /// Persona text (injected into stable prefix).
     pub persona: Option<String>,
     /// Conversation summary (injected into stable prefix).
@@ -104,20 +120,24 @@ impl Default for AgentLoopConfig {
     fn default() -> Self {
         Self {
             system_prompt: concat!(
-                "你是 openLoom，运行在用户本机的 AI 助手。",
-                "核心：简洁直接、行动优先、不确定就明说。",
-                "简单问题直接回答，不要无意义调工具。",
-                "可用工具（通过 request_tools 按需加载）：",
-                "文件/Shell/搜索/网络/LSP/MCP/技能/子代理。",
+                "你是 openLoom，运行在用户本机的 AI 助手。\n",
+                "核心：行动优先、简洁直接、不确定就明说。\n",
+                "要进行文件操作、执行命令、搜索代码、网络搜索、使用技能等任务时，",
+                "直接调用对应的 tool。",
+                "仅纯知识问答可以直接回复，不需要调工具。\n",
+                "如果系统提示中出现 ## Available Skills 列表，",
+                "且用户请求匹配某个 skill 的描述，",
+                "必须先调用 use_skill(skill_name=\"<名称>\") 加载完整指令，",
+                "再按 skill 指令行事。不要用通用知识完成本应由 skill 处理的任务。\n",
                 "批量操作用 shell 一次性完成；改文件前先读确认。",
-                "如果系统提示中出现 ## Available Skills 列表，且用户请求匹配某个 skill 的描述，",
-                "必须先调用 use_skill(skill_name=\"<exact-name>\") 加载完整指令，再按指令行事。",
-                "不要用通用知识完成本应由 skill 处理的任务。",
             ).to_string(),
             max_iterations: 30,
             max_tokens: 4096,
             temperature: 0.0,
             lazy_tools: true,
+            cc_dispatch: true,
+            selected_skills: Vec::new(),
+            available_skill_count: 0,
             persona: None,
             summary: None,
             kg_context: None,
@@ -247,7 +267,7 @@ fn load_image_as_content_part(path: &str) -> Result<ContentPart> {
 fn request_tools_definition() -> ToolDefinition {
     ToolDefinition {
         name: "request_tools".into(),
-        description: "MUST call this first before any file/shell/search/skill operation. You can either describe what you need to do, or specify tool names directly. The matching tools will load and become available. IMPORTANT: if you need to use a skill listed in the Available Skills section, you must first request the use_skill tool through this meta-tool, then call use_skill(skill_name=\"<name>\").".into(),
+        description: "MUST call this first before any file/shell/search/skill operation. Describe what you need to do (e.g. 'read a file', 'run a command', 'search code', 'use a skill to browse the web'). You can also list specific tool names. The matching tools will load and become available. IMPORTANT: if a skill from ## Available Skills matches the user's request, request_tools will always include use_skill — call use_skill(skill_name=\"<exact-name>\") to load the skill's full instructions.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -302,6 +322,8 @@ fn truncate_tool_content(raw: &str) -> String {
 
 /// Match tool names/descriptions against the reason string.
 /// Uses semantic keyword mapping + substring matching for higher precision.
+/// Always includes the 7 essential built-in tools (v0.2.16 behaviour) so
+/// the LLM can discover skills and core tools even when the reason is narrow.
 fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
     let r = reason.to_lowercase();
 
@@ -310,10 +332,11 @@ fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
         (&["读", "read", "查看", "打开", "open", "cat", "view"], "file_read"),
         (&["写", "write", "保存", "save", "创建", "create", "生成", "generate", "新建"], "file_write"),
         (&["删", "delete", "remove", "rm", "清除"], "file_delete"),
-        (&["搜", "search", "find", "grep", "查找", "寻找", "搜索", "检索"], "content_search"),
+        (&["搜", "find", "grep", "查找", "寻找", "搜索", "检索"], "content_search"),
         (&["列", "list", "ls", "dir", "目录", "文件列表", "列出"], "file_list"),
         (&["执行", "运行", "run", "exec", "shell", "命令", "command", "终端", "terminal", "bash", "cmd", "编译", "build", "测试", "test", "安装", "install"], "shell"),
-        (&["网络", "搜索", "网页", "web", "search", "http", "https", "查询", "api", "fetch", "抓取", "爬", "股票", "行情", "天气", "新闻", "news", "股价"], "web_search"),
+        (&["网络", "网页", "web", "http", "https", "查询", "api", "fetch", "抓取", "爬", "股票", "行情", "天气", "新闻", "news", "股价", "search", "搜索"], "web_search"),
+        (&["fetch", "get", "curl", "网页", "url", "page", "html"], "web_fetch"),
         (&["lsp", "补全", "诊断", "跳转", "定义", "引用", "hover", "completion", "diagnostic", "definition", "reference"], "lsp_diagnostics"),
         (&["技能", "skill", "use_skill"], "use_skill"),
     ];
@@ -334,6 +357,24 @@ fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
         let nl = t.name.to_lowercase();
         let dl = t.description.to_lowercase();
         if keywords.iter().any(|kw| nl.contains(kw) || dl.contains(kw)) {
+            matched_names.insert(t.name.as_str());
+        }
+    }
+
+    // 3. Always include the 7 essential built-in tools (v0.2.16 behaviour).
+    //    Without this, a narrow reason like "read a file" would only load
+    //    file_read, leaving use_skill/shell undiscoverable for subsequent turns.
+    let essentials: &[&str] = &[
+        "shell", "file_read", "file_write", "file_list",
+        "content_search", "file_delete", "use_skill",
+    ];
+    for name in essentials {
+        matched_names.insert(name);
+    }
+
+    // 4. Always include all MCP tools so the model can discover them.
+    for t in all {
+        if t.name.starts_with("mcp__") {
             matched_names.insert(t.name.as_str());
         }
     }
@@ -428,7 +469,21 @@ async fn run_agent_turn_inner(
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<TurnResult> {
     client.prefix_cache_reset();
-    let tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
+    let all_tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
+    // Apply the same lazy/eager gating as the streaming path
+    let has_injected_skills = !config.selected_skills.is_empty();
+    let has_available_skills = config.available_skill_count > 0;
+    let mut tools = if config.lazy_tools && !has_injected_skills && !config.cc_dispatch {
+        let mut initial = vec![request_tools_definition()];
+        if has_available_skills {
+            if let Some(skill_def) = all_tools.iter().find(|t| t.name == "use_skill") {
+                initial.push(skill_def.clone());
+            }
+        }
+        initial
+    } else {
+        all_tools.clone()
+    };
     let assembler = ContextAssembler::new(&config.system_prompt, 16384);
     let opts = AssembleOptions {
         persona: config.persona.clone(),
@@ -791,6 +846,59 @@ async fn run_agent_turn_inner(
             for tc in &response.tool_calls {
                 let tool_name = tc.name.clone();
                 info!(name = %tool_name, "executing tool");
+
+                // Handle request_tools meta-tool: match and inject real tools
+                // (skipped when cc_dispatch is true — all tools are already loaded)
+                if config.lazy_tools && !config.cc_dispatch && tool_name == "request_tools" {
+                    let args = &tc.arguments;
+                    let mut matched: Vec<ToolDefinition> = Vec::new();
+                    if let Some(tools_arr) = args["tools"].as_array() {
+                        for t in tools_arr {
+                            if let Some(name) = t.as_str() {
+                                if let Some(def) = all_tools.iter().find(|d| d.name == name) {
+                                    if !matched.iter().any(|m| m.name == def.name) {
+                                        matched.push(def.clone());
+                                    }
+                                } else {
+                                    let fuzzed = match_tools(name, &all_tools);
+                                    for def in fuzzed {
+                                        if !matched.iter().any(|m| m.name == def.name) {
+                                            matched.push(def);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let reason = args["reason"].as_str().unwrap_or("");
+                    if !reason.is_empty() {
+                        let reason_matched = match_tools(reason, &all_tools);
+                        for t in reason_matched {
+                            if !matched.iter().any(|m| m.name == t.name) {
+                                matched.push(t);
+                            }
+                        }
+                    }
+                    if matched.is_empty() {
+                        let essentials: &[&str] = &[
+                            "shell", "file_read", "file_write", "file_list",
+                            "content_search", "file_delete", "use_skill",
+                        ];
+                        matched = all_tools.iter()
+                            .filter(|t| essentials.contains(&t.name.as_str()))
+                            .cloned()
+                            .collect();
+                    }
+                    let names: Vec<&str> = matched.iter().map(|t| t.name.as_str()).collect();
+                    tracing::info!(%reason, ?names, "request_tools matched (non-streaming)");
+                    let content = format!("Tools loaded: {}", names.join(", "));
+                    messages.push(Message::tool(&tc.id, &tool_name, &content));
+                    tool_messages.push(messages.last().unwrap().clone());
+                    tools = matched;
+                    tool_calls_made += 1;
+                    continue;
+                }
+
                 // Permission check using configured defaults (or merged skill permissions)
                 let perms = config.default_permissions.clone();
                 let (mut allowed, risk) = check_permission(&tool_name, &perms);
@@ -851,24 +959,6 @@ async fn run_agent_turn_inner(
                     messages.push(perm_msg.clone());
                     tool_messages.push(perm_msg);
                     continue;
-                }
-
-                // Skill-first routing: if the LLM calls web_search or web_fetch,
-                // and use_skill has not been used yet in this turn, intercept
-                // and suggest loading skills first (matching the streaming path).
-                if tool_name == "web_search" || tool_name == "web_fetch" {
-                    let skill_used = tool_messages.iter().any(|msg| {
-                        msg.content.iter().any(|part| {
-                            matches!(part, ContentPart::ToolResult { name, .. } if name == "use_skill")
-                        })
-                    });
-                    if !skill_used {
-                        let content = "内置搜索已禁用，因为技能更准确。调用 use_skill('list') 查看可用技能，或安装浏览器技能后加载。如确需内置搜索，可重试。";
-                        let skill_msg = Message::tool(&tc.id, &tool_name, content);
-                        messages.push(skill_msg.clone());
-                        tool_messages.push(skill_msg);
-                        continue;
-                    }
                 }
 
                 let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
@@ -1093,14 +1183,27 @@ async fn run_agent_turn_streaming_inner(
 ) -> Result<TurnResult> {
     client.prefix_cache_reset();
     let all_tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
-    let mut tools = if config.lazy_tools {
-        // First-turn surface: request_tools (meta) + use_skill (skill loader).
-        // Including use_skill directly avoids the two-hop dance
-        // (request_tools → use_skill → use_skill), which most models skip,
-        // making selected/available skills effectively unusable.
+    // Bypass lazy_tools when skills are already injected into the system prompt:
+    // the LLM has all skill instructions but needs the underlying tool suite
+    // (shell, file_read, etc.) immediately to act on them. Without this, the
+    // model would have to call request_tools first — a hop most non-Claude
+    // models skip, making skill instructions effectively dead code.
+    // lazy_tools: only bypass when skills are explicitly selected/injected.
+    let has_injected_skills = !config.selected_skills.is_empty();
+    let has_available_skills = config.available_skill_count > 0;
+    let mut tools = if config.lazy_tools && !has_injected_skills && !config.cc_dispatch {
+        // v0.2.17 behavior: start with request_tools only.
+        // The model calls request_tools to get real tools.
         let mut initial = vec![request_tools_definition()];
-        if let Some(skill_tool) = all_tools.iter().find(|t| t.name == "use_skill") {
-            initial.push(skill_tool.clone());
+        // When skills are installed but not pre-selected, include use_skill
+        // in the initial tool set. The use_skill description contains the full
+        // skill catalogue, so the LLM can semantically match user intent to a
+        // skill name and load it without needing to call request_tools first.
+        // Non-Claude models that skip request_tools can still reach skills.
+        if has_available_skills {
+            if let Some(skill_def) = all_tools.iter().find(|t| t.name == "use_skill") {
+                initial.push(skill_def.clone());
+            }
         }
         initial
     } else {
@@ -1745,7 +1848,8 @@ async fn run_agent_turn_streaming_inner(
 
             for (_, tc_id, tc_name, tc_args) in &pending_tool_calls {
                 // Handle request_tools meta-tool: match and inject real tools
-                if config.lazy_tools && tc_name == "request_tools" {
+                // (skipped when cc_dispatch is true — all tools are already loaded)
+                if config.lazy_tools && !config.cc_dispatch && tc_name == "request_tools" {
                     let args: serde_json::Value =
                         serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}));
 
@@ -1753,12 +1857,21 @@ async fn run_agent_turn_streaming_inner(
                     let mut matched: Vec<ToolDefinition> = Vec::new();
 
                     if let Some(tools_arr) = args["tools"].as_array() {
-                        // Match by exact tool name
                         for t in tools_arr {
                             if let Some(name) = t.as_str() {
+                                // 1. Exact name match
                                 if let Some(def) = all_tools.iter().find(|d| d.name == name) {
-                                    if !matched.iter().any(|m| m.name == name) {
+                                    if !matched.iter().any(|m| m.name == def.name) {
                                         matched.push(def.clone());
+                                    }
+                                } else {
+                                    // 2. Fuzzy fallback: treat the name as a reason keyword
+                                    //    so "fetch" → web_fetch, "search" → web_search, etc.
+                                    let fuzzed = match_tools(name, &all_tools);
+                                    for def in fuzzed {
+                                        if !matched.iter().any(|m| m.name == def.name) {
+                                            matched.push(def);
+                                        }
                                     }
                                 }
                             }
@@ -1776,7 +1889,14 @@ async fn run_agent_turn_streaming_inner(
                         }
                     }
 
-                    // Fallback: load essential built-in tools only (not all 16)
+                    // Note: match_tools() now always includes the 7 essential built-in
+                    // tools (shell, file_read, file_write, file_list, content_search,
+                    // file_delete, use_skill) and all MCP tools, matching v0.2.16
+                    // behaviour. The fallback and force-add blocks below are no longer
+                    // needed — they're kept as a safety net in case match_tools() returns
+                    // empty for an edge-case reason (empty string, etc.).
+
+                    // Safety-net fallback: load essential built-in tools only
                     if matched.is_empty() {
                         let essentials: &[&str] = &[
                             "shell", "file_read", "file_write", "file_list",
@@ -1786,29 +1906,6 @@ async fn run_agent_turn_streaming_inner(
                             .filter(|t| essentials.contains(&t.name.as_str()))
                             .cloned()
                             .collect();
-                    }
-
-                    // Always include use_skill so the LLM can discover and load skills
-                    if let Some(skill_tool) = all_tools.iter().find(|t| t.name == "use_skill") {
-                        if !matched.iter().any(|t| t.name == "use_skill") {
-                            matched.push(skill_tool.clone());
-                        }
-                    }
-
-                    // Skill-first routing: if the LLM wants web_search/web_fetch,
-                    // intercept and push use_skill instead — unless use_skill is
-                    // already loaded (LLM saw the skill list and chose to retry).
-                    let wants_web = matched.iter().any(|t| t.name == "web_search" || t.name == "web_fetch");
-                    let skill_already_loaded = tools.iter().any(|t| t.name == "use_skill");
-                    if wants_web && !skill_already_loaded {
-                        // Keep only use_skill + essential non-web tools
-                        matched.retain(|t| t.name == "use_skill" || t.name == "shell" || t.name == "file_read" || t.name == "file_write");
-                        let content = "内置搜索已禁用，因为技能更准确。调用 use_skill('list') 查看可用技能，或安装浏览器技能后加载。如确需内置搜索，再次调用 request_tools。";
-                        messages.push(Message::tool(tc_id, tc_name, content));
-                        tool_messages.push(messages.last().unwrap().clone());
-                        tools = matched;
-                        tool_calls_made += 1;
-                        continue;
                     }
 
                     let names: Vec<&str> = matched.iter().map(|t| t.name.as_str()).collect();

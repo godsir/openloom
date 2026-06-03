@@ -147,6 +147,18 @@ impl PluginManager {
                 tracing::info!(count=found, dir=%path.display(), source, "plugins discovered");
             }
         }
+
+        // Deduplicate: keep only the first occurrence of each (name, source) pair.
+        // Multiple marketplace subdirs can each contain the same plugin name —
+        // we prefer the shallowest (first discovered) copy.
+        let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+        self.plugins.retain(|p| {
+            // Normalise source: strip "-auto" suffix for dedup purposes so that
+            // a SKILL.md-only plugin doesn't duplicate a manifest plugin with the same name.
+            let src = p.source.trim_end_matches("-auto").to_string();
+            seen.insert((p.manifest.name.clone(), src))
+        });
+
         Ok(self.plugins.len())
     }
 

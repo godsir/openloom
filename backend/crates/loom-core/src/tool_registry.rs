@@ -61,14 +61,18 @@ pub trait AgentTool: Send + Sync {
 /// Canonical registry of all tools available to an agent.
 ///
 /// Replaces the old SkillRegistry. Tools are indexed by their model-visible name.
+/// Also supports aliases (e.g. "Read" → "file_read") for Claude Code compatibility.
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn AgentTool>>,
+    /// Alias → canonical name mapping (e.g. "Read" → "file_read").
+    aliases: HashMap<String, String>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            aliases: HashMap::new(),
         }
     }
 
@@ -83,17 +87,50 @@ impl ToolRegistry {
         Ok(())
     }
 
+    /// Register an alias for an existing tool.
+    /// The alias maps to the canonical name, so `find("Read")` returns the
+    /// same tool as `find("file_read")`. Returns error if the alias is already
+    /// in use or if the canonical name doesn't exist.
+    pub fn register_alias(&mut self, alias: &str, canonical: &str) -> Result<()> {
+        if !self.tools.contains_key(canonical) {
+            anyhow::bail!(
+                "cannot create alias '{}' → '{}': canonical tool not found",
+                alias,
+                canonical
+            );
+        }
+        if self.tools.contains_key(alias) {
+            anyhow::bail!("alias '{}' conflicts with existing tool name", alias);
+        }
+        if self.aliases.contains_key(alias) {
+            anyhow::bail!(
+                "alias '{}' already points to '{}'",
+                alias,
+                self.aliases[alias]
+            );
+        }
+        tracing::debug!(%alias, %canonical, "tool alias registered");
+        self.aliases.insert(alias.to_string(), canonical.to_string());
+        Ok(())
+    }
+
     /// Remove a tool by its model-visible name. Returns the removed tool or None.
+    /// Also cleans up any aliases pointing to this tool.
     pub fn remove(&mut self, name: &str) -> Option<Arc<dyn AgentTool>> {
         let removed = self.tools.remove(name);
         if removed.is_some() {
             tracing::debug!(name = %name, "tool unregistered");
+            // Clean up aliases pointing to this name
+            self.aliases.retain(|_, canonical| canonical != name);
+            // Also remove if the name itself was an alias
+            self.aliases.remove(name);
         }
         removed
     }
 
     /// Remove all tools whose name starts with the given prefix.
     /// Useful for cleaning up MCP server tools (prefixed "mcp__<server>__").
+    /// Also cleans up any aliases pointing to removed tools.
     pub fn remove_by_prefix(&mut self, prefix: &str) -> Vec<Arc<dyn AgentTool>> {
         let keys: Vec<String> = self
             .tools
@@ -102,12 +139,14 @@ impl ToolRegistry {
             .cloned()
             .collect();
         let mut removed = Vec::new();
-        for key in keys {
-            if let Some(tool) = self.tools.remove(&key) {
+        for key in &keys {
+            if let Some(tool) = self.tools.remove(key) {
                 tracing::debug!(name = %key, "tool unregistered by prefix");
                 removed.push(tool);
             }
         }
+        // Clean up aliases pointing to removed tools
+        self.aliases.retain(|_, canonical| !keys.contains(canonical));
         removed
     }
 
@@ -123,9 +162,16 @@ impl ToolRegistry {
         format!("mcp__{}__", server)
     }
 
-    /// Look up a tool by its model-visible name.
+    /// Look up a tool by its model-visible name (checks aliases first).
     pub fn find(&self, name: &str) -> Option<Arc<dyn AgentTool>> {
-        self.tools.get(name).cloned()
+        // Check direct tool name first, then alias → canonical
+        if let Some(tool) = self.tools.get(name) {
+            return Some(tool.clone());
+        }
+        if let Some(canonical) = self.aliases.get(name) {
+            return self.tools.get(canonical).cloned();
+        }
+        None
     }
 
     /// Build all tool definitions for an LLM request.
@@ -262,6 +308,11 @@ impl AgentTool for SpawnAgentTool {
             max_tokens: config.max_tokens,
             temperature: config.temperature,
             lazy_tools: config.lazy_tools,
+            cc_dispatch: config.cc_dispatch,
+            // Sub-agents inherit no selected skills — they start fresh
+            selected_skills: Vec::new(),
+            // Sub-agents don't do skill-first routing
+            available_skill_count: 0,
             persona: None,
             summary: None,
             kg_context: None,

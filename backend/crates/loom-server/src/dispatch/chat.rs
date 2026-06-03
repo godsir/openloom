@@ -103,7 +103,7 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
         .get_bound_agent(session_id)
         .await
         .unwrap_or_else(|| "default".to_string());
-    let agent_config = state
+    let mut agent_config = state
         .orchestrator
         .agent_config_get(&config_name)
         .await
@@ -114,6 +114,15 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
         .get("permission_mode")
         .and_then(|v| v.as_str())
         .unwrap_or("operate");
+
+    // cc_dispatch override — can be set per-request or inherited from agent config
+    let cc_dispatch = p
+        .get("cc_dispatch")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(agent_config.cc_dispatch);
+
+    // Apply cc_dispatch override from RPC params
+    agent_config.cc_dispatch = cc_dispatch;
 
     let skip_user_message = p
         .get("skip_user_message")

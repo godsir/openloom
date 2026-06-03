@@ -11,6 +11,7 @@ pub mod builtin_tools;
 pub mod event_bus;
 pub mod hooks;
 pub mod orchestrator;
+pub mod slash_router;
 pub mod tool_context;
 pub mod tool_registry;
 pub mod vision;
@@ -20,6 +21,7 @@ pub use agent_loop::{AgentLoopConfig, TurnResult, run_agent_turn, run_agent_turn
 pub use agent_pool::AgentPool;
 pub use event_bus::{AgentEvent, EventBus};
 pub use orchestrator::{MemoryStore, Orchestrator};
+pub use slash_router::{SlashIntercept, SlashRouter};
 pub use tool_registry::{
     AgentTool, SpawnAgentTool, SpawnContext, ToolProvenance, ToolRegistry, ToolResult,
 };

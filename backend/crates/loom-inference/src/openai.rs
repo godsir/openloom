@@ -271,7 +271,7 @@ impl OpenAIClient {
                             parts.push(serde_json::json!({"type": "text", "text": result}));
                         }
                         ContentPart::Thinking { text } => {
-                            parts.push(serde_json::json!({"type": "text", "text": format!("[reasoning]\n{}", text)}));
+                            parts.push(serde_json::json!({"type": "text", "text": format!("[reasoning]\n{}\n[/reasoning]", text)}));
                         }
                     }
                 }
@@ -285,7 +285,7 @@ impl OpenAIClient {
                 .filter_map(|p| match p { ContentPart::Text { text } => Some(text.as_str()), _ => None })
                 .collect();
             let thinking_texts: Vec<String> = msg.content.iter().filter_map(|p| match p {
-                ContentPart::Thinking { text } => Some(format!("[reasoning]\n{}", text)),
+                ContentPart::Thinking { text } => Some(format!("[reasoning]\n{}\n[/reasoning]", text)),
                 _ => None,
             }).collect();
             let tc_vals: Vec<serde_json::Value> = msg.content.iter().filter_map(|p| match p {
@@ -479,6 +479,13 @@ impl CloudClient for OpenAIClient {
         let mut buf: Vec<u8> = Vec::new();
         let mut acc_text = String::new();
         let mut in_xml_tool_calls = false;
+        // Track whether we are inside a [reasoning]...[/reasoning] block
+        // embedded in the content stream. Some providers/gateways emit reasoning
+        // inline in content instead of using the native reasoning_content field.
+        // When detected, redirect to StreamDelta::Reasoning so the frontend
+        // routes it to the thinking block.
+        let mut in_reasoning_block = false;
+        let mut reason_buf = String::new(); // partial marker accumulator
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result?;
             buf.extend_from_slice(&chunk);
@@ -489,6 +496,15 @@ impl CloudClient for OpenAIClient {
                 for line in frame.lines() {
                     if let Some(data) = line.strip_prefix("data: ") {
                         if data == "[DONE]" {
+                            // Flush buffered partial marker before finishing
+                            if !reason_buf.is_empty() {
+                                let send = std::mem::take(&mut reason_buf);
+                                if in_reasoning_block {
+                                    let _ = tx.send(StreamDelta::Reasoning(send)).await;
+                                } else {
+                                    let _ = tx.send(StreamDelta::Text(send)).await;
+                                }
+                            }
                             return Ok(());
                         }
                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
@@ -515,8 +531,66 @@ impl CloudClient for OpenAIClient {
                                     in_xml_tool_calls = true;
                                 }
                                 if !in_xml_tool_calls {
-                                    if tx.send(StreamDelta::Text(t.to_string())).await.is_err() {
-                                        return Ok(());
+                                    // Filter [reasoning]...[/reasoning] blocks from content.
+                                    // Build the string to scan: buffered partial + new delta.
+                                    let scan = if reason_buf.is_empty() {
+                                        t.to_string()
+                                    } else {
+                                        let mut s = std::mem::take(&mut reason_buf);
+                                        s.push_str(t);
+                                        s
+                                    };
+                                    let mut pos = 0usize;
+                                    // Process the accumulated scan buffer, emitting
+                                    // Text or Reasoning deltas based on marker position.
+                                    while pos < scan.len() {
+                                        let rest = &scan[pos..];
+                                        if in_reasoning_block {
+                                            if let Some(close) = rest.find("[/reasoning]") {
+                                                if close > 0 {
+                                                    let _ = tx.send(StreamDelta::Reasoning(rest[..close].to_string())).await;
+                                                }
+                                                pos += close + "[/reasoning]".len();
+                                                in_reasoning_block = false;
+                                            } else {
+                                                // Still in reasoning — buffer for next delta
+                                                let _ = tx.send(StreamDelta::Reasoning(rest.to_string())).await;
+                                                pos = scan.len();
+                                            }
+                                        } else {
+                                            if let Some(open) = rest.find("[reasoning]") {
+                                                if open > 0 {
+                                                    let _ = tx.send(StreamDelta::Text(rest[..open].to_string())).await;
+                                                }
+                                                pos += open + "[reasoning]".len();
+                                                in_reasoning_block = true;
+                                            } else {
+                                                // Check for partial [reasoning] prefix at end
+                                                let tail = rest;
+                                                let mut held = 0usize;
+                                                let marker = "[reasoning]";
+                                                for i in 1..=tail.len().min(marker.len() - 1) {
+                                                    let idx = tail.len() - i;
+                                                    if !tail.is_char_boundary(idx) {
+                                                        continue;
+                                                    }
+                                                    if marker.starts_with(&tail[idx..]) {
+                                                        held = i;
+                                                        break;
+                                                    }
+                                                }
+                                                if held > 0 {
+                                                    let safe = &rest[..rest.len() - held];
+                                                    if !safe.is_empty() {
+                                                        let _ = tx.send(StreamDelta::Text(safe.to_string())).await;
+                                                    }
+                                                    reason_buf.push_str(&rest[rest.len() - held..]);
+                                                } else {
+                                                    let _ = tx.send(StreamDelta::Text(rest.to_string())).await;
+                                                }
+                                                pos = scan.len();
+                                            }
+                                        }
                                     }
                                 } else {
                                     // Check for any closing XML tool tag
@@ -825,7 +899,122 @@ pub fn parse_inline_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
     let (cleaned, xml_calls) = parse_xml_tool_calls(&cleaned);
     tool_calls.extend(xml_calls);
 
+    // Strategy 3: Parse Qwen/Yi-style <tool_call><function=NAME>...</function></tool_call>
+    let (cleaned, qwen_calls) = parse_qwen_tool_calls(&cleaned);
+    tool_calls.extend(qwen_calls);
+
     let cleaned = cleaned.trim().to_string();
+    (cleaned, tool_calls)
+}
+
+/// Parse Qwen/Yi-style tool call format that some open-source models emit:
+///
+/// ```text
+/// <tool_call>
+/// <function=search_web>
+/// <parameter=query>some query</parameter>
+/// <parameter=num_results>5</parameter>
+/// </function>
+/// </tool_call>
+/// ```
+///
+/// Distinct from Format B (`<invoke name="X"><parameter name="Y">`) — uses
+/// `<function=NAME>` and `<parameter=NAME>VALUE</parameter>` instead of
+/// `name="..."` attributes. Wrapper `<tool_call>` is optional; some variants
+/// emit only the `<function=...>...</function>` block.
+fn parse_qwen_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
+    let mut tool_calls: Vec<ToolCall> = Vec::new();
+    let mut cleaned = text.to_string();
+
+    // Find every <function=NAME> opener (with optional <tool_call> wrapper).
+    // We work on a mutable string and remove each matched block as we go,
+    // then continue from offset 0 since indices change after each removal.
+    loop {
+        // Search for "<function=" — the canonical opener for this format.
+        let Some(fn_open_rel) = cleaned.find("<function=") else { break };
+        let fn_open = fn_open_rel;
+
+        // Extract function name: between "<function=" and the closing '>'.
+        let after_eq = &cleaned[fn_open + "<function=".len()..];
+        let Some(open_tag_end_rel) = after_eq.find('>') else { break };
+        let raw_name = after_eq[..open_tag_end_rel].trim();
+        // Strip optional quotes some variants emit: <function="search_web">
+        let name = raw_name.trim_matches(|c| c == '"' || c == '\'').to_string();
+        let body_start = fn_open + "<function=".len() + open_tag_end_rel + 1;
+
+        // Find matching </function> close tag.
+        let Some(close_rel) = cleaned[body_start..].find("</function>") else {
+            // Malformed — bail to avoid infinite loop.
+            cleaned.replace_range(fn_open..fn_open + 1, "");
+            continue;
+        };
+        let body_end = body_start + close_rel;
+        let close_end = body_end + "</function>".len();
+        let body = &cleaned[body_start..body_end].to_string();
+
+        // Extract <parameter=NAME>VALUE</parameter> pairs from the body.
+        let mut args = serde_json::Map::new();
+        let mut p_search = 0;
+        while let Some(p_open_rel) = body[p_search..].find("<parameter=") {
+            let p_open = p_search + p_open_rel;
+            let after_p_eq = &body[p_open + "<parameter=".len()..];
+            let Some(p_tag_end_rel) = after_p_eq.find('>') else { break };
+            let raw_pname = after_p_eq[..p_tag_end_rel].trim();
+            let p_name = raw_pname.trim_matches(|c| c == '"' || c == '\'').to_string();
+            let value_start = p_open + "<parameter=".len() + p_tag_end_rel + 1;
+
+            // Find </parameter> — accept variant closers like </parameter=name> too.
+            let Some(p_close_rel) = body[value_start..].find("</parameter") else { break };
+            let value_end = value_start + p_close_rel;
+            // Skip to after the closing '>' of </parameter...>
+            let next_search = if let Some(gt) = body[value_end..].find('>') {
+                value_end + gt + 1
+            } else {
+                value_end
+            };
+
+            if !p_name.is_empty() {
+                let value = body[value_start..value_end].trim();
+                // Try to parse value as JSON for non-string types (numbers, bools, arrays).
+                // Fall back to string if parsing fails.
+                let json_value = serde_json::from_str::<serde_json::Value>(value)
+                    .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
+                args.insert(p_name, json_value);
+            }
+            p_search = next_search;
+        }
+
+        if !name.is_empty() {
+            tool_calls.push(ToolCall {
+                id: format!("xml-c-{}", tool_calls.len()),
+                name,
+                arguments: serde_json::Value::Object(args),
+            });
+        }
+
+        // Remove the matched <function=...>...</function> block.
+        // Also strip an optional surrounding <tool_call>...</tool_call> wrapper.
+        let mut remove_start = fn_open;
+        let mut remove_end = close_end;
+        // Look back for <tool_call> opener (allow whitespace between it and <function=).
+        let prefix = &cleaned[..fn_open];
+        if let Some(tc_pos) = prefix.rfind("<tool_call>") {
+            let between = &prefix[tc_pos + "<tool_call>".len()..];
+            if between.trim().is_empty() {
+                remove_start = tc_pos;
+            }
+        }
+        // Look forward for </tool_call> closer.
+        let suffix = &cleaned[close_end..];
+        if let Some(tc_close_rel) = suffix.find("</tool_call>") {
+            let between = &suffix[..tc_close_rel];
+            if between.trim().is_empty() {
+                remove_end = close_end + tc_close_rel + "</tool_call>".len();
+            }
+        }
+        cleaned.replace_range(remove_start..remove_end, "");
+    }
+
     (cleaned, tool_calls)
 }
 
@@ -1037,4 +1226,84 @@ fn regex_find(text: &str, _pattern: &str) -> Option<(usize, usize)> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_qwen_function_format() {
+        let text = r#"<tool_call>
+<function=search_web>
+<parameter=query>亨通光电 600487</parameter>
+<parameter=num_results>5</parameter>
+</function>
+</tool_call>"#;
+        let (cleaned, calls) = parse_inline_tool_calls(text);
+        assert!(cleaned.is_empty(), "wrapper should be fully consumed, got: {:?}", cleaned);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "search_web");
+        assert_eq!(calls[0].arguments["query"], "亨通光电 600487");
+        // num_results should parse as a number, not a string
+        assert_eq!(calls[0].arguments["num_results"], 5);
+    }
+
+    #[test]
+    fn parses_qwen_format_without_wrapper() {
+        let text = r#"<function=shell>
+<parameter=command>ls -la</parameter>
+</function>"#;
+        let (cleaned, calls) = parse_inline_tool_calls(text);
+        assert!(cleaned.is_empty());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(calls[0].arguments["command"], "ls -la");
+    }
+
+    #[test]
+    fn parses_anthropic_invoke_format() {
+        let text = r#"<tool_calls>
+<invoke name="file_read">
+<parameter name="path">/etc/hosts</parameter>
+</invoke>
+</tool_calls>"#;
+        let (_cleaned, calls) = parse_inline_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "file_read");
+        assert_eq!(calls[0].arguments["path"], "/etc/hosts");
+    }
+
+    #[test]
+    fn parses_bare_json_format() {
+        let text = r#"I'll run the command. {"name": "shell", "arguments": {"command": "echo hi"}} that's it."#;
+        let (cleaned, calls) = parse_inline_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(calls[0].arguments["command"], "echo hi");
+        assert!(cleaned.contains("I'll run the command."));
+        assert!(cleaned.contains("that's it."));
+    }
+
+    #[test]
+    fn handles_multiple_qwen_calls() {
+        let text = r#"<function=shell>
+<parameter=command>ls</parameter>
+</function>
+<function=file_read>
+<parameter=path>/tmp/x</parameter>
+</function>"#;
+        let (_cleaned, calls) = parse_inline_tool_calls(text);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(calls[1].name, "file_read");
+    }
+
+    #[test]
+    fn ignores_non_tool_text() {
+        let text = "Just some regular text without any tool calls.";
+        let (cleaned, calls) = parse_inline_tool_calls(text);
+        assert_eq!(calls.len(), 0);
+        assert_eq!(cleaned, text);
+    }
 }

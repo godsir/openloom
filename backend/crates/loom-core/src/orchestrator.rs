@@ -28,6 +28,7 @@ use crate::agent_loop::{
 use crate::agent_pool::{AgentPool, AgentSummary};
 use crate::event_bus::{AgentEvent, EventBus};
 use crate::hooks::{HookContext, HookRegistry};
+use crate::slash_router::SlashRouter;
 use crate::tool_registry::{AgentTool, SpawnAgentTool, SpawnContext, ToolRegistry};
 
 /// The central orchestrator for openLoom v2.
@@ -40,6 +41,8 @@ pub struct Orchestrator {
     loop_config: Arc<RwLock<AgentLoopConfig>>,
     session_histories: Arc<RwLock<std::collections::HashMap<String, Vec<Message>>>>,
     skill_state: Arc<RwLock<loom_skills::SkillState>>,
+    /// Slash-command pre-processor for /skillname interception (Claude Code-style dispatch).
+    slash_router: Arc<RwLock<SlashRouter>>,
     persona_context: Arc<RwLock<String>>,
     memory_store: Arc<RwLock<Option<Box<dyn crate::MemoryStore>>>>,
     agent_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::AgentConfig>>>,
@@ -343,11 +346,22 @@ impl Orchestrator {
         let _ = registry.register(Arc::new(crate::builtin_tools::FileDeleteTool));
 
         let skill_state = Arc::new(RwLock::new(loom_skills::SkillState::default()));
+        let slash_router = Arc::new(RwLock::new(SlashRouter::new()));
         let _ = registry.register(Arc::new(crate::builtin_tools::UseSkillTool {
             skill_state: skill_state.clone(),
         }));
         let _ = registry.register(Arc::new(crate::builtin_tools::WebSearchTool));
         let _ = registry.register(Arc::new(crate::builtin_tools::WebFetchTool));
+
+        // Register Claude Code-style tool name aliases (always-on, no-op when unused).
+        // These allow the model to call e.g. "Read" and have it resolve to "file_read".
+        let _ = registry.register_alias("Read", "file_read");
+        let _ = registry.register_alias("Write", "file_write");
+        let _ = registry.register_alias("Grep", "content_search");
+        let _ = registry.register_alias("Glob", "file_list");
+        let _ = registry.register_alias("Skill", "use_skill");
+        let _ = registry.register_alias("Bash", "shell");
+        let _ = registry.register_alias("Delete", "file_delete");
 
         // LSP tools — registered for on-demand loading via request_tools
         let lsp_client = Arc::new(LspClient::new());
@@ -366,6 +380,7 @@ impl Orchestrator {
             loop_config: Arc::new(RwLock::new(AgentLoopConfig::default())),
             session_histories: Arc::new(RwLock::new(std::collections::HashMap::new())),
             skill_state,
+            slash_router,
             persona_context: Arc::new(RwLock::new(String::new())),
             memory_store: Arc::new(RwLock::new(None)),
             agent_configs: Arc::new(RwLock::new(std::collections::HashMap::from([(
@@ -699,7 +714,9 @@ impl Orchestrator {
     // === Skills / Persona / Memory ===
 
     /// Atomically replace all skill state (context, bodies, permissions, summaries).
+    /// Also rebuilds the slash-command router for /skillname interception.
     pub async fn set_skills(&self, state: loom_skills::SkillState) {
+        self.slash_router.write().await.rebuild(state.bodies.clone());
         *self.skill_state.write().await = state;
     }
 
@@ -1921,13 +1938,7 @@ impl Orchestrator {
     }
 
     /// Build the full system prompt by assembling agent persona, system instructions,
-    /// user profile, selected skills, KG context, and workspace path.
-    /// Shared by both `process_message_with_config` and `process_message_streaming`
-    /// to eliminate code duplication.
-    ///
-    /// Note: available_skills is a pre-formatted "- name: description" list
-    /// injected into the system prompt so the LLM can discover skills before
-    /// loading them via the `use_skill` tool.
+    /// user profile, selected skills, available skill list, KG context, and workspace path.
     async fn build_full_system_prompt(
         &self,
         agent_config: &loom_types::AgentConfig,
@@ -2002,11 +2013,9 @@ impl Orchestrator {
                 }
             }
         }
-        // 4b. Available skills — loaded on-demand via the use_skill tool.
-        // Inject the list (excluding already-active ones to avoid confusion)
-        // so the LLM can discover skills without guessing.
+        // 4b. Available skills — name+description list for LLM autonomous use_skill calls.
+        // Matches v0.2.17 behavior: simple list injection, no relevance filtering.
         if !available_skills.is_empty() {
-            // Build exclusion set: user-selected + always_active
             let active_set: std::collections::HashSet<String> = {
                 let state = self.skill_state.read().await;
                 selected_skills.iter().cloned()
@@ -2016,7 +2025,6 @@ impl Orchestrator {
             let filtered: String = available_skills
                 .lines()
                 .filter(|line| {
-                    // Lines look like "- name: description"
                     if let Some(rest) = line.strip_prefix("- ") {
                         if let Some((name, _)) = rest.split_once(':') {
                             return !active_set.contains(name.trim());
@@ -2027,15 +2035,7 @@ impl Orchestrator {
                 .collect::<Vec<_>>()
                 .join("\n");
             if !filtered.trim().is_empty() {
-                system_prompt.push_str(
-                    "\n\n## Available Skills (load on-demand)\n\
-                    When the user's request matches one of these skills, you MUST call \
-                    `use_skill(skill_name=\"<name>\")` BEFORE attempting the task. \
-                    The skill's instructions will then be loaded and you must follow them. \
-                    Match by the skill description below — do not guess names.\n\n\
-                    Skills:\n"
-                );
-                system_prompt.push_str(&filtered);
+                system_prompt.push_str(&format!("\n\n## Available Skills\n{}", filtered));
             }
         }
 
@@ -2103,6 +2103,37 @@ impl Orchestrator {
             state.context.clone()
         };
 
+        // ── Slash-command pre-processing (Claude Code-style dispatch) ──
+        // When cc_dispatch is enabled, intercept /skillname before the model
+        // sees it. The skill body is injected directly into the system prompt
+        // and the slash prefix is stripped from the user message.
+        let (effective_message, slash_skill_body) = {
+            if agent_config.cc_dispatch {
+                let router = self.slash_router.read().await;
+                if let Some(intercept) = router.intercept(user_message) {
+                    tracing::info!(
+                        skill = %intercept.skill_name,
+                        "slash command intercepted, injecting skill body"
+                    );
+                    let skill_header = format!(
+                        "## Active Skill (Loaded by /{})\nThe following skill was activated by slash command. Follow its instructions directly — do NOT call use_skill for this.\n\n### Skill: {}\n{}",
+                        intercept.skill_name, intercept.skill_name, intercept.skill_body
+                    );
+                    (intercept.stripped_message, Some(skill_header))
+                } else {
+                    (user_message.to_string(), None)
+                }
+            } else {
+                (user_message.to_string(), None)
+            }
+        };
+        // Fall back to original message if the stripped version is empty
+        let user_message = if effective_message.is_empty() {
+            user_message.to_string()
+        } else {
+            effective_message
+        };
+
         // Register agent in pool
         let agent_id = self
             .pool
@@ -2115,12 +2146,24 @@ impl Orchestrator {
 
         // ── System prompt assembly ──
         // Collect skill permissions for merged tool-call permissions.
+        // Also include always_active skill names so the agent loop knows
+        // the full set of skills injected into the system prompt.
         let mut merged_skill_permissions: Vec<SkillPermissionConfig> = Vec::new();
-        if !selected_skills.is_empty() {
+        let mut effective_selected_skills = selected_skills.clone();
+        {
             let state = self.skill_state.read().await;
             for name in &selected_skills {
                 if let Some(perms) = state.permissions.get(name) {
                     merged_skill_permissions.push(perms.clone());
+                }
+            }
+            // Append always_active skills that aren't already in the list
+            for summary in state.summaries.iter().filter(|s| s.always_active) {
+                if !effective_selected_skills.contains(&summary.name) {
+                    effective_selected_skills.push(summary.name.clone());
+                    if let Some(perms) = state.permissions.get(&summary.name) {
+                        merged_skill_permissions.push(perms.clone());
+                    }
                 }
             }
         }
@@ -2139,17 +2182,23 @@ impl Orchestrator {
 
         // Build full system prompt via shared method (persona, instructions, profile,
         // selected skills, available skills, KG context, workspace path).
-        let system_prompt = self
+        let mut system_prompt = self
             .build_full_system_prompt(
                 agent_config,
                 &user_persona,
                 &skills,
                 &selected_skills,
-                user_message,
+                &user_message,
                 session_id,
                 &workspace_path,
             )
             .await;
+
+        // Inject slash-command skill body (if intercepted)
+        if let Some(ref body) = slash_skill_body {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(body);
+        }
 
         // Build default permissions based on permission_mode:
         // - "operate": allow everything (legacy behavior)
@@ -2262,7 +2311,11 @@ impl Orchestrator {
             summary,
             temperature: agent_config.temperature.unwrap_or(0.0),
             max_iterations: agent_config.max_iterations.unwrap_or(default_max_iters),
-            thinking_budget,
+            thinking_budget: if agent_config.cc_dispatch {
+                Some(thinking_budget.unwrap_or(4096))
+            } else {
+                thinking_budget
+            },
             model_configs: self.model_configs.read().await.values().cloned().collect(),
             active_model_name: self.active_model_name.read().await.clone(),
             workspace_path: workspace_path.clone(),
@@ -2274,8 +2327,17 @@ impl Orchestrator {
             key_store: Some(self.key_store.clone()),
             loom_dir: Some(self.data_dir_path().to_path_buf()),
             permission_mode: permission_mode.to_string(),
+            cc_dispatch: agent_config.cc_dispatch,
             event_bus: Some(self.pool.event_bus().clone()),
             pending_permissions: Some(self.pending_permissions.clone()),
+            // Pass selected_skills so the agent loop can bypass lazy_tools when
+            // skill instructions are already injected into the system prompt.
+            selected_skills: effective_selected_skills.clone(),
+            // Number of available skills — used for soft skill-first routing.
+            available_skill_count: {
+                let state = self.skill_state.read().await;
+                state.summaries.len()
+            },
             sandbox: {
                 let sc = self.sandbox_config.read().await.clone();
                 if sc.enabled {
@@ -2673,7 +2735,7 @@ impl Orchestrator {
         // direct-reply path below rebuilds system_prompt from base_prompt and
         // silently drops every skill, persona, and KG injection — making the
         // UI skill toggle a no-op.
-        let has_active_skills = !selected_skills.is_empty() || {
+        let has_active_skills = agent_config.cc_dispatch || !selected_skills.is_empty() || {
             let state = self.skill_state.read().await;
             state.summaries.iter().any(|s| s.always_active)
         };
@@ -3069,6 +3131,33 @@ impl Orchestrator {
         // Resolve agent config for this session (falls back to "default")
         let agent_config = self.resolve_session_agent_config(session_id).await;
 
+        // ── Slash-command pre-processing (Claude Code-style dispatch) ──
+        let (effective_message, slash_skill_body) = {
+            if agent_config.cc_dispatch {
+                let router = self.slash_router.read().await;
+                if let Some(intercept) = router.intercept(user_message) {
+                    tracing::info!(
+                        skill = %intercept.skill_name,
+                        "streaming: slash command intercepted, injecting skill body"
+                    );
+                    let skill_header = format!(
+                        "## Active Skill (Loaded by /{})\nThe following skill was activated by slash command. Follow its instructions directly — do NOT call use_skill for this.\n\n### Skill: {}\n{}",
+                        intercept.skill_name, intercept.skill_name, intercept.skill_body
+                    );
+                    (intercept.stripped_message, Some(skill_header))
+                } else {
+                    (user_message.to_string(), None)
+                }
+            } else {
+                (user_message.to_string(), None)
+            }
+        };
+        let user_message = if effective_message.is_empty() {
+            user_message.to_string()
+        } else {
+            effective_message
+        };
+
         // Register agent in pool
         let agent_id = self
             .pool
@@ -3254,25 +3343,42 @@ impl Orchestrator {
         };
 
         // ── System prompt assembly (shared method) ──
-        let system_prompt = self
+        let mut system_prompt = self
             .build_full_system_prompt(
                 &agent_config,
                 &user_persona,
                 &skills,
                 &selected_skills,
-                user_message,
+                &user_message,
                 session_id,
                 &workspace_path,
             )
             .await;
 
-        // Collect skill permissions for merged tool-call permissions
+        // Inject slash-command skill body (if intercepted)
+        if let Some(ref body) = slash_skill_body {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(body);
+        }
+
+        // Collect skill permissions for merged tool-call permissions.
+        // Also include always_active skill names so the agent loop knows
+        // the full set of skills injected into the system prompt.
         let mut merged_skill_permissions: Vec<SkillPermissionConfig> = Vec::new();
-        if !selected_skills.is_empty() {
+        let mut effective_selected_skills = selected_skills.clone();
+        {
             let state = self.skill_state.read().await;
             for name in &selected_skills {
                 if let Some(perms) = state.permissions.get(name) {
                     merged_skill_permissions.push(perms.clone());
+                }
+            }
+            for summary in state.summaries.iter().filter(|s| s.always_active) {
+                if !effective_selected_skills.contains(&summary.name) {
+                    effective_selected_skills.push(summary.name.clone());
+                    if let Some(perms) = state.permissions.get(&summary.name) {
+                        merged_skill_permissions.push(perms.clone());
+                    }
                 }
             }
         }
@@ -3304,7 +3410,11 @@ impl Orchestrator {
             persona: None,
             summary,
             kg_context: None,
-            thinking_budget,
+            thinking_budget: if agent_config.cc_dispatch {
+                Some(thinking_budget.unwrap_or(4096))
+            } else {
+                thinking_budget
+            },
             model_configs: self.model_configs.read().await.values().cloned().collect(),
             active_model_name: self.active_model_name.read().await.clone(),
             workspace_path: workspace_path.clone(),
@@ -3316,9 +3426,19 @@ impl Orchestrator {
             key_store: Some(self.key_store.clone()),
             loom_dir: Some(self.data_dir_path().to_path_buf()),
             permission_mode: permission_mode.to_string(),
+            cc_dispatch: agent_config.cc_dispatch,
             event_bus: Some(self.pool.event_bus().clone()),
             pending_permissions: Some(self.pending_permissions.clone()),
             max_iterations: default_max_iters,
+            // Pass selected_skills so the agent loop can bypass lazy_tools when
+            // skill instructions are already injected into the system prompt.
+            selected_skills: effective_selected_skills,
+            // Number of available skills — used for soft skill-first routing
+            // when the model requests web_search.
+            available_skill_count: {
+                let state = self.skill_state.read().await;
+                state.summaries.len()
+            },
             sandbox: {
                 let sc = self.sandbox_config.read().await.clone();
                 if sc.enabled {
@@ -3337,7 +3457,7 @@ impl Orchestrator {
             client.as_ref(),
             &registry,
             &history,
-            user_message,
+            &user_message,
             &attached_images,
             &config,
             delta_tx,
@@ -3366,7 +3486,7 @@ impl Orchestrator {
             if was_interrupted {
                 // Save user message and partial assistant response so context
                 // is preserved for the next user message.
-                let user_msg_full = build_user_message(user_message, &attached_images);
+                let user_msg_full = build_user_message(&user_message, &attached_images);
                 let mut user_parts = user_msg_full.content.clone();
                 let _ = self
                     .convert_images_to_refs(session_id, &mut user_parts)
@@ -3437,7 +3557,7 @@ impl Orchestrator {
                 }
             } else {
                 // Convert images to file refs before caching / persisting
-                let user_msg_full = build_user_message(user_message, &attached_images);
+                let user_msg_full = build_user_message(&user_message, &attached_images);
                 let mut user_parts = user_msg_full.content.clone();
                 if let Err(e) = self
                     .convert_images_to_refs(session_id, &mut user_parts)
