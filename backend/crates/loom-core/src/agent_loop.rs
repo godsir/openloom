@@ -99,41 +99,15 @@ pub struct AgentLoopConfig {
 impl Default for AgentLoopConfig {
     fn default() -> Self {
         Self {
-            system_prompt: vec![
-                "你是 openLoom，一个运行在用户本机、拥有真实系统访问能力的 AI 助手。",
-                "",
-                "## 核心原则",
-                "- 简洁直接：用最短的话把事说清楚，不要客套废话。",
-                "- 行动优先：能直接动手解决的问题就动手，不要只给建议。",
-                "- 诚实透明：不确定的事明确告知，不要编造。操作前说明风险。",
-                "- 上下文感知：关注当前工作区路径，理解用户的文件结构和项目背景。",
-                "",
-                "## 工具使用",
-                "你拥有以下工具类别，通过 request_tools 按需加载：",
-                "- 文件操作：读取、写入、编辑、删除文件，列出目录",
-                "- Shell：执行终端命令（需关注工作区路径）",
-                "- 搜索：全文搜索文件内容，支持正则",
-                "- 网络：搜索网页、抓取 URL 内容",
-                "- LSP：代码诊断、补全、跳转定义、查找引用（支持 30+ 语言）",
-                "- MCP：通过 MCP 协议连接外部工具服务",
-                "- 技能：加载用户导入的技能模块",
-                "",
-                "工具使用规则：",
-                "1. 简单问题直接回答，不要无意义地调用工具。",
-                "2. 需要工具时先调 request_tools 告知需要哪些工具，加载后再使用。",
-                "3. 批量操作用 shell 一次性完成，不要逐个文件处理。",
-                "4. 修改文件前先读文件确认当前内容，修改后展示 diff。",
-                "5. 长时间操作说明进度，出错时说明原因和恢复方案。",
-                "",
-                "## 子代理",
-                "需要并行处理多个独立子任务时，可以派生子代理并发执行。",
-                "子代理独立运行，完成后汇总结果。",
-                "",
-                "## 知识图谱",
-                "对话中的重要实体和关系会被自动提取到知识图谱。",
-                "长期记忆中存储了你的历史交互和用户偏好，会作为上下文注入。",
-            ].join("\n"),
-            max_iterations: 100,
+            system_prompt: concat!(
+                "你是 openLoom，运行在用户本机的 AI 助手。",
+                "核心：简洁直接、行动优先、不确定就明说。",
+                "简单问题直接回答，不要无意义调工具。",
+                "可用工具（通过 request_tools 按需加载）：",
+                "文件/Shell/搜索/网络/LSP/MCP/技能/子代理。",
+                "批量操作用 shell 一次性完成；改文件前先读确认。",
+            ).to_string(),
+            max_iterations: 30,
             max_tokens: 4096,
             temperature: 0.0,
             lazy_tools: true,
@@ -278,13 +252,13 @@ fn request_tools_definition() -> ToolDefinition {
 }
 
 /// Match tool names/descriptions against keywords in the reason string.
-/// Falls back to the built-in tools if nothing matches.
+/// Only returns tools that actually matched — the caller is responsible for
+/// providing a fallback when nothing matches (see request_tools handler).
 fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
     let r = reason.to_lowercase();
     let keywords: Vec<&str> = r.split_whitespace().filter(|w| w.len() >= 3).collect();
 
-    let mut matched: Vec<ToolDefinition> = all
-        .iter()
+    all.iter()
         .filter(|t| {
             if t.name == "request_tools" {
                 return false;
@@ -294,27 +268,7 @@ fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
             keywords.iter().any(|kw| nl.contains(kw) || dl.contains(kw))
         })
         .cloned()
-        .collect();
-
-    // Always include the essential built-in tools as a base
-    let builtins: &[&str] = &[
-        "shell",
-        "file_read",
-        "file_write",
-        "file_list",
-        "content_search",
-        "file_delete",
-        "use_skill",
-    ];
-    for name in builtins {
-        if !matched.iter().any(|t| t.name == *name) {
-            if let Some(t) = all.iter().find(|t| t.name == *name) {
-                matched.push(t.clone());
-            }
-        }
-    }
-
-    matched
+        .collect()
 }
 
 pub(crate) fn build_user_message(user_message: &str, attached_images: &[ContentPart]) -> Message {
@@ -555,7 +509,7 @@ async fn run_agent_turn_inner(
                 content_parts: vec![ContentPart::Text {
                     text: format!("任务进行中（已用 {} tokens）。输入「继续」以接着执行。", total_prompt),
                 }],
-                tool_messages: vec![],
+                tool_messages: tool_messages.clone(),
                 vision_usage: None,
             });
         }
@@ -575,6 +529,7 @@ async fn run_agent_turn_inner(
                     .await;
             }
             info!("agent turn cancelled by user at iteration {}", iteration);
+            // Preserve tool messages so sub-agent context isn't lost on cancel.
             return Ok(TurnResult {
                 response: "[已中断]".into(),
                 thinking: String::new(),
@@ -587,7 +542,7 @@ async fn run_agent_turn_inner(
                 content_parts: vec![ContentPart::Text {
                     text: "[已中断]".into(),
                 }],
-                tool_messages: vec![],
+                tool_messages: tool_messages.clone(),
                 vision_usage: None,
             });
         }
@@ -1277,7 +1232,7 @@ async fn run_agent_turn_streaming_inner(
                 cached_tokens: 0,
                 kv_cache_hit: None,
                 content_parts: vec![ContentPart::Text { text: "任务进行中，已达预算上限。".into() }],
-                tool_messages: vec![],
+                tool_messages: tool_messages.clone(),
                 vision_usage: None,
             });
         }
@@ -1297,21 +1252,42 @@ async fn run_agent_turn_streaming_inner(
                     .await;
             }
             tracing::info!("agent turn cancelled by user at iteration {}", iteration);
+            // Preserve accumulated text from previous iterations so the
+            // partial response can be persisted and used as context later.
+            let (interrupted_text, _is_empty_interrupt) = if final_text.is_empty() {
+                ("[已中断]".to_string(), true)
+            } else {
+                (format!("{}\n\n[已中断]", final_text), false)
+            };
+            let mut interrupted_parts: Vec<ContentPart> = Vec::new();
+            if !captured_thinking.is_empty() {
+                interrupted_parts.push(ContentPart::Thinking {
+                    text: captured_thinking.clone(),
+                });
+            }
+            interrupted_parts.push(ContentPart::Text {
+                text: interrupted_text.clone(),
+            });
+            for (media_type, data) in &captured_images {
+                interrupted_parts.push(ContentPart::Image {
+                    source_type: "base64".to_string(),
+                    media_type: media_type.clone(),
+                    data: data.clone(),
+                });
+            }
             let _ = delta_tx.send(StreamDelta::Text("[已中断]".into())).await;
             drop(delta_tx);
             return Ok(TurnResult {
-                response: "[已中断]".into(),
-                thinking: String::new(),
+                response: interrupted_text,
+                thinking: captured_thinking,
                 tool_calls_made,
                 iterations: iteration,
                 prompt_tokens: total_prompt,
                 completion_tokens: total_completion,
                 cached_tokens: 0,
                 kv_cache_hit: None,
-                content_parts: vec![ContentPart::Text {
-                    text: "[已中断]".into(),
-                }],
-                tool_messages: vec![],
+                content_parts: interrupted_parts,
+                tool_messages: tool_messages.clone(),
                 vision_usage: None,
             });
         }
@@ -1390,10 +1366,36 @@ async fn run_agent_turn_streaming_inner(
                         }
                         drop(stream_rx);
                         drop(stream_fut);
+                        // Preserve the already-accumulated partial text so the
+                        // user can continue the conversation with context.
+                        // Append interrupt marker so the orchestrator detects
+                        // this as a partial (not final) response.
+                        let interrupted_text = if attempt_text.is_empty() {
+                            "[已中断]".to_string()
+                        } else {
+                            format!("{}\n\n[已中断]", attempt_text)
+                        };
+                        let mut interrupted_parts: Vec<ContentPart> = Vec::new();
+                        if !attempt_thinking.is_empty() {
+                            interrupted_parts.push(ContentPart::Thinking {
+                                text: attempt_thinking.clone(),
+                            });
+                        }
+                        interrupted_parts.push(ContentPart::Text {
+                            text: interrupted_text.clone(),
+                        });
+                        // Preserve images from prior completed iterations
+                        for (media_type, data) in &captured_images {
+                            interrupted_parts.push(ContentPart::Image {
+                                source_type: "base64".to_string(),
+                                media_type: media_type.clone(),
+                                data: data.clone(),
+                            });
+                        }
                         let _ = delta_tx.send(StreamDelta::Text("[已中断]".into())).await;
                         drop(delta_tx);
                         return Ok(TurnResult {
-                            response: "[已中断]".into(),
+                            response: interrupted_text,
                             thinking: attempt_thinking,
                             tool_calls_made,
                             iterations: iteration,
@@ -1401,8 +1403,8 @@ async fn run_agent_turn_streaming_inner(
                             completion_tokens: total_completion + attempt_completion_tokens as usize,
                             cached_tokens: 0,
                             kv_cache_hit: None,
-                            content_parts: vec![ContentPart::Text { text: "[已中断]".into() }],
-                            tool_messages: vec![],
+                            content_parts: interrupted_parts,
+                            tool_messages: tool_messages.clone(),
                             vision_usage: None,
                         });
                     }
@@ -1428,10 +1430,10 @@ async fn run_agent_turn_streaming_inner(
                                     tc.3.push_str(&chunk);
                                 }
                             }
-                            StreamDelta::Usage { prompt_tokens, completion_tokens, .. } => {
+                            StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens } => {
                                 attempt_prompt_tokens += prompt_tokens;
                                 attempt_completion_tokens += completion_tokens;
-                                let _ = delta_tx.send(StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens: 0, cache_write_tokens: 0 }).await;
+                                let _ = delta_tx.send(StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens }).await;
                             }
                             StreamDelta::Image { media_type, data } => {
                                 attempt_images.push((media_type.clone(), data.clone()));
@@ -1476,7 +1478,8 @@ async fn run_agent_turn_streaming_inner(
                                             StreamDelta::Usage {
                                                 prompt_tokens,
                                                 completion_tokens,
-                                                ..
+                                                cache_read_tokens,
+                                                cache_write_tokens,
                                             } => {
                                                 attempt_prompt_tokens += prompt_tokens;
                                                 attempt_completion_tokens += completion_tokens;
@@ -1484,8 +1487,8 @@ async fn run_agent_turn_streaming_inner(
                                                     .send(StreamDelta::Usage {
                                                         prompt_tokens,
                                                         completion_tokens,
-                                                        cache_read_tokens: 0,
-                                                        cache_write_tokens: 0,
+                                                        cache_read_tokens,
+                                                        cache_write_tokens,
                                                     })
                                                     .await;
                                             }
@@ -1529,6 +1532,37 @@ async fn run_agent_turn_streaming_inner(
                     );
                     tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                     continue;
+                }
+                // If content was already forwarded to the frontend, return a
+                // partial TurnResult instead of an error so the accumulated
+                // text is preserved in the conversation context.
+                if forwarded_any && !attempt_text.is_empty() {
+                    tracing::warn!(
+                        error = %msg,
+                        partial_chars = attempt_text.len(),
+                        "stream error after content forwarded, returning partial result"
+                    );
+                    let partial = format!("{}\n\n[连接中断]", attempt_text);
+                    let mut partial_parts: Vec<ContentPart> = Vec::new();
+                    if !attempt_thinking.is_empty() {
+                        partial_parts.push(ContentPart::Thinking { text: attempt_thinking.clone() });
+                    }
+                    partial_parts.push(ContentPart::Text { text: partial.clone() });
+                    let _ = delta_tx.send(StreamDelta::Text("[连接中断]".into())).await;
+                    drop(delta_tx);
+                    return Ok(TurnResult {
+                        response: partial,
+                        thinking: attempt_thinking,
+                        tool_calls_made,
+                        iterations: iteration,
+                        prompt_tokens: total_prompt + attempt_prompt_tokens as usize,
+                        completion_tokens: total_completion + attempt_completion_tokens as usize,
+                        cached_tokens: 0,
+                        kv_cache_hit: None,
+                        content_parts: partial_parts,
+                        tool_messages: tool_messages.clone(),
+                        vision_usage: None,
+                    });
                 }
                 return Err(err);
             }

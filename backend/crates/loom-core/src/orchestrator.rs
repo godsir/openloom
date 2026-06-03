@@ -57,6 +57,10 @@ pub struct Orchestrator {
     /// Pending permission approvals for "ask" mode (call_id → oneshot sender).
     pending_permissions: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
     data_dir: PathBuf,
+    /// Global default: max LLM iterations per turn (overridable per agent).
+    default_max_iterations: Arc<RwLock<usize>>,
+    /// Global default: cumulative prompt token budget, 0 = disabled.
+    default_max_prompt_budget: Arc<RwLock<usize>>,
 }
 
 /// Trait for memory backends (SqliteEventStore, etc.)
@@ -346,6 +350,8 @@ impl Orchestrator {
             key_store: Arc::new(RwLock::new(HashMap::new())),
             pending_permissions: Arc::new(RwLock::new(HashMap::new())),
             data_dir,
+            default_max_iterations: Arc::new(RwLock::new(30)),
+            default_max_prompt_budget: Arc::new(RwLock::new(0)),
         }
     }
 
@@ -376,6 +382,24 @@ impl Orchestrator {
     /// Set the cloud client (call after configuring a model).
     pub async fn set_cloud_client(&self, client: Arc<dyn CloudClient>) {
         *self.cloud_client.write().await = Some(client);
+    }
+
+    // ── Global defaults ─────────────────────────────────────────────────
+
+    pub async fn get_default_max_iterations(&self) -> usize {
+        *self.default_max_iterations.read().await
+    }
+
+    pub async fn set_default_max_iterations(&self, val: usize) {
+        *self.default_max_iterations.write().await = val;
+    }
+
+    pub async fn get_default_max_prompt_budget(&self) -> usize {
+        *self.default_max_prompt_budget.read().await
+    }
+
+    pub async fn set_default_max_prompt_budget(&self, val: usize) {
+        *self.default_max_prompt_budget.write().await = val;
     }
 
     /// Set the API key store shared with the server layer.
@@ -1066,6 +1090,16 @@ impl Orchestrator {
         }
     }
 
+    /// Read a persisted session-agent binding from the memory store.
+    pub async fn memory_store_session_agent_name(&self, session_id: &str) -> Option<String> {
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            s.get_session_agent_name(session_id).await.ok().flatten()
+        } else {
+            None
+        }
+    }
+
     /// Query token usage summary for a time range.
     pub async fn token_summary(
         &self,
@@ -1718,6 +1752,7 @@ impl Orchestrator {
             vec![],
             vec![],
             "operate",
+            false,
         )
         .await
     }
@@ -1821,6 +1856,7 @@ impl Orchestrator {
         attached_images: Vec<ContentPart>,
         selected_skills: Vec<String>,
         permission_mode: &str,
+        skip_user_message: bool,
     ) -> Result<TurnResult> {
         tracing::info!(
             session_id,
@@ -1919,22 +1955,87 @@ impl Orchestrator {
             )
         };
 
-        // Compute smart prompt budget: 80% of the active model's context window
-        let max_prompt_budget = {
-            let configs = self.model_configs.read().await;
-            let active = self.active_model_name.read().await;
-            let ctx_window = active
-                .as_deref()
-                .and_then(|name| configs.values().find(|c| c.name == name))
-                .map(|c| c.context_size)
-                .unwrap_or(128_000); // default: 128K
-            (ctx_window as f64 * 0.8) as usize
+        // Global defaults (overridable per agent)
+        let max_prompt_budget = *self.default_max_prompt_budget.read().await;
+        let default_max_iters = *self.default_max_iterations.read().await;
+
+        // Ensure history is loaded from DB if not already in cache (e.g. after restart or session switch)
+        if self.session_history(session_id).await.is_empty() {
+            tracing::info!(session_id, "[orchestrator] step: loading history from DB");
+            let _ = self.load_history(session_id).await;
+            tracing::info!(session_id, "[orchestrator] step: history loaded");
+        }
+        let history = self.session_history(session_id).await;
+        tracing::info!(
+            session_id,
+            hist_len = history.len(),
+            "[orchestrator] step: history ready"
+        );
+
+        // ── Summary check ──
+        let (existing_summary, should_summarize) = {
+            let mem = self.memory_store.read().await;
+            if let Some(ref store) = *mem {
+                let existing = store.get_summary(session_id).await.unwrap_or(None);
+                let last_at = store.get_summary_at_count(session_id).await.unwrap_or(0);
+                let total_msgs = store
+                    .get_message_count(session_id)
+                    .await
+                    .unwrap_or(history.len());
+                let should = loom_memory::SummaryEngine::should_summarize(total_msgs, last_at, 12, 6);
+                (existing, should)
+            } else {
+                (None, false)
+            }
+        }; // lock released
+
+        let summary = if should_summarize {
+            tracing::info!(session_id, "summarization triggered");
+            let prompt = loom_memory::SummaryEngine::build_prompt(&history, existing_summary.as_deref());
+            let request = loom_memory::SummaryEngine::build_request(&prompt);
+            // Use auxiliary client if available, fall back to main
+            let summary_client: Option<Arc<dyn CloudClient>> =
+                if let Some(aux) = self.build_auxiliary_client("summary").await {
+                    Some(aux)
+                } else {
+                    self.cloud_client.read().await.clone()
+                };
+            if let Some(sc) = summary_client {
+                let saved_hash = sc.prefix_hash_snapshot();
+                match sc.complete(request).await {
+                    Ok(resp) if !resp.text.is_empty() => {
+                        sc.prefix_hash_restore(saved_hash);
+                        let mem = self.memory_store.read().await;
+                        if let Some(ref store) = *mem {
+                            let _ = store.save_summary(session_id, &resp.text).await;
+                            if resp.prompt_tokens > 0 || resp.completion_tokens > 0 {
+                                let _ = store.record_token_usage(
+                                    session_id,
+                                    &format!("{} (summary)", sc.model_name()),
+                                    resp.prompt_tokens, resp.completion_tokens, 0, 0, 0, 0,
+                                ).await;
+                            }
+                        }
+                        tracing::info!(chars = resp.text.len(), "conversation summarized");
+                        Some(resp.text)
+                    }
+                    _ => {
+                        sc.prefix_hash_restore(saved_hash);
+                        existing_summary
+                    }
+                }
+            } else {
+                existing_summary
+            }
+        } else {
+            existing_summary
         };
 
         let loop_config = AgentLoopConfig {
             system_prompt,
+            summary,
             temperature: agent_config.temperature.unwrap_or(0.0),
-            max_iterations: 100, // safety net — LLM decides when done
+            max_iterations: agent_config.max_iterations.unwrap_or(default_max_iters),
             thinking_budget,
             model_configs: self.model_configs.read().await.values().cloned().collect(),
             active_model_name: self.active_model_name.read().await.clone(),
@@ -1951,20 +2052,6 @@ impl Orchestrator {
             pending_permissions: Some(self.pending_permissions.clone()),
             ..Default::default()
         };
-        tracing::info!(session_id, "[orchestrator] step: loop_config built");
-
-        // Ensure history is loaded from DB if not already in cache (e.g. after restart or session switch)
-        if self.session_history(session_id).await.is_empty() {
-            tracing::info!(session_id, "[orchestrator] step: loading history from DB");
-            let _ = self.load_history(session_id).await;
-            tracing::info!(session_id, "[orchestrator] step: history loaded");
-        }
-        let history = self.session_history(session_id).await;
-        tracing::info!(
-            session_id,
-            hist_len = history.len(),
-            "[orchestrator] step: history ready"
-        );
         let user_msg = user_message.to_string();
         let sid = session_id.to_string();
 
@@ -2362,7 +2449,7 @@ impl Orchestrator {
         let _ = forward_handle.await;
 
         if let Ok(ref turn) = result {
-            let was_interrupted = turn.response == "[已中断]";
+            let was_interrupted = turn.response.contains("[已中断]") || turn.response.contains("[连接中断]");
 
             // Stop hook is already fired by agent_loop on cancellation; do not double-fire.
 
@@ -2376,27 +2463,78 @@ impl Orchestrator {
                 .await;
 
             if was_interrupted {
-                // Save user message so it isn't lost, skip the partial assistant response
+                // Save user message and partial assistant response so context
+                // is preserved for the next user message.
                 let user_msg_full = build_user_message(&user_msg, &attached_images);
                 let mut user_parts = user_msg_full.content.clone();
                 let _ = self
                     .convert_images_to_refs(session_id, &mut user_parts)
                     .await;
+                if !skip_user_message {
+                    self.add_to_history(
+                        session_id,
+                        Message {
+                            role: Role::User,
+                            content: user_parts.clone(),
+                            timestamp: user_msg_full.timestamp,
+                            usage: user_msg_full.usage,
+                        },
+                    )
+                    .await;
+                }
+
+                // Build assistant content from the partial TurnResult
+                let mut assistant_parts = if turn.content_parts.is_empty() {
+                    vec![ContentPart::Text {
+                        text: turn.response.clone(),
+                    }]
+                } else {
+                    turn.content_parts.clone()
+                };
+                if let Err(e) = self
+                    .convert_images_to_refs(session_id, &mut assistant_parts)
+                    .await
+                {
+                    tracing::warn!(session_id, error = %e, "failed to convert assistant images to file refs");
+                }
+                let content_json = serde_json::to_string(&assistant_parts)
+                    .unwrap_or_else(|_| serde_json::json!([{"text": turn.response}]).to_string());
+
                 self.add_to_history(
                     session_id,
                     Message {
-                        role: Role::User,
-                        content: user_parts.clone(),
-                        timestamp: user_msg_full.timestamp,
-                        usage: user_msg_full.usage,
+                        role: Role::Assistant,
+                        content: assistant_parts.clone(),
+                        timestamp: chrono::Utc::now(),
+                        usage: None,
                     },
                 )
                 .await;
+
+                // Persist tool messages from the partial turn too
+                for tool_msg in &turn.tool_messages {
+                    self.add_to_history(session_id, tool_msg.clone()).await;
+                }
+
+                // Persist to memory store — use save_turn so both user +
+                // assistant content is durable across restarts.
                 let mem = self.memory_store.read().await;
                 if let Some(ref store) = *mem {
-                    let user_json =
+                    let user_content_json =
                         serde_json::to_string(&user_parts).unwrap_or_else(|_| user_msg.clone());
-                    let _ = store.save_interrupted_turn(session_id, &user_json).await;
+                    if let Err(e) = store
+                        .save_turn(
+                            session_id,
+                            &user_content_json,
+                            &content_json,
+                            turn.tool_calls_made,
+                            turn.prompt_tokens,
+                            turn.completion_tokens,
+                        )
+                        .await
+                    {
+                        tracing::warn!(session_id, error = %e, "failed to persist interrupted turn");
+                    }
                 }
             } else {
                 // Convert images to file refs before caching / persisting
@@ -2478,8 +2616,8 @@ impl Orchestrator {
                 } else {
                     let main_client: Option<Arc<dyn CloudClient>> = self.cloud_client.read().await.clone();
                     let model_name = match main_client.as_ref() {
-                        Some(c) => c.model_name().to_string(),
-                        None => self.active_model_name.read().await.clone().unwrap_or_default(),
+                        Some(c) => format!("{} (entity)", c.model_name()),
+                        None => format!("{} (entity)", self.active_model_name.read().await.clone().unwrap_or_default()),
                     };
                     (main_client, model_name)
                 };
@@ -2685,6 +2823,10 @@ impl Orchestrator {
                 .clone()
         }; // read lock released immediately
         let registry = self.tool_registry.read().await;
+        // Load history from DB if in-memory cache is empty (e.g. after restart)
+        if self.session_history(session_id).await.is_empty() {
+            let _ = self.load_history(session_id).await;
+        }
         let history = self.session_history(session_id).await;
 
         // Get workspace path for this session
@@ -2751,7 +2893,7 @@ impl Orchestrator {
                 let model_name = aux_client.model_name().to_string();
                 (aux_client, model_name)
             } else {
-                let model_name = client.model_name().to_string();
+                let model_name = format!("{} (summary)", client.model_name());
                 (client.clone(), model_name)
             };
 
@@ -2837,17 +2979,9 @@ impl Orchestrator {
         let disallowed = agent_config.disallowed_tools.clone();
         let cancel = self.pool.cancel_token(&agent_id).await?;
 
-        // Compute smart prompt budget: 80% of active model's context window
-        let max_prompt_budget = {
-            let configs = self.model_configs.read().await;
-            let active = self.active_model_name.read().await;
-            let ctx_window = active
-                .as_deref()
-                .and_then(|name| configs.values().find(|c| c.name == name))
-                .map(|c| c.context_size)
-                .unwrap_or(128_000);
-            (ctx_window as f64 * 0.8) as usize
-        };
+        // Global defaults (overridable per agent)
+        let max_prompt_budget = *self.default_max_prompt_budget.read().await;
+        let default_max_iters = *self.default_max_iterations.read().await;
 
         let config = AgentLoopConfig {
             system_prompt,
@@ -2869,6 +3003,7 @@ impl Orchestrator {
             permission_mode: "operate".to_string(), // CLI always uses operate mode
             event_bus: Some(self.pool.event_bus().clone()),
             pending_permissions: Some(self.pending_permissions.clone()),
+            max_iterations: default_max_iters,
             ..Default::default()
         };
 
@@ -2889,7 +3024,7 @@ impl Orchestrator {
         drop(registry);
 
         if let Ok(ref turn) = result {
-            let was_interrupted = turn.response == "[已中断]";
+            let was_interrupted = turn.response.contains("[已中断]") || turn.response.contains("[连接中断]");
 
             // Stop hook is already fired by agent_loop on cancellation; do not double-fire.
 
@@ -2903,27 +3038,76 @@ impl Orchestrator {
                 .await;
 
             if was_interrupted {
-                // Save user message so it isn't lost, skip the partial assistant response
+                // Save user message and partial assistant response so context
+                // is preserved for the next user message.
                 let user_msg_full = build_user_message(user_message, &attached_images);
                 let mut user_parts = user_msg_full.content.clone();
                 let _ = self
                     .convert_images_to_refs(session_id, &mut user_parts)
                     .await;
                 self.add_to_history(
+                        session_id,
+                        Message {
+                            role: Role::User,
+                            content: user_parts.clone(),
+                            timestamp: user_msg_full.timestamp,
+                            usage: user_msg_full.usage,
+                        },
+                    )
+                    .await;
+
+                // Build assistant content from the partial TurnResult
+                let mut assistant_parts = if turn.content_parts.is_empty() {
+                    vec![ContentPart::Text {
+                        text: turn.response.clone(),
+                    }]
+                } else {
+                    turn.content_parts.clone()
+                };
+                if let Err(e) = self
+                    .convert_images_to_refs(session_id, &mut assistant_parts)
+                    .await
+                {
+                    tracing::warn!(session_id, error = %e, "failed to convert assistant images to file refs");
+                }
+                let content_json = serde_json::to_string(&assistant_parts)
+                    .unwrap_or_else(|_| serde_json::json!([{"text": turn.response}]).to_string());
+
+                self.add_to_history(
                     session_id,
                     Message {
-                        role: Role::User,
-                        content: user_parts.clone(),
-                        timestamp: user_msg_full.timestamp,
-                        usage: user_msg_full.usage,
+                        role: Role::Assistant,
+                        content: assistant_parts.clone(),
+                        timestamp: chrono::Utc::now(),
+                        usage: None,
                     },
                 )
                 .await;
+
+                // Persist tool messages from the partial turn too
+                for tool_msg in &turn.tool_messages {
+                    self.add_to_history(session_id, tool_msg.clone()).await;
+                }
+
+                // Persist to memory store — use save_turn so both user +
+                // assistant content is durable across restarts.
                 let mem = self.memory_store.read().await;
                 if let Some(ref store) = *mem {
-                    let user_json =
+                    let user_content_json =
                         serde_json::to_string(&user_parts).unwrap_or_else(|_| user_message.to_string());
-                    let _ = store.save_interrupted_turn(session_id, &user_json).await;
+                    if let Err(e) = store
+                        .save_turn(
+                            session_id,
+                            &user_content_json,
+                            &content_json,
+                            turn.tool_calls_made,
+                            turn.prompt_tokens,
+                            turn.completion_tokens,
+                        )
+                        .await
+                    {
+                        tracing::warn!(session_id, error = %e, "failed to persist interrupted turn");
+                    }
                 }
             } else {
                 // Convert images to file refs before caching / persisting
@@ -3005,8 +3189,8 @@ impl Orchestrator {
                     } else {
                         let main_client: Option<Arc<dyn CloudClient>> = self.cloud_client.read().await.clone();
                         let model_name = match main_client.as_ref() {
-                            Some(c) => c.model_name().to_string(),
-                            None => self.active_model_name.read().await.clone().unwrap_or_default(),
+                            Some(c) => format!("{} (entity)", c.model_name()),
+                            None => format!("{} (entity)", self.active_model_name.read().await.clone().unwrap_or_default()),
                         };
                         (main_client, model_name)
                     };

@@ -30,6 +30,9 @@ pub async fn handle(
         "config.set_vision" => Some(handle_config_set_vision(p)),
         "config.get_auxiliary" => Some(handle_config_get_auxiliary()),
         "config.set_auxiliary" => Some(handle_config_set_auxiliary(p)),
+        // Global defaults
+        "config.get_defaults" => Some(handle_config_get_defaults(state).await),
+        "config.set_defaults" => Some(handle_config_set_defaults(state, p).await),
         // Marketplace
         "marketplace.list" => Some(handle_marketplace_list(state).await),
         "marketplace.install" => Some(handle_marketplace_install(state, p).await),
@@ -346,4 +349,27 @@ async fn handle_marketplace_update(state: &AppState, p: &Value) -> Result<Value,
         }
         Err(e) => Err(err(ErrorCode::InternalError, &e.to_string())),
     }
+}
+
+// --- config.get_defaults ---
+
+async fn handle_config_get_defaults(state: &AppState) -> Result<Value, JsonRpcError> {
+    let max_iterations = state.orchestrator.get_default_max_iterations().await;
+    let max_prompt_budget = state.orchestrator.get_default_max_prompt_budget().await;
+    Ok(json!({
+        "max_iterations": max_iterations,
+        "max_prompt_budget": max_prompt_budget,
+    }))
+}
+
+// --- config.set_defaults ---
+
+async fn handle_config_set_defaults(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    if let Some(v) = p.get("max_iterations").and_then(|v| v.as_u64()) {
+        state.orchestrator.set_default_max_iterations(v as usize).await;
+    }
+    if let Some(v) = p.get("max_prompt_budget").and_then(|v| v.as_u64()) {
+        state.orchestrator.set_default_max_prompt_budget(v as usize).await;
+    }
+    Ok(json!({ "ok": true }))
 }

@@ -102,8 +102,16 @@ pub async fn serve(
     for (id, created_at, message_count, title) in sessions {
         state
             .sessions
-            .restore(id, created_at, message_count, title)
+            .restore(id.clone(), created_at, message_count, title)
             .await;
+        // Restore persisted agent binding
+        let agent_name = state
+            .orchestrator
+            .memory_store_session_agent_name(&id)
+            .await;
+        if let Some(name) = agent_name {
+            let _ = state.sessions.bind_agent(&id, &name).await;
+        }
     }
 
     let app = build_router(state);

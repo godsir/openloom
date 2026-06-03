@@ -323,6 +323,8 @@ async fn handle_session_bind_agent(state: &AppState, p: &Value) -> Result<Value,
         .bind_agent(session_id, config_name)
         .await
         .map_err(|e| err(ErrorCode::InternalError, &e))?;
+    // Persist the binding so it survives restarts
+    state.orchestrator.bind_agent_persisted(session_id, config_name).await;
     Ok(json!({ "ok": true }))
 }
 

@@ -109,6 +109,11 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
         .and_then(|v| v.as_str())
         .unwrap_or("operate");
 
+    let skip_user_message = p
+        .get("skip_user_message")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     let result = state
         .orchestrator
         .process_message_with_config(
@@ -119,13 +124,10 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
             attached_images,
             selected_skills,
             permission_mode,
+            skip_user_message,
         )
         .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
-    let skip_user_message = p
-        .get("skip_user_message")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
     if !skip_user_message {
         state
             .sessions

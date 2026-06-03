@@ -86,8 +86,10 @@ impl OpenAIClient {
                 ToolChoice::Required => serde_json::json!("required"),
             };
         }
-        if req.temperature > 0.0 {
-            body["temperature"] = req.temperature.into();
+        body["temperature"] = req.temperature.into();
+        if let Some(budget) = req.thinking_budget {
+            let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };
+            body["reasoning_effort"] = serde_json::json!(effort);
         }
 
         // Debug: log request body length for troubleshooting
@@ -333,8 +335,10 @@ impl CloudClient for OpenAIClient {
             "model": self.model, "max_tokens": req.max_tokens, "messages": messages,
             "stream": true, "stream_options": {"include_usage": true},
         });
-        if req.temperature > 0.0 {
-            body["temperature"] = req.temperature.into();
+        body["temperature"] = req.temperature.into();
+        if let Some(budget) = req.thinking_budget {
+            let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };
+            body["reasoning_effort"] = serde_json::json!(effort);
         }
         if !req.tools.is_empty() {
             body["tools"] = serde_json::json!(req.tools.iter().map(|t| serde_json::json!({
@@ -433,8 +437,10 @@ impl CloudClient for OpenAIClient {
             "model": self.model, "max_tokens": req.max_tokens, "messages": messages,
             "stream": true, "stream_options": {"include_usage": true},
         });
-        if req.temperature > 0.0 {
-            body["temperature"] = req.temperature.into();
+        body["temperature"] = req.temperature.into();
+        if let Some(budget) = req.thinking_budget {
+            let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };
+            body["reasoning_effort"] = serde_json::json!(effort);
         }
         if !req.tools.is_empty() {
             body["tools"] = serde_json::json!(req.tools.iter().map(|t| serde_json::json!({
