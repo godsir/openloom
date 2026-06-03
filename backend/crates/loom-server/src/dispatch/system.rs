@@ -23,6 +23,7 @@ pub async fn handle(
         "agent.config.create" => Some(handle_agent_config_create(state, p).await),
         "agent.config.update" => Some(handle_agent_config_update(state, p).await),
         "agent.config.delete" => Some(handle_agent_config_delete(state, p).await),
+        "agent.config.generate" => Some(handle_agent_config_generate(state, p).await),
         // Tools
         "tools.list" => Some(handle_tools_list(state).await),
         // Config (vision / auxiliary)
@@ -168,6 +169,24 @@ async fn handle_agent_config_delete(state: &AppState, p: &Value) -> Result<Value
         .await
         .map_err(|e| err(ErrorCode::InvalidRequest, &e.to_string()))?;
     Ok(json!({ "ok": true }))
+}
+
+// --- agent.config.generate ---
+
+async fn handle_agent_config_generate(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let description = p
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if description.trim().is_empty() {
+        return Err(err(ErrorCode::InvalidRequest, "description required"));
+    }
+    let config = state
+        .orchestrator
+        .agent_config_generate(description.trim())
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    Ok(serde_json::to_value(config).unwrap_or_default())
 }
 
 // --- tools.list ---

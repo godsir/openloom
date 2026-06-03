@@ -5,6 +5,7 @@ import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
 import Select from './Select'
+import { IconSparkles } from '../../utils/icons'
 import styles from './ConfigPanel.module.css'
 
 function cropImage(img: HTMLImageElement, crop: PixelCrop): Promise<string> {
@@ -48,6 +49,12 @@ export default function AgentConfigPanel() {
   const [modelDraft, setModelDraft] = useState('')
   const [systemPromptDraft, setSystemPromptDraft] = useState('')
   const [avatarDraft, setAvatarDraft] = useState<string | null>(null)
+
+  // AI-assisted creation state
+  const [showAiForm, setShowAiForm] = useState(false)
+  const [aiDescription, setAiDescription] = useState('')
+  const [aiGenerating, setAiGenerating] = useState(false)
+  const [aiGeneratedConfig, setAiGeneratedConfig] = useState<any | null>(null)
 
   // Avatar crop state
   const [cropSrc, setCropSrc] = useState<string | null>(null)
@@ -125,6 +132,43 @@ export default function AgentConfigPanel() {
     } catch { /* toast already shown */ }
   }
 
+  const handleAiGenerate = async () => {
+    if (!aiDescription.trim()) return
+    setAiGenerating(true)
+    try {
+      const config = await loomRpc<any>('agent.config.generate', {
+        description: aiDescription.trim(),
+      })
+      setAiGeneratedConfig(config)
+      setNameDraft(config.name || '')
+      setPersonaDraft(config.persona || '')
+      setModelDraft(config.model || '')
+      setSystemPromptDraft(config.system_prompt_override || '')
+      setAvatarDraft(config.avatar || null)
+      setShowAiForm(false)
+      setShowForm(true)
+    } catch (e: any) {
+      useStore.getState().addToast({
+        type: 'error',
+        message: `AI 生成失败: ${e.message || e}`,
+      })
+    } finally {
+      setAiGenerating(false)
+    }
+  }
+
+  const handleRegenerate = async () => {
+    setAiGeneratedConfig(null)
+    setNameDraft('')
+    setPersonaDraft('')
+    setModelDraft('')
+    setSystemPromptDraft('')
+    setAvatarDraft(null)
+    setShowForm(false)
+    setShowAiForm(true)
+    await handleAiGenerate()
+  }
+
   const startEdit = (agent: any) => {
     const isDefault = (agent.name || agent.id) === 'default'
     setEditingId(isDefault ? 'default' : (agent.name || agent.id))
@@ -161,6 +205,10 @@ export default function AgentConfigPanel() {
     setModelDraft('')
     setSystemPromptDraft('')
     setAvatarDraft(null)
+    setShowAiForm(false)
+    setAiDescription('')
+    setAiGenerating(false)
+    setAiGeneratedConfig(null)
   }
 
   const isEditing = showForm || editingId !== null
@@ -184,7 +232,15 @@ export default function AgentConfigPanel() {
     <div className={styles.panel}>
       <div className={styles.header}>
         {!isEditing && (
-          <button onClick={() => setShowForm(true)} className={styles.addBtn}>+ 新建</button>
+          <div className={styles.headerButtons}>
+            <button onClick={() => setShowForm(true)} className={styles.addBtn}>+ 新建</button>
+            <button
+              onClick={() => { setShowAiForm(true); setShowForm(false) }}
+              className={styles.aiCreateBtn}
+            >
+              <IconSparkles size={12} /> AI 创建
+            </button>
+          </div>
         )}
       </div>
 
@@ -211,6 +267,34 @@ export default function AgentConfigPanel() {
         </div>
       )}
 
+      {/* AI description input */}
+      {showAiForm && !aiGeneratedConfig && (
+        <div className={styles.aiSection}>
+          <p className={styles.aiHint}>
+            描述你想要创建的 Agent，AI 将自动生成名称、人格和配置。
+          </p>
+          <textarea
+            value={aiDescription}
+            onChange={(e) => setAiDescription(e.target.value)}
+            placeholder="例如：一个擅长 Python 代码审查的助手，风格严谨，只使用文件读取和 shell 工具..."
+            className={styles.aiTextarea}
+            disabled={aiGenerating}
+          />
+          <div className={styles.aiActions}>
+            <button onClick={resetForm} className={styles.cancelBtn} disabled={aiGenerating}>
+              取消
+            </button>
+            <button
+              onClick={handleAiGenerate}
+              disabled={!aiDescription.trim() || aiGenerating}
+              className={styles.submitBtn}
+            >
+              {aiGenerating ? '生成中...' : '生成配置'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Hidden file input for avatar */}
       <input
         ref={fileInputRef}
@@ -223,6 +307,14 @@ export default function AgentConfigPanel() {
       {/* Create form (shown at top when creating new agent) */}
       {showForm && !editingId && (
         <div className={styles.form}>
+          {aiGeneratedConfig && (
+            <div className={styles.aiGeneratedBadge}>
+              <span><IconSparkles size={11} /> AI 生成</span>
+              <button onClick={handleRegenerate} className={styles.regenerateBtn}>
+                重新生成
+              </button>
+            </div>
+          )}
           <div className={styles.formRow}>
             <label className={styles.formLabel}>头像</label>
             <div className={styles.avatarRow}>

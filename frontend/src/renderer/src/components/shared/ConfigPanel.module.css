@@ -630,3 +630,116 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* Header button group */
+.headerButtons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* AI Create button */
+.aiCreateBtn {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(168, 130, 255, 0.9);
+  background: rgba(139, 92, 246, 0.10);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.aiCreateBtn:hover {
+  background: rgba(139, 92, 246, 0.18);
+  border-color: rgba(139, 92, 246, 0.40);
+}
+
+/* AI description section */
+.aiSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: var(--r-md);
+  border: 1px solid rgba(139, 92, 246, 0.20);
+  background: rgba(139, 92, 246, 0.04);
+}
+
+.aiHint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.aiTextarea {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  outline: none;
+  resize: vertical;
+  min-height: 80px;
+  transition: border-color 0.15s ease;
+  box-sizing: border-box;
+}
+
+.aiTextarea:focus {
+  border-color: var(--border-accent);
+}
+
+.aiTextarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: var(--bg);
+}
+
+.aiTextarea::placeholder {
+  color: var(--text-muted);
+}
+
+.aiActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* AI generated badge on form */
+.aiGeneratedBadge {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(168, 130, 255, 0.9);
+  background: rgba(139, 92, 246, 0.08);
+  border-radius: var(--r-sm);
+  margin-bottom: 4px;
+}
+
+.regenerateBtn {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.regenerateBtn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}

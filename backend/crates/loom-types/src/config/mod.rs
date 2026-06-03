@@ -169,6 +169,13 @@ pub struct SandboxConfig {
     /// Takes precedence over `allowed_paths` and workspace.
     #[serde(default)]
     pub denied_paths: Vec<String>,
+
+    /// When true, the built-in `.loom` directory deny is lifted, allowing
+    /// agents to read/write skills, memory database, and MCP configuration
+    /// stored under `~/.loom/`.  The sandbox itself (and other built-in
+    /// deny patterns) remain active.
+    #[serde(default)]
+    pub allow_loom_data: bool,
 }
 
 impl Default for SandboxConfig {
@@ -178,6 +185,7 @@ impl Default for SandboxConfig {
             workspace_only: true,
             allowed_paths: Vec::new(),
             denied_paths: Vec::new(),
+            allow_loom_data: false,
         }
     }
 }

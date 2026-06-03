@@ -233,6 +233,33 @@ fn truncate_str(s: &str, max: usize) -> String {
     }
 }
 
+/// Prompt template for AI-assisted Agent configuration generation.
+///
+/// Sent to the active cloud model when a user requests an Agent config via
+/// natural language description. The LLM must output valid JSON inside a
+/// code fence — the extractor falls back to bare `{` if the fence is missing.
+const AGENT_CONFIG_GENERATION_PROMPT: &str = r#"你是 openLoom 的 Agent 配置生成器。根据用户的自然语言描述，生成一个完整的 AgentConfig JSON。
+
+AgentConfig 的字段说明（所有字段可填 null 表示使用默认值）：
+- name (string, 必填): Agent 名称，简洁有描述性，2-20 个字符，英文或中文
+- persona (string): 自然语言的人格描述，定义 Agent 的核心身份和行为方式
+- system_prompt_override (string | null): 自定义系统提示词，覆盖默认系统指令，null 表示使用默认
+- model (string | null): 指定使用的模型名称，null 表示使用默认模型
+- thinking_level (string | null): 思考深度，可选 "low" / "medium" / "high"，null 表示默认
+- temperature (number | null): 生成温度 0.0-2.0，null 表示默认
+- tool_scope (string | null): 工具范围，null 表示无限制
+- allowed_tools (string[] | null): 允许使用的工具列表，null 表示无限制
+- disallowed_tools (string[] | null): 禁止使用的工具列表，null 表示无限制
+- max_iterations (number | null): 每轮最大迭代次数，null 表示默认 20
+- timeout_secs (number | null): 超时秒数，null 表示默认 300
+- max_concurrent_subagents (number): 最大并发子代理数，默认 5
+- is_primary (boolean): 是否为主代理，默认 false
+- memory_enabled (boolean): 是否启用记忆，默认 true
+
+已有 Agent 名称（请勿重复使用这些名称）：{existing_names}
+
+只输出 JSON，放在 ```json 代码块中，不要包含任何其他解释。"#;
+
 fn extract_entity_candidates(text: &str) -> Vec<String> {
     let mut candidates: Vec<String> = Vec::new();
 
@@ -1391,6 +1418,122 @@ impl Orchestrator {
         };
         let name = config_name.unwrap_or_else(|| "default".to_string());
         self.agent_config_get(&name).await.unwrap_or_default()
+    }
+
+    /// Generate an AgentConfig from a natural language description using the
+    /// active cloud model.
+    ///
+    /// The LLM is prompted with the field definitions, existing agent names
+    /// (to avoid duplicates), and the user's description. The response is
+    /// parsed as JSON (with fallback extraction from markdown code fences).
+    pub async fn agent_config_generate(
+        &self,
+        description: &str,
+    ) -> Result<loom_types::AgentConfig> {
+        // Collect existing names to include in the prompt
+        let existing_names: Vec<String> = {
+            self.agent_configs
+                .read()
+                .await
+                .keys()
+                .cloned()
+                .collect()
+        };
+        let names_hint = if existing_names.is_empty() {
+            "(none)".to_string()
+        } else {
+            existing_names.join(", ")
+        };
+
+        let prompt = AGENT_CONFIG_GENERATION_PROMPT
+            .replace("{existing_names}", &names_hint);
+
+        let user_content = format!("{}\n\n用户描述：{}", prompt, description);
+
+        let request = CompletionRequest {
+            messages: vec![Message {
+                role: Role::User,
+                content: vec![ContentPart::Text {
+                    text: user_content,
+                }],
+                timestamp: chrono::Utc::now(),
+                usage: None,
+            }],
+            tools: vec![],
+            tool_choice: None,
+            prompt: String::new(),
+            max_tokens: 2048,
+            temperature: 0.3,
+            top_p: 1.0,
+            stop: vec![],
+            stream: false,
+            thinking_budget: None,
+        };
+
+        let client = {
+            self.cloud_client
+                .read()
+                .await
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("没有配置云端模型。请先在设置中添加一个模型。"))?
+        };
+
+        let response = client.complete(request).await?;
+        let raw = response.text.trim().to_string();
+
+        if raw.is_empty() {
+            anyhow::bail!("AI 返回了空响应，请重试");
+        }
+
+        // Extract JSON using the same pattern as parse_llm_extraction
+        let json_str = if let Some(start) = raw.find("```json") {
+            let content = &raw[start + 7..];
+            if let Some(end) = content.find("```") {
+                &content[..end]
+            } else {
+                content
+            }
+        } else if let Some(start) = raw.find('{') {
+            &raw[start..]
+        } else {
+            anyhow::bail!(
+                "AI 返回的内容中没有找到 JSON 配置。原始响应: {}",
+                &raw[..raw.len().min(500)]
+            )
+        };
+
+        let mut config: loom_types::AgentConfig =
+            serde_json::from_str(json_str.trim()).map_err(|e| {
+                anyhow::anyhow!(
+                    "AI 生成的配置 JSON 解析失败: {}\nJSON: {}",
+                    e,
+                    &json_str[..json_str.len().min(300)]
+                )
+            })?;
+
+        // Validate name
+        if config.name.trim().is_empty() {
+            anyhow::bail!("AI 生成的配置缺少 name 字段");
+        }
+
+        // Resolve name conflicts by appending a numeric suffix
+        if existing_names.contains(&config.name) {
+            let base = config.name.clone();
+            let mut suffix = 2;
+            loop {
+                let candidate = format!("{}-{}", base, suffix);
+                if !existing_names.contains(&candidate) {
+                    config.name = candidate;
+                    break;
+                }
+                suffix += 1;
+                if suffix > 100 {
+                    anyhow::bail!("无法为 Agent 名称 '{}' 生成不冲突的后缀", base);
+                }
+            }
+        }
+
+        Ok(config)
     }
 
     // === Workspace Management ===

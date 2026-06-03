@@ -196,7 +196,7 @@ impl SandboxGuard {
         let canonical = self.canonicalize_safe(path);
 
         // --- Step 4: built-in deny patterns first ---
-        if let Some(reason) = check_builtin_deny(&canonical) {
+        if let Some(reason) = check_builtin_deny(&canonical, self.config.allow_loom_data) {
             return Err(format!(
                 "{} denied for '{}': {}",
                 operation,
@@ -278,8 +278,11 @@ impl SandboxGuard {
 
 /// Check `path` against the hard-coded sensitive-resource list.
 ///
+/// `allow_loom_data` — when true, the `.loom` directory deny is skipped
+/// so agents can access skills, memory, and MCP config under `~/.loom/`.
+///
 /// Returns `Some(reason)` if the path should be denied, `None` if it passes.
-fn check_builtin_deny(path: &Path) -> Option<&'static str> {
+fn check_builtin_deny(path: &Path, allow_loom_data: bool) -> Option<&'static str> {
     let path_str = path.to_string_lossy();
     let path_lower = path_str.to_lowercase();
 
@@ -317,7 +320,9 @@ fn check_builtin_deny(path: &Path) -> Option<&'static str> {
     }
 
     // --- .loom config directory (prevent sandbox config tampering) ---
-    if has_component_named(path, ".loom") {
+    // When allow_loom_data is true the user has opted in to letting agents
+    // access skills, memory, and MCP config stored under ~/.loom/.
+    if !allow_loom_data && has_component_named(path, ".loom") {
         return Some(".loom configuration directory is protected");
     }
 
@@ -452,56 +457,69 @@ mod tests {
 
     #[test]
     fn denies_ssh_directory() {
-        assert!(check_builtin_deny(Path::new("/home/user/.ssh/id_rsa")).is_some());
-        assert!(check_builtin_deny(Path::new("/home/user/.ssh")).is_some());
+        assert!(check_builtin_deny(Path::new("/home/user/.ssh/id_rsa"), false).is_some());
+        assert!(check_builtin_deny(Path::new("/home/user/.ssh"), false).is_some());
     }
 
     #[test]
     fn denies_aws_directory() {
-        assert!(check_builtin_deny(Path::new("/home/user/.aws/credentials")).is_some());
+        assert!(check_builtin_deny(Path::new("/home/user/.aws/credentials"), false).is_some());
     }
 
     #[test]
     fn denies_dotenv_files() {
-        assert!(check_builtin_deny(Path::new("/project/.env")).is_some());
-        assert!(check_builtin_deny(Path::new("/project/subdir/.env")).is_some());
+        assert!(check_builtin_deny(Path::new("/project/.env"), false).is_some());
+        assert!(check_builtin_deny(Path::new("/project/subdir/.env"), false).is_some());
     }
 
     #[test]
     fn denies_credential_extensions() {
-        assert!(check_builtin_deny(Path::new("/tmp/secret.pem")).is_some());
-        assert!(check_builtin_deny(Path::new("/tmp/secret.key")).is_some());
-        assert!(check_builtin_deny(Path::new("/tmp/cert.p12")).is_some());
-        assert!(check_builtin_deny(Path::new("/tmp/cert.pfx")).is_some());
-        assert!(check_builtin_deny(Path::new("/tmp/cert.crt")).is_some());
-        assert!(check_builtin_deny(Path::new("/tmp/cert.cer")).is_some());
-        assert!(check_builtin_deny(Path::new("/tmp/keystore.jks")).is_some());
+        assert!(check_builtin_deny(Path::new("/tmp/secret.pem"), false).is_some());
+        assert!(check_builtin_deny(Path::new("/tmp/secret.key"), false).is_some());
+        assert!(check_builtin_deny(Path::new("/tmp/cert.p12"), false).is_some());
+        assert!(check_builtin_deny(Path::new("/tmp/cert.pfx"), false).is_some());
+        assert!(check_builtin_deny(Path::new("/tmp/cert.crt"), false).is_some());
+        assert!(check_builtin_deny(Path::new("/tmp/cert.cer"), false).is_some());
+        assert!(check_builtin_deny(Path::new("/tmp/keystore.jks"), false).is_some());
     }
 
     #[test]
     fn denies_unix_system_auth_files() {
-        assert!(check_builtin_deny(Path::new("/etc/passwd")).is_some());
-        assert!(check_builtin_deny(Path::new("/etc/shadow")).is_some());
+        assert!(check_builtin_deny(Path::new("/etc/passwd"), false).is_some());
+        assert!(check_builtin_deny(Path::new("/etc/shadow"), false).is_some());
     }
 
     #[test]
     fn denies_windows_system_config() {
-        assert!(check_builtin_deny(Path::new("C:\\Windows\\System32\\config\\SAM")).is_some());
+        assert!(check_builtin_deny(Path::new("C:\\Windows\\System32\\config\\SAM"), false).is_some());
         // Should match any drive letter
-        assert!(check_builtin_deny(Path::new("D:\\Windows\\System32\\config\\SAM")).is_some());
+        assert!(check_builtin_deny(Path::new("D:\\Windows\\System32\\config\\SAM"), false).is_some());
     }
 
     #[test]
     fn denies_loom_config_directory() {
-        assert!(check_builtin_deny(Path::new("/project/.loom/sandbox.toml")).is_some());
-        assert!(check_builtin_deny(Path::new("/home/user/.loom/config.json")).is_some());
+        // Default (allow_loom_data = false): .loom is blocked
+        assert!(check_builtin_deny(Path::new("/project/.loom/sandbox.toml"), false).is_some());
+        assert!(check_builtin_deny(Path::new("/home/user/.loom/config.json"), false).is_some());
+    }
+
+    #[test]
+    fn allows_loom_directory_when_flag_set() {
+        // When allow_loom_data = true, .loom paths should pass
+        assert!(check_builtin_deny(Path::new("/project/.loom/sandbox.toml"), true).is_none());
+        assert!(check_builtin_deny(Path::new("/home/user/.loom/config.json"), true).is_none());
+        assert!(check_builtin_deny(Path::new("/home/user/.loom/data/memory.db"), true).is_none());
+        assert!(check_builtin_deny(Path::new("/home/user/.loom/skills/my-skill.md"), true).is_none());
+        // Other deny patterns still active even with allow_loom_data = true
+        assert!(check_builtin_deny(Path::new("/home/user/.ssh/id_rsa"), true).is_some());
+        assert!(check_builtin_deny(Path::new("/project/.env"), true).is_some());
     }
 
     #[test]
     fn allows_normal_files() {
-        assert!(check_builtin_deny(Path::new("/project/src/main.rs")).is_none());
-        assert!(check_builtin_deny(Path::new("/tmp/data.csv")).is_none());
-        assert!(check_builtin_deny(Path::new("/home/user/projects/readme.md")).is_none());
+        assert!(check_builtin_deny(Path::new("/project/src/main.rs"), false).is_none());
+        assert!(check_builtin_deny(Path::new("/tmp/data.csv"), false).is_none());
+        assert!(check_builtin_deny(Path::new("/home/user/projects/readme.md"), false).is_none());
     }
 
     // ------------------------------------------------------------------
