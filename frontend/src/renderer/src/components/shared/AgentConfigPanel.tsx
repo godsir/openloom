@@ -54,6 +54,7 @@ export default function AgentConfigPanel() {
   const [showAiForm, setShowAiForm] = useState(false)
   const [aiDescription, setAiDescription] = useState('')
   const [aiGenerating, setAiGenerating] = useState(false)
+  const [aiOptimizing, setAiOptimizing] = useState(false)
   const [aiGeneratedConfig, setAiGeneratedConfig] = useState<any | null>(null)
 
   // Avatar crop state
@@ -154,6 +155,28 @@ export default function AgentConfigPanel() {
       })
     } finally {
       setAiGenerating(false)
+    }
+  }
+
+  const handleAiOptimize = async () => {
+    setAiOptimizing(true)
+    try {
+      const config = await loomRpc<any>('agent.config.optimize', {
+        current: buildPayload(),
+      })
+      setNameDraft(config.name || nameDraft)
+      setPersonaDraft(config.persona || '')
+      setModelDraft(config.model || modelDraft)
+      setSystemPromptDraft(config.system_prompt_override || '')
+      setAvatarDraft(config.avatar || avatarDraft)
+      useStore.getState().addToast({ type: 'success', message: 'AI 优化完成' })
+    } catch (e: any) {
+      useStore.getState().addToast({
+        type: 'error',
+        message: `AI 优化失败: ${e.message || e}`,
+      })
+    } finally {
+      setAiOptimizing(false)
     }
   }
 
@@ -454,6 +477,13 @@ export default function AgentConfigPanel() {
             </div>
             <div className={styles.formActions}>
               <button onClick={resetForm} className={styles.cancelBtn}>取消</button>
+              <button
+                onClick={handleAiOptimize}
+                disabled={aiOptimizing}
+                className={styles.aiCreateBtn}
+              >
+                <IconSparkles size={12} /> {aiOptimizing ? '优化中...' : 'AI 优化'}
+              </button>
               <button
                 onClick={handleUpdate}
                 disabled={!nameDraft.trim()}

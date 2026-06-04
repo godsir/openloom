@@ -137,6 +137,8 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
   const [autoTitle, setAutoTitle] = useState(false)
   const [uiFont, setUiFont] = useState('')
   const [codeFont, setCodeFont] = useState('')
+  const [disableHwAccel, setDisableHwAccel] = useState(false)
+  const [isWin32, setIsWin32] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [customColors, setCustomColors] = useState({ bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' })
 
@@ -148,7 +150,9 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
       window.loom.getPreference('uiFont', ''),
       window.loom.getPreference('codeFont', ''),
       window.loom.getPreference('customTheme', { bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' }),
-    ]).then(([as, ct, at, uf, cf, cc]) => {
+      window.loom.getPreference('disableHardwareAcceleration', false),
+      window.loom.getPlatform(),
+    ]).then(([as, ct, at, uf, cf, cc, dha, plat]) => {
       setAutoStart(as)
       setCloseToTray(ct)
       setAutoTitle(at)
@@ -157,6 +161,8 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
       setUiFont(uf as string)
       setCodeFont(cf as string)
       setCustomColors(cc as typeof customColors)
+      setDisableHwAccel(dha as boolean)
+      setIsWin32(plat === 'win32')
       setLoaded(true)
     })
   }, [])
@@ -184,6 +190,15 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
     setCloseToTray(val)
     await window.loom.setPreference('closeToTray', val)
     useStore.getState().addToast({ type: 'success', message: val ? '关闭按钮将最小化到托盘' : '关闭按钮将退出程序' })
+  }
+
+  const handleDisableHwAccel = async (val: boolean) => {
+    setDisableHwAccel(val)
+    await window.loom.setPreference('disableHardwareAcceleration', val)
+    useStore.getState().addToast({
+      type: 'success',
+      message: val ? '已关闭硬件加速，重启后生效' : '已开启硬件加速，重启后生效',
+    })
   }
 
   const handleUiFont = async (val: string) => {
@@ -457,6 +472,30 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                   </button>
                 </div>
               </div>
+              {isWin32 && (
+                <div className={styles.aboutRow}>
+                  <div>
+                    <span className={styles.aboutLabel}>硬件加速</span>
+                    <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
+                      Win11 上若出现光标、动画闪烁，可关闭硬件加速。需重启程序生效
+                    </p>
+                  </div>
+                  <div className={styles.mcpTransportToggle}>
+                    <button
+                      className={`${styles.mcpTransportBtn} ${!disableHwAccel ? styles.mcpTransportActive : ''}`}
+                      onClick={() => handleDisableHwAccel(false)}
+                    >
+                      开启
+                    </button>
+                    <button
+                      className={`${styles.mcpTransportBtn} ${disableHwAccel ? styles.mcpTransportActive : ''}`}
+                      onClick={() => handleDisableHwAccel(true)}
+                    >
+                      关闭
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>

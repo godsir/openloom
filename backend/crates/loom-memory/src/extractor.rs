@@ -125,37 +125,68 @@ impl EntityExtractor for RuleBasedEntityExtractor {
 ///
 /// Sent to a local model (via LM Studio or Ollama) to extract structured
 /// entities and relationships from conversation text.
-pub const LLM_EXTRACTION_PROMPT: &str = r#"You are an entity extraction system. Analyze the following conversation and extract:
+pub const LLM_EXTRACTION_PROMPT: &str = r#"You are an entity extraction system. Analyze the conversation and extract entities and their relationships.
 
-1. **Entities**: People, technologies, projects, concepts, tools, or organizations mentioned.
-2. **Relationships**: How entities relate to each other (uses, works_on, knows, interested_in, dislikes, depends_on, part_of).
+**Entity types**: Person, Technology, Project, Concept, Tool, Topic, Organization
+**Relation types**: uses, works_on, knows, interested_in, dislikes, depends_on, part_of, created_by, related_to
 
-Return ONLY valid JSON in this exact format:
-```json
+Return ONLY valid JSON with "entities" and "relationships" arrays.
+Confidence: 0.0–1.0 (high when explicit, lower when implied).
+
+**Rules**:
+- Extract both USER↔entity and entity↔entity relationships (e.g., "FastAPI is a Python framework" → Python-[part_of]→FastAPI).
+- Detect sentiment in Chinese: "喜欢"→interested_in, "不喜欢/讨厌"→dislikes.
+- When "做/开发/写/部署" connects two entities, create a relationship.
+
+**Examples**:
+
+Input: "我用 React 做前端，后端用 Python 的 FastAPI，用 Docker 部署"
 {
   "entities": [
-    {
-      "name": "Rust",
-      "entity_type": "Technology",
-      "description": "Systems programming language",
-      "confidence": 0.9,
-      "aliases": ["rust-lang", "Rust语言"]
-    }
+    {"name": "React", "entity_type": "Technology", "description": "前端 UI 框架", "confidence": 0.9, "aliases": []},
+    {"name": "Python", "entity_type": "Technology", "description": "通用编程语言", "confidence": 0.9, "aliases": []},
+    {"name": "FastAPI", "entity_type": "Technology", "description": "Python Web 框架", "confidence": 0.85, "aliases": []},
+    {"name": "Docker", "entity_type": "Tool", "description": "容器化平台", "confidence": 0.85, "aliases": []},
+    {"name": "前端", "entity_type": "Concept", "description": "用户界面开发", "confidence": 0.7, "aliases": ["frontend"]}
   ],
   "relationships": [
-    {
-      "source_name": "USER",
-      "target_name": "Rust",
-      "relation_type": "uses",
-      "fact": "USER uses Rust for backend development",
-      "confidence": 0.85
-    }
+    {"source_name": "USER", "target_name": "React", "relation_type": "uses", "fact": "USER uses React for frontend", "confidence": 0.9},
+    {"source_name": "USER", "target_name": "Python", "relation_type": "uses", "fact": "USER uses Python with FastAPI for backend", "confidence": 0.9},
+    {"source_name": "Python", "target_name": "FastAPI", "relation_type": "part_of", "fact": "FastAPI is a Python framework", "confidence": 0.85},
+    {"source_name": "USER", "target_name": "Docker", "relation_type": "uses", "fact": "USER uses Docker for deployment", "confidence": 0.85}
   ]
 }
-```
 
-Entity types: Person, Technology, Project, Concept, Tool, Topic, Organization
-Relation types: uses, works_on, knows, interested_in, dislikes, depends_on, part_of, created_by, related_to
+Input: "我们项目用微服务和前后端分离架构。我用 Rust 写了一个 MCP server，部署在 K8s 上。"
+{
+  "entities": [
+    {"name": "微服务", "entity_type": "Concept", "description": "微服务架构模式", "confidence": 0.85, "aliases": ["microservices"]},
+    {"name": "前后端分离", "entity_type": "Concept", "description": "前后端分离架构", "confidence": 0.8, "aliases": []},
+    {"name": "Rust", "entity_type": "Technology", "description": "Systems programming language", "confidence": 0.9, "aliases": []},
+    {"name": "MCP", "entity_type": "Concept", "description": "Model Context Protocol", "confidence": 0.85, "aliases": ["MCP server"]},
+    {"name": "K8s", "entity_type": "Technology", "description": "Kubernetes", "confidence": 0.85, "aliases": ["Kubernetes"]}
+  ],
+  "relationships": [
+    {"source_name": "USER", "target_name": "微服务", "relation_type": "uses", "fact": "USER's project uses microservices", "confidence": 0.85},
+    {"source_name": "USER", "target_name": "前后端分离", "relation_type": "uses", "fact": "USER's project uses frontend-backend separation", "confidence": 0.8},
+    {"source_name": "USER", "target_name": "Rust", "relation_type": "uses", "fact": "USER wrote an MCP server in Rust", "confidence": 0.9},
+    {"source_name": "MCP", "target_name": "K8s", "relation_type": "depends_on", "fact": "MCP server is deployed on Kubernetes", "confidence": 0.8}
+  ]
+}
+
+Input: "我不太喜欢 JavaScript，太动态了。还是 TypeScript 舒服。后端用 Rust。"
+{
+  "entities": [
+    {"name": "JavaScript", "entity_type": "Technology", "description": "Dynamic scripting language", "confidence": 0.9, "aliases": ["JS"]},
+    {"name": "TypeScript", "entity_type": "Technology", "description": "Typed JavaScript superset", "confidence": 0.9, "aliases": ["TS"]},
+    {"name": "Rust", "entity_type": "Technology", "description": "Systems programming language", "confidence": 0.9, "aliases": []}
+  ],
+  "relationships": [
+    {"source_name": "USER", "target_name": "JavaScript", "relation_type": "dislikes", "fact": "USER dislikes JavaScript because it is too dynamic", "confidence": 0.85},
+    {"source_name": "USER", "target_name": "TypeScript", "relation_type": "interested_in", "fact": "USER prefers TypeScript for its type safety", "confidence": 0.85},
+    {"source_name": "USER", "target_name": "Rust", "relation_type": "uses", "fact": "USER uses Rust for backend", "confidence": 0.9}
+  ]
+}
 
 Conversation context:"#;
 

@@ -1,8 +1,8 @@
-[package]
+﻿[package]
 name = "loom-lsp"
-version = "0.2.18"
+version = "0.2.20"
 edition = "2024"
-description = "LSP (Language Server Protocol) client for openLoom v2 — connect to language servers, run diagnostics, completions, hover, and more"
+description = "LSP (Language Server Protocol) client for openLoom v2 �?connect to language servers, run diagnostics, completions, hover, and more"
 
 [dependencies]
 loom-types = { path = "../loom-types" }

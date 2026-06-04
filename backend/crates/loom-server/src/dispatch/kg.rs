@@ -30,6 +30,8 @@ pub async fn handle(
         "stats.token_summary" => Some(handle_stats_token_summary(state, p).await),
         "stats.token_history" => Some(handle_stats_token_history(state, p).await),
         "stats.reset" => Some(handle_stats_reset(state).await),
+        // Memory
+        "memory.promote" => Some(handle_memory_promote(state, p).await),
         _ => None,
     }
 }
@@ -256,4 +258,36 @@ async fn handle_stats_reset(state: &AppState) -> Result<Value, JsonRpcError> {
         .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
     Ok(json!({ "ok": true }))
+}
+
+// --- memory.promote ---
+
+async fn handle_memory_promote(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let session_id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+    if session_id.is_empty() {
+        return Err(err(ErrorCode::InvalidRequest, "session_id required"));
+    }
+    let min_confidence = p
+        .get("min_confidence")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.5);
+    let node_names: Vec<String> = p
+        .get("node_names")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let cognition_ids: Vec<i64> = p
+        .get("cognition_ids")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_i64()).collect())
+        .unwrap_or_default();
+    let (promoted_nodes, promoted_cognitions) = state
+        .orchestrator
+        .memory_promote(session_id, min_confidence, &node_names, &cognition_ids)
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    Ok(json!({
+        "promoted_nodes": promoted_nodes,
+        "promoted_cognitions": promoted_cognitions
+    }))
 }

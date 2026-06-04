@@ -24,6 +24,7 @@ pub async fn handle(
         "agent.config.update" => Some(handle_agent_config_update(state, p).await),
         "agent.config.delete" => Some(handle_agent_config_delete(state, p).await),
         "agent.config.generate" => Some(handle_agent_config_generate(state, p).await),
+        "agent.config.optimize" => Some(handle_agent_config_optimize(state, p).await),
         // Tools
         "tools.list" => Some(handle_tools_list(state).await),
         // Config (vision / auxiliary)
@@ -184,6 +185,21 @@ async fn handle_agent_config_generate(state: &AppState, p: &Value) -> Result<Val
     let config = state
         .orchestrator
         .agent_config_generate(description.trim())
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    Ok(serde_json::to_value(config).unwrap_or_default())
+}
+
+// --- agent.config.optimize ---
+
+async fn handle_agent_config_optimize(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let current = p.get("current").ok_or_else(|| err(ErrorCode::InvalidRequest, "current config required"))?;
+    let current_config: loom_types::AgentConfig = serde_json::from_value(current.clone())
+        .map_err(|e| err(ErrorCode::InvalidRequest, &format!("invalid current config: {}", e)))?;
+    let instructions = p.get("instructions").and_then(|v| v.as_str()).unwrap_or("优化此 Agent 的 persona 和系统提示词");
+    let config = state
+        .orchestrator
+        .agent_config_optimize(current_config, instructions.trim())
         .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
     Ok(serde_json::to_value(config).unwrap_or_default())

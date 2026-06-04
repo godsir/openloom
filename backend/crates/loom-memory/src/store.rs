@@ -117,8 +117,8 @@ impl<'a> CognitionStore<'a> {
                 params![id, existing_version, trait_name, old_value, confidence, evidence_count, now],
             )?;
             self.conn.execute(
-                "UPDATE cognitions SET value = ?1, confidence = ?2, evidence_count = ?3, last_updated = ?4, version = ?5 WHERE id = ?6",
-                params![value, confidence, evidence_count, now, existing_version + 1, id],
+                "UPDATE cognitions SET value = ?1, confidence = ?2, evidence_count = evidence_count + 1, last_updated = ?4, version = ?5 WHERE id = ?6",
+                params![value, confidence, now, existing_version + 1, id],
             )?;
             Ok(id)
         } else {
@@ -199,6 +199,19 @@ impl<'a> CognitionStore<'a> {
             params![scope],
         )?;
         Ok(promoted)
+    }
+
+    /// Promote specific cognitions by ID to global scope (no deletion of others).
+    /// Used for selective promotion from the UI.
+    pub fn promote_cognitions_by_id(&self, ids: &[i64]) -> Result<usize> {
+        let mut count = 0;
+        for id in ids {
+            count += self.conn.execute(
+                "UPDATE cognitions SET scope = 'global' WHERE id = ?1 AND scope != 'global'",
+                params![id],
+            )?;
+        }
+        Ok(count)
     }
 
     /// Delete all cognitions with a given scope.

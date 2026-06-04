@@ -207,12 +207,13 @@ impl MemoryStore for LoomMemoryStore {
     async fn load_history(&self, session_id: &str, limit: usize) -> Result<Vec<Message>> {
         let store = self.session_db.lock().unwrap();
         let mut stmt = store.conn().prepare(
-            "SELECT role, content, metadata FROM message_history WHERE session_id = ?1 ORDER BY seq ASC LIMIT ?2"
+            "SELECT role, content, metadata, timestamp FROM message_history WHERE session_id = ?1 ORDER BY seq ASC LIMIT ?2"
         )?;
         let rows = stmt.query_map(rusqlite::params![session_id, limit as i64], |row| {
             let role: String = row.get(0)?;
             let content: String = row.get(1)?;
             let metadata: Option<String> = row.get(2)?;
+            let ts_str: String = row.get(3)?;
             let usage = metadata.and_then(|m| {
                 let v: serde_json::Value = serde_json::from_str(&m).ok()?;
                 Some(loom_types::TokenUsage {
@@ -238,7 +239,9 @@ impl MemoryStore for LoomMemoryStore {
             Ok(Message {
                 role: role_enum,
                 content: parts,
-                timestamp: chrono::Utc::now(),
+                timestamp: chrono::DateTime::parse_from_rfc3339(&ts_str)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
                 usage,
             })
         })?;
@@ -461,9 +464,14 @@ impl MemoryStore for LoomMemoryStore {
             } else {
                 format!("{} ({})", clean_name, clean_desc)
             };
+            let trait_name = match e.entity_type.to_lowercase().as_str() {
+                "technology" => format!("uses_{}", clean_name.to_lowercase()),
+                "interest" => format!("interest_{}", clean_name.to_lowercase()),
+                other => format!("entity_{}", other),
+            };
             let _ = cognition.insert(
                 "USER",
-                &format!("entity_{}", e.entity_type.to_lowercase()),
+                &trait_name,
                 &value,
                 e.confidence,
                 1,
@@ -888,6 +896,75 @@ impl MemoryStore for LoomMemoryStore {
         )?;
         conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])?;
         Ok(())
+    }
+
+    /// Promote high-confidence session-scoped memories to global scope
+    /// WITHOUT deleting remaining session-scoped data.
+    /// Returns (promoted_nodes, promoted_cognitions).
+    async fn promote_to_global(
+        &self,
+        session_id: &str,
+        min_confidence: f64,
+    ) -> Result<(usize, usize)> {
+        let store = self.memory_db.lock().unwrap();
+        let conn = store.conn();
+
+        // Promote KG nodes: change scope from session_id to 'global'
+        // for high-confidence nodes that don't already have a global duplicate.
+        let promoted_nodes = conn.execute(
+            "UPDATE kg_nodes SET scope = 'global'
+             WHERE scope = ?1 AND confidence >= ?2
+             AND name NOT IN (SELECT name FROM kg_nodes WHERE scope = 'global')",
+            rusqlite::params![session_id, min_confidence],
+        )?;
+
+        // Promote KG edges whose both endpoints are now global.
+        let _ = conn.execute(
+            "UPDATE kg_edges SET scope = 'global'
+             WHERE scope = ?1
+               AND source_id IN (SELECT id FROM kg_nodes WHERE scope = 'global')
+               AND target_id IN (SELECT id FROM kg_nodes WHERE scope = 'global')",
+            rusqlite::params![session_id],
+        )?;
+
+        // Promote cognitions: change scope from session_id to 'global'
+        // for high-confidence cognitions that don't already have a global duplicate.
+        let promoted_cogs = conn.execute(
+            "UPDATE cognitions SET scope = 'global'
+             WHERE scope = ?1 AND confidence >= ?2
+             AND (subject || '|' || trait) NOT IN
+                 (SELECT subject || '|' || trait FROM cognitions WHERE scope = 'global')",
+            rusqlite::params![session_id, min_confidence],
+        )?;
+
+        if promoted_nodes > 0 || promoted_cogs > 0 {
+            tracing::info!(
+                session_id,
+                promoted_nodes,
+                promoted_cogs,
+                min_confidence,
+                "promoted session memories to global"
+            );
+        }
+
+        Ok((promoted_nodes, promoted_cogs))
+    }
+
+    async fn promote_selected(
+        &self,
+        node_names: &[String],
+        cognition_ids: &[i64],
+    ) -> Result<(usize, usize)> {
+        let store = self.memory_db.lock().unwrap();
+        let conn = store.conn();
+        let graph = GraphStore::new(conn);
+        let cognition = CognitionStore::new(conn);
+        let promoted_nodes = graph.promote_nodes_by_name(node_names)?;
+        let promoted_cogs = cognition.promote_cognitions_by_id(cognition_ids)?;
+        if promoted_nodes > 0 || promoted_cogs > 0 {
+            tracing::info!(promoted_nodes, promoted_cogs, "promoted selected memories to global");
+        }
+        Ok((promoted_nodes, promoted_cogs))
     }
 
     async fn rename_session(&self, id: &str, title: &str) -> Result<()> {

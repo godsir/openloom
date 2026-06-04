@@ -9,7 +9,8 @@ use anyhow::{Context, Result};
 use base64::Engine;
 use loom_inference::engine::CloudClient;
 use loom_memory::{
-    ExtractedEntity, ExtractedRelationship, LLM_EXTRACTION_PROMPT, parse_llm_extraction,
+    EntityExtractor, ExtractedEntity, ExtractedRelationship, LLM_EXTRACTION_PROMPT,
+    RuleBasedEntityExtractor, parse_llm_extraction,
 };
 use loom_security::merge_multi_permissions;
 use loom_types::{
@@ -184,6 +185,19 @@ pub trait MemoryStore: Send + Sync {
     ) -> Result<Vec<loom_types::CognitionHistory>>;
     // Knowledge graph maintenance
     async fn kg_prune(&self, older_than_days: i64) -> Result<usize>;
+    /// Promote high-confidence session-scoped memories to global scope
+    /// WITHOUT deleting remaining session-scoped data.
+    async fn promote_to_global(
+        &self,
+        session_id: &str,
+        min_confidence: f64,
+    ) -> Result<(usize, usize)>;
+    /// Promote specific entities and cognitions by name/id to global scope.
+    async fn promote_selected(
+        &self,
+        node_names: &[String],
+        cognition_ids: &[i64],
+    ) -> Result<(usize, usize)>;
     // Session persistence
     async fn list_sessions(&self) -> Result<Vec<(String, String, usize, Option<String>)>>;
     async fn ensure_session(&self, id: &str) -> Result<()>;
@@ -243,10 +257,10 @@ fn truncate_str(s: &str, max: usize) -> String {
 /// code fence — the extractor falls back to bare `{` if the fence is missing.
 const AGENT_CONFIG_GENERATION_PROMPT: &str = r#"你是 openLoom 的 Agent 配置生成器。根据用户的自然语言描述，生成一个完整的 AgentConfig JSON。
 
-AgentConfig 的字段说明（所有字段可填 null 表示使用默认值）：
+AgentConfig 的字段说明：
 - name (string, 必填): Agent 名称，简洁有描述性，2-20 个字符，英文或中文
-- persona (string): 自然语言的人格描述，定义 Agent 的核心身份和行为方式
-- system_prompt_override (string | null): 自定义系统提示词，覆盖默认系统指令，null 表示使用默认
+- persona (string, 必填): 自然语言的人格描述，定义 Agent 的核心身份和行为方式。用第二人称"你是..."开头
+- system_prompt_override (string, 必填): 自定义系统提示词，包含 Agent 的具体行为规则、工作流程、限制条件等。必须生成，不能为 null。用第二人称
 - model (string | null): 指定使用的模型名称，null 表示使用默认模型
 - thinking_level (string | null): 思考深度，可选 "low" / "medium" / "high"，null 表示默认
 - temperature (number | null): 生成温度 0.0-2.0，null 表示默认
@@ -258,6 +272,8 @@ AgentConfig 的字段说明（所有字段可填 null 表示使用默认值）�
 - max_concurrent_subagents (number): 最大并发子代理数，默认 5
 - is_primary (boolean): 是否为主代理，默认 false
 - memory_enabled (boolean): 是否启用记忆，默认 true
+
+注意：persona 和 system_prompt_override 都必须生成。persona 侧重"身份"（你是谁），system_prompt_override 侧重"行为规则"（你怎么做）。
 
 已有 Agent 名称（请勿重复使用这些名称）：{existing_names}
 
@@ -274,7 +290,30 @@ fn extract_entity_candidates(text: &str) -> Vec<String> {
         }
     }
 
+    // Hardcoded allowlist of common lowercase tech terms
+    let tech_allowlist: &[&str] = &[
+        "rust", "python", "typescript", "javascript", "golang", "docker",
+        "kubernetes", "linux", "sqlite", "redis", "git", "react", "vue",
+        "electron", "tauri", "node", "postgres", "llm", "mcp", "lsp",
+    ];
+    let lower_text = text.to_lowercase();
+    for term in tech_allowlist {
+        if lower_text.contains(term) {
+            candidates.push(term.to_string());
+        }
+    }
+
     // Chinese: sliding window of 2-5 CJK characters on consecutive runs
+    let chinese_stopwords: &[&str] = &[
+        "的", "了", "是", "在", "和", "与", "或", "而",
+        "我", "你", "他", "她", "它", "们", "这", "那",
+        "吗", "呢", "吧", "啊", "哦", "嗯",
+        "一个", "这个", "那个", "什么", "怎么",
+        "因为", "所以", "但是", "如果", "虽然",
+        "可以", "需要", "应该", "可能", "已经", "正在",
+        "还是", "或者", "以及", "而且", "然后",
+    ];
+
     let chars: Vec<char> = text.chars().collect();
     let cjk_indices: Vec<usize> = chars
         .iter()
@@ -295,11 +334,12 @@ fn extract_entity_candidates(text: &str) -> Vec<String> {
         if run_len >= 2 {
             // Whole run
             if run_len <= 5 {
-                candidates.push(
-                    chars[cjk_indices[run_start]..=cjk_indices[run_end]]
-                        .iter()
-                        .collect(),
-                );
+                let s: String = chars[cjk_indices[run_start]..=cjk_indices[run_end]]
+                    .iter()
+                    .collect();
+                if !is_cjk_stopword(&s, chinese_stopwords) {
+                    candidates.push(s);
+                }
             }
             // Sub-ngrams (2-4 chars)
             for n in 2..=5.min(run_len) {
@@ -308,7 +348,9 @@ fn extract_entity_candidates(text: &str) -> Vec<String> {
                         [cjk_indices[run_start + i]..=cjk_indices[run_start + i + n - 1]]
                         .iter()
                         .collect();
-                    candidates.push(s);
+                    if !is_cjk_stopword(&s, chinese_stopwords) {
+                        candidates.push(s);
+                    }
                 }
             }
         }
@@ -317,7 +359,7 @@ fn extract_entity_candidates(text: &str) -> Vec<String> {
 
     candidates.sort();
     candidates.dedup();
-    candidates.truncate(10);
+    candidates.truncate(20);
     candidates
 }
 
@@ -328,6 +370,19 @@ fn is_cjk_char(c: char) -> bool {
         | '\u{F900}'..='\u{FAFF}'   // CJK Compatibility
         | '\u{2F800}'..='\u{2FA1F}' // CJK Compatibility Supplement
     )
+}
+
+/// Check if a CJK n-gram is a stopword or starts with one.
+fn is_cjk_stopword(s: &str, stopwords: &[&str]) -> bool {
+    if s.is_empty() {
+        return true;
+    }
+    for sw in stopwords {
+        if s == *sw || s.starts_with(sw) {
+            return true;
+        }
+    }
+    false
 }
 
 impl Orchestrator {
@@ -932,6 +987,27 @@ impl Orchestrator {
         }
     }
 
+    /// Promote high-confidence session-scoped KG nodes/edges and cognitions to global scope.
+    /// Returns (promoted_nodes, promoted_cognitions).
+    /// If node_names/cognition_ids are provided, only promote those specific items.
+    pub async fn memory_promote(
+        &self,
+        session_id: &str,
+        min_confidence: f64,
+        node_names: &[String],
+        cognition_ids: &[i64],
+    ) -> Result<(usize, usize)> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            if !node_names.is_empty() || !cognition_ids.is_empty() {
+                store.promote_selected(node_names, cognition_ids).await
+            } else {
+                store.promote_to_global(session_id, min_confidence).await
+            }
+        } else {
+            Ok((0, 0))
+        }
+    }
+
     /// Return the base system prompt without persona/skills injection.
     /// Persona, skills, and agent-specific additions are injected separately
     /// by the caller (process_message_with_config / process_message_streaming).
@@ -1454,7 +1530,6 @@ impl Orchestrator {
         &self,
         description: &str,
     ) -> Result<loom_types::AgentConfig> {
-        // Collect existing names to include in the prompt
         let existing_names: Vec<String> = {
             self.agent_configs
                 .read()
@@ -1469,20 +1544,28 @@ impl Orchestrator {
             existing_names.join(", ")
         };
 
-        let prompt = AGENT_CONFIG_GENERATION_PROMPT
+        let system_prompt = AGENT_CONFIG_GENERATION_PROMPT
             .replace("{existing_names}", &names_hint);
 
-        let user_content = format!("{}\n\n用户描述：{}", prompt, description);
-
         let request = CompletionRequest {
-            messages: vec![Message {
-                role: Role::User,
-                content: vec![ContentPart::Text {
-                    text: user_content,
-                }],
-                timestamp: chrono::Utc::now(),
-                usage: None,
-            }],
+            messages: vec![
+                Message {
+                    role: Role::System,
+                    content: vec![ContentPart::Text {
+                        text: system_prompt,
+                    }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+                Message {
+                    role: Role::User,
+                    content: vec![ContentPart::Text {
+                        text: format!("用户描述：{}", description),
+                    }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+            ],
             tools: vec![],
             tool_choice: None,
             prompt: String::new(),
@@ -1490,23 +1573,38 @@ impl Orchestrator {
             temperature: 0.3,
             top_p: 1.0,
             stop: vec![],
-            stream: false,
+            stream: true,
             thinking_budget: None,
         };
 
-        let client = {
-            self.cloud_client
-                .read()
-                .await
-                .clone()
-                .ok_or_else(|| anyhow::anyhow!("没有配置云端模型。请先在设置中添加一个模型。"))?
-        };
+        // Get client: try auxiliary first, fall back to main cloud client
+        let client = self
+            .build_auxiliary_client("entity")
+            .await
+            .or_else(|| {
+                self.cloud_client.try_read().ok().and_then(|g| g.clone())
+            })
+            .ok_or_else(|| anyhow::anyhow!("没有可用的模型。请先在设置中配置一个模型。"))?;
 
-        let response = client.complete(request).await?;
-        let raw = response.text.trim().to_string();
+        // Use streaming to collect response (works better with local models)
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
+        let handle = tokio::spawn(async move {
+            let mut text = String::new();
+            while let Some(token) = rx.recv().await {
+                text.push_str(&token);
+            }
+            text
+        });
+
+        if let Err(e) = client.complete_stream(request, tx).await {
+            handle.abort();
+            anyhow::bail!("模型调用失败: {}. 请确认模型服务正常运行。", e);
+        }
+
+        let raw = handle.await.unwrap_or_default().trim().to_string();
 
         if raw.is_empty() {
-            anyhow::bail!("AI 返回了空响应，请重试");
+            anyhow::bail!("AI 返回了空响应，请重试。提示：请确认已选择模型并模型服务正常运行。");
         }
 
         // Extract JSON using the same pattern as parse_llm_extraction
@@ -1540,6 +1638,16 @@ impl Orchestrator {
             anyhow::bail!("AI 生成的配置缺少 name 字段");
         }
 
+        // Auto-generate system_prompt_override if the model left it empty
+        if config.system_prompt_override.as_deref().map_or(true, |s| s.trim().is_empty()) {
+            if !config.persona.trim().is_empty() {
+                config.system_prompt_override = Some(format!(
+                    "你是 {}。\n\n{}\n\n行为准则：\n- 始终使用中文回复\n- 优先使用本地工具和本地模型\n- 回答前先确认用户环境",
+                    config.name, config.persona
+                ));
+            }
+        }
+
         // Resolve name conflicts by appending a numeric suffix
         if existing_names.contains(&config.name) {
             let base = config.name.clone();
@@ -1554,6 +1662,124 @@ impl Orchestrator {
                 if suffix > 100 {
                     anyhow::bail!("无法为 Agent 名称 '{}' 生成不冲突的后缀", base);
                 }
+            }
+        }
+
+        Ok(config)
+    }
+
+    /// Optimize an existing agent config using AI based on user instructions.
+    /// Reuses the same generation pipeline but with the current config as context.
+    pub async fn agent_config_optimize(
+        &self,
+        current: loom_types::AgentConfig,
+        instructions: &str,
+    ) -> Result<loom_types::AgentConfig> {
+        let current_json = serde_json::to_string_pretty(&current).unwrap_or_default();
+
+        let optimize_prompt = format!(
+            r#"你是 openLoom 的 Agent 配置优化器。根据用户的优化指令，改进现有的 AgentConfig JSON。
+
+当前的 AgentConfig:
+```json
+{}
+```
+
+优化规则：
+- 保持 name 不变（除非用户明确要求改名）
+- 根据用户指令优化 persona 和 system_prompt_override
+- 只修改用户提到的部分，其他字段保持不变
+- persona 侧重"身份"，system_prompt_override 侧重"行为规则"
+- system_prompt_override 必须生成，不能为 null 或空
+
+只输出优化后的完整 JSON，放在 ```json 代码块中，不要包含任何其他解释。"#,
+            current_json
+        );
+
+        let request = CompletionRequest {
+            messages: vec![
+                Message {
+                    role: Role::System,
+                    content: vec![ContentPart::Text {
+                        text: optimize_prompt,
+                    }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+                Message {
+                    role: Role::User,
+                    content: vec![ContentPart::Text {
+                        text: format!("优化指令：{}", instructions),
+                    }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+            ],
+            tools: vec![],
+            tool_choice: None,
+            prompt: String::new(),
+            max_tokens: 2048,
+            temperature: 0.3,
+            top_p: 1.0,
+            stop: vec![],
+            stream: true,
+            thinking_budget: None,
+        };
+
+        let client = self
+            .build_auxiliary_client("entity")
+            .await
+            .or_else(|| {
+                self.cloud_client.try_read().ok().and_then(|g| g.clone())
+            })
+            .ok_or_else(|| anyhow::anyhow!("没有可用的模型。请先在设置中配置一个模型。"))?;
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
+        let handle = tokio::spawn(async move {
+            let mut text = String::new();
+            while let Some(token) = rx.recv().await {
+                text.push_str(&token);
+            }
+            text
+        });
+
+        if let Err(e) = client.complete_stream(request, tx).await {
+            handle.abort();
+            anyhow::bail!("模型调用失败: {}. 请确认模型服务正常运行。", e);
+        }
+
+        let raw = handle.await.unwrap_or_default().trim().to_string();
+
+        if raw.is_empty() {
+            anyhow::bail!("AI 返回了空响应，请重试。提示：请确认已选择模型并模型服务正常运行。");
+        }
+
+        let json_str = if let Some(start) = raw.find("```json") {
+            let content = &raw[start + 7..];
+            if let Some(end) = content.find("```") {
+                &content[..end]
+            } else {
+                content
+            }
+        } else if let Some(start) = raw.find('{') {
+            &raw[start..]
+        } else {
+            anyhow::bail!("AI 返回的内容中没有找到 JSON。原始响应: {}", &raw[..raw.len().min(500)])
+        };
+
+        let config: loom_types::AgentConfig =
+            serde_json::from_str(json_str.trim()).map_err(|e| {
+                anyhow::anyhow!("优化后的 JSON 解析失败: {}\nJSON: {}", e, &json_str[..json_str.len().min(300)])
+            })?;
+
+        // Ensure system_prompt_override is filled
+        let mut config = config;
+        if config.system_prompt_override.as_deref().map_or(true, |s| s.trim().is_empty()) {
+            if !config.persona.trim().is_empty() {
+                config.system_prompt_override = Some(format!(
+                    "你是 {}。\n\n{}\n\n行为准则：\n- 始终使用中文回复\n- 优先使用本地工具和本地模型\n- 回答前先确认用户环境",
+                    config.name, config.persona
+                ));
             }
         }
 
@@ -2244,7 +2470,9 @@ impl Orchestrator {
         // Ensure history is loaded from DB if not already in cache (e.g. after restart or session switch)
         if self.session_history(session_id).await.is_empty() {
             tracing::info!(session_id, "[orchestrator] step: loading history from DB");
-            let _ = self.load_history(session_id).await;
+            if let Err(e) = self.load_history(session_id).await {
+                tracing::warn!(session_id = %session_id, error = %e, "Failed to load conversation history from DB");
+            }
             tracing::info!(session_id, "[orchestrator] step: history loaded");
         }
         let history = self.session_history(session_id).await;
@@ -2947,6 +3175,11 @@ impl Orchestrator {
                     )
                     .await?;
 
+                // Keyword-based cognition extraction (runs unconditionally, even without cloud client)
+                if let Err(e) = store.extract_cognitions(session_id, &user_message).await {
+                    tracing::warn!(error = %e, "Keyword cognition extraction failed");
+                }
+
                 // LLM-based entity extraction (synchronous, runs after response)
                 let msg = user_message.to_string();
 
@@ -2995,16 +3228,38 @@ impl Orchestrator {
                                     tracing::info!(n, e, "KG updated via LLM");
                                 }
                             }
-                            if let Ok(persona) = store.get_persona().await
-                                && !persona.is_empty()
-                            {
-                                *self.persona_context.write().await = persona;
-                            }
                         }
-                        Err(e) => tracing::debug!("LLM extraction: {}", e),
+                        Err(e) => {
+                            tracing::debug!("LLM extraction: {}", e);
+                            // Fall back to rule-based entity extraction
+                            let extractor = RuleBasedEntityExtractor;
+                            if let Ok(fallback_entities) = extractor.extract_entities(&msg, "", session_id) {
+                                let fallback_relationships = extractor
+                                    .extract_relationships(&msg, &fallback_entities, session_id)
+                                    .unwrap_or_default();
+                                if let Ok((n, e)) = store
+                                    .feed_knowledge_graph(&fallback_entities, &fallback_relationships, event_id, session_id)
+                                    .await
+                                {
+                                    let _ = store
+                                        .save_extracted_entities(&fallback_entities, &fallback_relationships, session_id)
+                                        .await;
+                                    if n > 0 || e > 0 {
+                                        tracing::warn!(n, e, "KG updated via rule-based fallback (LLM extraction failed)");
+                                    }
+                                }
+                            }
+                            tracing::warn!("LLM extraction failed, using rule-based fallback");
+                        }
                     }
                 }
                 drop(client_opt);
+                // Always refresh persona after save_turn, regardless of LLM extraction success
+                if let Ok(persona) = store.get_persona().await
+                    && !persona.is_empty()
+                {
+                    *self.persona_context.write().await = persona;
+                }
             }
 
             // Fire TaskCompleted hook
@@ -3194,7 +3449,9 @@ impl Orchestrator {
         let registry = self.tool_registry.read().await;
         // Load history from DB if in-memory cache is empty (e.g. after restart)
         if self.session_history(session_id).await.is_empty() {
-            let _ = self.load_history(session_id).await;
+            if let Err(e) = self.load_history(session_id).await {
+                tracing::warn!(session_id = %session_id, error = %e, "Failed to load conversation history from DB");
+            }
         }
         let history = self.session_history(session_id).await;
 
@@ -3590,6 +3847,11 @@ impl Orchestrator {
                         )
                         .await?;
 
+                    // Keyword-based cognition extraction (runs unconditionally, even without cloud client)
+                    if let Err(e) = store.extract_cognitions(session_id, &user_message).await {
+                        tracing::warn!(error = %e, "Keyword cognition extraction failed");
+                    }
+
                     // LLM-based entity extraction (synchronous, runs after response)
                     let msg = user_message.to_string();
 
@@ -3635,16 +3897,38 @@ impl Orchestrator {
                                         tracing::info!(n, e, "KG updated via LLM");
                                     }
                                 }
-                                if let Ok(persona) = store.get_persona().await
-                                    && !persona.is_empty()
-                                {
-                                    *self.persona_context.write().await = persona;
-                                }
                             }
-                            Err(e) => tracing::debug!("LLM extraction: {}", e),
+                            Err(e) => {
+                                tracing::debug!("LLM extraction: {}", e);
+                                // Fall back to rule-based entity extraction
+                                let extractor = RuleBasedEntityExtractor;
+                                if let Ok(fallback_entities) = extractor.extract_entities(&msg, "", session_id) {
+                                    let fallback_relationships = extractor
+                                        .extract_relationships(&msg, &fallback_entities, session_id)
+                                        .unwrap_or_default();
+                                    if let Ok((n, e)) = store
+                                        .feed_knowledge_graph(&fallback_entities, &fallback_relationships, event_id, session_id)
+                                        .await
+                                    {
+                                        let _ = store
+                                            .save_extracted_entities(&fallback_entities, &fallback_relationships, session_id)
+                                            .await;
+                                        if n > 0 || e > 0 {
+                                            tracing::warn!(n, e, "KG updated via rule-based fallback (LLM extraction failed)");
+                                        }
+                                    }
+                                }
+                                tracing::warn!("LLM extraction failed, using rule-based fallback");
+                            }
                         }
                     }
                     drop(client_opt);
+                    // Always refresh persona after save_turn, regardless of LLM extraction success
+                    if let Ok(persona) = store.get_persona().await
+                        && !persona.is_empty()
+                    {
+                        *self.persona_context.write().await = persona;
+                    }
                 }
 
             // Fire TaskCompleted hook

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useStore } from '../../stores'
 import Select from '../shared/Select'
 import type { Cognition, CognitionHistory } from '../../types/bindings'
+import PromoteDialog from './PromoteDialog'
 import styles from './KnowledgeGraphPanel.module.css'
 
 function formatTimestamp(ts: number): string {
@@ -118,6 +119,7 @@ export default function MaintenanceTab() {
   const [subject, setSubject] = useState('USER')
   const [scopeFilter, setScopeFilter] = useState('all')
   const [pruning, setPruning] = useState(false)
+  const [promoteOpen, setPromoteOpen] = useState(false)
 
   useEffect(() => {
     cognitionListSubjects()
@@ -148,6 +150,29 @@ export default function MaintenanceTab() {
 
   return (
     <div className={styles.maintenanceTab}>
+      <div className={styles.section}>
+        <div className={styles.sectionTitle}>图谱维护</div>
+        {kgStats && (
+          <div className={styles.maintenanceStats}>
+            当前统计: 实体 {kgStats.node_count}, 关系 {kgStats.edge_count}
+          </div>
+        )}
+        <div className={styles.maintenanceActions}>
+          <button
+            className={styles.promoteBtn}
+            onClick={() => setPromoteOpen(true)}
+          >
+            提升会话记忆为全局...
+          </button>
+          <button
+            className={styles.pruneBtn}
+            onClick={handlePrune}
+            disabled={pruning}
+          >
+            {pruning ? '清理中...' : '清理 30 天以上低置信度实体'}
+          </button>
+        </div>
+      </div>
       <div className={styles.section}>
         <div className={styles.sectionTitle}>认知记录</div>
         <div className={styles.filterRow}>
@@ -181,21 +206,8 @@ export default function MaintenanceTab() {
           )}
         </div>
       </div>
-      <div className={styles.section}>
-        <div className={styles.sectionTitle}>图谱维护</div>
-        {kgStats && (
-          <div className={styles.maintenanceStats}>
-            当前统计: 实体 {kgStats.node_count}, 关系 {kgStats.edge_count}
-          </div>
-        )}
-        <button
-          className={styles.pruneBtn}
-          onClick={handlePrune}
-          disabled={pruning}
-        >
-          {pruning ? '清理中...' : '清理 30 天以上低置信度实体'}
-        </button>
-      </div>
+
+      <PromoteDialog open={promoteOpen} onClose={() => setPromoteOpen(false)} />
     </div>
   )
 }

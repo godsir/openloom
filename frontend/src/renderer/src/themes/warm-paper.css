@@ -21,21 +21,21 @@
   --border-accent:  rgba(176,90,48,0.30);
   --border-light:   rgba(120,90,60,0.06);
 
-  /* Accent — Terracotta */
-  --accent:         #B05A30;
-  --accent-hover:   #C06A3A;
-  --accent-rgb:     176,90,48;
-  --accent-subtle:  rgba(176,90,48,0.08);
-  --accent-medium:  rgba(176,90,48,0.14);
-  --accent-glow:    rgba(176,90,48,0.15);
-  --accent-light:   rgba(176,90,48,0.10);
-  --accent-strong:  rgba(176,90,48,0.18);
+  /* Accent — Terracotta (warmer, more visible) */
+  --accent:         #C45A30;
+  --accent-hover:   #D46A40;
+  --accent-rgb:     196,90,48;
+  --accent-subtle:  rgba(196,90,48,0.08);
+  --accent-medium:  rgba(196,90,48,0.14);
+  --accent-glow:    rgba(196,90,48,0.15);
+  --accent-light:   rgba(196,90,48,0.10);
+  --accent-strong:  rgba(196,90,48,0.18);
 
   /* Semantic */
-  --green:        #10B981;
-  --green-light:  rgba(16,185,129,0.10);
+  --green:        #059669;
+  --green-light:  rgba(5,150,105,0.10);
   --amber:        #D97706;
-  --amber-light:  rgba(217,119,6,0.10);
+  --amber-light:  rgba(217,119,6,0.12);
   --red:          #DC2626;
   --red-light:    rgba(220,38,38,0.10);
 

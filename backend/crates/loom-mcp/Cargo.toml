@@ -1,8 +1,8 @@
-[package]
+﻿[package]
 name = "loom-mcp"
-version = "0.2.18"
+version = "0.2.20"
 edition = "2024"
-description = "MCP client for openLoom v2 — connect to MCP servers, list tools, call tools"
+description = "MCP client for openLoom v2 �?connect to MCP servers, list tools, call tools"
 
 [dependencies]
 loom-types = { path = "../loom-types" }

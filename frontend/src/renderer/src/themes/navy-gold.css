@@ -21,23 +21,23 @@
   --border-accent:  rgba(255,231,111,0.20);
   --border-light:   rgba(255,231,111,0.03);
 
-  /* Accent — Warm Gold */
+  /* Accent — Warm Gold (higher opacity for visibility) */
   --accent:         #FFE76F;
   --accent-hover:   #FFED8A;
   --accent-rgb:     255,231,111;
-  --accent-subtle:  rgba(255,231,111,0.06);
-  --accent-medium:  rgba(255,231,111,0.12);
-  --accent-glow:    rgba(255,231,111,0.12);
-  --accent-light:   rgba(255,231,111,0.08);
-  --accent-strong:  rgba(255,231,111,0.16);
+  --accent-subtle:  rgba(255,231,111,0.08);
+  --accent-medium:  rgba(255,231,111,0.15);
+  --accent-glow:    rgba(255,231,111,0.14);
+  --accent-light:   rgba(255,231,111,0.10);
+  --accent-strong:  rgba(255,231,111,0.18);
 
   /* Semantic */
   --green:        #34D399;
   --green-light:  rgba(52,211,153,0.10);
-  --amber:        #FBBF24;
-  --amber-light:  rgba(251,191,36,0.10);
+  --amber:        #F59E0B;
+  --amber-light:  rgba(245,158,11,0.12);
   --red:          #F87171;
-  --red-light:    rgba(248,113,113,0.10);
+  --red-light:    rgba(248,113,113,0.12);
 
   /* Toast — solid bg + white text */
   --toast-success-bg: #0F766E;

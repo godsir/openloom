@@ -627,16 +627,38 @@ impl<'a> GraphStore<'a> {
              AND name NOT IN (SELECT name FROM kg_nodes WHERE scope = 'global')",
             rusqlite::params![scope, min_confidence],
         )?;
-        // Delete remaining session-scoped nodes (duplicates or low confidence)
+        // Promote edges whose both endpoints are now global
+        self.conn.execute(
+            "UPDATE kg_edges SET scope = 'global'
+             WHERE scope = ?1
+               AND source_id IN (SELECT id FROM kg_nodes WHERE scope = 'global')
+               AND target_id IN (SELECT id FROM kg_nodes WHERE scope = 'global')",
+            rusqlite::params![scope],
+        )?;
+        // Delete remaining session-scoped edges (those with at least one endpoint not promoted)
         self.conn.execute(
             "DELETE FROM kg_edges WHERE scope = ?1",
             rusqlite::params![scope],
         )?;
+        // Delete remaining session-scoped nodes (duplicates or low confidence)
         self.conn.execute(
             "DELETE FROM kg_nodes WHERE scope = ?1",
             rusqlite::params![scope],
         )?;
         Ok(promoted)
+    }
+
+    /// Promote specific nodes by name to global scope (no deletion of others).
+    /// Used for selective promotion from the UI.
+    pub fn promote_nodes_by_name(&self, names: &[String]) -> Result<usize> {
+        let mut count = 0;
+        for name in names {
+            count += self.conn.execute(
+                "UPDATE kg_nodes SET scope = 'global' WHERE name = ?1 AND scope != 'global'",
+                rusqlite::params![name],
+            )?;
+        }
+        Ok(count)
     }
 
     /// Delete all nodes, edges, and evidence with a given scope.

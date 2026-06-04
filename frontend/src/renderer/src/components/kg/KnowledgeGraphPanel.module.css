@@ -633,6 +633,11 @@
   margin-bottom: 12px;
 }
 
+.maintenanceActions {
+  display: flex;
+  gap: 8px;
+}
+
 .pruneBtn {
   padding: 10px 16px;
   background: var(--red-light);
@@ -649,6 +654,26 @@
 }
 
 .pruneBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.promoteBtn {
+  padding: 10px 16px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--r-md);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.promoteBtn:hover:not(:disabled) {
+  background: rgba(var(--accent-rgb), 0.18);
+}
+
+.promoteBtn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

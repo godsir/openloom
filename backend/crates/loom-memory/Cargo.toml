@@ -1,8 +1,8 @@
-[package]
+﻿[package]
 name = "loom-memory"
-version = "0.2.18"
+version = "0.2.20"
 edition = "2024"
-description = "Memory kernel for openLoom v2 — event store, cognition pipeline, knowledge graph, persona"
+description = "Memory kernel for openLoom v2 �?event store, cognition pipeline, knowledge graph, persona"
 
 [dependencies]
 loom-types = { path = "../loom-types" }

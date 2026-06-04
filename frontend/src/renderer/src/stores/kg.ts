@@ -24,6 +24,7 @@ export interface KgSlice {
   cognitionListSubjects: () => Promise<void>
   cognitionLoadSnapshots: (cognitionId: number) => Promise<void>
   kgPrune: (olderThanDays: number) => Promise<void>
+  memoryPromote: (sessionId: string, minConfidence?: number) => Promise<{ promoted_nodes: number; promoted_cognitions: number }>
 }
 
 export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
@@ -213,5 +214,17 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
     await loomRpc('kg.prune', { older_than_days: olderThanDays })
     await get().kgLoadStats()
     await get().kgListNodes()
+  },
+
+  memoryPromote: async (sessionId, minConfidence = 0.5) => {
+    const result = await loomRpc<{ promoted_nodes: number; promoted_cognitions: number }>(
+      'memory.promote',
+      { session_id: sessionId, min_confidence: minConfidence },
+    )
+    await get().kgLoadStats()
+    // Refresh cognition list after promotion
+    const curSubject = 'USER'
+    await get().cognitionListBySubject(curSubject, undefined)
+    return result
   },
 })

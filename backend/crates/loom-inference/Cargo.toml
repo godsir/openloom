@@ -1,8 +1,8 @@
-[package]
+﻿[package]
 name = "loom-inference"
-version = "0.2.18"
+version = "0.2.20"
 edition = "2024"
-description = "Inference engine for openLoom v2 — provider dispatch (Anthropic, OpenAI, DeepSeek, LM Studio, Ollama)"
+description = "Inference engine for openLoom v2 �?provider dispatch (Anthropic, OpenAI, DeepSeek, LM Studio, Ollama)"
 
 [dependencies]
 loom-types = { path = "../loom-types" }

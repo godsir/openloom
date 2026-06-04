@@ -1,8 +1,8 @@
-[package]
+﻿[package]
 name = "loom-security"
-version = "0.2.18"
+version = "0.2.20"
 edition = "2024"
-description = "Security layer for openLoom v2 — sandbox, approval, audit"
+description = "Security layer for openLoom v2 �?sandbox, approval, audit"
 
 [dependencies]
 loom-types = { path = "../loom-types" }

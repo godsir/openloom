@@ -22,13 +22,14 @@ export function createMainWindow(port: number): BrowserWindow {
     minHeight: 400,
     frame: false,
     titleBarStyle: 'hidden',
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#0B0F14',
     show: false,
     icon: getIconPath(),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      backgroundThrottling: false,
       preload: join(__dirname, '../preload/index.js'),
     },
   })

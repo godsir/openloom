@@ -2,7 +2,7 @@ import { useStore } from '../stores'
 import { renderMarkdown } from '../utils/markdown'
 import { sanitizeHtml } from '../utils/markdown-sanitizer'
 
-const FLUSH_INTERVAL = 200
+const FLUSH_INTERVAL = 16
 
 interface BufferState {
   messageId: string | null
@@ -35,7 +35,8 @@ interface BufferState {
     status: 'running' | 'done' | 'error'
     result?: string
   }>
-  flushTimer: ReturnType<typeof setTimeout> | null
+  rafId: number | null
+  _lastFlush: number
   _lastTextLen: number
   _lastThinkLen: number
 }
@@ -63,7 +64,7 @@ class StreamBufferManager {
     buf.inVision = false
     buf.visionDone = false
     buf.visionBatches = []
-    if (buf.flushTimer) { clearTimeout(buf.flushTimer); buf.flushTimer = null }
+    if (buf.rafId) { cancelAnimationFrame(buf.rafId); buf.rafId = null }
   }
 
   /** Remove a message from the store by ID. */
@@ -94,7 +95,8 @@ class StreamBufferManager {
         inVision: false,
         visionDone: false,
         visionBatches: [],
-        flushTimer: null,
+        rafId: null,
+        _lastFlush: 0,
         _lastTextLen: 0,
         _lastThinkLen: 0,
       })
@@ -259,7 +261,7 @@ class StreamBufferManager {
 
   handleStreamEnd(sessionId: string): void {
     const buf = this.ensureBuffer(sessionId)
-    if (buf.flushTimer) clearTimeout(buf.flushTimer)
+    if (buf.rafId) { cancelAnimationFrame(buf.rafId); buf.rafId = null }
     buf.inThinking = false
     this.flush(buf, sessionId)
     const usage = useStore.getState().usageBySession.get(sessionId)
@@ -321,11 +323,24 @@ class StreamBufferManager {
   }
 
   private scheduleFlush(buf: BufferState, sessionId: string): void {
-    if (buf.flushTimer) return
-    buf.flushTimer = setTimeout(() => {
-      buf.flushTimer = null
-      this.flush(buf, sessionId)
-    }, FLUSH_INTERVAL)
+    if (buf.rafId) return
+    const now = performance.now()
+    const elapsed = now - buf._lastFlush
+    if (elapsed < FLUSH_INTERVAL) {
+      // Too soon since last flush — schedule a delayed rAF
+      buf.rafId = requestAnimationFrame(() => {
+        buf.rafId = null
+        this.flush(buf, sessionId)
+        buf._lastFlush = performance.now()
+      })
+    } else {
+      // Flush immediately on next frame
+      buf.rafId = requestAnimationFrame(() => {
+        buf.rafId = null
+        this.flush(buf, sessionId)
+        buf._lastFlush = performance.now()
+      })
+    }
   }
 
   private flush(buf: BufferState, sessionId: string): void {
@@ -445,7 +460,7 @@ class StreamBufferManager {
 
   clear(sessionId: string): void {
     const buf = this.buffers.get(sessionId)
-    if (buf?.flushTimer) clearTimeout(buf.flushTimer)
+    if (buf?.rafId) cancelAnimationFrame(buf.rafId)
     this.buffers.delete(sessionId)
   }
 }

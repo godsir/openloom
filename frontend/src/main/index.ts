@@ -8,6 +8,21 @@ import { getStoreKey } from './store'
 import { initPet, registerPetProtocol } from './pet'
 import { startConfigWatcher } from './config-watcher'
 
+// Windows tuning.
+if (process.platform === 'win32') {
+  // Keep timers running so streaming flushes stay smooth when the window
+  // is in the background or partially occluded.
+  app.commandLine.appendSwitch('disable-background-timer-throttling')
+
+  // User escape hatch — only honoured if explicitly enabled via Settings.
+  // Falls back to software compositing; reduces animation smoothness but
+  // can work around driver/compositor flicker on some Win11 setups.
+  const disableHwAccel = getStoreKey<boolean>('disableHardwareAcceleration', false)
+  if (disableHwAccel) {
+    app.disableHardwareAcceleration()
+  }
+}
+
 let port = 0
 let isQuitting = false
 

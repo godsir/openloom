@@ -1,8 +1,8 @@
-[package]
+﻿[package]
 name = "loom-plugins"
-version = "0.2.18"
+version = "0.2.20"
 edition = "2024"
-description = "Plugin discovery and manifest loading for openLoom v2 — Claude Code / OpenClaw compatible"
+description = "Plugin discovery and manifest loading for openLoom v2 �?Claude Code / OpenClaw compatible"
 
 [dependencies]
 anyhow = "1"

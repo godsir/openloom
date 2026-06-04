@@ -68,6 +68,26 @@ impl MemoryDb {
              END;",
         )?;
 
+        // --- kg_nodes_fts sync triggers ---
+        // Drop the standalone FTS5 table created in V1__memory.sql and rebuild it
+        // with proper sync triggers so insert/update/delete on kg_nodes are
+        // reflected in the FTS index used by search_entities().
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS kg_nodes_fts;
+             CREATE VIRTUAL TABLE kg_nodes_fts USING fts5(name, description, content='kg_nodes', content_rowid='id');
+             INSERT INTO kg_nodes_fts(rowid, name, description) SELECT id, name, description FROM kg_nodes;
+             CREATE TRIGGER IF NOT EXISTS kg_nodes_fts_ai AFTER INSERT ON kg_nodes BEGIN
+                 INSERT INTO kg_nodes_fts(rowid, name, description)
+                 VALUES (new.id, new.name, new.description);
+             END;
+             CREATE TRIGGER IF NOT EXISTS kg_nodes_fts_au AFTER UPDATE ON kg_nodes BEGIN
+                 INSERT INTO kg_nodes_fts(kg_nodes_fts, rowid, name, description)
+                 VALUES('delete', old.id, old.name, old.description);
+                 INSERT INTO kg_nodes_fts(rowid, name, description)
+                 VALUES (new.id, new.name, new.description);
+             END;",
+        )?;
+
         Ok(Self { conn })
     }
 
@@ -92,5 +112,83 @@ impl MemoryDb {
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kg_nodes_fts_sync_triggers() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("memory.db");
+        let db = MemoryDb::open(&db_path).unwrap();
+        let conn = db.conn();
+
+        // Insert a kg_node — FTS trigger should auto-populate kg_nodes_fts
+        conn.execute(
+            "INSERT INTO kg_nodes (name, entity_type, description, confidence, scope)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params!["Rust", "Technology", "Systems programming language", 0.9, "global"],
+        )
+        .unwrap();
+
+        // Verify it's in kg_nodes
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM kg_nodes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "kg_nodes should have 1 row");
+
+        // Verify it's in kg_nodes_fts (the fix ensures triggers populate it)
+        let fts_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM kg_nodes_fts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            fts_count, 1,
+            "kg_nodes_fts should have 1 row — FTS sync trigger is working"
+        );
+
+        // Verify FTS search actually finds it
+        let fts_match: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM kg_nodes_fts WHERE kg_nodes_fts MATCH ?1",
+                rusqlite::params!["Rust"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            fts_match, 1,
+            "FTS search for 'Rust' should return 1 match"
+        );
+
+        // Test UPDATE trigger: change description, should still be searchable
+        conn.execute(
+            "UPDATE kg_nodes SET description = 'Fast systems language' WHERE name = 'Rust'",
+            [],
+        )
+        .unwrap();
+        let fts_after_update: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM kg_nodes_fts WHERE kg_nodes_fts MATCH ?1",
+                rusqlite::params!["systems"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            fts_after_update, 1,
+            "After UPDATE, FTS should still find the node by new description"
+        );
+
+        // Test DELETE trigger
+        conn.execute("DELETE FROM kg_nodes WHERE name = 'Rust'", [])
+            .unwrap();
+        let fts_after_delete: i64 = conn
+            .query_row("SELECT COUNT(*) FROM kg_nodes_fts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            fts_after_delete, 0,
+            "After DELETE, FTS should have 0 rows — delete trigger is working"
+        );
     }
 }

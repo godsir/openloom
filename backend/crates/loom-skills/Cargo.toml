@@ -1,8 +1,8 @@
-[package]
+﻿[package]
 name = "loom-skills"
-version = "0.2.18"
+version = "0.2.20"
 edition = "2024"
-description = "Skill loading for openLoom v2 — Claude Code / OpenClaw compatible SKILL.md parser"
+description = "Skill loading for openLoom v2 �?Claude Code / OpenClaw compatible SKILL.md parser"
 
 [dependencies]
 loom-types = { path = "../loom-types" }
