@@ -13,6 +13,7 @@ let petWindow: BrowserWindow | null = null
 let petEnabled = false
 let dndEnabled = false
 let onDndChanged: (() => void) | null = null
+let ipcRegistered = false
 
 export function registerPetProtocol(): void {
   protocol.handle('loom-pet', (request) => {
@@ -54,27 +55,111 @@ function seedDefaultPet(): void {
   copyFileSync(join(src, 'spritesheet.webp'), join(dest, 'spritesheet.webp'))
 }
 
-// IPC: list all installed pets
-ipcMain.handle('pets:list', () => {
-  ensurePetsDir()
-  if (!existsSync(PETS_DIR)) return []
-  try {
-    return readdirSync(PETS_DIR, { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .map(d => {
-        const metaPath = join(PETS_DIR, d.name, 'pet.json')
-        if (!existsSync(metaPath)) return null
-        try {
-          const meta = JSON.parse(readFileSync(metaPath, 'utf-8'))
-          meta.id = d.name // overwrite id with directory name
-          return meta
-        } catch { return null }
-      })
-      .filter(Boolean)
-  } catch { return [] }
-})
+function registerPetIpc(): void {
+  if (ipcRegistered) return
+  ipcRegistered = true
+
+  // IPC: list all installed pets
+  ipcMain.handle('pets:list', () => {
+    ensurePetsDir()
+    if (!existsSync(PETS_DIR)) return []
+    try {
+      return readdirSync(PETS_DIR, { withFileTypes: true })
+        .filter(d => d.isDirectory())
+        .map(d => {
+          const metaPath = join(PETS_DIR, d.name, 'pet.json')
+          if (!existsSync(metaPath)) return null
+          try {
+            const meta = JSON.parse(readFileSync(metaPath, 'utf-8'))
+            meta.id = d.name // overwrite id with directory name
+            return meta
+          } catch { return null }
+        })
+        .filter(Boolean)
+    } catch { return [] }
+  })
+
+  ipcMain.on('pet:move', (_e, dx: number, dy: number) => {
+    if (petWindow && !petWindow.isDestroyed()) {
+      const [x, y] = petWindow.getPosition()
+      const [ww, wh] = petWindow.getSize()
+      // Compute virtual desktop bounds across all displays
+      const displays = screen.getAllDisplays()
+      let vMinX = Infinity, vMinY = Infinity, vMaxX = -Infinity, vMaxY = -Infinity
+      for (const d of displays) {
+        const wa = d.workArea
+        vMinX = Math.min(vMinX, wa.x)
+        vMinY = Math.min(vMinY, wa.y)
+        vMaxX = Math.max(vMaxX, wa.x + wa.width)
+        vMaxY = Math.max(vMaxY, wa.y + wa.height)
+      }
+      const newX = Math.max(vMinX - ww + 40, Math.min(vMaxX - 40, x + dx))
+      const newY = Math.max(vMinY - wh + 40, Math.min(vMaxY - 40, y + dy))
+      petWindow.setPosition(newX, newY)
+      setStoreKey(posKey(), { x: newX, y: newY })
+    }
+  })
+
+  ipcMain.on('pet:resize', (_e, spriteSize: number) => {
+    if (petWindow && !petWindow.isDestroyed()) {
+      const newSize = spriteSize + PADDING
+      petWindow.setSize(newSize, newSize)
+    }
+  })
+
+  ipcMain.on('pet:context-menu', () => {
+    const menu = Menu.buildFromTemplate([
+      { label: '大小：小 (128px)', click: () => sendPetCommand('size:small') },
+      { label: '大小：中 (192px)', click: () => sendPetCommand('size:medium') },
+      { label: '大小：大 (256px)', click: () => sendPetCommand('size:large') },
+      { type: 'separator' },
+      { label: dndEnabled ? '关闭勿扰模式' : '开启勿扰模式', click: () => { togglePetDnd() } },
+      { type: 'separator' },
+      { label: '关闭桌宠', click: () => sendPetCommand('close') },
+    ])
+    menu.popup({ window: petWindow! })
+  })
+
+  // Pixel-level hit testing: toggle click-through so transparent pixels pass through
+  // but the actual sprite captures mouse events for drag and right-click.
+  ipcMain.on('pet:set-ignore-mouse', (_e, ignore: boolean) => {
+    if (petWindow && !petWindow.isDestroyed()) {
+      if (ignore) {
+        petWindow.setIgnoreMouseEvents(true, { forward: true })
+      } else {
+        petWindow.setIgnoreMouseEvents(false)
+      }
+    }
+  })
+
+  // DnD toggle from renderer (hover unlock)
+  ipcMain.on('pet:set-dnd', (_e, on: boolean) => {
+    dndEnabled = on
+    setStoreKey('petDnd', on)
+    if (onDndChanged) onDndChanged()
+  })
+
+  // Cursor following — return window + cursor screen positions
+  ipcMain.handle('pet:get-positions', () => {
+    if (petWindow && !petWindow.isDestroyed()) {
+      const [wx, wy] = petWindow.getPosition()
+      const [ww, wh] = petWindow.getSize()
+      const cp = screen.getCursorScreenPoint()
+      return { winX: wx, winY: wy, winW: ww, winH: wh, cursorX: cp.x, cursorY: cp.y }
+    }
+    return null
+  })
+
+  ipcMain.handle('pet:toggle', (_e, on: boolean) => {
+    petEnabled = on
+    setStoreKey('petEnabled', on)
+    if (on) create(); else close()
+    return on
+  })
+}
 
 export function initPet(): void {
+  registerPetIpc()
   ensurePetsDir()
   seedDefaultPet()
   petEnabled = getStoreKey('petEnabled', false) as boolean
@@ -86,84 +171,6 @@ function sendPetCommand(cmd: string): void {
     petWindow.webContents.send('pet:command', cmd)
   }
 }
-
-ipcMain.on('pet:move', (_e, dx: number, dy: number) => {
-  if (petWindow && !petWindow.isDestroyed()) {
-    const [x, y] = petWindow.getPosition()
-    const [ww, wh] = petWindow.getSize()
-    // Compute virtual desktop bounds across all displays
-    const displays = screen.getAllDisplays()
-    let vMinX = Infinity, vMinY = Infinity, vMaxX = -Infinity, vMaxY = -Infinity
-    for (const d of displays) {
-      const wa = d.workArea
-      vMinX = Math.min(vMinX, wa.x)
-      vMinY = Math.min(vMinY, wa.y)
-      vMaxX = Math.max(vMaxX, wa.x + wa.width)
-      vMaxY = Math.max(vMaxY, wa.y + wa.height)
-    }
-    const newX = Math.max(vMinX - ww + 40, Math.min(vMaxX - 40, x + dx))
-    const newY = Math.max(vMinY - wh + 40, Math.min(vMaxY - 40, y + dy))
-    petWindow.setPosition(newX, newY)
-    setStoreKey(posKey(), { x: newX, y: newY })
-  }
-})
-
-ipcMain.on('pet:resize', (_e, spriteSize: number) => {
-  if (petWindow && !petWindow.isDestroyed()) {
-    const newSize = spriteSize + PADDING
-    petWindow.setSize(newSize, newSize)
-  }
-})
-
-ipcMain.on('pet:context-menu', () => {
-  const menu = Menu.buildFromTemplate([
-    { label: '大小：小 (128px)', click: () => sendPetCommand('size:small') },
-    { label: '大小：中 (192px)', click: () => sendPetCommand('size:medium') },
-    { label: '大小：大 (256px)', click: () => sendPetCommand('size:large') },
-    { type: 'separator' },
-    { label: dndEnabled ? '关闭勿扰模式' : '开启勿扰模式', click: () => { togglePetDnd() } },
-    { type: 'separator' },
-    { label: '关闭桌宠', click: () => sendPetCommand('close') },
-  ])
-  menu.popup({ window: petWindow! })
-})
-
-// Pixel-level hit testing: toggle click-through so transparent pixels pass through
-// but the actual sprite captures mouse events for drag and right-click.
-ipcMain.on('pet:set-ignore-mouse', (_e, ignore: boolean) => {
-  if (petWindow && !petWindow.isDestroyed()) {
-    if (ignore) {
-      petWindow.setIgnoreMouseEvents(true, { forward: true })
-    } else {
-      petWindow.setIgnoreMouseEvents(false)
-    }
-  }
-})
-
-// DnD toggle from renderer (hover unlock)
-ipcMain.on('pet:set-dnd', (_e, on: boolean) => {
-  dndEnabled = on
-  setStoreKey('petDnd', on)
-  if (onDndChanged) onDndChanged()
-})
-
-// Cursor following — return window + cursor screen positions
-ipcMain.handle('pet:get-positions', () => {
-  if (petWindow && !petWindow.isDestroyed()) {
-    const [wx, wy] = petWindow.getPosition()
-    const [ww, wh] = petWindow.getSize()
-    const cp = screen.getCursorScreenPoint()
-    return { winX: wx, winY: wy, winW: ww, winH: wh, cursorX: cp.x, cursorY: cp.y }
-  }
-  return null
-})
-
-ipcMain.handle('pet:toggle', (_e, on: boolean) => {
-  petEnabled = on
-  setStoreKey('petEnabled', on)
-  if (on) create(); else close()
-  return on
-})
 
 function posKey(): string { return 'petPosition' }
 

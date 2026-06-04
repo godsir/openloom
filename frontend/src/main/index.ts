@@ -30,13 +30,12 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'loom-pet', privileges: { standard: true, secure: true, supportFetchAPI: true } },
 ])
 
-app.whenReady().then(async () => {
-  registerPetProtocol()
-  if (!app.requestSingleInstanceLock()) {
-    app.quit()
-    return
-  }
-
+// Single instance lock MUST be requested before the ready event.
+// Calling it inside whenReady() is too late and causes a native
+// Electron window to flash on auto-start.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
   app.on('second-instance', () => {
     const win = getMainWindow()
     if (win) {
@@ -45,6 +44,10 @@ app.whenReady().then(async () => {
       win.focus()
     }
   })
+}
+
+app.whenReady().then(async () => {
+  registerPetProtocol()
 
   // Auto-start on boot
   const autoStart = getStoreKey('autoStart', false)
