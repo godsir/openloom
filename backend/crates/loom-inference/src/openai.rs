@@ -86,10 +86,8 @@ impl OpenAIClient {
                 ToolChoice::Required => serde_json::json!("required"),
             };
         }
-        body["temperature"] = req.temperature.into();
-        if let Some(budget) = req.thinking_budget {
-            let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };
-            body["reasoning_effort"] = serde_json::json!(effort);
+        if req.temperature > 0.0 {
+            body["temperature"] = req.temperature.into();
         }
 
         // Debug: log request body length for troubleshooting
@@ -335,10 +333,8 @@ impl CloudClient for OpenAIClient {
             "model": self.model, "max_tokens": req.max_tokens, "messages": messages,
             "stream": true, "stream_options": {"include_usage": true},
         });
-        body["temperature"] = req.temperature.into();
-        if let Some(budget) = req.thinking_budget {
-            let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };
-            body["reasoning_effort"] = serde_json::json!(effort);
+        if req.temperature > 0.0 {
+            body["temperature"] = req.temperature.into();
         }
         if !req.tools.is_empty() {
             body["tools"] = serde_json::json!(req.tools.iter().map(|t| serde_json::json!({
@@ -437,10 +433,8 @@ impl CloudClient for OpenAIClient {
             "model": self.model, "max_tokens": req.max_tokens, "messages": messages,
             "stream": true, "stream_options": {"include_usage": true},
         });
-        body["temperature"] = req.temperature.into();
-        if let Some(budget) = req.thinking_budget {
-            let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };
-            body["reasoning_effort"] = serde_json::json!(effort);
+        if req.temperature > 0.0 {
+            body["temperature"] = req.temperature.into();
         }
         if !req.tools.is_empty() {
             body["tools"] = serde_json::json!(req.tools.iter().map(|t| serde_json::json!({
@@ -477,8 +471,6 @@ impl CloudClient for OpenAIClient {
         use futures::StreamExt;
         let mut stream = resp.bytes_stream();
         let mut buf: Vec<u8> = Vec::new();
-        let mut acc_text = String::new();
-        let mut in_xml_tool_calls = false;
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result?;
             buf.extend_from_slice(&chunk);
@@ -504,30 +496,9 @@ impl CloudClient for OpenAIClient {
                             }
                             if let Some(t) = d["content"].as_str()
                                 && !t.is_empty()
+                                && tx.send(StreamDelta::Text(t.to_string())).await.is_err()
                             {
-                                acc_text.push_str(t);
-                                // Suppress XML/HTML tool call text from appearing in chat
-                                let has_xml = acc_text.contains("<tool_calls")
-                                    || acc_text.contains("<invoke")
-                                    || acc_text.contains("<request_tools")
-                                    || acc_text.contains("<function_call");
-                                if !in_xml_tool_calls && has_xml {
-                                    in_xml_tool_calls = true;
-                                }
-                                if !in_xml_tool_calls {
-                                    if tx.send(StreamDelta::Text(t.to_string())).await.is_err() {
-                                        return Ok(());
-                                    }
-                                } else {
-                                    // Check for any closing XML tool tag
-                                    let has_close = acc_text.contains("</tool_calls>")
-                                        || acc_text.contains("</invoke>")
-                                        || acc_text.contains("</request_tools>")
-                                        || acc_text.contains("</function_call>");
-                                    if has_close {
-                                        in_xml_tool_calls = false;
-                                    }
-                                }
+                                return Ok(());
                             }
                             if let Some(tcs) = d["tool_calls"].as_array() {
                                 for tc in tcs {

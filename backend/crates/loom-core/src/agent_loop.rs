@@ -45,7 +45,6 @@ pub struct TurnResult {
 }
 
 /// Configuration for the agent loop.
-#[derive(Clone)]
 pub struct AgentLoopConfig {
     /// System prompt injected at the start of every turn.
     pub system_prompt: String,
@@ -95,26 +94,46 @@ pub struct AgentLoopConfig {
     pub event_bus: Option<EventBus>,
     /// Pending permission approvals keyed by call_id
     pub pending_permissions: Option<Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>>,
-    /// Optional sandbox guard for file/path access control.
-    /// When None, no sandbox checks are performed (backward compatible).
-    pub sandbox: Option<Arc<loom_security::sandbox::SandboxGuard>>,
 }
 
 impl Default for AgentLoopConfig {
     fn default() -> Self {
         Self {
-            system_prompt: concat!(
-                "你是 openLoom，运行在用户本机的 AI 助手。",
-                "核心：简洁直接、行动优先、不确定就明说。",
-                "简单问题直接回答，不要无意义调工具。",
-                "可用工具（通过 request_tools 按需加载）：",
-                "文件/Shell/搜索/网络/LSP/MCP/技能/子代理。",
-                "批量操作用 shell 一次性完成；改文件前先读确认。",
-                "如果系统提示中出现 ## Available Skills 列表，且用户请求匹配某个 skill 的描述，",
-                "必须先调用 use_skill(skill_name=\"<exact-name>\") 加载完整指令，再按指令行事。",
-                "不要用通用知识完成本应由 skill 处理的任务。",
-            ).to_string(),
-            max_iterations: 30,
+            system_prompt: vec![
+                "你是 openLoom，一个运行在用户本机、拥有真实系统访问能力的 AI 助手。",
+                "",
+                "## 核心原则",
+                "- 简洁直接：用最短的话把事说清楚，不要客套废话。",
+                "- 行动优先：能直接动手解决的问题就动手，不要只给建议。",
+                "- 诚实透明：不确定的事明确告知，不要编造。操作前说明风险。",
+                "- 上下文感知：关注当前工作区路径，理解用户的文件结构和项目背景。",
+                "",
+                "## 工具使用",
+                "你拥有以下工具类别，通过 request_tools 按需加载：",
+                "- 文件操作：读取、写入、编辑、删除文件，列出目录",
+                "- Shell：执行终端命令（需关注工作区路径）",
+                "- 搜索：全文搜索文件内容，支持正则",
+                "- 网络：搜索网页、抓取 URL 内容",
+                "- LSP：代码诊断、补全、跳转定义、查找引用（支持 30+ 语言）",
+                "- MCP：通过 MCP 协议连接外部工具服务",
+                "- 技能：加载用户导入的技能模块",
+                "",
+                "工具使用规则：",
+                "1. 简单问题直接回答，不要无意义地调用工具。",
+                "2. 需要工具时先调 request_tools 告知需要哪些工具，加载后再使用。",
+                "3. 批量操作用 shell 一次性完成，不要逐个文件处理。",
+                "4. 修改文件前先读文件确认当前内容，修改后展示 diff。",
+                "5. 长时间操作说明进度，出错时说明原因和恢复方案。",
+                "",
+                "## 子代理",
+                "需要并行处理多个独立子任务时，可以派生子代理并发执行。",
+                "子代理独立运行，完成后汇总结果。",
+                "",
+                "## 知识图谱",
+                "对话中的重要实体和关系会被自动提取到知识图谱。",
+                "长期记忆中存储了你的历史交互和用户偏好，会作为上下文注入。",
+            ].join("\n"),
+            max_iterations: 100,
             max_tokens: 4096,
             temperature: 0.0,
             lazy_tools: true,
@@ -135,7 +154,6 @@ impl Default for AgentLoopConfig {
             permission_mode: "operate".to_string(),
             event_bus: None,
             pending_permissions: None,
-            sandbox: None,
         }
     }
 }
@@ -247,7 +265,7 @@ fn load_image_as_content_part(path: &str) -> Result<ContentPart> {
 fn request_tools_definition() -> ToolDefinition {
     ToolDefinition {
         name: "request_tools".into(),
-        description: "MUST call this first before any file/shell/search/skill operation. You can either describe what you need to do, or specify tool names directly. The matching tools will load and become available. IMPORTANT: if you need to use a skill listed in the Available Skills section, you must first request the use_skill tool through this meta-tool, then call use_skill(skill_name=\"<name>\").".into(),
+        description: "MUST call this first before any file/shell/search operation. You can either describe what you need to do, or specify tool names directly. The matching tools will load and become available.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -259,89 +277,44 @@ fn request_tools_definition() -> ToolDefinition {
     }
 }
 
-/// Truncate tool output to prevent single huge results from dominating the
-/// conversation context. Classification:
-/// - < 2 KB   → keep full
-/// - 2-10 KB  → keep first 40 % + last 40 %, mark truncated
-/// - > 10 KB  → keep first 2 KB + last 2 KB, mark truncated with original size
-fn truncate_tool_content(raw: &str) -> String {
-    const SMALL: usize = 2_000;   // chars, not bytes
-    const MEDIUM: usize = 10_000;
-    const HEAD_TAIL_FRAC: usize = 40; // percent
-    const LARGE_HEAD: usize = 2_000;
-
-    let chars: Vec<char> = raw.chars().collect();
-    let len = chars.len();
-    if len <= SMALL {
-        return raw.to_string();
-    }
-    if len <= MEDIUM {
-        let head = len * HEAD_TAIL_FRAC / 100;
-        let tail = len - head;
-        let head_str: String = chars[..head].iter().collect();
-        let tail_str: String = chars[tail..].iter().collect();
-        return format!(
-            "{}\n\n[...{} 字已省略...]\n\n{}",
-            head_str,
-            len.saturating_sub(head + (len - tail)),
-            tail_str,
-        );
-    }
-    // Large: head + tail
-    let head_str: String = chars.iter().take(LARGE_HEAD).collect();
-    let tail_start = len.saturating_sub(LARGE_HEAD);
-    let tail_str: String = chars[tail_start..].iter().collect();
-    format!(
-        "{}\n\n[...{} 字已省略（共 {} 字）...]\n\n{}",
-        head_str,
-        len.saturating_sub(LARGE_HEAD * 2),
-        len,
-        tail_str,
-    )
-}
-
-/// Match tool names/descriptions against the reason string.
-/// Uses semantic keyword mapping + substring matching for higher precision.
+/// Match tool names/descriptions against keywords in the reason string.
+/// Falls back to the built-in tools if nothing matches.
 fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
     let r = reason.to_lowercase();
+    let keywords: Vec<&str> = r.split_whitespace().filter(|w| w.len() >= 3).collect();
 
-    // Semantic intent → tool name mapping (CJK + English)
-    let intent_map: &[(&[&str], &str)] = &[
-        (&["读", "read", "查看", "打开", "open", "cat", "view"], "file_read"),
-        (&["写", "write", "保存", "save", "创建", "create", "生成", "generate", "新建"], "file_write"),
-        (&["删", "delete", "remove", "rm", "清除"], "file_delete"),
-        (&["搜", "search", "find", "grep", "查找", "寻找", "搜索", "检索"], "content_search"),
-        (&["列", "list", "ls", "dir", "目录", "文件列表", "列出"], "file_list"),
-        (&["执行", "运行", "run", "exec", "shell", "命令", "command", "终端", "terminal", "bash", "cmd", "编译", "build", "测试", "test", "安装", "install"], "shell"),
-        (&["网络", "搜索", "网页", "web", "search", "http", "https", "查询", "api", "fetch", "抓取", "爬", "股票", "行情", "天气", "新闻", "news", "股价"], "web_search"),
-        (&["lsp", "补全", "诊断", "跳转", "定义", "引用", "hover", "completion", "diagnostic", "definition", "reference"], "lsp_diagnostics"),
-        (&["技能", "skill", "use_skill"], "use_skill"),
-    ];
-
-    let mut matched_names = std::collections::HashSet::new();
-
-    // 1. Semantic intent matching
-    for (keywords, tool_name) in intent_map {
-        if keywords.iter().any(|kw| r.contains(kw)) {
-            matched_names.insert(*tool_name);
-        }
-    }
-
-    // 2. Substring matching on tool name/description as fallback
-    let keywords: Vec<&str> = r.split_whitespace().filter(|w| w.len() >= 2).collect();
-    for t in all {
-        if t.name == "request_tools" { continue; }
-        let nl = t.name.to_lowercase();
-        let dl = t.description.to_lowercase();
-        if keywords.iter().any(|kw| nl.contains(kw) || dl.contains(kw)) {
-            matched_names.insert(t.name.as_str());
-        }
-    }
-
-    all.iter()
-        .filter(|t| matched_names.contains(t.name.as_str()))
+    let mut matched: Vec<ToolDefinition> = all
+        .iter()
+        .filter(|t| {
+            if t.name == "request_tools" {
+                return false;
+            }
+            let nl = t.name.to_lowercase();
+            let dl = t.description.to_lowercase();
+            keywords.iter().any(|kw| nl.contains(kw) || dl.contains(kw))
+        })
         .cloned()
-        .collect()
+        .collect();
+
+    // Always include the essential built-in tools as a base
+    let builtins: &[&str] = &[
+        "shell",
+        "file_read",
+        "file_write",
+        "file_list",
+        "content_search",
+        "file_delete",
+        "use_skill",
+    ];
+    for name in builtins {
+        if !matched.iter().any(|t| t.name == *name) {
+            if let Some(t) = all.iter().find(|t| t.name == *name) {
+                matched.push(t.clone());
+            }
+        }
+    }
+
+    matched
 }
 
 pub(crate) fn build_user_message(user_message: &str, attached_images: &[ContentPart]) -> Message {
@@ -429,7 +402,7 @@ async fn run_agent_turn_inner(
 ) -> Result<TurnResult> {
     client.prefix_cache_reset();
     let tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
-    let assembler = ContextAssembler::new(&config.system_prompt, 16384);
+    let assembler = ContextAssembler::new(&config.system_prompt, 8192);
     let opts = AssembleOptions {
         persona: config.persona.clone(),
         summary: config.summary.clone(),
@@ -548,11 +521,8 @@ async fn run_agent_turn_inner(
     let mut total_prompt = 0usize;
     let mut total_completion = 0usize;
 
-    // Create tool context with workspace path and optional sandbox guard
-    let tool_context = ToolContext::with_workspace_and_sandbox(
-        config.workspace_path.clone(),
-        config.sandbox.clone(),
-    );
+    // Create tool context with workspace path for file operations
+    let tool_context = ToolContext::with_workspace(config.workspace_path.clone());
 
     for iteration in 0..config.max_iterations {
         // Token budget check: stop if cumulative prompt tokens exceed the budget
@@ -585,7 +555,7 @@ async fn run_agent_turn_inner(
                 content_parts: vec![ContentPart::Text {
                     text: format!("任务进行中（已用 {} tokens）。输入「继续」以接着执行。", total_prompt),
                 }],
-                tool_messages: tool_messages.clone(),
+                tool_messages: vec![],
                 vision_usage: None,
             });
         }
@@ -605,7 +575,6 @@ async fn run_agent_turn_inner(
                     .await;
             }
             info!("agent turn cancelled by user at iteration {}", iteration);
-            // Preserve tool messages so sub-agent context isn't lost on cancel.
             return Ok(TurnResult {
                 response: "[已中断]".into(),
                 thinking: String::new(),
@@ -618,7 +587,7 @@ async fn run_agent_turn_inner(
                 content_parts: vec![ContentPart::Text {
                     text: "[已中断]".into(),
                 }],
-                tool_messages: tool_messages.clone(),
+                tool_messages: vec![],
                 vision_usage: None,
             });
         }
@@ -853,24 +822,6 @@ async fn run_agent_turn_inner(
                     continue;
                 }
 
-                // Skill-first routing: if the LLM calls web_search or web_fetch,
-                // and use_skill has not been used yet in this turn, intercept
-                // and suggest loading skills first (matching the streaming path).
-                if tool_name == "web_search" || tool_name == "web_fetch" {
-                    let skill_used = tool_messages.iter().any(|msg| {
-                        msg.content.iter().any(|part| {
-                            matches!(part, ContentPart::ToolResult { name, .. } if name == "use_skill")
-                        })
-                    });
-                    if !skill_used {
-                        let content = "内置搜索已禁用，因为技能更准确。调用 use_skill('list') 查看可用技能，或安装浏览器技能后加载。如确需内置搜索，可重试。";
-                        let skill_msg = Message::tool(&tc.id, &tool_name, content);
-                        messages.push(skill_msg.clone());
-                        tool_messages.push(skill_msg);
-                        continue;
-                    }
-                }
-
                 let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
                 // Drain progress updates in background to avoid SendError in tool implementations
                 tokio::spawn(async move {
@@ -902,7 +853,7 @@ async fn run_agent_turn_inner(
                         let content = if result.is_error {
                             format!("Error: {}", result.content)
                         } else {
-                            truncate_tool_content(&result.content)
+                            result.content
                         };
 
                         // Fire PostToolUse hook
@@ -1094,19 +1045,11 @@ async fn run_agent_turn_streaming_inner(
     client.prefix_cache_reset();
     let all_tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
     let mut tools = if config.lazy_tools {
-        // First-turn surface: request_tools (meta) + use_skill (skill loader).
-        // Including use_skill directly avoids the two-hop dance
-        // (request_tools → use_skill → use_skill), which most models skip,
-        // making selected/available skills effectively unusable.
-        let mut initial = vec![request_tools_definition()];
-        if let Some(skill_tool) = all_tools.iter().find(|t| t.name == "use_skill") {
-            initial.push(skill_tool.clone());
-        }
-        initial
+        vec![request_tools_definition()]
     } else {
         all_tools.clone()
     };
-    let assembler = ContextAssembler::new(&config.system_prompt, 16384);
+    let assembler = ContextAssembler::new(&config.system_prompt, 8192);
     let opts = AssembleOptions {
         persona: config.persona.clone(),
         summary: config.summary.clone(),
@@ -1299,11 +1242,8 @@ async fn run_agent_turn_streaming_inner(
     let mut captured_images: Vec<(String, String)> = Vec::new();
     let mut completed_iterations = 0usize;
 
-    // Create tool context with workspace path and optional sandbox guard
-    let tool_context = ToolContext::with_workspace_and_sandbox(
-        config.workspace_path.clone(),
-        config.sandbox.clone(),
-    );
+    // Create tool context with workspace path for file operations
+    let tool_context = ToolContext::with_workspace(config.workspace_path.clone());
 
     for iteration in 0..config.max_iterations {
         // Token budget check: stop if cumulative prompt tokens exceed the budget
@@ -1337,7 +1277,7 @@ async fn run_agent_turn_streaming_inner(
                 cached_tokens: 0,
                 kv_cache_hit: None,
                 content_parts: vec![ContentPart::Text { text: "任务进行中，已达预算上限。".into() }],
-                tool_messages: tool_messages.clone(),
+                tool_messages: vec![],
                 vision_usage: None,
             });
         }
@@ -1357,42 +1297,21 @@ async fn run_agent_turn_streaming_inner(
                     .await;
             }
             tracing::info!("agent turn cancelled by user at iteration {}", iteration);
-            // Preserve accumulated text from previous iterations so the
-            // partial response can be persisted and used as context later.
-            let (interrupted_text, _is_empty_interrupt) = if final_text.is_empty() {
-                ("[已中断]".to_string(), true)
-            } else {
-                (format!("{}\n\n[已中断]", final_text), false)
-            };
-            let mut interrupted_parts: Vec<ContentPart> = Vec::new();
-            if !captured_thinking.is_empty() {
-                interrupted_parts.push(ContentPart::Thinking {
-                    text: captured_thinking.clone(),
-                });
-            }
-            interrupted_parts.push(ContentPart::Text {
-                text: interrupted_text.clone(),
-            });
-            for (media_type, data) in &captured_images {
-                interrupted_parts.push(ContentPart::Image {
-                    source_type: "base64".to_string(),
-                    media_type: media_type.clone(),
-                    data: data.clone(),
-                });
-            }
             let _ = delta_tx.send(StreamDelta::Text("[已中断]".into())).await;
             drop(delta_tx);
             return Ok(TurnResult {
-                response: interrupted_text,
-                thinking: captured_thinking,
+                response: "[已中断]".into(),
+                thinking: String::new(),
                 tool_calls_made,
                 iterations: iteration,
                 prompt_tokens: total_prompt,
                 completion_tokens: total_completion,
                 cached_tokens: 0,
                 kv_cache_hit: None,
-                content_parts: interrupted_parts,
-                tool_messages: tool_messages.clone(),
+                content_parts: vec![ContentPart::Text {
+                    text: "[已中断]".into(),
+                }],
+                tool_messages: vec![],
                 vision_usage: None,
             });
         }
@@ -1471,36 +1390,10 @@ async fn run_agent_turn_streaming_inner(
                         }
                         drop(stream_rx);
                         drop(stream_fut);
-                        // Preserve the already-accumulated partial text so the
-                        // user can continue the conversation with context.
-                        // Append interrupt marker so the orchestrator detects
-                        // this as a partial (not final) response.
-                        let interrupted_text = if attempt_text.is_empty() {
-                            "[已中断]".to_string()
-                        } else {
-                            format!("{}\n\n[已中断]", attempt_text)
-                        };
-                        let mut interrupted_parts: Vec<ContentPart> = Vec::new();
-                        if !attempt_thinking.is_empty() {
-                            interrupted_parts.push(ContentPart::Thinking {
-                                text: attempt_thinking.clone(),
-                            });
-                        }
-                        interrupted_parts.push(ContentPart::Text {
-                            text: interrupted_text.clone(),
-                        });
-                        // Preserve images from prior completed iterations
-                        for (media_type, data) in &captured_images {
-                            interrupted_parts.push(ContentPart::Image {
-                                source_type: "base64".to_string(),
-                                media_type: media_type.clone(),
-                                data: data.clone(),
-                            });
-                        }
                         let _ = delta_tx.send(StreamDelta::Text("[已中断]".into())).await;
                         drop(delta_tx);
                         return Ok(TurnResult {
-                            response: interrupted_text,
+                            response: "[已中断]".into(),
                             thinking: attempt_thinking,
                             tool_calls_made,
                             iterations: iteration,
@@ -1508,8 +1401,8 @@ async fn run_agent_turn_streaming_inner(
                             completion_tokens: total_completion + attempt_completion_tokens as usize,
                             cached_tokens: 0,
                             kv_cache_hit: None,
-                            content_parts: interrupted_parts,
-                            tool_messages: tool_messages.clone(),
+                            content_parts: vec![ContentPart::Text { text: "[已中断]".into() }],
+                            tool_messages: vec![],
                             vision_usage: None,
                         });
                     }
@@ -1535,10 +1428,10 @@ async fn run_agent_turn_streaming_inner(
                                     tc.3.push_str(&chunk);
                                 }
                             }
-                            StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens } => {
+                            StreamDelta::Usage { prompt_tokens, completion_tokens, .. } => {
                                 attempt_prompt_tokens += prompt_tokens;
                                 attempt_completion_tokens += completion_tokens;
-                                let _ = delta_tx.send(StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens }).await;
+                                let _ = delta_tx.send(StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens: 0, cache_write_tokens: 0 }).await;
                             }
                             StreamDelta::Image { media_type, data } => {
                                 attempt_images.push((media_type.clone(), data.clone()));
@@ -1583,8 +1476,7 @@ async fn run_agent_turn_streaming_inner(
                                             StreamDelta::Usage {
                                                 prompt_tokens,
                                                 completion_tokens,
-                                                cache_read_tokens,
-                                                cache_write_tokens,
+                                                ..
                                             } => {
                                                 attempt_prompt_tokens += prompt_tokens;
                                                 attempt_completion_tokens += completion_tokens;
@@ -1592,8 +1484,8 @@ async fn run_agent_turn_streaming_inner(
                                                     .send(StreamDelta::Usage {
                                                         prompt_tokens,
                                                         completion_tokens,
-                                                        cache_read_tokens,
-                                                        cache_write_tokens,
+                                                        cache_read_tokens: 0,
+                                                        cache_write_tokens: 0,
                                                     })
                                                     .await;
                                             }
@@ -1637,37 +1529,6 @@ async fn run_agent_turn_streaming_inner(
                     );
                     tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                     continue;
-                }
-                // If content was already forwarded to the frontend, return a
-                // partial TurnResult instead of an error so the accumulated
-                // text is preserved in the conversation context.
-                if forwarded_any && !attempt_text.is_empty() {
-                    tracing::warn!(
-                        error = %msg,
-                        partial_chars = attempt_text.len(),
-                        "stream error after content forwarded, returning partial result"
-                    );
-                    let partial = format!("{}\n\n[连接中断]", attempt_text);
-                    let mut partial_parts: Vec<ContentPart> = Vec::new();
-                    if !attempt_thinking.is_empty() {
-                        partial_parts.push(ContentPart::Thinking { text: attempt_thinking.clone() });
-                    }
-                    partial_parts.push(ContentPart::Text { text: partial.clone() });
-                    let _ = delta_tx.send(StreamDelta::Text("[连接中断]".into())).await;
-                    drop(delta_tx);
-                    return Ok(TurnResult {
-                        response: partial,
-                        thinking: attempt_thinking,
-                        tool_calls_made,
-                        iterations: iteration,
-                        prompt_tokens: total_prompt + attempt_prompt_tokens as usize,
-                        completion_tokens: total_completion + attempt_completion_tokens as usize,
-                        cached_tokens: 0,
-                        kv_cache_hit: None,
-                        content_parts: partial_parts,
-                        tool_messages: tool_messages.clone(),
-                        vision_usage: None,
-                    });
                 }
                 return Err(err);
             }
@@ -1788,29 +1649,6 @@ async fn run_agent_turn_streaming_inner(
                             .collect();
                     }
 
-                    // Always include use_skill so the LLM can discover and load skills
-                    if let Some(skill_tool) = all_tools.iter().find(|t| t.name == "use_skill") {
-                        if !matched.iter().any(|t| t.name == "use_skill") {
-                            matched.push(skill_tool.clone());
-                        }
-                    }
-
-                    // Skill-first routing: if the LLM wants web_search/web_fetch,
-                    // intercept and push use_skill instead — unless use_skill is
-                    // already loaded (LLM saw the skill list and chose to retry).
-                    let wants_web = matched.iter().any(|t| t.name == "web_search" || t.name == "web_fetch");
-                    let skill_already_loaded = tools.iter().any(|t| t.name == "use_skill");
-                    if wants_web && !skill_already_loaded {
-                        // Keep only use_skill + essential non-web tools
-                        matched.retain(|t| t.name == "use_skill" || t.name == "shell" || t.name == "file_read" || t.name == "file_write");
-                        let content = "内置搜索已禁用，因为技能更准确。调用 use_skill('list') 查看可用技能，或安装浏览器技能后加载。如确需内置搜索，再次调用 request_tools。";
-                        messages.push(Message::tool(tc_id, tc_name, content));
-                        tool_messages.push(messages.last().unwrap().clone());
-                        tools = matched;
-                        tool_calls_made += 1;
-                        continue;
-                    }
-
                     let names: Vec<&str> = matched.iter().map(|t| t.name.as_str()).collect();
                     tracing::info!(%reason, ?names, "request_tools matched");
                     let content = format!("Tools loaded: {}", names.join(", "));
@@ -1924,7 +1762,7 @@ async fn run_agent_turn_streaming_inner(
                         let content = if result.is_error {
                             format!("Error: {}", result.content)
                         } else {
-                            truncate_tool_content(&result.content)
+                            result.content
                         };
 
                         // Fire PostToolUse hook
