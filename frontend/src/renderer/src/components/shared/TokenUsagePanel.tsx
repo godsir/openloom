@@ -349,7 +349,7 @@ export default function TokenUsagePanel() {
   const maxProviderCost = Math.max(...costByProvider.map(p => p.cost), 0.01)
 
   // Handlers
-  const handleTimeRangeChange = useCallback((r: 'all' | '7d' | '30d') => {
+  const handleTimeRangeChange = useCallback((r: 'all' | 'today' | '7d' | '30d') => {
     setLoadError(null)
     setTimeRange(r)
   }, [setTimeRange])
@@ -449,13 +449,13 @@ export default function TokenUsagePanel() {
           {loading ? '加载中...' : hasData ? `${rankedModels.length} 个模型 / ${totalRequests} 次请求` : ''}
         </span>
         <div className={styles.timeRangeToggle}>
-          {(['all', '7d', '30d'] as const).map((r) => (
+          {(['today', '7d', '30d', 'all'] as const).map((r) => (
             <button
               key={r}
               className={`${styles.timeRangeBtn} ${timeRange === r ? styles.timeRangeBtnActive : ''}`}
               onClick={() => handleTimeRangeChange(r)}
             >
-              {r === 'all' ? '全部' : r === '7d' ? '近7天' : '近30天'}
+              {r === 'all' ? '全部' : r === 'today' ? '今天' : r === '7d' ? '近7天' : '近30天'}
             </button>
           ))}
           {hasData && (

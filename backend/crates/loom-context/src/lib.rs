@@ -5,8 +5,20 @@
 //! maximize KV cache reuse: system prompt, persona, conversation summary, and
 //! KG context form the stable prefix; recent history forms the dynamic suffix.
 
+//! Uses `tiktoken-rs` (cl100k_base) for accurate token counting instead of
+//! heuristic character-based estimates.
+
 use anyhow::Result;
 use loom_types::Message;
+use std::sync::OnceLock;
+
+/// Shared tiktoken BPE instance — initialised once, reused for all assemblies.
+fn bpe() -> &'static tiktoken_rs::CoreBPE {
+    static BPE: OnceLock<tiktoken_rs::CoreBPE> = OnceLock::new();
+    BPE.get_or_init(|| {
+        tiktoken_rs::cl100k_base().expect("tiktoken cl100k_base model should always load")
+    })
+}
 
 /// Options for context assembly.
 #[derive(Default)]
@@ -90,18 +102,16 @@ impl ContextAssembler {
         Ok(messages)
     }
 
-    /// Keep the most recent messages that fit within `max_char_tokens`
-    /// (approximation: ASCII chars / 4, non-ASCII chars / 2 — CJK chars are
-    /// ~1-2 tokens each, not ~0.25 tokens like ASCII).
-    fn truncate_history(&self, history: &[Message], max_char_tokens: usize) -> Vec<Message> {
+    /// Keep the most recent messages that fit within `max_tokens`, scanning
+    /// from newest to oldest. Uses tiktoken for precise token counting.
+    fn truncate_history(&self, history: &[Message], max_tokens: usize) -> Vec<Message> {
+        let bpe = bpe();
         let mut token_count = 0usize;
         let mut included: Vec<usize> = Vec::new();
         for (i, msg) in history.iter().enumerate().rev() {
             let text = msg.text_content();
-            let ascii = text.chars().filter(|c| c.is_ascii()).count();
-            let non_ascii = text.chars().count() - ascii;
-            let msg_tokens = ascii / 4 + (non_ascii + 1) / 2; // ceiling division for CJK
-            if token_count + msg_tokens > max_char_tokens {
+            let msg_tokens = bpe.encode_with_special_tokens(&text).len();
+            if token_count + msg_tokens > max_tokens {
                 break;
             }
             token_count += msg_tokens;

@@ -94,6 +94,9 @@ pub struct AgentLoopConfig {
     pub event_bus: Option<EventBus>,
     /// Pending permission approvals keyed by call_id
     pub pending_permissions: Option<Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>>,
+    /// Optional sandbox guard for file/path access control.
+    /// When None, no sandbox checks are performed (backward compatible).
+    pub sandbox: Option<Arc<loom_security::sandbox::SandboxGuard>>,
 }
 
 impl Default for AgentLoopConfig {
@@ -154,6 +157,7 @@ impl Default for AgentLoopConfig {
             permission_mode: "operate".to_string(),
             event_bus: None,
             pending_permissions: None,
+            sandbox: None,
         }
     }
 }
@@ -1045,7 +1049,13 @@ async fn run_agent_turn_streaming_inner(
     client.prefix_cache_reset();
     let all_tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
     let mut tools = if config.lazy_tools {
-        vec![request_tools_definition()]
+        // Include use_skill in initial tools so the LLM can directly invoke
+        // skills from the Available Skills list without an extra request_tools hop.
+        let mut initial = vec![request_tools_definition()];
+        if let Some(skill_tool) = all_tools.iter().find(|t| t.name == "use_skill") {
+            initial.push(skill_tool.clone());
+        }
+        initial
     } else {
         all_tools.clone()
     };
@@ -1428,10 +1438,10 @@ async fn run_agent_turn_streaming_inner(
                                     tc.3.push_str(&chunk);
                                 }
                             }
-                            StreamDelta::Usage { prompt_tokens, completion_tokens, .. } => {
+                            StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens } => {
                                 attempt_prompt_tokens += prompt_tokens;
                                 attempt_completion_tokens += completion_tokens;
-                                let _ = delta_tx.send(StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens: 0, cache_write_tokens: 0 }).await;
+                                let _ = delta_tx.send(StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens }).await;
                             }
                             StreamDelta::Image { media_type, data } => {
                                 attempt_images.push((media_type.clone(), data.clone()));
@@ -1476,7 +1486,8 @@ async fn run_agent_turn_streaming_inner(
                                             StreamDelta::Usage {
                                                 prompt_tokens,
                                                 completion_tokens,
-                                                ..
+                                                cache_read_tokens,
+                                                cache_write_tokens,
                                             } => {
                                                 attempt_prompt_tokens += prompt_tokens;
                                                 attempt_completion_tokens += completion_tokens;
@@ -1484,8 +1495,8 @@ async fn run_agent_turn_streaming_inner(
                                                     .send(StreamDelta::Usage {
                                                         prompt_tokens,
                                                         completion_tokens,
-                                                        cache_read_tokens: 0,
-                                                        cache_write_tokens: 0,
+                                                        cache_read_tokens,
+                                                        cache_write_tokens,
                                                     })
                                                     .await;
                                             }

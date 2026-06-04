@@ -1134,8 +1134,15 @@ impl Orchestrator {
         if let Some(by_model) = summary["by_model"].as_array_mut() {
             for entry in by_model {
                 let model_name = entry["model"].as_str().unwrap_or("");
+                // Strip auxiliary task suffix for price lookup:
+                // e.g. "claude-sonnet-4-6 (entity)" → "claude-sonnet-4-6"
+                let base_name = model_name
+                    .trim_end_matches(" (entity)")
+                    .trim_end_matches(" (summary)")
+                    .trim_end_matches(" (vision)");
                 let (input_price, output_price, cache_read_price, cache_write_price) = configs
-                    .get(model_name)
+                    .get(base_name)
+                    .or_else(|| configs.get(model_name)) // fallback: exact match
                     .map(|c| {
                         (
                             c.input_price,
@@ -2520,52 +2527,12 @@ impl Orchestrator {
         let disallowed = agent_config.disallowed_tools.clone();
         let cancel = self.pool.cancel_token(&agent_id).await?;
 
-        // ── Intent classifier: does this message need tools at all? ──
-        // Skips the agent loop for simple conversation, saving latency & tokens.
-        //
-        // SHORT-CIRCUIT: if the user explicitly selected skills OR any skill
-        // declares always_active, we MUST run the full agent path so the
-        // skill instructions (injected into system_prompt by
-        // build_full_system_prompt) actually reach the model. Otherwise the
-        // direct-reply path below rebuilds system_prompt from base_prompt and
-        // silently drops every skill, persona, and KG injection — making the
-        // UI skill toggle a no-op.
-        let has_active_skills = !selected_skills.is_empty() || {
-            let state = self.skill_state.read().await;
-            state.summaries.iter().any(|s| s.always_active)
-        };
-        let needs_tools = if has_active_skills {
-            tracing::info!(
-                session_id,
-                selected = selected_skills.len(),
-                "active skills present — bypassing intent classifier, forcing agent path"
-            );
-            true
-        } else {
-            let classify_prompt = format!(
-                "用户消息：「{}」\n\n这条消息是否需要获取实时/外部信息（股票行情、天气、新闻、网页内容、文件等）或执行系统操作？如果用已有知识可以直接回答，回答 NO。只回答 YES 或 NO。",
-                user_msg,
-            );
-            let classify_req = CompletionRequest {
-                messages: vec![build_user_message(&classify_prompt, &[])],
-                max_tokens: 4,
-                temperature: 0.0,
-                stream: false,
-                ..Default::default()
-            };
-            match client.complete(classify_req).await {
-                Ok(resp) => {
-                    let upper = resp.text.trim().to_uppercase();
-                    let yes = upper.starts_with("YES") || upper.starts_with('Y');
-                    tracing::info!(session_id, classifier = %resp.text.trim(), needs_tools = yes, "intent classifier");
-                    yes
-                }
-                Err(e) => {
-                    tracing::warn!(session_id, error = %e, "classifier failed, defaulting to tools");
-                    true // safety: fall back to full agent loop
-                }
-            }
-        };
+        // Always run the full agent path — the intent classifier was an
+        // over-optimization that caused:
+        // 1. Workspace path not being injected (direct-reply used base_prompt only)
+        // 2. Skills/Persona/KG silently dropped in direct-reply mode
+        // 3. Classifier false-negatives blocking tool usage for valid requests
+        let needs_tools = true;
 
         let result = if !needs_tools {
             // Direct reply — single completion, no tools at all.

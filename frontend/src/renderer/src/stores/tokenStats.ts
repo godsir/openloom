@@ -53,12 +53,12 @@ export interface TokenStatsSlice {
   summary: TokenSummary | null
   history: TokenHistoryPoint[]
   loading: boolean
-  timeRange: 'all' | '7d' | '30d'
+  timeRange: 'all' | 'today' | '7d' | '30d'
 
   recordUsage: (usage: TokenUsageRecord) => void
   loadSummary: (from: string, to: string) => Promise<void>
   loadHistory: (from: string, to: string, granularity: string) => Promise<void>
-  setTimeRange: (range: 'all' | '7d' | '30d') => void
+  setTimeRange: (range: 'all' | 'today' | '7d' | '30d') => void
   resetTokenUsage: () => Promise<void>
 }
 
@@ -115,19 +115,24 @@ export const createTokenStatsSlice: StateCreator<TokenStatsSlice> = (set, get) =
   setTimeRange: (range) => {
     set({ timeRange: range })
     const now = new Date()
+    const today = now.toISOString().slice(0, 10)
     let from = '1970-01-01'
-    if (range === '7d') {
+    if (range === 'today') {
+      from = today + ' 00:00:00'
+    } else if (range === '7d') {
       const d = new Date(now);
       d.setDate(d.getDate() - 7);
-      from = d.toISOString().slice(0, 10) + 'T00:00:00'
+      from = d.toISOString().slice(0, 10) + ' 00:00:00'
     } else if (range === '30d') {
       const d = new Date(now);
       d.setDate(d.getDate() - 30);
-      from = d.toISOString().slice(0, 10) + 'T00:00:00'
+      from = d.toISOString().slice(0, 10) + ' 00:00:00'
     }
     const to = range === 'all'
       ? '2099-12-31'
-      : now.toISOString().slice(0, 10) + 'T23:59:59'
+      : range === 'today'
+        ? today + ' 23:59:59'
+        : now.toISOString().slice(0, 10) + ' 23:59:59'
     get().loadSummary(from, to)
     get().loadHistory(from, to, 'day')
   },
