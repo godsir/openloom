@@ -574,7 +574,7 @@ async fn run_agent_turn_inner(
                 content_parts: vec![ContentPart::Text {
                     text: format!("任务进行中（已用 {} tokens）。输入「继续」以接着执行。", total_prompt),
                 }],
-                tool_messages: vec![],
+                tool_messages,
                 vision_usage: None,
             });
         }
@@ -606,7 +606,7 @@ async fn run_agent_turn_inner(
                 content_parts: vec![ContentPart::Text {
                     text: "[已中断]".into(),
                 }],
-                tool_messages: vec![],
+                tool_messages,
                 vision_usage: None,
             });
         }
@@ -986,7 +986,7 @@ async fn run_agent_turn_inner(
         completion_tokens: total_completion,
         cached_tokens: client.estimated_cache_tokens(),
         kv_cache_hit: client.last_cache_hit(),
-        tool_messages: vec![],
+        tool_messages,
         vision_usage: vision_usage.clone(),
     })
 }
@@ -1302,7 +1302,7 @@ async fn run_agent_turn_streaming_inner(
                 cached_tokens: 0,
                 kv_cache_hit: None,
                 content_parts: vec![ContentPart::Text { text: "任务进行中，已达预算上限。".into() }],
-                tool_messages: vec![],
+                tool_messages,
                 vision_usage: None,
             });
         }
@@ -1336,7 +1336,7 @@ async fn run_agent_turn_streaming_inner(
                 content_parts: vec![ContentPart::Text {
                     text: "[已中断]".into(),
                 }],
-                tool_messages: vec![],
+                tool_messages,
                 vision_usage: None,
             });
         }
@@ -1427,7 +1427,7 @@ async fn run_agent_turn_streaming_inner(
                             cached_tokens: 0,
                             kv_cache_hit: None,
                             content_parts: vec![ContentPart::Text { text: "[已中断]".into() }],
-                            tool_messages: vec![],
+                            tool_messages,
                             vision_usage: None,
                         });
                     }
@@ -1757,7 +1757,39 @@ async fn run_agent_turn_streaming_inner(
                     continue;
                 }
 
-                let arguments = serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}));
+                let arguments = match serde_json::from_str::<serde_json::Value>(tc_args) {
+                    Ok(args) => args,
+                    Err(e) => {
+                        // Non-empty args that fail to parse are almost certainly
+                        // truncated by max_tokens — not a genuine empty-args call.
+                        if !tc_args.is_empty() {
+                            tracing::warn!(
+                                tool_name = %tc_name,
+                                args_len = tc_args.len(),
+                                parse_err = %e,
+                                "tool arguments JSON truncated (token limit)"
+                            );
+                            let err_content = format!(
+                                "Output truncated by token limit — {} bytes received but JSON is incomplete. Split large content across multiple file_write calls instead of one giant file.",
+                                tc_args.len()
+                            );
+                            messages.push(Message::tool(tc_id, tc_name, &err_content));
+                            tool_messages.push(messages.last().unwrap().clone());
+                            let _ = delta_tx
+                                .send(StreamDelta::ToolResult {
+                                    call_id: tc_id.clone(),
+                                    tool_name: tc_name.clone(),
+                                    success: false,
+                                    result: Some(err_content),
+                                    structured_content: None,
+                                })
+                                .await;
+                            continue;
+                        }
+                        // Truly empty args — model called tool with no parameters
+                        serde_json::json!({})
+                    }
+                };
                 let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
                 // Drain progress updates in background to avoid SendError in tool implementations
                 tokio::spawn(async move {
@@ -1780,6 +1812,7 @@ async fn run_agent_turn_streaming_inner(
                         .await;
                 }
 
+                info!(tool_name = %tc_name, tool_args = %tc_args, "executing tool (streaming)");
                 match registry.execute(tc_name, arguments, progress_tx, &tool_context).await {
                     Ok(result) => {
                         tool_calls_made += 1;
@@ -1790,6 +1823,12 @@ async fn run_agent_turn_streaming_inner(
                         } else {
                             result.content
                         };
+
+                        if success {
+                            info!(tool_name = %tc_name, result_len = content.len(), "tool succeeded (streaming)");
+                        } else {
+                            tracing::warn!(tool_name = %tc_name, error = %content, "tool failed (streaming)");
+                        }
 
                         // Fire PostToolUse hook
                         if let Some(ref hook_reg) = config.hook_registry {

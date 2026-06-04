@@ -118,7 +118,11 @@ impl ContextAssembler {
             included.push(i);
         }
         included.reverse();
-        included.into_iter().map(|i| history[i].clone()).collect()
+        included.into_iter().map(|i| {
+            let mut msg = history[i].clone();
+            msg.compact_for_llm();
+            msg
+        }).collect()
     }
 
     /// Compact conversation history by summarizing old messages.

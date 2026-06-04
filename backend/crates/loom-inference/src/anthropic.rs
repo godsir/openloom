@@ -24,7 +24,6 @@ impl AnthropicClient {
     pub fn new(api_key: String, model: String, base_url: String) -> Self {
         let http = HttpClient::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(180))
             .build()
             .unwrap_or_default();
         // Normalize base_url: strip any /v1 suffix so we don't double it when appending /v1/messages.
@@ -82,7 +81,8 @@ impl AnthropicClient {
             tracing::info!("KV cache miss");
         }
         let (system_prompt, messages) = self.lower_messages(&eff);
-        let mut body = serde_json::json!({"model": self.model, "max_tokens": req.max_tokens, "temperature": req.temperature, "messages": messages});
+        let max_tokens = if req.max_tokens > 0 { req.max_tokens } else { 128000 };
+        let mut body = serde_json::json!({"model": self.model, "max_tokens": max_tokens, "temperature": req.temperature, "messages": messages});
         if let Some(sys) = system_prompt {
             body["system"] = serde_json::json!(sys);
         }
@@ -273,7 +273,8 @@ impl CloudClient for AnthropicClient {
             tracing::info!("KV cache miss (stream)");
         }
         let (system_prompt, messages) = self.lower_messages(&eff);
-        let mut body = serde_json::json!({"model": self.model, "max_tokens": req.max_tokens, "temperature": req.temperature, "messages": messages, "stream": true});
+        let max_tokens = if req.max_tokens > 0 { req.max_tokens } else { 128000 };
+        let mut body = serde_json::json!({"model": self.model, "max_tokens": max_tokens, "temperature": req.temperature, "messages": messages, "stream": true});
         if let Some(sys) = system_prompt {
             body["system"] = serde_json::json!(sys);
         }
@@ -368,7 +369,8 @@ impl CloudClient for AnthropicClient {
             tracing::info!("KV cache miss (structured stream)");
         }
         let (system_prompt, messages) = self.lower_messages(&eff);
-        let mut body = serde_json::json!({"model": self.model, "max_tokens": req.max_tokens, "temperature": req.temperature, "messages": messages, "stream": true});
+        let max_tokens = if req.max_tokens > 0 { req.max_tokens } else { 128000 };
+        let mut body = serde_json::json!({"model": self.model, "max_tokens": max_tokens, "temperature": req.temperature, "messages": messages, "stream": true});
         if let Some(sys) = system_prompt {
             body["system"] = serde_json::json!(sys);
         }

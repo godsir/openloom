@@ -24,7 +24,6 @@ impl OpenAIClient {
     pub fn new(api_key: String, model: String, base_url: String, _is_local: bool) -> Self {
         let http = HttpClient::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(180))
             .build()
             .unwrap_or_default();
         Self {
@@ -70,8 +69,11 @@ impl OpenAIClient {
         }
         let messages = self.lower_messages(&eff);
         let mut body = serde_json::json!({
-            "model": self.model, "max_tokens": req.max_tokens, "messages": messages,
+            "model": self.model, "messages": messages,
         });
+        if req.max_tokens > 0 {
+            body["max_tokens"] = serde_json::json!(req.max_tokens);
+        }
         if !req.tools.is_empty() {
             body["tools"] = serde_json::json!(req.tools.iter().map(|t| serde_json::json!({
                 "type": "function", "function": {
@@ -332,9 +334,12 @@ impl CloudClient for OpenAIClient {
         }
         let messages = self.lower_messages(&eff);
         let mut body = serde_json::json!({
-            "model": self.model, "max_tokens": req.max_tokens, "messages": messages,
+            "model": self.model, "messages": messages,
             "stream": true, "stream_options": {"include_usage": true},
         });
+        if req.max_tokens > 0 {
+            body["max_tokens"] = serde_json::json!(req.max_tokens);
+        }
         body["temperature"] = req.temperature.into();
         if let Some(budget) = req.thinking_budget {
             let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };
@@ -434,9 +439,12 @@ impl CloudClient for OpenAIClient {
         }
         let messages = self.lower_messages(&eff);
         let mut body = serde_json::json!({
-            "model": self.model, "max_tokens": req.max_tokens, "messages": messages,
+            "model": self.model, "messages": messages,
             "stream": true, "stream_options": {"include_usage": true},
         });
+        if req.max_tokens > 0 {
+            body["max_tokens"] = serde_json::json!(req.max_tokens);
+        }
         body["temperature"] = req.temperature.into();
         if let Some(budget) = req.thinking_budget {
             let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };

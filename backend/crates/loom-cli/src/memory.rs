@@ -115,6 +115,7 @@ impl MemoryStore for LoomMemoryStore {
         tools: usize,
         prompt_tokens: usize,
         completion_tokens: usize,
+        tool_msgs_json: &[String],
     ) -> Result<i64> {
         // Write messages to session db
         let now = chrono::Utc::now().to_rfc3339();
@@ -135,9 +136,18 @@ impl MemoryStore for LoomMemoryStore {
                 "INSERT INTO message_history (session_id, seq, role, content, timestamp, metadata) VALUES (?1, ?2, 'assistant', ?3, ?4, ?5)",
                 rusqlite::params![session_id, seq + 1, assistant_msg, now, usage_meta],
             )?;
+            // Persist tool messages
+            let mut tool_count: i64 = 0;
+            for (i, tool_json) in tool_msgs_json.iter().enumerate() {
+                conn.execute(
+                    "INSERT INTO message_history (session_id, seq, role, content, timestamp) VALUES (?1, ?2, 'tool', ?3, ?4)",
+                    rusqlite::params![session_id, seq + 2 + i as i64, tool_json, now],
+                )?;
+                tool_count += 1;
+            }
             conn.execute(
-                "UPDATE sessions SET message_count = message_count + 2 WHERE id = ?1",
-                rusqlite::params![session_id],
+                "UPDATE sessions SET message_count = message_count + ?1 WHERE id = ?2",
+                rusqlite::params![2 + tool_count, session_id],
             )?;
         }
         // Write event to memory db
@@ -234,6 +244,7 @@ impl MemoryStore for LoomMemoryStore {
                 "user" => loom_types::Role::User,
                 "assistant" => loom_types::Role::Assistant,
                 "system" => loom_types::Role::System,
+                "tool" => loom_types::Role::Tool,
                 _ => loom_types::Role::User,
             };
             Ok(Message {

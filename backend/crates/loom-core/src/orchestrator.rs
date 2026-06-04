@@ -80,6 +80,8 @@ pub trait MemoryStore: Send + Sync {
         tools: usize,
         prompt_tokens: usize,
         completion_tokens: usize,
+        // JSON-serialised content of each tool message (tool calls + results).
+        tool_msgs_json: &[String],
     ) -> Result<i64>;
     async fn save_interrupted_turn(
         &self,
@@ -2546,6 +2548,9 @@ impl Orchestrator {
             summary,
             temperature: agent_config.temperature.unwrap_or(0.0),
             max_iterations: agent_config.max_iterations.unwrap_or(default_max_iters),
+            // Bump output budget when skills are active — skills often involve
+            // large file generation (HTML slides, code, etc.) that 4096 can't fit.
+            max_tokens: if effective_selected_skills.is_empty() { 4096 } else { 0 },
             thinking_budget: if agent_config.cc_dispatch {
                 Some(thinking_budget.unwrap_or(4096))
             } else {
@@ -2584,6 +2589,7 @@ impl Orchestrator {
                     None
                 }
             },
+            lazy_tools: effective_selected_skills.is_empty(),
             ..Default::default()
         };
         let user_msg = user_message.to_string();
@@ -3091,6 +3097,9 @@ impl Orchestrator {
                 if let Some(ref store) = *mem {
                     let user_content_json =
                         serde_json::to_string(&user_parts).unwrap_or_else(|_| user_msg.clone());
+                    let tool_json: Vec<String> = turn.tool_messages.iter()
+                        .map(|m| serde_json::to_string(&m.content).unwrap_or_default())
+                        .collect();
                     if let Err(e) = store
                         .save_turn(
                             session_id,
@@ -3099,6 +3108,7 @@ impl Orchestrator {
                             turn.tool_calls_made,
                             turn.prompt_tokens,
                             turn.completion_tokens,
+                            &tool_json,
                         )
                         .await
                     {
@@ -3164,6 +3174,9 @@ impl Orchestrator {
             if let Some(ref store) = *mem {
                 let user_content_json =
                     serde_json::to_string(&user_parts).unwrap_or_else(|_| user_msg.clone());
+                let tool_json: Vec<String> = turn.tool_messages.iter()
+                    .map(|m| serde_json::to_string(&m.content).unwrap_or_default())
+                    .collect();
                 let event_id = store
                     .save_turn(
                         session_id,
@@ -3172,6 +3185,7 @@ impl Orchestrator {
                         turn.tool_calls_made,
                         turn.prompt_tokens,
                         turn.completion_tokens,
+                        &tool_json,
                     )
                     .await?;
 
@@ -3652,8 +3666,11 @@ impl Orchestrator {
             event_bus: Some(self.pool.event_bus().clone()),
             pending_permissions: Some(self.pending_permissions.clone()),
             max_iterations: default_max_iters,
-            // Pass selected_skills so the agent loop can bypass lazy_tools when
-            // skill instructions are already injected into the system prompt.
+            // Bump output budget when skills are active.
+            max_tokens: if effective_selected_skills.is_empty() { 4096 } else { 0 },
+            // When selected_skills is non-empty, bypass lazy_tools so the LLM can
+            // act on skill instructions immediately without a request_tools round-trip.
+            lazy_tools: effective_selected_skills.is_empty(),
             selected_skills: effective_selected_skills,
             // Number of available skills — used for soft skill-first routing
             // when the model requests web_search.
@@ -3674,7 +3691,6 @@ impl Orchestrator {
             },
             ..Default::default()
         };
-
         let result = run_agent_turn_streaming_with_images(
             client.as_ref(),
             &registry,
@@ -3763,6 +3779,9 @@ impl Orchestrator {
                 if let Some(ref store) = *mem {
                     let user_content_json =
                         serde_json::to_string(&user_parts).unwrap_or_else(|_| user_message.to_string());
+                    let tool_json: Vec<String> = turn.tool_messages.iter()
+                        .map(|m| serde_json::to_string(&m.content).unwrap_or_default())
+                        .collect();
                     if let Err(e) = store
                         .save_turn(
                             session_id,
@@ -3771,6 +3790,7 @@ impl Orchestrator {
                             turn.tool_calls_made,
                             turn.prompt_tokens,
                             turn.completion_tokens,
+                            &tool_json,
                         )
                         .await
                     {
@@ -3836,6 +3856,9 @@ impl Orchestrator {
                 if let Some(ref store) = *mem {
                     let user_content_json =
                         serde_json::to_string(&user_parts).unwrap_or_else(|_| user_message.to_string());
+                    let tool_json: Vec<String> = turn.tool_messages.iter()
+                        .map(|m| serde_json::to_string(&m.content).unwrap_or_default())
+                        .collect();
                     let event_id = store
                         .save_turn(
                             session_id,
@@ -3844,6 +3867,7 @@ impl Orchestrator {
                             turn.tool_calls_made,
                             turn.prompt_tokens,
                             turn.completion_tokens,
+                            &tool_json,
                         )
                         .await?;
 

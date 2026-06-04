@@ -90,7 +90,6 @@ impl InferenceEngine {
     pub fn new(base_url: String, model: String) -> Self {
         let http = HttpClient::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(300))
             .build()
             .unwrap_or_default();
         Self {
@@ -133,9 +132,10 @@ impl InferenceEngine {
             tracing::info!("KV cache miss — cold prefix");
         }
 
+        let max_tokens = if req.max_tokens > 0 { req.max_tokens } else { 4096 };
         let mut body = serde_json::json!({
             "model": self.model,
-            "max_tokens": req.max_tokens,
+            "max_tokens": max_tokens,
             "messages": messages,
         });
         if !req.tools.is_empty() {
@@ -219,9 +219,10 @@ impl InferenceEngine {
         } else {
             tracing::info!("KV cache miss (stream)");
         }
+        let max_tokens = if req.max_tokens > 0 { req.max_tokens } else { 4096 };
         let mut body = serde_json::json!({
             "model": self.model,
-            "max_tokens": req.max_tokens,
+            "max_tokens": max_tokens,
             "messages": messages,
             "stream": true,
             "stream_options": {"include_usage": true},
@@ -408,9 +409,10 @@ impl CloudClient for InferenceEngine {
             tracing::info!("KV cache miss (structured stream)");
         }
 
+        let max_tokens = if req.max_tokens > 0 { req.max_tokens } else { 4096 };
         let mut body = serde_json::json!({
             "model": self.model,
-            "max_tokens": req.max_tokens,
+            "max_tokens": max_tokens,
             "messages": messages,
             "stream": true,
             "stream_options": {"include_usage": true},

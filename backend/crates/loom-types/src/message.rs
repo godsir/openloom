@@ -123,6 +123,46 @@ impl Message {
             .join("")
     }
 
+    /// Strip display-only content before sending to the LLM.
+    ///
+    /// - Removes `Thinking` blocks (the LLM doesn't need its own prior reasoning).
+    /// - Truncates large `ToolResult` blocks (>2000 chars) to a compact summary.
+    ///
+    /// The full content is preserved in the database for frontend display;
+    /// this only affects the in-memory copy assembled for context.
+    pub fn compact_for_llm(&mut self) {
+        let mut new_content = Vec::with_capacity(self.content.len());
+
+        for part in self.content.drain(..) {
+            match part {
+                ContentPart::Thinking { .. } => {
+                    // Drop thinking — not needed for LLM context
+                }
+                ContentPart::ToolResult { ref result, tool_call_id, name } if result.len() > 2000 => {
+                    let char_cut = result.char_indices()
+                        .nth(500)
+                        .map(|(i, _)| i)
+                        .unwrap_or(result.len());
+                    let truncated = format!(
+                        "{}...\n[{} chars truncated from context]",
+                        &result[..char_cut],
+                        result.len() - char_cut
+                    );
+                    new_content.push(ContentPart::ToolResult {
+                        tool_call_id,
+                        name,
+                        result: truncated,
+                    });
+                }
+                other => {
+                    new_content.push(other);
+                }
+            }
+        }
+
+        self.content = new_content;
+    }
+
     pub fn tool_calls(&self) -> Vec<(String, String, serde_json::Value)> {
         self.content
             .iter()

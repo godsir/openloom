@@ -533,11 +533,19 @@ impl AgentTool for FileWriteTool {
         let content = arguments["content"].as_str().unwrap_or("");
 
         if path_str.is_empty() {
-            return Ok(ToolResult {
-                content: format!(
+            let msg = if content.is_empty() {
+                format!(
+                    "file_write called with no arguments — both 'path' and 'content' are missing. Usage: file_write(path=\"/path/to/file\", content=\"...\"). Received: {}",
+                    arguments
+                )
+            } else {
+                format!(
                     "No path provided. Usage: file_write(path=\"/path/to/file\", content=\"...\"). Received: {}",
                     arguments
-                ),
+                )
+            };
+            return Ok(ToolResult {
+                content: msg,
                 is_error: true,
                 structured_content: None,
             });
