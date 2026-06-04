@@ -303,6 +303,7 @@ impl<'a> AgentConfigStore<'a> {
                     max_concurrent_subagents: row.get::<_, i64>(12).unwrap_or(5) as usize,
                     is_primary: row.get::<_, i64>(13).unwrap_or(0) != 0,
                     memory_enabled: row.get::<_, i64>(14).unwrap_or(0) != 0,
+                    cc_dispatch: false,
                 })
             })
             .ok();
@@ -336,6 +337,7 @@ impl<'a> AgentConfigStore<'a> {
                 max_concurrent_subagents: row.get::<_, i64>(12).unwrap_or(5) as usize,
                 is_primary: row.get::<_, i64>(13).unwrap_or(0) != 0,
                 memory_enabled: row.get::<_, i64>(14).unwrap_or(0) != 0,
+                cc_dispatch: false,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)

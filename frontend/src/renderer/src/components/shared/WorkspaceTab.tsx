@@ -10,12 +10,13 @@ interface SandboxConfig {
   workspace_only: boolean
   allowed_paths: string[]
   denied_paths: string[]
+  allow_loom_data: boolean
 }
 
 export default function WorkspaceTab() {
   const [defaultPath, setDefaultPath] = useState('')
   const [loading, setLoading] = useState(true)
-  const [sandbox, setSandbox] = useState<SandboxConfig>({ enabled: false, workspace_only: true, allowed_paths: [], denied_paths: [] })
+  const [sandbox, setSandbox] = useState<SandboxConfig>({ enabled: false, workspace_only: true, allowed_paths: [], denied_paths: [], allow_loom_data: false })
   const sandboxRef = useRef(sandbox)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sessions = useStore(s => s.sessions)
@@ -184,6 +185,27 @@ export default function WorkspaceTab() {
 
           <div className={settingsStyles.aboutRow}>
             <div>
+              <span className={settingsStyles.aboutLabel}>允许访问 .loom 数据目录</span>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>放行 ~/.loom/ 下的技能、记忆数据库和 MCP 配置</p>
+            </div>
+            <div className={settingsStyles.mcpTransportToggle}>
+              <button
+                className={`${settingsStyles.mcpTransportBtn} ${sandbox.allow_loom_data ? settingsStyles.mcpTransportActive : ''}`}
+                onClick={() => updateSandbox({ allow_loom_data: true })}
+              >
+                开启
+              </button>
+              <button
+                className={`${settingsStyles.mcpTransportBtn} ${!sandbox.allow_loom_data ? settingsStyles.mcpTransportActive : ''}`}
+                onClick={() => updateSandbox({ allow_loom_data: false })}
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+
+          <div className={settingsStyles.aboutRow}>
+            <div>
               <span className={settingsStyles.aboutLabel}>额外允许的路径</span>
               <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>工作区之外允许访问的目录，每行一个</p>
             </div>
@@ -213,7 +235,7 @@ export default function WorkspaceTab() {
           <div className={styles.builtinNote}>
             <span className={styles.builtinLabel}>内置禁止访问：</span>
             <span className={styles.builtinPatterns}>
-              ~/.ssh, ~/.aws, .env, *.pem, *.key, *.p12, *.pfx, *.crt, *.jks, /etc/passwd, /etc/shadow, Windows\System32\config, .loom/
+              ~/.ssh, ~/.aws, .env, *.pem, *.key, *.p12, *.pfx, *.crt, *.jks, /etc/passwd, /etc/shadow, Windows\System32\config{sandbox.allow_loom_data ? '' : ', .loom/'}
             </span>
           </div>
         </>

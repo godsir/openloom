@@ -169,6 +169,13 @@ pub struct SandboxConfig {
     /// Takes precedence over `allowed_paths` and workspace.
     #[serde(default)]
     pub denied_paths: Vec<String>,
+
+    /// When true, the built-in `.loom` directory deny is lifted, allowing
+    /// agents to read/write skills, memory database, and MCP configuration
+    /// stored under `~/.loom/`.  The sandbox itself (and other built-in
+    /// deny patterns) remain active.
+    #[serde(default)]
+    pub allow_loom_data: bool,
 }
 
 impl Default for SandboxConfig {
@@ -178,6 +185,7 @@ impl Default for SandboxConfig {
             workspace_only: true,
             allowed_paths: Vec::new(),
             denied_paths: Vec::new(),
+            allow_loom_data: false,
         }
     }
 }
@@ -236,7 +244,7 @@ impl Default for AppConfig {
 /// Agent configuration stored in settings.agent.{id}.config.
 ///
 /// Consumers: loom-core (AgentPool::spawn), loom-server (agent.configure RPC)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub name: String,
     #[serde(default)]
@@ -268,8 +276,38 @@ pub struct AgentConfig {
     pub is_primary: bool,
     #[serde(default)]
     pub memory_enabled: bool,
+    /// If true, use Claude Code-style dispatch.
+    #[serde(default = "default_true")]
+    pub cc_dispatch: bool,
 }
 
 fn default_max_subagents() -> usize {
     5
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            avatar: None,
+            persona: String::new(),
+            system_prompt_override: None,
+            model: None,
+            thinking_level: None,
+            temperature: None,
+            tool_scope: None,
+            allowed_tools: None,
+            disallowed_tools: None,
+            max_iterations: None,
+            timeout_secs: None,
+            max_concurrent_subagents: default_max_subagents(),
+            is_primary: false,
+            memory_enabled: false,
+            cc_dispatch: true,
+        }
+    }
 }

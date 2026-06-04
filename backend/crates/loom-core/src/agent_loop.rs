@@ -90,6 +90,18 @@ pub struct AgentLoopConfig {
     pub loom_dir: Option<std::path::PathBuf>,
     /// Permission mode: "operate" | "ask" | "read_only"
     pub permission_mode: String,
+    /// When `selected_skills` is non-empty this flag is effectively ignored:
+    /// skill body is already in the system prompt so all tools are exposed
+    /// upfront so the LLM can act on the skill instructions immediately.
+    pub cc_dispatch: bool,
+    /// Names of skills already injected into the system prompt.
+    /// When non-empty, lazy_tools is bypassed so the LLM can act on skill
+    /// instructions without first calling request_tools.
+    pub selected_skills: Vec<String>,
+    /// Number of available (installable but not yet selected) skills.
+    /// Used by the request_tools handler to decide whether to soft-intercept
+    /// web_search requests.
+    pub available_skill_count: usize,
     /// Event bus for publishing permission requests (for "ask" mode)
     pub event_bus: Option<EventBus>,
     /// Pending permission approvals keyed by call_id
@@ -155,6 +167,9 @@ impl Default for AgentLoopConfig {
             key_store: None,
             loom_dir: None,
             permission_mode: "operate".to_string(),
+            cc_dispatch: true,
+            selected_skills: Vec::new(),
+            available_skill_count: 0,
             event_bus: None,
             pending_permissions: None,
             sandbox: None,

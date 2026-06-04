@@ -810,13 +810,42 @@ impl AgentTool for UseSkillTool {
     }
 
     fn tool_definition(&self) -> ToolDefinition {
+        // Build dynamic description with the full available-skills catalogue
+        // so the LLM can semantically match user intent → skill name without
+        // needing to scan the separate "Available Skills" system prompt section.
+        let skill_list = if let Ok(state) = self.skill_state.try_read() {
+            if state.summaries.is_empty() {
+                String::new()
+            } else {
+                state
+                    .summaries
+                    .iter()
+                    .map(|s| format!("- {}: {}", s.name, s.description))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+        } else {
+            // Lock contested (rare — only during skill reload); fall back to
+            // a static description so we never block the calling thread.
+            String::new()
+        };
+
+        let description = if skill_list.is_empty() {
+            "Load a skill's full instructions into context. No skills are currently installed — call with an empty skill_name or \"list\" to confirm.".into()
+        } else {
+            format!(
+                "Load a skill's full instructions into context by name.\n\nAvailable skills:\n{}\n\nWhen the user's request matches a skill above, call use_skill with the exact skill_name FIRST, then follow the loaded instructions. Do NOT attempt skill-related tasks with only general knowledge when a matching skill exists. Pass an empty name or \"list\" to see this list again.",
+                skill_list
+            )
+        };
+
         ToolDefinition {
             name: "use_skill".into(),
-            description: "Load a skill's full instructions into context. Call this WHENEVER the user's request matches a skill listed in '## Available Skills' section of your system prompt — for example, if a 'browser' skill is listed and the user asks to open a webpage, call use_skill(skill_name=\"browser\") FIRST, then follow the loaded instructions. Do NOT attempt skill-related tasks using only general knowledge when a matching skill is available. If you don't know the exact skill name, call with any name and the error will list all available skills.".into(),
+            description,
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "skill_name": { "type": "string", "description": "Exact name from the Available Skills list" }
+                    "skill_name": { "type": "string", "description": "Exact skill name from the list in the tool description" }
                 },
                 "required": ["skill_name"]
             }),
