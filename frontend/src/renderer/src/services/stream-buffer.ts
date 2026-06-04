@@ -4,37 +4,27 @@ import { sanitizeHtml } from '../utils/markdown-sanitizer'
 
 const FLUSH_INTERVAL = 200
 
-interface SkillCallEntry {
-  id: string
-  name: string
-  status: 'running' | 'done'
-  args: Record<string, unknown>
-  result?: string
-  /** Insertion order — used to preserve display order across Map iterations */
-  order: number
-}
-
-interface ShellCallEntry {
-  id: string
-  name: string
-  status: 'running' | 'done'
-  args: Record<string, unknown>
-  result?: string
-  details?: Record<string, unknown>
-  order: number
-}
-
 interface BufferState {
   messageId: string | null
   textAcc: string
   thinkingAcc: string
   imageAcc: Array<{ mimeType: string; data: string }>
   moodAcc: { yuan: string; text: string }
-  /** Map<toolId, entry> — id-keyed for precise updates, order field preserves insertion order */
-  skillCalls: Map<string, SkillCallEntry>
-  shellCalls: Map<string, ShellCallEntry>
-  /** Next insertion order counter */
-  _nextOrder: number
+  skillCalls: Array<{
+    id: string
+    name: string
+    status: 'running' | 'done'
+    args: Record<string, unknown>
+    result?: string
+  }>
+  shellCalls: Array<{
+    id: string
+    name: string
+    status: 'running' | 'done'
+    args: Record<string, unknown>
+    result?: string
+    details?: Record<string, unknown>
+  }>
   userSkills: string[]
   inThinking: boolean
   inVision: boolean
@@ -48,8 +38,6 @@ interface BufferState {
   flushTimer: ReturnType<typeof setTimeout> | null
   _lastTextLen: number
   _lastThinkLen: number
-  /** Partial [reasoning] prefix held across delta boundaries */
-  _pendingReasoningPrefix: string
 }
 
 class StreamBufferManager {
@@ -68,15 +56,13 @@ class StreamBufferManager {
     buf.textAcc = ''
     buf.thinkingAcc = ''
     buf.imageAcc = []
-    buf.skillCalls = new Map()
-    buf.shellCalls = new Map()
-    buf._nextOrder = 0
+    buf.skillCalls = []
+    buf.shellCalls = []
     buf.userSkills = userSkills ?? []
     buf.inThinking = false
     buf.inVision = false
     buf.visionDone = false
     buf.visionBatches = []
-    buf._pendingReasoningPrefix = ''
     if (buf.flushTimer) { clearTimeout(buf.flushTimer); buf.flushTimer = null }
   }
 
@@ -97,23 +83,21 @@ class StreamBufferManager {
   private ensureBuffer(sessionId: string): BufferState {
     if (!this.buffers.has(sessionId)) {
       this.buffers.set(sessionId, {
-      messageId: null,
-      textAcc: '',
-      thinkingAcc: '',
-      moodAcc: { yuan: '', text: '' },
-      skillCalls: new Map(),
-      shellCalls: new Map(),
-      _nextOrder: 0,
-      userSkills: [],
-      inThinking: false,
-      inVision: false,
-      visionDone: false,
-      visionBatches: [],
-      flushTimer: null,
-      _lastTextLen: 0,
-      _lastThinkLen: 0,
-      _pendingReasoningPrefix: '',
-    })
+        messageId: null,
+        textAcc: '',
+        thinkingAcc: '',
+        moodAcc: { yuan: '', text: '' },
+        skillCalls: [],
+        shellCalls: [],
+        userSkills: [],
+        inThinking: false,
+        inVision: false,
+        visionDone: false,
+        visionBatches: [],
+        flushTimer: null,
+        _lastTextLen: 0,
+        _lastThinkLen: 0,
+      })
     }
     return this.buffers.get(sessionId)!
   }
@@ -190,60 +174,7 @@ class StreamBufferManager {
       }
       return
     } else {
-      // Safety net: Some models/gateways emit [reasoning]...[/reasoning] blocks
-      // inline in text content instead of using the native reasoning_content field
-      // or the \x02REASONING\x02 control signal. Parse these out and route to
-      // thinkingAcc so they don't leak into the visible response.
-
-      // Resolve any partial [reasoning] prefix held from the previous delta
-      let resolved = delta
-      if (buf._pendingReasoningPrefix) {
-        resolved = buf._pendingReasoningPrefix + delta
-        buf._pendingReasoningPrefix = ''
-      }
-
-      const reasonOpen = '[reasoning]'
-      const reasonClose = '[/reasoning]'
-      let remaining = resolved
-      while (remaining.length > 0) {
-        if (buf.inThinking) {
-          const closeIdx = remaining.indexOf(reasonClose)
-          if (closeIdx >= 0) {
-            buf.thinkingAcc += remaining.slice(0, closeIdx)
-            remaining = remaining.slice(closeIdx + reasonClose.length)
-            buf.inThinking = false
-          } else {
-            buf.thinkingAcc += remaining
-            remaining = ''
-          }
-        } else {
-          const openIdx = remaining.indexOf(reasonOpen)
-          if (openIdx >= 0) {
-            // Text before the [reasoning] tag goes to textAcc
-            if (openIdx > 0) {
-              buf.textAcc += remaining.slice(0, openIdx)
-            }
-            remaining = remaining.slice(openIdx + reasonOpen.length)
-            buf.inThinking = true
-          } else {
-            // Check for partial open tag at end (e.g. "[reas" or "[reasonin")
-            // Only buffer if it could be a prefix of [reasoning]
-            const partialLen = this.partialReasoningPrefix(remaining)
-            if (partialLen > 0) {
-              const safe = remaining.slice(0, remaining.length - partialLen)
-              const partial = remaining.slice(remaining.length - partialLen)
-              if (safe.length > 0) {
-                buf.textAcc += safe
-              }
-              // Hold the partial prefix — it will be resolved on the next delta
-              buf._pendingReasoningPrefix = partial
-            } else {
-              buf.textAcc += remaining
-            }
-            remaining = ''
-          }
-        }
-      }
+      buf.textAcc += delta
     }
 
     this.scheduleFlush(buf, sessionId)
@@ -259,24 +190,22 @@ class StreamBufferManager {
     console.log('[stream-buffer] Tool started:', tool.name, tool.id)
     if (tool.name === 'use_skill') {
       const skillName = (tool.args?.skill_name as string) || 'loading...'
-      buf.skillCalls.set(tool.id, {
+      buf.skillCalls.push({
         id: tool.id,
         name: skillName,
         status: 'running',
         args: tool.args ?? {},
-        order: buf._nextOrder++,
       })
     } else if (tool.name === 'request_tools') {
       // meta-tool — invisible, no block
     } else {
       // All other tools (shell, file_write, file_read, content_search, etc.)
       // render in terminal-style ShellBlock for full visibility.
-      buf.shellCalls.set(tool.id, {
+      buf.shellCalls.push({
         id: tool.id,
         name: tool.name,
         status: 'running',
         args: tool.args ?? {},
-        order: buf._nextOrder++,
       })
     }
     this.scheduleFlush(buf, sessionId)
@@ -292,15 +221,13 @@ class StreamBufferManager {
     if (!useStore.getState().streamingSessionIds.has(sessionId)) return
     const buf = this.ensureBuffer(sessionId)
     if (!buf.messageId) return
-
-    const shell = buf.shellCalls.get(toolId)
+    const shell = buf.shellCalls.find((t) => t.id === toolId)
     if (shell) {
       shell.status = 'done'
       shell.result = result
       if (details) shell.details = details
     }
-
-    const skill = buf.skillCalls.get(toolId)
+    const skill = buf.skillCalls.find((t) => t.id === toolId)
     if (skill) {
       skill.status = 'done'
       skill.result = result
@@ -311,36 +238,22 @@ class StreamBufferManager {
         if (m) skill.name = m[1].trim()
       }
     }
-
     // Fallback: if neither tool nor skill was tracked (started event missed),
-    // create a completed entry based on the tool name from the completed event.
-    if (!shell && !skill && toolName === 'use_skill') {
+    // create a completed entry based on the tool name from the completed event
+    if (!skill && toolName === 'use_skill') {
       let skillName = 'unknown'
       if (result) {
         const m = result.match(/^## Skill: ([^\n]+)/)
         if (m) skillName = m[1].trim()
       }
-      buf.skillCalls.set(toolId, {
+      buf.skillCalls.push({
         id: toolId,
         name: skillName,
         status: 'done',
         args: {},
         result,
-        order: buf._nextOrder++,
-      })
-    } else if (!shell && !skill && toolName && toolName !== 'request_tools') {
-      // Generic fallback for any non-skill tool whose started event was missed
-      buf.shellCalls.set(toolId, {
-        id: toolId,
-        name: toolName,
-        status: 'done',
-        args: {},
-        result,
-        details,
-        order: buf._nextOrder++,
       })
     }
-
     this.scheduleFlush(buf, sessionId)
   }
 
@@ -421,15 +334,13 @@ class StreamBufferManager {
     const blocks: Array<{ type: string; [key: string]: unknown }> = []
 
     console.log('[stream-buffer] Flushing buffer:', {
-      skillCalls: buf.skillCalls.size,
-      shellCalls: buf.shellCalls.size,
+      skillCalls: buf.skillCalls.length,
       thinking: buf.thinkingAcc.length > 0,
       text: buf.textAcc.length > 0,
     })
 
-    // Display order: vision → thinking → tools (interleaved by insertion order) → images → text
-    // Tool blocks (shell + skill) are merged and sorted by their insertion order so concurrent
-    // or sequential tool calls render in the correct sequence regardless of completion timing.
+    // Display order: vision → thinking → shells → skills → images → text
+    // Thinking above tools so the user sees reasoning first, then what was executed.
 
     if (buf.inVision || buf.visionBatches.length > 0) {
       const doneCount = buf.visionBatches.filter(b => b.status === 'done').length
@@ -476,43 +387,28 @@ class StreamBufferManager {
       blocks.push({ type: 'mood', ...buf.moodAcc })
     }
 
-    // Terminal-style blocks for shell/file tools + skill blocks,
-    // merged and sorted by insertion order so calls display in correct sequence.
-    type ToolBlock = { order: number; block: { type: string; [key: string]: unknown } }
-    const toolBlocks: ToolBlock[] = []
-
-    for (const sc of buf.shellCalls.values()) {
-      toolBlocks.push({
-        order: sc.order,
-        block: {
-          type: 'shell',
-          toolName: sc.name,
-          status: sc.status,
-          args: sc.args || {},
-          result: sc.result,
-          details: sc.details,
-          sealed: sc.status === 'done',
-        },
+    // Terminal-style blocks for shell/file tools — rendered below thinking
+    for (const sc of buf.shellCalls) {
+      blocks.push({
+        type: 'shell',
+        toolName: sc.name,
+        status: sc.status,
+        args: sc.args || {},
+        result: sc.result,
+        details: sc.details,
+        sealed: sc.status === 'done',
       })
     }
 
-    for (const sc of buf.skillCalls.values()) {
+    for (const sc of buf.skillCalls) {
       console.log('[stream-buffer] Creating skill block:', sc.name, sc.status)
-      toolBlocks.push({
-        order: sc.order,
-        block: {
-          type: 'skill',
-          name: sc.name,
-          status: sc.status,
-          result: sc.result,
-          sealed: sc.status === 'done',
-        },
+      blocks.push({
+        type: 'skill',
+        name: sc.name,
+        status: sc.status,
+        result: sc.result,
+        sealed: sc.status === 'done',
       })
-    }
-
-    toolBlocks.sort((a, b) => a.order - b.order)
-    for (const { block } of toolBlocks) {
-      blocks.push(block)
     }
 
     if (buf.textAcc) {
@@ -541,22 +437,6 @@ class StreamBufferManager {
     const tail = lastNewline >= 0 ? source.slice(lastNewline + 1) : source
     if (!stable) return sanitizeHtml(renderMarkdown(tail))
     return sanitizeHtml(renderMarkdown(stable)) + '\n' + escapeHtml(tail)
-  }
-
-  /**
-   * If the trailing portion of `s` looks like a prefix of `[reasoning]`,
-   * return its length so the caller can hold it back for the next delta.
-   * Returns 0 if no partial prefix is detected.
-   */
-  private partialReasoningPrefix(s: string): number {
-    const marker = '[reasoning]'
-    for (let i = 1; i <= Math.min(s.length, marker.length - 1); i++) {
-      const tail = s.slice(-i)
-      if (marker.startsWith(tail)) {
-        return i
-      }
-    }
-    return 0
   }
 
   snapshot(sessionId: string): BufferState | null {
