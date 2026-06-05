@@ -337,8 +337,14 @@ async fn handle_marketplace_install(state: &AppState, p: &Value) -> Result<Value
     let skills_dir = home.join(".loom").join("skills");
     match loom_marketplace::install_from_catalog(entry_id, &plugins_dir, &skills_dir).await {
         Ok(target) => {
-            let mut pm = loom_plugins::PluginManager::new();
-            let n = pm.discover(&home).unwrap_or(0);
+            let home_for_discover = home.clone();
+            let (n, pm) = tokio::task::spawn_blocking(move || {
+                let mut pm = loom_plugins::PluginManager::new();
+                let n = pm.discover(&home_for_discover).unwrap_or(0);
+                (n, pm)
+            })
+            .await
+            .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             if n > 0 {
                 state.orchestrator.load_hooks_from_plugins(&pm).await;
             }
@@ -387,8 +393,14 @@ async fn handle_marketplace_uninstall(state: &AppState, p: &Value) -> Result<Val
     .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?
     {
         Ok(()) => {
-            let mut pm = loom_plugins::PluginManager::new();
-            let n = pm.discover(&home).unwrap_or(0);
+            let home_for_discover = home.clone();
+            let (n, pm) = tokio::task::spawn_blocking(move || {
+                let mut pm = loom_plugins::PluginManager::new();
+                let n = pm.discover(&home_for_discover).unwrap_or(0);
+                (n, pm)
+            })
+            .await
+            .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             if n > 0 {
                 state.orchestrator.load_hooks_from_plugins(&pm).await;
             }
@@ -416,8 +428,14 @@ async fn handle_marketplace_update(state: &AppState, p: &Value) -> Result<Value,
     let skills_dir = home.join(".loom").join("skills");
     match loom_marketplace::update_from_catalog(entry_id, &plugins_dir, &skills_dir).await {
         Ok(()) => {
-            let mut pm = loom_plugins::PluginManager::new();
-            let n = pm.discover(&home).unwrap_or(0);
+            let home_for_discover = home.clone();
+            let (n, pm) = tokio::task::spawn_blocking(move || {
+                let mut pm = loom_plugins::PluginManager::new();
+                let n = pm.discover(&home_for_discover).unwrap_or(0);
+                (n, pm)
+            })
+            .await
+            .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
             if n > 0 {
                 state.orchestrator.load_hooks_from_plugins(&pm).await;
             }

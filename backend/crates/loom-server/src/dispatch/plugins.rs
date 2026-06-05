@@ -25,7 +25,10 @@ async fn handle_plugins_list(state: &AppState) -> Result<Value, JsonRpcError> {
     let _ = state; // uses direct filesystem + PluginManager
     let home = dirs::home_dir().unwrap_or_default();
     let mut plugin_manager = loom_plugins::PluginManager::new();
-    let _ = plugin_manager.discover(&home);
+    let _ = tokio::task::spawn_blocking(move || plugin_manager.discover(&home))
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
 
     let mut plugins: Vec<Value> = Vec::new();
     for plugin in plugin_manager.discovered() {
@@ -157,7 +160,10 @@ async fn handle_plugins_reload(state: &AppState) -> Result<Value, JsonRpcError> 
         Ok(count) => {
             let home = dirs::home_dir().unwrap_or_default();
             let mut plugin_manager = loom_plugins::PluginManager::new();
-            let n = plugin_manager.discover(&home).unwrap_or(0);
+            let n = tokio::task::spawn_blocking(move || plugin_manager.discover(&home))
+                .await
+                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?
+                .unwrap_or(0);
             if n > 0 {
                 state
                     .orchestrator

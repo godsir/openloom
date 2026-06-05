@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import GalaxyGraph from './GalaxyGraph'
 import { useStore } from '../../stores'
 import Select from '../shared/Select'
@@ -16,6 +16,17 @@ function hashHue(s: string): number {
 function entityColor(type: string): string {
   return `hsl(${hashHue(type)}, 70%, 62%)`
 }
+
+const ENTITY_TYPE_CN: Record<string, string> = {
+  Technology: '技术', Person: '人物', Project: '项目', Concept: '概念',
+  Tool: '工具', Topic: '话题', Organization: '组织',
+}
+
+function entityTypeCn(type: string): string {
+  return ENTITY_TYPE_CN[type] ?? type
+}
+
+const PAGE_SIZE = 20
 
 const RELATION_LABELS: Record<string, string> = {
   uses: '使用', works_on: '参与', knows: '了解',
@@ -61,6 +72,7 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
   const [activeTab] = useState<'list' | 'graph'>(initialSubTab)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showLabels, setShowLabels] = useState(true)
+  const [listPage, setListPage] = useState(0)
 
   const chartWrapRef = useRef<HTMLDivElement>(null)
   const fullscreenWrapRef = useRef<HTMLDivElement>(null)
@@ -204,6 +216,17 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
   // search results overlay on top of node list; clear when query is empty
   const displayNodes = query && kgSearchResults.length > 0 ? kgSearchResults : kgNodeList
 
+  // ── Pagination ──
+  const totalPages = Math.max(1, Math.ceil(displayNodes.length / PAGE_SIZE))
+  const safePage = Math.min(listPage, totalPages - 1)
+  const pagedNodes = useMemo(() => {
+    const start = safePage * PAGE_SIZE
+    return displayNodes.slice(start, start + PAGE_SIZE)
+  }, [displayNodes, safePage])
+
+  // Reset page when data changes
+  useEffect(() => { setListPage(0) }, [displayNodes.length])
+
   return (
     <div className={styles.panel}>
       <div className={styles.searchRow}>
@@ -262,43 +285,50 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
               暂无实体。知识图谱会在与 AI 对话过程中自动积累。
             </div>
           ) : (
-            displayNodes.map(n => (
-              <div key={n.node_id || n.name} className={styles.nodeItem}>
-                <div className={styles.nodeItemInfo}>
-                  <div className={styles.nodeItemMeta}>
-                    <span className={styles.nodeItemName}>{n.name}</span>
-                    <span
-                      className={styles.nodeItemType}
-                      style={{
-                        color: entityColor(n.entity_type),
-                        background: entityColor(n.entity_type) + '18',
-                      }}
-                    >
-                      {n.entity_type}
-                    </span>
-                    {n.scope && n.scope !== 'global' && (
-                      <span className={styles.scopeBadge}>{n.scope.slice(0, 6)}</span>
-                    )}
-                    <span className={styles.nodeItemConf} title="AI 对该实体信息的把握程度">
-                      确信 {(n.confidence * 100).toFixed(0)}%
-                    </span>
+            <>
+              {pagedNodes.map(n => (
+                <div key={n.node_id || n.name} className={styles.nodeItem}>
+                  <div className={styles.nodeItemInfo}>
+                    <div className={styles.nodeItemMeta}>
+                      <span className={styles.nodeItemName}>{n.name}</span>
+                      <span
+                        className={styles.nodeItemType}
+                        style={{
+                          color: entityColor(n.entity_type),
+                          background: entityColor(n.entity_type) + '18',
+                        }}
+                      >
+                        {entityTypeCn(n.entity_type)}
+                      </span>
+                      {n.scope && n.scope !== 'global' && (
+                        <span className={styles.scopeBadge}>{n.scope.slice(0, 6)}</span>
+                      )}
+                      <span className={styles.nodeItemConf} title="AI 对该实体信息的把握程度">
+                        确信 {(n.confidence * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                    <div className={styles.nodeItemActions}>
+                      <button className={styles.actionBtn} onClick={() => handleExpand(n.name)}>关联</button>
+                      <button className={styles.actionBtn} onClick={() => handleWalk(n.name)}>关系网</button>
+                      <span className={styles.actionDivider} />
+                      <button className={styles.actionBtnDanger} onClick={() => handleDeleteNode(n.name)}>删除</button>
+                    </div>
                   </div>
-                  <div className={styles.nodeItemActions}>
-                    <button className={styles.actionBtn} onClick={() => handleExpand(n.name)}>
-                      关联
-                    </button>
-                    <button className={styles.actionBtn} onClick={() => handleWalk(n.name)}>
-                      关系网
-                    </button>
-                    <span className={styles.actionDivider} />
-                    <button className={styles.actionBtnDanger} onClick={() => handleDeleteNode(n.name)}>
-                      删除
-                    </button>
-                  </div>
+                  {n.description && <div className={styles.nodeItemDesc}>{n.description}</div>}
                 </div>
-                {n.description && <div className={styles.nodeItemDesc}>{n.description}</div>}
-              </div>
-            ))
+              ))}
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className={styles.pagination}>
+                  <button className={styles.pageBtn} disabled={safePage === 0} onClick={() => setListPage(p => Math.max(0, p - 1))}>上一页</button>
+                  <span className={styles.pageInfo}>
+                    {safePage + 1} / {totalPages}
+                    <span className={styles.pageTotal}>（共 {displayNodes.length} 条）</span>
+                  </span>
+                  <button className={styles.pageBtn} disabled={safePage >= totalPages - 1} onClick={() => setListPage(p => Math.min(totalPages - 1, p + 1))}>下一页</button>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
@@ -362,7 +392,7 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
           return types.map(type => (
             <div key={type} className={styles.legendItem}>
               <span className={styles.legendDot} style={{ background: entityColor(type) }} />
-              {type}
+              {entityTypeCn(type)}
             </div>
           ))
         })()}
@@ -380,7 +410,7 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
           }}
         >
           <div className={styles.tooltipName}>{tooltip.node.name}</div>
-          <div className={styles.tooltipType}>{tooltip.node.entity_type}</div>
+          <div className={styles.tooltipType}>{entityTypeCn(tooltip.node.entity_type)}</div>
           {tooltip.node.description && (
             <div className={styles.tooltipDesc}>{tooltip.node.description}</div>
           )}
