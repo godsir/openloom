@@ -6,6 +6,10 @@ use anyhow::Result;
 use chrono::Utc;
 use rusqlite::Connection;
 
+/// Default embedding dimension, matching common embedding models
+/// (e.g., text-embedding-3-small, all-mpnet-base-v2: 768).
+pub const DEFAULT_EMBEDDING_DIM: usize = 768;
+
 /// A row from a graph query.
 #[derive(Debug, Clone)]
 pub struct GraphRow {
@@ -523,6 +527,11 @@ impl<'a> GraphStore<'a> {
         let placeholder = "?,".repeat(node_ids.len());
         let in_clause = &placeholder[..placeholder.len() - 1];
         let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(s) = scope {
+            // Build explicit ?NNN placeholders so scope (?1) does not collide
+            // with the auto-numbered ? markers in the IN clauses.
+            let n = node_ids.len();
+            let source_ph: Vec<String> = (2..(2 + n)).map(|i| format!("?{}", i)).collect();
+            let target_ph: Vec<String> = ((2 + n)..(2 + 2 * n)).map(|i| format!("?{}", i)).collect();
             let sql = format!(
                 "SELECT sn.name, tn.name, e.relation_type, e.confidence
                  FROM kg_edges e
@@ -530,7 +539,8 @@ impl<'a> GraphStore<'a> {
                  JOIN kg_nodes tn ON tn.id = e.target_id
                  WHERE e.source_id IN ({}) AND e.target_id IN ({})
                  AND (e.scope = ?1 OR e.scope = 'global')",
-                in_clause, in_clause
+                source_ph.join(","),
+                target_ph.join(",")
             );
             let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(s.to_string())];
             for id in node_ids.iter().chain(node_ids.iter()) {
@@ -781,6 +791,285 @@ impl<'a> GraphStore<'a> {
                 row.get::<_, i64>(0)
             })? as usize)
     }
+
+    // ========================================================================
+    // Memory Quality Logging
+    // ========================================================================
+
+    /// Record a memory quality log entry — which entities were injected into the
+    /// system prompt and how long injection took. Returns the log entry ID.
+    pub fn record_quality_log(
+        &self,
+        session_id: &str,
+        turn_seq: i64,
+        injected_entities_json: &str,
+        duration_ms: i64,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO memory_quality_log (session_id, turn_seq, injected_entities, injection_duration_ms)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![session_id, turn_seq, injected_entities_json, duration_ms],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Update a quality log entry with the entities the assistant actually referenced.
+    pub fn update_quality_log_references(
+        &self,
+        log_id: i64,
+        referenced_entities_json: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE memory_quality_log SET referenced_entities = ?1 WHERE id = ?2",
+            rusqlite::params![referenced_entities_json, log_id],
+        )?;
+        Ok(())
+    }
+
+    /// Get quality statistics for a session.
+    /// Returns a JSON object with total_injections, avg_relevance, and evaluated_turns.
+    pub fn get_quality_stats(&self, session_id: &str) -> Result<serde_json::Value> {
+        let mut stmt = self.conn.prepare(
+            "SELECT injected_entities, referenced_entities, injection_duration_ms
+             FROM memory_quality_log WHERE session_id = ?1
+             ORDER BY created_at ASC",
+        )?;
+        let rows: Vec<(String, Option<String>, i64)> = stmt
+            .query_map(rusqlite::params![session_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let total = rows.len();
+        let mut total_relevance: f64 = 0.0;
+        let mut evaluated_turns: usize = 0;
+        let mut total_duration_ms: i64 = 0;
+        let mut turns_with_refs: usize = 0;
+
+        for (injected_str, ref_opt, dur) in &rows {
+            total_duration_ms += dur;
+            let injected: Vec<String> =
+                serde_json::from_str(injected_str).unwrap_or_default();
+            let referenced: Vec<String> = ref_opt
+                .as_ref()
+                .and_then(|r| serde_json::from_str(r).ok())
+                .unwrap_or_default();
+            if !injected.is_empty() {
+                let relevance = referenced.len() as f64 / injected.len() as f64;
+                total_relevance += relevance;
+                evaluated_turns += 1;
+            }
+            if !referenced.is_empty() {
+                turns_with_refs += 1;
+            }
+        }
+
+        let avg_relevance = if evaluated_turns > 0 {
+            (total_relevance / evaluated_turns as f64 * 100.0).round() / 100.0
+        } else {
+            0.0
+        };
+        let avg_duration_ms = if total > 0 {
+            total_duration_ms / total as i64
+        } else {
+            0
+        };
+
+        Ok(serde_json::json!({
+            "total_injections": total,
+            "avg_relevance": avg_relevance,
+            "evaluated_turns": evaluated_turns,
+            "turns_with_references": turns_with_refs,
+            "avg_injection_duration_ms": avg_duration_ms,
+        }))
+    }
+
+    // ========================================================================
+    // Vector embedding — semantic similarity search
+    // ========================================================================
+
+    /// Store a float32 embedding vector for a named entity node.
+    /// The embedding is serialised as a BLOB of little-endian f32 values.
+    /// If the node does not exist, a minimal node is created automatically.
+    pub fn embed_node(&self, name: &str, embedding: &[f32]) -> Result<()> {
+        let bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
+        let affected = self.conn.execute(
+            "UPDATE kg_nodes SET embedding = ?1 WHERE name = ?2",
+            rusqlite::params![bytes, name],
+        )?;
+        if affected == 0 {
+            // Node doesn't exist yet — upsert a minimal node with embedding
+            let now = Utc::now().timestamp();
+            self.conn.execute(
+                "INSERT INTO kg_nodes (name, entity_type, description, confidence, evidence_count,
+                 first_seen, last_updated, scope, embedding)
+                 VALUES (?1, 'concept', '', 0.5, 1, ?2, ?2, 'global', ?3)",
+                rusqlite::params![name, now, bytes],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Retrieve the stored embedding vector for a node. Returns `None` if the
+    /// node has no embedding or does not exist.
+    pub fn get_embedding(&self, name: &str) -> Result<Option<Vec<f32>>> {
+        let result: Option<Vec<u8>> = self
+            .conn
+            .query_row(
+                "SELECT embedding FROM kg_nodes WHERE name = ?1 AND embedding IS NOT NULL",
+                rusqlite::params![name],
+                |row| row.get(0),
+            )
+            .ok();
+        match result {
+            Some(blob) => Ok(Some(blob_to_f32_vec(&blob))),
+            None => Ok(None),
+        }
+    }
+
+    /// Search for entities whose stored embeddings are most similar to the
+    /// query embedding via cosine similarity. Returns up to `limit` results
+    /// sorted by descending similarity, each paired with its similarity score.
+    ///
+    /// Falls back to FTS5 text search when no nodes have embeddings or when
+    /// `fallback_query` is provided and the vector search yields no results.
+    pub fn search_similar(
+        &self,
+        embedding: &[f32],
+        limit: usize,
+        fallback_query: Option<&str>,
+        scope: Option<&str>,
+    ) -> Result<Vec<(GraphRow, f64)>> {
+        // Build scope filter clause
+        let scope_clause = if scope.is_some() {
+            "AND (n.scope = ?1 OR n.scope = 'global')"
+        } else {
+            ""
+        };
+
+        let sql = format!(
+            "SELECT n.id, n.name, n.entity_type, n.description, n.confidence, n.scope, n.embedding
+             FROM kg_nodes n WHERE n.embedding IS NOT NULL {}
+             LIMIT 5000",
+            scope_clause
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows: Vec<_> = if scope.is_some() {
+            stmt.query_map(rusqlite::params![scope.unwrap()], |row| {
+                let emb_bytes: Vec<u8> = row.get(6)?;
+                let stored: Vec<f32> = blob_to_f32_vec(&emb_bytes);
+                Ok((
+                    GraphRow {
+                        node_id: row.get(0)?,
+                        name: row.get(1)?,
+                        entity_type: row.get(2)?,
+                        description: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                        confidence: row.get(4)?,
+                        relation_type: None,
+                        distance: None,
+                        scope: row.get(5)?,
+                    },
+                    stored,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map([], |row| {
+                let emb_bytes: Vec<u8> = row.get(6)?;
+                let stored: Vec<f32> = blob_to_f32_vec(&emb_bytes);
+                Ok((
+                    GraphRow {
+                        node_id: row.get(0)?,
+                        name: row.get(1)?,
+                        entity_type: row.get(2)?,
+                        description: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                        confidence: row.get(4)?,
+                        relation_type: None,
+                        distance: None,
+                        scope: row.get(5)?,
+                    },
+                    stored,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+
+        if !rows.is_empty() {
+            // Vector search path: compute cosine similarity and rank
+            let mut scored: Vec<(GraphRow, f64)> = rows
+                .into_iter()
+                .filter(|(_, emb)| emb.len() == embedding.len())
+                .map(|(row, emb)| {
+                    let sim = cosine_similarity(embedding, &emb);
+                    (row, sim)
+                })
+                .collect();
+
+            scored.sort_by(|a, b| {
+                b.1.partial_cmp(&a.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            scored.truncate(limit);
+
+            let result_rows: Vec<GraphRow> = scored.iter().map(|(r, _)| r.clone()).collect();
+            let _ = self.touch_rows(&result_rows);
+            return Ok(scored);
+        }
+
+        // Fallback: no embeddings available — use FTS5 text search if query provided
+        if let Some(query) = fallback_query {
+            let text_results = self.search_entities(query, limit, scope)?;
+            let scored: Vec<(GraphRow, f64)> = text_results
+                .into_iter()
+                .map(|r| (r, 0.0))
+                .collect();
+            return Ok(scored);
+        }
+
+        Ok(Vec::new())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Vector helpers
+// ---------------------------------------------------------------------------
+
+/// Convert a `[f32]` slice into a BLOB of little-endian bytes.
+#[allow(dead_code)]
+pub fn f32_slice_to_blob(v: &[f32]) -> Vec<u8> {
+    v.iter().flat_map(|f| f.to_le_bytes()).collect()
+}
+
+/// Decode a BLOB of little-endian bytes into a `Vec<f32>`.
+pub fn blob_to_f32_vec(blob: &[u8]) -> Vec<f32> {
+    blob.chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
+}
+
+/// Compute cosine similarity between two float slices.
+pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
+    let dot: f64 = a
+        .iter()
+        .zip(b.iter())
+        .map(|(x, y)| (*x as f64) * (*y as f64))
+        .sum();
+    let norm_a: f64 = a
+        .iter()
+        .map(|x| (*x as f64) * (*x as f64))
+        .sum::<f64>()
+        .sqrt();
+    let norm_b: f64 = b
+        .iter()
+        .map(|x| (*x as f64) * (*x as f64))
+        .sum::<f64>()
+        .sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        0.0
+    } else {
+        dot / (norm_a * norm_b)
+    }
 }
 
 #[cfg(test)]
@@ -796,6 +1085,8 @@ mod tests {
         conn.execute_batch("ALTER TABLE kg_nodes ADD COLUMN access_count INTEGER DEFAULT 0;")
             .unwrap();
         conn.execute_batch("ALTER TABLE kg_nodes ADD COLUMN last_accessed INTEGER;")
+            .unwrap();
+        conn.execute_batch("ALTER TABLE kg_nodes ADD COLUMN embedding BLOB;")
             .unwrap();
         conn
     }
@@ -868,5 +1159,73 @@ mod tests {
         let neighbors = store.neighbors("Rust", None, 10).unwrap();
         assert_eq!(neighbors.len(), 1);
         assert_eq!(neighbors[0].name, "openLoom");
+    }
+
+    #[test]
+    fn test_embedding_store_and_search() {
+        let conn = setup_db();
+        let store = GraphStore::new(&conn);
+
+        // Create nodes with embeddings
+        let emb_rust = vec![1.0f32, 0.0, 0.0]; // dim=3 for testing
+        let emb_python = vec![0.0, 1.0, 0.0];
+        let emb_loom = vec![0.9, 0.1, 0.0]; // close to emb_rust
+
+        store.upsert_node("Rust", "Technology", "PL", 0.9, "global").unwrap();
+        store.embed_node("Rust", &emb_rust).unwrap();
+
+        store.upsert_node("Python", "Technology", "PL", 0.85, "global").unwrap();
+        store.embed_node("Python", &emb_python).unwrap();
+
+        store.upsert_node("openLoom", "Project", "AI kernel", 0.9, "global").unwrap();
+        store.embed_node("openLoom", &emb_loom).unwrap();
+
+        // embed_node should also work for non-existing nodes (auto-creates)
+        store.embed_node("NewTech", &vec![0.5, 0.5, 0.0]).unwrap();
+        assert!(store.resolve_node("NewTech").unwrap().is_some());
+
+        // Search: query embedding close to emb_rust
+        let query = vec![0.95, 0.05, 0.0];
+        let results = store.search_similar(&query, 5, None, None).unwrap();
+        assert!(results.len() >= 3, "expected at least 3 results, got {}", results.len());
+        // Rust-like embeddings should rank highest
+        let top = &results[0];
+        assert!(
+            top.0.name == "Rust" || top.0.name == "openLoom" || top.0.name == "NewTech",
+            "top result should be close to query, got {}", top.0.name
+        );
+        assert!(top.1 > 0.9, "similarity should be high, got {}", top.1);
+
+        // get_embedding
+        let retrieved = store.get_embedding("Rust").unwrap();
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.len(), 3);
+        assert!((retrieved[0] - 1.0).abs() < 1e-6);
+        assert!((retrieved[1] - 0.0).abs() < 1e-6);
+        assert!((retrieved[2] - 0.0).abs() < 1e-6);
+
+        // Node without embedding returns None
+        store.upsert_node("NoEmb", "Concept", "desc", 0.5, "global").unwrap();
+        assert!(store.get_embedding("NoEmb").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_embedding_fallback_to_fts() {
+        let conn = setup_db();
+        let store = GraphStore::new(&conn);
+
+        // No nodes have embeddings — search_similar should fall back to FTS5
+        store.upsert_node("RustLang", "Technology", "Rust programming", 0.9, "global").unwrap();
+
+        let query = vec![0.5f32; 768];
+        let results = store.search_similar(&query, 10, Some("rust"), None).unwrap();
+        // Falls back to FTS5 search with score 0.0
+        assert!(!results.is_empty(), "FTS5 fallback should return results");
+        assert_eq!(results[0].1, 0.0, "FTS5 fallback results have score 0.0");
+
+        // Without fallback_query, returns empty
+        let no_results = store.search_similar(&query, 10, None, None).unwrap();
+        assert!(no_results.is_empty(), "without fallback query, should be empty");
     }
 }

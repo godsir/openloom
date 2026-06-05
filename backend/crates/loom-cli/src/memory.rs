@@ -105,6 +105,29 @@ fn truncate(s: &str, max_chars: usize) -> &str {
     }
 }
 
+/// Extract a CJK-friendly snippet from `text` starting at `pos`, respecting
+/// sentence boundaries (。！？) within `cap` chars so the snippet reads naturally.
+fn cjk_snippet(text: &str, pos: usize, cap: usize) -> String {
+    let tail: String = text[pos..].chars().take(cap).collect();
+    // Find the last sentence boundary within the snippet.
+    // Use char-indexed slicing to avoid UTF-8 byte-boundary panics with
+    // multi-byte CJK punctuation (。=3B, ！=3B, ？=3B).
+    if let Some((char_idx, _boundary_char)) = tail
+        .rmatch_indices(|c: char| matches!(c, '。' | '！' | '？' | '\n'))
+        .next()
+    {
+        let byte_len: usize = tail
+            .char_indices()
+            .take(char_idx + 1)
+            .last()
+            .map(|(bi, c)| bi + c.len_utf8())
+            .unwrap_or(tail.len());
+        tail[..byte_len].to_string()
+    } else {
+        tail
+    }
+}
+
 #[async_trait::async_trait]
 impl MemoryStore for LoomMemoryStore {
     async fn save_turn(
@@ -131,7 +154,7 @@ impl MemoryStore for LoomMemoryStore {
             "context_window": context_window,
         }).to_string();
         {
-            let sess = self.session_db.lock().unwrap();
+            let sess = self.session_db.lock().expect("lock poisoned");
             let conn = sess.conn();
             let seq: i64 = conn.query_row(
                 "SELECT COALESCE(MAX(seq), 0) + 1 FROM message_history WHERE session_id = ?1",
@@ -177,7 +200,7 @@ impl MemoryStore for LoomMemoryStore {
                 serde_json::json!({"assistant_response": assistant_msg, "tool_calls": tools, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}),
             ),
         };
-        let event_id = self.memory_db.lock().unwrap().insert_event(&event)?;
+        let event_id = self.memory_db.lock().expect("lock poisoned").insert_event(&event)?;
         tracing::debug!(session_id, event_id, "chat turn saved");
         Ok(event_id)
     }
@@ -185,7 +208,7 @@ impl MemoryStore for LoomMemoryStore {
     async fn save_interrupted_turn(&self, session_id: &str, user_msg: &str) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         {
-            let sess = self.session_db.lock().unwrap();
+            let sess = self.session_db.lock().expect("lock poisoned");
             let conn = sess.conn();
             let seq: i64 = conn.query_row(
                 "SELECT COALESCE(MAX(seq), 0) + 1 FROM message_history WHERE session_id = ?1",
@@ -205,7 +228,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn delete_message(&self, session_id: &str, index: usize) -> Result<()> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         let conn = store.conn();
         // Delete the message at the given index by seq order
         let deleted = conn.execute(
@@ -225,7 +248,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn load_history(&self, session_id: &str, limit: usize) -> Result<Vec<Message>> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         let mut stmt = store.conn().prepare(
             "SELECT role, content, metadata, timestamp FROM message_history WHERE session_id = ?1 ORDER BY seq ASC LIMIT ?2"
         )?;
@@ -277,14 +300,15 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn extract_cognitions(&self, session_id: &str, text: &str) -> Result<Vec<String>> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         let cognition = CognitionStore::new(store.conn());
         let graph = GraphStore::new(store.conn());
         let mut triggered = Vec::new();
         let lower = text.to_lowercase();
 
         // 1. Technology stack keywords
-        let tech_keywords = &[
+        let tech_keywords: &[(&str, &str)] = &[
+            // ── Programming Languages ──────────────────────────────
             ("rust", "rust"),
             ("python", "python"),
             ("typescript", "typescript"),
@@ -293,20 +317,68 @@ impl MemoryStore for LoomMemoryStore {
             ("c++", "cpp"),
             ("c#", "csharp"),
             ("javascript", "javascript"),
+            ("kotlin", "kotlin"),
+            ("swift", "swift"),
+            ("elixir", "elixir"),
+            ("scala", "scala"),
+            ("zig", "zig"),
+            ("lua", "lua"),
+            ("ruby", "ruby"),
+            ("php", "php"),
+            ("perl", "perl"),
+            ("haskell", "haskell"),
+            ("nix", "nix"),
+            // ── Frameworks & Libraries ─────────────────────────────
             ("react", "react"),
             ("vue", "vue"),
+            ("angular", "angular"),
+            ("svelte", "svelte"),
+            ("next.js", "nextjs"),
+            ("nuxt", "nuxt"),
             ("electron", "electron"),
             ("tauri", "tauri"),
-            ("node", "nodejs"),
+            ("fastapi", "fastapi"),
+            ("django", "django"),
+            ("flask", "flask"),
+            ("spring", "spring"),
+            ("axum", "axum"),
+            ("tokio", "tokio"),
+            // ── Databases ──────────────────────────────────────────
+            ("postgres", "postgresql"),
+            ("postgresql", "postgresql"),
+            ("sql", "sql"),
+            ("sqlite", "sqlite"),
+            ("mysql", "mysql"),
+            ("redis", "redis"),
+            ("mongodb", "mongodb"),
+            ("elasticsearch", "elasticsearch"),
+            ("neo4j", "neo4j"),
+            ("clickhouse", "clickhouse"),
+            ("duckdb", "duckdb"),
+            ("milvus", "milvus"),
+            ("qdrant", "qdrant"),
+            // ── DevOps & Infrastructure ────────────────────────────
             ("docker", "docker"),
             ("kubernetes", "k8s"),
-            ("sql", "sql"),
-            ("postgres", "postgresql"),
-            ("sqlite", "sqlite"),
-            ("redis", "redis"),
+            ("k8s", "k8s"),
+            ("terraform", "terraform"),
+            ("nginx", "nginx"),
+            ("grafana", "grafana"),
+            ("prometheus", "prometheus"),
+            ("kafka", "kafka"),
+            ("rabbitmq", "rabbitmq"),
+            ("node", "nodejs"),
             ("git", "git"),
+            ("github", "github"),
             ("linux", "linux"),
             ("windows", "windows"),
+            ("macos", "macos"),
+            // ── Concepts ───────────────────────────────────────────
+            ("graphql", "graphql"),
+            ("grpc", "grpc"),
+            ("webassembly", "wasm"),
+            ("wasm", "wasm"),
+            ("microservices", "microservices"),
         ];
         for (keyword, tag) in tech_keywords {
             if lower.contains(keyword) && !lower.contains(&format!("not {}", keyword)) {
@@ -331,11 +403,23 @@ impl MemoryStore for LoomMemoryStore {
             "mcp",
             "lsp",
             "skill",
+            "rag",
+            "embedding",
+            "transformer",
+            "diffusion",
+            "fine-tuning",
+            "ft",
+            "prompt engineering",
             "claude",
             "openai",
             "deepseek",
+            "qwen",
+            "glm",
             "lm studio",
             "ollama",
+            "langchain",
+            "copilot",
+            "chatgpt",
         ] {
             if lower.contains(kw) {
                 if cognition
@@ -356,20 +440,33 @@ impl MemoryStore for LoomMemoryStore {
         }
 
         // 3. Chinese patterns: preferences, goals, habits
-        let cn_patterns = [
+        let cn_patterns: &[(&str, &str)] = &[
             ("我喜欢", "preference"),
+            ("我讨厌", "dislike"),
+            ("我不喜欢", "dislike"),
+            ("我不用", "avoid"),
             ("我想", "goal"),
             ("我需要", "need"),
+            ("我觉得", "opinion"),
+            ("我认为", "opinion"),
+            ("我打算", "plan"),
+            ("我希望", "wish"),
+            ("我计划", "plan"),
             ("我习惯", "habit"),
             ("我在做", "working_on"),
             ("我在用", "using"),
+            ("我之前用", "used_before"),
             ("我的项目", "project"),
             ("我公司", "company"),
             ("我团队", "team"),
+            ("我关注", "following"),
+            ("我建议", "suggestion"),
+            ("我在学", "learning"),
+            ("我想学", "learning"),
         ];
-        for (prefix, trait_name) in &cn_patterns {
+        for (prefix, trait_name) in cn_patterns {
             if let Some(pos) = text.find(prefix) {
-                let snippet: String = text[pos..].chars().take(30).collect();
+                let snippet = cjk_snippet(text, pos, 50);
                 if cognition
                     .insert("USER", trait_name, &snippet, 0.4, 1, session_id)
                     .is_ok()
@@ -399,7 +496,7 @@ impl MemoryStore for LoomMemoryStore {
 
     async fn get_persona(&self) -> Result<String> {
         let rows = {
-            let store = self.memory_db.lock().unwrap();
+            let store = self.memory_db.lock().expect("lock poisoned");
             let cognition = CognitionStore::new(store.conn());
             cognition.query_by_subject("USER", None, 20, 0)?
         };
@@ -414,7 +511,7 @@ impl MemoryStore for LoomMemoryStore {
         source_event_id: i64,
         scope: &str,
     ) -> Result<(usize, usize)> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         let graph = loom_memory::GraphStore::new(store.conn());
         let mut node_ids = std::collections::HashMap::new();
         let mut node_count = 0;
@@ -478,7 +575,7 @@ impl MemoryStore for LoomMemoryStore {
         _relationships: &[loom_memory::ExtractedRelationship],
         scope: &str,
     ) -> Result<()> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         let cognition = CognitionStore::new(store.conn());
         for e in entities {
             let clean_name = e.name.trim_matches('\'').trim_matches('"');
@@ -507,22 +604,22 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn save_agent_config(&self, config: &AgentConfig) -> Result<()> {
-        let store = self.config_db.lock().unwrap();
+        let store = self.config_db.lock().expect("lock poisoned");
         AgentConfigStore::new(store.conn()).upsert(config)
     }
 
     async fn get_agent_config(&self, name: &str) -> Result<Option<AgentConfig>> {
-        let store = self.config_db.lock().unwrap();
+        let store = self.config_db.lock().expect("lock poisoned");
         AgentConfigStore::new(store.conn()).get(name)
     }
 
     async fn list_agent_configs(&self) -> Result<Vec<AgentConfig>> {
-        let store = self.config_db.lock().unwrap();
+        let store = self.config_db.lock().expect("lock poisoned");
         AgentConfigStore::new(store.conn()).list()
     }
 
     async fn delete_agent_config(&self, name: &str) -> Result<()> {
-        let store = self.config_db.lock().unwrap();
+        let store = self.config_db.lock().expect("lock poisoned");
         AgentConfigStore::new(store.conn()).delete(name)
     }
 
@@ -531,22 +628,22 @@ impl MemoryStore for LoomMemoryStore {
         session_id: &str,
         agent_config_name: &str,
     ) -> Result<()> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         AgentConfigStore::new(store.conn()).set_session_binding(session_id, agent_config_name)
     }
 
     async fn get_session_agent_name(&self, session_id: &str) -> Result<Option<String>> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         AgentConfigStore::new(store.conn()).get_session_binding(session_id)
     }
 
     async fn save_session_workspace(&self, session_id: &str, path: &str) -> Result<()> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         AgentConfigStore::new(store.conn()).set_session_workspace(session_id, path)
     }
 
     async fn get_session_workspace(&self, session_id: &str) -> Result<Option<String>> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         AgentConfigStore::new(store.conn()).get_session_workspace(session_id)
     }
 
@@ -559,32 +656,32 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn save_model_config(&self, config: &ModelConfig) -> Result<()> {
-        let store = self.config_db.lock().unwrap();
+        let store = self.config_db.lock().expect("lock poisoned");
         ModelConfigStore::new(store.conn()).upsert(config)
     }
 
     async fn get_model_config(&self, name: &str) -> Result<Option<ModelConfig>> {
-        let store = self.config_db.lock().unwrap();
+        let store = self.config_db.lock().expect("lock poisoned");
         ModelConfigStore::new(store.conn()).get(name)
     }
 
     async fn list_model_configs(&self) -> Result<Vec<ModelConfig>> {
-        let store = self.config_db.lock().unwrap();
+        let store = self.config_db.lock().expect("lock poisoned");
         ModelConfigStore::new(store.conn()).list()
     }
 
     async fn delete_model_config(&self, name: &str) -> Result<()> {
-        let store = self.config_db.lock().unwrap();
+        let store = self.config_db.lock().expect("lock poisoned");
         ModelConfigStore::new(store.conn()).delete(name)
     }
 
     async fn set_active_model(&self, name: &str) -> Result<()> {
-        let store = self.config_db.lock().unwrap();
+        let store = self.config_db.lock().expect("lock poisoned");
         ModelConfigStore::new(store.conn()).set_active(name)
     }
 
     async fn get_active_model(&self) -> Result<Option<ModelConfig>> {
-        let store = self.config_db.lock().unwrap();
+        let store = self.config_db.lock().expect("lock poisoned");
         ModelConfigStore::new(store.conn()).get_active()
     }
 
@@ -614,12 +711,12 @@ impl MemoryStore for LoomMemoryStore {
                 .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".into())),
             autostart,
         };
-        let store = self.config_db.lock().unwrap();
+        let store = self.config_db.lock().expect("lock poisoned");
         McpConfigStore::new(store.conn()).upsert(&row)
     }
 
     async fn list_mcp_servers(&self) -> Result<Vec<(loom_mcp::McpServerConfig, bool)>> {
-        let store = self.config_db.lock().unwrap();
+        let store = self.config_db.lock().expect("lock poisoned");
         let rows = McpConfigStore::new(store.conn()).list()?;
         let configs = rows
             .into_iter()
@@ -656,12 +753,12 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn delete_mcp_server(&self, name: &str) -> Result<()> {
-        let store = self.config_db.lock().unwrap();
+        let store = self.config_db.lock().expect("lock poisoned");
         McpConfigStore::new(store.conn()).delete(name)
     }
 
     async fn query_kg_context(&self, entity_names: &[&str], limit: usize, scope: &str) -> Result<String> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         let graph = GraphStore::new(store.conn());
         let mut lines: Vec<String> = Vec::new();
         const MIN_CONFIDENCE: f64 = 0.5;
@@ -722,7 +819,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn list_sessions(&self) -> Result<Vec<(String, String, usize, Option<String>, Option<String>)>> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         let mut stmt = store.conn().prepare(
             "SELECT id, created_at, message_count, title, updated_at FROM sessions ORDER BY updated_at DESC",
         )?;
@@ -739,7 +836,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn ensure_session(&self, id: &str) -> Result<()> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         store.conn().execute(
             "INSERT OR IGNORE INTO sessions (id, created_at, updated_at, message_count) VALUES (?1, datetime('now'), datetime('now'), 0)",
             rusqlite::params![id],
@@ -748,7 +845,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn prune_memory(&self) -> Result<usize> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         let graph = GraphStore::new(store.conn());
         // Only prune when entity count exceeds threshold
         let count = graph.node_count()?;
@@ -767,7 +864,7 @@ impl MemoryStore for LoomMemoryStore {
         query: &str,
         limit: usize,
     ) -> Result<Vec<(String, String, String, f64)>> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         let graph = GraphStore::new(store.conn());
         let results = graph.search_entities(query, limit, None)?;
         Ok(results
@@ -784,17 +881,17 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn kg_node_count(&self) -> Result<usize> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         GraphStore::new(store.conn()).node_count()
     }
 
     async fn kg_edge_count(&self) -> Result<usize> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         GraphStore::new(store.conn()).edge_count()
     }
 
     async fn kg_neighbors(&self, node_name: &str, limit: usize, scope: Option<&str>) -> Result<loom_types::KgGraph> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         let graph = GraphStore::new(store.conn());
         let rows = graph.neighbors(node_name, scope, limit)?;
         let nodes: Vec<loom_types::KgNode> = rows
@@ -830,7 +927,7 @@ impl MemoryStore for LoomMemoryStore {
         scope: Option<&str>,
         limit: usize,
     ) -> Result<loom_types::KgGraph> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         let graph = GraphStore::new(store.conn());
         let rows = graph.walk(start_name, max_depth, scope, limit)?;
 
@@ -905,7 +1002,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn delete_session(&self, id: &str) -> Result<()> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         let conn = store.conn();
 
         // 1. Promote high-confidence session-scoped KG nodes/edges and cognitions to global
@@ -943,7 +1040,7 @@ impl MemoryStore for LoomMemoryStore {
         session_id: &str,
         min_confidence: f64,
     ) -> Result<(usize, usize)> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         let conn = store.conn();
 
         // Promote KG nodes: change scope from session_id to 'global'
@@ -992,7 +1089,7 @@ impl MemoryStore for LoomMemoryStore {
         node_names: &[String],
         cognition_ids: &[i64],
     ) -> Result<(usize, usize)> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         let conn = store.conn();
         let graph = GraphStore::new(conn);
         let cognition = CognitionStore::new(conn);
@@ -1005,7 +1102,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn rename_session(&self, id: &str, title: &str) -> Result<()> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         store.conn().execute(
             "UPDATE sessions SET title = ?1, updated_at = datetime('now') WHERE id = ?2",
             rusqlite::params![title, id],
@@ -1014,7 +1111,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn get_summary(&self, session_id: &str) -> Result<Option<String>> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         let result = store.conn().query_row(
             "SELECT summary FROM sessions WHERE id = ?1",
             rusqlite::params![session_id],
@@ -1028,7 +1125,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn save_summary(&self, session_id: &str, summary: &str) -> Result<()> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         // Also record the current message count so we know when to re-summarize
         let count: i64 = store
             .conn()
@@ -1046,7 +1143,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn get_summary_at_count(&self, session_id: &str) -> Result<usize> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         let result = store.conn().query_row(
             "SELECT summary_at_count FROM sessions WHERE id = ?1",
             rusqlite::params![session_id],
@@ -1056,7 +1153,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn get_message_count(&self, session_id: &str) -> Result<usize> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         let result = store.conn().query_row(
             "SELECT message_count FROM sessions WHERE id = ?1",
             rusqlite::params![session_id],
@@ -1071,7 +1168,7 @@ impl MemoryStore for LoomMemoryStore {
         offset: usize,
         scope: Option<&str>,
     ) -> Result<Vec<loom_types::KgNode>> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         let graph = GraphStore::new(store.conn());
         let rows = graph.list_nodes(limit, offset, scope)?;
         Ok(rows
@@ -1088,7 +1185,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn kg_edges_between(&self, node_names: &[String], scope: Option<&str>) -> Result<Vec<loom_types::KgEdge>> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         let graph = GraphStore::new(store.conn());
 
         // Resolve node names to IDs
@@ -1122,12 +1219,12 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn kg_delete_node(&self, name: &str) -> Result<bool> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         GraphStore::new(store.conn()).delete_node(name)
     }
 
     async fn kg_delete_edge(&self, source: &str, target: &str, relation: &str) -> Result<bool> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         GraphStore::new(store.conn()).delete_edge(source, target, relation)
     }
 
@@ -1138,7 +1235,7 @@ impl MemoryStore for LoomMemoryStore {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<loom_types::Cognition>> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         let cognitions = loom_memory::CognitionStore::new(store.conn());
         let rows = cognitions.query_by_subject(subject, scope, limit, offset)?;
         Ok(rows
@@ -1159,7 +1256,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn cognition_list_subjects(&self) -> Result<Vec<String>> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         let cognitions = loom_memory::CognitionStore::new(store.conn());
         cognitions.list_subjects()
     }
@@ -1168,7 +1265,7 @@ impl MemoryStore for LoomMemoryStore {
         &self,
         cognition_id: i64,
     ) -> Result<Vec<loom_types::CognitionHistory>> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         let cognitions = loom_memory::CognitionStore::new(store.conn());
         let snapshots = cognitions.snapshots_for(cognition_id)?;
         Ok(snapshots
@@ -1186,7 +1283,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn kg_prune(&self, older_than_days: i64) -> Result<usize> {
-        let store = self.memory_db.lock().unwrap();
+        let store = self.memory_db.lock().expect("lock poisoned");
         let graph = GraphStore::new(store.conn());
         graph.prune_stale(older_than_days, 1000)
     }
@@ -1202,7 +1299,7 @@ impl MemoryStore for LoomMemoryStore {
         latency_ms: u64,
         context_window: usize,
     ) -> Result<()> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         let model = model.trim();
         store.conn().execute(
             "INSERT INTO token_usage (session_id, model, prompt_tokens, completion_tokens, cached_tokens, cached_read_tokens, cached_write_tokens, latency_ms, context_window) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -1212,7 +1309,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn get_token_summary(&self, from: &str, to: &str) -> Result<serde_json::Value> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         let conn = store.conn();
 
         let totals: (i64, i64, i64, i64, i64, i64, f64) = conn.query_row(
@@ -1265,7 +1362,7 @@ impl MemoryStore for LoomMemoryStore {
         to: &str,
         granularity: &str,
     ) -> Result<serde_json::Value> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         let conn = store.conn();
 
         let date_format = match granularity {
@@ -1322,8 +1419,76 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn reset_token_usage(&self) -> Result<()> {
-        let store = self.session_db.lock().unwrap();
+        let store = self.session_db.lock().expect("lock poisoned");
         store.conn().execute("DELETE FROM token_usage", [])?;
         Ok(())
+    }
+
+    // ── Vector embedding & semantic similarity search ──────────────────────
+
+    async fn embed_entity(&self, name: &str, embedding: Vec<f32>) -> Result<()> {
+        let store = self.memory_db.lock().expect("lock poisoned");
+        let graph = loom_memory::GraphStore::new(store.conn());
+        graph.embed_node(name, &embedding)
+    }
+
+    async fn search_similar_entities(
+        &self,
+        embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<loom_types::KgNode>> {
+        let store = self.memory_db.lock().expect("lock poisoned");
+        let graph = loom_memory::GraphStore::new(store.conn());
+        let rows = graph.search_similar(embedding, limit, None, None)?;
+        Ok(rows
+            .iter()
+            .map(|(row, _score)| loom_types::KgNode {
+                node_id: row.node_id,
+                name: row.name.clone(),
+                entity_type: row.entity_type.clone(),
+                description: row.description.clone(),
+                confidence: row.confidence,
+                scope: row.scope.clone(),
+            })
+            .collect())
+    }
+
+    // ── Memory quality feedback loop ───────────────────────────────────────
+
+    async fn record_memory_quality(
+        &self,
+        session_id: &str,
+        turn_seq: i64,
+        injected: &[String],
+        duration_ms: i64,
+    ) -> Result<i64> {
+        let injected_json =
+            serde_json::to_string(injected).unwrap_or_else(|_| "[]".to_string());
+        // Compute turn_seq from session DB if not explicitly provided
+        let effective_seq = if turn_seq > 0 {
+            turn_seq
+        } else {
+            let sess = self.session_db.lock().expect("lock poisoned");
+            sess.conn().query_row(
+                "SELECT COALESCE(MAX(seq), 0) FROM message_history WHERE session_id = ?1 AND role = 'user'",
+                rusqlite::params![session_id],
+                |r| r.get::<_, i64>(0),
+            ).unwrap_or(0)
+        };
+        let mem = self.memory_db.lock().expect("lock poisoned");
+        let graph = GraphStore::new(mem.conn());
+        graph.record_quality_log(session_id, effective_seq, &injected_json, duration_ms)
+    }
+
+    async fn update_quality_references(
+        &self,
+        log_id: i64,
+        referenced: &[String],
+    ) -> Result<()> {
+        let referenced_json =
+            serde_json::to_string(referenced).unwrap_or_else(|_| "[]".to_string());
+        let mem = self.memory_db.lock().expect("lock poisoned");
+        let graph = GraphStore::new(mem.conn());
+        graph.update_quality_log_references(log_id, &referenced_json)
     }
 }

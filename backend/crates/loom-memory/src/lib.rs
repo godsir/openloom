@@ -18,6 +18,9 @@ pub use extractor::{
     RuleBasedEntityExtractor, parse_llm_extraction,
 };
 pub use graph::GraphStore;
+pub use graph::{
+    DEFAULT_EMBEDDING_DIM, blob_to_f32_vec, cosine_similarity, f32_slice_to_blob,
+};
 pub use persona::CognitionsPersonaProvider;
 pub use store::{
     AgentConfigStore, CognitionRow, CognitionSnapshot, CognitionStore, EventRow, McpConfigStore,

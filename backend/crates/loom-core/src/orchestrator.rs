@@ -67,6 +67,8 @@ pub struct Orchestrator {
     default_max_prompt_budget: Arc<RwLock<usize>>,
     /// Sandbox configuration for file and shell access control.
     sandbox_config: Arc<RwLock<loom_types::config::SandboxConfig>>,
+    /// Semaphore to limit concurrent entity extraction tasks (prevents unbounded LLM calls).
+    extraction_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 /// Trait for memory backends (SqliteEventStore, etc.)
@@ -229,6 +231,46 @@ pub trait MemoryStore: Send + Sync {
         granularity: &str,
     ) -> Result<serde_json::Value>;
     async fn reset_token_usage(&self) -> Result<()>;
+
+    // ── Vector embedding & semantic similarity search ──────────────────────
+
+    /// Store a float32 embedding vector for a named entity node.
+    /// Enables semantic similarity search across the knowledge graph.
+    async fn embed_entity(&self, _name: &str, _embedding: Vec<f32>) -> Result<()> {
+        Ok(())
+    }
+    /// Search for entities whose stored embeddings are most similar to the
+    /// query embedding via cosine similarity.
+    async fn search_similar_entities(
+        &self,
+        _embedding: &[f32],
+        _limit: usize,
+    ) -> Result<Vec<loom_types::KgNode>> {
+        Ok(Vec::new())
+    }
+
+    // ── Memory quality feedback loop ───────────────────────────────────────
+
+    /// Record a memory quality injection log entry. Returns the log ID for
+    /// later correlation with actual LLM usage via `update_quality_references`.
+    async fn record_memory_quality(
+        &self,
+        _session_id: &str,
+        _turn_seq: i64,
+        _injected: &[String],
+        _duration_ms: i64,
+    ) -> Result<i64> {
+        Ok(0)
+    }
+    /// Update which injected memories were actually referenced by the LLM
+    /// during the turn, enabling future recall quality scoring.
+    async fn update_quality_references(
+        &self,
+        _log_id: i64,
+        _referenced: &[String],
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 // ── Entity extraction helper (English + Chinese) ─────────────────────────
@@ -457,6 +499,7 @@ impl Orchestrator {
             default_max_iterations: Arc::new(RwLock::new(30)),
             default_max_prompt_budget: Arc::new(RwLock::new(0)),
             sandbox_config: Arc::new(RwLock::new(loom_types::config::SandboxConfig::default())),
+            extraction_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
         }
     }
 
@@ -2157,6 +2200,173 @@ impl Orchestrator {
         }
     }
 
+    // ── Async entity extraction pipeline ─────────────────────────────────
+
+    /// Spawn a non-blocking entity extraction task via `tokio::spawn`.
+    ///
+    /// Pipeline: extract_cognitions → RuleBasedEntityExtractor (baseline) →
+    /// llm_extract_entities (if available) → feed_knowledge_graph →
+    /// save_extracted_entities → publish `MemoryUpdated` event.
+    ///
+    /// Persona refresh is deferred to the START of the next turn (lazy refresh
+    /// in `process_message_with_config` / `process_message_streaming`), which
+    /// is more correct since it captures all memory from the previous turn.
+    async fn spawn_extraction_pipeline(
+        &self,
+        session_id: String,
+        user_message: String,
+        assistant_response: String,
+        event_id: i64,
+    ) {
+        // Build LLM client before spawning (requires &self for config lookup).
+        let llm_client: Option<Arc<dyn CloudClient>> = self
+            .build_auxiliary_client("entity")
+            .await
+            .or_else(|| {
+                self.cloud_client
+                    .try_read()
+                    .ok()
+                    .and_then(|g| g.clone())
+            });
+
+        let extract_model = llm_client
+            .as_ref()
+            .map(|c| c.model_name().to_string())
+            .unwrap_or_else(|| {
+                format!(
+                    "{} (entity)",
+                    self.active_model_name
+                        .try_read()
+                        .ok()
+                        .and_then(|g| g.clone())
+                        .unwrap_or_default()
+                )
+            });
+
+        let mem_arc = self.memory_store.clone();
+        let event_bus = self.pool.event_bus().clone();
+        let sid = session_id.clone();
+        let sem = self.extraction_semaphore.clone();
+
+        tokio::spawn(async move {
+            // Rate-limit concurrent LLM extraction calls to prevent unbounded
+            // resource consumption during rapid chat.
+            let _permit = sem.acquire().await;
+
+            // Combine user + assistant text for broader entity coverage.
+            // The assistant often mentions new technologies/concepts that should be extracted.
+            let combined_text = if assistant_response.is_empty() {
+                user_message.clone()
+            } else {
+                format!("User: {}\nAssistant: {}", user_message, assistant_response)
+            };
+
+            // 1. Keyword-based cognition extraction (runs unconditionally)
+            {
+                let guard = mem_arc.read().await;
+                if let Some(ref store) = *guard {
+                    if let Err(e) = store.extract_cognitions(&session_id, &combined_text).await {
+                        tracing::warn!(error = %e, "Keyword cognition extraction failed");
+                    }
+                }
+            }
+
+            // 2. Rule-based entity extraction (always as baseline)
+            let mut all_entities: Vec<ExtractedEntity> = Vec::new();
+            let mut all_relationships: Vec<ExtractedRelationship> = Vec::new();
+
+            let extractor = RuleBasedEntityExtractor;
+            if let Ok(rule_entities) =
+                extractor.extract_entities(&combined_text, "", &session_id)
+            {
+                if let Ok(rule_relationships) = extractor
+                    .extract_relationships(&combined_text, &rule_entities, &session_id)
+                {
+                    all_entities.extend(rule_entities);
+                    all_relationships.extend(rule_relationships);
+                } else {
+                    all_entities.extend(rule_entities);
+                }
+            }
+
+            // 3. LLM-based entity extraction (if client available)
+            if let Some(ref client) = llm_client {
+                match llm_extract_entities(client.as_ref(), &user_message, &assistant_response, &session_id).await
+                {
+                    Ok((mut entities, mut relationships, ext_prompt, ext_completion)) => {
+                        // Record entity extraction token usage
+                        if ext_prompt > 0 || ext_completion > 0 {
+                            let guard = mem_arc.read().await;
+                            if let Some(ref store) = *guard {
+                                let _ = store
+                                    .record_token_usage(
+                                        &session_id,
+                                        &extract_model,
+                                        ext_prompt,
+                                        ext_completion,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                    )
+                                    .await;
+                            }
+                        }
+                        all_entities.append(&mut entities);
+                        all_relationships.append(&mut relationships);
+                        tracing::info!(
+                            n_entities = all_entities.len(),
+                            n_relationships = all_relationships.len(),
+                            "LLM entity extraction complete"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            error = %e,
+                            "LLM extraction failed, using rule-based only"
+                        );
+                    }
+                }
+            }
+
+            // 4. Feed knowledge graph + save extracted entities
+            {
+                let guard = mem_arc.read().await;
+                if let Some(ref store) = *guard {
+                    if let Ok((n, e)) = store
+                        .feed_knowledge_graph(
+                            &all_entities,
+                            &all_relationships,
+                            event_id,
+                            &session_id,
+                        )
+                        .await
+                    {
+                        let _ = store
+                            .save_extracted_entities(
+                                &all_entities,
+                                &all_relationships,
+                                &session_id,
+                            )
+                            .await;
+                        if n > 0 || e > 0 {
+                            tracing::info!(n, e, "KG updated via async extraction pipeline");
+                        }
+                    }
+                }
+            }
+
+            // 5. Publish MemoryUpdated event so frontend can refresh KG display
+            event_bus.publish(AgentEvent::MemoryUpdated {
+                session_id: sid,
+            });
+        });
+        // Note: tokio::JoinHandle does not expose inspect_err in current tokio.
+        // Panics in the extraction task are caught by tokio's task boundary
+        // and logged by the runtime. The fire-and-forget design is intentional —
+        // extraction failures must not block the main agent loop.
+    }
+
     // === Agent Loop ===
 
     /// Process a user message through the agent loop and return the response.
@@ -2329,6 +2539,20 @@ impl Orchestrator {
             "[orchestrator] process_message_with_config ENTER"
         );
 
+        // Lazy-refresh persona from memory store at the START of each turn.
+        // This captures all async extraction results from the previous turn
+        // (which now runs in a non-blocking tokio::spawn task).
+        {
+            let store = self.memory_store.read().await;
+            if let Some(ref s) = *store {
+                if let Ok(persona) = s.get_persona().await {
+                    if !persona.is_empty() {
+                        *self.persona_context.write().await = persona;
+                    }
+                }
+            }
+        }
+
         // Read shared contexts BEFORE pool.spawn to avoid any lock interaction
         // with the agent pool state (especially when another message's
         // entity-extraction completion is about to write persona_context).
@@ -2417,6 +2641,15 @@ impl Orchestrator {
         } else {
             None
         };
+
+        // ── Memory quality tracking: capture injected entities and start time ──
+        let quality_start = std::time::Instant::now();
+        let quality_candidates = extract_entity_candidates(&user_message);
+        let mut quality_injected_names: Vec<String> = Vec::new();
+        for c in &quality_candidates {
+            quality_injected_names.push(c.clone());
+        }
+        quality_injected_names.truncate(6);
 
         // Build full system prompt via shared method (persona, instructions, profile,
         // selected skills, available skills, KG context, workspace path).
@@ -3215,91 +3448,50 @@ impl Orchestrator {
                     )
                     .await?;
 
-                // Keyword-based cognition extraction (runs unconditionally, even without cloud client)
-                if let Err(e) = store.extract_cognitions(session_id, &user_message).await {
-                    tracing::warn!(error = %e, "Keyword cognition extraction failed");
-                }
-
-                // LLM-based entity extraction (synchronous, runs after response)
-                let msg = user_message.to_string();
-
-                // Try auxiliary client first, fall back to main client
-                let (client_opt, extract_model) = if let Some(aux_client) = self.build_auxiliary_client("entity").await {
-                    let model_name = aux_client.model_name().to_string();
-                    (Some(aux_client), model_name)
-                } else {
-                    let main_client: Option<Arc<dyn CloudClient>> = self.cloud_client.read().await.clone();
-                    let model_name = match main_client.as_ref() {
-                        Some(c) => format!("{} (entity)", c.model_name()),
-                        None => format!("{} (entity)", self.active_model_name.read().await.clone().unwrap_or_default()),
-                    };
-                    (main_client, model_name)
+                // ── Memory quality logging ──
+                // Record injected entities, duration, and referenced entities for feedback loop
+                let quality_duration_ms = quality_start.elapsed().as_millis() as i64;
+                let assistant_text_for_scan = extract_text(&assistant_parts);
+                let quality_referenced: Vec<String> = quality_injected_names
+                    .iter()
+                    .filter(|name| {
+                        let lower_name = name.to_lowercase();
+                        assistant_text_for_scan.to_lowercase().contains(&lower_name)
+                    })
+                    .cloned()
+                    .collect();
+                let quality_log_id = match store
+                    .record_memory_quality(
+                        session_id,
+                        0, // turn_seq computed internally by the store
+                        &quality_injected_names,
+                        quality_duration_ms,
+                    )
+                    .await
+                {
+                    Ok(id) => id,
+                    Err(e) => {
+                        tracing::warn!(session_id, error = %e, "failed to record memory quality log");
+                        0
+                    }
                 };
-
-                if let Some(ref client) = client_opt {
-                    match llm_extract_entities(client.as_ref(), &msg, session_id).await {
-                        Ok((entities, relationships, ext_prompt, ext_completion)) => {
-                            // Record entity extraction token usage
-                            if ext_prompt > 0 || ext_completion > 0 {
-                                if let Err(e) = store
-                                    .record_token_usage(
-                                        session_id,
-                                        &extract_model,
-                                        ext_prompt,
-                                        ext_completion,
-                                        0,
-                                        0,
-                                        0,
-                                        0,
-                                    )
-                                    .await
-                                {
-                                    tracing::warn!(error = %e, model = %extract_model, "failed to record entity extraction token usage");
-                                }
-                            }
-                            if let Ok((n, e)) = store
-                                .feed_knowledge_graph(&entities, &relationships, event_id, session_id)
-                                .await
-                            {
-                                let _ = store
-                                    .save_extracted_entities(&entities, &relationships, session_id)
-                                    .await;
-                                if n > 0 || e > 0 {
-                                    tracing::info!(n, e, "KG updated via LLM");
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::debug!("LLM extraction: {}", e);
-                            // Fall back to rule-based entity extraction
-                            let extractor = RuleBasedEntityExtractor;
-                            if let Ok(fallback_entities) = extractor.extract_entities(&msg, "", session_id) {
-                                let fallback_relationships = extractor
-                                    .extract_relationships(&msg, &fallback_entities, session_id)
-                                    .unwrap_or_default();
-                                if let Ok((n, e)) = store
-                                    .feed_knowledge_graph(&fallback_entities, &fallback_relationships, event_id, session_id)
-                                    .await
-                                {
-                                    let _ = store
-                                        .save_extracted_entities(&fallback_entities, &fallback_relationships, session_id)
-                                        .await;
-                                    if n > 0 || e > 0 {
-                                        tracing::warn!(n, e, "KG updated via rule-based fallback (LLM extraction failed)");
-                                    }
-                                }
-                            }
-                            tracing::warn!("LLM extraction failed, using rule-based fallback");
-                        }
+                if quality_log_id > 0 && !quality_referenced.is_empty() {
+                    if let Err(e) = store
+                        .update_quality_references(quality_log_id, &quality_referenced)
+                        .await
+                    {
+                        tracing::warn!(session_id, error = %e, "failed to update quality references");
                     }
                 }
-                drop(client_opt);
-                // Always refresh persona after save_turn, regardless of LLM extraction success
-                if let Ok(persona) = store.get_persona().await
-                    && !persona.is_empty()
-                {
-                    *self.persona_context.write().await = persona;
-                }
+
+                // Spawn async entity extraction pipeline (non-blocking)
+                self.spawn_extraction_pipeline(
+                    session_id.to_string(),
+                    user_message.to_string(),
+                    turn.response.clone(),
+                    event_id,
+                )
+                .await;
             }
 
             // Fire TaskCompleted hook
@@ -3377,6 +3569,20 @@ impl Orchestrator {
         selected_skills: Vec<String>,
         permission_mode: &str,
     ) -> Result<TurnResult> {
+        // Lazy-refresh persona from memory store at the START of each turn.
+        // This captures all async extraction results from the previous turn
+        // (which now runs in a non-blocking tokio::spawn task).
+        {
+            let store = self.memory_store.read().await;
+            if let Some(ref s) = *store {
+                if let Ok(persona) = s.get_persona().await {
+                    if !persona.is_empty() {
+                        *self.persona_context.write().await = persona;
+                    }
+                }
+            }
+        }
+
         // Read shared contexts BEFORE pool.spawn (same reason as
         // process_message_with_config).
         let user_persona = {
@@ -3603,6 +3809,15 @@ impl Orchestrator {
         } else {
             existing_summary
         };
+
+        // ── Memory quality tracking: capture injected entities and start time ──
+        let quality_start = std::time::Instant::now();
+        let quality_candidates = extract_entity_candidates(&user_message);
+        let mut quality_injected_names: Vec<String> = Vec::new();
+        for c in &quality_candidates {
+            quality_injected_names.push(c.clone());
+        }
+        quality_injected_names.truncate(6);
 
         // ── System prompt assembly (shared method) ──
         let mut system_prompt = self
@@ -3903,88 +4118,49 @@ impl Orchestrator {
                         )
                         .await?;
 
-                    // Keyword-based cognition extraction (runs unconditionally, even without cloud client)
-                    if let Err(e) = store.extract_cognitions(session_id, &user_message).await {
-                        tracing::warn!(error = %e, "Keyword cognition extraction failed");
-                    }
-
-                    // LLM-based entity extraction (synchronous, runs after response)
-                    let msg = user_message.to_string();
-
-                    // Try auxiliary client first, fall back to main client
-                    let (client_opt, extract_model) = if let Some(aux_client) = self.build_auxiliary_client("entity").await {
-                        let model_name = aux_client.model_name().to_string();
-                        (Some(aux_client), model_name)
-                    } else {
-                        let main_client: Option<Arc<dyn CloudClient>> = self.cloud_client.read().await.clone();
-                        let model_name = match main_client.as_ref() {
-                            Some(c) => format!("{} (entity)", c.model_name()),
-                            None => format!("{} (entity)", self.active_model_name.read().await.clone().unwrap_or_default()),
-                        };
-                        (main_client, model_name)
+                    // ── Memory quality logging ──
+                    let quality_duration_ms = quality_start.elapsed().as_millis() as i64;
+                    let assistant_text_for_scan = extract_text(&assistant_parts);
+                    let quality_referenced: Vec<String> = quality_injected_names
+                        .iter()
+                        .filter(|name| {
+                            let lower_name = name.to_lowercase();
+                            assistant_text_for_scan.to_lowercase().contains(&lower_name)
+                        })
+                        .cloned()
+                        .collect();
+                    let quality_log_id = match store
+                        .record_memory_quality(
+                            session_id,
+                            0, // turn_seq computed internally by the store
+                            &quality_injected_names,
+                            quality_duration_ms,
+                        )
+                        .await
+                    {
+                        Ok(id) => id,
+                        Err(e) => {
+                            tracing::warn!(session_id, error = %e, "failed to record memory quality log");
+                            0
+                        }
                     };
-
-                    if let Some(ref client) = client_opt {
-                        match llm_extract_entities(client.as_ref(), &msg, session_id).await {
-                            Ok((entities, relationships, ext_prompt, ext_completion)) => {
-                                // Record entity extraction token usage
-                                if ext_prompt > 0 || ext_completion > 0 {
-                                    let _ = store
-                                        .record_token_usage(
-                                            session_id,
-                                            &extract_model,
-                                            ext_prompt,
-                                            ext_completion,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                        )
-                                        .await;
-                                }
-                                if let Ok((n, e)) = store
-                                    .feed_knowledge_graph(&entities, &relationships, event_id, session_id)
-                                    .await
-                                {
-                                    let _ = store
-                                        .save_extracted_entities(&entities, &relationships, session_id)
-                                        .await;
-                                    if n > 0 || e > 0 {
-                                        tracing::info!(n, e, "KG updated via LLM");
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                tracing::debug!("LLM extraction: {}", e);
-                                // Fall back to rule-based entity extraction
-                                let extractor = RuleBasedEntityExtractor;
-                                if let Ok(fallback_entities) = extractor.extract_entities(&msg, "", session_id) {
-                                    let fallback_relationships = extractor
-                                        .extract_relationships(&msg, &fallback_entities, session_id)
-                                        .unwrap_or_default();
-                                    if let Ok((n, e)) = store
-                                        .feed_knowledge_graph(&fallback_entities, &fallback_relationships, event_id, session_id)
-                                        .await
-                                    {
-                                        let _ = store
-                                            .save_extracted_entities(&fallback_entities, &fallback_relationships, session_id)
-                                            .await;
-                                        if n > 0 || e > 0 {
-                                            tracing::warn!(n, e, "KG updated via rule-based fallback (LLM extraction failed)");
-                                        }
-                                    }
-                                }
-                                tracing::warn!("LLM extraction failed, using rule-based fallback");
-                            }
+                    if quality_log_id > 0 && !quality_referenced.is_empty() {
+                        if let Err(e) = store
+                            .update_quality_references(quality_log_id, &quality_referenced)
+                            .await
+                        {
+                            tracing::warn!(session_id, error = %e, "failed to update quality references");
                         }
                     }
-                    drop(client_opt);
-                    // Always refresh persona after save_turn, regardless of LLM extraction success
-                    if let Ok(persona) = store.get_persona().await
-                        && !persona.is_empty()
-                    {
-                        *self.persona_context.write().await = persona;
-                    }
+
+                    // Spawn async entity extraction pipeline (non-blocking)
+                    self.spawn_extraction_pipeline(
+                        session_id.to_string(),
+                        user_message.to_string(),
+                        turn.response.clone(),
+                        event_id,
+                    )
+                    .await;
                 }
 
             // Fire TaskCompleted hook
@@ -4504,10 +4680,16 @@ fn register_lsp_tools(registry: &mut ToolRegistry, lsp_client: &Arc<LspClient>) 
 
 async fn llm_extract_entities(
     client: &dyn CloudClient,
-    text: &str,
+    user_text: &str,
+    assistant_text: &str,
     scope: &str,
 ) -> Result<(Vec<ExtractedEntity>, Vec<ExtractedRelationship>, usize, usize)> {
-    let prompt = format!("{}\n\nUser message: {}", LLM_EXTRACTION_PROMPT, text);
+    let conversation = if assistant_text.is_empty() {
+        format!("User message: {}", user_text)
+    } else {
+        format!("User: {}\nAssistant: {}", user_text, assistant_text)
+    };
+    let prompt = format!("{}\n\n{}", LLM_EXTRACTION_PROMPT, conversation);
 
     let request = CompletionRequest {
         messages: vec![Message::user(&prompt)],

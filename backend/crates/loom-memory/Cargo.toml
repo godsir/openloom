@@ -8,6 +8,7 @@ description = "Memory kernel for openLoom v2 �?event store, cognition pipeline
 loom-types = { path = "../loom-types" }
 refinery = { version = "0.8", features = ["rusqlite"] }
 rusqlite = { version = "0.32", features = ["bundled", "vtab"] }
+sqlite-vec = { version = "0.1", optional = true }
 anyhow = "1"
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
@@ -16,6 +17,10 @@ chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
 async-trait = "0.1"
 dirs = "6"
+
+[features]
+default = []
+sqlite-vec = ["dep:sqlite-vec"]
 
 [dev-dependencies]
 tempfile = "3"

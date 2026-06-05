@@ -544,6 +544,9 @@ async fn run_agent_turn_inner(
     let mut total_prompt = 0usize;
     let mut total_completion = 0usize;
     let mut total_cache_read = 0usize;
+    // NOTE: cache_write_tokens is always 0 for non-streaming because
+    // CompletionResponse does not yet separate cache_read/cache_write.
+    // The streaming path correctly accumulates via StreamDelta::Usage.
     let total_cache_write = 0usize;
 
     // Create tool context with workspace path for file operations

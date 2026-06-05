@@ -18,6 +18,19 @@ impl MemoryDb {
         )?;
         conn.execute_batch(include_str!("../../../../migrations/memory/V1__memory.sql"))?;
 
+        // Idempotent: ALTER TABLE ADD COLUMN errors on repeat runs, so check first.
+        let has_embedding_column: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('kg_nodes') WHERE name = 'embedding'")?
+            .exists([])?;
+        if !has_embedding_column {
+            conn.execute_batch(include_str!(
+                "../../../../migrations/memory/V2__entity_embedding_quality.sql"
+            ))?;
+        }
+        conn.execute_batch(include_str!(
+            "../../../../migrations/memory/V3__memory_quality_log.sql"
+        ))?;
+
         // Always drop old V1__initial.sql triggers — they reference the `type`
         // column which no longer exists after migration to `event_type`.
         conn.execute_batch(
@@ -72,21 +85,42 @@ impl MemoryDb {
         // Drop the standalone FTS5 table created in V1__memory.sql and rebuild it
         // with proper sync triggers so insert/update/delete on kg_nodes are
         // reflected in the FTS index used by search_entities().
-        conn.execute_batch(
-            "DROP TABLE IF EXISTS kg_nodes_fts;
-             CREATE VIRTUAL TABLE kg_nodes_fts USING fts5(name, description, content='kg_nodes', content_rowid='id');
-             INSERT INTO kg_nodes_fts(rowid, name, description) SELECT id, name, description FROM kg_nodes;
-             CREATE TRIGGER IF NOT EXISTS kg_nodes_fts_ai AFTER INSERT ON kg_nodes BEGIN
-                 INSERT INTO kg_nodes_fts(rowid, name, description)
-                 VALUES (new.id, new.name, new.description);
-             END;
-             CREATE TRIGGER IF NOT EXISTS kg_nodes_fts_au AFTER UPDATE ON kg_nodes BEGIN
-                 INSERT INTO kg_nodes_fts(kg_nodes_fts, rowid, name, description)
-                 VALUES('delete', old.id, old.name, old.description);
-                 INSERT INTO kg_nodes_fts(rowid, name, description)
-                 VALUES (new.id, new.name, new.description);
-             END;",
-        )?;
+        // Only rebuild if kg_nodes_fts is out of sync (avoids full rebuild on every open).
+        let fts_row_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM kg_nodes_fts",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let node_row_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM kg_nodes",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if fts_row_count != node_row_count {
+            conn.execute_batch(
+                "DROP TABLE IF EXISTS kg_nodes_fts;
+                 CREATE VIRTUAL TABLE kg_nodes_fts USING fts5(name, description, content='kg_nodes', content_rowid='id');
+                 INSERT INTO kg_nodes_fts(rowid, name, description) SELECT id, name, description FROM kg_nodes;
+                 CREATE TRIGGER IF NOT EXISTS kg_nodes_fts_ai AFTER INSERT ON kg_nodes BEGIN
+                     INSERT INTO kg_nodes_fts(rowid, name, description)
+                     VALUES (new.id, new.name, new.description);
+                 END;
+                 CREATE TRIGGER IF NOT EXISTS kg_nodes_fts_au AFTER UPDATE ON kg_nodes BEGIN
+                     INSERT INTO kg_nodes_fts(kg_nodes_fts, rowid, name, description)
+                     VALUES('delete', old.id, old.name, old.description);
+                     INSERT INTO kg_nodes_fts(rowid, name, description)
+                     VALUES (new.id, new.name, new.description);
+                 END;",
+            )?;
+        }
+
+        // Vector embeddings are stored as manual float32 BLOBs in kg_nodes.embedding.
+        // The sqlite-vec crate is declared as an optional dependency for future
+        // KNN-accelerated vector search. Feature gate can be enabled when needed.
 
         Ok(Self { conn })
     }

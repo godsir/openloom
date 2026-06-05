@@ -13,7 +13,7 @@ loom-types = { path = "../loom-types" }
 loom-core = { path = "../loom-core" }
 loom-server = { path = "../loom-server" }
 loom-inference = { path = "../loom-inference" }
-loom-memory = { path = "../loom-memory" }
+loom-memory = { path = "../loom-memory", features = ["sqlite-vec"] }
 loom-mcp = { path = "../loom-mcp" }
 loom-skills = { path = "../loom-skills" }
 loom-plugins = { path = "../loom-plugins" }

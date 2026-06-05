@@ -129,6 +129,7 @@ fn agent_event_method(event: &AgentEvent) -> &'static str {
         AgentEvent::StreamEnd { .. } => "chat.stream_end",
         AgentEvent::TokenUsage { .. } => "chat.token_usage",
         AgentEvent::PermissionRequest { .. } => "tool.permission_request",
+        AgentEvent::MemoryUpdated { .. } => "memory.updated",
     }
 }
 

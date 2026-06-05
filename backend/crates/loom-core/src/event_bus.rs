@@ -84,6 +84,10 @@ pub enum AgentEvent {
         args: serde_json::Value,
         risk: String,
     },
+    /// Memory (KG/cognitions) was updated for a session — frontend can refresh KG display.
+    MemoryUpdated {
+        session_id: String,
+    },
 }
 
 /// A lightweight event bus using tokio broadcast.
