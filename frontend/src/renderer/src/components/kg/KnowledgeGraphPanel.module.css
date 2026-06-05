@@ -17,14 +17,10 @@
   margin-bottom: 12px;
 }
 
-/* Sticky header bar (search + stats) */
+/* Search bar + stats header (scrolls with content) */
 .stickyBar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  background: var(--bg);
-  padding-bottom: 8px;
-  margin-bottom: 4px;
+  flex-shrink: 0;
+  padding-bottom: 4px;
 }
 
 /* Search bar */
