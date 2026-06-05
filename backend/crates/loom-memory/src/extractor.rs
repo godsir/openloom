@@ -85,7 +85,6 @@ impl EntityExtractor for RuleBasedEntityExtractor {
             ("torch", "Technology", "PyTorch ML framework"),
             ("tensorflow", "Technology", "Google's ML framework"),
             ("transformers", "Technology", "HuggingFace transformer models library"),
-            ("langchain", "Technology", "LLM application framework"),
             ("axum", "Technology", "Rust async web framework"),
             ("tokio", "Technology", "Rust async runtime"),
             ("bevy", "Technology", "Rust game/ECS engine"),
