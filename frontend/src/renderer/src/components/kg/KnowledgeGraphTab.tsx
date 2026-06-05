@@ -58,7 +58,7 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
   const [query, setQuery] = useState('')
   const [scopeFilter, setScopeFilter] = useState<'all' | 'global' | 'session'>('all')
   const [tooltip, setTooltip] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
-  const [activeTab, setActiveTab] = useState<'list' | 'graph'>(initialSubTab)
+  const [activeTab] = useState<'list' | 'graph'>(initialSubTab)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showLabels, setShowLabels] = useState(true)
 
@@ -241,45 +241,21 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
       )}
 
       {/* Tabs */}
-      <div className={styles.tabs}>
-        <button
-          className={`${styles.tab} ${activeTab === 'list' ? styles.tabActive : ''}`}
-          onClick={() => setActiveTab('list')}
-        >
-          实体列表
-        </button>
-        <button
-          className={`${styles.tab} ${activeTab === 'graph' ? styles.tabActive : ''}`}
-          onClick={() => setActiveTab('graph')}
-        >
-          图谱星图
-        </button>
-        {activeTab === 'graph' && (
-          <>
-            <button
-              className={styles.labelToggleBtn}
-              onClick={() => setShowLabels(v => !v)}
-              title={showLabels ? '隐藏标签' : '显示标签'}
-            >
-              {showLabels ? 'Aa' : 'Aa'}
-            </button>
-            <button
-              className={styles.fullscreenBtn}
-              onClick={() => setIsFullscreen(!isFullscreen)}
-              title={isFullscreen ? '退出全屏' : '全屏查看'}
-            >
-              {isFullscreen ? '⤓' : '⤢'}
-            </button>
-            {kgGraph && (
-              <button className={styles.clearBtn} onClick={handleClearGraph}>
-                清除图谱
-              </button>
-            )}
-          </>
-        )}
-      </div>
+      {initialSubTab === 'graph' && hasData && (
+        <div className={styles.tabs}>
+          <button className={styles.labelToggleBtn} onClick={() => setShowLabels(v => !v)} title={showLabels ? '隐藏标签' : '显示标签'}>
+            {showLabels ? 'Aa' : 'Aa'}
+          </button>
+          <button className={styles.fullscreenBtn} onClick={() => setIsFullscreen(!isFullscreen)} title={isFullscreen ? '退出全屏' : '全屏查看'}>
+            {isFullscreen ? '⤓' : '⤢'}
+          </button>
+          {kgGraph && (
+            <button className={styles.clearBtn} onClick={handleClearGraph}>清除图谱</button>
+          )}
+        </div>
+      )}
 
-      {activeTab === 'list' && (
+      {initialSubTab === 'list' && (
         <div className={styles.nodeList}>
           {displayNodes.length === 0 ? (
             <div className={styles.canvasEmpty}>
@@ -327,7 +303,7 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
         </div>
       )}
 
-      {activeTab === 'graph' && (
+      {initialSubTab === 'graph' && (
         <>
           <div className={styles.canvasWrap} ref={chartWrapRef}>
             {chartSize.w > 0 && <StarField width={chartSize.w} height={chartSize.h} className={styles.starField} />}
