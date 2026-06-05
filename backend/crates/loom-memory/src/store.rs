@@ -61,7 +61,6 @@ pub struct CognitionSnapshot {
     pub snapshot_at: i64,
 }
 
-
 // ============================================================================
 // CognitionStore — versioned trait storage
 // ============================================================================
@@ -194,10 +193,8 @@ impl<'a> CognitionStore<'a> {
             params![scope, min_confidence],
         )?;
         // Delete remaining session-scoped cognitions
-        self.conn.execute(
-            "DELETE FROM cognitions WHERE scope = ?1",
-            params![scope],
-        )?;
+        self.conn
+            .execute("DELETE FROM cognitions WHERE scope = ?1", params![scope])?;
         Ok(promoted)
     }
 
@@ -216,10 +213,8 @@ impl<'a> CognitionStore<'a> {
 
     /// Delete all cognitions with a given scope.
     pub fn delete_by_scope(&self, scope: &str) -> Result<()> {
-        self.conn.execute(
-            "DELETE FROM cognitions WHERE scope = ?1",
-            params![scope],
-        )?;
+        self.conn
+            .execute("DELETE FROM cognitions WHERE scope = ?1", params![scope])?;
         Ok(())
     }
 

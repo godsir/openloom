@@ -151,7 +151,8 @@ impl PluginManager {
         // Deduplicate: keep only the first occurrence of each (name, source) pair.
         // Multiple marketplace subdirs can each contain the same plugin name —
         // we prefer the shallowest (first discovered) copy.
-        let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+        let mut seen: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
         self.plugins.retain(|p| {
             // Normalise source: strip "-auto" suffix for dedup purposes so that
             // a SKILL.md-only plugin doesn't duplicate a manifest plugin with the same name.
@@ -200,9 +201,15 @@ impl PluginManager {
                 let root = plugin_dir.to_string_lossy().to_string();
                 if let Some(ref mut servers) = manifest.mcp_servers {
                     for s in servers.iter_mut() {
-                        s.env.entry("CLAUDE_PLUGIN_ROOT".into()).or_insert_with(|| root.clone());
-                        s.env.entry("PLUGIN_ROOT".into()).or_insert_with(|| root.clone());
-                        s.env.entry("LOOM_PLUGIN_ROOT".into()).or_insert_with(|| root.clone());
+                        s.env
+                            .entry("CLAUDE_PLUGIN_ROOT".into())
+                            .or_insert_with(|| root.clone());
+                        s.env
+                            .entry("PLUGIN_ROOT".into())
+                            .or_insert_with(|| root.clone());
+                        s.env
+                            .entry("LOOM_PLUGIN_ROOT".into())
+                            .or_insert_with(|| root.clone());
                     }
                 }
                 self.plugins.push(DiscoveredPlugin {
@@ -265,7 +272,11 @@ impl PluginManager {
                 .map(|(name, entry)| PluginMcpServer {
                     name,
                     transport: entry.transport.unwrap_or_else(|| {
-                        if entry.url.is_some() { "http".into() } else { "stdio".into() }
+                        if entry.url.is_some() {
+                            "http".into()
+                        } else {
+                            "stdio".into()
+                        }
                     }),
                     command: entry.command,
                     args: entry.args,
@@ -278,12 +289,16 @@ impl PluginManager {
         // Set CLAUDE_PLUGIN_ROOT / LOOM_PLUGIN_ROOT env for all MCP servers in this plugin
         let plugin_root = dir.to_string_lossy().to_string();
         let mcp_servers = mcp_servers.map(|servers: Vec<PluginMcpServer>| {
-            servers.into_iter().map(|mut s| {
-                s.env.insert("CLAUDE_PLUGIN_ROOT".into(), plugin_root.clone());
-                s.env.insert("PLUGIN_ROOT".into(), plugin_root.clone());
-                s.env.insert("LOOM_PLUGIN_ROOT".into(), plugin_root.clone());
-                s
-            }).collect()
+            servers
+                .into_iter()
+                .map(|mut s| {
+                    s.env
+                        .insert("CLAUDE_PLUGIN_ROOT".into(), plugin_root.clone());
+                    s.env.insert("PLUGIN_ROOT".into(), plugin_root.clone());
+                    s.env.insert("LOOM_PLUGIN_ROOT".into(), plugin_root.clone());
+                    s
+                })
+                .collect()
         });
         Some(PluginManifest {
             name: jm.name,
@@ -431,21 +446,30 @@ mod tests {
     fn test_plugin_manager_new_empty() {
         let manager = PluginManager::new();
         let list = manager.list();
-        assert!(list.is_empty(), "new PluginManager should have empty plugin list");
+        assert!(
+            list.is_empty(),
+            "new PluginManager should have empty plugin list"
+        );
     }
 
     #[test]
     fn test_mcp_configs_empty() {
         let manager = PluginManager::new();
         let configs = manager.mcp_configs();
-        assert!(configs.is_empty(), "new PluginManager should have no MCP configs");
+        assert!(
+            configs.is_empty(),
+            "new PluginManager should have no MCP configs"
+        );
     }
 
     #[test]
     fn test_skill_paths_empty() {
         let manager = PluginManager::new();
         let paths = manager.skill_paths();
-        assert!(paths.is_empty(), "new PluginManager should have no skill paths");
+        assert!(
+            paths.is_empty(),
+            "new PluginManager should have no skill paths"
+        );
     }
 
     #[test]
@@ -459,14 +483,24 @@ mod tests {
             headers: Default::default(),
             env: Default::default(),
         };
-        assert!(server.env.is_empty(), "PluginMcpServer env should default to empty HashMap");
+        assert!(
+            server.env.is_empty(),
+            "PluginMcpServer env should default to empty HashMap"
+        );
     }
 
     #[test]
     fn test_discover_nonexistent_dir() {
         let mut manager = PluginManager::new();
         let result = manager.discover(std::path::Path::new("/nonexistent_plugin_dir_12345"));
-        assert!(result.is_ok(), "discover should return Ok even for non-existent dirs");
-        assert_eq!(result.unwrap(), 0, "discover on non-existent dir should find 0 plugins");
+        assert!(
+            result.is_ok(),
+            "discover should return Ok even for non-existent dirs"
+        );
+        assert_eq!(
+            result.unwrap(),
+            0,
+            "discover on non-existent dir should find 0 plugins"
+        );
     }
 }

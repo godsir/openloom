@@ -176,7 +176,14 @@ async fn main() -> anyhow::Result<()> {
             {
                 let sc = orchestrator.load_sandbox_config().await;
                 orchestrator.set_sandbox_config(sc).await;
-                println!("[server] sandbox: {}", if orchestrator.sandbox_config().await.enabled { "enabled" } else { "disabled" });
+                println!(
+                    "[server] sandbox: {}",
+                    if orchestrator.sandbox_config().await.enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
             }
             // Load MCP servers from config files (~/.loom/mcp.json, .loom/mcp.json)
             match mcp_config::load_mcp_configs(&loom_dir) {
@@ -219,7 +226,9 @@ async fn main() -> anyhow::Result<()> {
                 skill_loader.add_standard_paths(&loom_dir);
                 match skill_loader.discover() {
                     Ok(skills) if !skills.is_empty() => {
-                        orchestrator.set_skills(loom_skills::SkillState::from_skills(&skills)).await;
+                        orchestrator
+                            .set_skills(loom_skills::SkillState::from_skills(&skills))
+                            .await;
                         println!("[server] {} skills loaded", skills.len());
                     }
                     Ok(_) => println!("[server] 0 skills loaded"),
@@ -258,8 +267,13 @@ async fn main() -> anyhow::Result<()> {
                         }
                         match skill_loader.discover() {
                             Ok(new_skills) if !new_skills.is_empty() => {
-                                orchestrator.set_skills(loom_skills::SkillState::from_skills(&new_skills)).await;
-                                println!("[server] {} skills loaded (with plugins)", new_skills.len());
+                                orchestrator
+                                    .set_skills(loom_skills::SkillState::from_skills(&new_skills))
+                                    .await;
+                                println!(
+                                    "[server] {} skills loaded (with plugins)",
+                                    new_skills.len()
+                                );
                             }
                             _ => {}
                         }
@@ -284,7 +298,10 @@ async fn main() -> anyhow::Result<()> {
                             println!("[server] connecting plugin MCP '{}'...", mcp.name);
                             match orchestrator.connect_mcp_server(config).await {
                                 Ok(name) => println!("[server] plugin MCP '{}' connected", name),
-                                Err(e) => println!("[server] plugin MCP '{}' failed: {:.120}", mcp.name, e),
+                                Err(e) => println!(
+                                    "[server] plugin MCP '{}' failed: {:.120}",
+                                    mcp.name, e
+                                ),
                             }
                         }
                     }
@@ -299,7 +316,7 @@ async fn main() -> anyhow::Result<()> {
                 tokio::spawn(async move {
                     #[cfg(unix)]
                     {
-                        use tokio::signal::unix::{signal, SignalKind};
+                        use tokio::signal::unix::{SignalKind, signal};
                         let mut sigterm = signal(SignalKind::terminate())
                             .expect("failed to register SIGTERM handler");
                         let mut sigint = signal(SignalKind::interrupt())
@@ -321,12 +338,8 @@ async fn main() -> anyhow::Result<()> {
                     token.cancel();
                 });
             }
-            loom_server::serve(
-                &host, port,
-                orchestrator.clone(),
-                &loom_dir,
-                shutdown_token,
-            ).await?;
+            loom_server::serve(&host, port, orchestrator.clone(), &loom_dir, shutdown_token)
+                .await?;
 
             // Drain inflight agent loops (10s timeout) + close SQLite
             tracing::info!("server loop exited — draining inflight agents");
@@ -498,6 +511,7 @@ fn normalize_openai_url(url: &str) -> String {
 // Chat demo
 // ============================================================================
 
+#[allow(clippy::too_many_arguments)]
 async fn run_chat_demo(
     model: &str,
     api_key: Option<&str>,
@@ -661,10 +675,7 @@ async fn run_chat_demo(
 
     // === Skills ===
     let mut skill_loader = loom_skills::SkillLoader::new();
-    if let Some(home) = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .ok()
-    {
+    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
         let home = std::path::PathBuf::from(&home);
         let search: &[(&str, std::path::PathBuf)] = &[
             ("~/.claude/skills", home.join(".claude").join("skills")),
@@ -681,7 +692,9 @@ async fn run_chat_demo(
         }
         match skill_loader.discover() {
             Ok(skills) if !skills.is_empty() => {
-                orchestrator.set_skills(loom_skills::SkillState::from_skills(&skills)).await;
+                orchestrator
+                    .set_skills(loom_skills::SkillState::from_skills(&skills))
+                    .await;
                 println!("[skills] {} loaded", skills.len());
             }
             Ok(_) => println!("[skills] 0 loaded (no SKILL.md found)"),
@@ -818,7 +831,9 @@ async fn run_chat_demo(
             // Re-discover skills with plugin paths included
             match skill_loader.discover() {
                 Ok(new_skills) if !new_skills.is_empty() => {
-                    orchestrator.set_skills(loom_skills::SkillState::from_skills(&new_skills)).await;
+                    orchestrator
+                        .set_skills(loom_skills::SkillState::from_skills(&new_skills))
+                        .await;
                     println!("[plugins] {} skills loaded", new_skills.len());
                 }
                 _ => {}
@@ -854,27 +869,27 @@ async fn run_chat_demo(
 
     // === Bridge ===
     let bridge_manager = std::sync::Arc::new(loom_bridge::BridgeManager::new());
-    if let Ok(token) = std::env::var("TELEGRAM_BOT_TOKEN") {
-        if !token.is_empty() {
-            let tg = loom_bridge::TelegramAdapter::new(token);
-            let mgr = bridge_manager.clone();
-            let _handle = tokio::spawn(async move {
-                mgr.register(Box::new(tg)).await;
-                let _ = mgr.start_platform(loom_bridge::Platform::Telegram).await;
-                println!("[bridge] Telegram connected");
-            });
-        }
+    if let Ok(token) = std::env::var("TELEGRAM_BOT_TOKEN")
+        && !token.is_empty()
+    {
+        let tg = loom_bridge::TelegramAdapter::new(token);
+        let mgr = bridge_manager.clone();
+        let _handle = tokio::spawn(async move {
+            mgr.register(Box::new(tg)).await;
+            let _ = mgr.start_platform(loom_bridge::Platform::Telegram).await;
+            println!("[bridge] Telegram connected");
+        });
     }
-    if let Ok(key) = std::env::var("ILINK_API_KEY") {
-        if !key.is_empty() {
-            let wx = loom_bridge::WechatAdapter::new(key);
-            let mgr = bridge_manager.clone();
-            let _handle = tokio::spawn(async move {
-                mgr.register(Box::new(wx)).await;
-                let _ = mgr.start_platform(loom_bridge::Platform::Wechat).await;
-                println!("[bridge] WeChat (iLink) connected");
-            });
-        }
+    if let Ok(key) = std::env::var("ILINK_API_KEY")
+        && !key.is_empty()
+    {
+        let wx = loom_bridge::WechatAdapter::new(key);
+        let mgr = bridge_manager.clone();
+        let _handle = tokio::spawn(async move {
+            mgr.register(Box::new(wx)).await;
+            let _ = mgr.start_platform(loom_bridge::Platform::Wechat).await;
+            println!("[bridge] WeChat (iLink) connected");
+        });
     }
 
     let registry = orchestrator.tool_registry().await;
@@ -932,7 +947,15 @@ async fn run_chat_demo(
 
         use loom_types::StreamDelta;
         let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamDelta>(256);
-        let mut fut = std::pin::pin!(orchestrator.process_message_streaming(&line, tx, session, None, vec![], vec![], "operate"));
+        let mut fut = std::pin::pin!(orchestrator.process_message_streaming(
+            &line,
+            tx,
+            session,
+            None,
+            vec![],
+            vec![],
+            "operate"
+        ));
         let mut tool_idx = 0usize;
         let mut think_buf = String::new();
         let (mut prompt, mut completion, mut cache_read, mut cache_write) =

@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use loom_plugins::hooks::{expand_plugin_root, HookEntry, HookEvent, HookHandlerType};
 use loom_plugins::PluginManager;
+use loom_plugins::hooks::{HookEntry, HookEvent, HookHandlerType, expand_plugin_root};
 use regex::Regex;
 use tokio::sync::RwLock;
 use tracing;
@@ -149,7 +149,11 @@ impl HookRegistry {
 
         let total: usize = hooks.values().map(|v| v.len()).sum();
         let events: usize = hooks.len();
-        tracing::info!(total_hooks = total, event_types = events, "hook registry compiled");
+        tracing::info!(
+            total_hooks = total,
+            event_types = events,
+            "hook registry compiled"
+        );
 
         Self {
             inner: Arc::new(RwLock::new(HookRegistryInner { hooks })),
@@ -256,7 +260,13 @@ impl HookRegistry {
 
     /// Return the number of registered hooks (all events combined).
     pub async fn hook_count(&self) -> usize {
-        self.inner.read().await.hooks.values().map(|v| v.len()).sum()
+        self.inner
+            .read()
+            .await
+            .hooks
+            .values()
+            .map(|v| v.len())
+            .sum()
     }
 
     /// Return the number of registered hook event types.
@@ -340,10 +350,10 @@ fn which_bash() -> Option<String> {
         return Some(git_bash.to_string());
     }
     // 2. Try WSL
-    if let Ok(output) = std::process::Command::new("where").arg("wsl.exe").output() {
-        if output.status.success() {
-            return Some("wsl.exe".to_string());
-        }
+    if let Ok(output) = std::process::Command::new("where").arg("wsl.exe").output()
+        && output.status.success()
+    {
+        return Some("wsl.exe".to_string());
     }
     None
 }
@@ -442,7 +452,10 @@ mod tests {
 
     #[test]
     fn test_hook_config_no_hooks_returns_default() {
-        let config = HookConfig { description: None, hooks: vec![] };
+        let config = HookConfig {
+            description: None,
+            hooks: vec![],
+        };
         assert!(config.hooks.is_empty());
     }
 
@@ -486,11 +499,14 @@ mod tests {
         };
 
         let inner = HookRegistryInner {
-            hooks: HashMap::from([(HookEvent::PreToolUse, vec![CompiledHook {
-                entry,
-                matcher: None,
-                plugin_dir: "/test".into(),
-            }])]),
+            hooks: HashMap::from([(
+                HookEvent::PreToolUse,
+                vec![CompiledHook {
+                    entry,
+                    matcher: None,
+                    plugin_dir: "/test".into(),
+                }],
+            )]),
         };
 
         let registry = HookRegistry {
@@ -498,9 +514,7 @@ mod tests {
         };
 
         let mut ctx = HookContext::default();
-        let result = registry
-            .fire(&HookEvent::PostToolUse, None, &mut ctx)
-            .await;
+        let result = registry.fire(&HookEvent::PostToolUse, None, &mut ctx).await;
         assert_eq!(result.prompts_injected, 0);
         assert!(ctx.prompt_injections.is_empty());
     }
@@ -519,11 +533,14 @@ mod tests {
         };
 
         let inner = HookRegistryInner {
-            hooks: HashMap::from([(HookEvent::PreToolUse, vec![CompiledHook {
-                entry,
-                matcher: Some(Arc::new(Regex::new("Write").unwrap())),
-                plugin_dir: "/test".into(),
-            }])]),
+            hooks: HashMap::from([(
+                HookEvent::PreToolUse,
+                vec![CompiledHook {
+                    entry,
+                    matcher: Some(Arc::new(Regex::new("Write").unwrap())),
+                    plugin_dir: "/test".into(),
+                }],
+            )]),
         };
 
         let registry = HookRegistry {
@@ -553,11 +570,14 @@ mod tests {
         };
 
         let inner = HookRegistryInner {
-            hooks: HashMap::from([(HookEvent::PreToolUse, vec![CompiledHook {
-                entry,
-                matcher: Some(Arc::new(Regex::new("Write").unwrap())),
-                plugin_dir: "/test".into(),
-            }])]),
+            hooks: HashMap::from([(
+                HookEvent::PreToolUse,
+                vec![CompiledHook {
+                    entry,
+                    matcher: Some(Arc::new(Regex::new("Write").unwrap())),
+                    plugin_dir: "/test".into(),
+                }],
+            )]),
         };
 
         let registry = HookRegistry {
@@ -588,11 +608,14 @@ mod tests {
 
         let registry = HookRegistry {
             inner: Arc::new(RwLock::new(HookRegistryInner {
-                hooks: HashMap::from([(HookEvent::PreToolUse, vec![CompiledHook {
-                    entry,
-                    matcher: None,
-                    plugin_dir: "/test".into(),
-                }])]),
+                hooks: HashMap::from([(
+                    HookEvent::PreToolUse,
+                    vec![CompiledHook {
+                        entry,
+                        matcher: None,
+                        plugin_dir: "/test".into(),
+                    }],
+                )]),
             })),
         };
 

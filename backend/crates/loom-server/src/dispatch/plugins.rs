@@ -4,8 +4,8 @@ use loom_types::{ErrorCode, JsonRpcError};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
-use crate::AppState;
 use super::err;
+use crate::AppState;
 
 pub async fn handle(
     state: &AppState,
@@ -42,8 +42,7 @@ async fn handle_plugins_list(state: &AppState) -> Result<Value, JsonRpcError> {
             .map(|s| s.len())
             .unwrap_or(0) as u64;
         let hook_config =
-            loom_plugins::hooks::HookConfig::from_plugin_dir(&plugin.path)
-                .unwrap_or_default();
+            loom_plugins::hooks::HookConfig::from_plugin_dir(&plugin.path).unwrap_or_default();
         let hook_count = hook_config.hooks.len() as u64;
         let has_settings = !plugin.manifest.settings.is_null();
 
@@ -60,11 +59,7 @@ async fn handle_plugins_list(state: &AppState) -> Result<Value, JsonRpcError> {
                         let name = if rel_path == "." {
                             plugin.manifest.name.clone()
                         } else {
-                            rel_path
-                                .rsplit('/')
-                                .next()
-                                .unwrap_or(rel_path)
-                                .to_string()
+                            rel_path.rsplit('/').next().unwrap_or(rel_path).to_string()
                         };
                         json!({
                             "name": name,
@@ -164,7 +159,10 @@ async fn handle_plugins_reload(state: &AppState) -> Result<Value, JsonRpcError> 
             let mut plugin_manager = loom_plugins::PluginManager::new();
             let n = plugin_manager.discover(&home).unwrap_or(0);
             if n > 0 {
-                state.orchestrator.load_hooks_from_plugins(&plugin_manager).await;
+                state
+                    .orchestrator
+                    .load_hooks_from_plugins(&plugin_manager)
+                    .await;
             }
             tracing::info!("[plugins.reload] {} skills reloaded, {} plugins", count, n);
             Ok(json!({ "ok": true, "skill_count": count, "plugin_count": n }))

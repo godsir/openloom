@@ -3,8 +3,8 @@
 use loom_types::JsonRpcError;
 use serde_json::{Value, json};
 
-use crate::AppState;
 use super::err;
+use crate::AppState;
 
 pub async fn handle(
     state: &AppState,
@@ -21,14 +21,8 @@ async fn handle_tool_respond(state: &AppState, p: &Value) -> Result<Value, JsonR
     let call_id = p
         .get("call_id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| err(
-            loom_types::ErrorCode::InvalidRequest,
-            "call_id required",
-        ))?;
-    let approved = p
-        .get("approved")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+        .ok_or_else(|| err(loom_types::ErrorCode::InvalidRequest, "call_id required"))?;
+    let approved = p.get("approved").and_then(|v| v.as_bool()).unwrap_or(false);
 
     let mut pending = state.orchestrator.pending_permissions().await;
     if let Some(tx) = pending.remove(call_id) {

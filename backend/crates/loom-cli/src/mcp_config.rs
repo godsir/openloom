@@ -16,7 +16,7 @@
 //! ```
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::Path;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -53,9 +53,7 @@ fn default_mcp_type() -> String {
 /// Scans in priority order:
 /// 1. Project-level: `<cwd>/.loom/mcp.json`
 /// 2. User-level: `<data_dir>/mcp.json`
-pub fn load_mcp_configs(
-    data_dir: &PathBuf,
-) -> Result<(Vec<loom_mcp::McpServerConfig>, Vec<String>)> {
+pub fn load_mcp_configs(data_dir: &Path) -> Result<(Vec<loom_mcp::McpServerConfig>, Vec<String>)> {
     let mut configs = Vec::new();
     let mut sources = Vec::new();
 

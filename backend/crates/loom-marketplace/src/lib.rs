@@ -13,7 +13,7 @@ use anyhow::{Result, anyhow};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-pub use catalog::{MarketPlugin, MarketplaceCatalog, MarketEntryKind};
+pub use catalog::{MarketEntryKind, MarketPlugin, MarketplaceCatalog};
 
 // ============================================================================
 // Types
@@ -54,17 +54,12 @@ pub struct MarketPluginWithStatus {
 
 impl MarketPluginWithStatus {
     /// Build from a catalog entry + local filesystem state.
-    fn from_catalog_entry(
-        entry: &MarketPlugin,
-        plugins_dir: &Path,
-        skills_dir: &Path,
-    ) -> Self {
+    fn from_catalog_entry(entry: &MarketPlugin, plugins_dir: &Path, skills_dir: &Path) -> Self {
         let target_dir = match entry.kind {
             MarketEntryKind::Plugin => plugins_dir,
             MarketEntryKind::Skill => skills_dir,
         };
-        let (installed, installed_version, installed_path) =
-            check_installed(&entry.id, target_dir);
+        let (installed, installed_version, installed_path) = check_installed(&entry.id, target_dir);
 
         let has_update = installed
             && installed_version.is_some()
@@ -125,9 +120,8 @@ pub async fn install(entry_id: &str, git_url: &str, target_dir: &Path) -> Result
         ));
     }
 
-    std::fs::create_dir_all(target_dir).map_err(|e| {
-        anyhow!("Failed to create directory: {}", e)
-    })?;
+    std::fs::create_dir_all(target_dir)
+        .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
 
     tracing::info!(
         entry_id = %entry_id,
@@ -142,18 +136,13 @@ pub async fn install(entry_id: &str, git_url: &str, target_dir: &Path) -> Result
             "--depth",
             "1",
             git_url,
-            &target.to_string_lossy().to_string(),
+            target.to_string_lossy().as_ref(),
         ])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .status()
         .await
-        .map_err(|e| {
-            anyhow!(
-                "Failed to run git. Is git installed and in PATH? ({})",
-                e
-            )
-        })?;
+        .map_err(|e| anyhow!("Failed to run git. Is git installed and in PATH? ({})", e))?;
 
     if !status.success() {
         let _ = std::fs::remove_dir_all(&target);
@@ -187,9 +176,7 @@ pub fn uninstall(entry_id: &str, target_dir: &Path) -> Result<()> {
         "removing entry directory"
     );
 
-    std::fs::remove_dir_all(&target).map_err(|e| {
-        anyhow!("Failed to remove directory: {}", e)
-    })?;
+    std::fs::remove_dir_all(&target).map_err(|e| anyhow!("Failed to remove directory: {}", e))?;
 
     tracing::info!(entry_id = %entry_id, "entry uninstalled successfully");
     Ok(())
@@ -248,7 +235,7 @@ pub async fn update(entry_id: &str, target_dir: &Path) -> Result<()> {
 
     // Try `git pull` first; fall back to `git fetch` + `git reset` for shallow repos.
     let pull_status = tokio::process::Command::new("git")
-        .args(["-C", &target.to_string_lossy().to_string(), "pull", "--ff-only"])
+        .args(["-C", target.to_string_lossy().as_ref(), "pull", "--ff-only"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .status()
@@ -260,7 +247,14 @@ pub async fn update(entry_id: &str, target_dir: &Path) -> Result<()> {
             // Fallback: fetch + reset for shallow repos
             tracing::info!(entry_id = %entry_id, "pull failed, trying fetch+reset for shallow repo");
             let fetch = tokio::process::Command::new("git")
-                .args(["-C", &target.to_string_lossy().to_string(), "fetch", "--depth", "1", "origin"])
+                .args([
+                    "-C",
+                    target.to_string_lossy().as_ref(),
+                    "fetch",
+                    "--depth",
+                    "1",
+                    "origin",
+                ])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::piped())
                 .status()
@@ -269,7 +263,13 @@ pub async fn update(entry_id: &str, target_dir: &Path) -> Result<()> {
             match fetch {
                 Ok(s) if s.success() => {
                     let reset = tokio::process::Command::new("git")
-                        .args(["-C", &target.to_string_lossy().to_string(), "reset", "--hard", "origin/HEAD"])
+                        .args([
+                            "-C",
+                            target.to_string_lossy().as_ref(),
+                            "reset",
+                            "--hard",
+                            "origin/HEAD",
+                        ])
                         .stdout(std::process::Stdio::null())
                         .stderr(std::process::Stdio::piped())
                         .status()
@@ -351,32 +351,29 @@ fn check_installed(entry_id: &str, target_dir: &Path) -> (bool, Option<String>, 
 fn try_read_version(entry_dir: &Path) -> Option<String> {
     // Try plugin.toml first (native format)
     let toml_path = entry_dir.join("plugin.toml");
-    if let Ok(content) = std::fs::read_to_string(&toml_path) {
-        if let Ok(toml) = content.parse::<toml::Table>() {
-            if let Some(version) = toml.get("version").and_then(|v| v.as_str()) {
-                return Some(version.to_string());
-            }
-        }
+    if let Ok(content) = std::fs::read_to_string(&toml_path)
+        && let Ok(toml) = content.parse::<toml::Table>()
+        && let Some(version) = toml.get("version").and_then(|v| v.as_str())
+    {
+        return Some(version.to_string());
     }
 
     // Try .claude-plugin/plugin.json (Claude Code format)
     let cc_path = entry_dir.join(".claude-plugin").join("plugin.json");
-    if let Ok(content) = std::fs::read_to_string(&cc_path) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(version) = json.get("version").and_then(|v| v.as_str()) {
-                return Some(version.to_string());
-            }
-        }
+    if let Ok(content) = std::fs::read_to_string(&cc_path)
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(version) = json.get("version").and_then(|v| v.as_str())
+    {
+        return Some(version.to_string());
     }
 
     // Try manifest.json (OpenClaw format)
     let mf_path = entry_dir.join("manifest.json");
-    if let Ok(content) = std::fs::read_to_string(&mf_path) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(version) = json.get("version").and_then(|v| v.as_str()) {
-                return Some(version.to_string());
-            }
-        }
+    if let Ok(content) = std::fs::read_to_string(&mf_path)
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(version) = json.get("version").and_then(|v| v.as_str())
+    {
+        return Some(version.to_string());
     }
 
     None
@@ -414,7 +411,10 @@ mod tests {
     #[test]
     fn test_default_catalog_has_entries() {
         let catalog = default_catalog();
-        assert!(!catalog.plugins.is_empty(), "default catalog should have entries");
+        assert!(
+            !catalog.plugins.is_empty(),
+            "default catalog should have entries"
+        );
         for p in &catalog.plugins {
             assert!(!p.id.is_empty(), "entry must have an id");
             assert!(!p.name.is_empty(), "entry must have a name");

@@ -4,8 +4,8 @@ use base64::Engine;
 use loom_types::{ContentPart, ErrorCode, JsonRpcError};
 use serde_json::{Value, json};
 
-use crate::AppState;
 use super::err;
+use crate::AppState;
 
 pub async fn handle(
     state: &AppState,

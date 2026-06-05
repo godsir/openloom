@@ -85,9 +85,7 @@ pub enum AgentEvent {
         risk: String,
     },
     /// Memory (KG/cognitions) was updated for a session — frontend can refresh KG display.
-    MemoryUpdated {
-        session_id: String,
-    },
+    MemoryUpdated { session_id: String },
 }
 
 /// A lightweight event bus using tokio broadcast.

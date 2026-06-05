@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use loom_types::{AgentConfig, AgentId, SessionId};
 use loom_plugins::hooks::HookEvent;
+use loom_types::{AgentConfig, AgentId, SessionId};
 use tokio::sync::RwLock;
 
 use crate::agent::{Agent, AgentStatus};
@@ -132,7 +132,11 @@ impl AgentPool {
                 let _ = hook_reg
                     .read()
                     .await
-                    .fire(&HookEvent::SubagentStart, Some(&agent.config.name), &mut hook_ctx)
+                    .fire(
+                        &HookEvent::SubagentStart,
+                        Some(&agent.config.name),
+                        &mut hook_ctx,
+                    )
                     .await;
             }
         }
@@ -272,9 +276,7 @@ impl AgentPool {
                 let agents = self.agents.read().await;
                 agents.get(parent_id).map(|a| a.session_id.to_string())
             };
-            if let (Some(hook_reg), Some(sid)) =
-                (&self.hook_registry, session_id)
-            {
+            if let (Some(hook_reg), Some(sid)) = (&self.hook_registry, session_id) {
                 let subject = child_name.clone();
                 let mut hook_ctx = HookContext {
                     session_id: sid,

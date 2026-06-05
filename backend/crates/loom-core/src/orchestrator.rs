@@ -9,19 +9,220 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context, Result};
 use base64::Engine;
 use loom_inference::engine::CloudClient;
+use loom_lsp::LspClient;
+use loom_mcp::McpClient;
 use loom_memory::{
     EntityExtractor, ExtractedEntity, ExtractedRelationship, LLM_EXTRACTION_PROMPT,
     RuleBasedEntityExtractor, parse_llm_extraction,
 };
 use loom_security::merge_multi_permissions;
-use loom_types::{
-    AgentConfig, CompletionRequest, ContentPart, Message, ModelBackend, Role, SandboxConfig, SessionId, SkillPermissions,
-    StreamDelta,
-};
-use loom_lsp::LspClient;
-use loom_mcp::McpClient;
 use loom_skills::SkillPermissionConfig;
+use loom_types::{
+    AgentConfig, CompletionRequest, ContentPart, Message, ModelBackend, Role, SandboxConfig,
+    SessionId, SkillPermissions, StreamDelta,
+};
 use tokio::sync::{RwLock, mpsc};
+
+// ── Phase 3: Pipeline Scheduler ─────────────────────────────────────────
+
+/// Pipeline stage identifiers used by the scheduler to decide what to run next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PipelineStage {
+    Extraction,
+    Generalization,
+    Consolidation,
+    Forgetting,
+    QualityAudit,
+}
+
+impl std::fmt::Display for PipelineStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PipelineStage::Extraction => write!(f, "Extraction"),
+            PipelineStage::Generalization => write!(f, "Generalization"),
+            PipelineStage::Consolidation => write!(f, "Consolidation"),
+            PipelineStage::Forgetting => write!(f, "Forgetting"),
+            PipelineStage::QualityAudit => write!(f, "QualityAudit"),
+        }
+    }
+}
+
+/// Reports the entities and relationships removed during a forgetting cycle.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ForgettingReport {
+    pub cycle_timestamp: String,
+    pub nodes_removed: usize,
+    pub edges_removed: usize,
+    pub cognitions_removed: usize,
+    pub min_importance_threshold: f64,
+    pub max_age_days: i64,
+    pub summary: String,
+}
+
+/// Health snapshot of the memory system.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MemoryHealth {
+    pub total_nodes: usize,
+    pub total_edges: usize,
+    pub total_cognitions: usize,
+    pub stale_nodes: usize,
+    pub orphan_nodes: usize,
+    pub layer_distribution: Vec<(String, i64)>,
+    pub fragmentation_score: f64,
+    pub status: String,
+    pub checked_at: String,
+}
+
+/// Quality evaluation of memory recall over a lookback period.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MemoryQualityReport {
+    pub lookback_days: i64,
+    pub total_injections: usize,
+    pub total_references: usize,
+    pub recall_rate: f64,
+    pub top_entities: Vec<String>,
+    pub stale_entities: Vec<String>,
+    pub quality_score: f64,
+    pub recommendations: Vec<String>,
+    pub evaluated_at: String,
+}
+
+/// Detected behavioral patterns for self-evolution.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BehaviorProfile {
+    pub preferred_tools: Vec<(String, usize)>,
+    pub frequent_topics: Vec<(String, usize)>,
+    pub active_hours: Vec<(u32, usize)>,
+    pub avg_turn_tokens: usize,
+    pub skill_usage: Vec<(String, usize)>,
+    pub extracted_at: String,
+}
+
+/// Derive agent behavior hints from the user's rich persona.
+/// Returns a concise directive (~80-120 tokens) for the system prompt.
+pub fn adapt_behavior(persona_text: &str) -> String {
+    if persona_text.is_empty() {
+        return String::new();
+    }
+
+    let mut hints = Vec::new();
+
+    // Detect language preference from persona
+    let has_chinese = persona_text.contains("中文") || persona_text.contains("Chinese");
+    let has_english = persona_text.contains("English") || persona_text.contains("英文");
+    if has_chinese && !has_english {
+        hints.push("Respond in Chinese (中文) unless the user writes in English.");
+    } else if has_english && !has_chinese {
+        hints.push("Respond in English unless the user writes in Chinese.");
+    }
+
+    // Detect working style from persona traits
+    if persona_text.contains("code-first") || persona_text.contains("CodeFirst") {
+        hints.push("Show code implementations directly rather than describing them abstractly.");
+    } else if persona_text.contains("plan-first") || persona_text.contains("PlanFirst") {
+        hints.push("Outline the approach and get confirmation before writing implementation code.");
+    }
+
+    // Detect verbosity preference
+    if persona_text.contains("concise") || persona_text.contains("Concise") {
+        hints.push("Keep responses concise — prefer minimal explanations.");
+    } else if persona_text.contains("detailed") || persona_text.contains("Detailed") {
+        hints.push("Provide detailed explanations with context and reasoning.");
+    }
+
+    // Detect expertise level for adaptation
+    if persona_text.contains("Beginner") {
+        hints.push("Include more explanation and examples as the user is learning.");
+    } else if persona_text.contains("Expert") {
+        hints.push("Skip basic explanations — the user is experienced and prefers advanced discussions.");
+    }
+
+    if hints.is_empty() {
+        return String::new();
+    }
+
+    format!("## Behavior Adaptation\n{}\n", hints.iter().map(|h| format!("- {}", h)).collect::<Vec<_>>().join("\n"))
+}
+
+/// Tracks pipeline events and gates stage transitions.
+pub struct PipelineScheduler {
+    extraction_count: u64,
+    last_generalization: std::time::Instant,
+    last_consolidation: std::time::Instant,
+    last_forgetting: std::time::Instant,
+    last_quality_audit: std::time::Instant,
+    generalization_interval: std::time::Duration,
+    consolidation_interval: std::time::Duration,
+    forgetting_interval: std::time::Duration,
+    quality_audit_interval: std::time::Duration,
+    extractions_per_generalization: u64,
+}
+
+impl PipelineScheduler {
+    pub fn new() -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            extraction_count: 0,
+            last_generalization: now,
+            last_consolidation: now,
+            last_forgetting: now,
+            last_quality_audit: now,
+            generalization_interval: std::time::Duration::from_secs(86400), // 24 hours
+            consolidation_interval: std::time::Duration::from_secs(7200),   // 2 hours
+            forgetting_interval: std::time::Duration::from_secs(604800),    // 7 days
+            quality_audit_interval: std::time::Duration::from_secs(86400),  // 24 hours
+            extractions_per_generalization: 50,
+        }
+    }
+
+    /// Record that an extraction just completed.
+    pub fn record_extraction(&mut self) {
+        self.extraction_count += 1;
+    }
+
+    /// Check whether the given stage should run now based on both
+    /// extraction-count thresholds and time-based intervals.
+    pub fn should_run(&self, stage: PipelineStage) -> bool {
+        let now = std::time::Instant::now();
+        match stage {
+            PipelineStage::Generalization => {
+                self.extraction_count > 0
+                    && self
+                        .extraction_count
+                        .is_multiple_of(self.extractions_per_generalization)
+                    && now.duration_since(self.last_generalization) >= self.generalization_interval
+            }
+            PipelineStage::Consolidation => {
+                now.duration_since(self.last_consolidation) >= self.consolidation_interval
+            }
+            PipelineStage::Forgetting => {
+                now.duration_since(self.last_forgetting) >= self.forgetting_interval
+            }
+            PipelineStage::QualityAudit => {
+                now.duration_since(self.last_quality_audit) >= self.quality_audit_interval
+            }
+            PipelineStage::Extraction => true,
+        }
+    }
+
+    /// Mark a stage as having just completed so its interval resets.
+    pub fn mark_completed(&mut self, stage: PipelineStage) {
+        let now = std::time::Instant::now();
+        match stage {
+            PipelineStage::Generalization => self.last_generalization = now,
+            PipelineStage::Consolidation => self.last_consolidation = now,
+            PipelineStage::Forgetting => self.last_forgetting = now,
+            PipelineStage::QualityAudit => self.last_quality_audit = now,
+            PipelineStage::Extraction => {} // no interval gate
+        }
+    }
+}
+
+impl Default for PipelineScheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 use crate::agent::AgentStatus;
 use crate::agent_loop::{
@@ -77,9 +278,12 @@ pub struct Orchestrator {
     extraction_count: Arc<AtomicU64>,
     /// Atomic counter for completed consolidations (both periodic and session-close).
     consolidation_count: Arc<AtomicU64>,
+    /// Phase 3: Pipeline scheduler gates stage transitions by count + time.
+    pipeline_scheduler: Arc<tokio::sync::Mutex<PipelineScheduler>>,
 }
 
 /// Trait for memory backends (SqliteEventStore, etc.)
+#[allow(clippy::too_many_arguments)]
 #[async_trait::async_trait]
 pub trait MemoryStore: Send + Sync {
     async fn save_turn(
@@ -96,11 +300,7 @@ pub trait MemoryStore: Send + Sync {
         // JSON-serialised content of each tool message (tool calls + results).
         tool_msgs_json: &[String],
     ) -> Result<i64>;
-    async fn save_interrupted_turn(
-        &self,
-        session_id: &str,
-        user_msg: &str,
-    ) -> Result<()>;
+    async fn save_interrupted_turn(&self, session_id: &str, user_msg: &str) -> Result<()>;
     async fn load_history(&self, session_id: &str, limit: usize) -> Result<Vec<Message>>;
     async fn delete_message(&self, session_id: &str, index: usize) -> Result<()>;
     async fn extract_cognitions(&self, session_id: &str, text: &str) -> Result<Vec<String>>;
@@ -157,7 +357,12 @@ pub trait MemoryStore: Send + Sync {
     async fn list_mcp_servers(&self) -> Result<Vec<(loom_mcp::McpServerConfig, bool)>>;
     async fn delete_mcp_server(&self, name: &str) -> Result<()>;
     // Knowledge graph read
-    async fn query_kg_context(&self, entity_names: &[&str], limit: usize, scope: &str) -> Result<String>;
+    async fn query_kg_context(
+        &self,
+        entity_names: &[&str],
+        limit: usize,
+        scope: &str,
+    ) -> Result<String>;
     /// Phase 2: Layer-aware KG context query with optional memory-tier filter.
     /// When `layer` is `None` it falls back to `query_kg_context` for backward
     /// compatibility with stores that have not adopted the layered API.
@@ -186,7 +391,12 @@ pub trait MemoryStore: Send + Sync {
     ) -> Result<Vec<(String, String, String, f64)>>;
     async fn kg_node_count(&self) -> Result<usize>;
     async fn kg_edge_count(&self) -> Result<usize>;
-    async fn kg_neighbors(&self, node_name: &str, limit: usize, scope: Option<&str>) -> Result<loom_types::KgGraph>;
+    async fn kg_neighbors(
+        &self,
+        node_name: &str,
+        limit: usize,
+        scope: Option<&str>,
+    ) -> Result<loom_types::KgGraph>;
     async fn kg_walk(
         &self,
         start_name: &str,
@@ -200,7 +410,11 @@ pub trait MemoryStore: Send + Sync {
         offset: usize,
         scope: Option<&str>,
     ) -> Result<Vec<loom_types::KgNode>>;
-    async fn kg_edges_between(&self, node_names: &[String], scope: Option<&str>) -> Result<Vec<loom_types::KgEdge>>;
+    async fn kg_edges_between(
+        &self,
+        node_names: &[String],
+        scope: Option<&str>,
+    ) -> Result<Vec<loom_types::KgEdge>>;
     async fn kg_delete_node(&self, name: &str) -> Result<bool>;
     async fn kg_delete_edge(&self, source: &str, target: &str, relation: &str) -> Result<bool>;
     // Cognition records
@@ -232,7 +446,9 @@ pub trait MemoryStore: Send + Sync {
         cognition_ids: &[i64],
     ) -> Result<(usize, usize)>;
     // Session persistence
-    async fn list_sessions(&self) -> Result<Vec<(String, String, usize, Option<String>, Option<String>)>>;
+    async fn list_sessions(
+        &self,
+    ) -> Result<Vec<(String, String, usize, Option<String>, Option<String>)>>;
     async fn ensure_session(&self, id: &str) -> Result<()>;
     async fn delete_session(&self, id: &str) -> Result<()>;
     async fn rename_session(&self, id: &str, title: &str) -> Result<()>;
@@ -290,12 +506,33 @@ pub trait MemoryStore: Send + Sync {
     }
     /// Update which injected memories were actually referenced by the LLM
     /// during the turn, enabling future recall quality scoring.
-    async fn update_quality_references(
-        &self,
-        _log_id: i64,
-        _referenced: &[String],
-    ) -> Result<()> {
+    async fn update_quality_references(&self, _log_id: i64, _referenced: &[String]) -> Result<()> {
         Ok(())
+    }
+    /// Holistic memory quality self-evaluation across all dimensions:
+    /// injection relevance, entity health, coverage, freshness, and
+    /// consolidation effectiveness.  Returns a structured report with a
+    /// 0-100 composite health score suitable for the frontend settings page.
+    async fn memory_quality_report(
+        &self,
+        _lookback_days: i64,
+    ) -> Result<loom_types::MemoryQualityReport> {
+        Ok(loom_types::MemoryQualityReport {
+            avg_relevance: 0.0,
+            injection_count: 0,
+            turns_with_references: 0,
+            total_entities: 0,
+            duplicate_rate: 0.0,
+            stale_entity_count: 0,
+            avg_confidence: 0.0,
+            entity_types_distribution: vec![],
+            layer_distribution: vec![],
+            entities_added_recently: 0,
+            entities_accessed_recently: 0,
+            consolidation_runs: 0,
+            total_merged: 0,
+            health_score: 0.0,
+        })
     }
 
     // ── Phase 2: Memory consolidation, persona, patterns, layers ─────────────
@@ -320,6 +557,36 @@ pub trait MemoryStore: Send + Sync {
     /// Promote a single knowledge graph node to a different memory layer.
     async fn promote_to_layer(&self, _node_name: &str, _layer: &str) -> Result<()> {
         Ok(())
+    }
+
+    // ── Phase 3: Full pipeline operations ───────────────────────────────────
+
+    /// Run a forgetting cycle: prune low-importance, stale entities.
+    /// Returns a JSON-serialised ForgettingReport.
+    async fn run_forgetting_cycle(
+        &self,
+        _min_importance: f64,
+        _max_age_days: i64,
+    ) -> Result<String> {
+        Ok(r#"{"summary":"noop"}"#.into())
+    }
+
+    /// Return a health snapshot of the memory system.
+    /// Returns a JSON-serialised MemoryHealth.
+    async fn get_memory_health(&self) -> Result<String> {
+        Ok(r#"{"status":"healthy","fragmentation_score":0.0}"#.into())
+    }
+
+    /// Evaluate memory recall quality over a lookback window.
+    /// Returns a JSON-serialised MemoryQualityReport.
+    async fn evaluate_quality(&self, _lookback_days: i64) -> Result<String> {
+        Ok(r#"{"recall_rate":0.0,"quality_score":0.0}"#.into())
+    }
+
+    /// Return the current pipeline status (stage, counts, timings).
+    /// Returns a JSON-serialised pipeline status object.
+    async fn get_pipeline_status(&self) -> Result<String> {
+        Ok(r#"{"status":"idle"}"#.into())
     }
 }
 
@@ -389,9 +656,26 @@ fn extract_entity_candidates(text: &str) -> Vec<String> {
 
     // Hardcoded allowlist of common lowercase tech terms
     let tech_allowlist: &[&str] = &[
-        "rust", "python", "typescript", "javascript", "golang", "docker",
-        "kubernetes", "linux", "sqlite", "redis", "git", "react", "vue",
-        "electron", "tauri", "node", "postgres", "llm", "mcp", "lsp",
+        "rust",
+        "python",
+        "typescript",
+        "javascript",
+        "golang",
+        "docker",
+        "kubernetes",
+        "linux",
+        "sqlite",
+        "redis",
+        "git",
+        "react",
+        "vue",
+        "electron",
+        "tauri",
+        "node",
+        "postgres",
+        "llm",
+        "mcp",
+        "lsp",
     ];
     let lower_text = text.to_lowercase();
     for term in tech_allowlist {
@@ -402,13 +686,10 @@ fn extract_entity_candidates(text: &str) -> Vec<String> {
 
     // Chinese: sliding window of 2-5 CJK characters on consecutive runs
     let chinese_stopwords: &[&str] = &[
-        "的", "了", "是", "在", "和", "与", "或", "而",
-        "我", "你", "他", "她", "它", "们", "这", "那",
-        "吗", "呢", "吧", "啊", "哦", "嗯",
-        "一个", "这个", "那个", "什么", "怎么",
-        "因为", "所以", "但是", "如果", "虽然",
-        "可以", "需要", "应该", "可能", "已经", "正在",
-        "还是", "或者", "以及", "而且", "然后",
+        "的", "了", "是", "在", "和", "与", "或", "而", "我", "你", "他", "她", "它", "们", "这",
+        "那", "吗", "呢", "吧", "啊", "哦", "嗯", "一个", "这个", "那个", "什么", "怎么", "因为",
+        "所以", "但是", "如果", "虽然", "可以", "需要", "应该", "可能", "已经", "正在", "还是",
+        "或者", "以及", "而且", "然后",
     ];
 
     let chars: Vec<char> = text.chars().collect();
@@ -553,7 +834,46 @@ impl Orchestrator {
             consolidation_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
             extraction_count: Arc::new(AtomicU64::new(0)),
             consolidation_count: Arc::new(AtomicU64::new(0)),
+            pipeline_scheduler: Arc::new(tokio::sync::Mutex::new(PipelineScheduler::new())),
         }
+    }
+
+    /// Phase 3: Spawn the background forgetting check loop.
+    /// Runs every hour, fire-and-forget. Does not block construction.
+    pub fn spawn_forgetting_loop(&self) {
+        let memory_store = self.memory_store.clone();
+        let scheduler = self.pipeline_scheduler.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600));
+            loop {
+                interval.tick().await;
+                let should_run = {
+                    let sched = scheduler.lock().await;
+                    sched.should_run(PipelineStage::Forgetting)
+                };
+                if !should_run {
+                    tracing::debug!("forgetting: interval elapsed but scheduler says not yet");
+                    continue;
+                }
+                tracing::info!("forgetting cycle starting (background hourly check)");
+                let guard = memory_store.read().await;
+                if let Some(ref store) = *guard {
+                    match store.run_forgetting_cycle(0.3, 90).await {
+                        Ok(report) => {
+                            tracing::info!(report = %report, "forgetting cycle completed");
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "forgetting cycle failed");
+                        }
+                    }
+                }
+                drop(guard);
+                {
+                    let mut sched = scheduler.lock().await;
+                    sched.mark_completed(PipelineStage::Forgetting);
+                }
+            }
+        });
     }
 
     /// Must be called after construction to wire spawn_agent (needs self references).
@@ -634,7 +954,7 @@ impl Orchestrator {
     /// 2. If api_key_env doesn't look like an env var name (not ALL_CAPS_UNDERSCORE),
     ///    treat it as a literal key value.
     /// 3. Fall back to well-known backend env var names.
-
+    ///
     /// Get a clone of the shared key_store Arc for direct access.
     pub fn key_store_arc(&self) -> Arc<RwLock<HashMap<String, String>>> {
         self.key_store.clone()
@@ -665,10 +985,10 @@ impl Orchestrator {
                 return Some(raw.to_string());
             }
             // Fall back to OS environment variable
-            if let Ok(val) = std::env::var(raw) {
-                if !val.is_empty() {
-                    return Some(val);
-                }
+            if let Ok(val) = std::env::var(raw)
+                && !val.is_empty()
+            {
+                return Some(val);
             }
         }
         // 3. Fallback to well-known backend env vars
@@ -713,7 +1033,7 @@ impl Orchestrator {
                 name: tool_name.clone(),
                 description: format!("[MCP:{}] {}", server, tool.description),
                 input_schema: tool.input_schema.clone(),
-                tags: vec!["mcp".into(), server.clone().into()],
+                tags: vec!["mcp".into(), server.clone()],
             };
             let mcp_client = self.mcp_client.clone();
             let mcp_tool = McpAgentTool {
@@ -872,7 +1192,10 @@ impl Orchestrator {
     /// Atomically replace all skill state (context, bodies, permissions, summaries).
     /// Also rebuilds the slash-command router for /skillname interception.
     pub async fn set_skills(&self, state: loom_skills::SkillState) {
-        self.slash_router.write().await.rebuild(state.bodies.clone());
+        self.slash_router
+            .write()
+            .await
+            .rebuild(state.bodies.clone());
         *self.skill_state.write().await = state;
     }
 
@@ -888,7 +1211,13 @@ impl Orchestrator {
 
     /// Return all cached skill names.
     pub async fn get_skill_names(&self) -> Vec<String> {
-        self.skill_state.read().await.bodies.keys().cloned().collect()
+        self.skill_state
+            .read()
+            .await
+            .bodies
+            .keys()
+            .cloned()
+            .collect()
     }
 
     // === Hook Registry ===
@@ -902,11 +1231,7 @@ impl Orchestrator {
 
     /// Reload the hook registry from plugins (when plugins are installed/removed).
     pub async fn reload_hooks(&self, plugin_manager: &loom_plugins::PluginManager) {
-        self.hook_registry
-            .read()
-            .await
-            .reload(plugin_manager)
-            .await;
+        self.hook_registry.read().await.reload(plugin_manager).await;
     }
 
     /// Get a clone of the hook registry for external access.
@@ -982,7 +1307,40 @@ impl Orchestrator {
         }
     }
 
-    pub async fn kg_neighbors(&self, node_name: &str, limit: usize, scope: Option<&str>) -> Result<loom_types::KgGraph> {
+    /// Holistic memory quality evaluation.  Returns a structured report
+    /// with a composite 0-100 health score for the frontend settings page.
+    pub async fn memory_quality_report(
+        &self,
+        lookback_days: i64,
+    ) -> Result<loom_types::MemoryQualityReport> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.memory_quality_report(lookback_days).await
+        } else {
+            Ok(loom_types::MemoryQualityReport {
+                avg_relevance: 0.0,
+                injection_count: 0,
+                turns_with_references: 0,
+                total_entities: 0,
+                duplicate_rate: 0.0,
+                stale_entity_count: 0,
+                avg_confidence: 0.0,
+                entity_types_distribution: vec![],
+                layer_distribution: vec![],
+                entities_added_recently: 0,
+                entities_accessed_recently: 0,
+                consolidation_runs: 0,
+                total_merged: 0,
+                health_score: 0.0,
+            })
+        }
+    }
+
+    pub async fn kg_neighbors(
+        &self,
+        node_name: &str,
+        limit: usize,
+        scope: Option<&str>,
+    ) -> Result<loom_types::KgGraph> {
         if let Some(ref store) = *self.memory_store.read().await {
             store.kg_neighbors(node_name, limit, scope).await
         } else {
@@ -1023,7 +1381,11 @@ impl Orchestrator {
         }
     }
 
-    pub async fn kg_edges_between(&self, node_names: &[String], scope: Option<&str>) -> Result<Vec<loom_types::KgEdge>> {
+    pub async fn kg_edges_between(
+        &self,
+        node_names: &[String],
+        scope: Option<&str>,
+    ) -> Result<Vec<loom_types::KgEdge>> {
         if let Some(ref store) = *self.memory_store.read().await {
             store.kg_edges_between(node_names, scope).await
         } else {
@@ -1279,7 +1641,9 @@ impl Orchestrator {
     }
 
     /// List sessions from the memory store (or empty if no store).
-    pub async fn list_persisted_sessions(&self) -> Vec<(String, String, usize, Option<String>, Option<String>)> {
+    pub async fn list_persisted_sessions(
+        &self,
+    ) -> Vec<(String, String, usize, Option<String>, Option<String>)> {
         let store = self.memory_store.read().await;
         if let Some(ref s) = *store {
             s.list_sessions().await.unwrap_or_default()
@@ -1320,7 +1684,9 @@ impl Orchestrator {
     pub async fn bind_agent_persisted(&self, session_id: &str, agent_config_name: &str) {
         let store = self.memory_store.read().await;
         if let Some(ref s) = *store {
-            let _ = s.save_session_agent_name(session_id, agent_config_name).await;
+            let _ = s
+                .save_session_agent_name(session_id, agent_config_name)
+                .await;
         }
     }
 
@@ -1481,7 +1847,7 @@ impl Orchestrator {
     async fn convert_images_to_refs(
         &self,
         session_id: &str,
-        parts: &mut Vec<ContentPart>,
+        parts: &mut [ContentPart],
     ) -> Result<()> {
         for part in parts.iter_mut() {
             if let ContentPart::Image {
@@ -1534,14 +1900,14 @@ impl Orchestrator {
         }
         // Fall back to DB — cache may be stale after a silent load failure
         let store = self.memory_store.read().await;
-        if let Some(ref s) = *store {
-            if let Some(cfg) = s.get_agent_config(name).await? {
-                self.agent_configs
-                    .write()
-                    .await
-                    .insert(name.to_string(), cfg.clone());
-                return Ok(cfg);
-            }
+        if let Some(ref s) = *store
+            && let Some(cfg) = s.get_agent_config(name).await?
+        {
+            self.agent_configs
+                .write()
+                .await
+                .insert(name.to_string(), cfg.clone());
+            return Ok(cfg);
         }
         anyhow::bail!("agent config '{}' not found", name)
     }
@@ -1631,22 +1997,15 @@ impl Orchestrator {
         &self,
         description: &str,
     ) -> Result<loom_types::AgentConfig> {
-        let existing_names: Vec<String> = {
-            self.agent_configs
-                .read()
-                .await
-                .keys()
-                .cloned()
-                .collect()
-        };
+        let existing_names: Vec<String> =
+            { self.agent_configs.read().await.keys().cloned().collect() };
         let names_hint = if existing_names.is_empty() {
             "(none)".to_string()
         } else {
             existing_names.join(", ")
         };
 
-        let system_prompt = AGENT_CONFIG_GENERATION_PROMPT
-            .replace("{existing_names}", &names_hint);
+        let system_prompt = AGENT_CONFIG_GENERATION_PROMPT.replace("{existing_names}", &names_hint);
 
         let request = CompletionRequest {
             messages: vec![
@@ -1682,9 +2041,7 @@ impl Orchestrator {
         let client = self
             .build_auxiliary_client("entity")
             .await
-            .or_else(|| {
-                self.cloud_client.try_read().ok().and_then(|g| g.clone())
-            })
+            .or_else(|| self.cloud_client.try_read().ok().and_then(|g| g.clone()))
             .ok_or_else(|| anyhow::anyhow!("没有可用的模型。请先在设置中配置一个模型。"))?;
 
         // Use streaming to collect response (works better with local models)
@@ -1740,13 +2097,16 @@ impl Orchestrator {
         }
 
         // Auto-generate system_prompt_override if the model left it empty
-        if config.system_prompt_override.as_deref().map_or(true, |s| s.trim().is_empty()) {
-            if !config.persona.trim().is_empty() {
-                config.system_prompt_override = Some(format!(
-                    "你是 {}。\n\n{}\n\n行为准则：\n- 始终使用中文回复\n- 优先使用本地工具和本地模型\n- 回答前先确认用户环境",
-                    config.name, config.persona
-                ));
-            }
+        if config
+            .system_prompt_override
+            .as_deref()
+            .is_none_or(|s| s.trim().is_empty())
+            && !config.persona.trim().is_empty()
+        {
+            config.system_prompt_override = Some(format!(
+                "你是 {}。\n\n{}\n\n行为准则：\n- 始终使用中文回复\n- 优先使用本地工具和本地模型\n- 回答前先确认用户环境",
+                config.name, config.persona
+            ));
         }
 
         // Resolve name conflicts by appending a numeric suffix
@@ -1830,9 +2190,7 @@ impl Orchestrator {
         let client = self
             .build_auxiliary_client("entity")
             .await
-            .or_else(|| {
-                self.cloud_client.try_read().ok().and_then(|g| g.clone())
-            })
+            .or_else(|| self.cloud_client.try_read().ok().and_then(|g| g.clone()))
             .ok_or_else(|| anyhow::anyhow!("没有可用的模型。请先在设置中配置一个模型。"))?;
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
@@ -1865,23 +2223,33 @@ impl Orchestrator {
         } else if let Some(start) = raw.find('{') {
             &raw[start..]
         } else {
-            anyhow::bail!("AI 返回的内容中没有找到 JSON。原始响应: {}", &raw[..raw.len().min(500)])
+            anyhow::bail!(
+                "AI 返回的内容中没有找到 JSON。原始响应: {}",
+                &raw[..raw.len().min(500)]
+            )
         };
 
         let config: loom_types::AgentConfig =
             serde_json::from_str(json_str.trim()).map_err(|e| {
-                anyhow::anyhow!("优化后的 JSON 解析失败: {}\nJSON: {}", e, &json_str[..json_str.len().min(300)])
+                anyhow::anyhow!(
+                    "优化后的 JSON 解析失败: {}\nJSON: {}",
+                    e,
+                    &json_str[..json_str.len().min(300)]
+                )
             })?;
 
         // Ensure system_prompt_override is filled
         let mut config = config;
-        if config.system_prompt_override.as_deref().map_or(true, |s| s.trim().is_empty()) {
-            if !config.persona.trim().is_empty() {
-                config.system_prompt_override = Some(format!(
-                    "你是 {}。\n\n{}\n\n行为准则：\n- 始终使用中文回复\n- 优先使用本地工具和本地模型\n- 回答前先确认用户环境",
-                    config.name, config.persona
-                ));
-            }
+        if config
+            .system_prompt_override
+            .as_deref()
+            .is_none_or(|s| s.trim().is_empty())
+            && !config.persona.trim().is_empty()
+        {
+            config.system_prompt_override = Some(format!(
+                "你是 {}。\n\n{}\n\n行为准则：\n- 始终使用中文回复\n- 优先使用本地工具和本地模型\n- 回答前先确认用户环境",
+                config.name, config.persona
+            ));
         }
 
         Ok(config)
@@ -2048,27 +2416,21 @@ impl Orchestrator {
         // Unload the previous local model before switching (avoids piling up in LM Studio)
         {
             let old_name = self.active_model_name.read().await.clone();
-            if let Some(ref old_name) = old_name {
-                if old_name != name {
-                    if let Ok(old_config) = self.model_config_get(old_name).await {
-                        if old_config.backend.is_local_inference() {
-                            if let Some(ref old_model_id) = old_config.model {
-                                let base = old_config.base_url.as_deref().unwrap_or(
-                                    match old_config.backend {
-                                        loom_types::ModelBackend::LmStudio => {
-                                            "http://localhost:1234/v1"
-                                        }
-                                        loom_types::ModelBackend::Ollama => {
-                                            "http://localhost:11434/v1"
-                                        }
-                                        _ => "http://localhost:1234/v1",
-                                    },
-                                );
-                                loom_inference::unload_local_model(base, old_model_id).await;
-                            }
-                        }
-                    }
-                }
+            if let Some(ref old_name) = old_name
+                && old_name != name
+                && let Ok(old_config) = self.model_config_get(old_name).await
+                && old_config.backend.is_local_inference()
+                && let Some(ref old_model_id) = old_config.model
+            {
+                let base = old_config
+                    .base_url
+                    .as_deref()
+                    .unwrap_or(match old_config.backend {
+                        loom_types::ModelBackend::LmStudio => "http://localhost:1234/v1",
+                        loom_types::ModelBackend::Ollama => "http://localhost:11434/v1",
+                        _ => "http://localhost:1234/v1",
+                    });
+                loom_inference::unload_local_model(base, old_model_id).await;
             }
         }
 
@@ -2113,10 +2475,10 @@ impl Orchestrator {
         // Log if current client model matches (for debugging)
         {
             let existing: Option<Arc<dyn CloudClient>> = self.cloud_client.read().await.clone();
-            if let Some(ref client) = existing {
-                if client.model_name() == model {
-                    tracing::info!(%model, name = %config.name, "cloud client model_name matches — force rebuild anyway to pick up config changes");
-                }
+            if let Some(ref client) = existing
+                && client.model_name() == model
+            {
+                tracing::info!(%model, name = %config.name, "cloud client model_name matches — force rebuild anyway to pick up config changes");
             }
         }
 
@@ -2189,7 +2551,8 @@ impl Orchestrator {
             "entity" => "entity_model",
             _ => return None,
         };
-        config.get(key)
+        config
+            .get(key)
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
@@ -2219,7 +2582,9 @@ impl Orchestrator {
             });
 
         if is_local {
-            match loom_inference::InferenceEngine::connect(&base_url, &model, config.context_size).await {
+            match loom_inference::InferenceEngine::connect(&base_url, &model, config.context_size)
+                .await
+            {
                 Ok(engine) => Some(Arc::new(engine) as Arc<dyn CloudClient>),
                 Err(e) => {
                     tracing::warn!(task, %model, error = %e, "failed to connect auxiliary inference engine");
@@ -2236,9 +2601,10 @@ impl Orchestrator {
                     let is_anthropic = config.api_format.as_deref() == Some("anthropic")
                         || matches!(config.backend, loom_types::ModelBackend::Anthropic);
                     if is_anthropic {
-                        Some(Arc::new(loom_inference::AnthropicClient::new(
-                            key, model, base_url,
-                        )) as Arc<dyn CloudClient>)
+                        Some(
+                            Arc::new(loom_inference::AnthropicClient::new(key, model, base_url))
+                                as Arc<dyn CloudClient>,
+                        )
                     } else {
                         Some(Arc::new(loom_inference::OpenAIClient::new(
                             key, model, base_url, false,
@@ -2275,12 +2641,7 @@ impl Orchestrator {
         let llm_client: Option<Arc<dyn CloudClient>> = self
             .build_auxiliary_client("entity")
             .await
-            .or_else(|| {
-                self.cloud_client
-                    .try_read()
-                    .ok()
-                    .and_then(|g| g.clone())
-            });
+            .or_else(|| self.cloud_client.try_read().ok().and_then(|g| g.clone()));
 
         let extract_model = llm_client
             .as_ref()
@@ -2303,6 +2664,7 @@ impl Orchestrator {
         let con_sem = self.consolidation_semaphore.clone();
         let extraction_count = self.extraction_count.clone();
         let consolidation_count = self.consolidation_count.clone();
+        let pipeline_scheduler = self.pipeline_scheduler.clone();
 
         tokio::spawn(async move {
             // Rate-limit concurrent LLM extraction calls to prevent unbounded
@@ -2320,10 +2682,10 @@ impl Orchestrator {
             // 1. Keyword-based cognition extraction (runs unconditionally)
             {
                 let guard = mem_arc.read().await;
-                if let Some(ref store) = *guard {
-                    if let Err(e) = store.extract_cognitions(&session_id, &combined_text).await {
-                        tracing::warn!(error = %e, "Keyword cognition extraction failed");
-                    }
+                if let Some(ref store) = *guard
+                    && let Err(e) = store.extract_cognitions(&session_id, &combined_text).await
+                {
+                    tracing::warn!(error = %e, "Keyword cognition extraction failed");
                 }
             }
 
@@ -2332,11 +2694,9 @@ impl Orchestrator {
             let mut all_relationships: Vec<ExtractedRelationship> = Vec::new();
 
             let extractor = RuleBasedEntityExtractor;
-            if let Ok(rule_entities) =
-                extractor.extract_entities(&combined_text, "", &session_id)
-            {
-                if let Ok(rule_relationships) = extractor
-                    .extract_relationships(&combined_text, &rule_entities, &session_id)
+            if let Ok(rule_entities) = extractor.extract_entities(&combined_text, "", &session_id) {
+                if let Ok(rule_relationships) =
+                    extractor.extract_relationships(&combined_text, &rule_entities, &session_id)
                 {
                     all_entities.extend(rule_entities);
                     all_relationships.extend(rule_relationships);
@@ -2347,7 +2707,13 @@ impl Orchestrator {
 
             // 3. LLM-based entity extraction (if client available)
             if let Some(ref client) = llm_client {
-                match llm_extract_entities(client.as_ref(), &user_message, &assistant_response, &session_id).await
+                match llm_extract_entities(
+                    client.as_ref(),
+                    &user_message,
+                    &assistant_response,
+                    &session_id,
+                )
+                .await
                 {
                     Ok((mut entities, mut relationships, ext_prompt, ext_completion)) => {
                         // Record entity extraction token usage
@@ -2388,8 +2754,8 @@ impl Orchestrator {
             // 4. Feed knowledge graph + save extracted entities
             {
                 let guard = mem_arc.read().await;
-                if let Some(ref store) = *guard {
-                    if let Ok((n, e)) = store
+                if let Some(ref store) = *guard
+                    && let Ok((n, e)) = store
                         .feed_knowledge_graph(
                             &all_entities,
                             &all_relationships,
@@ -2397,34 +2763,208 @@ impl Orchestrator {
                             &session_id,
                         )
                         .await
-                    {
-                        let _ = store
-                            .save_extracted_entities(
-                                &all_entities,
-                                &all_relationships,
-                                &session_id,
-                            )
-                            .await;
-                        if n > 0 || e > 0 {
-                            tracing::info!(n, e, "KG updated via async extraction pipeline");
-                        }
+                {
+                    let _ = store
+                        .save_extracted_entities(&all_entities, &all_relationships, &session_id)
+                        .await;
+                    if n > 0 || e > 0 {
+                        tracing::info!(n, e, "KG updated via async extraction pipeline");
                     }
                 }
             }
 
             // 5. Publish MemoryUpdated event so frontend can refresh KG display
-            event_bus.publish(AgentEvent::MemoryUpdated {
-                session_id: sid,
-            });
+            event_bus.publish(AgentEvent::MemoryUpdated { session_id: sid });
 
-            // 6. Increment extraction counter and trigger periodic consolidation
-            // every 50 extractions (fire-and-forget, spawned as background task).
+            // 6. Record extraction via scheduler and increment counter.
+            {
+                let mut sched = pipeline_scheduler.lock().await;
+                sched.record_extraction();
+            }
             let count = extraction_count.fetch_add(1, Ordering::Relaxed) + 1;
-            if count % 50 == 0 {
+
+            // 6a. Check if generalization should run (scheduler-gated: count % 50 + time interval).
+            let should_generalize = {
+                let sched = pipeline_scheduler.lock().await;
+                sched.should_run(PipelineStage::Generalization)
+            };
+            if should_generalize {
+                let g_mem = mem_arc.clone();
+                let g_sched = pipeline_scheduler.clone();
+                tokio::spawn(async move {
+                    let guard = g_mem.read().await;
+                    if let Some(ref store) = *guard {
+                        // Phase 3: Generalization — detect patterns across sessions
+                        tracing::info!("Phase 3: running generalization cycle");
+                        match store.detect_patterns().await {
+                            Ok(patterns_json) => {
+                                tracing::info!(
+                                    patterns = %patterns_json,
+                                    "generalization: patterns detected"
+                                );
+                                // Create concept nodes from detected topics.
+                                // TopicPattern serialises as {"topic":"...","session_count":N,...}
+                                // — an object, NOT an array. Use key access, not tuple index.
+                                if let Ok(report) =
+                                    serde_json::from_str::<serde_json::Value>(&patterns_json)
+                                    && let Some(topics) =
+                                        report.get("topics").and_then(|v| v.as_array())
+                                {
+                                    for topic in topics.iter().take(5) {
+                                        if let (Some(name), Some(count)) = (
+                                            topic.get("topic").and_then(|v| v.as_str()),
+                                            topic.get("session_count").and_then(|v| v.as_u64()),
+                                        ) {
+                                            // Skip common English stopwords that would pollute the KG
+                                            let name_lower = name.to_lowercase();
+                                            let is_stopword = matches!(
+                                                name_lower.as_str(),
+                                                "the"
+                                                    | "a"
+                                                    | "an"
+                                                    | "is"
+                                                    | "are"
+                                                    | "was"
+                                                    | "were"
+                                                    | "be"
+                                                    | "been"
+                                                    | "being"
+                                                    | "have"
+                                                    | "has"
+                                                    | "had"
+                                                    | "do"
+                                                    | "does"
+                                                    | "did"
+                                                    | "will"
+                                                    | "would"
+                                                    | "could"
+                                                    | "should"
+                                                    | "may"
+                                                    | "might"
+                                                    | "can"
+                                                    | "shall"
+                                                    | "must"
+                                                    | "i"
+                                                    | "you"
+                                                    | "he"
+                                                    | "she"
+                                                    | "it"
+                                                    | "we"
+                                                    | "they"
+                                                    | "me"
+                                                    | "him"
+                                                    | "her"
+                                                    | "us"
+                                                    | "them"
+                                                    | "my"
+                                                    | "your"
+                                                    | "his"
+                                                    | "its"
+                                                    | "our"
+                                                    | "their"
+                                                    | "this"
+                                                    | "that"
+                                                    | "these"
+                                                    | "those"
+                                                    | "and"
+                                                    | "or"
+                                                    | "but"
+                                                    | "not"
+                                                    | "if"
+                                                    | "then"
+                                                    | "else"
+                                                    | "when"
+                                                    | "where"
+                                                    | "how"
+                                                    | "what"
+                                                    | "which"
+                                                    | "who"
+                                                    | "whom"
+                                                    | "to"
+                                                    | "from"
+                                                    | "in"
+                                                    | "on"
+                                                    | "at"
+                                                    | "by"
+                                                    | "for"
+                                                    | "with"
+                                                    | "about"
+                                                    | "as"
+                                                    | "of"
+                                            );
+                                            if is_stopword {
+                                                tracing::debug!(
+                                                    topic = %name,
+                                                    "generalization: skipping stopword topic"
+                                                );
+                                                continue;
+                                            }
+                                            // Require topics to appear in at least 2 sessions
+                                            if count < 2 {
+                                                continue;
+                                            }
+                                            let entities = vec![loom_memory::ExtractedEntity {
+                                                name: format!("Topic::{}", name),
+                                                entity_type: "Concept".into(),
+                                                description: format!(
+                                                    "Emergent topic detected across sessions (mentioned {} times)",
+                                                    count
+                                                ),
+                                                confidence: 0.85,
+                                                aliases: vec![],
+                                                scope: "global".into(),
+                                            }];
+                                            let relationships: Vec<
+                                                loom_memory::ExtractedRelationship,
+                                            > = vec![];
+                                            let _ = store
+                                                .feed_knowledge_graph(
+                                                    &entities,
+                                                    &relationships,
+                                                    0,
+                                                    "global",
+                                                )
+                                                .await;
+                                            let _ = store
+                                                .save_extracted_entities(
+                                                    &entities,
+                                                    &relationships,
+                                                    "global",
+                                                )
+                                                .await;
+                                            tracing::info!(
+                                                topic = %name,
+                                                count = count,
+                                                "generalization: created concept node from detected topic"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "generalization: detect_patterns failed");
+                            }
+                        }
+                    }
+                    {
+                        let mut sched = g_sched.lock().await;
+                        sched.mark_completed(PipelineStage::Generalization);
+                    }
+                });
+            }
+
+            // 6b. Periodic consolidation: count-based trigger (every 50 extractions)
+            // AND scheduler time-gate (2-hour minimum interval between consolidations).
+            let should_consolidate = {
+                let sched = pipeline_scheduler.lock().await;
+                count.is_multiple_of(50) && sched.should_run(PipelineStage::Consolidation)
+            };
+            if should_consolidate {
                 let c_mem = mem_arc.clone();
                 let c_consolidation_count = consolidation_count.clone();
                 let c_sem = con_sem.clone();
                 let c_session_id = session_id.clone();
+                let c_sched = pipeline_scheduler.clone();
                 tokio::spawn(async move {
                     let _permit = c_sem.acquire().await;
                     tracing::info!(
@@ -2436,7 +2976,8 @@ impl Orchestrator {
                         // Scope-based promotion: high-confidence session → global
                         match store.promote_to_global(&c_session_id, 0.7).await {
                             Ok((nodes, cogs)) => {
-                                let c_count = c_consolidation_count.fetch_add(1, Ordering::Relaxed) + 1;
+                                let c_count =
+                                    c_consolidation_count.fetch_add(1, Ordering::Relaxed) + 1;
                                 tracing::info!(
                                     promoted_nodes = nodes,
                                     promoted_cognitions = cogs,
@@ -2452,7 +2993,10 @@ impl Orchestrator {
                         match store.prune_memory().await {
                             Ok(pruned) => {
                                 if pruned > 0 {
-                                    tracing::info!(pruned, "periodic consolidation: pruned stale entities");
+                                    tracing::info!(
+                                        pruned,
+                                        "periodic consolidation: pruned stale entities"
+                                    );
                                 }
                             }
                             Err(e) => {
@@ -2471,6 +3015,10 @@ impl Orchestrator {
                                 tracing::warn!(error = %e, "periodic consolidation: run_consolidation_cycle failed");
                             }
                         }
+                    }
+                    {
+                        let mut sched = c_sched.lock().await;
+                        sched.mark_completed(PipelineStage::Consolidation);
                     }
                 });
             }
@@ -2501,6 +3049,7 @@ impl Orchestrator {
 
     /// Build the full system prompt by assembling agent persona, system instructions,
     /// user profile, selected skills, available skill list, KG context, and workspace path.
+    #[allow(clippy::too_many_arguments)]
     async fn build_full_system_prompt(
         &self,
         agent_config: &loom_types::AgentConfig,
@@ -2554,7 +3103,9 @@ impl Orchestrator {
         {
             let always_active_names: Vec<String> = {
                 let state = self.skill_state.read().await;
-                state.summaries.iter()
+                state
+                    .summaries
+                    .iter()
                     .filter(|s| s.always_active)
                     .map(|s| s.name.clone())
                     .collect()
@@ -2567,10 +3118,10 @@ impl Orchestrator {
                     if first_time { "Auto-Activated" } else { "Also Auto-Activated" }
                 ));
                 for name in &always_active_names {
-                    if !selected_skills.contains(name) {
-                        if let Some(body) = bodies.get(name) {
-                            system_prompt.push_str(&format!("\n\n### Skill: {}\n{}", name, body));
-                        }
+                    if !selected_skills.contains(name)
+                        && let Some(body) = bodies.get(name)
+                    {
+                        system_prompt.push_str(&format!("\n\n### Skill: {}\n{}", name, body));
                     }
                 }
             }
@@ -2580,17 +3131,25 @@ impl Orchestrator {
         if !available_skills.is_empty() {
             let active_set: std::collections::HashSet<String> = {
                 let state = self.skill_state.read().await;
-                selected_skills.iter().cloned()
-                    .chain(state.summaries.iter().filter(|s| s.always_active).map(|s| s.name.clone()))
+                selected_skills
+                    .iter()
+                    .cloned()
+                    .chain(
+                        state
+                            .summaries
+                            .iter()
+                            .filter(|s| s.always_active)
+                            .map(|s| s.name.clone()),
+                    )
                     .collect()
             };
             let filtered: String = available_skills
                 .lines()
                 .filter(|line| {
-                    if let Some(rest) = line.strip_prefix("- ") {
-                        if let Some((name, _)) = rest.split_once(':') {
-                            return !active_set.contains(name.trim());
-                        }
+                    if let Some(rest) = line.strip_prefix("- ")
+                        && let Some((name, _)) = rest.split_once(':')
+                    {
+                        return !active_set.contains(name.trim());
                     }
                     true
                 })
@@ -2615,14 +3174,23 @@ impl Orchestrator {
                 entities.truncate(6);
 
                 // Layer 1: Working — current session scope, working-layer entities
-                let kg_working = store.query_kg_context_layered(&entities, 5, session_id, Some("working")).await.unwrap_or_default();
+                let kg_working = store
+                    .query_kg_context_layered(&entities, 5, session_id, Some("working"))
+                    .await
+                    .unwrap_or_default();
                 // Layer 2: Semantic — global persistent scope, semantic-layer entities
                 let kg_semantic = if !kg_working.is_empty() {
                     // Only fetch global if working layer already has results
-                    store.query_kg_context_layered(&entities, 2, "global", Some("semantic")).await.unwrap_or_default()
+                    store
+                        .query_kg_context_layered(&entities, 2, "global", Some("semantic"))
+                        .await
+                        .unwrap_or_default()
                 } else {
                     // Fallback: no working results, get more from global
-                    store.query_kg_context_layered(&entities, 5, "global", Some("semantic")).await.unwrap_or_default()
+                    store
+                        .query_kg_context_layered(&entities, 5, "global", Some("semantic"))
+                        .await
+                        .unwrap_or_default()
                 };
 
                 // Combine: working first, then semantic (deduped implicitly by
@@ -2711,6 +3279,7 @@ impl Orchestrator {
     /// Uses the Agent state machine: Idle → Thinking → Completed (or Errored).
     /// `attached_images` are ContentPart::Image items to send directly to the model.
     /// `selected_skills` are skill names whose full content should be injected into the system prompt.
+    #[allow(clippy::too_many_arguments)]
     pub async fn process_message_with_config(
         &self,
         user_message: &str,
@@ -2735,12 +3304,11 @@ impl Orchestrator {
         // Phase 2: use rich persona with confidence scores and layered structure.
         {
             let store = self.memory_store.read().await;
-            if let Some(ref s) = *store {
-                if let Ok(Some(persona)) = s.get_rich_persona().await {
-                    if !persona.is_empty() {
-                        *self.persona_context.write().await = persona;
-                    }
-                }
+            if let Some(ref s) = *store
+                && let Ok(Some(persona)) = s.get_rich_persona().await
+                && !persona.is_empty()
+            {
+                *self.persona_context.write().await = persona;
             }
         }
 
@@ -2749,7 +3317,14 @@ impl Orchestrator {
         // entity-extraction completion is about to write persona_context).
         let user_persona = {
             let p = self.persona_context.read().await;
-            p.clone()
+            let raw = p.clone();
+            // Append behavior adaptation hints derived from the persona
+            let behavior_hints = adapt_behavior(&raw);
+            if behavior_hints.is_empty() {
+                raw
+            } else {
+                format!("{}\n{}", behavior_hints, raw)
+            }
         };
         let skills = {
             let state = self.skill_state.read().await;
@@ -2867,11 +3442,16 @@ impl Orchestrator {
             system_prompt.push_str("\n\n## 规划模式\n");
             system_prompt.push_str("你正处于 **规划模式（Plan Mode）**。在此模式下：\n");
             system_prompt.push_str("- **禁止**修改文件、执行 Shell 命令或任何破坏性操作。\n");
-            system_prompt.push_str("- 你应当深入分析代码库，探索相关文件，创建一个详细的实施方案。\n");
-            system_prompt.push_str("- 方案应包含：需要修改的文件、架构决策、分步实施计划、边界情况和潜在风险。\n");
+            system_prompt
+                .push_str("- 你应当深入分析代码库，探索相关文件，创建一个详细的实施方案。\n");
+            system_prompt.push_str(
+                "- 方案应包含：需要修改的文件、架构决策、分步实施计划、边界情况和潜在风险。\n",
+            );
             system_prompt.push_str("- 使用清晰的 Markdown 标题、列表和代码片段呈现方案。\n");
-            system_prompt.push_str("- 用户审核方案后，会切换到 **Operate（操作）** 模式来开始实施。\n");
-            system_prompt.push_str("- 你可以自由使用只读工具（Read、Grep、Glob）和搜索工具进行分析。\n");
+            system_prompt
+                .push_str("- 用户审核方案后，会切换到 **Operate（操作）** 模式来开始实施。\n");
+            system_prompt
+                .push_str("- 你可以自由使用只读工具（Read、Grep、Glob）和搜索工具进行分析。\n");
         }
 
         // Build default permissions based on permission_mode:
@@ -2899,10 +3479,7 @@ impl Orchestrator {
         let default_permissions = if merged_skill_permissions.is_empty() {
             base_permissions
         } else {
-            merge_multi_permissions(
-                merged_skill_permissions.iter().map(Some),
-                &base_permissions,
-            )
+            merge_multi_permissions(merged_skill_permissions.iter().map(Some), &base_permissions)
         };
 
         // Global defaults (overridable per agent)
@@ -2934,7 +3511,8 @@ impl Orchestrator {
                     .get_message_count(session_id)
                     .await
                     .unwrap_or(history.len());
-                let should = loom_memory::SummaryEngine::should_summarize(total_msgs, last_at, 12, 6);
+                let should =
+                    loom_memory::SummaryEngine::should_summarize(total_msgs, last_at, 12, 6);
                 (existing, should)
             } else {
                 (None, false)
@@ -2943,7 +3521,8 @@ impl Orchestrator {
 
         let summary = if should_summarize {
             tracing::info!(session_id, "summarization triggered");
-            let prompt = loom_memory::SummaryEngine::build_prompt(&history, existing_summary.as_deref());
+            let prompt =
+                loom_memory::SummaryEngine::build_prompt(&history, existing_summary.as_deref());
             let request = loom_memory::SummaryEngine::build_request(&prompt);
             // Use auxiliary client if available, fall back to main
             let summary_client: Option<Arc<dyn CloudClient>> =
@@ -2961,11 +3540,18 @@ impl Orchestrator {
                         if let Some(ref store) = *mem {
                             let _ = store.save_summary(session_id, &resp.text).await;
                             if resp.prompt_tokens > 0 || resp.completion_tokens > 0 {
-                                let _ = store.record_token_usage(
-                                    session_id,
-                                    &format!("{} (summary)", sc.model_name()),
-                                    resp.prompt_tokens, resp.completion_tokens, 0, 0, 0, 0,
-                                ).await;
+                                let _ = store
+                                    .record_token_usage(
+                                        session_id,
+                                        &format!("{} (summary)", sc.model_name()),
+                                        resp.prompt_tokens,
+                                        resp.completion_tokens,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                    )
+                                    .await;
                             }
                         }
                         tracing::info!(chars = resp.text.len(), "conversation summarized");
@@ -2990,7 +3576,11 @@ impl Orchestrator {
             max_iterations: agent_config.max_iterations.unwrap_or(default_max_iters),
             // Bump output budget when skills are active — skills often involve
             // large file generation (HTML slides, code, etc.) that 4096 can't fit.
-            max_tokens: if effective_selected_skills.is_empty() { 4096 } else { 0 },
+            max_tokens: if effective_selected_skills.is_empty() {
+                4096
+            } else {
+                0
+            },
             thinking_budget: if agent_config.cc_dispatch {
                 Some(thinking_budget.unwrap_or(4096))
             } else {
@@ -3021,10 +3611,10 @@ impl Orchestrator {
             sandbox: {
                 let sc = self.sandbox_config.read().await.clone();
                 if sc.enabled {
-                    let ws_path = workspace_path
-                        .as_ref()
-                        .map(|p| std::path::PathBuf::from(p));
-                    Some(Arc::new(loom_security::sandbox::SandboxGuard::new(sc, ws_path)))
+                    let ws_path = workspace_path.as_ref().map(std::path::PathBuf::from);
+                    Some(Arc::new(loom_security::sandbox::SandboxGuard::new(
+                        sc, ws_path,
+                    )))
                 } else {
                     None
                 }
@@ -3156,14 +3746,14 @@ impl Orchestrator {
                         delta_seq += 1;
                         full_text.push_str(&t);
                         tracing::debug!(seq = delta_seq, delta = %t, "forward_handle Text delta");
-                        let _ = event_bus.publish(AgentEvent::StreamDelta {
+                        event_bus.publish(AgentEvent::StreamDelta {
                             agent_id: forward_agent_id.clone(),
                             session_id: forward_session_id.clone(),
                             delta: t,
                         });
                     }
                     StreamDelta::Reasoning(t) => {
-                        let _ = event_bus.publish(AgentEvent::StreamDelta {
+                        event_bus.publish(AgentEvent::StreamDelta {
                             agent_id: forward_agent_id.clone(),
                             session_id: forward_session_id.clone(),
                             delta: format!("\x02REASONING\x02{}", t),
@@ -3175,7 +3765,7 @@ impl Orchestrator {
                             // Publish immediately so the frontend shows the
                             // tool drawer / terminal as soon as the LLM
                             // starts calling a tool — don't wait for args.
-                            let _ = event_bus.publish(AgentEvent::ToolStarted {
+                            event_bus.publish(AgentEvent::ToolStarted {
                                 agent_id: forward_agent_id.clone(),
                                 call_id: id.clone(),
                                 tool_name: name.clone(),
@@ -3201,7 +3791,7 @@ impl Orchestrator {
                     } => {
                         tool_results.insert(call_id.clone(), success);
                         // Emit ToolCompleted immediately so the frontend updates in real-time
-                        let _ = event_bus.publish(AgentEvent::ToolCompleted {
+                        event_bus.publish(AgentEvent::ToolCompleted {
                             agent_id: forward_agent_id.clone(),
                             call_id: call_id.clone(),
                             tool_name: tool_name.clone(),
@@ -3214,7 +3804,7 @@ impl Orchestrator {
                         }
                     }
                     StreamDelta::Image { media_type, data } => {
-                        let _ = event_bus.publish(AgentEvent::StreamDelta {
+                        event_bus.publish(AgentEvent::StreamDelta {
                             agent_id: forward_agent_id.clone(),
                             session_id: forward_session_id.clone(),
                             delta: format!("\x02IMAGE\x02{};{}", media_type, data),
@@ -3229,43 +3819,44 @@ impl Orchestrator {
                     } => {
                         // Merge Anthropic split-usage deltas (message_start + message_delta).
                         // OpenAI / local engines send complete usage in a single delta.
-                        let (p_tokens, c_tokens, cr_tokens, cw_tokens) =
-                            if prompt_tokens > 0 && completion_tokens == 0 {
-                                // Anthropic message_start — store partial, don't publish yet
-                                partial_prompt = prompt_tokens;
-                                partial_cache_read = cache_read_tokens;
-                                usage_pending = true;
-                                tracing::debug!(
-                                    prompt = prompt_tokens,
-                                    "[token-stats] partial usage (message_start), waiting for message_delta"
-                                );
-                                continue;
-                            } else if prompt_tokens == 0 && completion_tokens > 0 && usage_pending {
-                                // Anthropic message_delta — merge with stored partial
-                                usage_pending = false;
-                                let merged = (
-                                    partial_prompt,
-                                    completion_tokens,
-                                    partial_cache_read,
-                                    cache_write_tokens,
-                                );
-                                tracing::debug!(
-                                    prompt = partial_prompt,
-                                    completion = completion_tokens,
-                                    "[token-stats] merged partial usage (message_delta)"
-                                );
-                                merged
-                            } else {
-                                // OpenAI / local engine complete delta, or no pending partial
-                                usage_pending = false;
-                                (
-                                    prompt_tokens,
-                                    completion_tokens,
-                                    cache_read_tokens,
-                                    cache_write_tokens,
-                                )
-                            };
-                        let _ = event_bus.publish(AgentEvent::TokenUsage {
+                        let (p_tokens, c_tokens, cr_tokens, cw_tokens) = if prompt_tokens > 0
+                            && completion_tokens == 0
+                        {
+                            // Anthropic message_start — store partial, don't publish yet
+                            partial_prompt = prompt_tokens;
+                            partial_cache_read = cache_read_tokens;
+                            usage_pending = true;
+                            tracing::debug!(
+                                prompt = prompt_tokens,
+                                "[token-stats] partial usage (message_start), waiting for message_delta"
+                            );
+                            continue;
+                        } else if prompt_tokens == 0 && completion_tokens > 0 && usage_pending {
+                            // Anthropic message_delta — merge with stored partial
+                            usage_pending = false;
+                            let merged = (
+                                partial_prompt,
+                                completion_tokens,
+                                partial_cache_read,
+                                cache_write_tokens,
+                            );
+                            tracing::debug!(
+                                prompt = partial_prompt,
+                                completion = completion_tokens,
+                                "[token-stats] merged partial usage (message_delta)"
+                            );
+                            merged
+                        } else {
+                            // OpenAI / local engine complete delta, or no pending partial
+                            usage_pending = false;
+                            (
+                                prompt_tokens,
+                                completion_tokens,
+                                cache_read_tokens,
+                                cache_write_tokens,
+                            )
+                        };
+                        event_bus.publish(AgentEvent::TokenUsage {
                             agent_id: forward_agent_id.clone(),
                             session_id: forward_session_id.clone(),
                             model: usage_model.clone(),
@@ -3306,7 +3897,9 @@ impl Orchestrator {
                                 tracing::info!(model = %usage_model, prompt = p_tokens, completion = c_tokens, "[token-stats] main model token usage recorded");
                             }
                         } else {
-                            tracing::warn!("[token-stats] memory_store is None, cannot record main model usage");
+                            tracing::warn!(
+                                "[token-stats] memory_store is None, cannot record main model usage"
+                            );
                         }
                     }
                     StreamDelta::AuxiliaryUsage {
@@ -3315,7 +3908,7 @@ impl Orchestrator {
                         completion_tokens,
                     } => {
                         // Persist auxiliary model token usage under its own model name
-                        let _ = event_bus.publish(AgentEvent::TokenUsage {
+                        event_bus.publish(AgentEvent::TokenUsage {
                             agent_id: forward_agent_id.clone(),
                             session_id: forward_session_id.clone(),
                             model: model.clone(),
@@ -3327,8 +3920,8 @@ impl Orchestrator {
                             latency_ms: 0,
                             context_window: 0,
                         });
-                        if let Some(store) = &*memory_store.read().await {
-                            if let Err(e) = store
+                        if let Some(store) = &*memory_store.read().await
+                            && let Err(e) = store
                                 .record_token_usage(
                                     &forward_session_id,
                                     &model,
@@ -3340,9 +3933,8 @@ impl Orchestrator {
                                     0,
                                 )
                                 .await
-                            {
-                                tracing::warn!(error = %e, model = %model, "failed to record auxiliary model token usage (stream)");
-                            }
+                        {
+                            tracing::warn!(error = %e, model = %model, "failed to record auxiliary model token usage (stream)");
                         }
                     }
                 }
@@ -3354,7 +3946,7 @@ impl Orchestrator {
                     let args_str = tool_args_acc.get(&index).cloned().unwrap_or_default();
                     let args: serde_json::Value =
                         serde_json::from_str(&args_str).unwrap_or(serde_json::Value::Null);
-                    let _ = event_bus.publish(AgentEvent::ToolStarted {
+                    event_bus.publish(AgentEvent::ToolStarted {
                         agent_id: forward_agent_id.clone(),
                         call_id: id,
                         tool_name: name,
@@ -3368,7 +3960,7 @@ impl Orchestrator {
                 if tool_results.contains_key(call_id) {
                     continue; // already emitted via ToolResult handler
                 }
-                let _ = event_bus.publish(AgentEvent::ToolCompleted {
+                event_bus.publish(AgentEvent::ToolCompleted {
                     agent_id: forward_agent_id.clone(),
                     call_id: call_id.clone(),
                     tool_name: tool_name.clone(),
@@ -3378,7 +3970,7 @@ impl Orchestrator {
                 });
             }
             // Send StreamEnd when channel closes
-            let _ = event_bus.publish(AgentEvent::StreamEnd {
+            event_bus.publish(AgentEvent::StreamEnd {
                 agent_id: forward_agent_id.clone(),
                 session_id: forward_session_id.clone(),
                 full_response: full_text,
@@ -3444,7 +4036,8 @@ impl Orchestrator {
                 &Some(vec![]), // no tools at all
                 &disallowed,
                 &cancel,
-            ).await
+            )
+            .await
         } else {
             let reg = registry.read().await;
             run_agent_turn_streaming_with_images(
@@ -3468,7 +4061,8 @@ impl Orchestrator {
         let _ = forward_handle.await;
 
         if let Ok(ref turn) = result {
-            let was_interrupted = turn.response.contains("[已中断]") || turn.response.contains("[连接中断]");
+            let was_interrupted =
+                turn.response.contains("[已中断]") || turn.response.contains("[连接中断]");
 
             // Stop hook is already fired by agent_loop on cancellation; do not double-fire.
 
@@ -3476,7 +4070,11 @@ impl Orchestrator {
                 .pool
                 .transition(
                     &agent_id,
-                    if was_interrupted { AgentStatus::Killed } else { AgentStatus::Completed },
+                    if was_interrupted {
+                        AgentStatus::Killed
+                    } else {
+                        AgentStatus::Completed
+                    },
                     None,
                 )
                 .await;
@@ -3541,7 +4139,9 @@ impl Orchestrator {
                 if let Some(ref store) = *mem {
                     let user_content_json =
                         serde_json::to_string(&user_parts).unwrap_or_else(|_| user_msg.clone());
-                    let tool_json: Vec<String> = turn.tool_messages.iter()
+                    let tool_json: Vec<String> = turn
+                        .tool_messages
+                        .iter()
                         .map(|m| serde_json::to_string(&m.content).unwrap_or_default())
                         .collect();
                     if let Err(e) = store
@@ -3584,126 +4184,128 @@ impl Orchestrator {
                 )
                 .await;
 
-            let mut assistant_parts = if turn.content_parts.is_empty() {
-                vec![ContentPart::Text {
-                    text: turn.response.clone(),
-                }]
-            } else {
-                turn.content_parts.clone()
-            };
-            if let Err(e) = self
-                .convert_images_to_refs(session_id, &mut assistant_parts)
-                .await
-            {
-                tracing::warn!(session_id, error = %e, "failed to convert assistant images to file refs");
-            }
-            let content_json = serde_json::to_string(&assistant_parts)
-                .unwrap_or_else(|_| serde_json::json!([{"text": turn.response}]).to_string());
-
-            self.add_to_history(
-                session_id,
-                Message {
-                    role: Role::Assistant,
-                    content: assistant_parts.clone(),
-                    timestamp: chrono::Utc::now(),
-                    usage: None,
-                },
-            )
-            .await;
-
-            // Persist intermediate tool-call and tool-result messages to history
-            for tool_msg in &turn.tool_messages {
-                self.add_to_history(session_id, tool_msg.clone()).await;
-            }
-
-            // Persist to memory store
-            let mem = self.memory_store.read().await;
-            if let Some(ref store) = *mem {
-                let user_content_json =
-                    serde_json::to_string(&user_parts).unwrap_or_else(|_| user_msg.clone());
-                let tool_json: Vec<String> = turn.tool_messages.iter()
-                    .map(|m| serde_json::to_string(&m.content).unwrap_or_default())
-                    .collect();
-                let event_id = store
-                    .save_turn(
-                        session_id,
-                        &user_content_json,
-                        &content_json,
-                        turn.tool_calls_made,
-                        turn.prompt_tokens,
-                        turn.completion_tokens,
-                        turn.cache_read_tokens,
-                        turn.cache_write_tokens,
-                        0, // context_window recorded via record_token_usage
-                        &tool_json,
-                    )
-                    .await?;
-
-                // ── Memory quality logging ──
-                // Record injected entities, duration, and referenced entities for feedback loop
-                let quality_duration_ms = quality_start.elapsed().as_millis() as i64;
-                let assistant_text_for_scan = extract_text(&assistant_parts);
-                let quality_referenced: Vec<String> = quality_injected_names
-                    .iter()
-                    .filter(|name| {
-                        let lower_name = name.to_lowercase();
-                        assistant_text_for_scan.to_lowercase().contains(&lower_name)
-                    })
-                    .cloned()
-                    .collect();
-                let quality_log_id = match store
-                    .record_memory_quality(
-                        session_id,
-                        0, // turn_seq computed internally by the store
-                        &quality_injected_names,
-                        quality_duration_ms,
-                    )
+                let mut assistant_parts = if turn.content_parts.is_empty() {
+                    vec![ContentPart::Text {
+                        text: turn.response.clone(),
+                    }]
+                } else {
+                    turn.content_parts.clone()
+                };
+                if let Err(e) = self
+                    .convert_images_to_refs(session_id, &mut assistant_parts)
                     .await
                 {
-                    Ok(id) => id,
-                    Err(e) => {
-                        tracing::warn!(session_id, error = %e, "failed to record memory quality log");
-                        0
-                    }
-                };
-                if quality_log_id > 0 && !quality_referenced.is_empty() {
-                    if let Err(e) = store
-                        .update_quality_references(quality_log_id, &quality_referenced)
+                    tracing::warn!(session_id, error = %e, "failed to convert assistant images to file refs");
+                }
+                let content_json = serde_json::to_string(&assistant_parts)
+                    .unwrap_or_else(|_| serde_json::json!([{"text": turn.response}]).to_string());
+
+                self.add_to_history(
+                    session_id,
+                    Message {
+                        role: Role::Assistant,
+                        content: assistant_parts.clone(),
+                        timestamp: chrono::Utc::now(),
+                        usage: None,
+                    },
+                )
+                .await;
+
+                // Persist intermediate tool-call and tool-result messages to history
+                for tool_msg in &turn.tool_messages {
+                    self.add_to_history(session_id, tool_msg.clone()).await;
+                }
+
+                // Persist to memory store
+                let mem = self.memory_store.read().await;
+                if let Some(ref store) = *mem {
+                    let user_content_json =
+                        serde_json::to_string(&user_parts).unwrap_or_else(|_| user_msg.clone());
+                    let tool_json: Vec<String> = turn
+                        .tool_messages
+                        .iter()
+                        .map(|m| serde_json::to_string(&m.content).unwrap_or_default())
+                        .collect();
+                    let event_id = store
+                        .save_turn(
+                            session_id,
+                            &user_content_json,
+                            &content_json,
+                            turn.tool_calls_made,
+                            turn.prompt_tokens,
+                            turn.completion_tokens,
+                            turn.cache_read_tokens,
+                            turn.cache_write_tokens,
+                            0, // context_window recorded via record_token_usage
+                            &tool_json,
+                        )
+                        .await?;
+
+                    // ── Memory quality logging ──
+                    // Record injected entities, duration, and referenced entities for feedback loop
+                    let quality_duration_ms = quality_start.elapsed().as_millis() as i64;
+                    let assistant_text_for_scan = extract_text(&assistant_parts);
+                    let quality_referenced: Vec<String> = quality_injected_names
+                        .iter()
+                        .filter(|name| {
+                            let lower_name = name.to_lowercase();
+                            assistant_text_for_scan.to_lowercase().contains(&lower_name)
+                        })
+                        .cloned()
+                        .collect();
+                    let quality_log_id = match store
+                        .record_memory_quality(
+                            session_id,
+                            0, // turn_seq computed internally by the store
+                            &quality_injected_names,
+                            quality_duration_ms,
+                        )
                         .await
+                    {
+                        Ok(id) => id,
+                        Err(e) => {
+                            tracing::warn!(session_id, error = %e, "failed to record memory quality log");
+                            0
+                        }
+                    };
+                    if quality_log_id > 0
+                        && !quality_referenced.is_empty()
+                        && let Err(e) = store
+                            .update_quality_references(quality_log_id, &quality_referenced)
+                            .await
                     {
                         tracing::warn!(session_id, error = %e, "failed to update quality references");
                     }
-                }
 
-                // Spawn async entity extraction pipeline (non-blocking)
-                self.spawn_extraction_pipeline(
-                    session_id.to_string(),
-                    user_message.to_string(),
-                    turn.response.clone(),
-                    event_id,
-                )
-                .await;
-            }
-
-            // Fire TaskCompleted hook
-            {
-                let mut hook_ctx = HookContext {
-                    session_id: sid.clone(),
-                    agent_id: agent_id.to_string(),
-                    ..Default::default()
-                };
-                tracing::debug!(session_id = %sid, agent_id = %agent_id, "firing TaskCompleted hook");
-                let _ = self
-                    .hook_registry
-                    .read()
-                    .await
-                    .fire(
-                        &loom_plugins::hooks::HookEvent::TaskCompleted,
-                        None,
-                        &mut hook_ctx,
+                    // Spawn async entity extraction pipeline (non-blocking)
+                    self.spawn_extraction_pipeline(
+                        session_id.to_string(),
+                        user_message.to_string(),
+                        turn.response.clone(),
+                        event_id,
                     )
                     .await;
-            }
+                }
+
+                // Fire TaskCompleted hook
+                {
+                    let mut hook_ctx = HookContext {
+                        session_id: sid.clone(),
+                        agent_id: agent_id.to_string(),
+                        ..Default::default()
+                    };
+                    tracing::debug!(session_id = %sid, agent_id = %agent_id, "firing TaskCompleted hook");
+                    let _ = self
+                        .hook_registry
+                        .read()
+                        .await
+                        .fire(
+                            &loom_plugins::hooks::HookEvent::TaskCompleted,
+                            None,
+                            &mut hook_ctx,
+                        )
+                        .await;
+                }
             } // end else (not interrupted)
         } else {
             let _ = self
@@ -3754,6 +4356,7 @@ impl Orchestrator {
     }
 
     /// Process a user message with streaming deltas sent over the channel.
+    #[allow(clippy::too_many_arguments)]
     pub async fn process_message_streaming(
         &self,
         user_message: &str,
@@ -3770,12 +4373,11 @@ impl Orchestrator {
         // Phase 2: use rich persona with confidence scores and layered structure.
         {
             let store = self.memory_store.read().await;
-            if let Some(ref s) = *store {
-                if let Ok(Some(persona)) = s.get_rich_persona().await {
-                    if !persona.is_empty() {
-                        *self.persona_context.write().await = persona;
-                    }
-                }
+            if let Some(ref s) = *store
+                && let Ok(Some(persona)) = s.get_rich_persona().await
+                && !persona.is_empty()
+            {
+                *self.persona_context.write().await = persona;
             }
         }
 
@@ -3783,7 +4385,13 @@ impl Orchestrator {
         // process_message_with_config).
         let user_persona = {
             let p = self.persona_context.read().await;
-            p.clone()
+            let raw = p.clone();
+            let behavior_hints = adapt_behavior(&raw);
+            if behavior_hints.is_empty() {
+                raw
+            } else {
+                format!("{}\n{}", behavior_hints, raw)
+            }
         };
         let skills = {
             let state = self.skill_state.read().await;
@@ -3851,7 +4459,11 @@ impl Orchestrator {
                 .hook_registry
                 .read()
                 .await
-                .fire(&loom_plugins::hooks::HookEvent::SessionStart, None, &mut hook_ctx)
+                .fire(
+                    &loom_plugins::hooks::HookEvent::SessionStart,
+                    None,
+                    &mut hook_ctx,
+                )
                 .await;
         }
 
@@ -3890,10 +4502,10 @@ impl Orchestrator {
         }; // read lock released immediately
         let registry = self.tool_registry.read().await;
         // Load history from DB if in-memory cache is empty (e.g. after restart)
-        if self.session_history(session_id).await.is_empty() {
-            if let Err(e) = self.load_history(session_id).await {
-                tracing::warn!(session_id = %session_id, error = %e, "Failed to load conversation history from DB");
-            }
+        if self.session_history(session_id).await.is_empty()
+            && let Err(e) = self.load_history(session_id).await
+        {
+            tracing::warn!(session_id = %session_id, error = %e, "Failed to load conversation history from DB");
         }
         let history = self.session_history(session_id).await;
 
@@ -3957,13 +4569,14 @@ impl Orchestrator {
             let request = loom_memory::SummaryEngine::build_request(&prompt);
 
             // Try auxiliary client first, fall back to main client
-            let (summary_client, summary_model) = if let Some(aux_client) = self.build_auxiliary_client("summary").await {
-                let model_name = aux_client.model_name().to_string();
-                (aux_client, model_name)
-            } else {
-                let model_name = format!("{} (summary)", client.model_name());
-                (client.clone(), model_name)
-            };
+            let (summary_client, summary_model) =
+                if let Some(aux_client) = self.build_auxiliary_client("summary").await {
+                    let model_name = aux_client.model_name().to_string();
+                    (aux_client, model_name)
+                } else {
+                    let model_name = format!("{} (summary)", client.model_name());
+                    (client.clone(), model_name)
+                };
 
             let saved_hash = summary_client.prefix_hash_snapshot();
             let result = summary_client.complete(request).await;
@@ -3974,24 +4587,22 @@ impl Orchestrator {
                     // Record summary token usage
                     let sum_prompt = resp.prompt_tokens;
                     let sum_completion = resp.completion_tokens;
-                    if sum_prompt > 0 || sum_completion > 0 {
-                        if let Some(ref store) = *self.memory_store.read().await {
-                            if let Err(e) = store
-                                .record_token_usage(
-                                    session_id,
-                                    &summary_model,
-                                    sum_prompt,
-                                    sum_completion,
-                                    0,
-                                    0,
-                                    0,
-                                    0,
-                                )
-                                .await
-                            {
-                                tracing::warn!(error = %e, model = %summary_model, "failed to record summary token usage");
-                            }
-                        }
+                    if (sum_prompt > 0 || sum_completion > 0)
+                        && let Some(ref store) = *self.memory_store.read().await
+                        && let Err(e) = store
+                            .record_token_usage(
+                                session_id,
+                                &summary_model,
+                                sum_prompt,
+                                sum_completion,
+                                0,
+                                0,
+                                0,
+                                0,
+                            )
+                            .await
+                    {
+                        tracing::warn!(error = %e, model = %summary_model, "failed to record summary token usage");
                     }
                     // Phase 3: save summary (re-acquire lock briefly)
                     if let Some(ref store) = *self.memory_store.read().await {
@@ -4063,10 +4674,7 @@ impl Orchestrator {
         let default_permissions = if merged_skill_permissions.is_empty() {
             base_permissions
         } else {
-            merge_multi_permissions(
-                merged_skill_permissions.iter().map(Some),
-                &base_permissions,
-            )
+            merge_multi_permissions(merged_skill_permissions.iter().map(Some), &base_permissions)
         };
 
         let allowed = agent_config.allowed_tools.clone();
@@ -4104,7 +4712,11 @@ impl Orchestrator {
             pending_permissions: Some(self.pending_permissions.clone()),
             max_iterations: default_max_iters,
             // Bump output budget when skills are active.
-            max_tokens: if effective_selected_skills.is_empty() { 4096 } else { 0 },
+            max_tokens: if effective_selected_skills.is_empty() {
+                4096
+            } else {
+                0
+            },
             // When selected_skills is non-empty, bypass lazy_tools so the LLM can
             // act on skill instructions immediately without a request_tools round-trip.
             lazy_tools: effective_selected_skills.is_empty(),
@@ -4118,10 +4730,10 @@ impl Orchestrator {
             sandbox: {
                 let sc = self.sandbox_config.read().await.clone();
                 if sc.enabled {
-                    let ws_path = workspace_path
-                        .as_ref()
-                        .map(|p| std::path::PathBuf::from(p));
-                    Some(Arc::new(loom_security::sandbox::SandboxGuard::new(sc, ws_path)))
+                    let ws_path = workspace_path.as_ref().map(std::path::PathBuf::from);
+                    Some(Arc::new(loom_security::sandbox::SandboxGuard::new(
+                        sc, ws_path,
+                    )))
                 } else {
                     None
                 }
@@ -4145,7 +4757,8 @@ impl Orchestrator {
         drop(registry);
 
         if let Ok(ref turn) = result {
-            let was_interrupted = turn.response.contains("[已中断]") || turn.response.contains("[连接中断]");
+            let was_interrupted =
+                turn.response.contains("[已中断]") || turn.response.contains("[连接中断]");
 
             // Stop hook is already fired by agent_loop on cancellation; do not double-fire.
 
@@ -4153,7 +4766,11 @@ impl Orchestrator {
                 .pool
                 .transition(
                     &agent_id,
-                    if was_interrupted { AgentStatus::Killed } else { AgentStatus::Completed },
+                    if was_interrupted {
+                        AgentStatus::Killed
+                    } else {
+                        AgentStatus::Completed
+                    },
                     None,
                 )
                 .await;
@@ -4167,15 +4784,15 @@ impl Orchestrator {
                     .convert_images_to_refs(session_id, &mut user_parts)
                     .await;
                 self.add_to_history(
-                        session_id,
-                        Message {
-                            role: Role::User,
-                            content: user_parts.clone(),
-                            timestamp: user_msg_full.timestamp,
-                            usage: user_msg_full.usage,
-                        },
-                    )
-                    .await;
+                    session_id,
+                    Message {
+                        role: Role::User,
+                        content: user_parts.clone(),
+                        timestamp: user_msg_full.timestamp,
+                        usage: user_msg_full.usage,
+                    },
+                )
+                .await;
 
                 // Build assistant content from the partial TurnResult
                 let mut assistant_parts = if turn.content_parts.is_empty() {
@@ -4214,9 +4831,11 @@ impl Orchestrator {
                 // assistant content is durable across restarts.
                 let mem = self.memory_store.read().await;
                 if let Some(ref store) = *mem {
-                    let user_content_json =
-                        serde_json::to_string(&user_parts).unwrap_or_else(|_| user_message.to_string());
-                    let tool_json: Vec<String> = turn.tool_messages.iter()
+                    let user_content_json = serde_json::to_string(&user_parts)
+                        .unwrap_or_else(|_| user_message.to_string());
+                    let tool_json: Vec<String> = turn
+                        .tool_messages
+                        .iter()
                         .map(|m| serde_json::to_string(&m.content).unwrap_or_default())
                         .collect();
                     if let Err(e) = store
@@ -4294,9 +4913,11 @@ impl Orchestrator {
                 // Persist to memory store
                 let mem = self.memory_store.read().await;
                 if let Some(ref store) = *mem {
-                    let user_content_json =
-                        serde_json::to_string(&user_parts).unwrap_or_else(|_| user_message.to_string());
-                    let tool_json: Vec<String> = turn.tool_messages.iter()
+                    let user_content_json = serde_json::to_string(&user_parts)
+                        .unwrap_or_else(|_| user_message.to_string());
+                    let tool_json: Vec<String> = turn
+                        .tool_messages
+                        .iter()
                         .map(|m| serde_json::to_string(&m.content).unwrap_or_default())
                         .collect();
                     let event_id = store
@@ -4340,13 +4961,13 @@ impl Orchestrator {
                             0
                         }
                     };
-                    if quality_log_id > 0 && !quality_referenced.is_empty() {
-                        if let Err(e) = store
+                    if quality_log_id > 0
+                        && !quality_referenced.is_empty()
+                        && let Err(e) = store
                             .update_quality_references(quality_log_id, &quality_referenced)
                             .await
-                        {
-                            tracing::warn!(session_id, error = %e, "failed to update quality references");
-                        }
+                    {
+                        tracing::warn!(session_id, error = %e, "failed to update quality references");
                     }
 
                     // Spawn async entity extraction pipeline (non-blocking)
@@ -4359,25 +4980,25 @@ impl Orchestrator {
                     .await;
                 }
 
-            // Fire TaskCompleted hook
-            {
-                let mut hook_ctx = HookContext {
-                    session_id: sid.clone(),
-                    agent_id: agent_id.to_string(),
-                    ..Default::default()
-                };
-                tracing::debug!(session_id = %sid, agent_id = %agent_id, "firing TaskCompleted hook");
-                let _ = self
-                    .hook_registry
-                    .read()
-                    .await
-                    .fire(
-                        &loom_plugins::hooks::HookEvent::TaskCompleted,
-                        None,
-                        &mut hook_ctx,
-                    )
-                    .await;
-            }
+                // Fire TaskCompleted hook
+                {
+                    let mut hook_ctx = HookContext {
+                        session_id: sid.clone(),
+                        agent_id: agent_id.to_string(),
+                        ..Default::default()
+                    };
+                    tracing::debug!(session_id = %sid, agent_id = %agent_id, "firing TaskCompleted hook");
+                    let _ = self
+                        .hook_registry
+                        .read()
+                        .await
+                        .fire(
+                            &loom_plugins::hooks::HookEvent::TaskCompleted,
+                            None,
+                            &mut hook_ctx,
+                        )
+                        .await;
+                }
             } // end else (not interrupted)
         } else {
             let _ = self
@@ -4429,7 +5050,8 @@ impl Orchestrator {
     /// Get a clone of the pending permissions map for "ask" mode tool approval.
     pub async fn pending_permissions(
         &self,
-    ) -> tokio::sync::RwLockWriteGuard<'_, HashMap<String, tokio::sync::oneshot::Sender<bool>>> {
+    ) -> tokio::sync::RwLockWriteGuard<'_, HashMap<String, tokio::sync::oneshot::Sender<bool>>>
+    {
         self.pending_permissions.write().await
     }
 
@@ -4530,22 +5152,17 @@ impl Orchestrator {
     pub async fn load_sandbox_config(&self) -> SandboxConfig {
         let path = self.data_dir.join("sandbox.json");
         match tokio::fs::read_to_string(&path).await {
-            Ok(contents) => {
-                serde_json::from_str(&contents).unwrap_or_default()
-            }
+            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
             Err(_) => SandboxConfig::default(),
         }
     }
 
     /// Save sandbox configuration to `data_dir/sandbox.json`.
-    pub async fn save_sandbox_config(
-        &self,
-        config: &SandboxConfig,
-    ) -> Result<()> {
+    pub async fn save_sandbox_config(&self, config: &SandboxConfig) -> Result<()> {
         let _ = tokio::fs::create_dir_all(&self.data_dir).await;
         let path = self.data_dir.join("sandbox.json");
-        let contents = serde_json::to_string_pretty(config)
-            .context("failed to serialize sandbox config")?;
+        let contents =
+            serde_json::to_string_pretty(config).context("failed to serialize sandbox config")?;
         tokio::fs::write(&path, &contents)
             .await
             .context("failed to write sandbox.json")?;
@@ -4764,7 +5381,9 @@ impl AgentTool for LspTool {
                     .get("character")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0) as u32;
-                self.lsp_client.completion(&file_path_str, line, character).await
+                self.lsp_client
+                    .completion(&file_path_str, line, character)
+                    .await
             }
             LspOp::Hover => {
                 let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
@@ -4780,7 +5399,9 @@ impl AgentTool for LspTool {
                     .get("character")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0) as u32;
-                self.lsp_client.definition(&file_path_str, line, character).await
+                self.lsp_client
+                    .definition(&file_path_str, line, character)
+                    .await
             }
             LspOp::References => {
                 let line = arguments.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
@@ -4883,7 +5504,12 @@ async fn llm_extract_entities(
     user_text: &str,
     assistant_text: &str,
     scope: &str,
-) -> Result<(Vec<ExtractedEntity>, Vec<ExtractedRelationship>, usize, usize)> {
+) -> Result<(
+    Vec<ExtractedEntity>,
+    Vec<ExtractedRelationship>,
+    usize,
+    usize,
+)> {
     let conversation = if assistant_text.is_empty() {
         format!("User message: {}", user_text)
     } else {

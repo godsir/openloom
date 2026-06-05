@@ -13,6 +13,12 @@ pub struct BridgeManager {
     pub inbound_rx: Arc<Mutex<mpsc::Receiver<BridgeMessage>>>,
 }
 
+impl Default for BridgeManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BridgeManager {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel(256);

@@ -49,7 +49,10 @@ impl InferenceEngine {
                 Ok(v) => v
                     .get("data")
                     .and_then(|d| d.as_array())
-                    .map(|a| a.iter().any(|m| m.get("id").and_then(|id| id.as_str()) == Some(model)))
+                    .map(|a| {
+                        a.iter()
+                            .any(|m| m.get("id").and_then(|id| id.as_str()) == Some(model))
+                    })
                     .unwrap_or(false),
                 Err(_) => false,
             },
@@ -132,7 +135,11 @@ impl InferenceEngine {
             tracing::info!("KV cache miss — cold prefix");
         }
 
-        let max_tokens = if req.max_tokens > 0 { req.max_tokens } else { 4096 };
+        let max_tokens = if req.max_tokens > 0 {
+            req.max_tokens
+        } else {
+            4096
+        };
         let mut body = serde_json::json!({
             "model": self.model,
             "max_tokens": max_tokens,
@@ -219,7 +226,11 @@ impl InferenceEngine {
         } else {
             tracing::info!("KV cache miss (stream)");
         }
-        let max_tokens = if req.max_tokens > 0 { req.max_tokens } else { 4096 };
+        let max_tokens = if req.max_tokens > 0 {
+            req.max_tokens
+        } else {
+            4096
+        };
         let mut body = serde_json::json!({
             "model": self.model,
             "max_tokens": max_tokens,
@@ -409,7 +420,11 @@ impl CloudClient for InferenceEngine {
             tracing::info!("KV cache miss (structured stream)");
         }
 
-        let max_tokens = if req.max_tokens > 0 { req.max_tokens } else { 4096 };
+        let max_tokens = if req.max_tokens > 0 {
+            req.max_tokens
+        } else {
+            4096
+        };
         let mut body = serde_json::json!({
             "model": self.model,
             "max_tokens": max_tokens,
@@ -476,7 +491,8 @@ impl CloudClient for InferenceEngine {
                                     let idx = tc["index"].as_u64().unwrap_or(0) as usize;
                                     if let (Some(id), Some(name)) =
                                         (tc["id"].as_str(), tc["function"]["name"].as_str())
-                                        && !id.is_empty() && !name.is_empty()
+                                        && !id.is_empty()
+                                        && !name.is_empty()
                                         && tx
                                             .send(StreamDelta::ToolCallBegin {
                                                 index: idx,
@@ -739,7 +755,7 @@ fn lower_messages(messages: &[Message]) -> Vec<serde_json::Value> {
                 })
                 .collect();
 
-            let all_texts: Vec<&str> = texts.iter().map(|s| *s)
+            let all_texts: Vec<&str> = texts.iter().copied()
                 .chain(thinking_texts.iter().map(|s| s.as_str()))
                 .collect();
             if all_texts.is_empty() && tc_vals.is_empty() {

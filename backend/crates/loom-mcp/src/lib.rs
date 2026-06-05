@@ -97,10 +97,10 @@ fn find_bash() -> Option<String> {
     if std::path::Path::new(git_bash).exists() {
         return Some(git_bash.to_string());
     }
-    if let Ok(output) = std::process::Command::new("where").arg("wsl.exe").output() {
-        if output.status.success() {
-            return Some("wsl.exe".to_string());
-        }
+    if let Ok(output) = std::process::Command::new("where").arg("wsl.exe").output()
+        && output.status.success()
+    {
+        return Some("wsl.exe".to_string());
     }
     None
 }

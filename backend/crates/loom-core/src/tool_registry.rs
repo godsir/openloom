@@ -110,7 +110,8 @@ impl ToolRegistry {
             );
         }
         tracing::debug!(%alias, %canonical, "tool alias registered");
-        self.aliases.insert(alias.to_string(), canonical.to_string());
+        self.aliases
+            .insert(alias.to_string(), canonical.to_string());
         Ok(())
     }
 
@@ -146,7 +147,8 @@ impl ToolRegistry {
             }
         }
         // Clean up aliases pointing to removed tools
-        self.aliases.retain(|_, canonical| !keys.contains(canonical));
+        self.aliases
+            .retain(|_, canonical| !keys.contains(canonical));
         removed
     }
 
@@ -513,9 +515,7 @@ mod tests {
 
         // Register 3 tools with prefix "mcp__foo__" and 1 with "mcp__bar__"
         for name in &["mcp__foo__a", "mcp__foo__b", "mcp__foo__c"] {
-            registry
-                .register(Arc::new(TestTool::new(name)))
-                .unwrap();
+            registry.register(Arc::new(TestTool::new(name))).unwrap();
         }
         registry
             .register(Arc::new(TestTool::new("mcp__bar__x")))

@@ -6,8 +6,8 @@ use loom_mcp::McpServerConfig;
 use loom_types::{ErrorCode, JsonRpcError};
 use serde_json::{Value, json};
 
-use crate::AppState;
 use super::err;
+use crate::AppState;
 
 pub async fn handle(
     state: &AppState,
@@ -86,7 +86,10 @@ async fn handle_mcp_read_resource(state: &AppState, p: &Value) -> Result<Value, 
 
 // --- mcp.list_resource_templates ---
 
-async fn handle_mcp_list_resource_templates(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+async fn handle_mcp_list_resource_templates(
+    state: &AppState,
+    p: &Value,
+) -> Result<Value, JsonRpcError> {
     let server = p.get("server").and_then(|v| v.as_str()).unwrap_or("");
     if server.is_empty() {
         return Err(err(ErrorCode::InvalidRequest, "server required"));
@@ -206,10 +209,8 @@ async fn handle_mcp_connect(state: &AppState, p: &Value) -> Result<Value, JsonRp
     // Persist before connect: even if the server fails to start, the
     // user's filled-in form values survive so they can edit + retry
     // without re-typing everything.
-    if persist {
-        if let Err(e) = state.orchestrator.save_mcp_server(&config, autostart).await {
-            tracing::warn!(error = %e, "failed to persist MCP server config");
-        }
+    if persist && let Err(e) = state.orchestrator.save_mcp_server(&config, autostart).await {
+        tracing::warn!(error = %e, "failed to persist MCP server config");
     }
     state
         .orchestrator

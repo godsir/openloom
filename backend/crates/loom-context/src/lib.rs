@@ -66,25 +66,25 @@ impl ContextAssembler {
         // ── Stable prefix (single system message, fixed order) ──
         let mut prefix = self.system_prompt.clone();
 
-        if let Some(ref p) = opts.persona {
-            if !p.is_empty() {
-                prefix.push_str(&format!("\n\n## User Profile\n{}", p));
-            }
+        if let Some(ref p) = opts.persona
+            && !p.is_empty()
+        {
+            prefix.push_str(&format!("\n\n## User Profile\n{}", p));
         }
-        if let Some(ref s) = opts.summary {
-            if !s.is_empty() {
-                prefix.push_str(&format!("\n\n## Conversation Summary\n{}", s));
-            }
+        if let Some(ref s) = opts.summary
+            && !s.is_empty()
+        {
+            prefix.push_str(&format!("\n\n## Conversation Summary\n{}", s));
         }
-        if let Some(ref kg) = opts.kg_context {
-            if !kg.is_empty() {
-                prefix.push_str(&format!("\n\n{}", kg));
-            }
+        if let Some(ref kg) = opts.kg_context
+            && !kg.is_empty()
+        {
+            prefix.push_str(&format!("\n\n{}", kg));
         }
-        if let Some(ref tc) = opts.tool_catalog {
-            if !tc.is_empty() {
-                prefix.push_str(&format!("\n\n## Available Tools\n{}", tc));
-            }
+        if let Some(ref tc) = opts.tool_catalog
+            && !tc.is_empty()
+        {
+            prefix.push_str(&format!("\n\n## Available Tools\n{}", tc));
         }
 
         messages.push(Message {
@@ -118,11 +118,14 @@ impl ContextAssembler {
             included.push(i);
         }
         included.reverse();
-        included.into_iter().map(|i| {
-            let mut msg = history[i].clone();
-            msg.compact_for_llm();
-            msg
-        }).collect()
+        included
+            .into_iter()
+            .map(|i| {
+                let mut msg = history[i].clone();
+                msg.compact_for_llm();
+                msg
+            })
+            .collect()
     }
 
     /// Compact conversation history by summarizing old messages.

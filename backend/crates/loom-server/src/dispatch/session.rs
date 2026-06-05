@@ -7,8 +7,8 @@ use loom_types::{ErrorCode, JsonRpcError};
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
-use crate::AppState;
 use super::err;
+use crate::AppState;
 
 // ---------------------------------------------------------------------------
 // SessionStore (moved from dispatch.rs)
@@ -290,7 +290,10 @@ async fn handle_session_auto_title(state: &AppState, p: &Value) -> Result<Value,
     match state.orchestrator.auto_title(id).await {
         Ok(title) => {
             let _ = state.sessions.rename(id, &title).await;
-            state.orchestrator.rename_session_persisted(id, &title).await;
+            state
+                .orchestrator
+                .rename_session_persisted(id, &title)
+                .await;
             Ok(json!({ "title": title }))
         }
         Err(e) => Err(err(ErrorCode::InternalError, &e.to_string())),
@@ -338,30 +341,40 @@ async fn handle_session_bind_agent(state: &AppState, p: &Value) -> Result<Value,
         .await
         .map_err(|e| err(ErrorCode::InternalError, &e))?;
     // Persist the binding so it survives restarts
-    state.orchestrator.bind_agent_persisted(session_id, config_name).await;
+    state
+        .orchestrator
+        .bind_agent_persisted(session_id, config_name)
+        .await;
     Ok(json!({ "ok": true }))
 }
 
 // --- workspace.get ---
 
 async fn handle_workspace_get(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
-    let session_id = p
-        .get("session_id")
-        .and_then(|v| v.as_str());
+    let session_id = p.get("session_id").and_then(|v| v.as_str());
 
     let workspace = if let Some(sid) = session_id {
-        let session_ws = state.orchestrator.get_session_workspace(sid).await
+        let session_ws = state
+            .orchestrator
+            .get_session_workspace(sid)
+            .await
             .ok()
             .flatten();
         if session_ws.is_some() {
             session_ws
         } else {
-            state.orchestrator.get_default_workspace().await
+            state
+                .orchestrator
+                .get_default_workspace()
+                .await
                 .ok()
                 .flatten()
         }
     } else {
-        state.orchestrator.get_default_workspace().await
+        state
+            .orchestrator
+            .get_default_workspace()
+            .await
             .ok()
             .flatten()
     };
@@ -381,7 +394,10 @@ async fn handle_workspace_set_session(state: &AppState, p: &Value) -> Result<Val
         .and_then(|v| v.as_str())
         .ok_or_else(|| err(ErrorCode::InvalidRequest, "path required"))?;
 
-    state.orchestrator.set_session_workspace(session_id, path).await
+    state
+        .orchestrator
+        .set_session_workspace(session_id, path)
+        .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
     Ok(json!({ "ok": true }))
 }
@@ -394,7 +410,10 @@ async fn handle_workspace_set_default(state: &AppState, p: &Value) -> Result<Val
         .and_then(|v| v.as_str())
         .ok_or_else(|| err(ErrorCode::InvalidRequest, "path required"))?;
 
-    state.orchestrator.set_default_workspace(path).await
+    state
+        .orchestrator
+        .set_default_workspace(path)
+        .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
     Ok(json!({ "ok": true }))
 }

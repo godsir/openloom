@@ -5,6 +5,87 @@
 use anyhow::Result;
 use chrono::Utc;
 use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+
+/// Memory quality self-evaluation report — holistic health metrics for the
+/// knowledge graph and memory injection pipeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryQualityReport {
+    // ── Injection quality (from memory_quality_log) ──────────────────────
+    /// Average ratio of referenced entities to injected entities per turn (0-1).
+    pub avg_relevance: f64,
+    /// Total number of turns with quality log entries.
+    pub injection_count: i64,
+    /// Number of turns where at least one injected entity was referenced.
+    pub turns_with_references: i64,
+
+    // ── Entity health ────────────────────────────────────────────────────
+    /// Total number of entity nodes in the knowledge graph.
+    pub total_entities: i64,
+    /// Ratio of entities that share identical names (0-1). Lower is better.
+    pub duplicate_rate: f64,
+    /// Entities that haven't been accessed in over 30 days.
+    pub stale_entity_count: i64,
+    /// Average confidence across all kg_nodes.
+    pub avg_confidence: f64,
+
+    // ── Coverage ─────────────────────────────────────────────────────────
+    /// Distribution of entity types (type name, count).
+    pub entity_types_distribution: Vec<(String, i64)>,
+    /// Distribution of memory layers (layer name, count).
+    pub layer_distribution: Vec<(String, i64)>,
+
+    // ── Freshness ────────────────────────────────────────────────────────
+    /// Entities added in the last 7 days.
+    pub entities_added_recently: i64,
+    /// Entities accessed in the last 7 days.
+    pub entities_accessed_recently: i64,
+
+    // ── Consolidation effectiveness ──────────────────────────────────────
+    /// Number of consolidation cycles that have run.
+    pub consolidation_runs: i64,
+    /// Total number of duplicate entities merged across all cycles.
+    pub total_merged: i64,
+
+    // ── Score (0-100) ────────────────────────────────────────────────────
+    /// Weighted composite health score from all metrics above.
+    pub health_score: f64,
+}
+
+impl MemoryQualityReport {
+    /// Compute the weighted health score (0-100) from the report's metrics.
+    ///
+    /// Weights:
+    /// - 30% relevance: how well injected memories match what the LLM uses
+    /// - 25% freshness: how recently entities have been accessed
+    /// - 20% coverage: breadth of entity types present
+    /// - 15% confidence: average entity confidence
+    /// - 10% dedup rate: cleanliness (inverse of duplicate rate)
+    pub fn compute_health_score(report: &Self) -> f64 {
+        let relevance = (report.avg_relevance * 100.0).min(100.0);
+        let freshness = if report.total_entities > 0 {
+            (report.entities_accessed_recently as f64 / report.total_entities as f64 * 100.0)
+                .min(100.0)
+        } else {
+            0.0
+        };
+        let coverage = (report.entity_types_distribution.len() as f64 / 8.0).min(1.0) * 100.0;
+        let confidence = (report.avg_confidence * 100.0).min(100.0);
+        let dedup = if report.total_entities > 0 {
+            (1.0 - report.duplicate_rate) * 100.0
+        } else {
+            100.0
+        };
+
+        let score = 0.30 * relevance
+            + 0.25 * freshness
+            + 0.20 * coverage
+            + 0.15 * confidence
+            + 0.10 * dedup;
+
+        (score * 10.0).round() / 10.0 // round to 1 decimal place
+    }
+}
 
 /// Default embedding dimension, matching common embedding models
 /// (e.g., text-embedding-3-small, all-mpnet-base-v2: 768).
@@ -41,6 +122,25 @@ pub struct PathStep {
     pub relation: String,
     pub to: String,
     pub depth: usize,
+}
+
+/// Result of a single active-forgetting pruning pass.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForgettingReport {
+    pub pruned_nodes: i64,
+    pub pruned_edges: i64,
+    pub pruned_cognitions: i64,
+    pub skipped_protected: i64,
+}
+
+/// Health snapshot of the in-memory knowledge graph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryHealth {
+    pub total_nodes: i64,
+    pub total_edges: i64,
+    pub avg_confidence: f64,
+    pub oldest_node_age_days: i64,
+    pub layer_distribution: Vec<(String, i64)>,
 }
 
 /// Read/write access to knowledge graph tables.
@@ -92,7 +192,15 @@ impl<'a> GraphStore<'a> {
                 "INSERT INTO kg_nodes (name, entity_type, description, confidence,
                  evidence_count, first_seen, last_updated, scope, layer)
                  VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5, ?6, ?7)",
-                rusqlite::params![name, entity_type, description, confidence, now, scope, layer_val],
+                rusqlite::params![
+                    name,
+                    entity_type,
+                    description,
+                    confidence,
+                    now,
+                    scope,
+                    layer_val
+                ],
             )?;
             Ok(self.conn.last_insert_rowid())
         }
@@ -200,7 +308,12 @@ impl<'a> GraphStore<'a> {
     /// Full-text search for entities by name or description.
     /// Automatically adds prefix matching (*) to bare ASCII terms.
     /// CJK terms are passed through as-is (FTS5 unicode61 tokenizes per-character).
-    pub fn search_entities(&self, query: &str, limit: usize, scope: Option<&str>) -> Result<Vec<GraphRow>> {
+    pub fn search_entities(
+        &self,
+        query: &str,
+        limit: usize,
+        scope: Option<&str>,
+    ) -> Result<Vec<GraphRow>> {
         let has_ops = query.contains('*')
             || query.contains("AND")
             || query.contains("OR")
@@ -330,7 +443,8 @@ impl<'a> GraphStore<'a> {
             )
         };
         let mut stmt = self.conn.prepare(sql)?;
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(param_refs.as_slice(), |row| {
             Ok(GraphRow {
                 node_id: row.get(0)?,
@@ -487,8 +601,7 @@ impl<'a> GraphStore<'a> {
         }
 
         // Query each entity name via FTS5 + layer filter, then get neighbors
-        let mut seen_entities: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut seen_entities: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for name in entity_names {
             if name.is_empty() || *name == "USER" {
@@ -510,8 +623,7 @@ impl<'a> GraphStore<'a> {
                    AND n.layer IN ({})
                    AND (n.scope = ?{} OR n.scope = 'global')
                  ORDER BY rank LIMIT 3",
-                layer_placeholders,
-                scope_ph,
+                layer_placeholders, scope_ph,
             );
             let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
                 vec![Box::new((*name).to_string())];
@@ -572,8 +684,7 @@ impl<'a> GraphStore<'a> {
                        AND n2.layer IN ({})
                        AND (n2.scope = ?{} OR n2.scope = 'global')
                      ORDER BY e2.confidence DESC LIMIT 3",
-                    layer_ph,
-                    n_scope_ph,
+                    layer_ph, n_scope_ph,
                 );
                 let mut nparams: Vec<Box<dyn rusqlite::types::ToSql>> =
                     vec![Box::new(r.name.clone())];
@@ -689,7 +800,8 @@ impl<'a> GraphStore<'a> {
             )
         };
         let mut stmt = self.conn.prepare(sql)?;
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(param_refs.as_slice(), |row| {
             Ok(GraphRow {
                 node_id: row.get(0)?,
@@ -748,7 +860,11 @@ impl<'a> GraphStore<'a> {
 
     /// Return all edges where both source and target are in the given node IDs.
     /// When scope is provided, only returns edges in that scope or global scope.
-    pub fn edges_between(&self, node_ids: &[i64], scope: Option<&str>) -> Result<Vec<(String, String, String, f64)>> {
+    pub fn edges_between(
+        &self,
+        node_ids: &[i64],
+        scope: Option<&str>,
+    ) -> Result<Vec<(String, String, String, f64)>> {
         if node_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -759,7 +875,8 @@ impl<'a> GraphStore<'a> {
             // with the auto-numbered ? markers in the IN clauses.
             let n = node_ids.len();
             let source_ph: Vec<String> = (2..(2 + n)).map(|i| format!("?{}", i)).collect();
-            let target_ph: Vec<String> = ((2 + n)..(2 + 2 * n)).map(|i| format!("?{}", i)).collect();
+            let target_ph: Vec<String> =
+                ((2 + n)..(2 + 2 * n)).map(|i| format!("?{}", i)).collect();
             let sql = format!(
                 "SELECT sn.name, tn.name, e.relation_type, e.confidence
                  FROM kg_edges e
@@ -792,7 +909,8 @@ impl<'a> GraphStore<'a> {
             (sql, params)
         };
         let mut stmt = self.conn.prepare(&sql)?;
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(param_refs.as_slice(), |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -801,7 +919,8 @@ impl<'a> GraphStore<'a> {
                 row.get::<_, f64>(3)?,
             ))
         })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 
     // ========================================================================
@@ -1107,8 +1226,7 @@ impl<'a> GraphStore<'a> {
 
         for (injected_str, ref_opt, dur) in &rows {
             total_duration_ms += dur;
-            let injected: Vec<String> =
-                serde_json::from_str(injected_str).unwrap_or_default();
+            let injected: Vec<String> = serde_json::from_str(injected_str).unwrap_or_default();
             let referenced: Vec<String> = ref_opt
                 .as_ref()
                 .and_then(|r| serde_json::from_str(r).ok())
@@ -1141,6 +1259,268 @@ impl<'a> GraphStore<'a> {
             "turns_with_references": turns_with_refs,
             "avg_injection_duration_ms": avg_duration_ms,
         }))
+    }
+
+    /// Evaluate holistic memory quality across all dimensions.
+    ///
+    /// `lookback_days` limits the quality-log window for relevance metrics
+    /// (e.g., 30 days).  Pass 0 to use all available logs.
+    ///
+    /// Safe to call on an empty database — all counts will be 0 / 0.0 and
+    /// `health_score` will be 0.0.
+    pub fn evaluate_memory_quality(&self, lookback_days: i64) -> Result<MemoryQualityReport> {
+        let now_ts = Utc::now().timestamp();
+        let lookback_cutoff = if lookback_days > 0 {
+            now_ts - lookback_days * 86400
+        } else {
+            0 // include all data
+        };
+
+        // ── Injection quality (from memory_quality_log) ──────────────────
+        //
+        // Defensively check for table existence — pre-V3 databases may lack
+        // memory_quality_log. When absent, all quality metrics are zeroed.
+
+        let has_quality_table: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type='table' AND name='memory_quality_log'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+
+        let (injection_count, turns_with_references, avg_relevance) = if has_quality_table {
+            let mut total: i64 = 0;
+            let mut ref_turns: i64 = 0;
+            let mut sum_relevance: f64 = 0.0;
+            let mut evaluated: i64 = 0;
+
+            // Query only the lookback window.
+            // Use datetime(?1, 'unixepoch') to convert the epoch-seconds parameter
+            // to ISO-8601 text — avoids strftime() per-row and allows index use.
+            let rows: Vec<(String, Option<String>)> = if lookback_days > 0 {
+                let mut stmt = self.conn.prepare(
+                    "SELECT injected_entities, referenced_entities
+                     FROM memory_quality_log
+                     WHERE created_at >= datetime(?1, 'unixepoch')
+                     ORDER BY created_at ASC",
+                )?;
+                stmt.query_map(rusqlite::params![lookback_cutoff], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+            } else {
+                let mut stmt = self.conn.prepare(
+                    "SELECT injected_entities, referenced_entities
+                     FROM memory_quality_log
+                     ORDER BY created_at ASC",
+                )?;
+                stmt.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+            };
+
+            for (injected_str, ref_opt) in &rows {
+                let injected: Vec<String> = serde_json::from_str(injected_str).unwrap_or_default();
+                let referenced: Vec<String> = ref_opt
+                    .as_ref()
+                    .and_then(|r| serde_json::from_str(r).ok())
+                    .unwrap_or_default();
+
+                total += 1;
+
+                if !referenced.is_empty() {
+                    ref_turns += 1;
+                }
+
+                // Include ALL turns in the relevance average, not just
+                // those with non-empty injections. Zero-injection turns
+                // contribute 0 relevance, which is correct — if the system
+                // injected nothing, the relevance is zero for that turn.
+                let relevance = if injected.is_empty() {
+                    0.0
+                } else {
+                    (referenced.len() as f64 / injected.len() as f64).min(1.0)
+                };
+                sum_relevance += relevance;
+                evaluated += 1;
+            }
+
+            let avg_rel = if evaluated > 0 {
+                (sum_relevance / evaluated as f64 * 100.0).round() / 100.0
+            } else {
+                0.0
+            };
+
+            (total, ref_turns, avg_rel)
+        } else {
+            // No quality log table — all zeroes.
+            (0i64, 0i64, 0.0f64)
+        };
+
+        // ── Entity health ────────────────────────────────────────────────
+
+        let total_entities: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM kg_nodes", [], |row| row.get(0))
+            .unwrap_or(0);
+
+        // Duplicate rate: entities sharing the same name
+        let duplicate_rate: f64 = if total_entities > 0 {
+            let dup_count: i64 = self
+                .conn
+                .query_row(
+                    "SELECT COALESCE(SUM(cnt - 1), 0)
+                 FROM (SELECT COUNT(*) AS cnt FROM kg_nodes GROUP BY name HAVING cnt > 1)",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            dup_count as f64 / total_entities as f64
+        } else {
+            0.0
+        };
+
+        // Stale entities: never accessed AND first_seen > 30 days ago.
+        // Fresh entities (first_seen within 30 days) with no accesses yet
+        // are NOT considered stale — they simply haven't had a chance to be used.
+        let stale_cutoff = now_ts - 30 * 86400;
+        let stale_entity_count: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM kg_nodes
+             WHERE (last_accessed IS NULL OR last_accessed < ?1)
+               AND (access_count IS NULL OR access_count = 0)
+               AND first_seen < ?1",
+                rusqlite::params![stale_cutoff, stale_cutoff],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        // Average confidence
+        let avg_confidence: f64 = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(AVG(confidence), 0.0) FROM kg_nodes",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+
+        // ── Coverage ─────────────────────────────────────────────────────
+
+        let entity_types_distribution: Vec<(String, i64)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT entity_type, COUNT(*) AS cnt FROM kg_nodes
+                 GROUP BY entity_type ORDER BY cnt DESC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?;
+            let mut result = Vec::new();
+            for row in rows {
+                result.push(row?);
+            }
+            result
+        };
+
+        let layer_distribution: Vec<(String, i64)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT COALESCE(layer, 'semantic') AS layer, COUNT(*) AS cnt
+                 FROM kg_nodes GROUP BY layer ORDER BY cnt DESC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?;
+            let mut result = Vec::new();
+            for row in rows {
+                result.push(row?);
+            }
+            result
+        };
+
+        // ── Freshness ────────────────────────────────────────────────────
+
+        let recent_cutoff = now_ts - 7 * 86400; // last 7 days
+
+        let entities_added_recently: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM kg_nodes WHERE first_seen >= ?1",
+                rusqlite::params![recent_cutoff],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let entities_accessed_recently: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM kg_nodes WHERE last_accessed IS NOT NULL AND last_accessed >= ?1",
+            rusqlite::params![recent_cutoff],
+            |row| row.get(0),
+        ).unwrap_or(0);
+
+        // ── Consolidation effectiveness ──────────────────────────────────
+        //
+        // Consolidation metrics are tracked via the memory_consolidation_log
+        // table when available.  When the table does not exist (pre-Phase-3
+        // databases) both values are returned as 0 so the health score still
+        // works; the frontend can hide the section when total_merged == 0.
+
+        let (consolidation_runs, total_merged) = {
+            let has_log_table: bool = self
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type='table' AND name='memory_consolidation_log'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|c| c > 0)
+                .unwrap_or(false);
+
+            if has_log_table {
+                let runs: i64 = self
+                    .conn
+                    .query_row("SELECT COUNT(*) FROM memory_consolidation_log", [], |row| {
+                        row.get(0)
+                    })
+                    .unwrap_or(0);
+                let merged: i64 = self.conn.query_row(
+                    "SELECT COALESCE(SUM(merged_nodes + merged_cognitions), 0) FROM memory_consolidation_log",
+                    [],
+                    |row| row.get(0),
+                ).unwrap_or(0);
+                (runs, merged)
+            } else {
+                (0, 0)
+            }
+        };
+
+        // ── Build report + health score ──────────────────────────────────
+
+        let mut report = MemoryQualityReport {
+            avg_relevance,
+            injection_count,
+            turns_with_references,
+            total_entities,
+            duplicate_rate,
+            stale_entity_count,
+            avg_confidence,
+            entity_types_distribution,
+            layer_distribution,
+            entities_added_recently,
+            entities_accessed_recently,
+            consolidation_runs,
+            total_merged,
+            health_score: 0.0, // computed below
+        };
+
+        report.health_score = MemoryQualityReport::compute_health_score(&report);
+
+        Ok(report)
     }
 
     // ========================================================================
@@ -1214,8 +1594,8 @@ impl<'a> GraphStore<'a> {
         );
 
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows: Vec<_> = if scope.is_some() {
-            stmt.query_map(rusqlite::params![scope.unwrap()], |row| {
+        let rows: Vec<_> = if let Some(scope_str) = scope {
+            stmt.query_map(rusqlite::params![scope_str], |row| {
                 let emb_bytes: Vec<u8> = row.get(6)?;
                 let stored: Vec<f32> = blob_to_f32_vec(&emb_bytes);
                 Ok((
@@ -1265,10 +1645,7 @@ impl<'a> GraphStore<'a> {
                 })
                 .collect();
 
-            scored.sort_by(|a, b| {
-                b.1.partial_cmp(&a.1)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             scored.truncate(limit);
 
             let result_rows: Vec<GraphRow> = scored.iter().map(|(r, _)| r.clone()).collect();
@@ -1279,14 +1656,259 @@ impl<'a> GraphStore<'a> {
         // Fallback: no embeddings available — use FTS5 text search if query provided
         if let Some(query) = fallback_query {
             let text_results = self.search_entities(query, limit, scope)?;
-            let scored: Vec<(GraphRow, f64)> = text_results
-                .into_iter()
-                .map(|r| (r, 0.0))
-                .collect();
+            let scored: Vec<(GraphRow, f64)> = text_results.into_iter().map(|r| (r, 0.0)).collect();
             return Ok(scored);
         }
 
         Ok(Vec::new())
+    }
+
+    // ========================================================================
+    // Active Forgetting — importance-based pruning
+    // ========================================================================
+
+    /// Score all non-protected nodes by importance, then prune those below
+    /// `min_importance` that are also older than `max_age_days`.
+    ///
+    /// Importance formula:
+    ///   confidence * (1 + ln(evidence_count+1)*0.3) * (1 + ln(access_count+1)*0.15)
+    ///   * exp(-days_since_access / 60)
+    ///
+    /// The decay is continuous (no 30-day cliff) — a 60-day half-life ensures
+    /// gradual rather than abrupt degradation of importance.
+    /// Protection rules (never pruned):
+    /// - entity_type = 'Person'
+    /// - evidence_count >= 10
+    /// - scope = 'global' AND layer = 'global'
+    /// - access_count > 50
+    ///
+    /// Cascade delete order (inside a transaction): edges → aliases → evidence → node.
+    pub fn active_forgetting(
+        &self,
+        min_importance: f64,
+        max_age_days: i64,
+    ) -> Result<ForgettingReport> {
+        let now = Utc::now().timestamp();
+        let cutoff_ts = now - max_age_days * 86400;
+
+        // Step 1: read all nodes with the fields needed for scoring
+        let mut stmt = self.conn.prepare(
+            "SELECT id, entity_type, confidence, evidence_count, access_count,
+                    last_accessed, first_seen, scope, layer
+             FROM kg_nodes",
+        )?;
+
+        #[allow(clippy::type_complexity)]
+        let nodes: Vec<(
+            i64,         // id
+            String,      // entity_type
+            f64,         // confidence
+            i64,         // evidence_count
+            i64,         // access_count
+            Option<i64>, // last_accessed
+            i64,         // first_seen
+            String,      // scope
+            String,      // layer
+        )> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get::<_, Option<i64>>(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        // Step 2: score and classify
+        let mut to_prune: Vec<i64> = Vec::new();
+        let mut skipped_protected: i64 = 0;
+
+        for (
+            id,
+            entity_type,
+            confidence,
+            evidence_count,
+            access_count,
+            last_accessed,
+            first_seen,
+            scope,
+            layer,
+        ) in &nodes
+        {
+            // --- Protection rules (NEVER prune) ---
+            if entity_type == "Person" {
+                skipped_protected += 1;
+                continue;
+            }
+            if *evidence_count >= 10 {
+                skipped_protected += 1;
+                continue;
+            }
+            if scope == "global" && layer == "global" {
+                skipped_protected += 1;
+                continue;
+            }
+            if *access_count > 50 {
+                skipped_protected += 1;
+                continue;
+            }
+
+            // --- Age gate: skip nodes younger than max_age_days ---
+            if *first_seen > cutoff_ts {
+                continue;
+            }
+
+            // --- Importance score ---
+            let last_access = last_accessed.unwrap_or(*first_seen);
+            let days_since_access = ((now - last_access) as f64 / 86400.0).max(0.0);
+
+            let importance = confidence
+                * (1.0 + f64::ln(*evidence_count as f64 + 1.0) * 0.3)
+                * (1.0 + f64::ln(*access_count as f64 + 1.0) * 0.15)
+                * f64::exp(-days_since_access / 60.0);
+
+            if importance < min_importance {
+                to_prune.push(*id);
+            }
+        }
+
+        if to_prune.is_empty() {
+            return Ok(ForgettingReport {
+                pruned_nodes: 0,
+                pruned_edges: 0,
+                pruned_cognitions: 0,
+                skipped_protected,
+            });
+        }
+
+        // Step 3: cascade delete within a transaction
+        // We build string-interpolated IN clauses — safe because IDs come from our DB.
+        let id_list: String = to_prune
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let run_pruning = || -> Result<ForgettingReport> {
+            self.conn.execute_batch("BEGIN;")?;
+
+            // Count edges that reference pruned nodes (before we delete evidence)
+            let pruned_edges: i64 = self.conn.query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM kg_edges WHERE source_id IN ({}) OR target_id IN ({})",
+                    id_list, id_list
+                ),
+                [],
+                |row| row.get(0),
+            )?;
+
+            // Count evidence rows that will be pruned
+            let pruned_cognitions: i64 = self.conn.query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM kg_evidence WHERE node_id IN ({})
+                       OR edge_id IN (SELECT id FROM kg_edges WHERE source_id IN ({}) OR target_id IN ({}))",
+                    id_list, id_list, id_list
+                ),
+                [],
+                |row| row.get(0),
+            )?;
+
+            // 1. Delete evidence referencing edges of pruned nodes
+            self.conn.execute(
+                &format!(
+                    "DELETE FROM kg_evidence WHERE edge_id IN (SELECT id FROM kg_edges WHERE source_id IN ({}) OR target_id IN ({}))",
+                    id_list, id_list
+                ),
+                [],
+            )?;
+
+            // 2. Delete evidence referencing pruned nodes directly
+            self.conn.execute(
+                &format!("DELETE FROM kg_evidence WHERE node_id IN ({})", id_list),
+                [],
+            )?;
+
+            // 3. Delete edges
+            self.conn.execute(
+                &format!(
+                    "DELETE FROM kg_edges WHERE source_id IN ({}) OR target_id IN ({})",
+                    id_list, id_list
+                ),
+                [],
+            )?;
+
+            // 4. Delete aliases
+            self.conn.execute(
+                &format!("DELETE FROM kg_aliases WHERE node_id IN ({})", id_list),
+                [],
+            )?;
+
+            // 5. Delete nodes (count affected rows via query_row on changes() after execute)
+            let pruned_nodes = self.conn.execute(
+                &format!("DELETE FROM kg_nodes WHERE id IN ({})", id_list),
+                [],
+            )? as i64;
+
+            self.conn.execute_batch("COMMIT;")?;
+
+            Ok(ForgettingReport {
+                pruned_nodes,
+                pruned_edges,
+                pruned_cognitions,
+                skipped_protected,
+            })
+        };
+
+        match run_pruning() {
+            Ok(report) => Ok(report),
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK;");
+                Err(e)
+            }
+        }
+    }
+
+    /// Return a snapshot of overall knowledge-graph health.
+    pub fn get_memory_health(&self) -> Result<MemoryHealth> {
+        let now = Utc::now().timestamp();
+
+        let total_nodes: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM kg_nodes", [], |row| row.get(0))?;
+
+        let total_edges: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM kg_edges", [], |row| row.get(0))?;
+
+        let avg_confidence: f64 = self.conn.query_row(
+            "SELECT COALESCE(AVG(confidence), 0.0) FROM kg_nodes",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let oldest_ts: Option<i64> = self
+            .conn
+            .query_row("SELECT MIN(first_seen) FROM kg_nodes", [], |row| row.get(0))
+            .ok()
+            .flatten();
+
+        let oldest_node_age_days = oldest_ts.map_or(0, |ts| ((now - ts) / 86400).max(0));
+
+        let layer_distribution = self.get_layer_stats()?;
+
+        Ok(MemoryHealth {
+            total_nodes,
+            total_edges,
+            avg_confidence,
+            oldest_node_age_days,
+            layer_distribution,
+        })
     }
 }
 
@@ -1337,6 +1959,26 @@ mod tests {
 
     fn setup_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
+        // Create tables referenced by kg_evidence FKs (needed by V8 migration)
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_session TEXT
+            );
+            CREATE TABLE IF NOT EXISTS cognitions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject TEXT NOT NULL,
+                trait TEXT NOT NULL,
+                value TEXT NOT NULL,
+                confidence REAL DEFAULT 0.5,
+                evidence_count INTEGER DEFAULT 1,
+                first_seen INTEGER NOT NULL DEFAULT 0,
+                last_updated INTEGER NOT NULL DEFAULT 0,
+                version INTEGER DEFAULT 1,
+                scope TEXT NOT NULL DEFAULT 'global'
+            );",
+        )
+        .unwrap();
         conn.execute_batch(include_str!(
             "../../../../migrations/V8__add_knowledge_graph.sql"
         ))
@@ -1450,13 +2092,19 @@ mod tests {
         let emb_python = vec![0.0, 1.0, 0.0];
         let emb_loom = vec![0.9, 0.1, 0.0]; // close to emb_rust
 
-        store.upsert_node("Rust", "Technology", "PL", 0.9, "global", None).unwrap();
+        store
+            .upsert_node("Rust", "Technology", "PL", 0.9, "global", None)
+            .unwrap();
         store.embed_node("Rust", &emb_rust).unwrap();
 
-        store.upsert_node("Python", "Technology", "PL", 0.85, "global", None).unwrap();
+        store
+            .upsert_node("Python", "Technology", "PL", 0.85, "global", None)
+            .unwrap();
         store.embed_node("Python", &emb_python).unwrap();
 
-        store.upsert_node("openLoom", "Project", "AI kernel", 0.9, "global", None).unwrap();
+        store
+            .upsert_node("openLoom", "Project", "AI kernel", 0.9, "global", None)
+            .unwrap();
         store.embed_node("openLoom", &emb_loom).unwrap();
 
         // embed_node should also work for non-existing nodes (auto-creates)
@@ -1466,12 +2114,17 @@ mod tests {
         // Search: query embedding close to emb_rust
         let query = vec![0.95, 0.05, 0.0];
         let results = store.search_similar(&query, 5, None, None).unwrap();
-        assert!(results.len() >= 3, "expected at least 3 results, got {}", results.len());
+        assert!(
+            results.len() >= 3,
+            "expected at least 3 results, got {}",
+            results.len()
+        );
         // Rust-like embeddings should rank highest
         let top = &results[0];
         assert!(
             top.0.name == "Rust" || top.0.name == "openLoom" || top.0.name == "NewTech",
-            "top result should be close to query, got {}", top.0.name
+            "top result should be close to query, got {}",
+            top.0.name
         );
         assert!(top.1 > 0.9, "similarity should be high, got {}", top.1);
 
@@ -1485,7 +2138,9 @@ mod tests {
         assert!((retrieved[2] - 0.0).abs() < 1e-6);
 
         // Node without embedding returns None
-        store.upsert_node("NoEmb", "Concept", "desc", 0.5, "global", None).unwrap();
+        store
+            .upsert_node("NoEmb", "Concept", "desc", 0.5, "global", None)
+            .unwrap();
         assert!(store.get_embedding("NoEmb").unwrap().is_none());
     }
 
@@ -1495,16 +2150,210 @@ mod tests {
         let store = GraphStore::new(&conn);
 
         // No nodes have embeddings — search_similar should fall back to FTS5
-        store.upsert_node("RustLang", "Technology", "Rust programming", 0.9, "global", None).unwrap();
+        store
+            .upsert_node(
+                "RustLang",
+                "Technology",
+                "Rust programming",
+                0.9,
+                "global",
+                None,
+            )
+            .unwrap();
 
         let query = vec![0.5f32; 768];
-        let results = store.search_similar(&query, 10, Some("rust"), None).unwrap();
+        let results = store
+            .search_similar(&query, 10, Some("rust"), None)
+            .unwrap();
         // Falls back to FTS5 search with score 0.0
         assert!(!results.is_empty(), "FTS5 fallback should return results");
         assert_eq!(results[0].1, 0.0, "FTS5 fallback results have score 0.0");
 
         // Without fallback_query, returns empty
         let no_results = store.search_similar(&query, 10, None, None).unwrap();
-        assert!(no_results.is_empty(), "without fallback query, should be empty");
+        assert!(
+            no_results.is_empty(),
+            "without fallback query, should be empty"
+        );
+    }
+
+    // ========================================================================
+    // Active Forgetting tests
+    // ========================================================================
+
+    #[test]
+    fn test_active_forgetting_prunes_low_importance_and_protects_rules() {
+        let conn = setup_db();
+        let store = GraphStore::new(&conn);
+        let now = Utc::now().timestamp();
+        let old_ts = now - 60 * 86400; // 60 days ago
+
+        // -- Nodes that SHOULD be pruned (low importance, old enough) --
+        let n1 = store
+            .upsert_node("low_conf", "concept", "low quality", 0.1, "session", None)
+            .unwrap();
+        let n2 = store
+            .upsert_node("stale_topic", "concept", "stale", 0.15, "session", None)
+            .unwrap();
+
+        // Make them old enough to pass the age gate
+        conn.execute(
+            "UPDATE kg_nodes SET first_seen = ?1 WHERE id IN (?2, ?3)",
+            rusqlite::params![old_ts, n1, n2],
+        )
+        .unwrap();
+
+        // Edge between the two prunable nodes (tests cascade)
+        store
+            .upsert_edge(n1, n2, "related_to", "link", 0.1, "session")
+            .unwrap();
+
+        // Alias for n1 (tests alias cascade)
+        store.add_alias(n1, "lc").unwrap();
+
+        // -- Protected nodes (should NOT be pruned) --
+        // Protected: Person
+        store
+            .upsert_node("Alice", "Person", "a user", 0.1, "global", None)
+            .unwrap();
+
+        // Protected: high evidence_count (>= 10)
+        let n_high_ev = store
+            .upsert_node(
+                "high_evidence",
+                "concept",
+                "many refs",
+                0.1,
+                "session",
+                None,
+            )
+            .unwrap();
+        conn.execute(
+            "UPDATE kg_nodes SET evidence_count = 12 WHERE id = ?1",
+            rusqlite::params![n_high_ev],
+        )
+        .unwrap();
+
+        // Protected: scope=global AND layer=global
+        store
+            .upsert_node(
+                "global_core",
+                "concept",
+                "core entity",
+                0.1,
+                "global",
+                Some("global"),
+            )
+            .unwrap();
+
+        // Protected: access_count > 50
+        let n_popular = store
+            .upsert_node("popular_item", "concept", "hit", 0.1, "session", None)
+            .unwrap();
+        conn.execute(
+            "UPDATE kg_nodes SET access_count = 51 WHERE id = ?1",
+            rusqlite::params![n_popular],
+        )
+        .unwrap();
+
+        // ── Execute ──
+        let report = store.active_forgetting(0.5, 30).unwrap();
+
+        assert_eq!(
+            report.pruned_nodes, 2,
+            "should prune 2 low-importance nodes"
+        );
+        assert_eq!(report.pruned_edges, 1, "should cascade-delete 1 edge");
+        assert_eq!(report.skipped_protected, 4, "should skip 4 protected nodes");
+
+        // Pruned nodes are gone
+        assert!(
+            store.resolve_node("low_conf").unwrap().is_none(),
+            "low_conf should be pruned"
+        );
+        assert!(
+            store.resolve_node("stale_topic").unwrap().is_none(),
+            "stale_topic should be pruned"
+        );
+
+        // Protected nodes remain
+        assert!(
+            store.resolve_node("Alice").unwrap().is_some(),
+            "Person should be protected"
+        );
+        assert!(
+            store.resolve_node("high_evidence").unwrap().is_some(),
+            "high evidence_count should be protected"
+        );
+        assert!(
+            store.resolve_node("global_core").unwrap().is_some(),
+            "global+global should be protected"
+        );
+        assert!(
+            store.resolve_node("popular_item").unwrap().is_some(),
+            "high access_count should be protected"
+        );
+    }
+
+    #[test]
+    fn test_active_forgetting_empty_when_nothing_to_prune() {
+        let conn = setup_db();
+        let store = GraphStore::new(&conn);
+
+        // All nodes are high-confidence → nothing to prune
+        store
+            .upsert_node("A", "concept", "desc", 0.95, "global", None)
+            .unwrap();
+        store
+            .upsert_node("B", "concept", "desc", 0.90, "global", None)
+            .unwrap();
+
+        let report = store.active_forgetting(0.1, 1).unwrap();
+        assert_eq!(report.pruned_nodes, 0);
+        assert_eq!(report.pruned_edges, 0);
+    }
+
+    #[test]
+    fn test_get_memory_health() {
+        let conn = setup_db();
+        let store = GraphStore::new(&conn);
+
+        store
+            .upsert_node("Alpha", "concept", "first", 0.75, "global", None)
+            .unwrap();
+        let b_id = store
+            .upsert_node("Beta", "concept", "second", 0.85, "global", None)
+            .unwrap();
+        let c_id = store
+            .upsert_node("Gamma", "Person", "third", 0.65, "global", None)
+            .unwrap();
+
+        // Two edges
+        store
+            .upsert_edge(b_id, c_id, "knows", "knows", 0.9, "global")
+            .unwrap();
+
+        let health = store.get_memory_health().unwrap();
+
+        assert_eq!(health.total_nodes, 3);
+        assert_eq!(health.total_edges, 1); // only 1 because we created 1 edge
+        // Actually re-read: we upsert_edge once → 1 edge total
+        assert!(
+            (health.avg_confidence - 0.75).abs() < 0.01,
+            "avg confidence should be ~0.75, got {}",
+            health.avg_confidence
+        );
+        assert!(
+            health.oldest_node_age_days >= 0,
+            "oldest_node_age_days should be non-negative"
+        );
+        assert!(
+            !health.layer_distribution.is_empty(),
+            "layer distribution should not be empty"
+        );
+
+        // Check serialization round-trips
+        let json = serde_json::to_string(&health).unwrap();
+        let _roundtripped: MemoryHealth = serde_json::from_str(&json).unwrap();
     }
 }

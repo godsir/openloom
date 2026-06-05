@@ -3,8 +3,8 @@
 use loom_types::{ErrorCode, JsonRpcError};
 use serde_json::{Value, json};
 
-use crate::AppState;
 use super::err;
+use crate::AppState;
 
 pub async fn handle(
     state: &AppState,
@@ -32,6 +32,7 @@ pub async fn handle(
         "stats.reset" => Some(handle_stats_reset(state).await),
         // Memory
         "memory.promote" => Some(handle_memory_promote(state, p).await),
+        "memory.quality" => Some(handle_memory_quality(state, p).await),
         _ => None,
     }
 }
@@ -165,7 +166,10 @@ async fn handle_kg_edge_delete(state: &AppState, p: &Value) -> Result<Value, Jso
 // --- kg.prune ---
 
 async fn handle_kg_prune(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
-    let older_than_days = p.get("older_than_days").and_then(|v| v.as_i64()).unwrap_or(30);
+    let older_than_days = p
+        .get("older_than_days")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(30);
     let pruned_count = state
         .orchestrator
         .kg_prune(older_than_days)
@@ -276,7 +280,11 @@ async fn handle_memory_promote(state: &AppState, p: &Value) -> Result<Value, Jso
     let node_names: Vec<String> = p
         .get("node_names")
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let cognition_ids: Vec<i64> = p
         .get("cognition_ids")
@@ -292,4 +300,19 @@ async fn handle_memory_promote(state: &AppState, p: &Value) -> Result<Value, Jso
         "promoted_nodes": promoted_nodes,
         "promoted_cognitions": promoted_cognitions
     }))
+}
+
+// --- memory.quality ---
+
+async fn handle_memory_quality(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let lookback_days = p
+        .get("lookback_days")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(30);
+    let report = state
+        .orchestrator
+        .memory_quality_report(lookback_days)
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    Ok(serde_json::to_value(report).unwrap_or_default())
 }

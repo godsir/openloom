@@ -298,8 +298,16 @@ mod tests {
     #[test]
     fn test_catalog_has_both_kinds() {
         let catalog = default_catalog();
-        let plugins = catalog.plugins.iter().filter(|p| p.kind == MarketEntryKind::Plugin).count();
-        let skills = catalog.plugins.iter().filter(|p| p.kind == MarketEntryKind::Skill).count();
+        let plugins = catalog
+            .plugins
+            .iter()
+            .filter(|p| p.kind == MarketEntryKind::Plugin)
+            .count();
+        let skills = catalog
+            .plugins
+            .iter()
+            .filter(|p| p.kind == MarketEntryKind::Skill)
+            .count();
         assert!(plugins > 0, "catalog must have plugin entries");
         assert!(skills > 0, "catalog must have skill entries");
     }

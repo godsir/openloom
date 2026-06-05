@@ -12,19 +12,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct VisionConfig {
     pub enabled: bool,
     pub model: Option<String>,
-}
-
-impl Default for VisionConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            model: None,
-        }
-    }
 }
 
 const VISION_PROMPT: &str = r#"Analyze this image for another text-only model. Return a concise note with these exact sections:
@@ -53,7 +44,10 @@ pub fn load_vision_config() -> VisionConfig {
 pub fn has_images(messages: &[Message]) -> bool {
     messages.iter().any(|m| {
         m.content.iter().any(|part| {
-            matches!(part, ContentPart::Image { .. } | ContentPart::ImageRef { .. })
+            matches!(
+                part,
+                ContentPart::Image { .. } | ContentPart::ImageRef { .. }
+            )
         })
     })
 }
@@ -79,18 +73,19 @@ pub fn extract_images_from_messages(
                 } => {
                     // Reconstruct file path: loom_dir/sessions/*/images/fid
                     let mut found = false;
-                    if let Some(base) = loom_dir {
-                        if let Ok(sessions_dir) = std::fs::read_dir(base.join("sessions")) {
-                            for entry in sessions_dir.flatten() {
-                                let img_path = entry.path().join("images").join(fid);
-                                if img_path.exists() {
-                                    if let Ok(data) = std::fs::read(&img_path) {
-                                        let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
-                                        images.push(("base64".to_string(), mt.clone(), encoded));
-                                        found = true;
-                                    }
-                                    break;
+                    if let Some(base) = loom_dir
+                        && let Ok(sessions_dir) = std::fs::read_dir(base.join("sessions"))
+                    {
+                        for entry in sessions_dir.flatten() {
+                            let img_path = entry.path().join("images").join(fid);
+                            if img_path.exists() {
+                                if let Ok(data) = std::fs::read(&img_path) {
+                                    let encoded =
+                                        base64::engine::general_purpose::STANDARD.encode(&data);
+                                    images.push(("base64".to_string(), mt.clone(), encoded));
+                                    found = true;
                                 }
+                                break;
                             }
                         }
                     }
@@ -164,20 +159,23 @@ pub async fn prepare_vision_context(
                 std::env::var(raw).ok().filter(|v| !v.is_empty())
             }
         })
-        .or_else(|| {
-            let well_known = match config.backend {
-                ModelBackend::DeepSeek => guard.get("DEEPSEEK_API_KEY").cloned()
-                    .or_else(|| std::env::var("DEEPSEEK_API_KEY").ok()),
-                ModelBackend::OpenAI => guard.get("OPENAI_API_KEY").cloned()
-                    .or_else(|| std::env::var("OPENAI_API_KEY").ok()),
-                ModelBackend::Anthropic => guard.get("ANTHROPIC_API_KEY").cloned()
-                    .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()),
-                ModelBackend::Custom | ModelBackend::LmStudio | ModelBackend::Ollama => {
-                    guard.get("OPENLOOM_API_KEY").cloned()
-                        .or_else(|| std::env::var("OPENLOOM_API_KEY").ok())
-                }
-            };
-            well_known
+        .or_else(|| match config.backend {
+            ModelBackend::DeepSeek => guard
+                .get("DEEPSEEK_API_KEY")
+                .cloned()
+                .or_else(|| std::env::var("DEEPSEEK_API_KEY").ok()),
+            ModelBackend::OpenAI => guard
+                .get("OPENAI_API_KEY")
+                .cloned()
+                .or_else(|| std::env::var("OPENAI_API_KEY").ok()),
+            ModelBackend::Anthropic => guard
+                .get("ANTHROPIC_API_KEY")
+                .cloned()
+                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()),
+            ModelBackend::Custom | ModelBackend::LmStudio | ModelBackend::Ollama => guard
+                .get("OPENLOOM_API_KEY")
+                .cloned()
+                .or_else(|| std::env::var("OPENLOOM_API_KEY").ok()),
         })
         .unwrap_or_default();
     drop(guard);
@@ -230,7 +228,8 @@ pub async fn prepare_vision_context(
         image_count = images.len(),
         batch_count,
         batch_size = BATCH_SIZE,
-        "vision: processing sequentially in batches of {}", BATCH_SIZE
+        "vision: processing sequentially in batches of {}",
+        BATCH_SIZE
     );
 
     let mut analyses = Vec::new();
@@ -239,20 +238,17 @@ pub async fn prepare_vision_context(
     for (batch_idx, batch) in batches.iter().enumerate() {
         // Report batch start
         if let Some(ref tx) = progress_tx {
-            let _ = tx.send(VisionBatchProgress {
-                batch_index: batch_idx,
-                total_batches: batch_count,
-                status: "running".to_string(),
-                result: None,
-            }).await;
+            let _ = tx
+                .send(VisionBatchProgress {
+                    batch_index: batch_idx,
+                    total_batches: batch_count,
+                    status: "running".to_string(),
+                    result: None,
+                })
+                .await;
         }
 
-        let client = OpenAIClient::new(
-            api_key.clone(),
-            model_id.clone(),
-            base_url.clone(),
-            false,
-        );
+        let client = OpenAIClient::new(api_key.clone(), model_id.clone(), base_url.clone(), false);
 
         let mut content_parts: Vec<ContentPart> = Vec::new();
         if batch_count > 1 {
@@ -313,30 +309,36 @@ pub async fn prepare_vision_context(
 
                 // Report batch done
                 if let Some(ref tx) = progress_tx {
-                    let _ = tx.send(VisionBatchProgress {
-                        batch_index: batch_idx,
-                        total_batches: batch_count,
-                        status: "done".to_string(),
-                        result: Some(text),
-                    }).await;
+                    let _ = tx
+                        .send(VisionBatchProgress {
+                            batch_index: batch_idx,
+                            total_batches: batch_count,
+                            status: "done".to_string(),
+                            result: Some(text),
+                        })
+                        .await;
                 }
             }
             Err(e) => {
                 tracing::warn!(batch = batch_idx + 1, error = %e, "vision batch failed");
                 let error_msg = format!(
                     "[Batch {}/{}] (analysis failed: {})",
-                    batch_idx + 1, batch_count, e
+                    batch_idx + 1,
+                    batch_count,
+                    e
                 );
                 analyses.push(error_msg.clone());
 
                 // Report batch error
                 if let Some(ref tx) = progress_tx {
-                    let _ = tx.send(VisionBatchProgress {
-                        batch_index: batch_idx,
-                        total_batches: batch_count,
-                        status: "error".to_string(),
-                        result: Some(error_msg),
-                    }).await;
+                    let _ = tx
+                        .send(VisionBatchProgress {
+                            batch_index: batch_idx,
+                            total_batches: batch_count,
+                            status: "error".to_string(),
+                            result: Some(error_msg),
+                        })
+                        .await;
                 }
             }
         }

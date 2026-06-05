@@ -89,14 +89,14 @@ impl ChannelAdapter for WechatAdapter {
                     .await
                 {
                     Ok(resp) => {
-                        if let Ok(body) = resp.json::<serde_json::Value>().await {
-                            if let Some(messages) = body["messages"].as_array() {
-                                for msg in messages {
-                                    since_id =
-                                        msg["message_id"].as_str().unwrap_or(&since_id).to_string();
-                                    if let Some(bm) = Self::parse_ilink_message(msg) {
-                                        let _ = tx.send(bm).await;
-                                    }
+                        if let Ok(body) = resp.json::<serde_json::Value>().await
+                            && let Some(messages) = body["messages"].as_array()
+                        {
+                            for msg in messages {
+                                since_id =
+                                    msg["message_id"].as_str().unwrap_or(&since_id).to_string();
+                                if let Some(bm) = Self::parse_ilink_message(msg) {
+                                    let _ = tx.send(bm).await;
                                 }
                             }
                         }

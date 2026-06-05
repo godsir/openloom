@@ -193,7 +193,7 @@ impl<'a> SessionPatternDetector<'a> {
             })
             .collect();
 
-        patterns.sort_by(|a, b| b.session_count.cmp(&a.session_count));
+        patterns.sort_by_key(|b| std::cmp::Reverse(b.session_count));
         Ok(patterns)
     }
 
@@ -216,7 +216,9 @@ impl<'a> SessionPatternDetector<'a> {
         )?;
 
         let rows: Vec<(String, f64)> = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)))?
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+            })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         // tool_name → (total_count, sum_confidence)
@@ -244,10 +246,10 @@ impl<'a> SessionPatternDetector<'a> {
             // Collect tool names from tool_use blocks in this event
             let mut seen_in_event: HashSet<String> = HashSet::new();
             for block in &blocks {
-                if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                    if let Some(name) = block.get("name").and_then(|n| n.as_str()) {
-                        seen_in_event.insert(name.to_string());
-                    }
+                if block.get("type").and_then(|t| t.as_str()) == Some("tool_use")
+                    && let Some(name) = block.get("name").and_then(|n| n.as_str())
+                {
+                    seen_in_event.insert(name.to_string());
                 }
             }
 
@@ -285,7 +287,7 @@ impl<'a> SessionPatternDetector<'a> {
             })
             .collect();
 
-        preferences.sort_by(|a, b| b.usage_count.cmp(&a.usage_count));
+        preferences.sort_by_key(|b| std::cmp::Reverse(b.usage_count));
         Ok(preferences)
     }
 
@@ -327,15 +329,33 @@ impl<'a> SessionPatternDetector<'a> {
             (
                 "containers",
                 &[
-                    "docker", "kubernetes", "k8s", "container", "podman", "helm", "rancher",
+                    "docker",
+                    "kubernetes",
+                    "k8s",
+                    "container",
+                    "podman",
+                    "helm",
+                    "rancher",
                     "openshift",
                 ],
             ),
             (
                 "web",
                 &[
-                    "html", "css", "javascript", "react", "vue", "angular", "svelte", "next",
-                    "nuxt", "webpack", "vite", "http", "rest", "graphql",
+                    "html",
+                    "css",
+                    "javascript",
+                    "react",
+                    "vue",
+                    "angular",
+                    "svelte",
+                    "next",
+                    "nuxt",
+                    "webpack",
+                    "vite",
+                    "http",
+                    "rest",
+                    "graphql",
                 ],
             ),
             (
@@ -348,46 +368,99 @@ impl<'a> SessionPatternDetector<'a> {
             (
                 "cloud",
                 &[
-                    "aws", "azure", "gcp", "cloud", "serverless", "lambda", "s3", "ec2",
+                    "aws",
+                    "azure",
+                    "gcp",
+                    "cloud",
+                    "serverless",
+                    "lambda",
+                    "s3",
+                    "ec2",
                     "terraform",
                 ],
             ),
             (
                 "ai-ml",
                 &[
-                    "ai", "ml", "machine learning", "neural", "deep learning", "llm", "transformer",
-                    "pytorch", "tensorflow", "gpt", "bert", "embedding",
+                    "ai",
+                    "ml",
+                    "machine learning",
+                    "neural",
+                    "deep learning",
+                    "llm",
+                    "transformer",
+                    "pytorch",
+                    "tensorflow",
+                    "gpt",
+                    "bert",
+                    "embedding",
                 ],
             ),
             (
                 "devops",
                 &[
-                    "ci/cd", "jenkins", "github actions", "gitlab", "ansible", "pipeline",
-                    "deploy", "monitoring", "prometheus", "grafana",
+                    "ci/cd",
+                    "jenkins",
+                    "github actions",
+                    "gitlab",
+                    "ansible",
+                    "pipeline",
+                    "deploy",
+                    "monitoring",
+                    "prometheus",
+                    "grafana",
                 ],
             ),
             (
                 "mobile",
                 &[
-                    "ios", "android", "swift", "kotlin", "flutter", "react native", "mobile",
+                    "ios",
+                    "android",
+                    "swift",
+                    "kotlin",
+                    "flutter",
+                    "react native",
+                    "mobile",
                 ],
             ),
             (
                 "systems",
                 &[
-                    "rust", "c", "c++", "memory", "concurrency", "async", "thread", "kernel", "os",
+                    "rust",
+                    "c",
+                    "c++",
+                    "memory",
+                    "concurrency",
+                    "async",
+                    "thread",
+                    "kernel",
+                    "os",
                 ],
             ),
             (
                 "data",
                 &[
-                    "python", "pandas", "numpy", "spark", "kafka", "etl", "pipeline", "dataframe",
+                    "python",
+                    "pandas",
+                    "numpy",
+                    "spark",
+                    "kafka",
+                    "etl",
+                    "pipeline",
+                    "dataframe",
                 ],
             ),
             (
                 "security",
                 &[
-                    "security", "auth", "oauth", "jwt", "tls", "ssl", "encrypt", "vulnerability",
+                    "security",
+                    "auth",
+                    "oauth",
+                    "jwt",
+                    "tls",
+                    "ssl",
+                    "encrypt",
+                    "vulnerability",
                 ],
             ),
         ];
@@ -421,8 +494,7 @@ impl<'a> SessionPatternDetector<'a> {
             }
 
             // Confidence: avg of entity confidences, boosted by count
-            let avg_conf: f64 =
-                stages.iter().map(|(_, _, c)| c).sum::<f64>() / stages.len() as f64;
+            let avg_conf: f64 = stages.iter().map(|(_, _, c)| c).sum::<f64>() / stages.len() as f64;
             let stage_bonus: f64 = ((stages.len() as f64 - 1.0) * 0.05).min(0.3);
             let confidence = (avg_conf + stage_bonus).min(1.0);
 
@@ -490,8 +562,7 @@ impl<'a> SessionPatternDetector<'a> {
                     ts_str.parse::<i64>().ok().map(|unix| {
                         // Approximate hour from Unix timestamp
                         let secs_since_midnight = unix % 86400;
-                        let local_offset =
-                            chrono::Local::now().offset().local_minus_utc() as i64;
+                        let local_offset = chrono::Local::now().offset().local_minus_utc() as i64;
                         let adjusted = (secs_since_midnight + local_offset) % 86400;
                         if adjusted < 0 {
                             ((adjusted + 86400) / 3600) as i32
@@ -755,10 +826,7 @@ mod tests {
 
         let detector = SessionPatternDetector::new(&conn);
         let topics = detector.detect_topic_frequency(2).unwrap();
-        assert!(
-            topics.is_empty(),
-            "Should not appear with min_sessions=2"
-        );
+        assert!(topics.is_empty(), "Should not appear with min_sessions=2");
     }
 
     // --- Tool Preferences ---
@@ -841,10 +909,7 @@ mod tests {
         let tools = detector.detect_tool_preferences().unwrap();
 
         let unknown = tools.iter().find(|t| t.tool == "<unknown tool>");
-        assert!(
-            unknown.is_some(),
-            "Should fall back to <unknown tool>"
-        );
+        assert!(unknown.is_some(), "Should fall back to <unknown tool>");
         assert_eq!(unknown.unwrap().usage_count, 3);
     }
 

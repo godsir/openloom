@@ -16,7 +16,9 @@ impl SessionDb {
             "PRAGMA journal_mode=DELETE;
              PRAGMA foreign_keys=ON;",
         )?;
-        conn.execute_batch(include_str!("../../../../migrations/session/V1__session.sql"))?;
+        conn.execute_batch(include_str!(
+            "../../../../migrations/session/V1__session.sql"
+        ))?;
 
         // Migration V2: add updated_at column to sessions (last-active timestamp)
         let has_updated_at: bool = conn
@@ -31,14 +33,10 @@ impl SessionDb {
 
         // Migration V3: add episodic_summary column for L1 episodic layer summaries
         let has_episodic_summary: bool = conn
-            .prepare(
-                "SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'episodic_summary'",
-            )?
+            .prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'episodic_summary'")?
             .exists([])?;
         if !has_episodic_summary {
-            conn.execute_batch(
-                "ALTER TABLE sessions ADD COLUMN episodic_summary TEXT;",
-            )?;
+            conn.execute_batch("ALTER TABLE sessions ADD COLUMN episodic_summary TEXT;")?;
         }
 
         Ok(Self { conn })

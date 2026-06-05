@@ -269,7 +269,12 @@ impl SkillState {
             });
         }
 
-        Self { context, bodies, permissions, summaries }
+        Self {
+            context,
+            bodies,
+            permissions,
+            summaries,
+        }
     }
 }
 
@@ -541,8 +546,14 @@ mod tests {
 
         // Bodies map has 2 entries
         assert_eq!(state.bodies.len(), 2);
-        assert_eq!(state.bodies.get("alpha").map(|s| s.as_str()), Some("Alpha body"));
-        assert_eq!(state.bodies.get("beta").map(|s| s.as_str()), Some("Beta body"));
+        assert_eq!(
+            state.bodies.get("alpha").map(|s| s.as_str()),
+            Some("Alpha body")
+        );
+        assert_eq!(
+            state.bodies.get("beta").map(|s| s.as_str()),
+            Some("Beta body")
+        );
 
         // Permissions map has only 1 entry (the one with permissions)
         assert_eq!(state.permissions.len(), 1);

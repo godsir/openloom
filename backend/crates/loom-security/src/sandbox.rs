@@ -206,8 +206,8 @@ impl SandboxGuard {
         }
 
         // --- Step 5: workspace check (if workspace_only) ---
-        let granted_by_workspace = self.config.workspace_only
-            && self.is_within_workspace(&canonical);
+        let granted_by_workspace =
+            self.config.workspace_only && self.is_within_workspace(&canonical);
 
         // --- Step 6: allowed_paths (if not already granted by workspace) ---
         let granted_by_allowed = if granted_by_workspace {
@@ -303,7 +303,9 @@ fn check_builtin_deny(path: &Path, allow_loom_data: bool) -> Option<&'static str
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         match ext.to_lowercase().as_str() {
             "pem" | "key" | "p12" | "pfx" | "crt" | "cert" | "cer" | "der" | "jks" | "keystore" => {
-                return Some("credential files (*.pem / *.key / *.p12 / *.pfx / *.crt / *.jks) are protected");
+                return Some(
+                    "credential files (*.pem / *.key / *.p12 / *.pfx / *.crt / *.jks) are protected",
+                );
             }
             _ => {}
         }
@@ -491,9 +493,13 @@ mod tests {
 
     #[test]
     fn denies_windows_system_config() {
-        assert!(check_builtin_deny(Path::new("C:\\Windows\\System32\\config\\SAM"), false).is_some());
+        assert!(
+            check_builtin_deny(Path::new("C:\\Windows\\System32\\config\\SAM"), false).is_some()
+        );
         // Should match any drive letter
-        assert!(check_builtin_deny(Path::new("D:\\Windows\\System32\\config\\SAM"), false).is_some());
+        assert!(
+            check_builtin_deny(Path::new("D:\\Windows\\System32\\config\\SAM"), false).is_some()
+        );
     }
 
     #[test]
@@ -509,7 +515,9 @@ mod tests {
         assert!(check_builtin_deny(Path::new("/project/.loom/sandbox.toml"), true).is_none());
         assert!(check_builtin_deny(Path::new("/home/user/.loom/config.json"), true).is_none());
         assert!(check_builtin_deny(Path::new("/home/user/.loom/data/memory.db"), true).is_none());
-        assert!(check_builtin_deny(Path::new("/home/user/.loom/skills/my-skill.md"), true).is_none());
+        assert!(
+            check_builtin_deny(Path::new("/home/user/.loom/skills/my-skill.md"), true).is_none()
+        );
         // Other deny patterns still active even with allow_loom_data = true
         assert!(check_builtin_deny(Path::new("/home/user/.ssh/id_rsa"), true).is_some());
         assert!(check_builtin_deny(Path::new("/project/.env"), true).is_some());

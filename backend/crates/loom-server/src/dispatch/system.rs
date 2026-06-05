@@ -3,8 +3,8 @@
 use loom_types::{AgentConfig, ErrorCode, JsonRpcError, SandboxConfig};
 use serde_json::{Value, json};
 
-use crate::AppState;
 use super::err;
+use crate::AppState;
 
 pub async fn handle(
     state: &AppState,
@@ -175,10 +175,7 @@ async fn handle_agent_config_delete(state: &AppState, p: &Value) -> Result<Value
 // --- agent.config.generate ---
 
 async fn handle_agent_config_generate(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
-    let description = p
-        .get("description")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let description = p.get("description").and_then(|v| v.as_str()).unwrap_or("");
     if description.trim().is_empty() {
         return Err(err(ErrorCode::InvalidRequest, "description required"));
     }
@@ -193,10 +190,20 @@ async fn handle_agent_config_generate(state: &AppState, p: &Value) -> Result<Val
 // --- agent.config.optimize ---
 
 async fn handle_agent_config_optimize(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
-    let current = p.get("current").ok_or_else(|| err(ErrorCode::InvalidRequest, "current config required"))?;
-    let current_config: loom_types::AgentConfig = serde_json::from_value(current.clone())
-        .map_err(|e| err(ErrorCode::InvalidRequest, &format!("invalid current config: {}", e)))?;
-    let instructions = p.get("instructions").and_then(|v| v.as_str()).unwrap_or("优化此 Agent 的 persona 和系统提示词");
+    let current = p
+        .get("current")
+        .ok_or_else(|| err(ErrorCode::InvalidRequest, "current config required"))?;
+    let current_config: loom_types::AgentConfig =
+        serde_json::from_value(current.clone()).map_err(|e| {
+            err(
+                ErrorCode::InvalidRequest,
+                &format!("invalid current config: {}", e),
+            )
+        })?;
+    let instructions = p
+        .get("instructions")
+        .and_then(|v| v.as_str())
+        .unwrap_or("优化此 Agent 的 persona 和系统提示词");
     let config = state
         .orchestrator
         .agent_config_optimize(current_config, instructions.trim())
@@ -363,7 +370,10 @@ async fn handle_marketplace_uninstall(state: &AppState, p: &Value) -> Result<Val
     } else if skill_path.exists() {
         &skills_dir
     } else {
-        return Err(err(ErrorCode::InternalError, &format!("'{}' is not installed", entry_id)));
+        return Err(err(
+            ErrorCode::InternalError,
+            &format!("'{}' is not installed", entry_id),
+        ));
     };
     match loom_marketplace::uninstall(entry_id, target_dir) {
         Ok(()) => {
@@ -424,10 +434,16 @@ async fn handle_config_get_defaults(state: &AppState) -> Result<Value, JsonRpcEr
 
 async fn handle_config_set_defaults(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
     if let Some(v) = p.get("max_iterations").and_then(|v| v.as_u64()) {
-        state.orchestrator.set_default_max_iterations(v as usize).await;
+        state
+            .orchestrator
+            .set_default_max_iterations(v as usize)
+            .await;
     }
     if let Some(v) = p.get("max_prompt_budget").and_then(|v| v.as_u64()) {
-        state.orchestrator.set_default_max_prompt_budget(v as usize).await;
+        state
+            .orchestrator
+            .set_default_max_prompt_budget(v as usize)
+            .await;
     }
     Ok(json!({ "ok": true }))
 }

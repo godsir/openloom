@@ -4,8 +4,8 @@
 use loom_types::{ErrorCode, JsonRpcError, ModelConfig};
 use serde_json::{Value, json};
 
-use crate::AppState;
 use super::err;
+use crate::AppState;
 
 pub async fn handle(
     state: &AppState,
@@ -158,10 +158,8 @@ async fn handle_model_config_update(state: &AppState, p: &Value) -> Result<Value
                 }
             })
             .or(existing.model),
-        model_type: serde_json::from_value(
-            p.get("model_type").cloned().unwrap_or_default(),
-        )
-        .unwrap_or(existing.model_type),
+        model_type: serde_json::from_value(p.get("model_type").cloned().unwrap_or_default())
+            .unwrap_or(existing.model_type),
         backend: serde_json::from_value(p.get("backend").cloned().unwrap_or_default())
             .unwrap_or(existing.backend),
         backend_label: p
@@ -229,10 +227,8 @@ async fn handle_model_config_update(state: &AppState, p: &Value) -> Result<Value
             .and_then(|v| v.as_u64())
             .map(|v| v as usize)
             .unwrap_or(existing.n_gpu_layers),
-        capabilities: serde_json::from_value(
-            p.get("capabilities").cloned().unwrap_or_default(),
-        )
-        .unwrap_or(existing.capabilities),
+        capabilities: serde_json::from_value(p.get("capabilities").cloned().unwrap_or_default())
+            .unwrap_or(existing.capabilities),
         input_price: p
             .get("input_price")
             .and_then(|v| v.as_f64())
@@ -279,7 +275,10 @@ async fn handle_model_config_delete(state: &AppState, p: &Value) -> Result<Value
 // model.config.set_active
 // ---------------------------------------------------------------------------
 
-async fn handle_model_config_set_active(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+async fn handle_model_config_set_active(
+    state: &AppState,
+    p: &Value,
+) -> Result<Value, JsonRpcError> {
     let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
     if name.is_empty() {
         return Err(err(ErrorCode::InvalidRequest, "name required"));
@@ -312,13 +311,7 @@ async fn handle_model_save_key(state: &AppState, p: &Value) -> Result<Value, Jso
 
     // Store the key in the in-memory key_store and persist to disk.
     // This replaces the unsafe std::env::set_var approach.
-    crate::credential::save_key(
-        &state.data_dir,
-        &state.key_store,
-        &env_name,
-        api_key,
-    )
-    .await;
+    crate::credential::save_key(&state.data_dir, &state.key_store, &env_name, api_key).await;
 
     // Also update the orchestrator's key_store so it can resolve keys
     // when building cloud inference clients.
@@ -367,7 +360,9 @@ async fn handle_model_check_key(state: &AppState, p: &Value) -> Result<Value, Js
     // Read from in-memory key_store, fall back to OS env var
     let guard = state.key_store.read().await;
     let has_key = guard.get(&env_name).map(|v| !v.is_empty()).unwrap_or(false)
-        || std::env::var(&env_name).map(|v| !v.is_empty()).unwrap_or(false)
+        || std::env::var(&env_name)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
         || api_key_env.map(|v| !v.is_empty()).unwrap_or(false);
     Ok(json!({ "set": has_key, "env_name": env_name }))
 }
@@ -407,7 +402,9 @@ async fn handle_model_discover(state: &AppState, p: &Value) -> Result<Value, Jso
         })
         .or_else(|| {
             let auto_env = format!("{}_API_KEY", backend.to_uppercase().replace('-', "_"));
-            guard.get(&auto_env).cloned()
+            guard
+                .get(&auto_env)
+                .cloned()
                 .or_else(|| std::env::var(&auto_env).ok().filter(|v| !v.is_empty()))
         })
         .or_else(|| {
@@ -417,7 +414,9 @@ async fn handle_model_discover(state: &AppState, p: &Value) -> Result<Value, Jso
                 "anthropic" => "ANTHROPIC_API_KEY",
                 _ => "OPENLOOM_API_KEY",
             };
-            guard.get(auto_env).cloned()
+            guard
+                .get(auto_env)
+                .cloned()
                 .or_else(|| std::env::var(auto_env).ok().filter(|v| !v.is_empty()))
         })
         .unwrap_or_default();
@@ -470,93 +469,83 @@ async fn handle_model_discover(state: &AppState, p: &Value) -> Result<Value, Jso
         });
 
     // Try native API for local providers — yields accurate context_length
-    let native_ctx: std::collections::HashMap<String, u64> = if backend == "lmstudio"
-        || backend == "LmStudio"
-    {
-        let native_url = format!(
-            "{}/api/v1/models",
-            base_url.trim_end_matches("/v1").trim_end_matches('/')
-        );
-        match client
-            .get(&native_url)
-            .timeout(std::time::Duration::from_secs(5))
-            .send()
-            .await
-        {
-            Ok(resp) if resp.status().is_success() => match resp.json::<Value>().await {
-                Ok(v) => v
-                    .get("data")
-                    .and_then(|d| d.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|m| {
-                                let id = m.get("id").and_then(|v| v.as_str())?;
-                                let ctx = m
-                                    .get("max_context_length")
-                                    .and_then(|v| json_value_as_u64(v))
-                                    .filter(|&n| n > 0);
-                                Some((id.to_string(), ctx.unwrap_or(0)))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                Err(_) => std::collections::HashMap::new(),
-            },
-            _ => std::collections::HashMap::new(),
-        }
-    } else if backend == "ollama" || backend == "Ollama" {
-        // Ollama native /api/tags — yields model names then /api/show for context
-        let ollama_host = base_url.trim_end_matches("/v1").trim_end_matches('/');
-        let mut ctx_map = std::collections::HashMap::new();
-        if let Ok(resp) = client
-            .get(format!("{}/api/tags", ollama_host))
-            .timeout(std::time::Duration::from_secs(5))
-            .send()
-            .await
-        {
-            if resp.status().is_success() {
-                if let Ok(v) = resp.json::<Value>().await {
-                    if let Some(models) = v.get("models").and_then(|d| d.as_array()) {
-                        for m in models {
-                            if let Some(name) = m.get("name").and_then(|v| v.as_str()) {
-                                // Try /api/show for detailed model_info
-                                if let Ok(show_resp) = client
-                                    .post(format!("{}/api/show", ollama_host))
-                                    .json(&json!({ "name": name }))
-                                    .timeout(std::time::Duration::from_secs(3))
-                                    .send()
-                                    .await
-                                {
-                                    if show_resp.status().is_success() {
-                                        if let Ok(info) = show_resp.json::<Value>().await {
-                                            let ctx = info
-                                                .get("model_info")
-                                                .and_then(|mi| {
-                                                    mi.get("llama.context_length")
-                                                        .or_else(|| {
-                                                            mi.get("context_length")
-                                                        })
-                                                        .or_else(|| {
-                                                            mi.get("max_context_length")
-                                                        })
-                                                })
-                                                .and_then(|v| json_value_as_u64(v));
-                                            if let Some(c) = ctx.filter(|&n| n > 0) {
-                                                ctx_map.insert(name.to_string(), c);
-                                            }
-                                        }
-                                    }
-                                }
+    let native_ctx: std::collections::HashMap<String, u64> =
+        if backend == "lmstudio" || backend == "LmStudio" {
+            let native_url = format!(
+                "{}/api/v1/models",
+                base_url.trim_end_matches("/v1").trim_end_matches('/')
+            );
+            match client
+                .get(&native_url)
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => match resp.json::<Value>().await {
+                    Ok(v) => v
+                        .get("data")
+                        .and_then(|d| d.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|m| {
+                                    let id = m.get("id").and_then(|v| v.as_str())?;
+                                    let ctx = m
+                                        .get("max_context_length")
+                                        .and_then(json_value_as_u64)
+                                        .filter(|&n| n > 0);
+                                    Some((id.to_string(), ctx.unwrap_or(0)))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    Err(_) => std::collections::HashMap::new(),
+                },
+                _ => std::collections::HashMap::new(),
+            }
+        } else if backend == "ollama" || backend == "Ollama" {
+            // Ollama native /api/tags — yields model names then /api/show for context
+            let ollama_host = base_url.trim_end_matches("/v1").trim_end_matches('/');
+            let mut ctx_map = std::collections::HashMap::new();
+            if let Ok(resp) = client
+                .get(format!("{}/api/tags", ollama_host))
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await
+                && resp.status().is_success()
+                && let Ok(v) = resp.json::<Value>().await
+                && let Some(models) = v.get("models").and_then(|d| d.as_array())
+            {
+                for m in models {
+                    if let Some(name) = m.get("name").and_then(|v| v.as_str()) {
+                        // Try /api/show for detailed model_info
+                        if let Ok(show_resp) = client
+                            .post(format!("{}/api/show", ollama_host))
+                            .json(&json!({ "name": name }))
+                            .timeout(std::time::Duration::from_secs(3))
+                            .send()
+                            .await
+                            && show_resp.status().is_success()
+                            && let Ok(info) = show_resp.json::<Value>().await
+                        {
+                            let ctx = info
+                                .get("model_info")
+                                .and_then(|mi| {
+                                    mi.get("llama.context_length")
+                                        .or_else(|| mi.get("context_length"))
+                                        .or_else(|| mi.get("max_context_length"))
+                                })
+                                .and_then(json_value_as_u64);
+                            if let Some(c) = ctx.filter(|&n| n > 0) {
+                                ctx_map.insert(name.to_string(), c);
                             }
                         }
                     }
                 }
             }
-        }
-        ctx_map
-    } else {
-        std::collections::HashMap::new()
-    };
+            ctx_map
+        } else {
+            std::collections::HashMap::new()
+        };
 
     let models: Vec<Value> = raw_models
         .iter()
@@ -572,7 +561,7 @@ async fn handle_model_discover(state: &AppState, p: &Value) -> Result<Value, Jso
                         .or_else(|| item.get("context_length"))
                         .or_else(|| item.get("max_input_tokens"))
                         .or_else(|| item.get("max_context_length"))
-                        .and_then(|v| json_value_as_u64(v))
+                        .and_then(json_value_as_u64)
                         .filter(|&n| n > 0)
                 })
                 .or_else(|| known_context_window(id));

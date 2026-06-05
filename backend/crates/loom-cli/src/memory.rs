@@ -5,11 +5,8 @@
 use anyhow::Result;
 use loom_core::MemoryStore;
 use loom_memory::{
-    AgentConfigStore, CognitionStore, GraphStore, McpConfigStore, McpServerRow,
-    ModelConfigStore, NewEvent, RichPersonaProvider,
-    config_db::ConfigDb,
-    memory_db::MemoryDb,
-    session_db::SessionDb,
+    AgentConfigStore, CognitionStore, GraphStore, McpConfigStore, McpServerRow, ModelConfigStore,
+    NewEvent, RichPersonaProvider, config_db::ConfigDb, memory_db::MemoryDb, session_db::SessionDb,
 };
 use loom_types::{AgentConfig, Message, ModelConfig, PersonaProvider};
 
@@ -39,7 +36,12 @@ impl LoomMemoryStore {
         })
     }
 
-    fn migrate_legacy(data_dir: &std::path::Path, config_db: &ConfigDb, memory_db: &MemoryDb, session_db: &SessionDb) {
+    fn migrate_legacy(
+        data_dir: &std::path::Path,
+        config_db: &ConfigDb,
+        memory_db: &MemoryDb,
+        session_db: &SessionDb,
+    ) {
         let backup_path = data_dir.join("memory.db备份");
         if !backup_path.exists() {
             return;
@@ -48,47 +50,59 @@ impl LoomMemoryStore {
         tracing::info!("one-time migration from memory.db备份");
 
         // Copy config tables from backup to loom.db
-        let _ = config_db.conn().execute(
-            &format!("ATTACH DATABASE '{}' AS backup", backup), [],
-        );
-        config_db.conn().execute_batch(
-            "INSERT OR IGNORE INTO model_configs SELECT * FROM backup.model_configs;
+        let _ = config_db
+            .conn()
+            .execute(&format!("ATTACH DATABASE '{}' AS backup", backup), []);
+        config_db
+            .conn()
+            .execute_batch(
+                "INSERT OR IGNORE INTO model_configs SELECT * FROM backup.model_configs;
              INSERT OR IGNORE INTO agent_configs SELECT * FROM backup.agent_configs;
-             INSERT OR IGNORE INTO mcp_servers SELECT * FROM backup.mcp_servers;"
-        ).ok();
+             INSERT OR IGNORE INTO mcp_servers SELECT * FROM backup.mcp_servers;",
+            )
+            .ok();
         config_db.conn().execute("DETACH backup", []).ok();
 
         // Copy memory tables from backup to memory.db (fresh db, so no duplicates)
-        let _ = memory_db.conn().execute(
-            &format!("ATTACH DATABASE '{}' AS backup", backup), [],
-        );
-        memory_db.conn().execute_batch(
-            "INSERT OR IGNORE INTO events SELECT * FROM backup.events;
+        let _ = memory_db
+            .conn()
+            .execute(&format!("ATTACH DATABASE '{}' AS backup", backup), []);
+        memory_db
+            .conn()
+            .execute_batch(
+                "INSERT OR IGNORE INTO events SELECT * FROM backup.events;
              INSERT OR IGNORE INTO cognitions SELECT * FROM backup.cognitions;
              INSERT OR IGNORE INTO cognition_snapshots SELECT * FROM backup.cognition_snapshots;
              INSERT OR IGNORE INTO kg_nodes SELECT * FROM backup.kg_nodes;
              INSERT OR IGNORE INTO kg_edges SELECT * FROM backup.kg_edges;
              INSERT OR IGNORE INTO kg_aliases SELECT * FROM backup.kg_aliases;
-             INSERT OR IGNORE INTO kg_evidence SELECT * FROM backup.kg_evidence;"
-        ).ok();
+             INSERT OR IGNORE INTO kg_evidence SELECT * FROM backup.kg_evidence;",
+            )
+            .ok();
         // Rebuild FTS5 indexes
-        memory_db.conn().execute_batch(
-            "INSERT INTO events_fts (event_type, action, context)
+        memory_db
+            .conn()
+            .execute_batch(
+                "INSERT INTO events_fts (event_type, action, context)
              SELECT event_type, action, context FROM events;
              INSERT INTO kg_nodes_fts (name, description)
-             SELECT name, description FROM kg_nodes;"
-        ).ok();
+             SELECT name, description FROM kg_nodes;",
+            )
+            .ok();
         memory_db.conn().execute("DETACH backup", []).ok();
 
         // Copy session tables from backup to session.db
-        let _ = session_db.conn().execute(
-            &format!("ATTACH DATABASE '{}' AS backup", backup), [],
-        );
-        session_db.conn().execute_batch(
-            "INSERT OR IGNORE INTO sessions SELECT * FROM backup.sessions;
+        let _ = session_db
+            .conn()
+            .execute(&format!("ATTACH DATABASE '{}' AS backup", backup), []);
+        session_db
+            .conn()
+            .execute_batch(
+                "INSERT OR IGNORE INTO sessions SELECT * FROM backup.sessions;
              INSERT OR IGNORE INTO message_history SELECT * FROM backup.message_history;
-             INSERT OR IGNORE INTO token_usage SELECT * FROM backup.token_usage;"
-        ).ok();
+             INSERT OR IGNORE INTO token_usage SELECT * FROM backup.token_usage;",
+            )
+            .ok();
         session_db.conn().execute("DETACH backup", []).ok();
 
         // One-time migration complete — rename backup so it's not reused
@@ -112,9 +126,7 @@ fn cjk_snippet(text: &str, pos: usize, cap: usize) -> String {
     // Find the last sentence boundary within the snippet.
     // Use char-indexed slicing to avoid UTF-8 byte-boundary panics with
     // multi-byte CJK punctuation (。=3B, ！=3B, ？=3B).
-    if let Some((char_idx, _boundary_char)) = tail
-        .rmatch_indices(|c: char| matches!(c, '。' | '！' | '？' | '\n'))
-        .next()
+    if let Some((char_idx, _boundary_char)) = tail.rmatch_indices(['。', '！', '？', '\n']).next()
     {
         let byte_len: usize = tail
             .char_indices()
@@ -152,7 +164,8 @@ impl MemoryStore for LoomMemoryStore {
             "cache_read_tokens": cached_read_tokens,
             "cache_write_tokens": cached_write_tokens,
             "context_window": context_window,
-        }).to_string();
+        })
+        .to_string();
         {
             let sess = self.session_db.lock().expect("lock poisoned");
             let conn = sess.conn();
@@ -200,7 +213,11 @@ impl MemoryStore for LoomMemoryStore {
                 serde_json::json!({"assistant_response": assistant_msg, "tool_calls": tools, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}),
             ),
         };
-        let event_id = self.memory_db.lock().expect("lock poisoned").insert_event(&event)?;
+        let event_id = self
+            .memory_db
+            .lock()
+            .expect("lock poisoned")
+            .insert_event(&event)?;
         tracing::debug!(session_id, event_id, "chat turn saved");
         Ok(event_id)
     }
@@ -383,7 +400,14 @@ impl MemoryStore for LoomMemoryStore {
         for (keyword, tag) in tech_keywords {
             if lower.contains(keyword) && !lower.contains(&format!("not {}", keyword)) {
                 if cognition
-                    .insert("USER", &format!("uses_{}", tag), keyword, 0.5, 1, session_id)
+                    .insert(
+                        "USER",
+                        &format!("uses_{}", tag),
+                        keyword,
+                        0.5,
+                        1,
+                        session_id,
+                    )
                     .is_ok()
                 {
                     triggered.push(format!("uses_{}", tag));
@@ -486,7 +510,14 @@ impl MemoryStore for LoomMemoryStore {
         }
 
         // 5. Link USER node in knowledge graph
-        let _ = graph.upsert_node("USER", "Person", "The user of openLoom", 1.0, session_id, None);
+        let _ = graph.upsert_node(
+            "USER",
+            "Person",
+            "The user of openLoom",
+            1.0,
+            session_id,
+            None,
+        );
 
         if !triggered.is_empty() {
             tracing::info!(?triggered, session_id, "cognitions extracted");
@@ -533,15 +564,20 @@ impl MemoryStore for LoomMemoryStore {
             for t in persona.tech_stack.iter().take(10) {
                 lines.push(format!(
                     "- **{}**: {} (confidence: {:.2}, evidence: {})",
-                    t.name, t.level.as_str(), t.confidence, t.evidence_count
+                    t.name,
+                    t.level.as_str(),
+                    t.confidence,
+                    t.evidence_count
                 ));
             }
         }
 
         // Append active goals
-        let active_goals: Vec<_> = persona.goals.iter().filter(|g| {
-            matches!(g.status, loom_memory::persona::GoalStatus::Active)
-        }).collect();
+        let active_goals: Vec<_> = persona
+            .goals
+            .iter()
+            .filter(|g| matches!(g.status, loom_memory::persona::GoalStatus::Active))
+            .collect();
         if !active_goals.is_empty() {
             lines.push("\n### Active Goals".to_string());
             for g in active_goals.iter().take(5) {
@@ -586,33 +622,32 @@ impl MemoryStore for LoomMemoryStore {
 
         // Also resolve referenced entities that may already exist in DB
         for r in relationships {
-            if !node_ids.contains_key(&r.source_name) {
-                if let Ok(Some(id)) = graph.resolve_node(&r.source_name) {
-                    node_ids.insert(r.source_name.clone(), id);
-                }
+            if !node_ids.contains_key(&r.source_name)
+                && let Ok(Some(id)) = graph.resolve_node(&r.source_name)
+            {
+                node_ids.insert(r.source_name.clone(), id);
             }
-            if !node_ids.contains_key(&r.target_name) {
-                if let Ok(Some(id)) = graph.resolve_node(&r.target_name) {
-                    node_ids.insert(r.target_name.clone(), id);
-                }
+            if !node_ids.contains_key(&r.target_name)
+                && let Ok(Some(id)) = graph.resolve_node(&r.target_name)
+            {
+                node_ids.insert(r.target_name.clone(), id);
             }
         }
 
         // Wire evidence for nodes
-        for (_, node_id) in &node_ids {
+        for node_id in node_ids.values() {
             let _ = graph.link_evidence_node(*node_id, source_event_id);
         }
         // Wire evidence for edges
         for r in relationships {
             let src = node_ids.get(&r.source_name).copied();
             let tgt = node_ids.get(&r.target_name).copied();
-            if let (Some(s), Some(t)) = (src, tgt) {
-                if let Ok(edge_id) =
+            if let (Some(s), Some(t)) = (src, tgt)
+                && let Ok(edge_id) =
                     graph.upsert_edge(s, t, &r.relation_type, &r.fact, r.confidence, scope)
-                {
-                    edge_count += 1;
-                    let _ = graph.link_evidence_edge(edge_id, source_event_id);
-                }
+            {
+                edge_count += 1;
+                let _ = graph.link_evidence_edge(edge_id, source_event_id);
             }
         }
         Ok((node_count, edge_count))
@@ -639,14 +674,7 @@ impl MemoryStore for LoomMemoryStore {
                 "interest" => format!("interest_{}", clean_name.to_lowercase()),
                 other => format!("entity_{}", other),
             };
-            let _ = cognition.insert(
-                "USER",
-                &trait_name,
-                &value,
-                e.confidence,
-                1,
-                scope,
-            );
+            let _ = cognition.insert("USER", &trait_name, &value, e.confidence, 1, scope);
             tracing::info!(entity = %e.name, scope, "cognition inserted with scope");
         }
         Ok(())
@@ -806,7 +834,12 @@ impl MemoryStore for LoomMemoryStore {
         McpConfigStore::new(store.conn()).delete(name)
     }
 
-    async fn query_kg_context(&self, entity_names: &[&str], limit: usize, scope: &str) -> Result<String> {
+    async fn query_kg_context(
+        &self,
+        entity_names: &[&str],
+        limit: usize,
+        scope: &str,
+    ) -> Result<String> {
         let store = self.memory_db.lock().expect("lock poisoned");
         let graph = GraphStore::new(store.conn());
         let mut lines: Vec<String> = Vec::new();
@@ -879,7 +912,9 @@ impl MemoryStore for LoomMemoryStore {
         graph.query_kg_context(entity_names, limit, Some(scope), layer)
     }
 
-    async fn list_sessions(&self) -> Result<Vec<(String, String, usize, Option<String>, Option<String>)>> {
+    async fn list_sessions(
+        &self,
+    ) -> Result<Vec<(String, String, usize, Option<String>, Option<String>)>> {
         let store = self.session_db.lock().expect("lock poisoned");
         let mut stmt = store.conn().prepare(
             "SELECT id, created_at, message_count, title, updated_at FROM sessions ORDER BY updated_at DESC",
@@ -951,7 +986,12 @@ impl MemoryStore for LoomMemoryStore {
         GraphStore::new(store.conn()).edge_count()
     }
 
-    async fn kg_neighbors(&self, node_name: &str, limit: usize, scope: Option<&str>) -> Result<loom_types::KgGraph> {
+    async fn kg_neighbors(
+        &self,
+        node_name: &str,
+        limit: usize,
+        scope: Option<&str>,
+    ) -> Result<loom_types::KgGraph> {
         let store = self.memory_db.lock().expect("lock poisoned");
         let graph = GraphStore::new(store.conn());
         let rows = graph.neighbors(node_name, scope, limit)?;
@@ -995,10 +1035,10 @@ impl MemoryStore for LoomMemoryStore {
         // Also include the start node itself
         let start_id: Option<i64> = graph.resolve_node(start_name)?;
         let mut all_ids: Vec<i64> = rows.iter().map(|r| r.node_id).collect();
-        if let Some(sid) = start_id {
-            if !all_ids.contains(&sid) {
-                all_ids.insert(0, sid);
-            }
+        if let Some(sid) = start_id
+            && !all_ids.contains(&sid)
+        {
+            all_ids.insert(0, sid);
         }
 
         let nodes: Vec<loom_types::KgNode> = if let Some(sid) = start_id {
@@ -1008,17 +1048,23 @@ impl MemoryStore for LoomMemoryStore {
                 .map(|r| r.scope.clone())
                 .or_else(|| {
                     // If walk returned no rows, query the node directly for its scope
-                    store.conn().query_row(
-                        "SELECT scope FROM kg_nodes WHERE id = ?1",
-                        rusqlite::params![sid],
-                        |row| row.get::<_, String>(0),
-                    ).ok()
+                    store
+                        .conn()
+                        .query_row(
+                            "SELECT scope FROM kg_nodes WHERE id = ?1",
+                            rusqlite::params![sid],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .ok()
                 })
                 .unwrap_or_else(|| "global".to_string());
             let start_node = loom_types::KgNode {
                 node_id: sid,
                 name: start_name.to_string(),
-                entity_type: rows.first().map(|r| r.entity_type.clone()).unwrap_or_default(),
+                entity_type: rows
+                    .first()
+                    .map(|r| r.entity_type.clone())
+                    .unwrap_or_default(),
                 description: String::new(),
                 confidence: 1.0,
                 scope: start_scope,
@@ -1162,7 +1208,11 @@ impl MemoryStore for LoomMemoryStore {
         let promoted_nodes = graph.promote_nodes_by_name(node_names)?;
         let promoted_cogs = cognition.promote_cognitions_by_id(cognition_ids)?;
         if promoted_nodes > 0 || promoted_cogs > 0 {
-            tracing::info!(promoted_nodes, promoted_cogs, "promoted selected memories to global");
+            tracing::info!(
+                promoted_nodes,
+                promoted_cogs,
+                "promoted selected memories to global"
+            );
         }
         Ok((promoted_nodes, promoted_cogs))
     }
@@ -1250,7 +1300,11 @@ impl MemoryStore for LoomMemoryStore {
             .collect())
     }
 
-    async fn kg_edges_between(&self, node_names: &[String], scope: Option<&str>) -> Result<Vec<loom_types::KgEdge>> {
+    async fn kg_edges_between(
+        &self,
+        node_names: &[String],
+        scope: Option<&str>,
+    ) -> Result<Vec<loom_types::KgEdge>> {
         let store = self.memory_db.lock().expect("lock poisoned");
         let graph = GraphStore::new(store.conn());
 
@@ -1274,13 +1328,15 @@ impl MemoryStore for LoomMemoryStore {
         // Convert to KgEdge format
         Ok(edges
             .into_iter()
-            .map(|(source, target, relation_type, confidence)| loom_types::KgEdge {
-                source,
-                target,
-                relation_type,
-                fact: String::new(),
-                confidence,
-            })
+            .map(
+                |(source, target, relation_type, confidence)| loom_types::KgEdge {
+                    source,
+                    target,
+                    relation_type,
+                    fact: String::new(),
+                    confidence,
+                },
+            )
             .collect())
     }
 
@@ -1528,8 +1584,7 @@ impl MemoryStore for LoomMemoryStore {
         injected: &[String],
         duration_ms: i64,
     ) -> Result<i64> {
-        let injected_json =
-            serde_json::to_string(injected).unwrap_or_else(|_| "[]".to_string());
+        let injected_json = serde_json::to_string(injected).unwrap_or_else(|_| "[]".to_string());
         // Compute turn_seq from session DB if not explicitly provided
         let effective_seq = if turn_seq > 0 {
             turn_seq
@@ -1546,16 +1601,37 @@ impl MemoryStore for LoomMemoryStore {
         graph.record_quality_log(session_id, effective_seq, &injected_json, duration_ms)
     }
 
-    async fn update_quality_references(
-        &self,
-        log_id: i64,
-        referenced: &[String],
-    ) -> Result<()> {
+    async fn update_quality_references(&self, log_id: i64, referenced: &[String]) -> Result<()> {
         let referenced_json =
             serde_json::to_string(referenced).unwrap_or_else(|_| "[]".to_string());
         let mem = self.memory_db.lock().expect("lock poisoned");
         let graph = GraphStore::new(mem.conn());
         graph.update_quality_log_references(log_id, &referenced_json)
+    }
+
+    async fn memory_quality_report(
+        &self,
+        lookback_days: i64,
+    ) -> Result<loom_types::MemoryQualityReport> {
+        let mem = self.memory_db.lock().expect("lock poisoned");
+        let graph = GraphStore::new(mem.conn());
+        let report = graph.evaluate_memory_quality(lookback_days)?;
+        Ok(loom_types::MemoryQualityReport {
+            avg_relevance: report.avg_relevance,
+            injection_count: report.injection_count,
+            turns_with_references: report.turns_with_references,
+            total_entities: report.total_entities,
+            duplicate_rate: report.duplicate_rate,
+            stale_entity_count: report.stale_entity_count,
+            avg_confidence: report.avg_confidence,
+            entity_types_distribution: report.entity_types_distribution,
+            layer_distribution: report.layer_distribution,
+            entities_added_recently: report.entities_added_recently,
+            entities_accessed_recently: report.entities_accessed_recently,
+            consolidation_runs: report.consolidation_runs,
+            total_merged: report.total_merged,
+            health_score: report.health_score,
+        })
     }
 
     // ── Phase 2: Memory consolidation, persona, patterns, layers ─────────────
@@ -1564,7 +1640,8 @@ impl MemoryStore for LoomMemoryStore {
         let mem = self.memory_db.lock().expect("lock poisoned");
         let consolidator = loom_memory::MemoryConsolidator::new(mem.conn());
         let report = consolidator.run_cycle()?;
-        let json = serde_json::to_string(&report).unwrap_or_else(|_| r#"{"summary":"serialisation error"}"#.into());
+        let json = serde_json::to_string(&report)
+            .unwrap_or_else(|_| r#"{"summary":"serialisation error"}"#.into());
         tracing::info!(summary = %report.summary, "consolidation cycle completed");
         Ok(json)
     }
@@ -1599,5 +1676,286 @@ impl MemoryStore for LoomMemoryStore {
             anyhow::bail!("node '{}' not found for layer promotion", node_name);
         }
         Ok(())
+    }
+
+    // ── Phase 3: Full pipeline operations ───────────────────────────────────
+
+    async fn run_forgetting_cycle(&self, min_importance: f64, max_age_days: i64) -> Result<String> {
+        use loom_core::ForgettingReport;
+        let mem = self.memory_db.lock().expect("lock poisoned");
+        let conn = mem.conn();
+        let graph = loom_memory::GraphStore::new(conn);
+
+        // Use GraphStore::active_forgetting which applies safety protection rules:
+        // - entity_type='Person' → never pruned
+        // - evidence_count >= 10 → never pruned
+        // - scope='global' AND layer='global' → never pruned
+        // - access_count > 50 → never pruned
+        let report = graph.active_forgetting(min_importance, max_age_days)?;
+
+        let output = ForgettingReport {
+            cycle_timestamp: chrono::Utc::now().to_rfc3339(),
+            nodes_removed: report.pruned_nodes as usize,
+            edges_removed: report.pruned_edges as usize,
+            cognitions_removed: report.pruned_cognitions as usize,
+            min_importance_threshold: min_importance,
+            max_age_days,
+            summary: format!(
+                "Forgetting cycle: removed {} nodes, {} edges, {} cognitions (min_importance={}, max_age={}d); skipped {} protected",
+                report.pruned_nodes,
+                report.pruned_edges,
+                report.pruned_cognitions,
+                min_importance,
+                max_age_days,
+                report.skipped_protected
+            ),
+        };
+        let json = serde_json::to_string(&output)
+            .unwrap_or_else(|_| r#"{"summary":"serialisation error"}"#.into());
+        tracing::info!(
+            nodes = report.pruned_nodes,
+            edges = report.pruned_edges,
+            cognitions = report.pruned_cognitions,
+            skipped_protected = report.skipped_protected,
+            "forgetting cycle completed"
+        );
+        Ok(json)
+    }
+
+    async fn get_memory_health(&self) -> Result<String> {
+        use loom_core::MemoryHealth;
+        let mem = self.memory_db.lock().expect("lock poisoned");
+        let conn = mem.conn();
+        let graph = loom_memory::GraphStore::new(conn);
+
+        let total_nodes: usize = conn
+            .query_row("SELECT COUNT(*) FROM kg_nodes", [], |r| r.get(0))
+            .unwrap_or(0);
+        let total_edges: usize = conn
+            .query_row("SELECT COUNT(*) FROM kg_edges", [], |r| r.get(0))
+            .unwrap_or(0);
+        let total_cognitions: usize = conn
+            .query_row("SELECT COUNT(*) FROM cognitions", [], |r| r.get(0))
+            .unwrap_or(0);
+
+        // Stale nodes: updated more than 90 days ago
+        let stale_nodes: usize = conn
+            .query_row(
+                "SELECT COUNT(*) FROM kg_nodes WHERE updated_at < datetime('now', '-90 days')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        // Orphan nodes: nodes with no edges
+        let orphan_nodes: usize = conn
+            .query_row(
+                "SELECT COUNT(*) FROM kg_nodes n WHERE NOT EXISTS (SELECT 1 FROM kg_edges e WHERE e.source_id = n.id OR e.target_id = n.id)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        // Layer distribution
+        let layer_distribution = graph.get_layer_stats().unwrap_or_default();
+
+        // Fragmentation score: ratio of orphan nodes to total
+        let fragmentation_score = if total_nodes > 0 {
+            orphan_nodes as f64 / total_nodes as f64
+        } else {
+            0.0
+        };
+
+        let status = if fragmentation_score > 0.5 {
+            "critical"
+        } else if fragmentation_score > 0.3 {
+            "degraded"
+        } else {
+            "healthy"
+        };
+
+        let health = MemoryHealth {
+            total_nodes,
+            total_edges,
+            total_cognitions,
+            stale_nodes,
+            orphan_nodes,
+            layer_distribution,
+            fragmentation_score: (fragmentation_score * 100.0).round() / 100.0,
+            status: status.to_string(),
+            checked_at: chrono::Utc::now().to_rfc3339(),
+        };
+        let json =
+            serde_json::to_string(&health).unwrap_or_else(|_| r#"{"status":"unknown"}"#.into());
+        tracing::info!(
+            nodes = total_nodes,
+            edges = total_edges,
+            status = %status,
+            fragmentation = (fragmentation_score * 100.0),
+            "memory health check completed"
+        );
+        Ok(json)
+    }
+
+    async fn evaluate_quality(&self, lookback_days: i64) -> Result<String> {
+        use loom_core::MemoryQualityReport;
+        let mem = self.memory_db.lock().expect("lock poisoned");
+        let conn = mem.conn();
+
+        // Total injected entities (sum of json_array_length) in lookback window
+        let total_injected_entities: usize = conn
+            .query_row(
+                "SELECT COALESCE(SUM(json_array_length(injected_entities)), 0) FROM memory_quality_log WHERE created_at >= datetime('now', '-' || ?1 || ' days') AND injected_entities IS NOT NULL AND injected_entities != ''",
+                rusqlite::params![lookback_days],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        // Total referenced entities in lookback window
+        let total_references: usize = conn
+            .query_row(
+                "SELECT COALESCE(SUM(json_array_length(referenced_entities)), 0) FROM memory_quality_log WHERE created_at >= datetime('now', '-' || ?1 || ' days') AND referenced_entities IS NOT NULL AND referenced_entities != ''",
+                rusqlite::params![lookback_days],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        let recall_rate = if total_injected_entities > 0 {
+            (total_references as f64 / total_injected_entities as f64).min(1.0)
+        } else {
+            0.0
+        };
+
+        // Top entities: most recently updated, highest confidence
+        let top_entities: Vec<String> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT name FROM kg_nodes WHERE scope = 'global' ORDER BY confidence DESC, updated_at DESC LIMIT 10",
+                )
+                .ok();
+            let mut names = Vec::new();
+            if let Some(ref mut s) = stmt
+                && let Ok(rows) = s.query_map([], |row| row.get::<_, String>(0))
+            {
+                for name in rows.flatten() {
+                    names.push(name);
+                }
+            }
+            names
+        };
+
+        // Stale entities: not referenced anywhere recently
+        let stale_entities: Vec<String> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT name FROM kg_nodes WHERE updated_at < datetime('now', '-' || ?1 || ' days') AND scope = 'global' ORDER BY updated_at ASC LIMIT 10",
+                )
+                .ok();
+            let mut names = Vec::new();
+            if let Some(ref mut s) = stmt
+                && let Ok(rows) = s.query_map(rusqlite::params![lookback_days], |row| {
+                    row.get::<_, String>(0)
+                })
+            {
+                for name in rows.flatten() {
+                    names.push(name);
+                }
+            }
+            names
+        };
+
+        let quality_score = recall_rate * 100.0;
+
+        let mut recommendations: Vec<String> = Vec::new();
+        if recall_rate < 0.3 {
+            recommendations.push("Recall rate low: consider reducing entity extraction noise or increasing entity relevance thresholds.".into());
+        }
+        if stale_entities.len() > 5 {
+            recommendations.push(format!(
+                "{} stale entities detected: run forgetting cycle or manual prune.",
+                stale_entities.len()
+            ));
+        }
+
+        let report = MemoryQualityReport {
+            lookback_days,
+            total_injections: total_injected_entities,
+            total_references,
+            recall_rate: (recall_rate * 100.0).round() / 100.0,
+            top_entities,
+            stale_entities,
+            quality_score: (quality_score * 100.0).round() / 100.0,
+            recommendations,
+            evaluated_at: chrono::Utc::now().to_rfc3339(),
+        };
+        let json =
+            serde_json::to_string(&report).unwrap_or_else(|_| r#"{"recall_rate":0.0}"#.into());
+        tracing::info!(
+            injected_entities = total_injected_entities,
+            references = total_references,
+            recall_rate = recall_rate,
+            "quality evaluation completed"
+        );
+        Ok(json)
+    }
+
+    async fn get_pipeline_status(&self) -> Result<String> {
+        let mem = self.memory_db.lock().expect("lock poisoned");
+        let conn = mem.conn();
+
+        let node_count: usize = conn
+            .query_row("SELECT COUNT(*) FROM kg_nodes", [], |r| r.get(0))
+            .unwrap_or(0);
+        let edge_count: usize = conn
+            .query_row("SELECT COUNT(*) FROM kg_edges", [], |r| r.get(0))
+            .unwrap_or(0);
+        let cognition_count: usize = conn
+            .query_row("SELECT COUNT(*) FROM cognitions", [], |r| r.get(0))
+            .unwrap_or(0);
+
+        // Recent extraction count (last 24h) — count memory_quality_log entries
+        // (the actual injection log table used by the extraction pipeline),
+        // falling back to recent chat_turn events when the quality log is empty.
+        let recent_extractions: usize = {
+            let ql_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM memory_quality_log WHERE created_at >= datetime('now', '-1 day')",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            if ql_count > 0 {
+                ql_count as usize
+            } else {
+                // Fallback: count recent chat turns via events table
+                conn.query_row(
+                    "SELECT COUNT(*) FROM events WHERE event_type = 'chat_turn' AND timestamp >= ?1",
+                    rusqlite::params![chrono::Utc::now().timestamp() - 86400],
+                    |r| r.get(0),
+                ).unwrap_or(0) as usize
+            }
+        };
+
+        // Last consolidation (most recent kg_nodes update to 'global' scope)
+        let last_consolidation: String = conn
+            .query_row(
+                "SELECT COALESCE(MAX(updated_at), 'never') FROM kg_nodes WHERE scope = 'global'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or_else(|_| "never".to_string());
+
+        let status = serde_json::json!({
+            "status": "active",
+            "node_count": node_count,
+            "edge_count": edge_count,
+            "cognition_count": cognition_count,
+            "recent_extractions_24h": recent_extractions,
+            "last_consolidation": last_consolidation,
+            "checked_at": chrono::Utc::now().to_rfc3339(),
+        });
+        let json =
+            serde_json::to_string(&status).unwrap_or_else(|_| r#"{"status":"error"}"#.into());
+        Ok(json)
     }
 }

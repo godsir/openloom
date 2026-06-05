@@ -5,8 +5,8 @@ pub mod sandbox;
 
 pub use sandbox::SandboxGuard;
 
-use loom_types::{RiskLevel, SkillPermissions};
 use loom_skills::SkillPermissionConfig;
+use loom_types::{RiskLevel, SkillPermissions};
 
 /// Check if a tool call is allowed under current permissions.
 /// Returns (allowed, risk_level) where:

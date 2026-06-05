@@ -138,8 +138,13 @@ impl Message {
                 ContentPart::Thinking { .. } => {
                     // Drop thinking — not needed for LLM context
                 }
-                ContentPart::ToolResult { ref result, tool_call_id, name } if result.len() > 2000 => {
-                    let char_cut = result.char_indices()
+                ContentPart::ToolResult {
+                    ref result,
+                    tool_call_id,
+                    name,
+                } if result.len() > 2000 => {
+                    let char_cut = result
+                        .char_indices()
                         .nth(500)
                         .map(|(i, _)| i)
                         .unwrap_or(result.len());

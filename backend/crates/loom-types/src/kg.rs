@@ -62,3 +62,29 @@ pub struct CognitionHistory {
     pub evidence_count: usize,
     pub snapshot_at: i64,
 }
+
+/// Memory quality self-evaluation report — sent to the frontend settings page.
+/// Mirrors `loom_memory::MemoryQualityReport` for wire serialisation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryQualityReport {
+    // Injection quality
+    pub avg_relevance: f64,
+    pub injection_count: i64,
+    pub turns_with_references: i64,
+    // Entity health
+    pub total_entities: i64,
+    pub duplicate_rate: f64,
+    pub stale_entity_count: i64,
+    pub avg_confidence: f64,
+    // Coverage
+    pub entity_types_distribution: Vec<(String, i64)>,
+    pub layer_distribution: Vec<(String, i64)>,
+    // Freshness
+    pub entities_added_recently: i64,
+    pub entities_accessed_recently: i64,
+    // Consolidation
+    pub consolidation_runs: i64,
+    pub total_merged: i64,
+    // Score
+    pub health_score: f64,
+}

@@ -60,7 +60,12 @@ impl AgentTool for ShellTool {
         let cwd = arguments["cwd"]
             .as_str()
             .map(|s| context.resolve_path(s))
-            .or_else(|| context.workspace_path.as_ref().map(|ws| Path::new(ws).to_path_buf()));
+            .or_else(|| {
+                context
+                    .workspace_path
+                    .as_ref()
+                    .map(|ws| Path::new(ws).to_path_buf())
+            });
         let timeout_secs = arguments["timeout"].as_u64().unwrap_or(60).min(300);
 
         // Resolve actual working directory once, used for both sandbox check and shell execution
@@ -68,14 +73,14 @@ impl AgentTool for ShellTool {
         let work_dir = cwd.as_deref().unwrap_or(&default_cwd);
 
         // Sandbox guard: check exec permission
-        if let Some(ref guard) = context.sandbox {
-            if let Err(reason) = guard.check_exec(work_dir) {
-                return Ok(ToolResult {
-                    content: format!("沙盒拒绝: {}", reason),
-                    is_error: true,
-                    structured_content: None,
-                });
-            }
+        if let Some(ref guard) = context.sandbox
+            && let Err(reason) = guard.check_exec(work_dir)
+        {
+            return Ok(ToolResult {
+                content: format!("沙盒拒绝: {}", reason),
+                is_error: true,
+                structured_content: None,
+            });
         }
 
         // Use tokio::process::Command for async execution with timeout
@@ -83,14 +88,12 @@ impl AgentTool for ShellTool {
             // Prefer PowerShell over cmd.exe for better command support
             let pwsh = which_shell("pwsh").or_else(|| which_shell("powershell"));
             match pwsh {
-                Some(shell_path) => {
-                    tokio::process::Command::new(&shell_path)
-                        .args(["-NoProfile", "-NonInteractive", "-Command", command])
-                        .current_dir(work_dir)
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped())
-                        .spawn()
-                }
+                Some(shell_path) => tokio::process::Command::new(&shell_path)
+                    .args(["-NoProfile", "-NonInteractive", "-Command", command])
+                    .current_dir(work_dir)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn(),
                 None => {
                     // Fallback to cmd.exe if PowerShell is not found
                     tokio::process::Command::new("cmd")
@@ -102,7 +105,8 @@ impl AgentTool for ShellTool {
                 }
             }
         } else {
-            let default_cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
+            let default_cwd =
+                std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
             let work_dir = cwd.as_deref().unwrap_or(&default_cwd);
             tokio::process::Command::new("sh")
                 .args(["-c", command])
@@ -170,8 +174,7 @@ impl AgentTool for ShellTool {
                     content = "[ok] Command executed on local machine — no errors.".to_string();
                 }
                 if content.len() > 65536 {
-                    content =
-                        format!("{}...\n[truncated at 64KB]", truncate_utf8(&content, 65536));
+                    content = format!("{}...\n[truncated at 64KB]", truncate_utf8(&content, 65536));
                 }
                 Ok(ToolResult {
                     content,
@@ -236,14 +239,13 @@ fn which_shell(name: &str) -> Option<String> {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .output()
+            && output.status.success()
         {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout);
-                if let Some(first_line) = path.lines().next() {
-                    let trimmed = first_line.trim().to_string();
-                    if !trimmed.is_empty() {
-                        return Some(trimmed);
-                    }
+            let path = String::from_utf8_lossy(&output.stdout);
+            if let Some(first_line) = path.lines().next() {
+                let trimmed = first_line.trim().to_string();
+                if !trimmed.is_empty() {
+                    return Some(trimmed);
                 }
             }
         }
@@ -254,12 +256,11 @@ fn which_shell(name: &str) -> Option<String> {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .output()
+            && output.status.success()
         {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Some(path);
-                }
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(path);
             }
         }
     }
@@ -307,14 +308,14 @@ impl AgentTool for FileListTool {
         let path = context.resolve_path(path_str);
 
         // Sandbox guard: check read permission
-        if let Some(ref guard) = context.sandbox {
-            if let Err(reason) = guard.check_read(&path) {
-                return Ok(ToolResult {
-                    content: format!("沙盒拒绝: {}", reason),
-                    is_error: true,
-                    structured_content: None,
-                });
-            }
+        if let Some(ref guard) = context.sandbox
+            && let Err(reason) = guard.check_read(&path)
+        {
+            return Ok(ToolResult {
+                content: format!("沙盒拒绝: {}", reason),
+                is_error: true,
+                structured_content: None,
+            });
         }
 
         if !path.exists() {
@@ -434,14 +435,14 @@ impl AgentTool for FileReadTool {
         let path = context.resolve_path(path_str);
 
         // Sandbox guard: check read permission
-        if let Some(ref guard) = context.sandbox {
-            if let Err(reason) = guard.check_read(&path) {
-                return Ok(ToolResult {
-                    content: format!("沙盒拒绝: {}", reason),
-                    is_error: true,
-                    structured_content: None,
-                });
-            }
+        if let Some(ref guard) = context.sandbox
+            && let Err(reason) = guard.check_read(&path)
+        {
+            return Ok(ToolResult {
+                content: format!("沙盒拒绝: {}", reason),
+                is_error: true,
+                structured_content: None,
+            });
         }
 
         if !path.exists() {
@@ -554,14 +555,14 @@ impl AgentTool for FileWriteTool {
         let path = context.resolve_path(path_str);
 
         // Sandbox guard: check write permission
-        if let Some(ref guard) = context.sandbox {
-            if let Err(reason) = guard.check_write(&path) {
-                return Ok(ToolResult {
-                    content: format!("沙盒拒绝: {}", reason),
-                    is_error: true,
-                    structured_content: None,
-                });
-            }
+        if let Some(ref guard) = context.sandbox
+            && let Err(reason) = guard.check_write(&path)
+        {
+            return Ok(ToolResult {
+                content: format!("沙盒拒绝: {}", reason),
+                is_error: true,
+                structured_content: None,
+            });
         }
         let old_content = std::fs::read_to_string(&path).unwrap_or_default();
         let file_name = path
@@ -649,14 +650,14 @@ impl AgentTool for ContentSearchTool {
         let resolved_path = context.resolve_path(search_path);
 
         // Sandbox guard: check read permission on the search directory
-        if let Some(ref guard) = context.sandbox {
-            if let Err(reason) = guard.check_read(&resolved_path) {
-                return Ok(ToolResult {
-                    content: format!("沙盒拒绝: {}", reason),
-                    is_error: true,
-                    structured_content: None,
-                });
-            }
+        if let Some(ref guard) = context.sandbox
+            && let Err(reason) = guard.check_read(&resolved_path)
+        {
+            return Ok(ToolResult {
+                content: format!("沙盒拒绝: {}", reason),
+                is_error: true,
+                structured_content: None,
+            });
         }
         // Always use recursive walker — more reliable than findstr on Windows
         match simple_content_search(&resolved_path, pattern, max_results) {
@@ -763,14 +764,14 @@ impl AgentTool for FileDeleteTool {
         let path = context.resolve_path(path_str);
 
         // Sandbox guard: check write permission (delete is a destructive write)
-        if let Some(ref guard) = context.sandbox {
-            if let Err(reason) = guard.check_write(&path) {
-                return Ok(ToolResult {
-                    content: format!("沙盒拒绝: {}", reason),
-                    is_error: true,
-                    structured_content: None,
-                });
-            }
+        if let Some(ref guard) = context.sandbox
+            && let Err(reason) = guard.check_write(&path)
+        {
+            return Ok(ToolResult {
+                content: format!("沙盒拒绝: {}", reason),
+                is_error: true,
+                structured_content: None,
+            });
         }
         if !path.exists() {
             return Ok(ToolResult {
@@ -879,7 +880,14 @@ impl AgentTool for UseSkillTool {
                 });
             }
             return Ok(ToolResult {
-                content: format!("可用技能: {}", available.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")),
+                content: format!(
+                    "可用技能: {}",
+                    available
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
                 is_error: false,
                 structured_content: None,
             });

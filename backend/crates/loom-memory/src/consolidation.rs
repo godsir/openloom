@@ -4,7 +4,7 @@
 //! Phase 2 structural module.
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 
 use crate::graph::GraphStore;
@@ -126,128 +126,134 @@ impl<'a> MemoryConsolidator<'a> {
 
     /// Execute one L0-L3 layer consolidation cycle.
     /// Wrapped in an explicit transaction to prevent partial writes.
+    /// On any error the transaction is explicitly rolled back before propagating.
     pub fn run_cycle(&self) -> Result<ConsolidationReport> {
         self.conn.execute_batch("BEGIN")?;
 
-        let graph = GraphStore::new(self.conn);
-        let now = chrono::Utc::now().timestamp();
+        let result = (|| -> Result<ConsolidationReport> {
+            let graph = GraphStore::new(self.conn);
+            let now = chrono::Utc::now().timestamp();
 
-        // 1. Promote: episodic → semantic when high confidence and enough evidence.
-        let promoted = self.conn.execute(
-            "UPDATE kg_nodes SET layer = ?, last_updated = ?
+            // 1. Promote: episodic → semantic when high confidence and enough evidence.
+            let promoted = self.conn.execute(
+                "UPDATE kg_nodes SET layer = ?, last_updated = ?
              WHERE (layer = ? OR layer = ?)
                AND confidence >= ?
                AND evidence_count >= ?
                AND layer != ?
                AND layer != ?",
-            rusqlite::params![
-                Layer::Semantic.as_str(), now,
-                Layer::Episodic.as_str(), Layer::Working.as_str(),
-                self.config.promote_min_confidence,
-                self.config.promote_min_evidence,
-                Layer::Semantic.as_str(),
-                Layer::Global.as_str(),
-            ],
-        )?;
+                rusqlite::params![
+                    Layer::Semantic.as_str(),
+                    now,
+                    Layer::Episodic.as_str(),
+                    Layer::Working.as_str(),
+                    self.config.promote_min_confidence,
+                    self.config.promote_min_evidence,
+                    Layer::Semantic.as_str(),
+                    Layer::Global.as_str(),
+                ],
+            )?;
 
-        // 2. Promote: semantic → global for exceptional confidence.
-        let promoted_to_global = self.conn.execute(
-            "UPDATE kg_nodes SET layer = ?, last_updated = ?
+            // 2. Promote: semantic → global for exceptional confidence.
+            let promoted_to_global = self.conn.execute(
+                "UPDATE kg_nodes SET layer = ?, last_updated = ?
              WHERE layer = ?
                AND confidence >= 0.9
                AND evidence_count >= 10",
-            rusqlite::params![
-                Layer::Global.as_str(), now,
-                Layer::Semantic.as_str(),
-            ],
-        )?;
+                rusqlite::params![Layer::Global.as_str(), now, Layer::Semantic.as_str(),],
+            )?;
 
-        // 3. Demote: semantic → episodic when stale (inactive beyond demote window).
-        let cutoff_demote = now - self.config.demote_after_days * 86400;
-        let demoted = self.conn.execute(
-            "UPDATE kg_nodes SET layer = ?, last_updated = ?
+            // 3. Demote: semantic → episodic when stale (inactive beyond demote window).
+            let cutoff_demote = now - self.config.demote_after_days * 86400;
+            let demoted = self.conn.execute(
+                "UPDATE kg_nodes SET layer = ?, last_updated = ?
              WHERE layer = ?
                AND last_updated < ?
                AND confidence < 0.7",
-            rusqlite::params![
-                Layer::Episodic.as_str(), now,
-                Layer::Semantic.as_str(),
-                cutoff_demote,
-            ],
-        )?;
+                rusqlite::params![
+                    Layer::Episodic.as_str(),
+                    now,
+                    Layer::Semantic.as_str(),
+                    cutoff_demote,
+                ],
+            )?;
 
-        // 4. Prune: stale episodic nodes with very low confidence.
-        let cutoff_prune = now - self.config.prune_after_days * 86400;
-        let pruned = self.conn.execute(
-            "DELETE FROM kg_nodes
+            // 4. Prune: stale episodic nodes with very low confidence.
+            let cutoff_prune = now - self.config.prune_after_days * 86400;
+            let pruned = self.conn.execute(
+                "DELETE FROM kg_nodes
              WHERE layer = ?
                AND confidence < 0.2
                AND last_updated < ?
                AND evidence_count <= 1",
-            rusqlite::params![
-                Layer::Episodic.as_str(),
-                cutoff_prune,
-            ],
-        )?;
+                rusqlite::params![Layer::Episodic.as_str(), cutoff_prune,],
+            )?;
 
-        // 4a. Cascade: clean orphaned edges, aliases, evidence after prune.
-        if pruned > 0 {
-            self.conn.execute_batch(
-                "DELETE FROM kg_edges WHERE source_id NOT IN (SELECT id FROM kg_nodes)
+            // 4a. Cascade: clean orphaned edges, aliases, evidence after prune.
+            if pruned > 0 {
+                self.conn.execute_batch(
+                    "DELETE FROM kg_edges WHERE source_id NOT IN (SELECT id FROM kg_nodes)
                     OR target_id NOT IN (SELECT id FROM kg_nodes);
                  DELETE FROM kg_aliases WHERE node_id NOT IN (SELECT id FROM kg_nodes);
                  DELETE FROM kg_evidence WHERE node_id NOT IN (SELECT id FROM kg_nodes)
                     AND edge_id NOT IN (SELECT id FROM kg_edges);",
+                )?;
+            }
+
+            // 5. Cap semantic layer.
+            let semantic_count: i64 = self.conn.query_row(
+                "SELECT COUNT(*) FROM kg_nodes WHERE layer = ?",
+                rusqlite::params![Layer::Semantic.as_str()],
+                |row| row.get(0),
             )?;
-        }
 
-        // 5. Cap semantic layer.
-        let semantic_count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM kg_nodes WHERE layer = ?",
-            rusqlite::params![Layer::Semantic.as_str()],
-            |row| row.get(0),
-        )?;
-
-        let mut overflow_demoted = 0usize;
-        if semantic_count > self.config.semantic_cap as i64 {
-            let excess = semantic_count - self.config.semantic_cap as i64;
-            overflow_demoted = self.conn.execute(
-                "UPDATE kg_nodes SET layer = ?
+            let mut overflow_demoted = 0usize;
+            if semantic_count > self.config.semantic_cap as i64 {
+                let excess = semantic_count - self.config.semantic_cap as i64;
+                overflow_demoted = self.conn.execute(
+                    "UPDATE kg_nodes SET layer = ?
                  WHERE id IN (
                      SELECT id FROM kg_nodes
                      WHERE layer = ?
                      ORDER BY confidence ASC, evidence_count ASC
                      LIMIT ?
                  )",
-                rusqlite::params![
-                    Layer::Episodic.as_str(),
-                    Layer::Semantic.as_str(),
-                    excess,
-                ],
-            )? as usize;
+                    rusqlite::params![Layer::Episodic.as_str(), Layer::Semantic.as_str(), excess,],
+                )?;
+            }
+
+            // 6. Collect final layer stats before commit (read inside txn is OK).
+            let layer_counts = graph.get_layer_stats().unwrap_or_default();
+
+            let total_promoted = promoted + promoted_to_global;
+            let total_demoted = demoted + overflow_demoted;
+
+            let summary = format!(
+                "Consolidation: promoted={}, demoted={}, pruned={} | layers: {:?}",
+                total_promoted, total_demoted, pruned, layer_counts
+            );
+
+            self.conn.execute_batch("COMMIT")?;
+
+            Ok(ConsolidationReport {
+                promoted: total_promoted,
+                demoted: total_demoted,
+                pruned,
+                layer_counts,
+                summary,
+                ..Default::default()
+            })
+        })();
+
+        match result {
+            Ok(report) => Ok(report),
+            Err(e) => {
+                // Explicit rollback on any error — prevents leaving an open
+                // write transaction that could cause database-locked errors.
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
         }
-
-        // 6. Collect final layer stats before commit (read inside txn is OK).
-        let layer_counts = graph.get_layer_stats().unwrap_or_default();
-
-        let total_promoted = (promoted + promoted_to_global) as usize;
-        let total_demoted = (demoted + overflow_demoted as usize) as usize;
-
-        let summary = format!(
-            "Consolidation: promoted={}, demoted={}, pruned={} | layers: {:?}",
-            total_promoted, total_demoted, pruned, layer_counts
-        );
-
-        self.conn.execute_batch("COMMIT")?;
-
-        Ok(ConsolidationReport {
-            promoted: total_promoted,
-            demoted: total_demoted,
-            pruned: pruned as usize,
-            layer_counts,
-            summary,
-            ..Default::default()
-        })
     }
 
     // ========================================================================
@@ -309,8 +315,11 @@ impl<'a> MemoryConsolidator<'a> {
                 }
             };
 
-            let to_delete: Vec<i64> =
-                ids.iter().copied().filter(|id| *id != survivor_id).collect();
+            let to_delete: Vec<i64> = ids
+                .iter()
+                .copied()
+                .filter(|id| *id != survivor_id)
+                .collect();
             if to_delete.is_empty() {
                 continue;
             }
@@ -343,8 +352,11 @@ impl<'a> MemoryConsolidator<'a> {
             }
 
             // --- Clean evidence rows pointing to dupes ---
-            let ph: Vec<String> =
-                to_delete.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+            let ph: Vec<String> = to_delete
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 1))
+                .collect();
             let ev_sql = format!(
                 "DELETE FROM kg_evidence WHERE node_id IN ({})",
                 ph.join(",")
@@ -385,32 +397,42 @@ impl<'a> MemoryConsolidator<'a> {
 
     /// Pick the best node from a group of duplicate ids.
     fn find_survivor_node(&self, ids: &[i64]) -> Result<i64> {
-        let ph: Vec<String> =
-            ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+        let ph: Vec<String> = ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect();
         let sql = format!(
             "SELECT id FROM kg_nodes WHERE id IN ({})
              ORDER BY confidence DESC, evidence_count DESC, id ASC LIMIT 1",
             ph.join(",")
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let sparams: Vec<&dyn rusqlite::types::ToSql> =
-            ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+        let sparams: Vec<&dyn rusqlite::types::ToSql> = ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::types::ToSql)
+            .collect();
         Ok(stmt.query_row(sparams.as_slice(), |row| row.get(0))?)
     }
 
     /// Sum evidence_count and take MAX confidence from the duplicate nodes
     /// into the survivor.
     fn merge_node_stats(&self, survivor_id: i64, old_ids: &[i64]) -> Result<()> {
-        let ph: Vec<String> =
-            old_ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+        let ph: Vec<String> = old_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect();
         let sql = format!(
             "SELECT COALESCE(SUM(evidence_count),0), COALESCE(MAX(confidence),0)
              FROM kg_nodes WHERE id IN ({})",
             ph.join(",")
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let sparams: Vec<&dyn rusqlite::types::ToSql> =
-            old_ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+        let sparams: Vec<&dyn rusqlite::types::ToSql> = old_ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::types::ToSql)
+            .collect();
         let (extra_evidence, max_conf): (i64, f64) =
             stmt.query_row(sparams.as_slice(), |row| Ok((row.get(0)?, row.get(1)?)))?;
 
@@ -507,8 +529,11 @@ impl<'a> MemoryConsolidator<'a> {
             }
 
             // --- Pick the survivor ---
-            let ph: Vec<String> =
-                ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+            let ph: Vec<String> = ids
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 1))
+                .collect();
             let pick_sql = format!(
                 "SELECT id FROM cognitions WHERE id IN ({})
                  ORDER BY confidence DESC, evidence_count DESC, last_updated DESC, id ASC LIMIT 1",
@@ -516,8 +541,10 @@ impl<'a> MemoryConsolidator<'a> {
             );
             let survivor_id: i64 = {
                 let mut stmt = self.conn.prepare(&pick_sql)?;
-                let sparams: Vec<&dyn rusqlite::types::ToSql> =
-                    ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+                let sparams: Vec<&dyn rusqlite::types::ToSql> = ids
+                    .iter()
+                    .map(|id| id as &dyn rusqlite::types::ToSql)
+                    .collect();
                 match stmt.query_row(sparams.as_slice(), |row| row.get(0)) {
                     Ok(id) => id,
                     Err(e) => {
@@ -529,15 +556,21 @@ impl<'a> MemoryConsolidator<'a> {
                 }
             };
 
-            let to_delete: Vec<i64> =
-                ids.iter().copied().filter(|id| *id != survivor_id).collect();
+            let to_delete: Vec<i64> = ids
+                .iter()
+                .copied()
+                .filter(|id| *id != survivor_id)
+                .collect();
             if to_delete.is_empty() {
                 continue;
             }
 
             // --- Merge stats from duplicates ---
-            let del_ph: Vec<String> =
-                to_delete.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+            let del_ph: Vec<String> = to_delete
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 1))
+                .collect();
             let merge_sql = format!(
                 "SELECT COALESCE(SUM(evidence_count),0), COALESCE(MAX(confidence),0),
                         COALESCE(MAX(last_updated),0)
@@ -546,8 +579,10 @@ impl<'a> MemoryConsolidator<'a> {
             );
             let (extra_evidence, max_conf, max_updated): (i64, f64, i64) = {
                 let mut stmt = self.conn.prepare(&merge_sql)?;
-                let dparams: Vec<&dyn rusqlite::types::ToSql> =
-                    to_delete.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+                let dparams: Vec<&dyn rusqlite::types::ToSql> = to_delete
+                    .iter()
+                    .map(|id| id as &dyn rusqlite::types::ToSql)
+                    .collect();
                 stmt.query_row(dparams.as_slice(), |row| {
                     Ok((row.get(0)?, row.get(1)?, row.get(2)?))
                 })?
@@ -565,15 +600,29 @@ impl<'a> MemoryConsolidator<'a> {
 
             // --- Reassign snapshots to survivor ---
             for old_id in &to_delete {
-                let _ = self.conn.execute(
+                if let Err(e) = self.conn.execute(
                     "UPDATE cognition_snapshots SET cognition_id = ?1 WHERE cognition_id = ?2",
                     params![survivor_id, old_id],
-                );
+                ) {
+                    tracing::warn!(
+                        old_id = old_id,
+                        survivor_id = survivor_id,
+                        error = %e,
+                        "consolidation: failed to reassign cognition snapshot"
+                    );
+                    report.errors.push(format!(
+                        "snapshot_reassign old={} -> survivor={}: {}",
+                        old_id, survivor_id, e
+                    ));
+                }
             }
 
             // --- Delete the duplicates ---
-            let del2: Vec<String> =
-                to_delete.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+            let del2: Vec<String> = to_delete
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 1))
+                .collect();
             let del_sql = format!("DELETE FROM cognitions WHERE id IN ({})", del2.join(","));
             self.conn.execute(
                 &del_sql,
@@ -595,14 +644,16 @@ impl<'a> MemoryConsolidator<'a> {
     /// Promote session-scoped `kg_nodes` to the 'episodic' intermediate tier
     /// when they have confidence >= `threshold` AND evidence_count >= 3.
     ///
-    /// Nodes already at 'global' or 'episodic' layer are skipped.  Returns the
-    /// number of promoted rows.
+    /// Promotes from 'semantic' (L2, priority 20) → 'episodic' (L1, priority 30).
+    /// Does NOT promote from 'working' (L0, priority 40) — that would be a
+    /// demotion since L0 is the highest-priority tier.
+    /// Nodes already at 'global' (L3) or 'episodic' (L1) are skipped.
     pub fn promote_high_confidence(&self, threshold: f64) -> Result<usize> {
         self.conn.execute_batch("BEGIN")?;
 
         let promoted = self.conn.execute(
             "UPDATE kg_nodes SET layer = 'episodic'
-             WHERE layer IN ('working', 'semantic')
+             WHERE layer = 'semantic'
                AND scope NOT IN ('global')
                AND confidence >= ?1
                AND evidence_count >= 3",
@@ -674,10 +725,8 @@ mod tests {
 
     fn setup_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!(
-            "../../../../migrations/memory/V1__memory.sql"
-        ))
-        .unwrap();
+        conn.execute_batch(include_str!("../../../../migrations/memory/V1__memory.sql"))
+            .unwrap();
         // memory_db.rs adds embedding column idempotently.
         conn.execute_batch("ALTER TABLE kg_nodes ADD COLUMN embedding BLOB;")
             .unwrap();
@@ -715,10 +764,24 @@ mod tests {
         let store = GraphStore::new(&conn);
 
         let id1 = store
-            .upsert_node("Rust", "Technology", "A programming language", 0.6, "session_a", None)
+            .upsert_node(
+                "Rust",
+                "Technology",
+                "A programming language",
+                0.6,
+                "session_a",
+                None,
+            )
             .unwrap();
         let id2 = store
-            .upsert_node("Rust", "Technology", "A systems language", 0.9, "session_b", None)
+            .upsert_node(
+                "Rust",
+                "Technology",
+                "A systems language",
+                0.9,
+                "session_b",
+                None,
+            )
             .unwrap();
         assert_ne!(id1, id2);
 
@@ -748,7 +811,11 @@ mod tests {
         let report = consolidator.consolidate_duplicates().unwrap();
 
         assert_eq!(report.merged_nodes, 1);
-        assert!(report.errors.is_empty(), "unexpected errors: {:?}", report.errors);
+        assert!(
+            report.errors.is_empty(),
+            "unexpected errors: {:?}",
+            report.errors
+        );
 
         // One node left
         let cnt2: i64 = conn
@@ -1050,7 +1117,14 @@ mod tests {
 
         // Node already at episodic layer — should be skipped
         let id = store
-            .upsert_node("AlreadyEpi", "Concept", "desc", 0.9, "session_a", Some("episodic"))
+            .upsert_node(
+                "AlreadyEpi",
+                "Concept",
+                "desc",
+                0.9,
+                "session_a",
+                Some("episodic"),
+            )
             .unwrap();
         conn.execute(
             "UPDATE kg_nodes SET evidence_count = 10 WHERE id = ?1",

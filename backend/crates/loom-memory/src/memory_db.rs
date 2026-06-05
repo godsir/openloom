@@ -33,17 +33,47 @@ impl MemoryDb {
 
         // V4: Layered memory architecture (L0-L3).
         // Idempotent: ALTER TABLE ADD COLUMN errors on repeat runs, so check first.
-        // Checks BOTH kg_nodes and cognitions — V4 adds layer to both tables.
+        // Checks BOTH kg_nodes and cognitions individually — V4 adds layer to both tables.
+        // Each ALTER TABLE is guarded independently to avoid partial-migration
+        // corruption when one table was migrated but the other was not (e.g. crash
+        // mid-migration).
         let has_node_layer: bool = conn
             .prepare("SELECT 1 FROM pragma_table_info('kg_nodes') WHERE name = 'layer'")?
             .exists([])?;
         let has_cog_layer: bool = conn
             .prepare("SELECT 1 FROM pragma_table_info('cognitions') WHERE name = 'layer'")?
             .exists([])?;
+
+        // Apply V4 migration statements individually so a partial prior run
+        // (e.g. kg_nodes got the column before a crash) does not break the
+        // second attempt with a "column already exists" error.
+        if !has_node_layer {
+            conn.execute_batch(
+                "ALTER TABLE kg_nodes ADD COLUMN layer TEXT NOT NULL DEFAULT 'semantic';",
+            )?;
+        }
+        if !has_cog_layer {
+            conn.execute_batch(
+                "ALTER TABLE cognitions ADD COLUMN layer TEXT NOT NULL DEFAULT 'semantic';",
+            )?;
+        }
+
+        // Apply remaining V4 statements (triggers, indexes) — these are
+        // idempotent via IF NOT EXISTS / OR IGNORE.
         if !has_node_layer || !has_cog_layer {
-            conn.execute_batch(include_str!(
-                "../../../../migrations/memory/V4__layered_memory.sql"
-            ))?;
+            // Run the full migration for any non-ALTER-TABLE statements
+            // (triggers, indexes, etc.). The ALTER TABLEs above are already
+            // handled, so skip them by running only the safe parts.
+            conn.execute_batch(
+                "CREATE TRIGGER IF NOT EXISTS kg_nodes_layer_default
+                 AFTER INSERT ON kg_nodes
+                 FOR EACH ROW
+                 WHEN NEW.layer IS NULL
+                 BEGIN
+                     UPDATE kg_nodes SET layer = 'semantic' WHERE id = NEW.id;
+                 END;",
+            )
+            .ok(); // trigger may already exist
         }
         // Ensure memory_layers table and default rows exist (idempotent).
         // Must run even when the layer column already existed, since the
@@ -74,9 +104,7 @@ impl MemoryDb {
             .prepare("SELECT 1 FROM pragma_table_info('events') WHERE name = 'type'")?
             .exists([])?;
         if has_type_column {
-            conn.execute_batch(
-                "ALTER TABLE events RENAME COLUMN type TO event_type;",
-            )?;
+            conn.execute_batch("ALTER TABLE events RENAME COLUMN type TO event_type;")?;
         }
 
         // Rebuild events_fts if its schema doesn't match (survives partial
@@ -182,7 +210,13 @@ mod tests {
         conn.execute(
             "INSERT INTO kg_nodes (name, entity_type, description, confidence, scope)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params!["Rust", "Technology", "Systems programming language", 0.9, "global"],
+            rusqlite::params![
+                "Rust",
+                "Technology",
+                "Systems programming language",
+                0.9,
+                "global"
+            ],
         )
         .unwrap();
 
@@ -209,10 +243,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(
-            fts_match, 1,
-            "FTS search for 'Rust' should return 1 match"
-        );
+        assert_eq!(fts_match, 1, "FTS search for 'Rust' should return 1 match");
 
         // Test UPDATE trigger: change description, should still be searchable
         conn.execute(

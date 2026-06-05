@@ -3,8 +3,8 @@
 use loom_types::{ErrorCode, JsonRpcError};
 use serde_json::{Value, json};
 
-use crate::AppState;
 use super::err;
+use crate::AppState;
 
 pub async fn handle(
     state: &AppState,

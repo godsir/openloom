@@ -112,7 +112,10 @@ mod tests {
     fn make_router() -> SlashRouter {
         let mut router = SlashRouter::new();
         let mut bodies = HashMap::new();
-        bodies.insert("brainstorming".to_string(), "BRAINSTORMING_BODY".to_string());
+        bodies.insert(
+            "brainstorming".to_string(),
+            "BRAINSTORMING_BODY".to_string(),
+        );
         bodies.insert("debug".to_string(), "DEBUG_BODY".to_string());
         router.rebuild(bodies);
         router

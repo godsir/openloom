@@ -103,7 +103,13 @@ pub async fn serve(
         let effective_updated = updated_at.unwrap_or_else(|| created_at.clone());
         state
             .sessions
-            .restore(id.clone(), created_at, effective_updated, message_count, title)
+            .restore(
+                id.clone(),
+                created_at,
+                effective_updated,
+                message_count,
+                title,
+            )
             .await;
         // Restore persisted agent binding
         let agent_name = state
@@ -114,6 +120,9 @@ pub async fn serve(
             let _ = state.sessions.bind_agent(&id, &name).await;
         }
     }
+
+    // Phase 3: Start background forgetting loop (hourly check, 7-day interval gate).
+    state.orchestrator.spawn_forgetting_loop();
 
     let app = build_router(state);
     let addr = format!("{}:{}", host, port);

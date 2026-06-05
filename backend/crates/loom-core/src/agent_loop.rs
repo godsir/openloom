@@ -7,13 +7,15 @@
 use anyhow::Result;
 use loom_context::{AssembleOptions, ContextAssembler};
 use loom_inference::engine::CloudClient;
+use loom_plugins::hooks::HookEvent;
 use loom_security::check_permission;
+use loom_types::SkillPermissions;
+use loom_types::{
+    CompletionRequest, CompletionResponse, ContentPart, Message, Role, StreamDelta, ToolDefinition,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use loom_types::SkillPermissions;
-use loom_types::{CompletionRequest, CompletionResponse, ContentPart, Message, Role, StreamDelta, ToolDefinition};
-use loom_plugins::hooks::HookEvent;
 use tokio::sync::mpsc;
 use tracing::info;
 
@@ -109,7 +111,9 @@ pub struct AgentLoopConfig {
     /// Event bus for publishing permission requests (for "ask" mode)
     pub event_bus: Option<EventBus>,
     /// Pending permission approvals keyed by call_id
-    pub pending_permissions: Option<Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>>,
+    #[allow(clippy::type_complexity)]
+    pub pending_permissions:
+        Option<Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>>,
     /// Optional sandbox guard for file/path access control.
     /// When None, no sandbox checks are performed (backward compatible).
     pub sandbox: Option<Arc<loom_security::sandbox::SandboxGuard>>,
@@ -151,7 +155,8 @@ impl Default for AgentLoopConfig {
                 "## 知识图谱",
                 "对话中的重要实体和关系会被自动提取到知识图谱。",
                 "长期记忆中存储了你的历史交互和用户偏好，会作为上下文注入。",
-            ].join("\n"),
+            ]
+            .join("\n"),
             max_iterations: 100,
             max_tokens: 4096,
             temperature: 0.0,
@@ -184,7 +189,7 @@ impl Default for AgentLoopConfig {
 /// Remove all `ContentPart::Image` entries from the message list. Used after
 /// vision auxiliary injects a textual `<vision-context>` so non-vision main
 /// models never receive an `image_url` part they cannot deserialize.
-fn strip_image_parts(messages: &mut Vec<Message>) {
+fn strip_image_parts(messages: &mut [Message]) {
     for m in messages.iter_mut() {
         m.content
             .retain(|p| !matches!(p, ContentPart::Image { .. } | ContentPart::ImageRef { .. }));
@@ -221,7 +226,8 @@ fn extract_image_paths(text: &str) -> Vec<String> {
 
     // Match Windows paths: D:\foo\bar.jpg or C:/foo/bar.png
     let win_re = regex::Regex::new(&format!(
-        r#"[A-Za-z]:[/\\][^\s<>"|]+\.(?i)({})"#, ext_pattern
+        r#"[A-Za-z]:[/\\][^\s<>"|]+\.(?i)({})"#,
+        ext_pattern
     ))
     .unwrap();
     for mat in win_re.find_iter(text) {
@@ -229,10 +235,7 @@ fn extract_image_paths(text: &str) -> Vec<String> {
     }
 
     // Match Unix paths: /foo/bar.jpg
-    let unix_re = regex::Regex::new(&format!(
-        r#"/[^\s<>"|]+\.(?i)({})"#, ext_pattern
-    ))
-    .unwrap();
+    let unix_re = regex::Regex::new(&format!(r#"/[^\s<>"|]+\.(?i)({})"#, ext_pattern)).unwrap();
     for mat in unix_re.find_iter(text) {
         let path = mat.as_str().to_string();
         if !paths.contains(&path) {
@@ -245,7 +248,7 @@ fn extract_image_paths(text: &str) -> Vec<String> {
 
 /// Load an image file and convert to ContentPart::Image with base64 data.
 fn load_image_as_content_part(path: &str) -> Result<ContentPart> {
-    use base64::{engine::general_purpose::STANDARD, Engine};
+    use base64::{Engine, engine::general_purpose::STANDARD};
     use std::path::Path;
 
     let file_path = Path::new(path);
@@ -330,10 +333,10 @@ fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
         "use_skill",
     ];
     for name in builtins {
-        if !matched.iter().any(|t| t.name == *name) {
-            if let Some(t) = all.iter().find(|t| t.name == *name) {
-                matched.push(t.clone());
-            }
+        if !matched.iter().any(|t| t.name == *name)
+            && let Some(t) = all.iter().find(|t| t.name == *name)
+        {
+            matched.push(t.clone());
         }
     }
 
@@ -387,6 +390,7 @@ pub async fn run_agent_turn(
 }
 
 /// Execute one agent turn with attached images.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_agent_turn_with_images(
     client: &dyn CloudClient,
     registry: &ToolRegistry,
@@ -412,6 +416,7 @@ pub async fn run_agent_turn_with_images(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_agent_turn_inner(
     client: &dyn CloudClient,
     registry: &ToolRegistry,
@@ -472,41 +477,46 @@ async fn run_agent_turn_inner(
             info!("main model is vision-capable, skipping vision auxiliary");
         } else {
             let vision_cfg = crate::vision::load_vision_config();
-            if vision_cfg.enabled {
-                if let Some(vision_model) = &vision_cfg.model {
-                    // Resolve ImageRef back to base64 for vision model
-                    let images = crate::vision::extract_images_from_messages(
-                        &messages,
-                        config.loom_dir.as_deref(),
+            if vision_cfg.enabled
+                && let Some(vision_model) = &vision_cfg.model
+            {
+                // Resolve ImageRef back to base64 for vision model
+                let images = crate::vision::extract_images_from_messages(
+                    &messages,
+                    config.loom_dir.as_deref(),
+                );
+                if !images.is_empty() {
+                    let model_configs = config.model_configs.clone();
+                    let ks = config
+                        .key_store
+                        .clone()
+                        .unwrap_or_else(|| Arc::new(RwLock::new(HashMap::new())));
+                    let vision_fut = crate::vision::prepare_vision_context(
+                        &images,
+                        user_message,
+                        vision_model,
+                        &model_configs,
+                        &ks,
+                        None, // no progress reporting in non-streaming
                     );
-                    if !images.is_empty() {
-                        let model_configs = config.model_configs.clone();
-                        let ks = config.key_store.clone().unwrap_or_else(|| Arc::new(RwLock::new(HashMap::new())));
-                        let vision_fut = crate::vision::prepare_vision_context(
-                            &images,
-                            user_message,
-                            vision_model,
-                            &model_configs,
-                            &ks,
-                            None, // no progress reporting in non-streaming
-                        );
-                        let vision_result =
-                            tokio::time::timeout(std::time::Duration::from_secs(300), vision_fut)
-                                .await;
-                        match vision_result {
-                            Ok(Ok(vresult)) => {
-                                vision_usage = Some(vresult.usage);
-                                messages.push(Message {
-                                    role: loom_types::Role::System,
-                                    content: vec![ContentPart::Text { text: vresult.context }],
-                                    timestamp: chrono::Utc::now(),
-                                    usage: None,
-                                });
-                                info!("vision auxiliary context injected");
-                            }
-                            Ok(Err(e)) => {
-                                tracing::warn!(error = %e, "vision auxiliary failed");
-                                messages.push(Message {
+                    let vision_result =
+                        tokio::time::timeout(std::time::Duration::from_secs(300), vision_fut).await;
+                    match vision_result {
+                        Ok(Ok(vresult)) => {
+                            vision_usage = Some(vresult.usage);
+                            messages.push(Message {
+                                role: loom_types::Role::System,
+                                content: vec![ContentPart::Text {
+                                    text: vresult.context,
+                                }],
+                                timestamp: chrono::Utc::now(),
+                                usage: None,
+                            });
+                            info!("vision auxiliary context injected");
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!(error = %e, "vision auxiliary failed");
+                            messages.push(Message {
                                     role: loom_types::Role::System,
                                     content: vec![ContentPart::Text {
                                         text: format!(
@@ -517,10 +527,10 @@ async fn run_agent_turn_inner(
                                     timestamp: chrono::Utc::now(),
                                     usage: None,
                                 });
-                            }
-                            Err(_) => {
-                                tracing::warn!("vision auxiliary timed out after 300s");
-                                messages.push(Message {
+                        }
+                        Err(_) => {
+                            tracing::warn!("vision auxiliary timed out after 300s");
+                            messages.push(Message {
                                     role: loom_types::Role::System,
                                     content: vec![ContentPart::Text {
                                         text: "<vision-context>\n[图像分析超时：辅助视觉模型 300s 内无响应。请明确告诉用户你没看到图片，建议检查视觉模型配置。]\n</vision-context>".into(),
@@ -528,7 +538,6 @@ async fn run_agent_turn_inner(
                                     timestamp: chrono::Utc::now(),
                                     usage: None,
                                 });
-                            }
                         }
                     }
                 }
@@ -555,7 +564,12 @@ async fn run_agent_turn_inner(
     for iteration in 0..config.max_iterations {
         // Token budget check: stop if cumulative prompt tokens exceed the budget
         if config.max_prompt_budget > 0 && total_prompt > config.max_prompt_budget {
-            info!(iteration, total_prompt, budget = config.max_prompt_budget, "token budget exceeded");
+            info!(
+                iteration,
+                total_prompt,
+                budget = config.max_prompt_budget,
+                "token budget exceeded"
+            );
 
             // Fire Notification hook
             if let Some(ref hook_reg) = config.hook_registry {
@@ -567,12 +581,19 @@ async fn run_agent_turn_inner(
                 let _ = hook_reg
                     .read()
                     .await
-                    .fire(&HookEvent::Notification, Some("token_budget"), &mut hook_ctx)
+                    .fire(
+                        &HookEvent::Notification,
+                        Some("token_budget"),
+                        &mut hook_ctx,
+                    )
                     .await;
             }
 
             return Ok(TurnResult {
-                response: format!("任务进行中（已用 {} tokens，达到预算上限）。输入「继续」以接着执行。", total_prompt),
+                response: format!(
+                    "任务进行中（已用 {} tokens，达到预算上限）。输入「继续」以接着执行。",
+                    total_prompt
+                ),
                 thinking: String::new(),
                 tool_calls_made,
                 iterations: iteration,
@@ -583,7 +604,10 @@ async fn run_agent_turn_inner(
                 cache_write_tokens: 0,
                 kv_cache_hit: None,
                 content_parts: vec![ContentPart::Text {
-                    text: format!("任务进行中（已用 {} tokens）。输入「继续」以接着执行。", total_prompt),
+                    text: format!(
+                        "任务进行中（已用 {} tokens）。输入「继续」以接着执行。",
+                        total_prompt
+                    ),
                 }],
                 tool_messages,
                 vision_usage: None,
@@ -798,14 +822,11 @@ async fn run_agent_turn_inner(
                 let (mut allowed, risk) = check_permission(&tool_name, &perms);
 
                 // "ask" mode: for medium/high risk tools, request user approval
-                if allowed && config.permission_mode == "ask" && risk != loom_types::RiskLevel::Low {
-                    allowed = request_user_approval(
-                        &tc.id,
-                        &tool_name,
-                        &tc.arguments,
-                        &risk,
-                        config,
-                    ).await;
+                if allowed && config.permission_mode == "ask" && risk != loom_types::RiskLevel::Low
+                {
+                    allowed =
+                        request_user_approval(&tc.id, &tool_name, &tc.arguments, &risk, config)
+                            .await;
                 }
 
                 if !allowed {
@@ -852,11 +873,7 @@ async fn run_agent_turn_inner(
                             tool_name, risk
                         ),
                     };
-                    let perm_msg = Message::tool(
-                        &tc.id,
-                        &tool_name,
-                        reason,
-                    );
+                    let perm_msg = Message::tool(&tc.id, &tool_name, reason);
                     messages.push(perm_msg.clone());
                     tool_messages.push(perm_msg);
                     continue;
@@ -864,9 +881,7 @@ async fn run_agent_turn_inner(
 
                 let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
                 // Drain progress updates in background to avoid SendError in tool implementations
-                tokio::spawn(async move {
-                    while let Some(_) = progress_rx.recv().await {}
-                });
+                tokio::spawn(async move { while progress_rx.recv().await.is_some() {} });
 
                 // Fire PreToolUse hook
                 if let Some(ref hook_reg) = config.hook_registry {
@@ -1174,78 +1189,83 @@ async fn run_agent_turn_streaming_inner(
             tracing::info!("main model is vision-capable, skipping vision auxiliary (streaming)");
         } else {
             let vision_cfg = crate::vision::load_vision_config();
-            if vision_cfg.enabled {
-                if let Some(vision_model) = &vision_cfg.model {
-                    // Resolve ImageRef back to base64 for vision model
-                    let images = crate::vision::extract_images_from_messages(
-                        &messages,
-                        config.loom_dir.as_deref(),
+            if vision_cfg.enabled
+                && let Some(vision_model) = &vision_cfg.model
+            {
+                // Resolve ImageRef back to base64 for vision model
+                let images = crate::vision::extract_images_from_messages(
+                    &messages,
+                    config.loom_dir.as_deref(),
+                );
+                if !images.is_empty() {
+                    let _ = delta_tx
+                        .send(StreamDelta::Text("\x02VISION_START\x02".into()))
+                        .await;
+                    let model_configs = config.model_configs.clone();
+                    let (progress_tx, mut progress_rx) =
+                        tokio::sync::mpsc::channel::<crate::vision::VisionBatchProgress>(8);
+                    let images = images.clone();
+                    let user_message = user_message.to_string();
+                    let vision_model = vision_model.clone();
+
+                    // Spawn progress forwarder
+                    let delta_tx_progress = delta_tx.clone();
+                    let progress_handle = tokio::spawn(async move {
+                        while let Some(p) = progress_rx.recv().await {
+                            // Encode result: replace newlines with \x03 for safe transport
+                            let result_encoded =
+                                p.result.as_deref().unwrap_or("").replace('\n', "\x03");
+                            let signal = format!(
+                                "\x02VISION_BATCH\x02{};{};{};{}",
+                                p.batch_index, p.total_batches, p.status, result_encoded
+                            );
+                            let _ = delta_tx_progress.send(StreamDelta::Text(signal)).await;
+                        }
+                    });
+
+                    let ks = config
+                        .key_store
+                        .clone()
+                        .unwrap_or_else(|| Arc::new(RwLock::new(HashMap::new())));
+                    let vision_fut = crate::vision::prepare_vision_context(
+                        &images,
+                        &user_message,
+                        &vision_model,
+                        &model_configs,
+                        &ks,
+                        Some(progress_tx),
                     );
-                    if !images.is_empty() {
-                        let _ = delta_tx
-                            .send(StreamDelta::Text("\x02VISION_START\x02".into()))
-                            .await;
-                        let model_configs = config.model_configs.clone();
-                        let (progress_tx, mut progress_rx) =
-                            tokio::sync::mpsc::channel::<crate::vision::VisionBatchProgress>(8);
-                        let images = images.clone();
-                        let user_message = user_message.to_string();
-                        let vision_model = vision_model.clone();
-
-                        // Spawn progress forwarder
-                        let delta_tx_progress = delta_tx.clone();
-                        let progress_handle = tokio::spawn(async move {
-                            while let Some(p) = progress_rx.recv().await {
-                                // Encode result: replace newlines with \x03 for safe transport
-                                let result_encoded = p.result
-                                    .as_deref()
-                                    .unwrap_or("")
-                                    .replace('\n', "\x03");
-                                let signal = format!(
-                                    "\x02VISION_BATCH\x02{};{};{};{}",
-                                    p.batch_index, p.total_batches, p.status, result_encoded
-                                );
-                                let _ = delta_tx_progress
-                                    .send(StreamDelta::Text(signal))
-                                    .await;
-                            }
-                        });
-
-                        let ks = config.key_store.clone().unwrap_or_else(|| Arc::new(RwLock::new(HashMap::new())));
-                        let vision_fut = crate::vision::prepare_vision_context(
-                            &images,
-                            &user_message,
-                            &vision_model,
-                            &model_configs,
-                            &ks,
-                            Some(progress_tx),
-                        );
-                        let vision_result =
-                            tokio::time::timeout(std::time::Duration::from_secs(300), vision_fut)
-                                .await;
-                        match vision_result {
-                            Ok(Ok(vresult)) => {
-                                // Emit vision token usage as AuxiliaryUsage delta
-                                // so the orchestrator persists it under the vision model name
-                                if vresult.usage.prompt_tokens > 0 || vresult.usage.completion_tokens > 0 {
-                                    let _ = delta_tx.send(StreamDelta::AuxiliaryUsage {
+                    let vision_result =
+                        tokio::time::timeout(std::time::Duration::from_secs(300), vision_fut).await;
+                    match vision_result {
+                        Ok(Ok(vresult)) => {
+                            // Emit vision token usage as AuxiliaryUsage delta
+                            // so the orchestrator persists it under the vision model name
+                            if vresult.usage.prompt_tokens > 0
+                                || vresult.usage.completion_tokens > 0
+                            {
+                                let _ = delta_tx
+                                    .send(StreamDelta::AuxiliaryUsage {
                                         model: vresult.usage.model_name.clone(),
                                         prompt_tokens: vresult.usage.prompt_tokens as u64,
                                         completion_tokens: vresult.usage.completion_tokens as u64,
-                                    }).await;
-                                }
-                                vision_usage = Some(vresult.usage);
-                                messages.push(Message {
-                                    role: loom_types::Role::System,
-                                    content: vec![ContentPart::Text { text: vresult.context }],
-                                    timestamp: chrono::Utc::now(),
-                                    usage: None,
-                                });
-                                tracing::info!("vision auxiliary context injected (streaming)");
+                                    })
+                                    .await;
                             }
-                            Ok(Err(e)) => {
-                                tracing::warn!(error = %e, "vision auxiliary failed");
-                                messages.push(Message {
+                            vision_usage = Some(vresult.usage);
+                            messages.push(Message {
+                                role: loom_types::Role::System,
+                                content: vec![ContentPart::Text {
+                                    text: vresult.context,
+                                }],
+                                timestamp: chrono::Utc::now(),
+                                usage: None,
+                            });
+                            tracing::info!("vision auxiliary context injected (streaming)");
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!(error = %e, "vision auxiliary failed");
+                            messages.push(Message {
                                     role: loom_types::Role::System,
                                     content: vec![ContentPart::Text {
                                         text: format!(
@@ -1256,10 +1276,10 @@ async fn run_agent_turn_streaming_inner(
                                     timestamp: chrono::Utc::now(),
                                     usage: None,
                                 });
-                            }
-                            Err(_) => {
-                                tracing::warn!("vision auxiliary timed out after 300s");
-                                messages.push(Message {
+                        }
+                        Err(_) => {
+                            tracing::warn!("vision auxiliary timed out after 300s");
+                            messages.push(Message {
                                     role: loom_types::Role::System,
                                     content: vec![ContentPart::Text {
                                         text: "<vision-context>\n[图像分析超时：辅助视觉模型 300s 内无响应。请明确告诉用户你没看到图片，建议检查视觉模型配置。]\n</vision-context>".into(),
@@ -1267,14 +1287,13 @@ async fn run_agent_turn_streaming_inner(
                                     timestamp: chrono::Utc::now(),
                                     usage: None,
                                 });
-                            }
                         }
-                        // Clean up progress forwarder
-                        progress_handle.abort();
-                        let _ = delta_tx
-                            .send(StreamDelta::Text("\x02VISION_DONE\x02".into()))
-                            .await;
                     }
+                    // Clean up progress forwarder
+                    progress_handle.abort();
+                    let _ = delta_tx
+                        .send(StreamDelta::Text("\x02VISION_DONE\x02".into()))
+                        .await;
                 }
             }
             // Strip images so non-vision main model never receives image_url.
@@ -1300,7 +1319,12 @@ async fn run_agent_turn_streaming_inner(
     for iteration in 0..config.max_iterations {
         // Token budget check: stop if cumulative prompt tokens exceed the budget
         if config.max_prompt_budget > 0 && total_prompt > config.max_prompt_budget {
-            tracing::info!(iteration, total_prompt, budget = config.max_prompt_budget, "token budget exceeded (streaming)");
+            tracing::info!(
+                iteration,
+                total_prompt,
+                budget = config.max_prompt_budget,
+                "token budget exceeded (streaming)"
+            );
 
             // Fire Notification hook
             if let Some(ref hook_reg) = config.hook_registry {
@@ -1312,11 +1336,18 @@ async fn run_agent_turn_streaming_inner(
                 let _ = hook_reg
                     .read()
                     .await
-                    .fire(&HookEvent::Notification, Some("token_budget"), &mut hook_ctx)
+                    .fire(
+                        &HookEvent::Notification,
+                        Some("token_budget"),
+                        &mut hook_ctx,
+                    )
                     .await;
             }
 
-            let msg = format!("任务进行中（已用 {} tokens，达到预算上限）。输入「继续」以接着执行。", total_prompt);
+            let msg = format!(
+                "任务进行中（已用 {} tokens，达到预算上限）。输入「继续」以接着执行。",
+                total_prompt
+            );
             let _ = delta_tx.send(StreamDelta::Text(msg.clone())).await;
             drop(delta_tx);
             return Ok(TurnResult {
@@ -1330,7 +1361,9 @@ async fn run_agent_turn_streaming_inner(
                 cache_read_tokens: 0,
                 cache_write_tokens: 0,
                 kv_cache_hit: None,
-                content_parts: vec![ContentPart::Text { text: "任务进行中，已达预算上限。".into() }],
+                content_parts: vec![ContentPart::Text {
+                    text: "任务进行中，已达预算上限。".into(),
+                }],
                 tool_messages,
                 vision_usage: None,
             });
@@ -1447,7 +1480,7 @@ async fn run_agent_turn_streaming_inner(
                                 .await;
                         }
                         drop(stream_rx);
-                        drop(stream_fut);
+                        // stream_fut is a pinned future that doesn't need explicit drop
                         let _ = delta_tx.send(StreamDelta::Text("[已中断]".into())).await;
                         drop(delta_tx);
                         return Ok(TurnResult {
@@ -1513,6 +1546,7 @@ async fn run_agent_turn_streaming_inner(
                         match r {
                             Ok(()) => {
                                 // Drain remaining deltas with short timeout to catch racing sends.
+                                #[allow(clippy::while_let_loop)]
                                 loop {
                                     match tokio::time::timeout(
                                         std::time::Duration::from_millis(50),
@@ -1683,12 +1717,11 @@ async fn run_agent_turn_streaming_inner(
                     if let Some(tools_arr) = args["tools"].as_array() {
                         // Match by exact tool name
                         for t in tools_arr {
-                            if let Some(name) = t.as_str() {
-                                if let Some(def) = all_tools.iter().find(|d| d.name == name) {
-                                    if !matched.iter().any(|m| m.name == name) {
-                                        matched.push(def.clone());
-                                    }
-                                }
+                            if let Some(name) = t.as_str()
+                                && let Some(def) = all_tools.iter().find(|d| d.name == name)
+                                && !matched.iter().any(|m| m.name == name)
+                            {
+                                matched.push(def.clone());
                             }
                         }
                     }
@@ -1707,10 +1740,16 @@ async fn run_agent_turn_streaming_inner(
                     // Fallback: load essential built-in tools only (not all 16)
                     if matched.is_empty() {
                         let essentials: &[&str] = &[
-                            "shell", "file_read", "file_write", "file_list",
-                            "content_search", "file_delete", "use_skill",
+                            "shell",
+                            "file_read",
+                            "file_write",
+                            "file_list",
+                            "content_search",
+                            "file_delete",
+                            "use_skill",
                         ];
-                        matched = all_tools.iter()
+                        matched = all_tools
+                            .iter()
                             .filter(|t| essentials.contains(&t.name.as_str()))
                             .cloned()
                             .collect();
@@ -1731,15 +1770,11 @@ async fn run_agent_turn_streaming_inner(
                 let (mut allowed, risk) = check_permission(tc_name, &perms);
 
                 // "ask" mode: for medium/high risk tools, request user approval
-                if allowed && config.permission_mode == "ask" && risk != loom_types::RiskLevel::Low {
-                    let args: serde_json::Value = serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}));
-                    allowed = request_user_approval(
-                        tc_id,
-                        tc_name,
-                        &args,
-                        &risk,
-                        config,
-                    ).await;
+                if allowed && config.permission_mode == "ask" && risk != loom_types::RiskLevel::Low
+                {
+                    let args: serde_json::Value =
+                        serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}));
+                    allowed = request_user_approval(tc_id, tc_name, &args, &risk, config).await;
                 }
 
                 if !allowed {
@@ -1754,11 +1789,7 @@ async fn run_agent_turn_streaming_inner(
                         let _ = hook_reg
                             .read()
                             .await
-                            .fire(
-                                &HookEvent::PermissionRequest,
-                                Some(tc_name),
-                                &mut hook_ctx,
-                            )
+                            .fire(&HookEvent::PermissionRequest, Some(tc_name), &mut hook_ctx)
                             .await;
                     }
                     let reason = match config.permission_mode.as_str() {
@@ -1786,11 +1817,7 @@ async fn run_agent_turn_streaming_inner(
                             tc_name, risk
                         ),
                     };
-                    let perm_msg = Message::tool(
-                        tc_id,
-                        tc_name,
-                        reason.clone(),
-                    );
+                    let perm_msg = Message::tool(tc_id, tc_name, reason.clone());
                     messages.push(perm_msg.clone());
                     tool_messages.push(perm_msg);
                     let _ = delta_tx
@@ -1840,9 +1867,7 @@ async fn run_agent_turn_streaming_inner(
                 };
                 let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
                 // Drain progress updates in background to avoid SendError in tool implementations
-                tokio::spawn(async move {
-                    while let Some(_) = progress_rx.recv().await {}
-                });
+                tokio::spawn(async move { while progress_rx.recv().await.is_some() {} });
 
                 // Fire PreToolUse hook
                 if let Some(ref hook_reg) = config.hook_registry {
@@ -1861,7 +1886,10 @@ async fn run_agent_turn_streaming_inner(
                 }
 
                 info!(tool_name = %tc_name, tool_args = %tc_args, "executing tool (streaming)");
-                match registry.execute(tc_name, arguments, progress_tx, &tool_context).await {
+                match registry
+                    .execute(tc_name, arguments, progress_tx, &tool_context)
+                    .await
+                {
                     Ok(result) => {
                         tool_calls_made += 1;
                         let success = !result.is_error;
@@ -1884,7 +1912,9 @@ async fn run_agent_turn_streaming_inner(
                                 session_id: config.session_id.clone(),
                                 agent_id: config.agent_id.clone(),
                                 tool_name: Some(tc_name.to_string()),
-                                tool_args: Some(serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}))),
+                                tool_args: Some(
+                                    serde_json::from_str(tc_args).unwrap_or(serde_json::json!({})),
+                                ),
                                 tool_result: Some(content.clone()),
                                 tool_success: Some(success),
                                 ..Default::default()
@@ -1918,7 +1948,9 @@ async fn run_agent_turn_streaming_inner(
                                 session_id: config.session_id.clone(),
                                 agent_id: config.agent_id.clone(),
                                 tool_name: Some(tc_name.to_string()),
-                                tool_args: Some(serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}))),
+                                tool_args: Some(
+                                    serde_json::from_str(tc_args).unwrap_or(serde_json::json!({})),
+                                ),
                                 tool_result: Some(err_msg.clone()),
                                 tool_success: Some(false),
                                 ..Default::default()
@@ -1926,11 +1958,7 @@ async fn run_agent_turn_streaming_inner(
                             let _result = hook_reg
                                 .read()
                                 .await
-                                .fire(
-                                    &HookEvent::PostToolUseFailure,
-                                    Some(tc_name),
-                                    &mut hook_ctx,
-                                )
+                                .fire(&HookEvent::PostToolUseFailure, Some(tc_name), &mut hook_ctx)
                                 .await;
                         }
 
@@ -1985,7 +2013,11 @@ async fn run_agent_turn_streaming_inner(
         thinking: captured_thinking,
         content_parts,
         tool_calls_made,
-        iterations: if completed_iterations > 0 { completed_iterations } else { config.max_iterations },
+        iterations: if completed_iterations > 0 {
+            completed_iterations
+        } else {
+            config.max_iterations
+        },
         prompt_tokens: total_prompt,
         completion_tokens: total_completion,
         cached_tokens: client.estimated_cache_tokens(),
@@ -2009,7 +2041,9 @@ async fn request_user_approval(
     let (bus, pending) = match (&config.event_bus, &config.pending_permissions) {
         (Some(b), Some(p)) => (b, p),
         _ => {
-            tracing::warn!("ask mode enabled but no event_bus/pending_permissions configured — denying tool");
+            tracing::warn!(
+                "ask mode enabled but no event_bus/pending_permissions configured — denying tool"
+            );
             return false;
         }
     };

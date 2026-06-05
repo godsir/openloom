@@ -30,7 +30,12 @@ pub struct ExtractedRelationship {
 
 /// Trait for entity+relationship extraction from text.
 pub trait EntityExtractor: Send + Sync {
-    fn extract_entities(&self, text: &str, context: &str, scope: &str) -> Result<Vec<ExtractedEntity>>;
+    fn extract_entities(
+        &self,
+        text: &str,
+        context: &str,
+        scope: &str,
+    ) -> Result<Vec<ExtractedEntity>>;
     fn extract_relationships(
         &self,
         text: &str,
@@ -43,7 +48,12 @@ pub trait EntityExtractor: Send + Sync {
 pub struct RuleBasedEntityExtractor;
 
 impl EntityExtractor for RuleBasedEntityExtractor {
-    fn extract_entities(&self, text: &str, _context: &str, scope: &str) -> Result<Vec<ExtractedEntity>> {
+    fn extract_entities(
+        &self,
+        text: &str,
+        _context: &str,
+        scope: &str,
+    ) -> Result<Vec<ExtractedEntity>> {
         let mut entities = Vec::new();
         let lower = text.to_lowercase();
 
@@ -51,56 +61,136 @@ impl EntityExtractor for RuleBasedEntityExtractor {
         let techs: &[(&str, &str, &str)] = &[
             // ── Programming Languages ──────────────────────────────
             ("rust", "Technology", "Systems programming language"),
-            ("python", "Technology", "General-purpose programming language"),
+            (
+                "python",
+                "Technology",
+                "General-purpose programming language",
+            ),
             ("typescript", "Technology", "Typed JavaScript superset"),
             ("golang", "Technology", "Go programming language"),
             ("java", "Technology", "JVM-based object-oriented language"),
-            ("javascript", "Technology", "Dynamic scripting language for the web"),
+            (
+                "javascript",
+                "Technology",
+                "Dynamic scripting language for the web",
+            ),
             ("c++", "Technology", "General-purpose systems language"),
             ("c#", "Technology", ".NET object-oriented language"),
-            ("kotlin", "Technology", "Modern JVM language for Android/backend"),
-            ("swift", "Technology", "Apple's systems programming language"),
+            (
+                "kotlin",
+                "Technology",
+                "Modern JVM language for Android/backend",
+            ),
+            (
+                "swift",
+                "Technology",
+                "Apple's systems programming language",
+            ),
             ("elixir", "Technology", "Functional language on Erlang VM"),
             ("scala", "Technology", "JVM language blending OOP and FP"),
-            ("zig", "Technology", "Modern C alternative with safety features"),
-            ("nix", "Technology", "Purely functional package manager/language"),
-            ("lua", "Technology", "Lightweight embeddable scripting language"),
+            (
+                "zig",
+                "Technology",
+                "Modern C alternative with safety features",
+            ),
+            (
+                "nix",
+                "Technology",
+                "Purely functional package manager/language",
+            ),
+            (
+                "lua",
+                "Technology",
+                "Lightweight embeddable scripting language",
+            ),
             ("ruby", "Technology", "Dynamic scripting language (Rails)"),
             ("php", "Technology", "Server-side web scripting language"),
             ("perl", "Technology", "Versatile scripting language"),
-            ("haskell", "Technology", "Purely functional programming language"),
+            (
+                "haskell",
+                "Technology",
+                "Purely functional programming language",
+            ),
             // ── Frameworks & Libraries ─────────────────────────────
             ("react", "Technology", "UI framework by Meta"),
             ("vue", "Technology", "Progressive JavaScript framework"),
-            ("angular", "Technology", "Web application framework by Google"),
+            (
+                "angular",
+                "Technology",
+                "Web application framework by Google",
+            ),
             ("svelte", "Technology", "Compile-time reactive UI framework"),
             ("next.js", "Technology", "React meta-framework for SSR/SSG"),
             ("nuxt", "Technology", "Vue meta-framework"),
             ("tauri", "Technology", "Rust-based desktop app framework"),
-            ("electron", "Technology", "Chromium-based desktop app framework"),
+            (
+                "electron",
+                "Technology",
+                "Chromium-based desktop app framework",
+            ),
             ("fastapi", "Technology", "Modern Python web framework"),
-            ("django", "Technology", "Batteries-included Python web framework"),
-            ("flask", "Technology", "Lightweight Python web micro-framework"),
-            ("spring", "Technology", "Java enterprise application framework"),
+            (
+                "django",
+                "Technology",
+                "Batteries-included Python web framework",
+            ),
+            (
+                "flask",
+                "Technology",
+                "Lightweight Python web micro-framework",
+            ),
+            (
+                "spring",
+                "Technology",
+                "Java enterprise application framework",
+            ),
             ("torch", "Technology", "PyTorch ML framework"),
             ("tensorflow", "Technology", "Google's ML framework"),
-            ("transformers", "Technology", "HuggingFace transformer models library"),
+            (
+                "transformers",
+                "Technology",
+                "HuggingFace transformer models library",
+            ),
             ("axum", "Technology", "Rust async web framework"),
             ("tokio", "Technology", "Rust async runtime"),
             ("bevy", "Technology", "Rust game/ECS engine"),
             // ── Databases ──────────────────────────────────────────
-            ("postgres", "Technology", "Advanced open-source relational DB"),
-            ("postgresql", "Technology", "Advanced open-source relational DB"),
+            (
+                "postgres",
+                "Technology",
+                "Advanced open-source relational DB",
+            ),
+            (
+                "postgresql",
+                "Technology",
+                "Advanced open-source relational DB",
+            ),
             ("sqlite", "Technology", "Embedded zero-config database"),
-            ("mysql", "Technology", "Popular open-source relational database"),
+            (
+                "mysql",
+                "Technology",
+                "Popular open-source relational database",
+            ),
             ("redis", "Technology", "In-memory data structure store"),
             ("mongodb", "Technology", "Document-oriented NoSQL database"),
-            ("elasticsearch", "Technology", "Distributed search and analytics engine"),
+            (
+                "elasticsearch",
+                "Technology",
+                "Distributed search and analytics engine",
+            ),
             ("neo4j", "Technology", "Graph database"),
             ("clickhouse", "Technology", "Columnar OLAP database"),
             ("duckdb", "Technology", "In-process analytical database"),
-            ("cassandra", "Technology", "Wide-column distributed NoSQL database"),
-            ("milvus", "Technology", "Vector database for embedding search"),
+            (
+                "cassandra",
+                "Technology",
+                "Wide-column distributed NoSQL database",
+            ),
+            (
+                "milvus",
+                "Technology",
+                "Vector database for embedding search",
+            ),
             ("qdrant", "Technology", "Rust-based vector search engine"),
             ("chroma", "Technology", "Open-source vector database for AI"),
             // ── DevOps & Infrastructure ────────────────────────────
@@ -108,7 +198,11 @@ impl EntityExtractor for RuleBasedEntityExtractor {
             ("kubernetes", "Tool", "Container orchestration platform"),
             ("k8s", "Tool", "Kubernetes (container orchestration)"),
             ("terraform", "Tool", "Infrastructure-as-code by HashiCorp"),
-            ("ansible", "Tool", "IT automation and configuration management"),
+            (
+                "ansible",
+                "Tool",
+                "IT automation and configuration management",
+            ),
             ("jenkins", "Tool", "CI/CD automation server"),
             ("github actions", "Tool", "GitHub CI/CD pipeline"),
             ("gitlab ci", "Tool", "GitLab CI/CD pipeline"),
@@ -126,16 +220,32 @@ impl EntityExtractor for RuleBasedEntityExtractor {
             ("llm", "Concept", "Large Language Model"),
             ("rag", "Concept", "Retrieval-Augmented Generation"),
             ("embedding", "Concept", "Vector representation of data"),
-            ("transformer", "Concept", "Attention-based neural architecture"),
+            (
+                "transformer",
+                "Concept",
+                "Attention-based neural architecture",
+            ),
             ("diffusion", "Concept", "Generative image model family"),
             ("fine-tuning", "Concept", "Model fine-tuning"),
             ("ft", "Concept", "Fine-tuning"),
-            ("prompt engineering", "Concept", "Crafting effective LLM prompts"),
+            (
+                "prompt engineering",
+                "Concept",
+                "Crafting effective LLM prompts",
+            ),
             ("claude", "Tool", "Anthropic's AI assistant"),
             ("openai", "Organization", "AI research organization (GPT)"),
             ("deepseek", "Organization", "Chinese AI model provider"),
-            ("qwen", "Organization", "Alibaba's Tongyi Qianwen LLM family"),
-            ("glm", "Organization", "Tsinghua's GLM / ChatGLM model family"),
+            (
+                "qwen",
+                "Organization",
+                "Alibaba's Tongyi Qianwen LLM family",
+            ),
+            (
+                "glm",
+                "Organization",
+                "Tsinghua's GLM / ChatGLM model family",
+            ),
             ("ollama", "Tool", "Local LLM runner"),
             ("lm studio", "Tool", "Desktop local LLM runner"),
             ("agent", "Concept", "Autonomous AI agent system"),
@@ -153,13 +263,25 @@ impl EntityExtractor for RuleBasedEntityExtractor {
             ("neovim", "Tool", "Modern Vim-based text editor"),
             ("intellij", "Tool", "JetBrains Java IDE"),
             // ── Concepts & Architecture ────────────────────────────
-            ("microservices", "Concept", "Distributed service architecture"),
+            (
+                "microservices",
+                "Concept",
+                "Distributed service architecture",
+            ),
             ("graphql", "Concept", "API query language"),
             ("grpc", "Concept", "High-performance RPC framework"),
             ("rest", "Concept", "Representational State Transfer"),
-            ("webassembly", "Concept", "Wasm — portable binary instruction format"),
+            (
+                "webassembly",
+                "Concept",
+                "Wasm — portable binary instruction format",
+            ),
             ("wasm", "Concept", "WebAssembly runtime"),
-            ("serverless", "Concept", "Event-driven compute without server management"),
+            (
+                "serverless",
+                "Concept",
+                "Event-driven compute without server management",
+            ),
             ("crdt", "Concept", "Conflict-free Replicated Data Type"),
             ("edge computing", "Concept", "Compute at network edge"),
             // ── Organizations & Projects ───────────────────────────

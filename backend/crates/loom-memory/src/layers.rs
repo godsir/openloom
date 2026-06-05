@@ -18,7 +18,7 @@ pub enum Layer {
 
 impl Layer {
     /// Parse a layer string into the Layer enum.
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_layer_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "working" => Some(Self::Working),
             "episodic" => Some(Self::Episodic),

@@ -6,8 +6,8 @@ use loom_skills::SkillLoader;
 use loom_types::{ErrorCode, JsonRpcError};
 use serde_json::{Value, json};
 
-use crate::AppState;
 use super::err;
+use crate::AppState;
 
 pub async fn handle(
     state: &AppState,
@@ -99,9 +99,7 @@ async fn handle_skills_import(state: &AppState, p: &Value) -> Result<Value, Json
     }
     // Refresh orchestrator skill state
     let _ = reload_skills_into_orchestrator(&state.orchestrator).await;
-    Ok(
-        json!({ "ok": true, "path": skill_dir.display().to_string(), "files_written": wrote }),
-    )
+    Ok(json!({ "ok": true, "path": skill_dir.display().to_string(), "files_written": wrote }))
 }
 
 // --- skills.delete ---
@@ -140,13 +138,13 @@ pub(crate) async fn reload_skills_into_orchestrator(
 
     // Also discover plugins and feed their skill paths to the loader
     let mut plugin_manager = loom_plugins::PluginManager::new();
-    if let Ok(n) = plugin_manager.discover(&home) {
-        if n > 0 {
-            tracing::info!(plugin_count = n, "plugins discovered during skill reload");
-            for path in plugin_manager.skill_paths() {
-                if path.exists() {
-                    loader.add_path(path, "plugin");
-                }
+    if let Ok(n) = plugin_manager.discover(&home)
+        && n > 0
+    {
+        tracing::info!(plugin_count = n, "plugins discovered during skill reload");
+        for path in plugin_manager.skill_paths() {
+            if path.exists() {
+                loader.add_path(path, "plugin");
             }
         }
     }
@@ -173,7 +171,9 @@ pub(crate) async fn reload_skills_into_orchestrator(
                 };
                 match orch.connect_mcp_server(config).await {
                     Ok(_) => tracing::info!(server = %mcp.name, "plugin MCP server reconnected"),
-                    Err(e) => tracing::warn!(server = %mcp.name, error = %e, "plugin MCP server reconnect failed"),
+                    Err(e) => {
+                        tracing::warn!(server = %mcp.name, error = %e, "plugin MCP server reconnect failed")
+                    }
                 }
             }
         });

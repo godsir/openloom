@@ -220,11 +220,12 @@ impl From<HookConfigRaw> for HookConfig {
                         });
                     }
                 }
-                HookConfig { description, hooks: entries }
+                HookConfig {
+                    description,
+                    hooks: entries,
+                }
             }
-            HookConfigRaw::Array { description, hooks } => {
-                HookConfig { description, hooks }
-            }
+            HookConfigRaw::Array { description, hooks } => HookConfig { description, hooks },
         }
     }
 }
@@ -322,10 +323,9 @@ mod tests {
 
     #[test]
     fn test_hook_config_default_on_missing_file() {
-        let config = HookConfig::from_plugin_dir(
-            std::path::Path::new("/nonexistent_plugin_dir_12345"),
-        )
-        .unwrap();
+        let config =
+            HookConfig::from_plugin_dir(std::path::Path::new("/nonexistent_plugin_dir_12345"))
+                .unwrap();
         assert!(config.hooks.is_empty());
     }
 
@@ -340,10 +340,7 @@ mod tests {
 
     #[test]
     fn test_expand_plugin_root_both_vars() {
-        let result = expand_plugin_root(
-            "${CLAUDE_PLUGIN_ROOT}/a && ${PLUGIN_ROOT}/b",
-            "/p",
-        );
+        let result = expand_plugin_root("${CLAUDE_PLUGIN_ROOT}/a && ${PLUGIN_ROOT}/b", "/p");
         assert_eq!(result, "/p/a && /p/b");
     }
 
@@ -396,7 +393,10 @@ mod tests {
             }
         }"#;
         let config: HookConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.description.as_deref(), Some("Security guidance hooks"));
+        assert_eq!(
+            config.description.as_deref(),
+            Some("Security guidance hooks")
+        );
         assert_eq!(config.hooks.len(), 1);
         let entry = &config.hooks[0];
         assert_eq!(entry.event, HookEvent::PreToolUse);
@@ -425,8 +425,16 @@ mod tests {
         }"#;
         let config: HookConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.hooks.len(), 2);
-        assert_eq!(config.hooks[0].event, HookEvent::PreToolUse);
-        assert_eq!(config.hooks[1].event, HookEvent::SessionStart);
+        // Map keys are unordered, so check events are present in any order
+        let events: Vec<&HookEvent> = config.hooks.iter().map(|h| &h.event).collect();
+        assert!(
+            events.contains(&&HookEvent::PreToolUse),
+            "should contain PreToolUse"
+        );
+        assert!(
+            events.contains(&&HookEvent::SessionStart),
+            "should contain SessionStart"
+        );
     }
 
     #[test]

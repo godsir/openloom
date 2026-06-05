@@ -90,7 +90,13 @@ impl OpenAIClient {
         }
         body["temperature"] = req.temperature.into();
         if let Some(budget) = req.thinking_budget {
-            let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };
+            let effort = if budget <= 2048 {
+                "low"
+            } else if budget <= 8192 {
+                "medium"
+            } else {
+                "high"
+            };
             body["reasoning_effort"] = serde_json::json!(effort);
         }
 
@@ -99,7 +105,11 @@ impl OpenAIClient {
         tracing::debug!(
             body_len = body_str.len(),
             msg_count = messages.len(),
-            tool_count = if req.tools.is_empty() { 0 } else { req.tools.len() },
+            tool_count = if req.tools.is_empty() {
+                0
+            } else {
+                req.tools.len()
+            },
             "OpenAI API request"
         );
 
@@ -156,9 +166,8 @@ impl OpenAIClient {
                         if let Some(url) = part["image_url"]["url"].as_str() {
                             // data:image/png;base64,XXXX or https://...
                             if let Some(comma) = url.find(',') {
-                                let media_type = url[5..comma]
-                                    .trim_end_matches(";base64")
-                                    .to_string();
+                                let media_type =
+                                    url[5..comma].trim_end_matches(";base64").to_string();
                                 let data = url[comma + 1..].to_string();
                                 imgs.push((media_type, data));
                             }
@@ -169,7 +178,10 @@ impl OpenAIClient {
             }
             (text, imgs)
         } else {
-            (choice["content"].as_str().unwrap_or("").to_string(), Vec::new())
+            (
+                choice["content"].as_str().unwrap_or("").to_string(),
+                Vec::new(),
+            )
         };
 
         let mut tool_calls: Vec<ToolCall> = choice["tool_calls"]
@@ -297,7 +309,7 @@ impl OpenAIClient {
                 })),
                 _ => None,
             }).collect();
-            let all_texts: Vec<&str> = texts.iter().map(|s| *s)
+            let all_texts: Vec<&str> = texts.iter().copied()
                 .chain(thinking_texts.iter().map(|s| s.as_str()))
                 .collect();
             if all_texts.is_empty() && tc_vals.is_empty() {
@@ -342,7 +354,13 @@ impl CloudClient for OpenAIClient {
         }
         body["temperature"] = req.temperature.into();
         if let Some(budget) = req.thinking_budget {
-            let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };
+            let effort = if budget <= 2048 {
+                "low"
+            } else if budget <= 8192 {
+                "medium"
+            } else {
+                "high"
+            };
             body["reasoning_effort"] = serde_json::json!(effort);
         }
         if !req.tools.is_empty() {
@@ -447,7 +465,13 @@ impl CloudClient for OpenAIClient {
         }
         body["temperature"] = req.temperature.into();
         if let Some(budget) = req.thinking_budget {
-            let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };
+            let effort = if budget <= 2048 {
+                "low"
+            } else if budget <= 8192 {
+                "medium"
+            } else {
+                "high"
+            };
             body["reasoning_effort"] = serde_json::json!(effort);
         }
         if !req.tools.is_empty() {
@@ -519,7 +543,8 @@ impl CloudClient for OpenAIClient {
                                     let idx = tc["index"].as_u64().unwrap_or(0) as usize;
                                     if let (Some(id), Some(name)) =
                                         (tc["id"].as_str(), tc["function"]["name"].as_str())
-                                        && !id.is_empty() && !name.is_empty()
+                                        && !id.is_empty()
+                                        && !name.is_empty()
                                         && tx
                                             .send(StreamDelta::ToolCallBegin {
                                                 index: idx,
@@ -644,7 +669,9 @@ pub fn create_cloud_client(config: &ModelConfig, api_key: &str) -> Result<Box<dy
         });
     match config.backend {
         ModelBackend::Anthropic => Ok(Box::new(crate::AnthropicClient::new(
-            api_key.to_string(), model, base_url,
+            api_key.to_string(),
+            model,
+            base_url,
         ))),
         _ => Ok(Box::new(OpenAIClient::new(
             api_key.to_string(),
@@ -762,9 +789,15 @@ pub fn parse_inline_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
                 continue;
             }
             match ch {
-                '\\' if in_string => { escape_next = true; }
-                '"' => { in_string = !in_string; }
-                '{' if !in_string => { depth += 1; }
+                '\\' if in_string => {
+                    escape_next = true;
+                }
+                '"' => {
+                    in_string = !in_string;
+                }
+                '{' if !in_string => {
+                    depth += 1;
+                }
                 '}' if !in_string => {
                     depth -= 1;
                     if depth == 0 {
@@ -777,30 +810,35 @@ pub fn parse_inline_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
         }
         let abs_end = match end_pos {
             Some(e) => e,
-            None => { search_from = abs_start + 1; continue; }
+            None => {
+                search_from = abs_start + 1;
+                continue;
+            }
         };
         let json_str = &cleaned[abs_start..abs_end];
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
             // Accept objects that look like tool calls
-            let name = val["tool"].as_str()
+            let name = val["tool"]
+                .as_str()
                 .or_else(|| val["name"].as_str())
                 .or_else(|| val["function"]["name"].as_str());
-            if let Some(name) = name {
-                if !name.is_empty() && name.len() < 64
-                    && name.chars().all(|c| c.is_alphanumeric() || c == '_')
-                {
-                    let arguments = val.get("arguments")
-                        .or_else(|| val["function"].get("arguments"))
-                        .cloned()
-                        .unwrap_or(serde_json::json!({}));
-                    tool_calls.push(ToolCall {
-                        id: format!("inline-{}", tool_calls.len()),
-                        name: name.to_string(),
-                        arguments,
-                    });
-                    cleaned.replace_range(abs_start..abs_end, "");
-                    continue;
-                }
+            if let Some(name) = name
+                && !name.is_empty()
+                && name.len() < 64
+                && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+            {
+                let arguments = val
+                    .get("arguments")
+                    .or_else(|| val["function"].get("arguments"))
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
+                tool_calls.push(ToolCall {
+                    id: format!("inline-{}", tool_calls.len()),
+                    name: name.to_string(),
+                    arguments,
+                });
+                cleaned.replace_range(abs_start..abs_end, "");
+                continue;
             }
         }
         search_from = abs_end;
@@ -838,44 +876,51 @@ fn parse_xml_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
     let mut cleaned = text.to_string();
 
     // ── Format A: <｜tool▁calls▁begin｜>…<｜tool▁calls▁end｜> ──
-    if let Some(start) = cleaned.find("<｜tool▁calls▁begin｜>") {
-        if let Some(end) = cleaned.find("<｜tool▁calls▁end｜>") {
-            let block = &cleaned[start..end + "<｜tool▁calls▁end｜>".len()];
-            let mut search_from = 0;
-            while let Some(call_start) = block[search_from..].find("<｜tool▁call▁begin｜>function<｜tool▁sep｜>") {
-                let abs_start = search_from + call_start;
-                if let Some(call_end) = block[abs_start..].find("<｜tool▁call▁end｜>") {
-                    let call_block = &block[abs_start..abs_start + call_end + "<｜tool▁call▁end｜>".len()];
-                    if let Some(name_start) = call_block.find("<｜tool▁sep｜>") {
-                        let after_sep = &call_block[name_start + "<｜tool▁sep｜>".len()..];
-                        let name_end = after_sep.find('\n').unwrap_or(after_sep.len());
-                        let name = after_sep[..name_end].trim().to_string();
-                        let args = if let Some(json_start) = call_block.find("```json") {
-                            let after_json = &call_block[json_start + 7..];
-                            if let Some(json_end) = after_json.find("```") {
-                                let json_str = after_json[..json_end].trim();
-                                serde_json::from_str(json_str).unwrap_or(serde_json::json!({}))
-                            } else {
-                                serde_json::json!({})
-                            }
+    if let Some(start) = cleaned.find("<｜tool▁calls▁begin｜>")
+        && let Some(end) = cleaned.find("<｜tool▁calls▁end｜>")
+    {
+        let block = &cleaned[start..end + "<｜tool▁calls▁end｜>".len()];
+        let mut search_from = 0;
+        while let Some(call_start) =
+            block[search_from..].find("<｜tool▁call▁begin｜>function<｜tool▁sep｜>")
+        {
+            let abs_start = search_from + call_start;
+            if let Some(call_end) = block[abs_start..].find("<｜tool▁call▁end｜>") {
+                let call_block =
+                    &block[abs_start..abs_start + call_end + "<｜tool▁call▁end｜>".len()];
+                if let Some(name_start) = call_block.find("<｜tool▁sep｜>") {
+                    let after_sep = &call_block[name_start + "<｜tool▁sep｜>".len()..];
+                    let name_end = after_sep.find('\n').unwrap_or(after_sep.len());
+                    let name = after_sep[..name_end].trim().to_string();
+                    let args = if let Some(json_start) = call_block.find("```json") {
+                        let after_json = &call_block[json_start + 7..];
+                        if let Some(json_end) = after_json.find("```") {
+                            let json_str = after_json[..json_end].trim();
+                            serde_json::from_str(json_str).unwrap_or(serde_json::json!({}))
                         } else {
                             serde_json::json!({})
-                        };
-                        if !name.is_empty() {
-                            tool_calls.push(ToolCall {
-                                id: format!("xml-a-{}", tool_calls.len()),
-                                name,
-                                arguments: args,
-                            });
                         }
+                    } else {
+                        serde_json::json!({})
+                    };
+                    if !name.is_empty() {
+                        tool_calls.push(ToolCall {
+                            id: format!("xml-a-{}", tool_calls.len()),
+                            name,
+                            arguments: args,
+                        });
                     }
-                    search_from = abs_start + call_end + "<｜tool▁call▁end｜>".len();
-                } else {
-                    break;
                 }
+                search_from = abs_start + call_end + "<｜tool▁call▁end｜>".len();
+            } else {
+                break;
             }
-            cleaned = format!("{}{}", &cleaned[..start], &cleaned[end + "<｜tool▁calls▁end｜>".len()..]);
         }
+        cleaned = format!(
+            "{}{}",
+            &cleaned[..start],
+            &cleaned[end + "<｜tool▁calls▁end｜>".len()..]
+        );
     }
 
     // ── Format B: <tool_calls><invoke name="X"><parameter name="Y">…</parameter></invoke></tool_calls> ──
@@ -917,24 +962,26 @@ fn parse_xml_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
     while let Some(inv_open) = block[invoke_search..].find("<invoke") {
         let inv_start = invoke_search + inv_open;
         // Find the end of the opening tag
-        let Some(tag_body_end) = block[inv_start..].find('>') else { break };
+        let Some(tag_body_end) = block[inv_start..].find('>') else {
+            break;
+        };
         let open_tag = &block[inv_start..inv_start + tag_body_end + 1];
 
         // Extract tool name from name="X"
-        let name =
-            open_tag
-                .split("name=")
-                .nth(1)
-                .and_then(|s| {
-                    let s = s.trim_start_matches('"').trim_start_matches('\'');
-                    let end = s.find(|c| c == '"' || c == '\'')?;
-                    Some(s[..end].to_string())
-                })
-                .unwrap_or_default();
+        let name = open_tag
+            .split("name=")
+            .nth(1)
+            .and_then(|s| {
+                let s = s.trim_start_matches('"').trim_start_matches('\'');
+                let end = s.find(['"', '\''])?;
+                Some(s[..end].to_string())
+            })
+            .unwrap_or_default();
 
         // Find closing </invoke> — some models use a prefixed tag, so
         // look for any tag ending with "invoke>"
-        let inv_end_tag = if let Some(pos) = block[inv_start + tag_body_end + 1..].find("</invoke") {
+        let inv_end_tag = if let Some(pos) = block[inv_start + tag_body_end + 1..].find("</invoke")
+        {
             // skip to after the >
             if let Some(gt) = block[inv_start + tag_body_end + 1 + pos..].find('>') {
                 inv_start + tag_body_end + 1 + pos + gt + 1
@@ -953,7 +1000,9 @@ fn parse_xml_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
         let mut param_search = 0;
         while let Some(param_open) = invoke_body[param_search..].find("<parameter") {
             let param_start = param_search + param_open;
-            let Some(param_tag_end) = invoke_body[param_start..].find('>') else { break };
+            let Some(param_tag_end) = invoke_body[param_start..].find('>') else {
+                break;
+            };
             let param_tag = &invoke_body[param_start..param_start + param_tag_end + 1];
 
             let p_name = param_tag
@@ -961,13 +1010,15 @@ fn parse_xml_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
                 .nth(1)
                 .and_then(|s| {
                     let s = s.trim_start_matches('"').trim_start_matches('\'');
-                    let end = s.find(|c| c == '"' || c == '\'')?;
+                    let end = s.find(['"', '\''])?;
                     Some(s[..end].to_string())
                 })
                 .unwrap_or_default();
 
             // Value is the text between <parameter...> and </parameter> (or similar closing tag)
-            let param_close = if let Some(pos) = invoke_body[param_start + param_tag_end + 1..].find("</parameter") {
+            let param_close = if let Some(pos) =
+                invoke_body[param_start + param_tag_end + 1..].find("</parameter")
+            {
                 param_start + param_tag_end + 1 + pos
             } else {
                 param_search = param_start + 1;

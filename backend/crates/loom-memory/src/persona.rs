@@ -270,20 +270,18 @@ fn assemble_tech_stack(conn: &Connection) -> Result<Vec<TechProficiency>> {
     if let Ok(mut stmt) = conn.prepare(
         "SELECT name, confidence, COALESCE(evidence_count, 1) FROM kg_nodes
          WHERE entity_type = 'Technology' ORDER BY evidence_count DESC LIMIT 50",
-    ) {
-        if let Ok(kg_rows) = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, f64>(1)?,
-                r.get::<_, i64>(2)?,
-            ))
-        }) {
-            for kg_row in kg_rows.flatten() {
-                let (name, confidence, evidence_count) = kg_row;
-                let entry = tech_map.entry(name).or_insert((0.0, 0));
-                entry.0 = entry.0.max(confidence);
-                entry.1 += evidence_count;
-            }
+    ) && let Ok(kg_rows) = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, f64>(1)?,
+            r.get::<_, i64>(2)?,
+        ))
+    }) {
+        for kg_row in kg_rows.flatten() {
+            let (name, confidence, evidence_count) = kg_row;
+            let entry = tech_map.entry(name).or_insert((0.0, 0));
+            entry.0 = entry.0.max(confidence);
+            entry.1 += evidence_count;
         }
     }
 
@@ -299,13 +297,11 @@ fn assemble_tech_stack(conn: &Connection) -> Result<Vec<TechProficiency>> {
 
     // Sort descending by evidence_count then confidence
     techs.sort_by(|a, b| {
-        b.evidence_count
-            .cmp(&a.evidence_count)
-            .then_with(|| {
-                b.confidence
-                    .partial_cmp(&a.confidence)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+        b.evidence_count.cmp(&a.evidence_count).then_with(|| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     });
 
     Ok(techs)
@@ -461,15 +457,25 @@ fn assemble_working_style(conn: &Connection) -> Result<WorkingStyle> {
         }
 
         // Verbosity signals
-        if combined_lower.contains("简洁") || combined_lower.contains("concise") || combined_lower.contains("简短") {
+        if combined_lower.contains("简洁")
+            || combined_lower.contains("concise")
+            || combined_lower.contains("简短")
+        {
             concise += 1;
         }
-        if combined_lower.contains("详细") || combined_lower.contains("detailed") || combined_lower.contains("详尽") {
+        if combined_lower.contains("详细")
+            || combined_lower.contains("detailed")
+            || combined_lower.contains("详尽")
+        {
             detailed += 1;
         }
     }
 
-    balanced = balanced.max(1);
+    // balanced tracks real "Balanced" evidence from cognitions, not a forced bias.
+    if balanced == 0 && concise == 0 && detailed == 0 {
+        // No verbosity signal at all — default to Balanced.
+        balanced = 1;
+    }
 
     let approach = if code_first > plan_first && code_first > conversational {
         Approach::CodeFirst
@@ -487,7 +493,10 @@ fn assemble_working_style(conn: &Connection) -> Result<WorkingStyle> {
         Verbosity::Balanced
     };
 
-    Ok(WorkingStyle { approach, verbosity })
+    Ok(WorkingStyle {
+        approach,
+        verbosity,
+    })
 }
 
 /// Infer communication style (language + formality) from session metadata
@@ -509,9 +518,15 @@ fn assemble_communication(conn: &Connection) -> Result<CommunicationStyle> {
 
         // Formality signals
         let combined_lower = format!("{} {}", row.trait_name, row.value).to_lowercase();
-        if combined_lower.contains("随意") || combined_lower.contains("casual") || combined_lower.contains("轻松") {
+        if combined_lower.contains("随意")
+            || combined_lower.contains("casual")
+            || combined_lower.contains("轻松")
+        {
             casual += 1;
-        } else if combined_lower.contains("正式") || combined_lower.contains("formal") || combined_lower.contains("专业") {
+        } else if combined_lower.contains("正式")
+            || combined_lower.contains("formal")
+            || combined_lower.contains("专业")
+        {
             formal += 1;
         } else {
             neutral += 1;
@@ -519,19 +534,17 @@ fn assemble_communication(conn: &Connection) -> Result<CommunicationStyle> {
     }
 
     // Try session metadata for language hint
-    if lang_signal.is_empty() {
-        if let Ok(mut stmt) = conn.prepare(
-            "SELECT metadata FROM sessions WHERE metadata IS NOT NULL LIMIT 5",
-        ) {
-            if let Ok(meta_rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
-                for meta_row in meta_rows.flatten() {
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&meta_row) {
-                        if let Some(lang) = v.get("language").and_then(|l| l.as_str()) {
-                            lang_signal = lang.to_string();
-                            break;
-                        }
-                    }
-                }
+    if lang_signal.is_empty()
+        && let Ok(mut stmt) =
+            conn.prepare("SELECT metadata FROM sessions WHERE metadata IS NOT NULL LIMIT 5")
+        && let Ok(meta_rows) = stmt.query_map([], |r| r.get::<_, String>(0))
+    {
+        for meta_row in meta_rows.flatten() {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&meta_row)
+                && let Some(lang) = v.get("language").and_then(|l| l.as_str())
+            {
+                lang_signal = lang.to_string();
+                break;
             }
         }
     }
@@ -550,24 +563,29 @@ fn assemble_communication(conn: &Connection) -> Result<CommunicationStyle> {
         Formality::Neutral
     };
 
-    Ok(CommunicationStyle { language, formality })
+    Ok(CommunicationStyle {
+        language,
+        formality,
+    })
 }
 
 /// Derive expertise areas from kg_nodes entity types and technology clusters.
 fn assemble_expertise_areas(conn: &Connection) -> Result<Vec<String>> {
     let mut areas: Vec<String> = Vec::new();
 
-    // Collect distinct entity_types from kg_nodes (excluding granular tech types)
+    // Collect distinct entity_types from kg_nodes (excluding granular tech types).
+    // GROUP BY with COUNT gives actual frequency; DISTINCT with window function
+    // always produces COUNT=1 per group, making ORDER BY useless.
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT DISTINCT entity_type FROM kg_nodes
+        "SELECT entity_type, COUNT(*) AS cnt FROM kg_nodes
          WHERE entity_type NOT IN ('Technology','Tool','Language','Framework','Library')
          AND scope != 'test'
-         ORDER BY COUNT(*) OVER (PARTITION BY entity_type) DESC LIMIT 15",
-    ) {
-        if let Ok(et_rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
-            for r in et_rows.flatten() {
-                areas.push(r);
-            }
+         GROUP BY entity_type
+         ORDER BY cnt DESC LIMIT 15",
+    ) && let Ok(et_rows) = stmt.query_map([], |r| r.get::<_, String>(0))
+    {
+        for r in et_rows.flatten() {
+            areas.push(r);
         }
     }
 
@@ -577,39 +595,42 @@ fn assemble_expertise_areas(conn: &Connection) -> Result<Vec<String>> {
         if let Ok(mut stmt) = conn.prepare(
             "SELECT name FROM kg_nodes WHERE entity_type = 'Technology'
              ORDER BY COALESCE(evidence_count, 1) DESC LIMIT 20",
-        ) {
-            if let Ok(tech_rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
-                let tech_names: Vec<String> = tech_rows.flatten().collect();
-                let tech_strs: Vec<&str> = tech_names.iter().map(|s| s.as_str()).collect();
+        ) && let Ok(tech_rows) = stmt.query_map([], |r| r.get::<_, String>(0))
+        {
+            let tech_names: Vec<String> = tech_rows.flatten().collect();
+            let tech_strs: Vec<&str> = tech_names.iter().map(|s| s.as_str()).collect();
 
-                if tech_strs
-                    .iter()
-                    .any(|n| n.contains("Rust") || n.contains("Go") || n.contains("Python"))
-                {
-                    areas.push("backend".into());
-                }
-                if tech_strs.iter().any(|n| {
-                    n.contains("React") || n.contains("Vue") || n.contains("CSS") || n.contains("TypeScript")
-                }) {
-                    areas.push("frontend".into());
-                }
-                if tech_strs
-                    .iter()
-                    .any(|n| n.contains("Docker") || n.contains("K8s") || n.contains("nginx"))
-                {
-                    areas.push("DevOps".into());
-                }
-                if tech_strs
-                    .iter()
-                    .any(|n| n.contains("AI") || n.contains("Tensor") || n.contains("PyTorch"))
-                {
-                    areas.push("AI/ML".into());
-                }
-                if tech_strs.iter().any(|n| {
-                    n.contains("SQL") || n.contains("Postgres") || n.contains("Redis")
-                }) {
-                    areas.push("databases".into());
-                }
+            if tech_strs
+                .iter()
+                .any(|n| n.contains("Rust") || n.contains("Go") || n.contains("Python"))
+            {
+                areas.push("backend".into());
+            }
+            if tech_strs.iter().any(|n| {
+                n.contains("React")
+                    || n.contains("Vue")
+                    || n.contains("CSS")
+                    || n.contains("TypeScript")
+            }) {
+                areas.push("frontend".into());
+            }
+            if tech_strs
+                .iter()
+                .any(|n| n.contains("Docker") || n.contains("K8s") || n.contains("nginx"))
+            {
+                areas.push("DevOps".into());
+            }
+            if tech_strs
+                .iter()
+                .any(|n| n.contains("AI") || n.contains("Tensor") || n.contains("PyTorch"))
+            {
+                areas.push("AI/ML".into());
+            }
+            if tech_strs
+                .iter()
+                .any(|n| n.contains("SQL") || n.contains("Postgres") || n.contains("Redis"))
+            {
+                areas.push("databases".into());
             }
         }
     }
@@ -730,10 +751,7 @@ impl RichPersonaProvider {
 
         // --- Expertise areas ---
         if !persona.expertise_areas.is_empty() {
-            lines.push(format!(
-                "Expertise: {}",
-                persona.expertise_areas.join(", ")
-            ));
+            lines.push(format!("Expertise: {}", persona.expertise_areas.join(", ")));
         }
 
         // --- Preferences ---

@@ -7,8 +7,8 @@ use loom_types::{ErrorCode, JsonRpcError};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
-use crate::AppState;
 use super::err;
+use crate::AppState;
 
 const CLAWHUB_BASE: &str = "https://clawhub.ai";
 
@@ -196,11 +196,9 @@ async fn handle_clawhub_list(state: &AppState, p: &Value) -> Result<Value, JsonR
     }
 
     // Check cache first (unless force refresh)
-    if !force {
-        if let Some(cached) = read_cache() {
-            let enriched = enrich_install_status(&cached);
-            return Ok(json!({ "skills": enriched, "cached": true }));
-        }
+    if !force && let Some(cached) = read_cache() {
+        let enriched = enrich_install_status(&cached);
+        return Ok(json!({ "skills": enriched, "cached": true }));
     }
 
     // Fetch fresh data
@@ -314,25 +312,17 @@ async fn fetch_search_results(search: &str) -> Result<Vec<Value>, JsonRpcError> 
                         .header("User-Agent", "openLoom/0.2")
                         .send()
                         .await
+                        && let Ok(detail_body) = detail_resp.text().await
+                        && let Ok(detail) = serde_json::from_str::<Value>(&detail_body)
+                        && let Some(skill) = detail.get("skill")
+                        && let Ok(item) = serde_json::from_value::<ClawhubSkillItem>(skill.clone())
                     {
-                        if let Ok(detail_body) = detail_resp.text().await {
-                            if let Ok(detail) = serde_json::from_str::<Value>(&detail_body) {
-                                if let Some(skill) = detail.get("skill") {
-                                    if let Ok(item) =
-                                        serde_json::from_value::<ClawhubSkillItem>(skill.clone())
-                                    {
-                                        items.push(item);
-                                    }
-                                }
-                            }
-                        }
+                        items.push(item);
                     }
                 }
                 items
-            } else if let Some(list_items) = search_resp.items {
-                list_items
             } else {
-                Vec::new()
+                search_resp.items.unwrap_or_default()
             }
         } else {
             Vec::new()
@@ -442,17 +432,20 @@ async fn handle_clawhub_install(state: &AppState, p: &Value) -> Result<Value, Js
     }
 
     // Rename the first .md file (that looks like a skill) to SKILL.md if one doesn't exist
-    if !target_dir.join("SKILL.md").exists() {
-        if let Ok(entries) = std::fs::read_dir(&target_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("md") {
-                    let content = std::fs::read_to_string(&path).unwrap_or_default();
-                    // Check if it looks like a skill (has frontmatter or skill-like content)
-                    if content.contains("---") || content.contains("name:") || content.contains("description:") {
-                        let _ = std::fs::rename(&path, target_dir.join("SKILL.md"));
-                        break;
-                    }
+    if !target_dir.join("SKILL.md").exists()
+        && let Ok(entries) = std::fs::read_dir(&target_dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("md") {
+                let content = std::fs::read_to_string(&path).unwrap_or_default();
+                // Check if it looks like a skill (has frontmatter or skill-like content)
+                if content.contains("---")
+                    || content.contains("name:")
+                    || content.contains("description:")
+                {
+                    let _ = std::fs::rename(&path, target_dir.join("SKILL.md"));
+                    break;
                 }
             }
         }
