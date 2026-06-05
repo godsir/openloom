@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useStore } from '../../stores'
 import SessionItem from './SessionItem'
-import { IconPlus, IconSearch, IconSettings, IconTrash, IconPin, IconPinOff, IconCheck, IconX } from '../../utils/icons'
+import { IconPlus, IconSearch, IconTrash, IconPin, IconPinOff, IconCheck, IconX } from '../../utils/icons'
 import styles from './Sidebar.module.css'
 
 function getDateGroup(modified: string): string {
@@ -23,7 +23,6 @@ export default function Sidebar() {
   const selectedSessionIds = useStore((s) => s.selectedSessionIds)
   const createSession = useStore((s) => s.createSession)
   const switchSession = useStore((s) => s.switchSession)
-  const setSettingsOpen = useStore((s) => s.setSettingsOpen)
   const deleteSessions = useStore((s) => s.deleteSessions)
   const pinSessions = useStore((s) => s.pinSessions)
   const unpinSessions = useStore((s) => s.unpinSessions)
@@ -43,10 +42,16 @@ export default function Sidebar() {
     return sessions.filter(s => (s.title||'').toLowerCase().includes(q) || (s.firstMessage||'').toLowerCase().includes(q) || s.path.toLowerCase().includes(q))
   }, [sessions, query])
 
-  const pinned = useMemo(() => filtered.filter(s => pinnedIds.has(s.path)), [filtered, pinnedIds])
+  const pinned = useMemo(() => {
+    const list = filtered.filter(s => pinnedIds.has(s.path))
+    list.sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
+    return list
+  }, [filtered, pinnedIds])
 
   const dateGroups = useMemo(() => {
     const unpinned = filtered.filter(s => !pinnedIds.has(s.path))
+    // Sort by modified descending (most recent first) within each group
+    unpinned.sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
     const map = new Map<string, typeof unpinned>()
     const order: string[] = []
     for (const s of unpinned) {
@@ -152,9 +157,6 @@ export default function Sidebar() {
       <div className={styles.bottom}>
         <button onClick={handleCreate} className={styles.createBtn}>
           <IconPlus size={13} /> 新建会话
-        </button>
-        <button onClick={() => setSettingsOpen(true)} className={styles.settingsBtn}>
-          <IconSettings size={15} />
         </button>
       </div>
     </aside>

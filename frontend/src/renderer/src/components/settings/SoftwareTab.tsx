@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useStore } from '../../stores'
 import { type ThemeId, type FontSizeId, FONT_SIZE_MAP } from '../../stores/ui'
+import type { SendShortcut } from '../../stores/input'
 import Select, { type SelectOption } from '../shared/Select'
 import styles from '../shared/SettingsModal.module.css'
 
@@ -132,12 +133,16 @@ export function applyCustomTheme(c: { bg: string; surface: string; text: string;
 export default function SoftwareTab({ theme, setTheme }: { theme: string; setTheme: (t: any) => void }) {
   const fontSize = useStore((s) => s.fontSize)
   const setFontSize = useStore((s) => s.setFontSize)
+  const sendShortcut = useStore((s) => s.sendShortcut)
   const [autoStart, setAutoStart] = useState(false)
   const [closeToTray, setCloseToTray] = useState(true)
   const [autoTitle, setAutoTitle] = useState(false)
   const [uiFont, setUiFont] = useState('')
   const [codeFont, setCodeFont] = useState('')
   const [disableHwAccel, setDisableHwAccel] = useState(false)
+  const [thinkingExpand, setThinkingExpand] = useState(false)
+  const [toolExpand, setToolExpand] = useState(true)
+  const [skillExpand, setSkillExpand] = useState(false)
   const [isWin32, setIsWin32] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [customColors, setCustomColors] = useState({ bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' })
@@ -151,17 +156,26 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
       window.loom.getPreference('codeFont', ''),
       window.loom.getPreference('customTheme', { bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' }),
       window.loom.getPreference('disableHardwareAcceleration', false),
+      window.loom.getPreference('thinkingExpandDefault', false),
+      window.loom.getPreference('toolExpandDefault', true),
+      window.loom.getPreference('skillExpandDefault', false),
       window.loom.getPlatform(),
-    ]).then(([as, ct, at, uf, cf, cc, dha, plat]) => {
+    ]).then(([as, ct, at, uf, cf, cc, dha, te, toe, se, plat]) => {
       setAutoStart(as)
       setCloseToTray(ct)
       setAutoTitle(at)
       if (uf) document.documentElement.style.setProperty('--font', uf as string)
       if (cf) document.documentElement.style.setProperty('--font-mono', cf as string)
+      if ((uf as string).includes('KaiTi') || (uf as string).includes('楷体')) {
+        document.documentElement.style.setProperty('-webkit-text-stroke', '0.35px')
+      }
       setUiFont(uf as string)
       setCodeFont(cf as string)
       setCustomColors(cc as typeof customColors)
       setDisableHwAccel(dha as boolean)
+      setThinkingExpand(te as boolean)
+      setToolExpand(toe as boolean)
+      setSkillExpand(se as boolean)
       setIsWin32(plat === 'win32')
       setLoaded(true)
     })
@@ -201,12 +215,43 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
     })
   }
 
+  const handleThinkingExpand = async (val: boolean) => {
+    setThinkingExpand(val)
+    await window.loom.setPreference('thinkingExpandDefault', val)
+    useStore.getState().addToast({ type: 'success', message: val ? '思考块默认展开' : '思考块默认折叠' })
+  }
+
+  const handleToolExpand = async (val: boolean) => {
+    setToolExpand(val)
+    await window.loom.setPreference('toolExpandDefault', val)
+    useStore.getState().addToast({ type: 'success', message: val ? '工具块默认展开' : '工具块默认折叠' })
+  }
+
+  const handleSkillExpand = async (val: boolean) => {
+    setSkillExpand(val)
+    await window.loom.setPreference('skillExpandDefault', val)
+    useStore.getState().addToast({ type: 'success', message: val ? '技能块默认展开' : '技能块默认折叠' })
+  }
+
+  const handleSendShortcut = (val: string) => {
+    useStore.getState().setSendShortcut(val as SendShortcut)
+    const labels: Record<string, string> = { enter: 'Enter 发送', 'ctrl+enter': 'Ctrl+Enter 发送', 'shift+enter': 'Shift+Enter 发送' }
+    useStore.getState().addToast({ type: 'success', message: `发送快捷键已切换为 ${labels[val] ?? val}` })
+  }
+
   const handleUiFont = async (val: string) => {
     setUiFont(val)
     if (val) {
       document.documentElement.style.setProperty('--font', val)
+      // KaiTi is thinner than other CJK fonts — micro-stroke for readability
+      if (val.includes('KaiTi') || val.includes('楷体')) {
+        document.documentElement.style.setProperty('-webkit-text-stroke', '0.35px')
+      } else {
+        document.documentElement.style.removeProperty('-webkit-text-stroke')
+      }
     } else {
       document.documentElement.style.removeProperty('--font')
+      document.documentElement.style.removeProperty('-webkit-text-stroke')
     }
     await window.loom.setPreference('uiFont', val)
     useStore.getState().addToast({ type: 'success', message: val ? '界面字体已更新' : '已恢复系统默认字体' })
@@ -230,6 +275,249 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
         <p className={styles.sectionDesc}>外观、字体与软件行为</p>
       </div>
       <div className={styles.contentBody}>
+        {/* ── 聊天设置 ── */}
+        <div className={styles.aboutSection}>
+          <div className={styles.themeLabel}>聊天设置</div>
+          {!loaded ? (
+            <p className={styles.toolsEmpty}>加载中...</p>
+          ) : (
+            <>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>思考块默认展开</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>AI 的思考过程内容块是否默认展开显示</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${thinkingExpand ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleThinkingExpand(true)}
+                  >
+                    展开
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!thinkingExpand ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleThinkingExpand(false)}
+                  >
+                    折叠
+                  </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>工具块默认展开</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>命令执行、文件读写等工具调用内容块是否默认展开</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${toolExpand ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleToolExpand(true)}
+                  >
+                    展开
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!toolExpand ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleToolExpand(false)}
+                  >
+                    折叠
+                  </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>技能块默认展开</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>AI 调用的技能 (Skill) 内容块是否默认展开显示</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${skillExpand ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleSkillExpand(true)}
+                  >
+                    展开
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!skillExpand ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleSkillExpand(false)}
+                  >
+                    折叠
+                  </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>发送快捷键</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>输入框中发送消息的快捷键，设为非 Enter 时 Enter 变为换行</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${sendShortcut === 'enter' ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleSendShortcut('enter')}
+                  >
+                    Enter
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${sendShortcut === 'ctrl+enter' ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleSendShortcut('ctrl+enter')}
+                  >
+                    Ctrl+Enter
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${sendShortcut === 'shift+enter' ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleSendShortcut('shift+enter')}
+                  >
+                    Shift+Enter
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <hr className={styles.sectionDivider} />
+
+        {/* ── 行为 ── */}
+        <div className={styles.aboutSection}>
+          <div className={styles.themeLabel}>行为</div>
+          {!loaded ? (
+            <p className={styles.toolsEmpty}>加载中...</p>
+          ) : (
+            <>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>AI 自动命名会话</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>首次对话后由 AI 提取 2-7 字标题</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    onClick={() => handleAutoTitle(true)}
+                    className={`${styles.mcpTransportBtn} ${autoTitle ? styles.mcpTransportActive : ''}`}
+                  >
+                    开启
+                  </button>
+                  <button
+                    onClick={() => handleAutoTitle(false)}
+                    className={`${styles.mcpTransportBtn} ${!autoTitle ? styles.mcpTransportActive : ''}`}
+                  >
+                    关闭
+                  </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>关闭按钮行为</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>点击标题栏关闭按钮时的操作</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${closeToTray ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleCloseToTray(true)}
+                  >
+                    最小化到托盘
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!closeToTray ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleCloseToTray(false)}
+                  >
+                    退出程序
+                  </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>开机自启动</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>系统启动时自动运行 openLoom</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${autoStart ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleAutoStart(true)}
+                  >
+                    开启
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!autoStart ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleAutoStart(false)}
+                  >
+                    关闭
+                  </button>
+                </div>
+              </div>
+              {isWin32 && (
+                <div className={styles.aboutRow}>
+                  <div>
+                    <span className={styles.aboutLabel}>硬件加速</span>
+                    <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
+                      Win11 上若出现光标、动画闪烁，可关闭硬件加速。需重启程序生效
+                    </p>
+                  </div>
+                  <div className={styles.mcpTransportToggle}>
+                    <button
+                      className={`${styles.mcpTransportBtn} ${!disableHwAccel ? styles.mcpTransportActive : ''}`}
+                      onClick={() => handleDisableHwAccel(false)}
+                    >
+                      开启
+                    </button>
+                    <button
+                      className={`${styles.mcpTransportBtn} ${disableHwAccel ? styles.mcpTransportActive : ''}`}
+                      onClick={() => handleDisableHwAccel(true)}
+                    >
+                      关闭
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <hr className={styles.sectionDivider} />
+
+        {/* ── 字体 ── */}
+        <div className={styles.aboutSection}>
+          <div className={styles.themeLabel}>字体</div>
+          {!loaded ? (
+            <p className={styles.toolsEmpty}>加载中...</p>
+          ) : (
+            <>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>界面字体</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>菜单、对话和通用文本的字体</p>
+                </div>
+                <div style={{ width: 240 }}>
+                  <Select
+                    value={uiFont}
+                    options={UI_FONT_OPTIONS}
+                    onChange={(v) => handleUiFont(v)}
+                    variant="form"
+                  />
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>代码字体</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>代码块、Shell 输出等位置的等宽字体</p>
+                </div>
+                <div style={{ width: 240 }}>
+                  <Select
+                    value={codeFont}
+                    options={CODE_FONT_OPTIONS}
+                    onChange={(v) => handleCodeFont(v)}
+                    variant="form"
+                  />
+                </div>
+              </div>
+              <div className={styles.fontPreview}>
+                <div className={styles.fontPreviewLabel}>预览</div>
+                <pre className={styles.fontPreviewCode} style={{ fontFamily: codeFont || undefined }}>
+                  {`fn main() {\n  println!("你好，openLoom");\n}`}
+                </pre>
+              </div>
+            </>
+          )}
+        </div>
+
+        <hr className={styles.sectionDivider} />
+
         {/* ── 外观 ── */}
         <div className={styles.aboutSection}>
           <div className={styles.themeLabel}>外观</div>
@@ -352,150 +640,6 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                   ))}
                 </div>
               </div>
-            </>
-          )}
-        </div>
-
-        <hr className={styles.sectionDivider} />
-
-        {/* ── 字体 ── */}
-        <div className={styles.aboutSection}>
-          <div className={styles.themeLabel}>字体</div>
-          {!loaded ? (
-            <p className={styles.toolsEmpty}>加载中...</p>
-          ) : (
-            <>
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>界面字体</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>菜单、对话和通用文本的字体</p>
-                </div>
-                <div style={{ width: 240 }}>
-                  <Select
-                    value={uiFont}
-                    options={UI_FONT_OPTIONS}
-                    onChange={(v) => handleUiFont(v)}
-                    variant="form"
-                  />
-                </div>
-              </div>
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>代码字体</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>代码块、Shell 输出等位置的等宽字体</p>
-                </div>
-                <div style={{ width: 240 }}>
-                  <Select
-                    value={codeFont}
-                    options={CODE_FONT_OPTIONS}
-                    onChange={(v) => handleCodeFont(v)}
-                    variant="form"
-                  />
-                </div>
-              </div>
-              <div className={styles.fontPreview}>
-                <div className={styles.fontPreviewLabel}>预览</div>
-                <pre className={styles.fontPreviewCode} style={{ fontFamily: codeFont || undefined }}>
-                  {`fn main() {\n  println!("你好，openLoom");\n}`}
-                </pre>
-              </div>
-            </>
-          )}
-        </div>
-
-        <hr className={styles.sectionDivider} />
-
-        {/* ── 行为 ── */}
-        <div className={styles.aboutSection}>
-          <div className={styles.themeLabel}>行为</div>
-          {!loaded ? (
-            <p className={styles.toolsEmpty}>加载中...</p>
-          ) : (
-            <>
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>AI 自动命名会话</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>首次对话后由 AI 提取 2-7 字标题</p>
-                </div>
-                <div className={styles.mcpTransportToggle}>
-                  <button
-                    onClick={() => handleAutoTitle(true)}
-                    className={`${styles.mcpTransportBtn} ${autoTitle ? styles.mcpTransportActive : ''}`}
-                  >
-                    开启
-                  </button>
-                  <button
-                    onClick={() => handleAutoTitle(false)}
-                    className={`${styles.mcpTransportBtn} ${!autoTitle ? styles.mcpTransportActive : ''}`}
-                  >
-                    关闭
-                  </button>
-                </div>
-              </div>
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>关闭按钮行为</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>点击标题栏关闭按钮时的操作</p>
-                </div>
-                <div className={styles.mcpTransportToggle}>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${closeToTray ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleCloseToTray(true)}
-                  >
-                    最小化到托盘
-                  </button>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${!closeToTray ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleCloseToTray(false)}
-                  >
-                    退出程序
-                  </button>
-                </div>
-              </div>
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>开机自启动</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>系统启动时自动运行 openLoom</p>
-                </div>
-                <div className={styles.mcpTransportToggle}>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${autoStart ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleAutoStart(true)}
-                  >
-                    开启
-                  </button>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${!autoStart ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleAutoStart(false)}
-                  >
-                    关闭
-                  </button>
-                </div>
-              </div>
-              {isWin32 && (
-                <div className={styles.aboutRow}>
-                  <div>
-                    <span className={styles.aboutLabel}>硬件加速</span>
-                    <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
-                      Win11 上若出现光标、动画闪烁，可关闭硬件加速。需重启程序生效
-                    </p>
-                  </div>
-                  <div className={styles.mcpTransportToggle}>
-                    <button
-                      className={`${styles.mcpTransportBtn} ${!disableHwAccel ? styles.mcpTransportActive : ''}`}
-                      onClick={() => handleDisableHwAccel(false)}
-                    >
-                      开启
-                    </button>
-                    <button
-                      className={`${styles.mcpTransportBtn} ${disableHwAccel ? styles.mcpTransportActive : ''}`}
-                      onClick={() => handleDisableHwAccel(true)}
-                    >
-                      关闭
-                    </button>
-                  </div>
-                </div>
-              )}
             </>
           )}
         </div>

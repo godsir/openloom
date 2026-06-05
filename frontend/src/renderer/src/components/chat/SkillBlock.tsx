@@ -13,6 +13,11 @@ export default function SkillBlock({ block }: { block: ContentBlock }) {
   const status = block.status as string
   const rawResult = block.result as string | undefined
 
+  // Load default expand preference
+  useEffect(() => {
+    window.loom.getPreference('skillExpandDefault', false).then(v => setExpanded(v))
+  }, [])
+
   // Strip the "## Skill: {name}\n\n" prefix from use_skill result
   const content = rawResult
     ?.replace(/^## Skill: [^\n]*\n\n?/, '')  // Accept 1 or 2 newlines

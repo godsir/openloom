@@ -38,6 +38,10 @@ pub struct TurnResult {
     pub cached_tokens: usize,
     /// Whether the most recent prefix check was a cache hit (None = not checked).
     pub kv_cache_hit: Option<bool>,
+    /// Cache read tokens reported by the provider (Anthropic: cache_read_input_tokens).
+    pub cache_read_tokens: usize,
+    /// Cache write tokens reported by the provider (Anthropic: cache_creation_input_tokens).
+    pub cache_write_tokens: usize,
     /// Intermediate tool-call and tool-result messages for persistence.
     pub tool_messages: Vec<Message>,
     /// Token usage from auxiliary models (vision, etc.) for separate cost tracking.
@@ -539,6 +543,8 @@ async fn run_agent_turn_inner(
     let mut tool_messages: Vec<Message> = Vec::new();
     let mut total_prompt = 0usize;
     let mut total_completion = 0usize;
+    let mut total_cache_read = 0usize;
+    let total_cache_write = 0usize;
 
     // Create tool context with workspace path for file operations
     let tool_context = ToolContext::with_workspace(config.workspace_path.clone());
@@ -570,6 +576,8 @@ async fn run_agent_turn_inner(
                 prompt_tokens: total_prompt,
                 completion_tokens: total_completion,
                 cached_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
                 kv_cache_hit: None,
                 content_parts: vec![ContentPart::Text {
                     text: format!("任务进行中（已用 {} tokens）。输入「继续」以接着执行。", total_prompt),
@@ -602,6 +610,8 @@ async fn run_agent_turn_inner(
                 prompt_tokens: total_prompt,
                 completion_tokens: total_completion,
                 cached_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
                 kv_cache_hit: None,
                 content_parts: vec![ContentPart::Text {
                     text: "[已中断]".into(),
@@ -715,6 +725,7 @@ async fn run_agent_turn_inner(
         };
         total_prompt += response.prompt_tokens;
         total_completion += response.completion_tokens;
+        total_cache_read += response.cached_tokens;
 
         // After image-bearing call, strip images so next iteration can use tools.
         if images_in_call {
@@ -814,6 +825,13 @@ async fn run_agent_turn_inner(
                             .await;
                     }
                     let reason = match config.permission_mode.as_str() {
+                        "plan" => format!(
+                            "【规划模式】当前处于 Plan 模式，不允许执行 {} 操作。\
+                             你应当分析代码库、探索相关文件，并创建一个详细的实施方案。\
+                             不要尝试执行任何修改操作，专注于分析和规划。\
+                             用户审核方案后会切换到 Operate 模式来实施。",
+                            tool_name
+                        ),
                         "read_only" => format!(
                             "【只读模式】当前处于 Read Only 模式，不允许执行 {} 操作。\
                              请告知用户：需要切换到 Ask（询问）或 Operate（操作）模式后才能执行写入/删除/shell 等操作。\
@@ -968,6 +986,8 @@ async fn run_agent_turn_inner(
             prompt_tokens: total_prompt,
             completion_tokens: total_completion,
             cached_tokens: client.estimated_cache_tokens(),
+            cache_read_tokens: total_cache_read,
+            cache_write_tokens: total_cache_write,
             kv_cache_hit: client.last_cache_hit(),
             tool_messages,
             vision_usage: vision_usage.clone(),
@@ -985,6 +1005,8 @@ async fn run_agent_turn_inner(
         prompt_tokens: total_prompt,
         completion_tokens: total_completion,
         cached_tokens: client.estimated_cache_tokens(),
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
         kv_cache_hit: client.last_cache_hit(),
         tool_messages,
         vision_usage: vision_usage.clone(),
@@ -1261,6 +1283,8 @@ async fn run_agent_turn_streaming_inner(
     let mut tool_messages: Vec<Message> = Vec::new();
     let mut total_prompt = 0usize;
     let mut total_completion = 0usize;
+    let mut total_cache_read = 0usize;
+    let mut total_cache_write = 0usize;
     let mut final_text = String::new();
     let mut content_parts: Vec<ContentPart> = Vec::new();
     let mut captured_thinking = String::new();
@@ -1300,6 +1324,8 @@ async fn run_agent_turn_streaming_inner(
                 prompt_tokens: total_prompt,
                 completion_tokens: total_completion,
                 cached_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
                 kv_cache_hit: None,
                 content_parts: vec![ContentPart::Text { text: "任务进行中，已达预算上限。".into() }],
                 tool_messages,
@@ -1332,6 +1358,8 @@ async fn run_agent_turn_streaming_inner(
                 prompt_tokens: total_prompt,
                 completion_tokens: total_completion,
                 cached_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
                 kv_cache_hit: None,
                 content_parts: vec![ContentPart::Text {
                     text: "[已中断]".into(),
@@ -1390,6 +1418,8 @@ async fn run_agent_turn_streaming_inner(
             let mut attempt_images: Vec<(String, String)> = Vec::new();
             let mut attempt_prompt_tokens: u64 = 0;
             let mut attempt_completion_tokens: u64 = 0;
+            let mut attempt_cache_read_tokens: u64 = 0;
+            let mut attempt_cache_write_tokens: u64 = 0;
             // Forwarded deltas pending — we forward incrementally; if retry
             // happens after partial forward, downstream sees concatenation.
             // Image-only models typically fail before any deltas are emitted.
@@ -1425,6 +1455,8 @@ async fn run_agent_turn_streaming_inner(
                             prompt_tokens: total_prompt + attempt_prompt_tokens as usize,
                             completion_tokens: total_completion + attempt_completion_tokens as usize,
                             cached_tokens: 0,
+                            cache_read_tokens: attempt_cache_read_tokens as usize,
+                            cache_write_tokens: attempt_cache_write_tokens as usize,
                             kv_cache_hit: None,
                             content_parts: vec![ContentPart::Text { text: "[已中断]".into() }],
                             tool_messages,
@@ -1456,6 +1488,8 @@ async fn run_agent_turn_streaming_inner(
                             StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens } => {
                                 attempt_prompt_tokens += prompt_tokens;
                                 attempt_completion_tokens += completion_tokens;
+                                attempt_cache_read_tokens += cache_read_tokens;
+                                attempt_cache_write_tokens += cache_write_tokens;
                                 let _ = delta_tx.send(StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens }).await;
                             }
                             StreamDelta::Image { media_type, data } => {
@@ -1506,6 +1540,8 @@ async fn run_agent_turn_streaming_inner(
                                             } => {
                                                 attempt_prompt_tokens += prompt_tokens;
                                                 attempt_completion_tokens += completion_tokens;
+                                                attempt_cache_read_tokens += cache_read_tokens;
+                                                attempt_cache_write_tokens += cache_write_tokens;
                                                 let _ = delta_tx
                                                     .send(StreamDelta::Usage {
                                                         prompt_tokens,
@@ -1568,6 +1604,8 @@ async fn run_agent_turn_streaming_inner(
             }
             total_prompt += attempt_prompt_tokens as usize;
             total_completion += attempt_completion_tokens as usize;
+            total_cache_read += attempt_cache_read_tokens as usize;
+            total_cache_write += attempt_cache_write_tokens as usize;
             break;
         }
 
@@ -1721,6 +1759,13 @@ async fn run_agent_turn_streaming_inner(
                             .await;
                     }
                     let reason = match config.permission_mode.as_str() {
+                        "plan" => format!(
+                            "【规划模式】当前处于 Plan 模式，不允许执行 {} 操作。\
+                             你应当分析代码库、探索相关文件，并创建一个详细的实施方案。\
+                             不要尝试执行任何修改操作，专注于分析和规划。\
+                             用户审核方案后会切换到 Operate 模式来实施。",
+                            tc_name
+                        ),
                         "read_only" => format!(
                             "【只读模式】当前处于 Read Only 模式，不允许执行 {} 操作。\
                              请告知用户：需要切换到 Ask（询问）或 Operate（操作）模式后才能执行写入/删除/shell 等操作。\
@@ -1941,6 +1986,8 @@ async fn run_agent_turn_streaming_inner(
         prompt_tokens: total_prompt,
         completion_tokens: total_completion,
         cached_tokens: client.estimated_cache_tokens(),
+        cache_read_tokens: total_cache_read,
+        cache_write_tokens: total_cache_write,
         kv_cache_hit: client.last_cache_hit(),
         tool_messages,
         vision_usage: vision_usage.clone(),

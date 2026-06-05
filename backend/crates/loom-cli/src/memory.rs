@@ -27,7 +27,7 @@ impl LoomMemoryStore {
         let session_db = SessionDb::open(&data_dir.join("session.db"))?;
         // Ensure a default session row exists
         session_db.conn().execute(
-            "INSERT OR IGNORE INTO sessions (id, created_at, message_count) VALUES ('default', datetime('now'), 0)",
+            "INSERT OR IGNORE INTO sessions (id, created_at, updated_at, message_count) VALUES ('default', datetime('now'), datetime('now'), 0)",
             [],
         )?;
         // Migrate from legacy memory.db if present
@@ -115,11 +115,21 @@ impl MemoryStore for LoomMemoryStore {
         tools: usize,
         prompt_tokens: usize,
         completion_tokens: usize,
+        cached_read_tokens: usize,
+        cached_write_tokens: usize,
+        context_window: usize,
         tool_msgs_json: &[String],
     ) -> Result<i64> {
         // Write messages to session db
         let now = chrono::Utc::now().to_rfc3339();
-        let usage_meta = serde_json::json!({"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}).to_string();
+        let usage_meta = serde_json::json!({
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "cached_tokens": cached_read_tokens + cached_write_tokens,
+            "cache_read_tokens": cached_read_tokens,
+            "cache_write_tokens": cached_write_tokens,
+            "context_window": context_window,
+        }).to_string();
         {
             let sess = self.session_db.lock().unwrap();
             let conn = sess.conn();
@@ -146,7 +156,7 @@ impl MemoryStore for LoomMemoryStore {
                 tool_count += 1;
             }
             conn.execute(
-                "UPDATE sessions SET message_count = message_count + ?1 WHERE id = ?2",
+                "UPDATE sessions SET message_count = message_count + ?1, updated_at = datetime('now') WHERE id = ?2",
                 rusqlite::params![2 + tool_count, session_id],
             )?;
         }
@@ -187,7 +197,7 @@ impl MemoryStore for LoomMemoryStore {
                 rusqlite::params![session_id, seq, user_msg, now],
             )?;
             conn.execute(
-                "UPDATE sessions SET message_count = message_count + 1 WHERE id = ?1",
+                "UPDATE sessions SET message_count = message_count + 1, updated_at = datetime('now') WHERE id = ?1",
                 rusqlite::params![session_id],
             )?;
         }
@@ -229,7 +239,10 @@ impl MemoryStore for LoomMemoryStore {
                 Some(loom_types::TokenUsage {
                     prompt_tokens: v["prompt_tokens"].as_u64()? as usize,
                     completion_tokens: v["completion_tokens"].as_u64()? as usize,
-                    cached_tokens: 0,
+                    cached_tokens: v["cached_tokens"].as_u64().unwrap_or(0) as usize,
+                    cache_read_tokens: v["cache_read_tokens"].as_u64().unwrap_or(0) as usize,
+                    cache_write_tokens: v["cache_write_tokens"].as_u64().unwrap_or(0) as usize,
+                    context_window: v["context_window"].as_u64().unwrap_or(0) as usize,
                     latency_ms: 0,
                 })
             });
@@ -708,10 +721,10 @@ impl MemoryStore for LoomMemoryStore {
         }
     }
 
-    async fn list_sessions(&self) -> Result<Vec<(String, String, usize, Option<String>)>> {
+    async fn list_sessions(&self) -> Result<Vec<(String, String, usize, Option<String>, Option<String>)>> {
         let store = self.session_db.lock().unwrap();
         let mut stmt = store.conn().prepare(
-            "SELECT id, created_at, message_count, title FROM sessions ORDER BY created_at DESC",
+            "SELECT id, created_at, message_count, title, updated_at FROM sessions ORDER BY updated_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok((
@@ -719,6 +732,7 @@ impl MemoryStore for LoomMemoryStore {
                 row.get::<_, String>(1)?,
                 row.get::<_, i64>(2)? as usize,
                 row.get(3)?,
+                row.get(4)?,
             ))
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -727,7 +741,7 @@ impl MemoryStore for LoomMemoryStore {
     async fn ensure_session(&self, id: &str) -> Result<()> {
         let store = self.session_db.lock().unwrap();
         store.conn().execute(
-            "INSERT OR IGNORE INTO sessions (id, created_at, message_count) VALUES (?1, datetime('now'), 0)",
+            "INSERT OR IGNORE INTO sessions (id, created_at, updated_at, message_count) VALUES (?1, datetime('now'), datetime('now'), 0)",
             rusqlite::params![id],
         )?;
         Ok(())
@@ -779,10 +793,10 @@ impl MemoryStore for LoomMemoryStore {
         GraphStore::new(store.conn()).edge_count()
     }
 
-    async fn kg_neighbors(&self, node_name: &str, limit: usize) -> Result<loom_types::KgGraph> {
+    async fn kg_neighbors(&self, node_name: &str, limit: usize, scope: Option<&str>) -> Result<loom_types::KgGraph> {
         let store = self.memory_db.lock().unwrap();
         let graph = GraphStore::new(store.conn());
-        let rows = graph.neighbors(node_name, None, limit)?;
+        let rows = graph.neighbors(node_name, scope, limit)?;
         let nodes: Vec<loom_types::KgNode> = rows
             .iter()
             .map(|r| loom_types::KgNode {
@@ -830,14 +844,26 @@ impl MemoryStore for LoomMemoryStore {
         }
 
         let nodes: Vec<loom_types::KgNode> = if let Some(sid) = start_id {
-            // Add start node to the result
+            // Try to find the start node's scope from the walk result or resolve_node
+            let start_scope = rows
+                .first()
+                .map(|r| r.scope.clone())
+                .or_else(|| {
+                    // If walk returned no rows, query the node directly for its scope
+                    store.conn().query_row(
+                        "SELECT scope FROM kg_nodes WHERE id = ?1",
+                        rusqlite::params![sid],
+                        |row| row.get::<_, String>(0),
+                    ).ok()
+                })
+                .unwrap_or_else(|| "global".to_string());
             let start_node = loom_types::KgNode {
                 node_id: sid,
                 name: start_name.to_string(),
                 entity_type: rows.first().map(|r| r.entity_type.clone()).unwrap_or_default(),
                 description: String::new(),
                 confidence: 1.0,
-                scope: "global".to_string(),
+                scope: start_scope,
             };
             let mut n = vec![start_node];
             n.extend(rows.iter().map(|r| loom_types::KgNode {
@@ -862,8 +888,8 @@ impl MemoryStore for LoomMemoryStore {
                 .collect()
         };
 
-        // Get edges between all found nodes
-        let edge_rows = graph.edges_between(&all_ids)?;
+        // Get edges between all found nodes, filtered by the same scope
+        let edge_rows = graph.edges_between(&all_ids, scope)?;
         let edges: Vec<loom_types::KgEdge> = edge_rows
             .into_iter()
             .map(|(src, tgt, rel, conf)| loom_types::KgEdge {
@@ -981,7 +1007,7 @@ impl MemoryStore for LoomMemoryStore {
     async fn rename_session(&self, id: &str, title: &str) -> Result<()> {
         let store = self.session_db.lock().unwrap();
         store.conn().execute(
-            "UPDATE sessions SET title = ?1 WHERE id = ?2",
+            "UPDATE sessions SET title = ?1, updated_at = datetime('now') WHERE id = ?2",
             rusqlite::params![title, id],
         )?;
         Ok(())
@@ -1061,7 +1087,7 @@ impl MemoryStore for LoomMemoryStore {
             .collect())
     }
 
-    async fn kg_edges_between(&self, node_names: &[String]) -> Result<Vec<loom_types::KgEdge>> {
+    async fn kg_edges_between(&self, node_names: &[String], scope: Option<&str>) -> Result<Vec<loom_types::KgEdge>> {
         let store = self.memory_db.lock().unwrap();
         let graph = GraphStore::new(store.conn());
 
@@ -1079,8 +1105,8 @@ impl MemoryStore for LoomMemoryStore {
             return Ok(Vec::new());
         }
 
-        // Get all edges between these nodes
-        let edges = graph.edges_between(&node_ids)?;
+        // Get all edges between these nodes, filtered by scope
+        let edges = graph.edges_between(&node_ids, scope)?;
 
         // Convert to KgEdge format
         Ok(edges

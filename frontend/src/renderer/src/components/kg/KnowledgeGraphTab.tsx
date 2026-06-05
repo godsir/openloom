@@ -159,18 +159,24 @@ export default function KnowledgeGraphTab() {
     (name: string) => {
       userClearedGraph.current = false
       setTooltip(null)
-      kgExpandNode(name)
+      const effectiveScope = scopeFilter === 'all' ? undefined
+        : scopeFilter === 'session' ? (currentSessionId ?? undefined)
+        : scopeFilter
+      kgExpandNode(name, effectiveScope)
     },
-    [kgExpandNode],
+    [kgExpandNode, scopeFilter, currentSessionId],
   )
 
   const handleWalk = useCallback(
     (name: string) => {
       userClearedGraph.current = false
       setTooltip(null)
-      kgWalkFrom(name)
+      const effectiveScope = scopeFilter === 'all' ? undefined
+        : scopeFilter === 'session' ? (currentSessionId ?? undefined)
+        : scopeFilter
+      kgWalkFrom(name, 2, effectiveScope)
     },
-    [kgWalkFrom],
+    [kgWalkFrom, scopeFilter, currentSessionId],
   )
 
   const handleDeleteNode = useCallback(

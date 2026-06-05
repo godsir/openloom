@@ -23,6 +23,8 @@ pub struct SessionStore {
 pub struct SessionData {
     pub id: String,
     pub created_at: String,
+    #[serde(default = "default_updated_at")]
+    pub updated_at: String,
     pub message_count: usize,
     pub title: Option<String>,
     pub messages: Vec<LoomMessage>,
@@ -30,16 +32,24 @@ pub struct SessionData {
     pub agent_config_name: Option<String>,
 }
 
+fn default_updated_at() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
 impl SessionStore {
     pub async fn list(&self) -> Vec<SessionData> {
-        self.sessions.read().await.values().cloned().collect()
+        let mut sessions: Vec<SessionData> = self.sessions.read().await.values().cloned().collect();
+        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        sessions
     }
 
     pub async fn create(&self, cwd: Option<&str>) -> SessionData {
         let id = uuid::Uuid::now_v7().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
         let session = SessionData {
             id: id.clone(),
-            created_at: chrono::Utc::now().to_rfc3339(),
+            created_at: now.clone(),
+            updated_at: now,
             message_count: 0,
             title: cwd.map(|s| s.to_string()),
             messages: Vec::new(),
@@ -75,12 +85,14 @@ impl SessionStore {
             };
             s.messages.push(msg);
             s.message_count = s.messages.len();
+            s.updated_at = chrono::Utc::now().to_rfc3339();
         }
     }
 
     pub async fn rename(&self, id: &str, title: &str) -> bool {
         if let Some(s) = self.sessions.write().await.get_mut(id) {
             s.title = Some(title.to_string());
+            s.updated_at = chrono::Utc::now().to_rfc3339();
             true
         } else {
             false
@@ -96,6 +108,7 @@ impl SessionStore {
         &self,
         id: String,
         created_at: String,
+        updated_at: String,
         message_count: usize,
         title: Option<String>,
     ) {
@@ -104,6 +117,7 @@ impl SessionStore {
             SessionData {
                 id,
                 created_at,
+                updated_at,
                 message_count,
                 title,
                 messages: Vec::new(),

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import type { ContentBlock } from '../../stores/chat'
-import { IconChevronRight, IconChevronDown, IconTerminal } from '../../utils/icons'
+import { IconChevronRight, IconChevronDown, IconTerminal, IconSearch, IconGlobe, IconFile, IconFileText, IconEdit, IconTrash, IconFolder } from '../../utils/icons'
 import { FileDiffCard } from './FileDiffCard'
 import styles from './ShellBlock.module.css'
 
@@ -13,6 +13,11 @@ export default function ShellBlock({ block }: { block: ContentBlock }) {
   const toolName = (block.toolName as string) || 'unknown'
   const args = block.args as Record<string, unknown> | undefined
   const result = block.result as string | undefined
+
+  // Load default expand preference
+  useEffect(() => {
+    window.loom.getPreference('toolExpandDefault', true).then(v => setExpanded(v))
+  }, [])
   const status = block.status as string
   const details = block.details as Record<string, unknown> | undefined
 
@@ -38,6 +43,7 @@ export default function ShellBlock({ block }: { block: ContentBlock }) {
         className={styles.toggle}
       >
         {expanded ? <IconChevronDown size={10} /> : <IconChevronRight size={10} />}
+        <ToolIcon name={toolName} />
         <span className={styles.label}>{label}</span>
         <span className={styles.detail}>{truncate(detail, 120)}</span>
         {!sealed && <span className={styles.dot} />}
@@ -63,6 +69,21 @@ export default function ShellBlock({ block }: { block: ContentBlock }) {
       )}
     </div>
   )
+}
+
+function ToolIcon({ name }: { name: string }) {
+  switch (name) {
+    case 'shell': return <IconTerminal size={12} />
+    case 'file_write': return <IconEdit size={12} />
+    case 'file_read': return <IconFileText size={12} />
+    case 'file_edit': return <IconEdit size={12} />
+    case 'file_delete': return <IconTrash size={12} />
+    case 'content_search': return <IconSearch size={12} />
+    case 'file_list': return <IconFolder size={12} />
+    case 'web_search': return <IconGlobe size={12} />
+    case 'web_fetch': return <IconGlobe size={12} />
+    default: return <IconFile size={12} />
+  }
 }
 
 function formatTool(name: string, args?: Record<string, unknown>): { label: string; detail: string } {

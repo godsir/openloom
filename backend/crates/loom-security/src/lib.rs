@@ -39,9 +39,10 @@ pub fn check_permission(tool_name: &str, permissions: &SkillPermissions) -> (boo
 /// - Boolean fields (shell, subprocess): if the skill explicitly denies (false),
 ///   the result is false regardless of defaults. If the skill allows, the default
 ///   still controls.
-/// - Path-list fields (fs_read, fs_write): skill's allowlist is used if specified;
-///   otherwise, the default's value is used.
-/// - Network: same AND logic as shell.
+/// - Path-list fields (fs_read, fs_write, network): if the base default denies
+///   (None), the result is always denied regardless of skill declarations.
+///   If the default allows, the skill's allowlist refines it; if unspecified,
+///   the default's value is used.
 pub fn merge_permissions(
     skill_perms: Option<&SkillPermissionConfig>,
     defaults: &SkillPermissions,
@@ -52,9 +53,22 @@ pub fn merge_permissions(
     SkillPermissions {
         shell: sp.shell.unwrap_or(true) && defaults.shell,
         subprocess: sp.subprocess.unwrap_or(true) && defaults.subprocess,
-        fs_read: sp.fs_read.clone().or_else(|| defaults.fs_read.clone()),
-        fs_write: sp.fs_write.clone().or_else(|| defaults.fs_write.clone()),
-        network: sp.network.clone().or_else(|| defaults.network.clone()),
+        // Path-list fields: base denial (None) cannot be overridden by skill
+        fs_read: if defaults.fs_read.is_none() {
+            None
+        } else {
+            sp.fs_read.clone().or_else(|| defaults.fs_read.clone())
+        },
+        fs_write: if defaults.fs_write.is_none() {
+            None
+        } else {
+            sp.fs_write.clone().or_else(|| defaults.fs_write.clone())
+        },
+        network: if defaults.network.is_none() {
+            None
+        } else {
+            sp.network.clone().or_else(|| defaults.network.clone())
+        },
     }
 }
 

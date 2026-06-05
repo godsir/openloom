@@ -108,10 +108,16 @@
   margin-top: 1px;
   font-size: 10px;
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .meta span {
   line-height: 1;
+}
+
+.createTime {
+  opacity: 0.6;
 }
 
 .pinBtn {

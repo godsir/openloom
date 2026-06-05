@@ -174,6 +174,8 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
             prompt_tokens,
             completion_tokens,
             cached_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
             latency_ms,
             context_window,
         } => {
@@ -183,6 +185,8 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "cached_tokens": cached_tokens,
+                "cache_read_tokens": cache_read_tokens,
+                "cache_write_tokens": cache_write_tokens,
                 "latency_ms": latency_ms,
                 "context_window": context_window,
             })

@@ -82,6 +82,10 @@ export default function SessionItem({ session }: { session: SessionSummary }) {
               {session.modified && <span>{relativeTime(session.modified)}</span>}
               {session.modified && session.messageCount > 0 && <span>·</span>}
               {session.messageCount > 0 && <span>{session.messageCount}条消息</span>}
+              {session.createdAt && <>
+                <span>·</span>
+                <span className={styles.createTime}>{formatDate(session.createdAt)}</span>
+              </>}
             </div>
           )}
         </div>
@@ -119,5 +123,21 @@ function relativeTime(iso: string): string {
   const hrs = Math.floor(mins / 60)
   if (hrs < 24) return `${hrs}小时前`
   const days = Math.floor(hrs / 24)
-  return `${days}天前`
+  if (days < 30) return `${days}天前`
+  const months = Math.floor(days / 30)
+  if (months < 12) return `${months}个月前`
+  return `${Math.floor(months / 12)}年前`
+}
+
+function formatDate(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  const now = new Date()
+  const year = d.getFullYear()
+  const month = d.getMonth() + 1
+  const day = d.getDate()
+  if (year === now.getFullYear()) {
+    return `${month}月${day}日`
+  }
+  return `${year}年${month}月${day}日`
 }

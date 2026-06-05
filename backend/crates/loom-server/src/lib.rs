@@ -99,10 +99,11 @@ pub async fn serve(
 
     // Hydrate sessions from persisted store
     let sessions = state.orchestrator.list_persisted_sessions().await;
-    for (id, created_at, message_count, title) in sessions {
+    for (id, created_at, message_count, title, updated_at) in sessions {
+        let effective_updated = updated_at.unwrap_or_else(|| created_at.clone());
         state
             .sessions
-            .restore(id.clone(), created_at, message_count, title)
+            .restore(id.clone(), created_at, effective_updated, message_count, title)
             .await;
         // Restore persisted agent binding
         let agent_name = state

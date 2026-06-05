@@ -12,7 +12,7 @@ export interface KgSlice {
   cognitionSubjects: string[]
   cognitionSnapshots: Record<number, CognitionHistory[]>
   kgSearch: (query: string) => Promise<void>
-  kgExpandNode: (nodeName: string) => Promise<void>
+  kgExpandNode: (nodeName: string, scope?: string) => Promise<void>
   kgWalkFrom: (startName: string, maxDepth?: number, scope?: string) => Promise<void>
   kgLoadGraph: (seeds: string[], maxDepth?: number, scope?: string) => Promise<void>
   kgLoadStats: () => Promise<void>
@@ -42,9 +42,9 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
     set({ kgSearchResults: result.rows ?? [] })
   },
 
-  kgExpandNode: async (nodeName) => {
+  kgExpandNode: async (nodeName, scope?) => {
     set({ kgSelectedNode: null })
-    const result = await loomRpc<KgGraph>('kg.neighbors', { node_name: nodeName, limit: 30 })
+    const result = await loomRpc<KgGraph>('kg.neighbors', { node_name: nodeName, limit: 30, scope })
     const graph = result as KgGraph
     if (!graph.nodes?.length && !graph.edges?.length) return
 
@@ -131,7 +131,7 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
     if (nodeMap.size > 1) {
       try {
         const nodeNames = Array.from(nodeMap.keys())
-        const { edges } = await loomRpc<{ edges: KgEdge[] }>('kg.edges_between', { node_names: nodeNames })
+        const { edges } = await loomRpc<{ edges: KgEdge[] }>('kg.edges_between', { node_names: nodeNames, scope })
         for (const e of edges || []) {
           const key = `${e.source}||${e.target}||${e.relation_type}`
           if (!edgeMap.has(key)) {

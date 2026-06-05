@@ -1,12 +1,13 @@
 import { useRef, useEffect } from 'react'
 import { useStore } from '../../stores'
-import { IconZap, IconShield, IconEye } from '../../utils/icons'
+import { IconZap, IconShield, IconEye, IconLightbulb } from '../../utils/icons'
 import type { PermissionMode } from '../../stores/input'
 
 const OPTIONS: { id: PermissionMode; icon: typeof IconZap; label: string; desc: string }[] = [
   { id: 'operate', icon: IconZap, label: 'Operate', desc: '自动执行操作' },
   { id: 'ask', icon: IconShield, label: 'Ask', desc: '操作前需确认' },
   { id: 'read_only', icon: IconEye, label: 'Read Only', desc: '仅读取不修改' },
+  { id: 'plan', icon: IconLightbulb, label: 'Plan', desc: '先分析规划，再实施' },
 ]
 
 export default function PermissionModeButton() {

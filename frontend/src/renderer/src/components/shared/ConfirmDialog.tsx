@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { IconAlertCircle } from '../../utils/icons'
 import styles from './ConfirmDialog.module.css'
 
@@ -22,6 +23,15 @@ export default function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [open, onCancel])
+
   if (!open) return null
 
   return (

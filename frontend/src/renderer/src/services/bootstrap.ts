@@ -59,8 +59,13 @@ export async function bootstrapApp(): Promise<() => void> {
             completion: (p.completion_tokens as number) || 0,
             model: (p.model as string) || '',
             contextWindow: (p.context_window as number) || 0,
+            cached: (p.cached_tokens as number) || 0,
+            cacheRead: (p.cache_read_tokens as number) || 0,
+            cacheWrite: (p.cache_write_tokens as number) || 0,
           }
           useStore.getState().setSessionUsage(sessionId, usage)
+          // Accumulate into session cumulative for the context ring
+          useStore.getState().accumulateSessionUsage(sessionId, usage)
           // Also aggregate into token stats
           useStore.getState().recordUsage({
             session_id: sessionId,
@@ -111,19 +116,25 @@ export async function bootstrapApp(): Promise<() => void> {
         const toolArgs = p?.args as Record<string, unknown> | undefined
         if (callId && toolName) {
           const store = useStore.getState()
-          const riskLabel = risk === 'High' ? '⚠ 高风险操作' : risk === 'Medium' ? '● 中风险操作' : ''
-          // Show key args (path/command) so user knows what's being approved
-          const detail = toolArgs
-            ? (toolArgs.path || toolArgs.command || toolArgs.file_path || '')
+          // Format risk label with color indicator
+          const riskLabel = risk === 'High'
+            ? '⚠ 高风险操作 — 可能修改文件或执行命令'
+            : risk === 'Medium'
+            ? '● 中风险操作 — 涉及文件读取或网络访问'
             : ''
-          const detailStr = detail ? `目标: ${detail}` : ''
-          const msg = [
-            riskLabel,
-            detailStr,
-            `AI 想要执行 "${toolName}"，是否允许？`,
-          ].filter(Boolean).join('\n')
+          // Extract key detail for context
+          const detail = toolArgs
+            ? String(toolArgs.path || toolArgs.command || toolArgs.file_path || toolArgs.url || '')
+            : ''
+          // Build structured message with line breaks
+          const parts: string[] = []
+          if (riskLabel) parts.push(riskLabel)
+          parts.push(`工具: ${toolName}`)
+          if (detail) parts.push(`目标: ${detail}`)
+          parts.push('是否允许执行此操作？')
+          const msg = parts.join('\n')
           store.showConfirm(
-            `工具权限: ${toolName}`,
+            `工具权限确认`,
             msg,
             risk === 'High',
           ).then((approved: boolean) => {

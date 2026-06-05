@@ -80,6 +80,9 @@ pub trait MemoryStore: Send + Sync {
         tools: usize,
         prompt_tokens: usize,
         completion_tokens: usize,
+        cached_read_tokens: usize,
+        cached_write_tokens: usize,
+        context_window: usize,
         // JSON-serialised content of each tool message (tool calls + results).
         tool_msgs_json: &[String],
     ) -> Result<i64>;
@@ -155,7 +158,7 @@ pub trait MemoryStore: Send + Sync {
     ) -> Result<Vec<(String, String, String, f64)>>;
     async fn kg_node_count(&self) -> Result<usize>;
     async fn kg_edge_count(&self) -> Result<usize>;
-    async fn kg_neighbors(&self, node_name: &str, limit: usize) -> Result<loom_types::KgGraph>;
+    async fn kg_neighbors(&self, node_name: &str, limit: usize, scope: Option<&str>) -> Result<loom_types::KgGraph>;
     async fn kg_walk(
         &self,
         start_name: &str,
@@ -169,7 +172,7 @@ pub trait MemoryStore: Send + Sync {
         offset: usize,
         scope: Option<&str>,
     ) -> Result<Vec<loom_types::KgNode>>;
-    async fn kg_edges_between(&self, node_names: &[String]) -> Result<Vec<loom_types::KgEdge>>;
+    async fn kg_edges_between(&self, node_names: &[String], scope: Option<&str>) -> Result<Vec<loom_types::KgEdge>>;
     async fn kg_delete_node(&self, name: &str) -> Result<bool>;
     async fn kg_delete_edge(&self, source: &str, target: &str, relation: &str) -> Result<bool>;
     // Cognition records
@@ -201,7 +204,7 @@ pub trait MemoryStore: Send + Sync {
         cognition_ids: &[i64],
     ) -> Result<(usize, usize)>;
     // Session persistence
-    async fn list_sessions(&self) -> Result<Vec<(String, String, usize, Option<String>)>>;
+    async fn list_sessions(&self) -> Result<Vec<(String, String, usize, Option<String>, Option<String>)>>;
     async fn ensure_session(&self, id: &str) -> Result<()>;
     async fn delete_session(&self, id: &str) -> Result<()>;
     async fn rename_session(&self, id: &str, title: &str) -> Result<()>;
@@ -883,9 +886,9 @@ impl Orchestrator {
         }
     }
 
-    pub async fn kg_neighbors(&self, node_name: &str, limit: usize) -> Result<loom_types::KgGraph> {
+    pub async fn kg_neighbors(&self, node_name: &str, limit: usize, scope: Option<&str>) -> Result<loom_types::KgGraph> {
         if let Some(ref store) = *self.memory_store.read().await {
-            store.kg_neighbors(node_name, limit).await
+            store.kg_neighbors(node_name, limit, scope).await
         } else {
             Ok(loom_types::KgGraph {
                 nodes: Vec::new(),
@@ -924,9 +927,9 @@ impl Orchestrator {
         }
     }
 
-    pub async fn kg_edges_between(&self, node_names: &[String]) -> Result<Vec<loom_types::KgEdge>> {
+    pub async fn kg_edges_between(&self, node_names: &[String], scope: Option<&str>) -> Result<Vec<loom_types::KgEdge>> {
         if let Some(ref store) = *self.memory_store.read().await {
-            store.kg_edges_between(node_names).await
+            store.kg_edges_between(node_names, scope).await
         } else {
             Ok(Vec::new())
         }
@@ -1180,7 +1183,7 @@ impl Orchestrator {
     }
 
     /// List sessions from the memory store (or empty if no store).
-    pub async fn list_persisted_sessions(&self) -> Vec<(String, String, usize, Option<String>)> {
+    pub async fn list_persisted_sessions(&self) -> Vec<(String, String, usize, Option<String>, Option<String>)> {
         let store = self.memory_store.read().await;
         if let Some(ref s) = *store {
             s.list_sessions().await.unwrap_or_default()
@@ -2435,17 +2438,30 @@ impl Orchestrator {
             system_prompt.push_str(body);
         }
 
+        // Plan mode: inject planning instructions into system prompt
+        if permission_mode == "plan" {
+            system_prompt.push_str("\n\n## 规划模式\n");
+            system_prompt.push_str("你正处于 **规划模式（Plan Mode）**。在此模式下：\n");
+            system_prompt.push_str("- **禁止**修改文件、执行 Shell 命令或任何破坏性操作。\n");
+            system_prompt.push_str("- 你应当深入分析代码库，探索相关文件，创建一个详细的实施方案。\n");
+            system_prompt.push_str("- 方案应包含：需要修改的文件、架构决策、分步实施计划、边界情况和潜在风险。\n");
+            system_prompt.push_str("- 使用清晰的 Markdown 标题、列表和代码片段呈现方案。\n");
+            system_prompt.push_str("- 用户审核方案后，会切换到 **Operate（操作）** 模式来开始实施。\n");
+            system_prompt.push_str("- 你可以自由使用只读工具（Read、Grep、Glob）和搜索工具进行分析。\n");
+        }
+
         // Build default permissions based on permission_mode:
         // - "operate": allow everything (legacy behavior)
         // - "ask": allow everything but agent loop will prompt for medium/high risk
         // - "read_only": deny all writes and shell, allow reads only
+        // - "plan": same as read_only — analyze/plan only, no writes
         tracing::info!(
             session_id,
             permission_mode,
             "building base_permissions from permission_mode"
         );
         let base_permissions = match permission_mode {
-            "read_only" => SkillPermissions {
+            "read_only" | "plan" => SkillPermissions {
                 shell: false,
                 fs_write: None,
                 ..Default::default()
@@ -2832,6 +2848,8 @@ impl Orchestrator {
                             prompt_tokens: p_tokens as usize,
                             completion_tokens: c_tokens as usize,
                             cached_tokens: (cr_tokens + cw_tokens) as usize,
+                            cache_read_tokens: cr_tokens as usize,
+                            cache_write_tokens: cw_tokens as usize,
                             latency_ms: 0,
                             context_window: usage_ctx,
                         });
@@ -2880,6 +2898,8 @@ impl Orchestrator {
                             prompt_tokens: prompt_tokens as usize,
                             completion_tokens: completion_tokens as usize,
                             cached_tokens: 0,
+                            cache_read_tokens: 0,
+                            cache_write_tokens: 0,
                             latency_ms: 0,
                             context_window: 0,
                         });
@@ -3108,6 +3128,9 @@ impl Orchestrator {
                             turn.tool_calls_made,
                             turn.prompt_tokens,
                             turn.completion_tokens,
+                            turn.cache_read_tokens,
+                            turn.cache_write_tokens,
+                            0, // context_window recorded via record_token_usage
                             &tool_json,
                         )
                         .await
@@ -3185,6 +3208,9 @@ impl Orchestrator {
                         turn.tool_calls_made,
                         turn.prompt_tokens,
                         turn.completion_tokens,
+                        turn.cache_read_tokens,
+                        turn.cache_write_tokens,
+                        0, // context_window recorded via record_token_usage
                         &tool_json,
                     )
                     .await?;
@@ -3790,6 +3816,9 @@ impl Orchestrator {
                             turn.tool_calls_made,
                             turn.prompt_tokens,
                             turn.completion_tokens,
+                            turn.cache_read_tokens,
+                            turn.cache_write_tokens,
+                            0, // context_window recorded via record_token_usage
                             &tool_json,
                         )
                         .await
@@ -3867,6 +3896,9 @@ impl Orchestrator {
                             turn.tool_calls_made,
                             turn.prompt_tokens,
                             turn.completion_tokens,
+                            turn.cache_read_tokens,
+                            turn.cache_write_tokens,
+                            0, // context_window recorded via record_token_usage
                             &tool_json,
                         )
                         .await?;

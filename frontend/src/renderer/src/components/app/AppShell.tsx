@@ -3,13 +3,14 @@ import { useStore } from '../../stores'
 import Sidebar from './Sidebar'
 import WindowControls from './WindowControls'
 import ChatWorkspace from '../chat/ChatWorkspace'
-import { IconPanelLeftClose, IconPanelLeft, IconAlertCircle, IconWifiOff, IconRefresh, IconRotateCcw } from '../../utils/icons'
+import { IconPanelLeftClose, IconPanelLeft, IconAlertCircle, IconWifiOff, IconRefresh, IconRotateCcw, IconSettings } from '../../utils/icons'
 import { connectWebSocket } from '../../services/websocket'
 import styles from './AppShell.module.css'
 
 export default function AppShell({ children }: { children?: ReactNode }) {
   const sidebarOpen = useStore(s => s.sidebarOpen)
   const toggleSidebar = useStore(s => s.toggleSidebar)
+  const setSettingsOpen = useStore(s => s.setSettingsOpen)
   const wsState = useStore(s => s.wsState)
   const engineState = useStore(s => s.engineState)
   const port = useStore(s => s.port)
@@ -58,6 +59,9 @@ export default function AppShell({ children }: { children?: ReactNode }) {
         <div className={styles.titlebarLeft}>
           <button onClick={toggleSidebar} className={styles.toggleBtn} title="⌘B 切换侧边栏">
             {sidebarOpen ? <IconPanelLeftClose size={16} /> : <IconPanelLeft size={16} />}
+          </button>
+          <button onClick={() => setSettingsOpen(true)} className={styles.toggleBtn} title="设置">
+            <IconSettings size={16} />
           </button>
         </div>
 

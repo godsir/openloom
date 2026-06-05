@@ -9,7 +9,7 @@ import AgentSelector from './AgentSelector'
 import ThinkingLevelButton from './ThinkingLevelButton'
 import PermissionModeButton from './PermissionModeButton'
 import AttachedFiles from './AttachedFiles'
-import { IconSend, IconImage, IconPaperclip, IconSparkles, IconX, IconCheck } from '../../utils/icons'
+import { IconImage, IconPaperclip, IconSparkles, IconX, IconCheck } from '../../utils/icons'
 import type { AttachedFile } from '../../stores/input'
 import styles from './InputArea.module.css'
 
@@ -41,6 +41,7 @@ export default function InputArea() {
   const createSession = useStore(s => s.createSession)
   const switchSession = useStore(s => s.switchSession)
   const wsState = useStore(s => s.wsState)
+  const sendShortcut = useStore(s => s.sendShortcut)
   const { saveDraft, restoreDraft } = useStore.getState()
   const sessionWorkspace = sessionId ? sessionWorkspaces[sessionId] : undefined
 
@@ -254,23 +255,43 @@ export default function InputArea() {
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      if (e.ctrlKey || e.metaKey) {
-        // Insert newline at cursor position
-        e.preventDefault()
-        const el = e.currentTarget as HTMLTextAreaElement
-        const { selectionStart, selectionEnd, value } = el
-        const next = value.slice(0, selectionStart) + '\n' + value.slice(selectionEnd)
-        setText(next)
-        // Restore cursor after the inserted newline
-        requestAnimationFrame(() => {
-          el.selectionStart = el.selectionEnd = selectionStart + 1
-        })
-        return
-      }
+    if (e.key !== 'Enter') return
+
+    const ctrlOrMeta = e.ctrlKey || e.metaKey
+    const shift = e.shiftKey
+
+    let shouldSend = false
+    switch (sendShortcut) {
+      case 'ctrl+enter':
+        shouldSend = ctrlOrMeta && !shift
+        break
+      case 'shift+enter':
+        shouldSend = shift && !ctrlOrMeta
+        break
+      default: // 'enter'
+        shouldSend = !ctrlOrMeta && !shift
+        break
+    }
+
+    if (shouldSend) {
       e.preventDefault()
       handleSend()
+      return
     }
+
+    // Insert newline manually for modifier combos that need it
+    if (ctrlOrMeta && !shift) {
+      e.preventDefault()
+      const el = e.currentTarget as HTMLTextAreaElement
+      const { selectionStart, selectionEnd, value } = el
+      const next = value.slice(0, selectionStart) + '\n' + value.slice(selectionEnd)
+      setText(next)
+      requestAnimationFrame(() => {
+        el.selectionStart = el.selectionEnd = selectionStart + 1
+      })
+    }
+    // Enter without modifiers in ctrl+enter / shift+enter mode:
+    // let browser insert newline naturally (don't preventDefault)
   }
 
   const streaming = useStore(s => sessionId ? s.streamingSessionIds.has(sessionId) : false)
@@ -294,7 +315,15 @@ export default function InputArea() {
   }, [streaming])
 
   const isConnected = wsState === 'connected'
-  const placeholder = !isConnected ? '正在连接...' : !sessionId ? '开始新对话...' : '输入消息，Enter 发送 · Ctrl+Enter 换行'
+  const placeholder = !isConnected
+    ? '正在连接...'
+    : !sessionId
+      ? '开始新对话...'
+      : sendShortcut === 'ctrl+enter'
+        ? '输入消息，Ctrl+Enter 发送 · Enter 换行'
+        : sendShortcut === 'shift+enter'
+          ? '输入消息，Shift+Enter 发送 · Enter 换行'
+          : '输入消息，Enter 发送 · Ctrl+Enter 换行'
 
   return (
     <div
@@ -425,7 +454,7 @@ export default function InputArea() {
                 onClick={handleStop}
                 className={`${styles.sendBtn} ${styles.stopBtn}`}
               >
-                <IconSend size={12} />停止
+                停止
               </button>
             ) : (
               <button
@@ -433,7 +462,7 @@ export default function InputArea() {
                 disabled={(!text.trim() && attachedFiles.length === 0) || !isConnected}
                 className={styles.sendBtn}
               >
-                <IconSend size={12} />发送
+                发送
               </button>
             )}
           </div>

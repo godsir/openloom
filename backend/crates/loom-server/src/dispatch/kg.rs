@@ -68,9 +68,10 @@ async fn handle_kg_neighbors(state: &AppState, p: &Value) -> Result<Value, JsonR
         return Err(err(ErrorCode::InvalidRequest, "node_name required"));
     }
     let limit = p.get("limit").and_then(|v| v.as_u64()).unwrap_or(30) as usize;
+    let scope = p.get("scope").and_then(|v| v.as_str());
     let graph = state
         .orchestrator
-        .kg_neighbors(node_name, limit)
+        .kg_neighbors(node_name, limit, scope)
         .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
     Ok(serde_json::to_value(graph).unwrap_or_default())
@@ -120,9 +121,10 @@ async fn handle_kg_edges_between(state: &AppState, p: &Value) -> Result<Value, J
                 .collect()
         })
         .unwrap_or_default();
+    let scope = p.get("scope").and_then(|v| v.as_str());
     let edges = state
         .orchestrator
-        .kg_edges_between(&node_names)
+        .kg_edges_between(&node_names, scope)
         .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
     Ok(json!({ "edges": edges }))

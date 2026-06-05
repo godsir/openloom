@@ -169,6 +169,9 @@ class StreamBufferManager {
             completion,
             model: prev?.model ?? '',
             contextWindow: prev?.contextWindow ?? 0,
+            cached: prev?.cached ?? 0,
+            cacheRead: prev?.cacheRead ?? 0,
+            cacheWrite: prev?.cacheWrite ?? 0,
           })
         }
       } catch {

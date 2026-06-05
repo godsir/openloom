@@ -16,6 +16,12 @@ pub struct TokenUsage {
     #[serde(default)]
     pub cached_tokens: usize,
     #[serde(default)]
+    pub cache_read_tokens: usize,
+    #[serde(default)]
+    pub cache_write_tokens: usize,
+    #[serde(default)]
+    pub context_window: usize,
+    #[serde(default)]
     pub latency_ms: u64,
 }
 

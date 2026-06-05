@@ -10,12 +10,12 @@ export interface SessionSummary {
   path: string        // session ID (UUID)
   title: string | null
   firstMessage: string
-  modified: string    // ISO 8601 date
+  modified: string    // ISO 8601 — last active time (updated_at)
+  createdAt: string   // ISO 8601 — creation time (created_at)
   messageCount: number
   agentId: string | null
   agentName: string | null
   cwd: string | null
-  permissionMode: string | null
   pinnedAt: string | null
 }
 
@@ -82,7 +82,9 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
     }
     try {
       const result = await loomRpc<{ messages: any[] }>('session.messages', { session_id: id })
-      const msgs = (result.messages || []).map((m: any, i: number) => ({
+      const msgs = (result.messages || [])
+        .filter((m: any) => m.role !== 'tool' && m.role !== 'Tool') // tool messages already shown as assistant blocks
+        .map((m: any, i: number) => ({
         id: `hist-${id}-${i}`,
         role: parseRole(m.role),
         blocks: parseContentParts(m.content, id, get().port),
@@ -90,6 +92,10 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
         usage: m.usage ? {
           prompt: m.usage.prompt_tokens || 0,
           completion: m.usage.completion_tokens || 0,
+          cached: m.usage.cached_tokens || 0,
+          cacheRead: m.usage.cache_read_tokens || 0,
+          cacheWrite: m.usage.cache_write_tokens || 0,
+          contextWindow: m.usage.context_window || 0,
         } : undefined,
       }))
       ;(get() as any).hydrateMessages?.(id, msgs)
@@ -173,12 +179,12 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
       path: s.id || s.path || '',
       title: s.title || null,
       firstMessage: '',
-      modified: s.created_at || '',
+      modified: s.updated_at || s.created_at || '',
+      createdAt: s.created_at || s.updated_at || '',
       messageCount: s.message_count ?? 0,
       agentId: null,
       agentName: s.agent_config_name || null,
       cwd: null,
-      permissionMode: null,
       pinnedAt: null,
     }))
     set({ sessions: mapped })
@@ -312,8 +318,18 @@ function parseContentParts(content: any, sessionId: string, port: number): any[]
         blocks.push(pendingSkillBlock)
         pendingSkillBlock = null
         pendingSkillCallId = null
+      } else {
+        // Pair non-skill tool_call (shell, file, etc.) with its tool_result
+        const content = tr.content
+        const resultText = typeof content === 'string' ? content : (content != null ? JSON.stringify(content) : '')
+        // Find the last shell block without a result and attach it
+        for (let j = blocks.length - 1; j >= 0; j--) {
+          if (blocks[j].type === 'shell' && !blocks[j].result) {
+            blocks[j].result = resultText
+            break
+          }
+        }
       }
-      // Non-skill tool_results are skipped (already represented by their ToolCall block)
       continue
     } else if ('image' in part) {
       const img = part.image || {}
@@ -379,8 +395,17 @@ function parseContentParts(content: any, sessionId: string, port: number): any[]
         blocks.push(pendingSkillBlock)
         pendingSkillBlock = null
         pendingSkillCallId = null
+      } else {
+        // Pair non-skill tool_call (shell, file, etc.) with its tool_result
+        const content = part.content
+        const resultText = typeof content === 'string' ? content : (content != null ? JSON.stringify(content) : '')
+        for (let j = blocks.length - 1; j >= 0; j--) {
+          if (blocks[j].type === 'shell' && !blocks[j].result) {
+            blocks[j].result = resultText
+            break
+          }
+        }
       }
-      // Non-skill tool_results are skipped (already represented by their ToolCall block)
       continue
     } else {
       // Unknown format — render as text

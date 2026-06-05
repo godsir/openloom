@@ -16,8 +16,13 @@ interface StarFieldProps {
   className?: string
 }
 
+// Target ~20 fps for background stars to reduce GPU competition with GalaxyGraph
+const STARFIELD_FPS = 20
+const FRAME_INTERVAL = 1000 / STARFIELD_FPS
+
 export default function StarField({ width, height, className }: StarFieldProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const lastDrawRef = useRef<number>(0)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -33,10 +38,10 @@ export default function StarField({ width, height, className }: StarFieldProps) 
     if (!ctx) return
     ctx.scale(dpr, dpr)
 
-    // Generate star data once
+    // Generate star data — reduced density from /400 to /800
     const rng = mulberry32(42)
-    const starCount = Math.floor((width * height) / 400)
-    const stars = []
+    const starCount = Math.floor((width * height) / 800)
+    const stars: { x: number; y: number; r: number; baseBrightness: number; phase: number; speed: number }[] = []
     for (let i = 0; i < starCount; i++) {
       stars.push({
         x: rng() * width,
@@ -48,9 +53,9 @@ export default function StarField({ width, height, className }: StarFieldProps) 
       })
     }
 
-    // Generate bright stars with flares
-    const brightStars = []
-    for (let i = 0; i < Math.floor(starCount * 0.02); i++) {
+    // Generate bright stars with flares — only 1% of total (reduced from 2%)
+    const brightStars: { x: number; y: number; r: number; baseBrightness: number; phase: number; speed: number }[] = []
+    for (let i = 0; i < Math.floor(starCount * 0.01); i++) {
       brightStars.push({
         x: rng() * width,
         y: rng() * height,
@@ -61,15 +66,15 @@ export default function StarField({ width, height, className }: StarFieldProps) 
       })
     }
 
-    // Generate nebula data
+    // Nebula data — reduced from 6 to 4
     const nebulaColors = [
       'rgba(34, 211, 238, 0.012)',
       'rgba(167, 139, 250, 0.010)',
       'rgba(244, 114, 182, 0.008)',
       'rgba(52, 211, 153, 0.008)',
     ]
-    const nebulae = []
-    for (let i = 0; i < 6; i++) {
+    const nebulae: { x: number; y: number; r: number; color: string; phase: number; speed: number }[] = []
+    for (let i = 0; i < 4; i++) {
       nebulae.push({
         x: rng() * width,
         y: rng() * height,
@@ -80,39 +85,59 @@ export default function StarField({ width, height, className }: StarFieldProps) 
       })
     }
 
+    // ── Pre-render static background layer ──────────────────────────
+    // The deep space gradient and nebulae don't need per-frame updates.
+    // We render them once to an offscreen canvas, then blit it each frame.
+    const staticBg = document.createElement('canvas')
+    staticBg.width = width
+    staticBg.height = height
+    const bgCtx = staticBg.getContext('2d')!
+    const maxDim = Math.max(width, height)
+    const bgGrad = bgCtx.createRadialGradient(width / 2, height / 2, 0, width / 2, height / 2, maxDim * 0.7)
+    bgGrad.addColorStop(0, '#0d1117')
+    bgGrad.addColorStop(0.5, '#080b10')
+    bgGrad.addColorStop(1, '#050709')
+    bgCtx.fillStyle = bgGrad
+    bgCtx.fillRect(0, 0, width, height)
+
+    for (const neb of nebulae) {
+      const grad = bgCtx.createRadialGradient(neb.x, neb.y, 0, neb.x, neb.y, neb.r)
+      grad.addColorStop(0, neb.color)
+      grad.addColorStop(1, 'transparent')
+      bgCtx.fillStyle = grad
+      bgCtx.fillRect(0, 0, width, height)
+    }
+
+    // Also pre-render non-twinkling dim stars onto the static bg
+    for (const star of stars) {
+      bgCtx.beginPath()
+      bgCtx.arc(star.x, star.y, star.r, 0, Math.PI * 2)
+      bgCtx.fillStyle = `rgba(255,255,255,${star.baseBrightness * 0.7})`
+      bgCtx.fill()
+    }
+
     let animationId: number
-    const draw = () => {
+    const draw = (timestamp: number) => {
+      // Throttle to ~20fps
+      if (timestamp - lastDrawRef.current < FRAME_INTERVAL) {
+        animationId = requestAnimationFrame(draw)
+        return
+      }
+      lastDrawRef.current = timestamp
+
       const time = Date.now()
 
-      // Deep space background
-      const maxDim = Math.max(width, height)
-      const bgGrad = ctx.createRadialGradient(width / 2, height / 2, 0, width / 2, height / 2, maxDim * 0.7)
-      bgGrad.addColorStop(0, '#0d1117')
-      bgGrad.addColorStop(0.5, '#080b10')
-      bgGrad.addColorStop(1, '#050709')
-      ctx.fillStyle = bgGrad
-      ctx.fillRect(0, 0, width, height)
+      // Blit static background (deep space + nebulae + dim stars)
+      ctx.clearRect(0, 0, width, height)
+      ctx.drawImage(staticBg, 0, 0)
 
-      // Animated nebulae with subtle drift
-      for (const neb of nebulae) {
-        const drift = Math.sin(time * neb.speed + neb.phase) * 20
-        const grad = ctx.createRadialGradient(
-          neb.x + drift, neb.y, 0,
-          neb.x + drift, neb.y, neb.r
-        )
-        grad.addColorStop(0, neb.color)
-        grad.addColorStop(1, 'transparent')
-        ctx.fillStyle = grad
-        ctx.fillRect(0, 0, width, height)
-      }
-
-      // Twinkling stars
+      // Animated twinkling overlay for stars — only vary brightness on top of static
       for (const star of stars) {
-        const twinkle = Math.sin(time * star.speed + star.phase) * 0.3 + 0.7
-        const brightness = star.baseBrightness * twinkle
+        const twinkle = Math.sin(time * star.speed + star.phase) * 0.3
+        if (Math.abs(twinkle) < 0.05) continue // skip negligible changes
         ctx.beginPath()
         ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2)
-        ctx.fillStyle = `rgba(255,255,255,${brightness})`
+        ctx.fillStyle = `rgba(255,255,255,${star.baseBrightness * twinkle * 0.5})`
         ctx.fill()
       }
 
@@ -143,7 +168,7 @@ export default function StarField({ width, height, className }: StarFieldProps) 
       animationId = requestAnimationFrame(draw)
     }
 
-    draw()
+    animationId = requestAnimationFrame(draw)
     return () => {
       if (animationId) cancelAnimationFrame(animationId)
     }

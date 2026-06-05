@@ -1,10 +1,11 @@
 import { useStore } from '../../stores'
-import { useRef, useEffect, useMemo, useCallback } from 'react'
+import { useRef, useEffect, useMemo, useCallback, useState } from 'react'
 import AssistantMessage from './AssistantMessage'
 import UserMessage from './UserMessage'
 import ImageLightbox from '../shared/ImageLightbox'
 import ChatTimelineNavigator from './ChatTimelineNavigator'
 import { buildTimelineAnchors } from './timeline-anchors'
+import { IconChevronDown } from '../../utils/icons'
 import styles from './ChatArea.module.css'
 
 const EMPTY: never[] = []
@@ -19,6 +20,7 @@ export default function ChatArea() {
   const error = sessionId ? inlineErrors.get(sessionId)?.text : null
   const scrollRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
+  const [showScrollBtn, setShowScrollBtn] = useState(false)
   const timelineAnchors = useMemo(() => buildTimelineAnchors(messages as any[]), [messages])
   const lightboxSrc = useStore(s => s.lightbox.lightboxSrc)
   const openLightbox = useStore(s => s.openLightbox)
@@ -33,6 +35,7 @@ export default function ChatArea() {
   // Reset auto-scroll flag on session switch
   useEffect(() => {
     autoScrollRef.current = true
+    setShowScrollBtn(false)
   }, [sessionId])
 
   const handleScroll = useCallback(() => {
@@ -40,6 +43,15 @@ export default function ChatArea() {
     if (!el) return
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
     autoScrollRef.current = atBottom
+    setShowScrollBtn(!atBottom)
+  }, [])
+
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    autoScrollRef.current = true
+    setShowScrollBtn(false)
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
   }, [])
 
   // Lightbox click handler — only opens for successfully loaded images
@@ -99,6 +111,11 @@ export default function ChatArea() {
         </div>
       )}
       <ChatTimelineNavigator anchors={timelineAnchors} scrollRef={scrollRef} onManualNavigate={() => { autoScrollRef.current = false }} />
+      {showScrollBtn && messages.length > 0 && (
+        <button className={styles.scrollToBottom} onClick={scrollToBottom} title="回到底部">
+          <IconChevronDown size={16} />
+        </button>
+      )}
       <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
     </div>
   )

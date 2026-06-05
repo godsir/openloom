@@ -114,5 +114,12 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
       useStore.getState().removeStreamingSession(sid)
       streamBufferManager.clear(sid)
     }
+    // Update current session's modified time in sidebar
+    const now = new Date().toISOString()
+    useStore.getState().setSessions(
+      useStore.getState().sessions.map(s =>
+        s.path === sid ? { ...s, modified: now } : s
+      )
+    )
   }
 }

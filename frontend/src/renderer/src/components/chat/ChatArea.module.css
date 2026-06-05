@@ -171,3 +171,30 @@
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+.scrollToBottom {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 10;
+  animation: fadeUp 0.2s var(--ease-out);
+  transition: all 0.15s ease;
+}
+
+.scrollToBottom:hover {
+  background: var(--bg-active);
+  color: var(--text);
+  border-color: var(--border-accent);
+}

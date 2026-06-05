@@ -27,7 +27,7 @@ export default function WelcomeScreen() {
   const recentSessions = sessions
     .filter(s => s.title || s.firstMessage)
     .sort((a, b) => (b.modified || '').localeCompare(a.modified || ''))
-    .slice(0, 5)
+    .slice(0, 3)
 
   return (
     <div className={styles.wrapper}>

@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS sessions (
     id                TEXT PRIMARY KEY,
     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
     message_count     INTEGER NOT NULL DEFAULT 0,
     title             TEXT,
     pinned_at         TEXT,

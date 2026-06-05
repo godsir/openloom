@@ -316,7 +316,7 @@ body{
 }
 
 .drawer-item-active {
-  background: rgba(var(--accent-rgb, 34 211 238), 0.08);
+  background: rgb(var(--accent-rgb, 34 211 238) / 0.08);
   color: var(--accent);
 }
 

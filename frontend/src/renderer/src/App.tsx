@@ -10,6 +10,7 @@ import ConfirmDialog from './components/shared/ConfirmDialog'
 import { bootstrapApp } from './services/bootstrap'
 import { handleModelsChanged } from './services/app-event-actions'
 import { useStore } from './stores'
+import type { PermissionMode } from './stores/input'
 import styles from './App.module.css'
 
 export default function App() {
@@ -71,9 +72,29 @@ export default function App() {
         }
         const savedFontSize = await window.loom.getPreference('fontSize', 'default')
         useStore.getState().setFontSize(savedFontSize as any)
+        const savedSendShortcut = await window.loom.getPreference('sendShortcut', 'enter')
+        useStore.getState().setSendShortcut(savedSendShortcut as any)
+        const savedPermissionMode = await window.loom.getPreference('permissionMode', 'ask')
+        const validModes = ['operate', 'ask', 'read_only', 'plan']
+        if (validModes.includes(String(savedPermissionMode))) {
+          useStore.getState().setPermissionMode(savedPermissionMode as PermissionMode)
+        }
         const savedPinned = await window.loom.getPreference<string[]>('pinnedIds', [])
         if (savedPinned.length) {
           useStore.setState({ pinnedIds: new Set(savedPinned) })
+        }
+        // Apply saved fonts on startup
+        const savedUiFont = await window.loom.getPreference('uiFont', '')
+        const savedCodeFont = await window.loom.getPreference('codeFont', '')
+        const root = document.documentElement
+        if (savedUiFont) {
+          root.style.setProperty('--font', savedUiFont as string)
+          if ((savedUiFont as string).includes('KaiTi') || (savedUiFont as string).includes('楷体')) {
+            root.style.setProperty('-webkit-text-stroke', '0.35px')
+          }
+        }
+        if (savedCodeFont) {
+          root.style.setProperty('--font-mono', savedCodeFont as string)
         }
       } catch (e: any) {
         if (cancelled) return

@@ -287,19 +287,43 @@ impl<'a> GraphStore<'a> {
         if let Ok(Some(id)) = self.resolve_node(node_name) {
             let _ = self.touch_node(id);
         }
-        let scope_filter = scope.unwrap_or("global");
-        let mut stmt = self.conn.prepare(
-            "SELECT n.id, n.name, n.entity_type, n.description, e.relation_type, e.confidence, n.scope
-             FROM kg_nodes src
-             JOIN kg_edges e ON (e.source_id = src.id OR e.target_id = src.id)
-             JOIN kg_nodes n ON (
-                (e.source_id = n.id AND e.target_id = src.id) OR
-                (e.target_id = n.id AND e.source_id = src.id)
-             )
-             WHERE src.name = ?1 AND (e.scope = ?2 OR e.scope = 'global')
-             ORDER BY e.confidence DESC LIMIT ?3",
-        )?;
-        let rows = stmt.query_map(rusqlite::params![node_name, scope_filter, limit], |row| {
+        let (sql, params): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(s) = scope {
+            (
+                "SELECT n.id, n.name, n.entity_type, n.description, e.relation_type, e.confidence, n.scope
+                 FROM kg_nodes src
+                 JOIN kg_edges e ON (e.source_id = src.id OR e.target_id = src.id)
+                 JOIN kg_nodes n ON (
+                    (e.source_id = n.id AND e.target_id = src.id) OR
+                    (e.target_id = n.id AND e.source_id = src.id)
+                 )
+                 WHERE src.name = ?1 AND (e.scope = ?2 OR e.scope = 'global')
+                 ORDER BY e.confidence DESC LIMIT ?3",
+                vec![
+                    Box::new(node_name.to_string()) as Box<dyn rusqlite::types::ToSql>,
+                    Box::new(s.to_string()),
+                    Box::new(limit as i64),
+                ],
+            )
+        } else {
+            (
+                "SELECT n.id, n.name, n.entity_type, n.description, e.relation_type, e.confidence, n.scope
+                 FROM kg_nodes src
+                 JOIN kg_edges e ON (e.source_id = src.id OR e.target_id = src.id)
+                 JOIN kg_nodes n ON (
+                    (e.source_id = n.id AND e.target_id = src.id) OR
+                    (e.target_id = n.id AND e.source_id = src.id)
+                 )
+                 WHERE src.name = ?1
+                 ORDER BY e.confidence DESC LIMIT ?2",
+                vec![
+                    Box::new(node_name.to_string()) as Box<dyn rusqlite::types::ToSql>,
+                    Box::new(limit as i64),
+                ],
+            )
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
             Ok(GraphRow {
                 node_id: row.get(0)?,
                 name: row.get(1)?,
@@ -367,48 +391,85 @@ impl<'a> GraphStore<'a> {
         scope: Option<&str>,
         limit: usize,
     ) -> Result<Vec<GraphRow>> {
-        let scope_filter = scope.unwrap_or("global");
-        let mut stmt = self.conn.prepare(
-            "WITH RECURSIVE walk(id, name, entity_type, description, depth, visited, scope) AS (
-                SELECT n.id, n.name, n.entity_type, n.description, 0,
-                       '/' || CAST(n.id AS TEXT) || '/', n.scope
-                FROM kg_nodes n
-                WHERE n.name = ?1 AND (n.scope = ?2 OR n.scope = 'global')
-                UNION
-                SELECT CASE WHEN e.source_id = w.id THEN e.target_id ELSE e.source_id END,
-                       CASE WHEN e.source_id = w.id THEN tn.name ELSE sn.name END,
-                       CASE WHEN e.source_id = w.id THEN tn.entity_type ELSE sn.entity_type END,
-                       CASE WHEN e.source_id = w.id THEN tn.description ELSE sn.description END,
-                       w.depth + 1,
-                       w.visited || CAST(CASE WHEN e.source_id = w.id THEN e.target_id ELSE e.source_id END AS TEXT) || '/',
-                       CASE WHEN e.source_id = w.id THEN tn.scope ELSE sn.scope END
-                FROM walk w
-                JOIN kg_edges e ON (e.source_id = w.id OR e.target_id = w.id)
-                JOIN kg_nodes sn ON sn.id = e.source_id
-                JOIN kg_nodes tn ON tn.id = e.target_id
-                WHERE w.depth < ?3
-                  AND (e.scope = ?2 OR e.scope = 'global')
-                  AND w.visited NOT LIKE '%/' || CAST(CASE WHEN e.source_id = w.id THEN e.target_id ELSE e.source_id END AS TEXT) || '/%'
+        let (sql, params): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(s) = scope {
+            (
+                "WITH RECURSIVE walk(id, name, entity_type, description, depth, visited, scope) AS (
+                    SELECT n.id, n.name, n.entity_type, n.description, 0,
+                           '/' || CAST(n.id AS TEXT) || '/', n.scope
+                    FROM kg_nodes n
+                    WHERE n.name = ?1 AND (n.scope = ?2 OR n.scope = 'global')
+                    UNION
+                    SELECT CASE WHEN e.source_id = w.id THEN e.target_id ELSE e.source_id END,
+                           CASE WHEN e.source_id = w.id THEN tn.name ELSE sn.name END,
+                           CASE WHEN e.source_id = w.id THEN tn.entity_type ELSE sn.entity_type END,
+                           CASE WHEN e.source_id = w.id THEN tn.description ELSE sn.description END,
+                           w.depth + 1,
+                           w.visited || CAST(CASE WHEN e.source_id = w.id THEN e.target_id ELSE e.source_id END AS TEXT) || '/',
+                           CASE WHEN e.source_id = w.id THEN tn.scope ELSE sn.scope END
+                    FROM walk w
+                    JOIN kg_edges e ON (e.source_id = w.id OR e.target_id = w.id)
+                    JOIN kg_nodes sn ON sn.id = e.source_id
+                    JOIN kg_nodes tn ON tn.id = e.target_id
+                    WHERE w.depth < ?3
+                      AND (e.scope = ?2 OR e.scope = 'global')
+                      AND w.visited NOT LIKE '%/' || CAST(CASE WHEN e.source_id = w.id THEN e.target_id ELSE e.source_id END AS TEXT) || '/%'
+                )
+                SELECT DISTINCT id, name, entity_type, description, MIN(depth), scope
+                FROM walk WHERE depth > 0
+                GROUP BY id ORDER BY MIN(depth) LIMIT ?4",
+                vec![
+                    Box::new(start_name.to_string()) as Box<dyn rusqlite::types::ToSql>,
+                    Box::new(s.to_string()),
+                    Box::new(max_depth as i64),
+                    Box::new(limit as i64),
+                ],
             )
-            SELECT DISTINCT id, name, entity_type, description, MIN(depth), scope
-            FROM walk WHERE depth > 0
-            GROUP BY id ORDER BY MIN(depth) LIMIT ?4"
-        )?;
-        let rows = stmt.query_map(
-            rusqlite::params![start_name, scope_filter, max_depth, limit],
-            |row| {
-                Ok(GraphRow {
-                    node_id: row.get(0)?,
-                    name: row.get(1)?,
-                    entity_type: row.get(2)?,
-                    description: row.get(3)?,
-                    confidence: 0.0,
-                    relation_type: None,
-                    distance: Some(row.get(4)?),
-                    scope: row.get(5)?,
-                })
-            },
-        )?;
+        } else {
+            (
+                "WITH RECURSIVE walk(id, name, entity_type, description, depth, visited, scope) AS (
+                    SELECT n.id, n.name, n.entity_type, n.description, 0,
+                           '/' || CAST(n.id AS TEXT) || '/', n.scope
+                    FROM kg_nodes n
+                    WHERE n.name = ?1
+                    UNION
+                    SELECT CASE WHEN e.source_id = w.id THEN e.target_id ELSE e.source_id END,
+                           CASE WHEN e.source_id = w.id THEN tn.name ELSE sn.name END,
+                           CASE WHEN e.source_id = w.id THEN tn.entity_type ELSE sn.entity_type END,
+                           CASE WHEN e.source_id = w.id THEN tn.description ELSE sn.description END,
+                           w.depth + 1,
+                           w.visited || CAST(CASE WHEN e.source_id = w.id THEN e.target_id ELSE e.source_id END AS TEXT) || '/',
+                           CASE WHEN e.source_id = w.id THEN tn.scope ELSE sn.scope END
+                    FROM walk w
+                    JOIN kg_edges e ON (e.source_id = w.id OR e.target_id = w.id)
+                    JOIN kg_nodes sn ON sn.id = e.source_id
+                    JOIN kg_nodes tn ON tn.id = e.target_id
+                    WHERE w.depth < ?2
+                      AND w.visited NOT LIKE '%/' || CAST(CASE WHEN e.source_id = w.id THEN e.target_id ELSE e.source_id END AS TEXT) || '/%'
+                )
+                SELECT DISTINCT id, name, entity_type, description, MIN(depth), scope
+                FROM walk WHERE depth > 0
+                GROUP BY id ORDER BY MIN(depth) LIMIT ?3",
+                vec![
+                    Box::new(start_name.to_string()) as Box<dyn rusqlite::types::ToSql>,
+                    Box::new(max_depth as i64),
+                    Box::new(limit as i64),
+                ],
+            )
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok(GraphRow {
+                node_id: row.get(0)?,
+                name: row.get(1)?,
+                entity_type: row.get(2)?,
+                description: row.get(3)?,
+                confidence: 0.0,
+                relation_type: None,
+                distance: Some(row.get(4)?),
+                scope: row.get(5)?,
+            })
+        })?;
         let results: Vec<GraphRow> = rows.collect::<std::result::Result<Vec<_>, _>>()?;
         let _ = self.touch_rows(&results);
         Ok(results)
@@ -454,29 +515,47 @@ impl<'a> GraphStore<'a> {
     }
 
     /// Return all edges where both source and target are in the given node IDs.
-    pub fn edges_between(&self, node_ids: &[i64]) -> Result<Vec<(String, String, String, f64)>> {
+    /// When scope is provided, only returns edges in that scope or global scope.
+    pub fn edges_between(&self, node_ids: &[i64], scope: Option<&str>) -> Result<Vec<(String, String, String, f64)>> {
         if node_ids.is_empty() {
             return Ok(Vec::new());
         }
-        // Use positional `?` placeholders (not numbered `?N`) because the same
-        // set of IDs is used in two IN clauses and rusqlite needs separate bindings.
         let placeholder = "?,".repeat(node_ids.len());
-        let in_clause = &placeholder[..placeholder.len() - 1]; // strip trailing comma
-        let sql = format!(
-            "SELECT sn.name, tn.name, e.relation_type, e.confidence
-             FROM kg_edges e
-             JOIN kg_nodes sn ON sn.id = e.source_id
-             JOIN kg_nodes tn ON tn.id = e.target_id
-             WHERE e.source_id IN ({}) AND e.target_id IN ({})",
-            in_clause, in_clause
-        );
+        let in_clause = &placeholder[..placeholder.len() - 1];
+        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(s) = scope {
+            let sql = format!(
+                "SELECT sn.name, tn.name, e.relation_type, e.confidence
+                 FROM kg_edges e
+                 JOIN kg_nodes sn ON sn.id = e.source_id
+                 JOIN kg_nodes tn ON tn.id = e.target_id
+                 WHERE e.source_id IN ({}) AND e.target_id IN ({})
+                 AND (e.scope = ?1 OR e.scope = 'global')",
+                in_clause, in_clause
+            );
+            let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(s.to_string())];
+            for id in node_ids.iter().chain(node_ids.iter()) {
+                params.push(Box::new(*id));
+            }
+            (sql, params)
+        } else {
+            let sql = format!(
+                "SELECT sn.name, tn.name, e.relation_type, e.confidence
+                 FROM kg_edges e
+                 JOIN kg_nodes sn ON sn.id = e.source_id
+                 JOIN kg_nodes tn ON tn.id = e.target_id
+                 WHERE e.source_id IN ({}) AND e.target_id IN ({})",
+                in_clause, in_clause
+            );
+            let params: Vec<Box<dyn rusqlite::types::ToSql>> = node_ids
+                .iter()
+                .chain(node_ids.iter())
+                .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+                .collect();
+            (sql, params)
+        };
         let mut stmt = self.conn.prepare(&sql)?;
-        let params: Vec<&dyn rusqlite::types::ToSql> = node_ids
-            .iter()
-            .chain(node_ids.iter())
-            .map(|id| id as &dyn rusqlite::types::ToSql)
-            .collect();
-        let rows = stmt.query_map(params.as_slice(), |row| {
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
