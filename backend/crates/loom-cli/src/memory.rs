@@ -1798,7 +1798,7 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn evaluate_quality(&self, lookback_days: i64) -> Result<String> {
-        use loom_core::MemoryQualityReport;
+        use loom_core::QualityEvaluation;
         let mem = self.memory_db.lock().expect("lock poisoned");
         let conn = mem.conn();
 
@@ -1877,7 +1877,7 @@ impl MemoryStore for LoomMemoryStore {
             ));
         }
 
-        let report = MemoryQualityReport {
+        let report = QualityEvaluation {
             lookback_days,
             total_injections: total_injected_entities,
             total_references,

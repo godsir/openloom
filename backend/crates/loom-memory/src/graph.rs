@@ -4,91 +4,45 @@
 
 use anyhow::Result;
 use chrono::Utc;
+use loom_types::MemoryQualityReport;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-/// Memory quality self-evaluation report — holistic health metrics for the
-/// knowledge graph and memory injection pipeline.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryQualityReport {
-    // ── Injection quality (from memory_quality_log) ──────────────────────
-    /// Average ratio of referenced entities to injected entities per turn (0-1).
-    pub avg_relevance: f64,
-    /// Total number of turns with quality log entries.
-    pub injection_count: i64,
-    /// Number of turns where at least one injected entity was referenced.
-    pub turns_with_references: i64,
-
-    // ── Entity health ────────────────────────────────────────────────────
-    /// Total number of entity nodes in the knowledge graph.
-    pub total_entities: i64,
-    /// Ratio of entities that share identical names (0-1). Lower is better.
-    pub duplicate_rate: f64,
-    /// Entities that haven't been accessed in over 30 days.
-    pub stale_entity_count: i64,
-    /// Average confidence across all kg_nodes.
-    pub avg_confidence: f64,
-
-    // ── Coverage ─────────────────────────────────────────────────────────
-    /// Distribution of entity types (type name, count).
-    pub entity_types_distribution: Vec<(String, i64)>,
-    /// Distribution of memory layers (layer name, count).
-    pub layer_distribution: Vec<(String, i64)>,
-
-    // ── Freshness ────────────────────────────────────────────────────────
-    /// Entities added in the last 7 days.
-    pub entities_added_recently: i64,
-    /// Entities accessed in the last 7 days.
-    pub entities_accessed_recently: i64,
-
-    // ── Consolidation effectiveness ──────────────────────────────────────
-    /// Number of consolidation cycles that have run.
-    pub consolidation_runs: i64,
-    /// Total number of duplicate entities merged across all cycles.
-    pub total_merged: i64,
-
-    // ── Score (0-100) ────────────────────────────────────────────────────
-    /// Weighted composite health score from all metrics above.
-    pub health_score: f64,
-}
-
-impl MemoryQualityReport {
-    /// Compute the weighted health score (0-100) from the report's metrics.
-    ///
-    /// Weights:
-    /// - 30% relevance: how well injected memories match what the LLM uses
-    /// - 25% freshness: how recently entities have been accessed
-    /// - 20% coverage: breadth of entity types present
-    /// - 15% confidence: average entity confidence
-    /// - 10% dedup rate: cleanliness (inverse of duplicate rate)
-    pub fn compute_health_score(report: &Self) -> f64 {
-        let relevance = (report.avg_relevance * 100.0).min(100.0);
-        let freshness = if report.total_entities > 0 {
-            (report.entities_accessed_recently as f64 / report.total_entities as f64 * 100.0)
-                .min(100.0)
-        } else {
-            0.0
-        };
-        let coverage = (report.entity_types_distribution.len() as f64 / 8.0).min(1.0) * 100.0;
-        let confidence = (report.avg_confidence * 100.0).min(100.0);
-        let dedup = if report.total_entities > 0 {
-            (1.0 - report.duplicate_rate) * 100.0
-        } else {
-            100.0
-        };
-
-        let score = 0.30 * relevance
-            + 0.25 * freshness
-            + 0.20 * coverage
-            + 0.15 * confidence
-            + 0.10 * dedup;
-
-        (score * 10.0).round() / 10.0 // round to 1 decimal place
-    }
-}
-
 /// Default embedding dimension, matching common embedding models
 /// (e.g., text-embedding-3-small, all-mpnet-base-v2: 768).
+/// Compute the weighted health score (0-100) from the report's metrics.
+///
+/// Weights:
+/// - 30% relevance: how well injected memories match what the LLM uses
+/// - 25% freshness: how recently entities have been accessed
+/// - 20% coverage: breadth of entity types present
+/// - 15% confidence: average entity confidence
+/// - 10% dedup rate: cleanliness (inverse of duplicate rate)
+pub fn compute_health_score(report: &MemoryQualityReport) -> f64 {
+    let relevance = (report.avg_relevance * 100.0).min(100.0);
+    let freshness = if report.total_entities > 0 {
+        (report.entities_accessed_recently as f64 / report.total_entities as f64 * 100.0)
+            .min(100.0)
+    } else {
+        0.0
+    };
+    let coverage = (report.entity_types_distribution.len() as f64 / 8.0).min(1.0) * 100.0;
+    let confidence = (report.avg_confidence * 100.0).min(100.0);
+    let dedup = if report.total_entities > 0 {
+        (1.0 - report.duplicate_rate) * 100.0
+    } else {
+        100.0
+    };
+
+    let score = 0.30 * relevance
+        + 0.25 * freshness
+        + 0.20 * coverage
+        + 0.15 * confidence
+        + 0.10 * dedup;
+
+    (score * 10.0).round() / 10.0 // round to 1 decimal place
+}
+
 pub const DEFAULT_EMBEDDING_DIM: usize = 768;
 
 /// A row from a graph query.
@@ -126,7 +80,7 @@ pub struct PathStep {
 
 /// Result of a single active-forgetting pruning pass.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ForgettingReport {
+pub struct PruningResult {
     pub pruned_nodes: i64,
     pub pruned_edges: i64,
     pub pruned_cognitions: i64,
@@ -135,7 +89,7 @@ pub struct ForgettingReport {
 
 /// Health snapshot of the in-memory knowledge graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryHealth {
+pub struct GraphHealth {
     pub total_nodes: i64,
     pub total_edges: i64,
     pub avg_confidence: f64,
@@ -1518,7 +1472,7 @@ impl<'a> GraphStore<'a> {
             health_score: 0.0, // computed below
         };
 
-        report.health_score = MemoryQualityReport::compute_health_score(&report);
+        report.health_score = compute_health_score(&report);
 
         Ok(report)
     }
@@ -1687,7 +1641,7 @@ impl<'a> GraphStore<'a> {
         &self,
         min_importance: f64,
         max_age_days: i64,
-    ) -> Result<ForgettingReport> {
+    ) -> Result<PruningResult> {
         let now = Utc::now().timestamp();
         let cutoff_ts = now - max_age_days * 86400;
 
@@ -1779,7 +1733,7 @@ impl<'a> GraphStore<'a> {
         }
 
         if to_prune.is_empty() {
-            return Ok(ForgettingReport {
+            return Ok(PruningResult {
                 pruned_nodes: 0,
                 pruned_edges: 0,
                 pruned_cognitions: 0,
@@ -1795,7 +1749,7 @@ impl<'a> GraphStore<'a> {
             .collect::<Vec<_>>()
             .join(",");
 
-        let run_pruning = || -> Result<ForgettingReport> {
+        let run_pruning = || -> Result<PruningResult> {
             self.conn.execute_batch("BEGIN;")?;
 
             // Count edges that reference pruned nodes (before we delete evidence)
@@ -1857,7 +1811,7 @@ impl<'a> GraphStore<'a> {
 
             self.conn.execute_batch("COMMIT;")?;
 
-            Ok(ForgettingReport {
+            Ok(PruningResult {
                 pruned_nodes,
                 pruned_edges,
                 pruned_cognitions,
@@ -1875,7 +1829,7 @@ impl<'a> GraphStore<'a> {
     }
 
     /// Return a snapshot of overall knowledge-graph health.
-    pub fn get_memory_health(&self) -> Result<MemoryHealth> {
+    pub fn get_memory_health(&self) -> Result<GraphHealth> {
         let now = Utc::now().timestamp();
 
         let total_nodes: i64 = self
@@ -1902,7 +1856,7 @@ impl<'a> GraphStore<'a> {
 
         let layer_distribution = self.get_layer_stats()?;
 
-        Ok(MemoryHealth {
+        Ok(GraphHealth {
             total_nodes,
             total_edges,
             avg_confidence,
@@ -2354,6 +2308,6 @@ mod tests {
 
         // Check serialization round-trips
         let json = serde_json::to_string(&health).unwrap();
-        let _roundtripped: MemoryHealth = serde_json::from_str(&json).unwrap();
+        let _roundtripped: GraphHealth = serde_json::from_str(&json).unwrap();
     }
 }

@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 /// Pipeline stage with its trigger mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PipelineStage {
+pub enum MemoryPipelineStage {
     /// Entity extraction — event-driven, every conversation turn.
     Extraction,
     /// Full consolidation (promote/demote/prune/dedup) — every 50 extractions.
@@ -37,7 +37,7 @@ pub enum PipelineStage {
     SelfEvaluation,
 }
 
-impl PipelineStage {
+impl MemoryPipelineStage {
     /// Human-readable label.
     pub fn label(&self) -> &'static str {
         match self {
@@ -50,7 +50,7 @@ impl PipelineStage {
     }
 }
 
-impl std::fmt::Display for PipelineStage {
+impl std::fmt::Display for MemoryPipelineStage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.label())
     }
@@ -62,14 +62,14 @@ impl std::fmt::Display for PipelineStage {
 
 /// Tracks when each pipeline stage was last executed and drives scheduling
 /// decisions (extraction count, wall-clock intervals).
-pub struct PipelineScheduler {
+pub struct MemoryPipelineScheduler {
     last_consolidation: Instant,
     last_generalization: Instant,
     last_forgetting: Instant,
     extraction_count: u64,
 }
 
-impl Default for PipelineScheduler {
+impl Default for MemoryPipelineScheduler {
     fn default() -> Self {
         Self {
             last_consolidation: Instant::now(),
@@ -80,7 +80,7 @@ impl Default for PipelineScheduler {
     }
 }
 
-impl PipelineScheduler {
+impl MemoryPipelineScheduler {
     /// Create a new scheduler with all timers initialised to now.
     pub fn new() -> Self {
         Self::default()
@@ -93,16 +93,16 @@ impl PipelineScheduler {
     /// * `Consolidation` is due every 50 extractions.
     /// * `Generalization` is due when 24 h have passed since the last run.
     /// * `ActiveForgetting` is due when 7 d have passed since the last run.
-    pub fn should_run(&self, stage: PipelineStage) -> bool {
+    pub fn should_run(&self, stage: MemoryPipelineStage) -> bool {
         match stage {
-            PipelineStage::Extraction | PipelineStage::SelfEvaluation => true,
-            PipelineStage::Consolidation => {
+            MemoryPipelineStage::Extraction | MemoryPipelineStage::SelfEvaluation => true,
+            MemoryPipelineStage::Consolidation => {
                 self.extraction_count > 0 && self.extraction_count.is_multiple_of(50)
             }
-            PipelineStage::Generalization => {
+            MemoryPipelineStage::Generalization => {
                 self.last_generalization.elapsed() >= GENERALIZATION_INTERVAL
             }
-            PipelineStage::ActiveForgetting => {
+            MemoryPipelineStage::ActiveForgetting => {
                 self.last_forgetting.elapsed() >= FORGETTING_INTERVAL
             }
         }
@@ -114,27 +114,27 @@ impl PipelineScheduler {
     }
 
     /// Record that a stage has just completed so its timer is reset.
-    pub fn record_run(&mut self, stage: PipelineStage) {
+    pub fn record_run(&mut self, stage: MemoryPipelineStage) {
         match stage {
-            PipelineStage::Consolidation => self.last_consolidation = Instant::now(),
-            PipelineStage::Generalization => self.last_generalization = Instant::now(),
-            PipelineStage::ActiveForgetting => self.last_forgetting = Instant::now(),
+            MemoryPipelineStage::Consolidation => self.last_consolidation = Instant::now(),
+            MemoryPipelineStage::Generalization => self.last_generalization = Instant::now(),
+            MemoryPipelineStage::ActiveForgetting => self.last_forgetting = Instant::now(),
             // Extraction and SelfEvaluation are continuous — no timer to reset.
-            PipelineStage::Extraction | PipelineStage::SelfEvaluation => {}
+            MemoryPipelineStage::Extraction | MemoryPipelineStage::SelfEvaluation => {}
         }
     }
 
     /// Return the configured schedule as (stage, interval) pairs.
-    pub fn get_schedule() -> Vec<(PipelineStage, Duration)> {
+    pub fn get_schedule() -> Vec<(MemoryPipelineStage, Duration)> {
         vec![
-            (PipelineStage::Extraction, Duration::ZERO), // every turn
+            (MemoryPipelineStage::Extraction, Duration::ZERO), // every turn
             (
-                PipelineStage::Consolidation,
+                MemoryPipelineStage::Consolidation,
                 GENERALIZATION_INTERVAL.div_f64(24.0),
             ), // rough ~2h
-            (PipelineStage::Generalization, GENERALIZATION_INTERVAL),
-            (PipelineStage::ActiveForgetting, FORGETTING_INTERVAL),
-            (PipelineStage::SelfEvaluation, Duration::ZERO), // continuous
+            (MemoryPipelineStage::Generalization, GENERALIZATION_INTERVAL),
+            (MemoryPipelineStage::ActiveForgetting, FORGETTING_INTERVAL),
+            (MemoryPipelineStage::SelfEvaluation, Duration::ZERO), // continuous
         ]
     }
 
@@ -196,7 +196,7 @@ pub struct GeneralizationReport {
 
 /// Result of an active forgetting run.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ForgettingReport {
+pub struct PipelineForgettingReport {
     /// Number of nodes pruned.
     pub pruned: usize,
     /// Number of nodes scored (examined).
@@ -468,8 +468,8 @@ fn score_entity(confidence: f64, evidence_count: i64, last_accessed: i64, now: i
 /// - `evidence_count >= 10`
 /// - `scope = 'global'` AND `layer in ('semantic', 'global')`
 /// - `layer = 'global'`
-pub fn run_active_forgetting(conn: &Connection) -> Result<ForgettingReport> {
-    let mut report = ForgettingReport::default();
+pub fn run_active_forgetting(conn: &Connection) -> Result<PipelineForgettingReport> {
+    let mut report = PipelineForgettingReport::default();
     let now = Utc::now().timestamp();
     let cutoff = now - FORGET_RETENTION_DAYS * 86400;
 
@@ -700,57 +700,57 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // PipelineScheduler
+    // MemoryPipelineScheduler
     // -----------------------------------------------------------------------
 
     #[test]
     fn test_scheduler_new_defaults() {
-        let s = PipelineScheduler::new();
+        let s = MemoryPipelineScheduler::new();
         assert_eq!(s.extraction_count(), 0);
         // Extraction and SelfEvaluation are continuous — always due
-        assert!(s.should_run(PipelineStage::Extraction));
-        assert!(s.should_run(PipelineStage::SelfEvaluation));
+        assert!(s.should_run(MemoryPipelineStage::Extraction));
+        assert!(s.should_run(MemoryPipelineStage::SelfEvaluation));
         // Consolidation not due until extractions accumulate to 50
-        assert!(!s.should_run(PipelineStage::Consolidation));
+        assert!(!s.should_run(MemoryPipelineStage::Consolidation));
         // Generalization and forgetting are wall-clock gated; not due
         // immediately after construction (elapsed < 24h / 7d).
-        assert!(!s.should_run(PipelineStage::Generalization));
-        assert!(!s.should_run(PipelineStage::ActiveForgetting));
+        assert!(!s.should_run(MemoryPipelineStage::Generalization));
+        assert!(!s.should_run(MemoryPipelineStage::ActiveForgetting));
     }
 
     #[test]
     fn test_scheduler_consolidation_trigger() {
-        let mut s = PipelineScheduler::new();
+        let mut s = MemoryPipelineScheduler::new();
         for _ in 0..49 {
             s.record_extraction();
         }
-        assert!(!s.should_run(PipelineStage::Consolidation));
+        assert!(!s.should_run(MemoryPipelineStage::Consolidation));
         s.record_extraction(); // 50
-        assert!(s.should_run(PipelineStage::Consolidation));
-        s.record_run(PipelineStage::Consolidation);
+        assert!(s.should_run(MemoryPipelineStage::Consolidation));
+        s.record_run(MemoryPipelineStage::Consolidation);
         assert_eq!(s.extraction_count(), 50);
     }
 
     #[test]
     fn test_scheduler_record_run_resets_timers() {
-        let mut s = PipelineScheduler::new();
+        let mut s = MemoryPipelineScheduler::new();
         // After recording a run, generalization should no longer be due
         // (elapsed time is nearly zero)
-        s.record_run(PipelineStage::Generalization);
-        assert!(!s.should_run(PipelineStage::Generalization));
-        s.record_run(PipelineStage::ActiveForgetting);
-        assert!(!s.should_run(PipelineStage::ActiveForgetting));
+        s.record_run(MemoryPipelineStage::Generalization);
+        assert!(!s.should_run(MemoryPipelineStage::Generalization));
+        s.record_run(MemoryPipelineStage::ActiveForgetting);
+        assert!(!s.should_run(MemoryPipelineStage::ActiveForgetting));
     }
 
     #[test]
     fn test_get_schedule() {
-        let schedule = PipelineScheduler::get_schedule();
+        let schedule = MemoryPipelineScheduler::get_schedule();
         assert_eq!(schedule.len(), 5);
-        assert_eq!(schedule[0].0, PipelineStage::Extraction);
-        assert_eq!(schedule[1].0, PipelineStage::Consolidation);
-        assert_eq!(schedule[2].0, PipelineStage::Generalization);
-        assert_eq!(schedule[3].0, PipelineStage::ActiveForgetting);
-        assert_eq!(schedule[4].0, PipelineStage::SelfEvaluation);
+        assert_eq!(schedule[0].0, MemoryPipelineStage::Extraction);
+        assert_eq!(schedule[1].0, MemoryPipelineStage::Consolidation);
+        assert_eq!(schedule[2].0, MemoryPipelineStage::Generalization);
+        assert_eq!(schedule[3].0, MemoryPipelineStage::ActiveForgetting);
+        assert_eq!(schedule[4].0, MemoryPipelineStage::SelfEvaluation);
     }
 
     // -----------------------------------------------------------------------
@@ -990,16 +990,16 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // PipelineStage Display
+    // MemoryPipelineStage Display
     // -----------------------------------------------------------------------
 
     #[test]
     fn test_pipeline_stage_label() {
-        assert_eq!(PipelineStage::Extraction.label(), "extraction");
-        assert_eq!(PipelineStage::Consolidation.label(), "consolidation");
-        assert_eq!(PipelineStage::Generalization.label(), "generalization");
-        assert_eq!(PipelineStage::ActiveForgetting.label(), "active_forgetting");
-        assert_eq!(PipelineStage::SelfEvaluation.label(), "self_evaluation");
-        assert_eq!(PipelineStage::Extraction.to_string(), "extraction");
+        assert_eq!(MemoryPipelineStage::Extraction.label(), "extraction");
+        assert_eq!(MemoryPipelineStage::Consolidation.label(), "consolidation");
+        assert_eq!(MemoryPipelineStage::Generalization.label(), "generalization");
+        assert_eq!(MemoryPipelineStage::ActiveForgetting.label(), "active_forgetting");
+        assert_eq!(MemoryPipelineStage::SelfEvaluation.label(), "self_evaluation");
+        assert_eq!(MemoryPipelineStage::Extraction.to_string(), "extraction");
     }
 }

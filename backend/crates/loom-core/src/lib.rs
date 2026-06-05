@@ -21,8 +21,10 @@ pub use agent_loop::{AgentLoopConfig, TurnResult, run_agent_turn, run_agent_turn
 pub use agent_pool::AgentPool;
 pub use event_bus::{AgentEvent, EventBus};
 pub use orchestrator::{
-    BehaviorProfile, ForgettingReport, MemoryHealth, MemoryQualityReport, MemoryStore,
-    Orchestrator, PipelineScheduler, PipelineStage,
+    MemoryStore, Orchestrator, PipelineScheduler, adapt_behavior,
+};
+pub use loom_types::{
+    BehaviorProfile, ForgettingReport, MemoryHealth, PipelineStage, QualityEvaluation,
 };
 pub use slash_router::{SlashIntercept, SlashRouter};
 pub use tool_registry::{

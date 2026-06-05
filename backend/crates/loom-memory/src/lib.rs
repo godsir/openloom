@@ -23,8 +23,8 @@ pub use extractor::{
     RuleBasedEntityExtractor, parse_llm_extraction,
 };
 pub use graph::{
-    DEFAULT_EMBEDDING_DIM, ForgettingReport, GraphStore, MemoryHealth, MemoryQualityReport,
-    blob_to_f32_vec, cosine_similarity, f32_slice_to_blob,
+    DEFAULT_EMBEDDING_DIM, GraphStore, PruningResult, blob_to_f32_vec, compute_health_score,
+    cosine_similarity, f32_slice_to_blob,
 };
 pub use layers::{Layer, LayerConfig};
 pub use pattern::{
@@ -36,7 +36,7 @@ pub use persona::{
     RichPersona, RichPersonaProvider, TechProficiency, Verbosity, WorkingStyle,
 };
 pub use pipeline::{
-    ConceptCluster, GeneralizationReport, PipelineScheduler, PipelineStage, PruningEntry,
+    ConceptCluster, GeneralizationReport, PipelineForgettingReport, PruningEntry,
     detect_concept_clusters, evaluate_session_quality, run_active_forgetting,
 };
 pub use store::{

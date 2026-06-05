@@ -64,7 +64,7 @@ pub struct CognitionHistory {
 }
 
 /// Memory quality self-evaluation report — sent to the frontend settings page.
-/// Mirrors `loom_memory::MemoryQualityReport` for wire serialisation.
+/// Canonical type live in `loom_types::kg`; `loom_memory::graph` imports it from here.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryQualityReport {
     // Injection quality

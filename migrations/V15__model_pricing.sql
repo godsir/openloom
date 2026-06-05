@@ -1,2 +1,0 @@
-ALTER TABLE model_configs ADD COLUMN input_price REAL NOT NULL DEFAULT 0.0;
-ALTER TABLE model_configs ADD COLUMN output_price REAL NOT NULL DEFAULT 0.0;
