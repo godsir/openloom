@@ -38,7 +38,7 @@ interface GraphNode {
   color: string
 }
 
-export default function KnowledgeGraphTab() {
+export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialSubTab?: 'list' | 'graph' }) {
   const kgStats = useStore(s => s.kgStats)
   const kgSearchResults = useStore(s => s.kgSearchResults)
   const kgGraph = useStore(s => s.kgGraph)
@@ -58,7 +58,7 @@ export default function KnowledgeGraphTab() {
   const [query, setQuery] = useState('')
   const [scopeFilter, setScopeFilter] = useState<'all' | 'global' | 'session'>('all')
   const [tooltip, setTooltip] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
-  const [activeTab, setActiveTab] = useState<'list' | 'graph'>('list')
+  const [activeTab, setActiveTab] = useState<'list' | 'graph'>(initialSubTab)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showLabels, setShowLabels] = useState(true)
 

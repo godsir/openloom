@@ -1,3 +1,278 @@
+/* ── Maintenance Tab — Complete Styles ── */
+
+/* ── Wrapper & layout ── */
+.maintenanceTab {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Two-column card layout for management sections */
+.mgmtGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.mgmtCard {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-lg);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mgmtCardTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mgmtCardDesc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.mgmtCardActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: auto;
+}
+
+/* ── Generic section ── */
+.section {
+  margin-bottom: 28px;
+}
+
+.sectionTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+.sectionSubtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+/* ── KG maintenance section (original) ── */
+.maintenanceStats {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.maintenanceActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.promoteBtn,
+.pruneBtn {
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all 0.15s;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.promoteBtn:hover {
+  background: var(--bg-active);
+  border-color: var(--border-accent);
+}
+
+.pruneBtn {
+  color: var(--red);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.pruneBtn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.pruneBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Cognition filters ── */
+.filterRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.filterLabel {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ── Cognition list ── */
+.cognitionList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.emptyState {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 24px 0;
+}
+
+/* ── Cognition row ── */
+.cognitionRow {
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--bg-surface);
+  transition: border-color 0.15s;
+}
+
+.cognitionRow:hover {
+  border-color: var(--border-accent);
+}
+
+.cognitionHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  flex-wrap: wrap;
+}
+
+.expandToggle {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 2px;
+  width: 16px;
+  flex-shrink: 0;
+}
+
+.cognitionTrait {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.cognitionValue {
+  font-size: 12px;
+  color: var(--text);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cognitionConf {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  margin-left: auto;
+}
+
+.cognitionVersion {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.scopeBadge {
+  font-size: 10px;
+  padding: 1px 5px;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  border-radius: var(--r-sm);
+}
+
+.cognitionExpanded {
+  padding: 0 12px 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Evolution timeline ── */
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 8px;
+}
+
+.timelineEmpty {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 8px 0;
+}
+
+.timelineItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.timelineVersion {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--accent);
+  min-width: 48px;
+  flex-shrink: 0;
+}
+
+.timelineContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.timelineValue {
+  font-size: 11px;
+  color: var(--text);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.timelineMeta {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.timelineArrow {
+  font-size: 14px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 2px 0;
+}
+
 /* ── New Maintenance sections (Consolidation, Forgetting, Pipeline, Layers) ── */
 
 /* Section container — matches existing .section pattern */

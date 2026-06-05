@@ -18,6 +18,17 @@ function entityColor(type: string): string {
   return `hsl(${hashHue(type)}, 55%, 58%)`
 }
 
+// Entity type → Chinese label map
+const ENTITY_TYPE_CN: Record<string, string> = {
+  Technology: '技术',
+  Person: '人物',
+  Project: '项目',
+  Concept: '概念',
+  Tool: '工具',
+  Topic: '话题',
+  Organization: '组织',
+}
+
 function formatPct(v: number): string {
   return `${(v * 100).toFixed(0)}%`
 }
@@ -346,7 +357,7 @@ export default function MemoryHealthPanel() {
                     className={styles.typeDot}
                     style={{ background: entityColor(name) }}
                   />
-                  <span className={styles.typeName}>{name}</span>
+                  <span className={styles.typeName}>{ENTITY_TYPE_CN[name] ?? name}</span>
                 </div>
                 <span className={styles.typeCount}>{count.toLocaleString()}</span>
               </div>

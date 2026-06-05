@@ -27,9 +27,9 @@ const PROFICIENCY_BG: Record<string, string> = {
 }
 
 const APPROACH_ICONS: Record<Approach, string> = {
-  CodeFirst: '⌨',
-  PlanFirst: '\u{1F4CB}',
-  Conversational: '\u{1F4AC}',
+  CodeFirst: '\u{2328}',
+  PlanFirst: '\u{2630}',
+  Conversational: '\u{27F3}',
 }
 
 const APPROACH_LABELS: Record<Approach, string> = {
@@ -100,7 +100,9 @@ function formatTimestamp(iso: string): string {
 }
 
 function langFlag(lang: string): string {
-  return LANG_FLAGS[lang] ?? '\u{1F310}'
+  // Use text-based locale codes instead of emoji flags
+  const codes: Record<string, string> = { 'zh-CN': '中', 'zh-TW': '繁', 'en-US': 'EN', 'en-GB': 'EN', 'ja-JP': '日', 'ko-KR': '한' }
+  return codes[lang] ?? lang.slice(0, 2).toUpperCase()
 }
 
 // ── Sub-components ──
@@ -234,7 +236,7 @@ function CommunicationSection({ language, formality }: { language: string; forma
       <h3 className={styles.sectionTitle}>沟通风格</h3>
       <div className={styles.commRow}>
         <div className={styles.commItem}>
-          <span className={styles.langFlag}>{langFlag(language)}</span>
+          <span className={styles.langBadge}>{langFlag(language)}</span>
           <span className={styles.commLabel}>语言</span>
           <span className={styles.commValue}>{language}</span>
         </div>
@@ -323,7 +325,12 @@ export default function PersonaPanel({ persona, onRefresh, loading }: PersonaPan
     return (
       <div className={styles.panel}>
         <div className={styles.emptyState}>
-          <span className={styles.emptyIcon}>{'\u{1F9D0}'}</span>
+          <div className={styles.emptyIcon}>
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.4">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
+          </div>
           <p className={styles.emptyTitle}>暂无用户画像数据</p>
           <p className={styles.emptyHint}>保持与 AI 对话，系统会自动构建你的个人画像</p>
         </div>
@@ -346,7 +353,12 @@ export default function PersonaPanel({ persona, onRefresh, loading }: PersonaPan
     return (
       <div className={styles.panel}>
         <div className={styles.emptyState}>
-          <span className={styles.emptyIcon}>{'\u{1F9D0}'}</span>
+          <div className={styles.emptyIcon}>
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.4">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
+          </div>
           <p className={styles.emptyTitle}>暂无用户画像数据</p>
           <p className={styles.emptyHint}>继续对话，系统将自动构建你的用户画像</p>
         </div>

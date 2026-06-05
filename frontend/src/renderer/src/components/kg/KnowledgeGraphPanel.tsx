@@ -9,7 +9,7 @@ import VectorSearchPanel from './VectorSearchPanel'
 import styles from './KnowledgeGraphPanel.module.css'
 
 export default function KnowledgeGraphPanel() {
-  const [activeTab, setActiveTab] = useState<'kg' | 'vector' | 'persona' | 'patterns' | 'health' | 'maintenance'>('kg')
+  const [activeTab, setActiveTab] = useState<'graph' | 'kg' | 'vector' | 'persona' | 'patterns' | 'health' | 'maintenance'>('graph')
 
   // ── Pattern data (connected wrapper inline) ──
   const patternReport = useStore(s => s.patternReport)
@@ -19,9 +19,13 @@ export default function KnowledgeGraphPanel() {
     <div className={styles.panel}>
       <div className={styles.mainTabs}>
         <button
+          className={`${styles.mainTab} ${activeTab === 'graph' ? styles.mainTabActive : ''}`}
+          onClick={() => setActiveTab('graph')}
+        >星图</button>
+        <button
           className={`${styles.mainTab} ${activeTab === 'kg' ? styles.mainTabActive : ''}`}
           onClick={() => setActiveTab('kg')}
-        >知识图谱</button>
+        >知识库</button>
         <button
           className={`${styles.mainTab} ${activeTab === 'vector' ? styles.mainTabActive : ''}`}
           onClick={() => setActiveTab('vector')}
@@ -43,7 +47,8 @@ export default function KnowledgeGraphPanel() {
           onClick={() => setActiveTab('maintenance')}
         >维护</button>
       </div>
-      {activeTab === 'kg' && <KnowledgeGraphTab />}
+      {activeTab === 'graph' && <KnowledgeGraphTab initialSubTab="graph" />}
+      {activeTab === 'kg' && <KnowledgeGraphTab initialSubTab="list" />}
       {activeTab === 'vector' && (
         <VectorSearchPanel
           onEntitySelected={() => setActiveTab('kg')}
