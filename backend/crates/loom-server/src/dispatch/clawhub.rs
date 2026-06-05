@@ -124,64 +124,77 @@ fn read_installed_version(slug: &str) -> Option<String> {
 }
 
 /// Read cached skill list if it exists and is fresh enough.
-fn read_cache() -> Option<Vec<Value>> {
-    let path = cache_file();
-    let data = std::fs::read_to_string(&path).ok()?;
-    let cache: CacheEntry = serde_json::from_str(&data).ok()?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    if now - cache.timestamp < CACHE_TTL_SECS {
-        Some(cache.items)
-    } else {
-        None
-    }
+async fn read_cache() -> Option<Vec<Value>> {
+    tokio::task::spawn_blocking(|| {
+        let path = cache_file();
+        let data = std::fs::read_to_string(&path).ok()?;
+        let cache: CacheEntry = serde_json::from_str(&data).ok()?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now - cache.timestamp < CACHE_TTL_SECS {
+            Some(cache.items)
+        } else {
+            None
+        }
+    })
+    .await
+    .unwrap_or(None)
 }
 
 /// Write skill list to cache file.
-fn write_cache(items: &[Value]) {
-    let path = cache_file();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let cache = CacheEntry {
-        timestamp: now,
-        items: items.to_vec(),
-    };
-    if let Ok(json) = serde_json::to_string(&cache) {
-        let _ = std::fs::write(&path, json);
-    }
+async fn write_cache(items: Vec<Value>) {
+    tokio::task::spawn_blocking(move || {
+        let path = cache_file();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let cache = CacheEntry {
+            timestamp: now,
+            items,
+        };
+        if let Ok(json) = serde_json::to_string(&cache) {
+            let _ = std::fs::write(&path, json);
+        }
+    })
+    .await
+    .unwrap_or(());
 }
 
-/// Enrich cached items with live installed status.
-fn enrich_install_status(items: &[Value]) -> Vec<Value> {
-    items
-        .iter()
-        .map(|item| {
-            let slug = item["id"].as_str().unwrap_or("");
-            let installed = is_installed(slug);
-            let installed_version = if installed {
-                read_installed_version(slug)
-            } else {
-                None
-            };
-            let latest_ver = item["version"].as_str().unwrap_or("");
-            let has_update = installed
-                && !latest_ver.is_empty()
-                && installed_version.as_deref() != Some(latest_ver);
+/// Enrich cached items with live installed status (runs filesystem checks on blocking pool).
+async fn enrich_install_status(items: Vec<Value>) -> Vec<Value> {
+    let fallback = items.clone();
+    tokio::task::spawn_blocking(move || {
+        items
+            .into_iter()
+            .map(|item| {
+                let slug = item["id"].as_str().unwrap_or("");
+                let installed = is_installed(slug);
+                let installed_version = if installed {
+                    read_installed_version(slug)
+                } else {
+                    None
+                };
+                let latest_ver = item["version"].as_str().unwrap_or("");
+                let has_update = installed
+                    && !latest_ver.is_empty()
+                    && installed_version.as_deref() != Some(latest_ver);
 
-            let mut enriched = item.clone();
-            enriched["installed"] = json!(installed);
-            enriched["installed_version"] = json!(installed_version);
-            enriched["has_update"] = json!(has_update);
-            enriched
-        })
-        .collect()
+                let mut enriched = item.clone();
+                enriched["installed"] = json!(installed);
+                enriched["installed_version"] = json!(installed_version);
+                enriched["has_update"] = json!(has_update);
+                enriched
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or(fallback)
 }
 
 async fn handle_clawhub_list(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
@@ -196,15 +209,15 @@ async fn handle_clawhub_list(state: &AppState, p: &Value) -> Result<Value, JsonR
     }
 
     // Check cache first (unless force refresh)
-    if !force && let Some(cached) = read_cache() {
-        let enriched = enrich_install_status(&cached);
+    if !force && let Some(cached) = read_cache().await {
+        let enriched = enrich_install_status(cached).await;
         return Ok(json!({ "skills": enriched, "cached": true }));
     }
 
     // Fetch fresh data
     let skills = fetch_skill_list().await?;
-    write_cache(&skills);
-    let enriched = enrich_install_status(&skills);
+    write_cache(skills.clone()).await;
+    let enriched = enrich_install_status(skills).await;
     Ok(json!({ "skills": enriched, "cached": false }))
 }
 

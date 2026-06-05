@@ -314,7 +314,7 @@ export default function MaintenanceTab() {
               <input type="number" className={mt.numberInput} min={1} max={365} value={forgetMaxAge} onChange={e => setForgetMaxAge(Math.max(1, Math.min(365, parseInt(e.target.value, 10) || 60)))} />
             </div>
             <button className={mt.runBtnDanger} onClick={handleForgetting} disabled={forgetting}>
-              {forgetting ? '执行中...' : '执行'}
+              {forgetting ? '执行中...' : '执行遗忘'}
             </button>
           </div>
           {forgettingReport && (

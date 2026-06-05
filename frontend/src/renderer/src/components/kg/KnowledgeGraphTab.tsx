@@ -229,6 +229,7 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
 
   return (
     <div className={styles.panel}>
+      <div className={styles.stickyBar}>
       <div className={styles.searchRow}>
         <input
           className={styles.searchInput}
@@ -262,6 +263,7 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
           </span>
         </div>
       )}
+      </div>{/* stickyBar */}
 
       {/* Tabs */}
       {initialSubTab === 'graph' && hasData && (
