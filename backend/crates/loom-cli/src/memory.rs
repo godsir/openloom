@@ -5,8 +5,8 @@
 use anyhow::Result;
 use loom_core::MemoryStore;
 use loom_memory::{
-    AgentConfigStore, CognitionStore, CognitionsPersonaProvider, GraphStore, McpConfigStore,
-    McpServerRow, ModelConfigStore, NewEvent,
+    AgentConfigStore, CognitionStore, GraphStore, McpConfigStore, McpServerRow,
+    ModelConfigStore, NewEvent, RichPersonaProvider,
     config_db::ConfigDb,
     memory_db::MemoryDb,
     session_db::SessionDb,
@@ -389,7 +389,7 @@ impl MemoryStore for LoomMemoryStore {
                     triggered.push(format!("uses_{}", tag));
                 }
                 // Also upsert to knowledge graph
-                let _ = graph.upsert_node(keyword, "Technology", keyword, 0.5, session_id);
+                let _ = graph.upsert_node(keyword, "Technology", keyword, 0.5, session_id, None);
             }
         }
 
@@ -435,7 +435,7 @@ impl MemoryStore for LoomMemoryStore {
                 {
                     triggered.push(format!("interest_{}", kw.replace(' ', "_")));
                 }
-                let _ = graph.upsert_node(kw, "Concept", kw, 0.5, session_id);
+                let _ = graph.upsert_node(kw, "Concept", kw, 0.5, session_id, None);
             }
         }
 
@@ -486,7 +486,7 @@ impl MemoryStore for LoomMemoryStore {
         }
 
         // 5. Link USER node in knowledge graph
-        let _ = graph.upsert_node("USER", "Person", "The user of openLoom", 1.0, session_id);
+        let _ = graph.upsert_node("USER", "Person", "The user of openLoom", 1.0, session_id, None);
 
         if !triggered.is_empty() {
             tracing::info!(?triggered, session_id, "cognitions extracted");
@@ -495,13 +495,61 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn get_persona(&self) -> Result<String> {
-        let rows = {
+        let provider = {
             let store = self.memory_db.lock().expect("lock poisoned");
-            let cognition = CognitionStore::new(store.conn());
-            cognition.query_by_subject("USER", None, 20, 0)?
+            RichPersonaProvider::assemble(store.conn())?
         };
-        let provider = CognitionsPersonaProvider::new(rows);
         provider.summarize().await
+    }
+
+    /// Phase 2: Rich persona formatted as a structured Markdown block for
+    /// system prompt injection. Wraps the base persona with section headers
+    /// and confidence metadata for better LLM comprehension.
+    async fn get_rich_persona(&self) -> Result<Option<String>> {
+        let provider = {
+            let store = self.memory_db.lock().expect("lock poisoned");
+            RichPersonaProvider::assemble(store.conn())?
+        };
+        let persona = provider.persona();
+
+        // Return None if no meaningful data gathered yet
+        if persona.tech_stack.is_empty()
+            && persona.preferences.is_empty()
+            && persona.goals.is_empty()
+        {
+            return Ok(None);
+        }
+
+        let base = RichPersonaProvider::format_for_prompt(persona);
+
+        // Wrap with a structured Markdown header
+        let mut lines: Vec<String> = Vec::new();
+        lines.push("## User Profile (Rich)".to_string());
+        lines.push(base);
+
+        // Append a compact tech stack table if non-empty
+        if !persona.tech_stack.is_empty() {
+            lines.push("\n### Technology Proficiency".to_string());
+            for t in persona.tech_stack.iter().take(10) {
+                lines.push(format!(
+                    "- **{}**: {} (confidence: {:.2}, evidence: {})",
+                    t.name, t.level.as_str(), t.confidence, t.evidence_count
+                ));
+            }
+        }
+
+        // Append active goals
+        let active_goals: Vec<_> = persona.goals.iter().filter(|g| {
+            matches!(g.status, loom_memory::persona::GoalStatus::Active)
+        }).collect();
+        if !active_goals.is_empty() {
+            lines.push("\n### Active Goals".to_string());
+            for g in active_goals.iter().take(5) {
+                lines.push(format!("- {} (priority: {})", g.description, g.priority));
+            }
+        }
+
+        Ok(Some(lines.join("\n")))
     }
 
     async fn feed_knowledge_graph(
@@ -525,6 +573,7 @@ impl MemoryStore for LoomMemoryStore {
                 &e.description,
                 e.confidence,
                 scope,
+                None,
             ) {
                 node_ids.insert(e.name.clone(), id);
                 node_count += 1;
@@ -818,6 +867,18 @@ impl MemoryStore for LoomMemoryStore {
         }
     }
 
+    async fn query_kg_context_layered(
+        &self,
+        entity_names: &[&str],
+        limit: usize,
+        scope: &str,
+        layer: Option<&str>,
+    ) -> Result<String> {
+        let store = self.memory_db.lock().expect("lock poisoned");
+        let graph = GraphStore::new(store.conn());
+        graph.query_kg_context(entity_names, limit, Some(scope), layer)
+    }
+
     async fn list_sessions(&self) -> Result<Vec<(String, String, usize, Option<String>, Option<String>)>> {
         let store = self.session_db.lock().expect("lock poisoned");
         let mut stmt = store.conn().prepare(
@@ -1002,33 +1063,38 @@ impl MemoryStore for LoomMemoryStore {
     }
 
     async fn delete_session(&self, id: &str) -> Result<()> {
-        let store = self.session_db.lock().expect("lock poisoned");
-        let conn = store.conn();
-
-        // 1. Promote high-confidence session-scoped KG nodes/edges and cognitions to global
-        let graph = GraphStore::new(conn);
-        let cognition = CognitionStore::new(conn);
-        let promoted_nodes = graph.promote_scope_to_global(id, 0.6).unwrap_or(0);
-        let promoted_cogs = cognition.promote_to_global(id, 0.6).unwrap_or(0);
-        if promoted_nodes > 0 || promoted_cogs > 0 {
-            tracing::info!(
-                session_id = id,
-                promoted_nodes,
-                promoted_cogs,
-                "promoted session memories to global on delete"
-            );
+        // 1. Promote high-confidence session-scoped KG nodes/edges and cognitions to global.
+        //    These tables live in memory.db, NOT session.db.
+        {
+            let store = self.memory_db.lock().expect("lock poisoned");
+            let conn = store.conn();
+            let graph = GraphStore::new(conn);
+            let cognition = CognitionStore::new(conn);
+            let promoted_nodes = graph.promote_scope_to_global(id, 0.6).unwrap_or(0);
+            let promoted_cogs = cognition.promote_to_global(id, 0.6).unwrap_or(0);
+            if promoted_nodes > 0 || promoted_cogs > 0 {
+                tracing::info!(
+                    session_id = id,
+                    promoted_nodes,
+                    promoted_cogs,
+                    "promoted session memories to global on delete"
+                );
+            }
+            // Delete remaining session-scoped data (low confidence items)
+            let _ = graph.delete_by_scope(id);
+            let _ = cognition.delete_by_scope(id);
         }
 
-        // 2. Delete remaining session-scoped data (low confidence items)
-        let _ = graph.delete_by_scope(id);
-        let _ = cognition.delete_by_scope(id);
-
-        // 3. Delete message history and session row
-        conn.execute(
-            "DELETE FROM message_history WHERE session_id = ?1",
-            rusqlite::params![id],
-        )?;
-        conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])?;
+        // 2. Delete message history and session row from session.db.
+        {
+            let store = self.session_db.lock().expect("lock poisoned");
+            let conn = store.conn();
+            conn.execute(
+                "DELETE FROM message_history WHERE session_id = ?1",
+                rusqlite::params![id],
+            )?;
+            conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])?;
+        }
         Ok(())
     }
 
@@ -1490,5 +1556,48 @@ impl MemoryStore for LoomMemoryStore {
         let mem = self.memory_db.lock().expect("lock poisoned");
         let graph = GraphStore::new(mem.conn());
         graph.update_quality_log_references(log_id, &referenced_json)
+    }
+
+    // ── Phase 2: Memory consolidation, persona, patterns, layers ─────────────
+
+    async fn run_consolidation_cycle(&self) -> Result<String> {
+        let mem = self.memory_db.lock().expect("lock poisoned");
+        let consolidator = loom_memory::MemoryConsolidator::new(mem.conn());
+        let report = consolidator.run_cycle()?;
+        let json = serde_json::to_string(&report).unwrap_or_else(|_| r#"{"summary":"serialisation error"}"#.into());
+        tracing::info!(summary = %report.summary, "consolidation cycle completed");
+        Ok(json)
+    }
+
+    async fn detect_patterns(&self) -> Result<String> {
+        let mem = self.memory_db.lock().expect("lock poisoned");
+        let detector = loom_memory::SessionPatternDetector::new(mem.conn());
+        let report = detector.detect_all()?;
+        let json = serde_json::to_string(&report).unwrap_or_else(|_| r#"{}"#.into());
+        tracing::info!(
+            topics = report.topics.len(),
+            tools = report.tools.len(),
+            "pattern detection completed"
+        );
+        Ok(json)
+    }
+
+    async fn get_layer_stats(&self) -> Result<Vec<(String, i64)>> {
+        let mem = self.memory_db.lock().expect("lock poisoned");
+        let graph = loom_memory::GraphStore::new(mem.conn());
+        graph.get_layer_stats()
+    }
+
+    async fn promote_to_layer(&self, node_name: &str, layer: &str) -> Result<()> {
+        let mem = self.memory_db.lock().expect("lock poisoned");
+        let graph = loom_memory::GraphStore::new(mem.conn());
+        // Resolve node name to id, then promote
+        if let Some(node_id) = graph.resolve_node(node_name)? {
+            graph.promote_node_layer(node_id, layer)?;
+            tracing::info!(node = %node_name, layer, "promote_to_layer");
+        } else {
+            anyhow::bail!("node '{}' not found for layer promotion", node_name);
+        }
+        Ok(())
     }
 }

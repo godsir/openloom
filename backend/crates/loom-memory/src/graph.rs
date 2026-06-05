@@ -58,6 +58,8 @@ impl<'a> GraphStore<'a> {
     // ========================================================================
 
     /// Upsert an entity node. Returns the node ID.
+    /// `layer` defaults to "semantic" when None.
+    /// LLM-extracted high-confidence entities can be "episodic".
     pub fn upsert_node(
         &self,
         name: &str,
@@ -65,7 +67,9 @@ impl<'a> GraphStore<'a> {
         description: &str,
         confidence: f64,
         scope: &str,
+        layer: Option<&str>,
     ) -> Result<i64> {
+        let layer_val = layer.unwrap_or("semantic");
         let now = Utc::now().timestamp();
         let existing: Option<i64> = self
             .conn
@@ -79,16 +83,16 @@ impl<'a> GraphStore<'a> {
         if let Some(id) = existing {
             self.conn.execute(
                 "UPDATE kg_nodes SET description = ?1, confidence = MAX(confidence, ?2),
-                 evidence_count = evidence_count + 1, last_updated = ?3 WHERE id = ?4",
-                rusqlite::params![description, confidence, now, id],
+                 evidence_count = evidence_count + 1, last_updated = ?3, layer = ?4 WHERE id = ?5",
+                rusqlite::params![description, confidence, now, layer_val, id],
             )?;
             Ok(id)
         } else {
             self.conn.execute(
                 "INSERT INTO kg_nodes (name, entity_type, description, confidence,
-                 evidence_count, first_seen, last_updated, scope)
-                 VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5, ?6)",
-                rusqlite::params![name, entity_type, description, confidence, now, scope],
+                 evidence_count, first_seen, last_updated, scope, layer)
+                 VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5, ?6, ?7)",
+                rusqlite::params![name, entity_type, description, confidence, now, scope, layer_val],
             )?;
             Ok(self.conn.last_insert_rowid())
         }
@@ -344,7 +348,11 @@ impl<'a> GraphStore<'a> {
         Ok(results)
     }
 
-    /// Get top-scored interests/connections for a subject with temporal decay.
+    /// Get top-scored interests/connections for a subject with temporal decay
+    /// and layer-aware weighting.
+    /// Layer priority: working(40) > episodic(30) > semantic(20) > global(10).
+    /// The score is multiplied by (retrieval_priority / 20.0) so that the
+    /// default 'semantic' layer is the ×1.0 baseline.
     pub fn top_interests(
         &self,
         subject: &str,
@@ -362,11 +370,13 @@ impl<'a> GraphStore<'a> {
                         * EXP(MAX(?1 - e.last_updated, 0) / -2592000.0)
                         * (CASE WHEN n.last_accessed IS NOT NULL
                             THEN EXP(MAX(?1 - n.last_accessed, 0) / -604800.0)
-                            ELSE 0.5 END),
+                            ELSE 0.5 END)
+                        * COALESCE(ml.retrieval_priority, 20) / 20.0,
                     4) AS score
              FROM kg_nodes subj
              JOIN kg_edges e ON e.source_id = subj.id
              JOIN kg_nodes n ON e.target_id = n.id
+             LEFT JOIN memory_layers ml ON ml.name = n.layer
              WHERE subj.name = ?2 AND subj.entity_type = 'Person'
                AND (e.scope = ?3 OR e.scope = 'global')
              ORDER BY score DESC LIMIT ?4"
@@ -385,6 +395,224 @@ impl<'a> GraphStore<'a> {
             },
         )?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Query knowledge graph context around given entity names.
+    ///
+    /// Builds a formatted context string for LLM injection, with optional
+    /// layer filtering. When `layer` is provided, only entities in layers
+    /// at or above the given priority tier are included (cumulative: giving
+    /// "episodic" also includes "working").
+    ///
+    /// When `layer` is None, uses the current behavior (scope filtering only).
+    pub fn query_kg_context(
+        &self,
+        entity_names: &[&str],
+        limit: usize,
+        scope: Option<&str>,
+        layer: Option<&str>,
+    ) -> Result<String> {
+        let mut lines: Vec<String> = Vec::new();
+        const MIN_CONFIDENCE: f64 = 0.5;
+        let scope_val = scope.unwrap_or("global");
+
+        // Resolve which layers to include — cumulative, higher-priority tiers
+        // are always included when a lower-bound layer is requested.
+        let eligible_layers: Vec<&str> = match layer {
+            Some("working") => vec!["working"],
+            Some("episodic") => vec!["working", "episodic"],
+            Some("semantic") => vec!["working", "episodic", "semantic"],
+            _ => vec!["working", "episodic", "semantic", "global"],
+        };
+
+        // Always include the USER node and its neighbors
+        if let Ok(Some(_user_id)) = self.resolve_node("USER") {
+            // Get USER neighbors with layer+scope filtering inline
+            let layer_placeholders: String = eligible_layers
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 2))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT n.id, n.name, n.entity_type, n.description, e.relation_type, e.confidence, n.scope
+                 FROM kg_nodes src
+                 JOIN kg_edges e ON (e.source_id = src.id OR e.target_id = src.id)
+                 JOIN kg_nodes n ON (
+                    (e.source_id = n.id AND e.target_id = src.id) OR
+                    (e.target_id = n.id AND e.source_id = src.id)
+                 )
+                 WHERE src.name = ?1
+                   AND n.layer IN ({})
+                   AND (n.scope = ?{} OR n.scope = 'global')
+                 ORDER BY e.confidence DESC LIMIT ?{}",
+                layer_placeholders,
+                eligible_layers.len() + 2,
+                eligible_layers.len() + 3,
+            );
+
+            let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+                vec![Box::new("USER".to_string())];
+            for l in &eligible_layers {
+                params.push(Box::new((*l).to_string()));
+            }
+            params.push(Box::new(scope_val.to_string()));
+            params.push(Box::new(limit as i64));
+
+            let mut stmt = self.conn.prepare(&sql)?;
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                params.iter().map(|p| p.as_ref()).collect();
+            let rows = stmt.query_map(param_refs.as_slice(), |row| {
+                Ok(GraphRow {
+                    node_id: row.get(0)?,
+                    name: row.get(1)?,
+                    entity_type: row.get(2)?,
+                    description: row.get(3)?,
+                    confidence: row.get(5)?,
+                    relation_type: row.get::<_, Option<String>>(4)?,
+                    distance: Some(1),
+                    scope: row.get(6)?,
+                })
+            })?;
+            for r in rows {
+                let n = r?;
+                if n.confidence >= MIN_CONFIDENCE {
+                    let rel = n.relation_type.as_deref().unwrap_or("related_to");
+                    lines.push(format!(
+                        "- USER {} {} (confidence: {:.2})",
+                        rel, n.name, n.confidence
+                    ));
+                }
+            }
+        }
+
+        // Query each entity name via FTS5 + layer filter, then get neighbors
+        let mut seen_entities: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        for name in entity_names {
+            if name.is_empty() || *name == "USER" {
+                continue;
+            }
+
+            // FTS5 search with layer+scope filter
+            let layer_placeholders: String = eligible_layers
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 2))
+                .collect::<Vec<_>>()
+                .join(",");
+            let scope_ph = eligible_layers.len() + 2;
+            let search_sql = format!(
+                "SELECT n.id, n.name, n.entity_type, n.description, n.confidence, n.scope, n.layer
+                 FROM kg_nodes_fts fts JOIN kg_nodes n ON n.id = fts.rowid
+                 WHERE kg_nodes_fts MATCH ?1
+                   AND n.layer IN ({})
+                   AND (n.scope = ?{} OR n.scope = 'global')
+                 ORDER BY rank LIMIT 3",
+                layer_placeholders,
+                scope_ph,
+            );
+            let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+                vec![Box::new((*name).to_string())];
+            for l in &eligible_layers {
+                params.push(Box::new((*l).to_string()));
+            }
+            params.push(Box::new(scope_val.to_string()));
+
+            let results: Vec<GraphRow> = {
+                let mut stmt = self.conn.prepare(&search_sql)?;
+                let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                    params.iter().map(|p| p.as_ref()).collect();
+                stmt.query_map(param_refs.as_slice(), |row| {
+                    Ok(GraphRow {
+                        node_id: row.get(0)?,
+                        name: row.get(1)?,
+                        entity_type: row.get(2)?,
+                        description: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                        confidence: row.get(4)?,
+                        relation_type: None,
+                        distance: None,
+                        scope: row.get(5)?,
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+            };
+
+            for r in &results {
+                if r.name == "USER" || r.confidence < MIN_CONFIDENCE {
+                    continue;
+                }
+                if !seen_entities.insert(r.name.clone()) {
+                    continue;
+                }
+                lines.push(format!(
+                    "- {} is a {}: {} (confidence: {:.2})",
+                    r.name, r.entity_type, r.description, r.confidence
+                ));
+
+                // Get immediate neighbors with layer+scope filter
+                let layer_ph: String = eligible_layers
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| format!("?{}", i + 2))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let n_scope_ph = eligible_layers.len() + 2;
+                let neigh_sql = format!(
+                    "SELECT n2.id, n2.name, n2.entity_type, n2.description,
+                            e2.relation_type, n2.confidence, n2.scope
+                     FROM kg_nodes n1
+                     JOIN kg_edges e2 ON (e2.source_id = n1.id OR e2.target_id = n1.id)
+                     JOIN kg_nodes n2 ON (
+                        (e2.source_id = n2.id AND e2.target_id = n1.id) OR
+                        (e2.target_id = n2.id AND e2.source_id = n1.id)
+                     )
+                     WHERE n1.name = ?1
+                       AND n2.layer IN ({})
+                       AND (n2.scope = ?{} OR n2.scope = 'global')
+                     ORDER BY e2.confidence DESC LIMIT 3",
+                    layer_ph,
+                    n_scope_ph,
+                );
+                let mut nparams: Vec<Box<dyn rusqlite::types::ToSql>> =
+                    vec![Box::new(r.name.clone())];
+                for l in &eligible_layers {
+                    nparams.push(Box::new((*l).to_string()));
+                }
+                nparams.push(Box::new(scope_val.to_string()));
+                let mut nstmt = self.conn.prepare(&neigh_sql)?;
+                let nparam_refs: Vec<&dyn rusqlite::types::ToSql> =
+                    nparams.iter().map(|p| p.as_ref()).collect();
+                let neigh_rows = nstmt.query_map(nparam_refs.as_slice(), |nrow| {
+                    Ok(GraphRow {
+                        node_id: nrow.get(0)?,
+                        name: nrow.get(1)?,
+                        entity_type: nrow.get(2)?,
+                        description: nrow.get(3)?,
+                        confidence: nrow.get(5)?,
+                        relation_type: nrow.get::<_, Option<String>>(4)?,
+                        distance: Some(2),
+                        scope: nrow.get(6)?,
+                    })
+                })?;
+                for nr in neigh_rows {
+                    let n = nr?;
+                    if n.name == "USER" || n.name == r.name || n.confidence < MIN_CONFIDENCE {
+                        continue;
+                    }
+                    let rel = n.relation_type.as_deref().unwrap_or("related_to");
+                    lines.push(format!("  └ {} {} {}", r.name, rel, n.name));
+                }
+            }
+        }
+
+        lines.dedup();
+        if lines.is_empty() {
+            Ok(String::new())
+        } else {
+            Ok(format!("## Knowledge Graph\n{}", lines.join("\n")))
+        }
     }
 
     /// Walk up to N hops from a starting entity (breadth-first via recursive CTE).
@@ -793,6 +1021,37 @@ impl<'a> GraphStore<'a> {
     }
 
     // ========================================================================
+    // Layer Management (Phase 2 — memory tiering)
+    // ========================================================================
+
+    /// Count nodes per layer. Returns Vec<(layer_name, count)>.
+    pub fn get_layer_stats(&self) -> Result<Vec<(String, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT COALESCE(layer, 'semantic') as layer, COUNT(*) as cnt
+             FROM kg_nodes GROUP BY layer ORDER BY cnt DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
+    /// Promote a node to a different memory layer by ID.
+    /// Used by the consolidator to elevate high-confidence entities
+    /// (e.g., from "semantic" to "episodic").
+    pub fn promote_node_layer(&self, node_id: i64, new_layer: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE kg_nodes SET layer = ?1, last_updated = ?2 WHERE id = ?3",
+            rusqlite::params![new_layer, chrono::Utc::now().timestamp(), node_id],
+        )?;
+        Ok(())
+    }
+
+    // ========================================================================
     // Memory Quality Logging
     // ========================================================================
 
@@ -1088,6 +1347,23 @@ mod tests {
             .unwrap();
         conn.execute_batch("ALTER TABLE kg_nodes ADD COLUMN embedding BLOB;")
             .unwrap();
+        conn.execute_batch(
+            "ALTER TABLE kg_nodes ADD COLUMN layer TEXT NOT NULL DEFAULT 'semantic';",
+        )
+        .unwrap();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS memory_layers (
+                name                TEXT NOT NULL PRIMARY KEY,
+                retrieval_priority  INTEGER NOT NULL DEFAULT 0,
+                description         TEXT NOT NULL DEFAULT ''
+            );
+            INSERT OR IGNORE INTO memory_layers (name, retrieval_priority, description) VALUES
+                ('working', 40, ''),
+                ('episodic', 30, ''),
+                ('semantic', 20, ''),
+                ('global', 10, '');",
+        )
+        .unwrap();
         conn
     }
 
@@ -1102,6 +1378,7 @@ mod tests {
                 "Systems programming language",
                 0.9,
                 "global",
+                None,
             )
             .unwrap();
         assert!(id > 0);
@@ -1120,6 +1397,7 @@ mod tests {
                 "A programming language",
                 0.9,
                 "global",
+                None,
             )
             .unwrap();
         store
@@ -1129,6 +1407,7 @@ mod tests {
                 "A scripting language",
                 0.85,
                 "global",
+                None,
             )
             .unwrap();
         // FTS5 needs content sync — use the node directly
@@ -1141,10 +1420,10 @@ mod tests {
         let conn = setup_db();
         let store = GraphStore::new(&conn);
         let rust_id = store
-            .upsert_node("Rust", "Technology", "PL", 0.9, "global")
+            .upsert_node("Rust", "Technology", "PL", 0.9, "global", None)
             .unwrap();
         let loom_id = store
-            .upsert_node("openLoom", "Project", "AI kernel", 0.9, "global")
+            .upsert_node("openLoom", "Project", "AI kernel", 0.9, "global", None)
             .unwrap();
         store
             .upsert_edge(
@@ -1171,13 +1450,13 @@ mod tests {
         let emb_python = vec![0.0, 1.0, 0.0];
         let emb_loom = vec![0.9, 0.1, 0.0]; // close to emb_rust
 
-        store.upsert_node("Rust", "Technology", "PL", 0.9, "global").unwrap();
+        store.upsert_node("Rust", "Technology", "PL", 0.9, "global", None).unwrap();
         store.embed_node("Rust", &emb_rust).unwrap();
 
-        store.upsert_node("Python", "Technology", "PL", 0.85, "global").unwrap();
+        store.upsert_node("Python", "Technology", "PL", 0.85, "global", None).unwrap();
         store.embed_node("Python", &emb_python).unwrap();
 
-        store.upsert_node("openLoom", "Project", "AI kernel", 0.9, "global").unwrap();
+        store.upsert_node("openLoom", "Project", "AI kernel", 0.9, "global", None).unwrap();
         store.embed_node("openLoom", &emb_loom).unwrap();
 
         // embed_node should also work for non-existing nodes (auto-creates)
@@ -1206,7 +1485,7 @@ mod tests {
         assert!((retrieved[2] - 0.0).abs() < 1e-6);
 
         // Node without embedding returns None
-        store.upsert_node("NoEmb", "Concept", "desc", 0.5, "global").unwrap();
+        store.upsert_node("NoEmb", "Concept", "desc", 0.5, "global", None).unwrap();
         assert!(store.get_embedding("NoEmb").unwrap().is_none());
     }
 
@@ -1216,7 +1495,7 @@ mod tests {
         let store = GraphStore::new(&conn);
 
         // No nodes have embeddings — search_similar should fall back to FTS5
-        store.upsert_node("RustLang", "Technology", "Rust programming", 0.9, "global").unwrap();
+        store.upsert_node("RustLang", "Technology", "Rust programming", 0.9, "global", None).unwrap();
 
         let query = vec![0.5f32; 768];
         let results = store.search_similar(&query, 10, Some("rust"), None).unwrap();

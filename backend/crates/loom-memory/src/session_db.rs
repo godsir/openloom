@@ -28,6 +28,19 @@ impl SessionDb {
                  UPDATE sessions SET updated_at = created_at;",
             )?;
         }
+
+        // Migration V3: add episodic_summary column for L1 episodic layer summaries
+        let has_episodic_summary: bool = conn
+            .prepare(
+                "SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'episodic_summary'",
+            )?
+            .exists([])?;
+        if !has_episodic_summary {
+            conn.execute_batch(
+                "ALTER TABLE sessions ADD COLUMN episodic_summary TEXT;",
+            )?;
+        }
+
         Ok(Self { conn })
     }
 

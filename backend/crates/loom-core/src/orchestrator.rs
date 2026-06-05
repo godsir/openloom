@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 use base64::Engine;
@@ -69,6 +70,13 @@ pub struct Orchestrator {
     sandbox_config: Arc<RwLock<loom_types::config::SandboxConfig>>,
     /// Semaphore to limit concurrent entity extraction tasks (prevents unbounded LLM calls).
     extraction_semaphore: Arc<tokio::sync::Semaphore>,
+    /// Separate semaphore for lightweight consolidation tasks to avoid deadlock with
+    /// extraction tasks that also hold the extraction_semaphore.
+    consolidation_semaphore: Arc<tokio::sync::Semaphore>,
+    /// Atomic counter for entity extractions; triggers periodic consolidation every N extractions.
+    extraction_count: Arc<AtomicU64>,
+    /// Atomic counter for completed consolidations (both periodic and session-close).
+    consolidation_count: Arc<AtomicU64>,
 }
 
 /// Trait for memory backends (SqliteEventStore, etc.)
@@ -97,6 +105,11 @@ pub trait MemoryStore: Send + Sync {
     async fn delete_message(&self, session_id: &str, index: usize) -> Result<()>;
     async fn extract_cognitions(&self, session_id: &str, text: &str) -> Result<Vec<String>>;
     async fn get_persona(&self) -> Result<String>;
+    /// Phase 2: Rich structured persona with confidence scores and evidence counts.
+    /// Returns `None` when no sufficient data is available yet.
+    async fn get_rich_persona(&self) -> Result<Option<String>> {
+        Ok(None)
+    }
     async fn feed_knowledge_graph(
         &self,
         entities: &[loom_memory::ExtractedEntity],
@@ -145,6 +158,19 @@ pub trait MemoryStore: Send + Sync {
     async fn delete_mcp_server(&self, name: &str) -> Result<()>;
     // Knowledge graph read
     async fn query_kg_context(&self, entity_names: &[&str], limit: usize, scope: &str) -> Result<String>;
+    /// Phase 2: Layer-aware KG context query with optional memory-tier filter.
+    /// When `layer` is `None` it falls back to `query_kg_context` for backward
+    /// compatibility with stores that have not adopted the layered API.
+    async fn query_kg_context_layered(
+        &self,
+        entity_names: &[&str],
+        limit: usize,
+        scope: &str,
+        _layer: Option<&str>,
+    ) -> Result<String> {
+        // Default: ignore layer and delegate to the base method.
+        self.query_kg_context(entity_names, limit, scope).await
+    }
     // Conversation summary (P0 memory optimization)
     async fn get_summary(&self, session_id: &str) -> Result<Option<String>>;
     async fn save_summary(&self, session_id: &str, summary: &str) -> Result<()>;
@@ -269,6 +295,30 @@ pub trait MemoryStore: Send + Sync {
         _log_id: i64,
         _referenced: &[String],
     ) -> Result<()> {
+        Ok(())
+    }
+
+    // ── Phase 2: Memory consolidation, persona, patterns, layers ─────────────
+
+    /// Run a full memory consolidation cycle (promote/demote/prune across layers).
+    /// Returns a JSON-serialised ConsolidationReport.
+    async fn run_consolidation_cycle(&self) -> Result<String> {
+        Ok("noop".into())
+    }
+
+    /// Detect session usage patterns (topics, tools, learning paths, time).
+    /// Returns a JSON-serialised SessionPatternReport.
+    async fn detect_patterns(&self) -> Result<String> {
+        Ok("{}".into())
+    }
+
+    /// Get per-layer node counts as Vec<(layer_name, count)>.
+    async fn get_layer_stats(&self) -> Result<Vec<(String, i64)>> {
+        Ok(vec![])
+    }
+
+    /// Promote a single knowledge graph node to a different memory layer.
+    async fn promote_to_layer(&self, _node_name: &str, _layer: &str) -> Result<()> {
         Ok(())
     }
 }
@@ -500,6 +550,9 @@ impl Orchestrator {
             default_max_prompt_budget: Arc::new(RwLock::new(0)),
             sandbox_config: Arc::new(RwLock::new(loom_types::config::SandboxConfig::default())),
             extraction_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
+            consolidation_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
+            extraction_count: Arc::new(AtomicU64::new(0)),
+            consolidation_count: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -2247,6 +2300,9 @@ impl Orchestrator {
         let event_bus = self.pool.event_bus().clone();
         let sid = session_id.clone();
         let sem = self.extraction_semaphore.clone();
+        let con_sem = self.consolidation_semaphore.clone();
+        let extraction_count = self.extraction_count.clone();
+        let consolidation_count = self.consolidation_count.clone();
 
         tokio::spawn(async move {
             // Rate-limit concurrent LLM extraction calls to prevent unbounded
@@ -2360,6 +2416,64 @@ impl Orchestrator {
             event_bus.publish(AgentEvent::MemoryUpdated {
                 session_id: sid,
             });
+
+            // 6. Increment extraction counter and trigger periodic consolidation
+            // every 50 extractions (fire-and-forget, spawned as background task).
+            let count = extraction_count.fetch_add(1, Ordering::Relaxed) + 1;
+            if count % 50 == 0 {
+                let c_mem = mem_arc.clone();
+                let c_consolidation_count = consolidation_count.clone();
+                let c_sem = con_sem.clone();
+                let c_session_id = session_id.clone();
+                tokio::spawn(async move {
+                    let _permit = c_sem.acquire().await;
+                    tracing::info!(
+                        extraction_count = count,
+                        "triggering periodic consolidation"
+                    );
+                    let guard = c_mem.read().await;
+                    if let Some(ref store) = *guard {
+                        // Scope-based promotion: high-confidence session → global
+                        match store.promote_to_global(&c_session_id, 0.7).await {
+                            Ok((nodes, cogs)) => {
+                                let c_count = c_consolidation_count.fetch_add(1, Ordering::Relaxed) + 1;
+                                tracing::info!(
+                                    promoted_nodes = nodes,
+                                    promoted_cognitions = cogs,
+                                    consolidation_count = c_count,
+                                    "periodic consolidation: promoted session entities to global"
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "periodic consolidation: promote_to_global failed");
+                            }
+                        }
+                        // Prune stale entities to keep KG lean
+                        match store.prune_memory().await {
+                            Ok(pruned) => {
+                                if pruned > 0 {
+                                    tracing::info!(pruned, "periodic consolidation: pruned stale entities");
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "periodic consolidation: prune_memory failed");
+                            }
+                        }
+                        // Layer-based L0-L3 consolidation cycle
+                        match store.run_consolidation_cycle().await {
+                            Ok(json) => {
+                                tracing::info!(
+                                    report = %json,
+                                    "periodic consolidation: L0-L3 layer cycle completed"
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "periodic consolidation: run_consolidation_cycle failed");
+                            }
+                        }
+                    }
+                });
+            }
         });
         // Note: tokio::JoinHandle does not expose inspect_err in current tokio.
         // Panics in the extraction task are caught by tokio's task boundary
@@ -2487,7 +2601,9 @@ impl Orchestrator {
             }
         }
 
-        // Inject knowledge graph context
+        // Inject knowledge graph context — layer-aware (Phase 2):
+        // Layer 1: Working (current session entities) — max 5
+        // Layer 2: Semantic (global persistent entities) — max 2 additional
         {
             let mem_guard = self.memory_store.read().await;
             if let Some(ref store) = *mem_guard {
@@ -2497,11 +2613,30 @@ impl Orchestrator {
                     entities.push(c.as_str());
                 }
                 entities.truncate(6);
-                match store.query_kg_context(&entities, 5, session_id).await {
-                    Ok(kg) if !kg.is_empty() => {
-                        system_prompt.push_str(&format!("\n\n{}", kg));
-                    }
-                    _ => {}
+
+                // Layer 1: Working — current session scope, working-layer entities
+                let kg_working = store.query_kg_context_layered(&entities, 5, session_id, Some("working")).await.unwrap_or_default();
+                // Layer 2: Semantic — global persistent scope, semantic-layer entities
+                let kg_semantic = if !kg_working.is_empty() {
+                    // Only fetch global if working layer already has results
+                    store.query_kg_context_layered(&entities, 2, "global", Some("semantic")).await.unwrap_or_default()
+                } else {
+                    // Fallback: no working results, get more from global
+                    store.query_kg_context_layered(&entities, 5, "global", Some("semantic")).await.unwrap_or_default()
+                };
+
+                // Combine: working first, then semantic (deduped implicitly by
+                // query_kg_context's per-entity handling)
+                let mut kg_parts: Vec<&str> = Vec::new();
+                if !kg_working.is_empty() {
+                    kg_parts.push(&kg_working);
+                }
+                if !kg_semantic.is_empty() && kg_semantic != kg_working {
+                    kg_parts.push(&kg_semantic);
+                }
+                let combined = kg_parts.join("\n");
+                if !combined.is_empty() {
+                    system_prompt.push_str(&format!("\n\n{}", combined));
                 }
             }
         }
@@ -2515,6 +2650,61 @@ impl Orchestrator {
         }
 
         system_prompt
+    }
+
+    /// Shared session-close consolidation: promote high-confidence session
+    /// entities to global scope (scope-based), then run a lightweight layer
+    /// consolidation cycle (layer-based).  Fire-and-forget via tokio::spawn.
+    fn trigger_session_close_consolidation(&self, session_id: &str) {
+        let mem = self.memory_store.clone();
+        let c_sid = session_id.to_string();
+        let c_consolidation_count = self.consolidation_count.clone();
+        let c_sem = self.consolidation_semaphore.clone();
+        tokio::spawn(async move {
+            let _permit = c_sem.acquire().await;
+            let guard = mem.read().await;
+            if let Some(ref store) = *guard {
+                // Scope-based promotion: session-scoped → global
+                match store.promote_to_global(&c_sid, 0.6).await {
+                    Ok((nodes, cogs)) => {
+                        let c_count = c_consolidation_count.fetch_add(1, Ordering::Relaxed) + 1;
+                        if nodes > 0 || cogs > 0 {
+                            tracing::info!(
+                                session_id = %c_sid,
+                                promoted_nodes = nodes,
+                                promoted_cognitions = cogs,
+                                consolidation_count = c_count,
+                                "session close consolidation: promoted high-confidence entities to global"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            session_id = %c_sid,
+                            error = %e,
+                            "session close consolidation: promote_to_global failed"
+                        );
+                    }
+                }
+                // Layer-based consolidation: run a lightweight L0-L3 cycle
+                match store.run_consolidation_cycle().await {
+                    Ok(json) => {
+                        tracing::info!(
+                            session_id = %c_sid,
+                            report = %json,
+                            "session close: layer consolidation cycle completed"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            session_id = %c_sid,
+                            error = %e,
+                            "session close: layer consolidation cycle failed"
+                        );
+                    }
+                }
+            }
+        });
     }
 
     /// Process a user message with a specific session and agent config.
@@ -2542,10 +2732,11 @@ impl Orchestrator {
         // Lazy-refresh persona from memory store at the START of each turn.
         // This captures all async extraction results from the previous turn
         // (which now runs in a non-blocking tokio::spawn task).
+        // Phase 2: use rich persona with confidence scores and layered structure.
         {
             let store = self.memory_store.read().await;
             if let Some(ref s) = *store {
-                if let Ok(persona) = s.get_persona().await {
+                if let Ok(Some(persona)) = s.get_rich_persona().await {
                     if !persona.is_empty() {
                         *self.persona_context.write().await = persona;
                     }
@@ -3547,6 +3738,10 @@ impl Orchestrator {
                 .await;
         }
 
+        // Phase 2: Session close handling — trigger consolidation
+        // (scope-based promotion + layer-based L0-L3 cycle, fire-and-forget).
+        self.trigger_session_close_consolidation(&sid);
+
         // Clean up agent from pool
         let _ = self.pool.remove(&agent_id).await;
 
@@ -3572,10 +3767,11 @@ impl Orchestrator {
         // Lazy-refresh persona from memory store at the START of each turn.
         // This captures all async extraction results from the previous turn
         // (which now runs in a non-blocking tokio::spawn task).
+        // Phase 2: use rich persona with confidence scores and layered structure.
         {
             let store = self.memory_store.read().await;
             if let Some(ref s) = *store {
-                if let Ok(persona) = s.get_persona().await {
+                if let Ok(Some(persona)) = s.get_rich_persona().await {
                     if !persona.is_empty() {
                         *self.persona_context.write().await = persona;
                     }
@@ -4215,6 +4411,10 @@ impl Orchestrator {
                 )
                 .await;
         }
+
+        // Phase 2: Session close handling — trigger consolidation
+        // (scope-based promotion + layer-based L0-L3 cycle, fire-and-forget).
+        self.trigger_session_close_consolidation(&sid);
 
         // Clean up agent from pool
         let _ = self.pool.remove(&agent_id).await;

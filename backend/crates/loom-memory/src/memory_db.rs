@@ -31,6 +31,36 @@ impl MemoryDb {
             "../../../../migrations/memory/V3__memory_quality_log.sql"
         ))?;
 
+        // V4: Layered memory architecture (L0-L3).
+        // Idempotent: ALTER TABLE ADD COLUMN errors on repeat runs, so check first.
+        // Checks BOTH kg_nodes and cognitions — V4 adds layer to both tables.
+        let has_node_layer: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('kg_nodes') WHERE name = 'layer'")?
+            .exists([])?;
+        let has_cog_layer: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('cognitions') WHERE name = 'layer'")?
+            .exists([])?;
+        if !has_node_layer || !has_cog_layer {
+            conn.execute_batch(include_str!(
+                "../../../../migrations/memory/V4__layered_memory.sql"
+            ))?;
+        }
+        // Ensure memory_layers table and default rows exist (idempotent).
+        // Must run even when the layer column already existed, since the
+        // table may have been missed if V4 was applied incrementally.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS memory_layers (
+                name                TEXT NOT NULL PRIMARY KEY,
+                retrieval_priority  INTEGER NOT NULL DEFAULT 0,
+                description         TEXT NOT NULL DEFAULT ''
+            );
+            INSERT OR IGNORE INTO memory_layers (name, retrieval_priority, description) VALUES
+                ('working', 40, 'Working memory — temporary, current-session entities'),
+                ('episodic', 30, 'Episodic memory — event-specific high-confidence entities'),
+                ('semantic', 20, 'Semantic memory — general knowledge entities'),
+                ('global', 10, 'Global memory — shared cross-session entities');",
+        )?;
+
         // Always drop old V1__initial.sql triggers — they reference the `type`
         // column which no longer exists after migration to `event_type`.
         conn.execute_batch(
@@ -82,41 +112,29 @@ impl MemoryDb {
         )?;
 
         // --- kg_nodes_fts sync triggers ---
-        // Drop the standalone FTS5 table created in V1__memory.sql and rebuild it
-        // with proper sync triggers so insert/update/delete on kg_nodes are
-        // reflected in the FTS index used by search_entities().
-        // Only rebuild if kg_nodes_fts is out of sync (avoids full rebuild on every open).
-        let fts_row_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM kg_nodes_fts",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        let node_row_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM kg_nodes",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        if fts_row_count != node_row_count {
-            conn.execute_batch(
-                "DROP TABLE IF EXISTS kg_nodes_fts;
-                 CREATE VIRTUAL TABLE kg_nodes_fts USING fts5(name, description, content='kg_nodes', content_rowid='id');
-                 INSERT INTO kg_nodes_fts(rowid, name, description) SELECT id, name, description FROM kg_nodes;
-                 CREATE TRIGGER IF NOT EXISTS kg_nodes_fts_ai AFTER INSERT ON kg_nodes BEGIN
-                     INSERT INTO kg_nodes_fts(rowid, name, description)
-                     VALUES (new.id, new.name, new.description);
-                 END;
-                 CREATE TRIGGER IF NOT EXISTS kg_nodes_fts_au AFTER UPDATE ON kg_nodes BEGIN
-                     INSERT INTO kg_nodes_fts(kg_nodes_fts, rowid, name, description)
-                     VALUES('delete', old.id, old.name, old.description);
-                     INSERT INTO kg_nodes_fts(rowid, name, description)
-                     VALUES (new.id, new.name, new.description);
-                 END;",
-            )?;
-        }
+        // V1 creates a standalone FTS5 table (no content= option). We need a
+        // content-sync table so triggers that reference old.id/new.id work correctly.
+        // Always rebuild on open — the cost is a single INSERT-SELECT which is
+        // negligible compared to the migration overhead.
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS kg_nodes_fts;
+             CREATE VIRTUAL TABLE kg_nodes_fts USING fts5(name, description, content='kg_nodes', content_rowid='id');
+             INSERT INTO kg_nodes_fts(rowid, name, description) SELECT id, name, description FROM kg_nodes;
+             CREATE TRIGGER IF NOT EXISTS kg_nodes_fts_ai AFTER INSERT ON kg_nodes BEGIN
+                 INSERT INTO kg_nodes_fts(rowid, name, description)
+                 VALUES (new.id, new.name, new.description);
+             END;
+             CREATE TRIGGER IF NOT EXISTS kg_nodes_fts_au AFTER UPDATE ON kg_nodes BEGIN
+                 INSERT INTO kg_nodes_fts(kg_nodes_fts, rowid, name, description)
+                 VALUES('delete', old.id, old.name, old.description);
+                 INSERT INTO kg_nodes_fts(rowid, name, description)
+                 VALUES (new.id, new.name, new.description);
+             END;
+             CREATE TRIGGER IF NOT EXISTS kg_nodes_fts_ad AFTER DELETE ON kg_nodes BEGIN
+                 INSERT INTO kg_nodes_fts(kg_nodes_fts, rowid, name, description)
+                 VALUES('delete', old.id, old.name, old.description);
+             END;",
+        )?;
 
         // Vector embeddings are stored as manual float32 BLOBs in kg_nodes.embedding.
         // The sqlite-vec crate is declared as an optional dependency for future
