@@ -56,6 +56,7 @@ pub struct GraphRow {
     pub relation_type: Option<String>,
     pub distance: Option<usize>,
     pub scope: String,
+    pub layer: String,
 }
 
 /// A scored entity (for ranked queries like top interests).
@@ -310,6 +311,7 @@ impl<'a> GraphStore<'a> {
                 relation_type: None,
                 distance: None,
                 scope: row.get(5)?,
+                layer: "semantic".to_string(),
             })
         };
         let rows = if let Some(s) = scope {
@@ -409,6 +411,7 @@ impl<'a> GraphStore<'a> {
                 confidence: row.get(5)?,
                 distance: Some(1),
                 scope: row.get(6)?,
+                layer: "semantic".to_string(),
             })
         })?;
         let results: Vec<GraphRow> = rows.collect::<std::result::Result<Vec<_>, _>>()?;
@@ -540,6 +543,7 @@ impl<'a> GraphStore<'a> {
                     relation_type: row.get::<_, Option<String>>(4)?,
                     distance: Some(1),
                     scope: row.get(6)?,
+                    layer: "semantic".to_string(),
                 })
             })?;
             for r in rows {
@@ -600,6 +604,7 @@ impl<'a> GraphStore<'a> {
                         relation_type: None,
                         distance: None,
                         scope: row.get(5)?,
+                        layer: "semantic".to_string(),
                     })
                 })?
                 .collect::<std::result::Result<Vec<_>, _>>()?
@@ -659,6 +664,7 @@ impl<'a> GraphStore<'a> {
                         relation_type: nrow.get::<_, Option<String>>(4)?,
                         distance: Some(2),
                         scope: nrow.get(6)?,
+                        layer: "semantic".to_string(),
                     })
                 })?;
                 for nr in neigh_rows {
@@ -766,6 +772,7 @@ impl<'a> GraphStore<'a> {
                 relation_type: None,
                 distance: Some(row.get(4)?),
                 scope: row.get(5)?,
+                layer: "semantic".to_string(),
             })
         })?;
         let results: Vec<GraphRow> = rows.collect::<std::result::Result<Vec<_>, _>>()?;
@@ -934,14 +941,16 @@ impl<'a> GraphStore<'a> {
         let (sql, has_scope) = match scope {
             Some(_) => (
                 "SELECT n.id, n.name, n.entity_type, n.description, n.confidence,
-                        CAST(NULL AS TEXT) as relation_type, CAST(NULL AS INTEGER) as distance, n.scope
+                        CAST(NULL AS TEXT) as relation_type, CAST(NULL AS INTEGER) as distance, n.scope,
+                        COALESCE(n.layer, 'semantic') as layer
                  FROM kg_nodes n WHERE n.scope = ?3 OR n.scope = 'global'
                  ORDER BY n.last_updated DESC LIMIT ?1 OFFSET ?2",
                 true
             ),
             None => (
                 "SELECT n.id, n.name, n.entity_type, n.description, n.confidence,
-                        CAST(NULL AS TEXT) as relation_type, CAST(NULL AS INTEGER) as distance, n.scope
+                        CAST(NULL AS TEXT) as relation_type, CAST(NULL AS INTEGER) as distance, n.scope,
+                        COALESCE(n.layer, 'semantic') as layer
                  FROM kg_nodes n ORDER BY n.last_updated DESC LIMIT ?1 OFFSET ?2",
                 false
             ),
@@ -960,6 +969,7 @@ impl<'a> GraphStore<'a> {
                         relation_type: None,
                         distance: None,
                         scope: row.get(7)?,
+                        layer: row.get(8)?,
                     })
                 },
             )?
@@ -975,6 +985,7 @@ impl<'a> GraphStore<'a> {
                     relation_type: None,
                     distance: None,
                     scope: row.get(7)?,
+                    layer: row.get(8)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?
@@ -1562,6 +1573,7 @@ impl<'a> GraphStore<'a> {
                         relation_type: None,
                         distance: None,
                         scope: row.get(5)?,
+                        layer: "semantic".to_string(),
                     },
                     stored,
                 ))
@@ -1581,6 +1593,7 @@ impl<'a> GraphStore<'a> {
                         relation_type: None,
                         distance: None,
                         scope: row.get(5)?,
+                        layer: "semantic".to_string(),
                     },
                     stored,
                 ))

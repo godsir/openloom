@@ -35,6 +35,7 @@ pub struct ForgettingReport {
     pub cognitions_removed: usize,
     pub min_importance_threshold: f64,
     pub max_age_days: i64,
+    pub skipped_protected: i64,
     pub summary: String,
 }
 

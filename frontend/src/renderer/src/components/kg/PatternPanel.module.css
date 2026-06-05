@@ -1,0 +1,366 @@
+/* ── Panel layout ──────────────────────────────────────────────────── */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.refreshBtn {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.08);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.refreshBtn:hover {
+  background: rgba(var(--accent-rgb), 0.16);
+}
+
+/* ── Section ────────────────────────────────────────────────────────── */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sectionTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sectionCount {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-active);
+  padding: 1px 8px;
+  border-radius: var(--r-sm);
+}
+
+.sectionEmpty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  background: var(--bg-card, rgba(255, 255, 255, 0.02));
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+
+/* ── Full empty state ───────────────────────────────────────────────── */
+
+.fullEmpty {
+  padding: 40px 20px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.fullEmptyText {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.fullEmptyHint {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.6;
+  max-width: 320px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* ── Topics ─────────────────────────────────────────────────────────── */
+
+.topicList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.topicItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.topicHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.topicName {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.topicBadge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.1);
+  padding: 1px 8px;
+  border-radius: var(--r-sm);
+  flex-shrink: 0;
+}
+
+.topicBar {
+  height: 4px;
+  background: var(--bg-active);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.topicBarFill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.5), rgba(var(--accent-rgb), 0.9));
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.topicMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.topicMetaSep {
+  opacity: 0.5;
+}
+
+/* ── Tools ──────────────────────────────────────────────────────────── */
+
+.toolList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toolItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.toolRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolName {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolCount {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.toolConf {
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+  min-width: 32px;
+  text-align: right;
+}
+
+.toolBar {
+  position: relative;
+  height: 6px;
+  background: var(--bg-active);
+  border-radius: 3px;
+  overflow: visible;
+}
+
+.toolBarFill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.3), rgba(var(--accent-rgb), 0.7));
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.toolBarConf {
+  position: absolute;
+  top: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 4px rgba(0,0,0,0.3);
+  transform: translateX(-50%);
+  transition: left 0.3s ease;
+}
+
+/* ── Learning Progression ───────────────────────────────────────────── */
+
+.learnList {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.learnItem {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.learnHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.learnDomain {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.learnConf {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.learnStages {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  flex-wrap: wrap;
+  position: relative;
+}
+
+.learnStage {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  position: relative;
+}
+
+.learnStageDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(var(--accent-rgb), 0.5);
+  flex-shrink: 0;
+}
+
+.learnStageLine {
+  width: 24px;
+  height: 2px;
+  background: rgba(var(--accent-rgb), 0.35);
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.learnStageLabel {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+/* ── Time Patterns ──────────────────────────────────────────────────── */
+
+.timeChart {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0 0;
+}
+
+.timeBars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 80px;
+  padding: 0 4px;
+}
+
+.timeBarCol {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+}
+
+.timeBarWrap {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.timeBar {
+  width: 100%;
+  max-width: 20px;
+  min-height: 2px;
+  background: var(--accent);
+  border-radius: 2px 2px 0 0;
+  transition: height 0.3s ease, opacity 0.3s ease;
+}
+
+.timeLabel {
+  font-size: 9px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.timeLegend {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 4px;
+}
+
+.timeLegendLabel {
+  font-size: 9px;
+  color: var(--text-muted);
+  opacity: 0.5;
+}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useCallback, useState } from 'react'
+import { useEffect, useMemo, useCallback, useState, useRef } from 'react'
 import { BarChart3, TrendingUp, Zap, Database, AlertCircle } from 'lucide-react'
 import { onWsConnected } from '../../services/websocket'
 import { useStore } from '../../stores'
@@ -51,8 +51,6 @@ function formatPercent(n: number): string {
   return (n * 100).toFixed(1) + '%'
 }
 
-const RANK_COLORS = ['#fbbf24', '#94a3b8', '#cd7f32'] // gold, silver, bronze
-
 // ── Tooltip helper component ──
 
 interface TooltipData {
@@ -97,22 +95,41 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 
 // ── SVG trend chart ──
 
-const CHART_HEIGHT = 160
-const CHART_PADDING_TOP = 16
-const CHART_PADDING_BOTTOM = 24
-const CHART_PADDING_LEFT = 0
-const CHART_PADDING_RIGHT = 0
-const BAR_MAX_WIDTH = 36
+const CHART_HEIGHT = 180
+const CHART_PADDING_TOP = 12
+const CHART_PADDING_BOTTOM = 36
+const CHART_PADDING_LEFT = 42
+const CHART_PADDING_RIGHT = 8
 const BAR_GAP = 4
+
+function formatDateLabel(dateStr: string): string {
+  const parts = dateStr.split('-')
+  if (parts.length === 3) return `${parseInt(parts[1])}/${parseInt(parts[2])}`
+  return dateStr
+}
 
 interface TrendChartProps {
   history: Array<{ date: string; prompt: number; completion: number; cached: number; requests: number }>
 }
 
 function TrendChart({ history }: TrendChartProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [containerW, setContainerW] = useState(600)
   const [tooltip, setTooltip] = useState<TooltipData>({
     x: 0, y: 0, visible: false, date: '', prompt: 0, completion: 0, cached: 0,
   })
+
+  // Measure actual container width for responsive bar sizing
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) setContainerW(entry.contentRect.width)
+    })
+    ro.observe(el)
+    setContainerW(el.clientWidth)
+    return () => ro.disconnect()
+  }, [])
 
   const chartData = useMemo(() => {
     if (!history || history.length === 0) return { bars: [] as Array<{ date: string; prompt: number; completion: number; total: number }>, maxVal: 1, chartW: 0, barW: 0 }
@@ -130,14 +147,13 @@ function TrendChart({ history }: TrendChartProps) {
   if (bars.length === 0) return null
 
   const plotH = CHART_HEIGHT - CHART_PADDING_TOP - CHART_PADDING_BOTTOM
-  // Responsive bar width: fit all bars, capped at BAR_MAX_WIDTH
-  const totalAvailable = 600 // approximate available width
-  const rawBarW = Math.min(BAR_MAX_WIDTH, (totalAvailable - (bars.length - 1) * BAR_GAP) / bars.length)
+  // Bar width adapts to container: few bars → wide, many bars → narrow, capped at 120px
+  const rawBarW = Math.min(120, (containerW - CHART_PADDING_LEFT - CHART_PADDING_RIGHT - (bars.length - 1) * BAR_GAP) / bars.length)
   const barW = Math.max(4, rawBarW)
   const chartW = bars.length * (barW + BAR_GAP) - BAR_GAP
+  const labelInterval = bars.length > 25 ? 7 : bars.length > 14 ? 4 : bars.length > 7 ? 2 : 1
 
   const handleBarHover = useCallback((e: React.MouseEvent, bar: typeof bars[0], idx: number) => {
-    // Position: fixed is relative to the viewport — use clientX/Y directly
     setTooltip({ x: e.clientX, y: e.clientY, visible: true, date: bar.date, prompt: bar.prompt, completion: bar.completion, cached: 0 })
   }, [])
 
@@ -175,14 +191,24 @@ function TrendChart({ history }: TrendChartProps) {
           </span>
         </div>
       </div>
-      <div className={styles.chartScroll} style={{ overflowX: 'auto', overflowY: 'hidden' }}>
+      <div className={styles.chartScroll} ref={containerRef} style={{ overflowX: chartW > containerW ? 'auto' : 'hidden', overflowY: 'hidden' }}>
         <svg
           className={styles.chartSvg}
           viewBox={`0 0 ${Math.max(chartW + CHART_PADDING_LEFT + CHART_PADDING_RIGHT, 100)} ${CHART_HEIGHT}`}
           width={Math.max(chartW + CHART_PADDING_LEFT + CHART_PADDING_RIGHT, 100)}
           height={CHART_HEIGHT}
         >
-          {/* Grid lines */}
+          <defs>
+            <linearGradient id="promptGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#22d3ee" />
+              <stop offset="100%" stopColor="#0891b2" />
+            </linearGradient>
+            <linearGradient id="completionGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#a78bfa" />
+              <stop offset="100%" stopColor="#7c3aed" />
+            </linearGradient>
+          </defs>
+          {/* Y-axis labels + grid lines */}
           {yTicks.map((t, i) => (
             <g key={`ytick-${i}`}>
               <line
@@ -190,17 +216,28 @@ function TrendChart({ history }: TrendChartProps) {
                 y1={t.y}
                 x2={chartW + CHART_PADDING_LEFT}
                 y2={t.y}
-                stroke="rgba(255,255,255,0.05)"
+                stroke="var(--border-light)"
                 strokeDasharray="3 3"
               />
+              <text
+                x={CHART_PADDING_LEFT - 6}
+                y={t.y + 3}
+                textAnchor="end"
+                fontSize="9"
+                fill="var(--text-muted)"
+                fontFamily="var(--font-mono)"
+              >
+                {t.label}
+              </text>
             </g>
           ))}
           {/* Bars */}
           {bars.map((bar, i) => {
             const x = CHART_PADDING_LEFT + i * (barW + BAR_GAP)
-            const promptH = (bar.prompt / maxVal) * plotH
-            const completionH = (bar.completion / maxVal) * plotH
+            const promptH = Math.max((bar.prompt / maxVal) * plotH, bar.prompt > 0 ? 1 : 0)
+            const completionH = Math.max((bar.completion / maxVal) * plotH, bar.completion > 0 ? 1 : 0)
             const totalH = promptH + completionH
+            const gap = promptH > 0 && completionH > 0 ? 1 : 0
             return (
               <g
                 key={i}
@@ -208,25 +245,32 @@ function TrendChart({ history }: TrendChartProps) {
                 onMouseEnter={(e) => handleBarHover(e, bar, i)}
                 onMouseLeave={handleBarLeave}
               >
-                <rect
-                  x={x}
-                  y={CHART_PADDING_TOP + plotH - promptH}
-                  width={barW}
-                  height={Math.max(promptH, 0.5)}
-                  fill="#22d3ee"
-                  rx="2"
-                  className={styles.chartBarRect}
-                />
-                <rect
-                  x={x}
-                  y={CHART_PADDING_TOP + plotH - totalH}
-                  width={barW}
-                  height={Math.max(completionH, 0.5)}
-                  fill="#a78bfa"
-                  rx="2"
-                  className={styles.chartBarRect}
-                />
-                {barW >= 14 && (
+                {/* Prompt bar */}
+                {promptH > 0 && (
+                  <rect
+                    x={x}
+                    y={CHART_PADDING_TOP + plotH - promptH}
+                    width={barW}
+                    height={promptH - gap}
+                    fill="url(#promptGrad)"
+                    rx="2"
+                    className={styles.chartBarRect}
+                  />
+                )}
+                {/* Completion bar */}
+                {completionH > 0 && (
+                  <rect
+                    x={x}
+                    y={CHART_PADDING_TOP + plotH - totalH}
+                    width={barW}
+                    height={completionH}
+                    fill="url(#completionGrad)"
+                    rx="2"
+                    className={styles.chartBarRect}
+                  />
+                )}
+                {/* Total label above bar */}
+                {barW >= 14 && totalH > 14 && (
                   <text
                     x={x + barW / 2}
                     y={CHART_PADDING_TOP + plotH - totalH - 4}
@@ -236,6 +280,18 @@ function TrendChart({ history }: TrendChartProps) {
                     fontFamily="var(--font-mono)"
                   >
                     {formatNumber(bar.total)}
+                  </text>
+                )}
+                {/* X-axis date label */}
+                {i % labelInterval === 0 && (
+                  <text
+                    x={x + barW / 2}
+                    y={CHART_HEIGHT - 6}
+                    textAnchor="middle"
+                    fontSize="9"
+                    fill="var(--text-muted)"
+                  >
+                    {formatDateLabel(bar.date)}
                   </text>
                 )}
               </g>
@@ -273,12 +329,11 @@ export default function TokenUsagePanel() {
   const sessionTotal = useStore((s) => s.sessionTotal)
   const summary = useStore((s) => s.summary)
   const loading = useStore((s) => s.loading)
+  const loadError = useStore((s) => s.loadError)
   const timeRange = useStore((s) => s.timeRange)
   const setTimeRange = useStore((s) => s.setTimeRange)
   const models = useStore((s) => s.models)
   const history = useStore((s) => s.history)
-  // Track error state locally since the store doesn't expose it
-  const [loadError, setLoadError] = useState<string | null>(null)
 
   // Build a lookup: model name → { backend, backend_label }
   const modelLookup = useMemo(() => {
@@ -297,13 +352,6 @@ export default function TokenUsagePanel() {
     })
   }, [])
 
-  // Track errors from summary/history loading
-  useEffect(() => {
-    if (loading) {
-      setLoadError(null)
-    }
-  }, [loading])
-
   const rankedModels = useMemo(() => {
     if (!summary?.by_model) return []
     return [...summary.by_model]
@@ -320,7 +368,6 @@ export default function TokenUsagePanel() {
   }, [summary])
 
   const totalCost = summary?.total_cost ?? 0
-  const maxModelTotal = rankedModels.length > 0 ? rankedModels[0].total : 1
   const avgLatency = summary?.avg_latency_ms ?? 0
   const cacheHitRate = summary?.cache_hit_rate ?? 0
   const totalRequests = summary?.total_requests ?? 0
@@ -410,7 +457,7 @@ export default function TokenUsagePanel() {
       {hasData && !loading && (
         <div className={styles.metricsRow}>
           <div className={styles.metricCard}>
-            <div className={styles.metricIcon} style={{ background: 'rgba(34, 211, 238, 0.1)', color: '#22d3ee' }}>
+            <div className={styles.metricIcon} style={{ background: 'rgba(var(--accent-rgb), 0.1)', color: 'var(--accent)' }}>
               <TrendingUp size={14} />
             </div>
             <div className={styles.metricBody}>
@@ -420,7 +467,7 @@ export default function TokenUsagePanel() {
           </div>
           {avgLatency > 0 && (
             <div className={styles.metricCard}>
-              <div className={styles.metricIcon} style={{ background: 'rgba(250, 204, 21, 0.1)', color: '#facc15' }}>
+              <div className={styles.metricIcon} style={{ background: 'rgba(var(--amber-rgb, 245, 158, 11), 0.1)', color: 'var(--amber)' }}>
                 <Zap size={14} />
               </div>
               <div className={styles.metricBody}>
@@ -431,7 +478,7 @@ export default function TokenUsagePanel() {
           )}
           {cacheHitRate > 0 && (
             <div className={styles.metricCard}>
-              <div className={styles.metricIcon} style={{ background: 'rgba(52, 211, 153, 0.1)', color: '#34d399' }}>
+              <div className={styles.metricIcon} style={{ background: 'rgba(var(--green-rgb, 45, 212, 191), 0.1)', color: 'var(--green)' }}>
                 <Database size={14} />
               </div>
               <div className={styles.metricBody}>
@@ -496,6 +543,54 @@ export default function TokenUsagePanel() {
           {/* Trend chart */}
           {history && history.length > 1 && <TrendChart history={history} />}
 
+          {/* Model ranking — podium (top 3) */}
+          {rankedModels.length > 0 && (() => {
+            const top3 = rankedModels.slice(0, 3)
+            // Display order: silver(2nd) left, gold(1st) center, bronze(3rd) right
+            const podiumEntries = [
+              { model: top3[1], rank: 2, cls: styles.podiumSilver, medal: '🥈' },
+              { model: top3[0], rank: 1, cls: styles.podiumGold,   medal: '🥇' },
+              { model: top3[2], rank: 3, cls: styles.podiumBronze, medal: '🥉' },
+            ].filter(e => e.model)
+
+            return (
+              <div className={styles.leaderboard}>
+                <h4 className={styles.sectionTitle}>模型消耗排名</h4>
+                <div className={styles.podium}>
+                  {podiumEntries.map(({ model, rank, cls, medal }) => {
+                    const pct = grandTotal > 0 ? ((model.total / grandTotal) * 100).toFixed(1) : '0'
+                    const hasPrice = model.input_price > 0 || model.output_price > 0
+                    const info = modelLookup.get(model.model)
+                    return (
+                      <div key={model.model} className={`${styles.podiumCol} ${cls}`}>
+                        <div className={styles.podiumMedal}>{medal}</div>
+                        <div className={styles.podiumModelName} title={model.model}>{model.model}</div>
+                        {info && (
+                          <div className={styles.podiumBadges}>
+                            <span className={`${styles.modelBadge} ${isLocalModel(info.backend) ? styles.badgeLocal : styles.badgeCloud}`}>
+                              {isLocalModel(info.backend) ? '本地' : '云端'}
+                            </span>
+                            <span className={styles.modelBadgeProvider}>
+                              {getProviderLabel(info.backend, info.backendLabel)}
+                            </span>
+                          </div>
+                        )}
+                        <div className={styles.podiumTokens}>{formatTokens(model.total)}</div>
+                        <div className={styles.podiumPct}>{pct}%</div>
+                        {hasPrice && <div className={styles.podiumCost}>{formatCost(model.cost)}</div>}
+                        <div className={styles.podiumStats}>
+                          <span>输入 {formatNumber(model.prompt)}</span>
+                          <span>输出 {formatNumber(model.completion)}</span>
+                          <span>{model.requests} 次</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })()}
+
           {/* Cost by provider breakdown */}
           {costByProvider.length > 1 && (
             <div className={styles.providerCostSection}>
@@ -518,68 +613,6 @@ export default function TokenUsagePanel() {
                       <div className={styles.providerCostMeta}>
                         <span>{formatTokens(p.tokens)} tokens</span>
                         <span>{p.requests} 请求</span>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Model ranking leaderboard */}
-          {rankedModels.length > 0 && (
-            <div className={styles.leaderboard}>
-              <h4 className={styles.sectionTitle}>模型消耗排名</h4>
-              <div className={styles.leaderboardList}>
-                {rankedModels.map((m, i) => {
-                  const barWidth = Math.max((m.total / maxModelTotal) * 100, 2)
-                  const pct = grandTotal > 0 ? ((m.total / grandTotal) * 100).toFixed(1) : '0'
-                  const hasPrice = m.input_price > 0 || m.output_price > 0
-                  return (
-                    <div key={m.model} className={styles.rankItem}>
-                      <div className={styles.rankBadge} style={i < 3 ? { background: RANK_COLORS[i], color: i === 0 ? '#1e293b' : '#fff' } : {}}>
-                        {i + 1}
-                      </div>
-                      <div className={styles.rankBody}>
-                        <div className={styles.rankHeader}>
-                          <span className={styles.rankModel} title={m.model}>{m.model}</span>
-                          {(() => {
-                            const info = modelLookup.get(m.model)
-                            if (!info) return null
-                            return (
-                              <span className={styles.modelBadges}>
-                                <span className={`${styles.modelBadge} ${isLocalModel(info.backend) ? styles.badgeLocal : styles.badgeCloud}`}>
-                                  {isLocalModel(info.backend) ? '本地' : '云端'}
-                                </span>
-                                <span className={styles.modelBadgeProvider}>
-                                  {getProviderLabel(info.backend, info.backendLabel)}
-                                </span>
-                              </span>
-                            )
-                          })()}
-                          <span className={styles.rankTokens}>
-                            <strong>{formatTokens(m.total)}</strong>
-                            {hasPrice && <span className={styles.rankCost}>{formatCost(m.cost)}</span>}
-                            <span className={styles.rankTokensPct}>{pct}%</span>
-                          </span>
-                        </div>
-                        <div className={styles.rankBarTrack}>
-                          <div
-                            className={styles.rankBarFill}
-                            style={{ width: `${barWidth}%`, background: i === 0 ? 'linear-gradient(90deg, #22d3ee, #6366f1)' : i === 1 ? 'linear-gradient(90deg, #a78bfa, #6366f1)' : 'var(--border)' }}
-                          />
-                        </div>
-                        <div className={styles.rankMeta}>
-                          <span>输入: {formatNumber(m.prompt)}</span>
-                          <span>命中: {formatNumber((m as any).cache_hit_tokens ?? 0)}</span>
-                          <span>输出: {formatNumber(m.completion)}</span>
-                          <span>{m.requests} 次</span>
-                          {hasPrice && (
-                            <span className={styles.rankMetaPrice}>
-                              输入 ¥{m.input_price} | 命中 ¥{m.cache_read_price} | 写入 ¥{m.cache_write_price} | 输出 ¥{m.output_price} /百万
-                            </span>
-                          )}
-                        </div>
                       </div>
                     </div>
                   )
@@ -613,9 +646,12 @@ export default function TokenUsagePanel() {
                       const info = modelLookup.get(m.model)
                       const local = info ? isLocalModel(info.backend) : false
                       const provider = info ? getProviderLabel(info.backend, info.backendLabel) : ''
-                      const cacheHit = (m as any).cache_hit_tokens ?? 0
-                      const cacheMiss = (m as any).cache_miss_tokens ?? (m.prompt - cacheHit || 0)
-                      const cacheWrite = (m as any).cache_write_tokens ?? m.cached ?? 0
+                      const cacheHit = m.cache_hit_tokens ?? 0
+                      const cacheMiss = m.cache_miss_tokens ?? (m.prompt - cacheHit || 0)
+                      const cacheWrite = m.cache_write_tokens ?? m.cached ?? 0
+
+                      // Ensure the ranked model includes typed cache fields for the table
+                      // (they are already part of TokenSummary.by_model — no need for `as any`)
                       return (
                         <tr key={m.model}>
                           <td className={styles.rankCell}>{i + 1}</td>

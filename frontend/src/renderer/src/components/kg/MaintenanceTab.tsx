@@ -4,6 +4,7 @@ import Select from '../shared/Select'
 import type { Cognition, CognitionHistory } from '../../types/bindings'
 import PromoteDialog from './PromoteDialog'
 import styles from './KnowledgeGraphPanel.module.css'
+import mt from './MaintenanceTab.module.css'
 
 function formatTimestamp(ts: number): string {
   const date = new Date(ts * 1000)
@@ -105,7 +106,30 @@ function CognitionRow({ cognition }: { cognition: Cognition }) {
   )
 }
 
+// ── Layer colour mapping ──
+const LAYER_COLORS: Record<string, string> = {
+  working: '#f59e0b',
+  episodic: '#3b82f6',
+  semantic: '#8b5cf6',
+  global: '#10b981',
+}
+
+function layerColor(layer: string): string {
+  return LAYER_COLORS[layer] ?? 'var(--text-muted)'
+}
+
+// ── Pipeline stage labels ──
+const STAGE_LABELS: Record<string, string> = {
+  extraction: '实体提取',
+  consolidation: '记忆整合',
+  generalization: '泛化归纳',
+  active_forgetting: '主动遗忘',
+  self_evaluation: '自我评估',
+  quality_audit: '质量审计',
+}
+
 export default function MaintenanceTab() {
+  // ── Existing state ──
   const cognitionList = useStore(s => s.cognitionList)
   const cognitionSubjects = useStore(s => s.cognitionSubjects)
   const cognitionListBySubject = useStore(s => s.cognitionListBySubject)
@@ -116,15 +140,44 @@ export default function MaintenanceTab() {
   const showConfirm = useStore(s => s.showConfirm)
   const currentSessionId = useStore(s => s.currentSessionId)
 
+  // ── New state ──
+  const consolidationReport = useStore(s => s.consolidationReport)
+  const forgettingReport = useStore(s => s.forgettingReport)
+  const pipelineStatus = useStore(s => s.pipelineStatus)
+  const layerStats = useStore(s => s.layerStats)
+  const kgNodeList = useStore(s => s.kgNodeList)
+  const kgListNodes = useStore(s => s.kgListNodes)
+  const kgRunConsolidation = useStore(s => s.kgRunConsolidation)
+  const kgRunForgetting = useStore(s => s.kgRunForgetting)
+  const kgLoadPipelineStatus = useStore(s => s.kgLoadPipelineStatus)
+  const kgLoadLayerStats = useStore(s => s.kgLoadLayerStats)
+  const kgPromoteToLayer = useStore(s => s.kgPromoteToLayer)
+  const addToast = useStore(s => s.addToast)
+
+  // ── Local state ──
   const [subject, setSubject] = useState('USER')
   const [scopeFilter, setScopeFilter] = useState('all')
   const [pruning, setPruning] = useState(false)
   const [promoteOpen, setPromoteOpen] = useState(false)
 
+  // Forgetting params
+  const [forgetImportance, setForgetImportance] = useState(0.3)
+  const [forgetMaxAge, setForgetMaxAge] = useState(60)
+  const [forgetting, setForgetting] = useState(false)
+
+  // Consolidation
+  const [consolidating, setConsolidating] = useState(false)
+
+  // Layer view mode
+  const [layerViewMode, setLayerViewMode] = useState<'chart' | 'entities'>('chart')
+
   useEffect(() => {
     cognitionListSubjects()
     kgLoadStats()
-  }, [cognitionListSubjects, kgLoadStats])
+    kgLoadPipelineStatus()
+    kgLoadLayerStats()
+    kgListNodes()
+  }, [cognitionListSubjects, kgLoadStats, kgLoadPipelineStatus, kgLoadLayerStats, kgListNodes])
 
   useEffect(() => {
     const effectiveScope = scopeFilter === 'all' ? undefined
@@ -148,8 +201,63 @@ export default function MaintenanceTab() {
     }
   }
 
+  // ── Consolidation ──
+  const handleConsolidation = async () => {
+    setConsolidating(true)
+    try {
+      await kgRunConsolidation()
+      addToast?.({ type: 'success', message: '记忆整合已完成' })
+    } catch (err) {
+      console.error('Consolidation failed:', err)
+      addToast?.({ type: 'error', message: `整合失败: ${String(err)}` })
+    } finally {
+      setConsolidating(false)
+    }
+  }
+
+  // ── Forgetting ──
+  const handleForgetting = async () => {
+    setForgetting(true)
+    try {
+      await kgRunForgetting(forgetImportance, forgetMaxAge)
+      addToast?.({ type: 'success', message: '主动遗忘已完成' })
+    } catch (err) {
+      console.error('Forgetting failed:', err)
+      addToast?.({ type: 'error', message: `遗忘失败: ${String(err)}` })
+    } finally {
+      setForgetting(false)
+    }
+  }
+
+  // ── Layer promote/demote ──
+  const handlePromoteToLayer = async (nodeName: string, targetLayer: string) => {
+    try {
+      await kgPromoteToLayer(nodeName, targetLayer)
+      addToast?.({ type: 'success', message: `已将 "${nodeName}" 提升到 ${targetLayer} 层` })
+    } catch (err) {
+      addToast?.({ type: 'error', message: `提升失败: ${String(err)}` })
+    }
+  }
+
+  // ── Compute layer distribution ──
+  const totalLayerNodes = layerStats.reduce((sum, l) => sum + l.node_count, 0)
+
+  // Group nodes by layer for entity view
+  const nodesByLayer: Record<string, typeof kgNodeList> = {}
+  for (const n of kgNodeList) {
+    const l = n.layer || 'semantic'
+    if (!nodesByLayer[l]) nodesByLayer[l] = []
+    nodesByLayer[l].push(n)
+  }
+
+  const layerOrder = ['working', 'episodic', 'semantic', 'global']
+  const pipelineStages = ['extraction', 'consolidation', 'generalization', 'active_forgetting', 'self_evaluation']
+
   return (
     <div className={styles.maintenanceTab}>
+      {/* ══════════════════════════════════════════════════════════════════
+          Existing: KG Maintenance
+          ══════════════════════════════════════════════════════════════════ */}
       <div className={styles.section}>
         <div className={styles.sectionTitle}>图谱维护</div>
         {kgStats && (
@@ -173,6 +281,287 @@ export default function MaintenanceTab() {
           </button>
         </div>
       </div>
+
+      {/* ══════════════════════════════════════════════════════════════════
+          NEW: Consolidation
+          ══════════════════════════════════════════════════════════════════ */}
+      <div className={mt.mtSection}>
+        <div className={mt.mtSectionTitle}>记忆整合</div>
+        <div className={mt.consolidationActions}>
+          <button
+            className={mt.runBtn}
+            onClick={handleConsolidation}
+            disabled={consolidating}
+          >
+            {consolidating ? '整合中...' : '执行整合'}
+          </button>
+        </div>
+
+        {consolidationReport && (
+          <div className={mt.resultBox}>
+            <div className={mt.resultGrid}>
+              <div className={mt.resultItem}>
+                <span className={mt.resultLabel}>合并节点</span>
+                <span className={mt.resultValue}>{consolidationReport.merged_nodes}</span>
+              </div>
+              <div className={mt.resultItem}>
+                <span className={mt.resultLabel}>合并认知</span>
+                <span className={mt.resultValue}>{consolidationReport.merged_cognitions}</span>
+              </div>
+              <div className={mt.resultItem}>
+                <span className={mt.resultLabel}>提升实体</span>
+                <span className={mt.resultValue}>{consolidationReport.promoted_count}</span>
+              </div>
+              <div className={mt.resultItem}>
+                <span className={mt.resultLabel}>边重路由</span>
+                <span className={mt.resultValue}>{consolidationReport.edge_rerouted}</span>
+              </div>
+            </div>
+            {consolidationReport.summary && (
+              <div className={mt.resultSummary}>{consolidationReport.summary}</div>
+            )}
+            {consolidationReport.errors && consolidationReport.errors.length > 0 && (
+              <div className={mt.errorBox}>
+                {consolidationReport.errors.map((e, i) => (
+                  <div key={i} className={mt.errorText}>{e}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════
+          NEW: Active Forgetting
+          ══════════════════════════════════════════════════════════════════ */}
+      <div className={mt.mtSection}>
+        <div className={mt.mtSectionTitle}>主动遗忘</div>
+        <div className={mt.forgettingControls}>
+          <div className={mt.sliderGroup}>
+            <span className={mt.sliderLabel}>重要性阈值</span>
+            <div className={mt.sliderRow}>
+              <input
+                type="range"
+                className={mt.slider}
+                min={0}
+                max={1}
+                step={0.05}
+                value={forgetImportance}
+                onChange={e => setForgetImportance(parseFloat(e.target.value))}
+              />
+              <span className={mt.sliderValue}>{forgetImportance.toFixed(2)}</span>
+            </div>
+          </div>
+          <div className={mt.inputGroup}>
+            <span className={mt.inputLabel}>最大存活天数</span>
+            <input
+              type="number"
+              className={mt.numberInput}
+              min={1}
+              max={365}
+              value={forgetMaxAge}
+              onChange={e => setForgetMaxAge(Math.max(1, Math.min(365, parseInt(e.target.value, 10) || 60)))}
+            />
+          </div>
+          <button
+            className={mt.runBtnDanger}
+            onClick={handleForgetting}
+            disabled={forgetting}
+          >
+            {forgetting ? '执行中...' : '执行遗忘'}
+          </button>
+        </div>
+
+        {forgettingReport && (
+          <div className={mt.resultBox}>
+            <div className={mt.resultGrid}>
+              <div className={mt.resultItem}>
+                <span className={mt.resultLabel}>移除节点</span>
+                <span className={mt.resultValue}>{forgettingReport.nodes_removed}</span>
+              </div>
+              <div className={mt.resultItem}>
+                <span className={mt.resultLabel}>移除边</span>
+                <span className={mt.resultValue}>{forgettingReport.edges_removed}</span>
+              </div>
+              <div className={mt.resultItem}>
+                <span className={mt.resultLabel}>移除认知</span>
+                <span className={mt.resultValue}>{forgettingReport.cognitions_removed}</span>
+              </div>
+              <div className={mt.resultItem}>
+                <span className={mt.resultLabel}>受保护(跳过)</span>
+                <span className={mt.resultValue}>{forgettingReport.skipped_protected}</span>
+              </div>
+            </div>
+            {forgettingReport.summary && (
+              <div className={mt.resultSummary}>{forgettingReport.summary}</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════
+          NEW: Pipeline Status
+          ══════════════════════════════════════════════════════════════════ */}
+      <div className={mt.mtSection}>
+        <div className={mt.mtSectionTitle}>管线状态</div>
+
+        {/* Pipeline summary */}
+        {pipelineStatus.length > 0 && pipelineStatus[0] && (
+          <div className={mt.pipelineSummary}>
+            状态: <span>{pipelineStatus[0].status}</span>
+            {' | '}
+            节点: <span>{pipelineStatus[0].node_count}</span>
+            {' | '}
+            边: <span>{pipelineStatus[0].edge_count}</span>
+            {' | '}
+            认知: <span>{pipelineStatus[0].cognition_count}</span>
+            {' | '}
+            24h提取: <span>{pipelineStatus[0].recent_extractions_24h}</span>
+            {pipelineStatus[0].last_consolidation && pipelineStatus[0].last_consolidation !== 'never' && (
+              <>
+                {' | '}最后整合: <span>{pipelineStatus[0].last_consolidation}</span>
+              </>
+            )}
+          </div>
+        )}
+
+        {pipelineStatus.length === 0 && (
+          <div className={mt.loadingText}>暂无管线数据</div>
+        )}
+
+        {/* Stage cards */}
+        <div className={mt.pipelineGrid}>
+          {pipelineStages.map(stage => {
+            const label = STAGE_LABELS[stage] ?? stage
+            const status = pipelineStatus.length > 0 ? pipelineStatus[0] : null
+            const isHealthy = status?.status === 'active'
+            const dotClass = isHealthy ? mt.stageDotActive : mt.stageDotIdle
+
+            return (
+              <div key={stage} className={mt.stageCard}>
+                <div className={mt.stageHeader}>
+                  <span className={`${mt.stageDot} ${dotClass}`} />
+                  <span className={mt.stageName}>{label}</span>
+                </div>
+                <div className={mt.stageTime}>
+                  管线: {isHealthy ? '活跃' : '空闲'}
+                </div>
+                <button
+                  className={mt.stageTrigger}
+                  onClick={() => {
+                    if (stage === 'consolidation') handleConsolidation()
+                    else if (stage === 'active_forgetting') handleForgetting()
+                    else kgLoadPipelineStatus()
+                  }}
+                >
+                  手动触发
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════
+          NEW: Layer Stats
+          ══════════════════════════════════════════════════════════════════ */}
+      <div className={mt.mtSection}>
+        <div className={mt.layerRefreshBar}>
+          <span className={mt.mtSectionTitle} style={{ marginBottom: 0 }}>记忆分层</span>
+          <div className={mt.layerModeToggle}>
+            <button
+              className={layerViewMode === 'chart' ? mt.layerModeBtnActive : mt.layerModeBtn}
+              onClick={() => setLayerViewMode('chart')}
+            >
+              分布图
+            </button>
+            <button
+              className={layerViewMode === 'entities' ? mt.layerModeBtnActive : mt.layerModeBtn}
+              onClick={() => setLayerViewMode('entities')}
+            >
+              实体管理
+            </button>
+          </div>
+        </div>
+
+        {layerViewMode === 'chart' ? (
+          /* ── Distribution chart, sorted by layerOrder ── */
+          <div className={mt.layerBarList}>
+            {layerStats.length === 0 ? (
+              <div className={mt.loadingText}>暂无分层数据</div>
+            ) : (
+              layerOrder
+                .map(layerName => layerStats.find(ls => ls.layer_name === layerName))
+                .filter((ls): ls is NonNullable<typeof ls> => !!ls)
+                .map(ls => {
+                const pct = totalLayerNodes > 0 ? Math.round((ls.node_count / totalLayerNodes) * 100) : 0
+                return (
+                  <div key={ls.layer_name} className={mt.layerBarItem}>
+                    <span className={mt.layerBarName}>{ls.layer_name}</span>
+                    <div className={mt.layerBarTrack}>
+                      <div
+                        className={mt.layerBarFill}
+                        style={{
+                          width: `${pct}%`,
+                          background: layerColor(ls.layer_name),
+                        }}
+                      />
+                      <span className={mt.layerBarCount}>{ls.node_count}</span>
+                    </div>
+                    <span className={mt.layerBarPct}>{pct}%</span>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        ) : (
+          /* ── Per-entity management ── */
+          <div>
+            {layerOrder.map(layer => {
+              const nodes = nodesByLayer[layer] || []
+              if (nodes.length === 0) return null
+              const otherLayers = layerOrder.filter(l => l !== layer)
+              return (
+                <div key={layer} className={mt.layerEntitySection}>
+                  <div className={mt.layerEntityTitle}>
+                    {layer.charAt(0).toUpperCase() + layer.slice(1)} ({nodes.length})
+                  </div>
+                  <div className={mt.layerEntityList}>
+                    {nodes.map(n => (
+                      <div key={n.node_id || n.name} className={mt.layerEntityRow}>
+                        <div className={mt.layerEntityInfo}>
+                          <span className={mt.layerEntityName}>{n.name}</span>
+                          <span className={mt.layerEntityType}>{n.entity_type}</span>
+                          <span className={mt.layerEntityCurr}>{n.layer || 'semantic'}</span>
+                        </div>
+                        <div className={mt.layerEntityActions}>
+                          {otherLayers.map(tl => (
+                            <button
+                              key={tl}
+                              className={mt.layerActionBtn}
+                              onClick={() => handlePromoteToLayer(n.name, tl)}
+                              title={`移至 ${tl}`}
+                            >
+                              {tl.slice(0, 3)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+            {Object.keys(nodesByLayer).length === 0 && (
+              <div className={mt.loadingText}>暂无实体数据。请先加载实体列表。</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════
+          Existing: Cognition Records
+          ══════════════════════════════════════════════════════════════════ */}
       <div className={styles.section}>
         <div className={styles.sectionTitle}>认知记录</div>
         <div className={styles.filterRow}>

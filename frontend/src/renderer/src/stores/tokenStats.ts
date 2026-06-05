@@ -53,6 +53,7 @@ export interface TokenStatsSlice {
   summary: TokenSummary | null
   history: TokenHistoryPoint[]
   loading: boolean
+  loadError: string | null
   timeRange: 'all' | 'today' | '7d' | '30d'
 
   recordUsage: (usage: TokenUsageRecord) => void
@@ -68,6 +69,7 @@ export const createTokenStatsSlice: StateCreator<TokenStatsSlice> = (set, get) =
   summary: null,
   history: [],
   loading: false,
+  loadError: null,
   timeRange: 'all',
 
   recordUsage: (usage) => {
@@ -93,22 +95,22 @@ export const createTokenStatsSlice: StateCreator<TokenStatsSlice> = (set, get) =
   },
 
   loadSummary: async (from, to) => {
-    set({ loading: true })
+    set({ loading: true, loadError: null })
     try {
       const data = await loomRpc<TokenSummary>('stats.token_summary', { from, to })
       set({ summary: data, loading: false })
-    } catch {
-      set({ loading: false })
+    } catch (e: any) {
+      set({ loading: false, loadError: e?.message ?? '获取Token摘要失败' })
     }
   },
 
   loadHistory: async (from, to, granularity) => {
-    set({ loading: true })
+    set({ loading: true, loadError: null })
     try {
       const data = await loomRpc<{ points: TokenHistoryPoint[] }>('stats.token_history', { from, to, granularity })
       set({ history: data.points || [], loading: false })
-    } catch {
-      set({ loading: false })
+    } catch (e: any) {
+      set({ loading: false, loadError: e?.message ?? '获取历史数据失败' })
     }
   },
 

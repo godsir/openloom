@@ -588,6 +588,27 @@ impl MemoryStore for LoomMemoryStore {
         Ok(Some(lines.join("\n")))
     }
 
+    /// Phase 2: Rich persona as structured JSON — for client-side rendering.
+    async fn get_rich_persona_structured(&self) -> Result<Option<serde_json::Value>> {
+        let provider = {
+            let store = self.memory_db.lock().expect("lock poisoned");
+            RichPersonaProvider::assemble(store.conn())?
+        };
+        let persona = provider.persona();
+
+        // Return None if no meaningful data gathered yet
+        if persona.tech_stack.is_empty()
+            && persona.preferences.is_empty()
+            && persona.goals.is_empty()
+        {
+            return Ok(None);
+        }
+
+        serde_json::to_value(persona)
+            .map(Some)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize persona: {}", e))
+    }
+
     async fn feed_knowledge_graph(
         &self,
         entities: &[loom_memory::ExtractedEntity],
@@ -1004,6 +1025,8 @@ impl MemoryStore for LoomMemoryStore {
                 description: r.description.clone(),
                 confidence: r.confidence,
                 scope: r.scope.clone(),
+                layer: "semantic".to_string(),
+                similarity: 0.0,
             })
             .collect();
         let edges: Vec<loom_types::KgEdge> = rows
@@ -1068,6 +1091,8 @@ impl MemoryStore for LoomMemoryStore {
                 description: String::new(),
                 confidence: 1.0,
                 scope: start_scope,
+                layer: "semantic".to_string(),
+                similarity: 0.0,
             };
             let mut n = vec![start_node];
             n.extend(rows.iter().map(|r| loom_types::KgNode {
@@ -1077,6 +1102,8 @@ impl MemoryStore for LoomMemoryStore {
                 description: r.description.clone(),
                 confidence: r.confidence,
                 scope: r.scope.clone(),
+                layer: "semantic".to_string(),
+                similarity: 0.0,
             }));
             n
         } else {
@@ -1088,6 +1115,8 @@ impl MemoryStore for LoomMemoryStore {
                     description: r.description.clone(),
                     confidence: r.confidence,
                     scope: r.scope.clone(),
+                    layer: "semantic".to_string(),
+                    similarity: 0.0,
                 })
                 .collect()
         };
@@ -1296,6 +1325,8 @@ impl MemoryStore for LoomMemoryStore {
                 description: r.description.clone(),
                 confidence: r.confidence,
                 scope: r.scope.clone(),
+                layer: r.layer.clone(),
+                similarity: 0.0,
             })
             .collect())
     }
@@ -1556,21 +1587,27 @@ impl MemoryStore for LoomMemoryStore {
 
     async fn search_similar_entities(
         &self,
+        query: &str,
         embedding: &[f32],
         limit: usize,
     ) -> Result<Vec<loom_types::KgNode>> {
         let store = self.memory_db.lock().expect("lock poisoned");
         let graph = loom_memory::GraphStore::new(store.conn());
-        let rows = graph.search_similar(embedding, limit, None, None)?;
+        // Use the query text as a FTS5 fallback when embeddings are not yet
+        // available for the query (embedding vector is empty or absent).
+        let fallback = if query.is_empty() { None } else { Some(query) };
+        let rows = graph.search_similar(embedding, limit, fallback, None)?;
         Ok(rows
             .iter()
-            .map(|(row, _score)| loom_types::KgNode {
+            .map(|(row, score)| loom_types::KgNode {
                 node_id: row.node_id,
                 name: row.name.clone(),
                 entity_type: row.entity_type.clone(),
                 description: row.description.clone(),
                 confidence: row.confidence,
                 scope: row.scope.clone(),
+                layer: "semantic".to_string(),
+                similarity: *score,
             })
             .collect())
     }
@@ -1698,6 +1735,7 @@ impl MemoryStore for LoomMemoryStore {
             nodes_removed: report.pruned_nodes as usize,
             edges_removed: report.pruned_edges as usize,
             cognitions_removed: report.pruned_cognitions as usize,
+            skipped_protected: report.skipped_protected,
             min_importance_threshold: min_importance,
             max_age_days,
             summary: format!(

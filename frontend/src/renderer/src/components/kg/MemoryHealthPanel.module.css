@@ -1,0 +1,433 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 16px 0;
+}
+
+/* ── Header row ── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.refreshBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+
+.refreshBtn:hover:not(:disabled) {
+  background: rgba(var(--accent-rgb), 0.16);
+}
+
+.refreshBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.refreshIcon {
+  display: inline-block;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.spinning {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ── Top row: gauge + card grid ── */
+.topRow {
+  display: flex;
+  gap: 20px;
+  align-items: stretch;
+}
+
+/* ── Health score gauge ── */
+.gaugeSection {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 24px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  min-width: 180px;
+  flex-shrink: 0;
+}
+
+.gaugeLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.gaugeRing {
+  position: relative;
+  width: 120px;
+  height: 120px;
+}
+
+.gaugeSvg {
+  transform: rotate(-90deg);
+}
+
+.gaugeBg {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 8;
+}
+
+.gaugeFill {
+  fill: none;
+  stroke-width: 8;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.6s var(--ease-out), stroke 0.4s var(--ease-out);
+}
+
+.gaugeCenter {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.gaugeScore {
+  font-size: 28px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  line-height: 1;
+}
+
+.gaugeUnit {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* Health score colors */
+.scoreRed { color: var(--red); }
+.scoreYellow { color: var(--amber); }
+.scoreGreen { color: var(--green); }
+
+.fillRed { stroke: var(--red); }
+.fillYellow { stroke: var(--amber); }
+.fillGreen { stroke: var(--green); }
+
+.gaugeStatus {
+  font-size: 11px;
+  margin-top: 10px;
+  padding: 2px 10px;
+  border-radius: var(--r-full);
+  font-weight: 500;
+}
+
+.statusCritical {
+  color: var(--red);
+  background: var(--red-light);
+}
+
+.statusDegraded {
+  color: var(--amber);
+  background: var(--amber-light);
+}
+
+.statusHealthy {
+  color: var(--green);
+  background: var(--green-light);
+}
+
+/* ── Card grid ── */
+.cardGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  flex: 1;
+}
+
+.statCard {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 16px 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.statCard:hover {
+  border-color: var(--border-default);
+}
+
+.cardLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.cardValue {
+  font-size: 22px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.cardSubtext {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+/* ── Section ── */
+.section {
+  display: flex;
+  flex-direction: column;
+}
+
+.sectionHeader {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 14px;
+}
+
+/* ── Layer distribution bar chart ── */
+.barChart {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.barRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.barLabel {
+  width: 80px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-align: right;
+  flex-shrink: 0;
+  text-transform: capitalize;
+}
+
+.barTrack {
+  flex: 1;
+  height: 22px;
+  background: var(--bg-surface);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  position: relative;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: var(--r-sm);
+  transition: width 0.5s var(--ease-out);
+  display: flex;
+  align-items: center;
+  padding-left: 8px;
+  min-width: 0;
+}
+
+.barFillWorking {
+  background: rgba(34, 211, 238, 0.25);
+}
+
+.barFillEpisodic {
+  background: rgba(45, 212, 191, 0.25);
+}
+
+.barFillSemantic {
+  background: rgba(245, 158, 11, 0.25);
+}
+
+.barFillGlobal {
+  background: rgba(168, 85, 247, 0.25);
+}
+
+.barValue {
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.barCount {
+  width: 48px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* ── Entity type distribution ── */
+.typeList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.typeRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.typeRow:hover {
+  border-color: var(--border-default);
+}
+
+.typeName {
+  font-size: 12px;
+  color: var(--text);
+  text-transform: capitalize;
+}
+
+.typeCount {
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--accent);
+}
+
+.typeDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.typeLeft {
+  display: flex;
+  align-items: center;
+}
+
+/* ── Empty / Loading / Error states ── */
+.emptyState {
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.emptyHint {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.6;
+  margin-top: 4px;
+}
+
+.loadingState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  gap: 10px;
+}
+
+.loadingSpinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.loadingText {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.errorState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  gap: 10px;
+}
+
+.errorIcon {
+  font-size: 28px;
+  color: var(--red);
+}
+
+.errorText {
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.retryBtn {
+  padding: 6px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+
+.retryBtn:hover {
+  background: rgba(var(--accent-rgb), 0.16);
+}
+
+/* ── Footer timestamp ── */
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.footerText {
+  font-size: 10px;
+  color: var(--text-muted);
+}

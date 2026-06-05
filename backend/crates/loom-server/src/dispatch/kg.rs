@@ -33,6 +33,15 @@ pub async fn handle(
         // Memory
         "memory.promote" => Some(handle_memory_promote(state, p).await),
         "memory.quality" => Some(handle_memory_quality(state, p).await),
+        "memory.health" => Some(handle_memory_health(state).await),
+        "memory.persona" => Some(handle_memory_persona(state).await),
+        "memory.patterns" => Some(handle_memory_patterns(state).await),
+        "memory.consolidate" => Some(handle_memory_consolidate(state).await),
+        "memory.forget" => Some(handle_memory_forget(state, p).await),
+        "memory.promote_to_layer" => Some(handle_memory_promote_to_layer(state, p).await),
+        "memory.pipeline_status" => Some(handle_memory_pipeline_status(state).await),
+        "memory.layer_stats" => Some(handle_memory_layer_stats(state).await),
+        "memory.vector_search" => Some(handle_memory_vector_search(state, p).await),
         _ => None,
     }
 }
@@ -315,4 +324,134 @@ async fn handle_memory_quality(state: &AppState, p: &Value) -> Result<Value, Jso
         .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
     Ok(serde_json::to_value(report).unwrap_or_default())
+}
+
+// --- memory.health ---
+
+async fn handle_memory_health(state: &AppState) -> Result<Value, JsonRpcError> {
+    let health = state
+        .orchestrator
+        .get_memory_health()
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    serde_json::from_str::<Value>(&health)
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))
+}
+
+// --- memory.persona ---
+
+async fn handle_memory_persona(state: &AppState) -> Result<Value, JsonRpcError> {
+    let persona_text = state
+        .orchestrator
+        .get_rich_persona()
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    let persona_structured = state
+        .orchestrator
+        .get_rich_persona_structured()
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    Ok(json!({ "persona": persona_text, "rich_persona": persona_structured }))
+}
+
+// --- memory.patterns ---
+
+async fn handle_memory_patterns(state: &AppState) -> Result<Value, JsonRpcError> {
+    let patterns = state
+        .orchestrator
+        .detect_patterns()
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    serde_json::from_str::<Value>(&patterns)
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))
+}
+
+// --- memory.consolidate ---
+
+async fn handle_memory_consolidate(state: &AppState) -> Result<Value, JsonRpcError> {
+    let report = state
+        .orchestrator
+        .run_consolidation_cycle()
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    serde_json::from_str::<Value>(&report)
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))
+}
+
+// --- memory.forget ---
+
+async fn handle_memory_forget(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let min_importance = p
+        .get("min_importance")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.3);
+    let max_age_days = p
+        .get("max_age_days")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(90);
+    let report = state
+        .orchestrator
+        .run_forgetting_cycle(min_importance, max_age_days)
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    serde_json::from_str::<Value>(&report)
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))
+}
+
+// --- memory.pipeline_status ---
+
+async fn handle_memory_pipeline_status(state: &AppState) -> Result<Value, JsonRpcError> {
+    let status = state
+        .orchestrator
+        .get_pipeline_status()
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    serde_json::from_str::<Value>(&status)
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))
+}
+
+// --- memory.layer_stats ---
+
+async fn handle_memory_layer_stats(state: &AppState) -> Result<Value, JsonRpcError> {
+    let stats = state
+        .orchestrator
+        .get_layer_stats()
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    Ok(json!({ "layers": stats }))
+}
+
+// --- memory.promote_to_layer ---
+
+async fn handle_memory_promote_to_layer(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let node_name = p
+        .get("node_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| err(ErrorCode::InvalidRequest, "missing node_name"))?;
+    let target_layer = p
+        .get("target_layer")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| err(ErrorCode::InvalidRequest, "missing target_layer"))?;
+    state
+        .orchestrator
+        .promote_to_layer(node_name, target_layer)
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    Ok(json!({ "ok": true }))
+}
+
+// --- memory.vector_search ---
+
+async fn handle_memory_vector_search(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let query = p.get("query").and_then(|v| v.as_str()).unwrap_or("");
+    if query.is_empty() {
+        return Err(err(ErrorCode::InvalidRequest, "query required"));
+    }
+    let limit = p.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+    let results = state
+        .orchestrator
+        .search_similar_entities(query, limit)
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    Ok(json!({ "results": results }))
 }

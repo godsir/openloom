@@ -12,6 +12,18 @@ pub struct KgNode {
     pub description: String,
     pub confidence: f64,
     pub scope: String,
+    /// Memory layer: "working", "episodic", "semantic", or "global".
+    /// Omitted from older stores; defaults to "semantic" via serde.
+    #[serde(default = "default_layer")]
+    pub layer: String,
+    /// Cosine similarity score (0.0-1.0), set by vector search. Omitted in
+    /// regular graph queries (defaults to 0.0 via serde).
+    #[serde(default)]
+    pub similarity: f64,
+}
+
+fn default_layer() -> String {
+    "semantic".to_string()
 }
 
 /// A directed relationship between two KG entities.

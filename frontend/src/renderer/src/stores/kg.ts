@@ -1,6 +1,6 @@
 import { StateCreator } from 'zustand'
 import { loomRpc } from '../services/jsonrpc'
-import type { KgNode, KgEdge, KgGraph, KgStats, Cognition, CognitionHistory } from '../types/bindings'
+import type { KgNode, KgEdge, KgGraph, KgStats, Cognition, CognitionHistory, MemoryHealth, MemoryQualityReport, PersonaData, SessionPatternReport, ConsolidationReport, ForgettingReport, PipelineStatus, LayerStats, VectorSearchResult } from '../types/bindings'
 
 export interface KgSlice {
   kgSearchResults: KgNode[]
@@ -11,6 +11,16 @@ export interface KgSlice {
   cognitionList: Cognition[]
   cognitionSubjects: string[]
   cognitionSnapshots: Record<number, CognitionHistory[]>
+  memoryHealth: MemoryHealth | null
+  qualityReport: MemoryQualityReport | null
+  personaData: PersonaData | null
+  patternReport: SessionPatternReport | null
+  consolidationReport: ConsolidationReport | null
+  forgettingReport: ForgettingReport | null
+  pipelineStatus: PipelineStatus[]
+  layerStats: LayerStats[]
+  vectorResults: VectorSearchResult[]
+  activeTab: 'graph' | 'health' | 'persona' | 'patterns' | 'maintenance'
   kgSearch: (query: string) => Promise<void>
   kgExpandNode: (nodeName: string, scope?: string) => Promise<void>
   kgWalkFrom: (startName: string, maxDepth?: number, scope?: string) => Promise<void>
@@ -25,6 +35,17 @@ export interface KgSlice {
   cognitionLoadSnapshots: (cognitionId: number) => Promise<void>
   kgPrune: (olderThanDays: number) => Promise<void>
   memoryPromote: (sessionId: string, minConfidence?: number) => Promise<{ promoted_nodes: number; promoted_cognitions: number }>
+  kgLoadHealth: () => Promise<void>
+  kgLoadQuality: (lookbackDays?: number) => Promise<void>
+  kgLoadPersona: () => Promise<void>
+  kgLoadPatterns: () => Promise<void>
+  kgRunConsolidation: () => Promise<void>
+  kgRunForgetting: (minImportance?: number, maxAgeDays?: number) => Promise<void>
+  kgLoadPipelineStatus: () => Promise<void>
+  kgLoadLayerStats: () => Promise<void>
+  kgPromoteToLayer: (nodeName: string, targetLayer: string) => Promise<void>
+  kgVectorSearch: (query: string, limit?: number) => Promise<void>
+  kgSetActiveTab: (tab: 'graph' | 'health' | 'persona' | 'patterns' | 'maintenance') => void
 }
 
 export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
@@ -36,6 +57,16 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
   cognitionList: [],
   cognitionSubjects: [],
   cognitionSnapshots: {},
+  memoryHealth: null,
+  qualityReport: null,
+  personaData: null,
+  patternReport: null,
+  consolidationReport: null,
+  forgettingReport: null,
+  pipelineStatus: [],
+  layerStats: [],
+  vectorResults: [],
+  activeTab: 'graph',
 
   kgSearch: async (query) => {
     const result = await loomRpc<{ rows: KgNode[] }>('kg.search', { query, limit: 20 })
@@ -226,5 +257,117 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
     const curSubject = 'USER'
     await get().cognitionListBySubject(curSubject, undefined)
     return result
+  },
+
+  kgLoadHealth: async () => {
+    try {
+      const health = await loomRpc<MemoryHealth>('memory.health')
+      set({ memoryHealth: health })
+    } catch (err) {
+      console.error('[kgLoadHealth] failed:', err)
+    }
+  },
+
+  kgLoadQuality: async (lookbackDays) => {
+    try {
+      const report = await loomRpc<MemoryQualityReport>('memory.quality', { lookback_days: lookbackDays ?? 30 })
+      set({ qualityReport: report })
+    } catch (err) {
+      console.error('[kgLoadQuality] failed:', err)
+    }
+  },
+
+  kgLoadPersona: async () => {
+    try {
+      const result = await loomRpc<PersonaData>('memory.persona')
+      set({ personaData: result })
+    } catch (err) {
+      console.error('[kgLoadPersona] failed:', err)
+    }
+  },
+
+  kgLoadPatterns: async () => {
+    try {
+      const report = await loomRpc<SessionPatternReport>('memory.patterns')
+      set({ patternReport: report })
+    } catch (err) {
+      console.error('[kgLoadPatterns] failed:', err)
+    }
+  },
+
+  kgRunConsolidation: async () => {
+    try {
+      const report = await loomRpc<ConsolidationReport>('memory.consolidate')
+      set({ consolidationReport: report })
+    } catch (err) {
+      console.error('[kgRunConsolidation] failed:', err)
+      throw err
+    }
+  },
+
+  kgRunForgetting: async (minImportance, maxAgeDays) => {
+    try {
+      const report = await loomRpc<ForgettingReport>('memory.forget', {
+        min_importance: minImportance ?? 0.3,
+        max_age_days: maxAgeDays ?? 90,
+      })
+      set({ forgettingReport: report })
+    } catch (err) {
+      console.error('[kgRunForgetting] failed:', err)
+      throw err
+    }
+  },
+
+  kgLoadPipelineStatus: async () => {
+    try {
+      const status = await loomRpc<PipelineStatus>('memory.pipeline_status')
+      set({ pipelineStatus: status ? [status] : [] })
+    } catch (err) {
+      console.error('[kgLoadPipelineStatus] failed:', err)
+    }
+  },
+
+  kgLoadLayerStats: async () => {
+    try {
+      const result = await loomRpc<{ layers: [string, number][] }>('memory.layer_stats')
+      const stats = (result.layers ?? []).map(([layer_name, node_count]) => ({ layer_name, node_count }))
+      set({ layerStats: stats })
+    } catch (err) {
+      console.error('[kgLoadLayerStats] failed:', err)
+    }
+  },
+
+  kgPromoteToLayer: async (nodeName, targetLayer) => {
+    try {
+      await loomRpc('memory.promote_to_layer', { node_name: nodeName, target_layer: targetLayer })
+      // Refresh stats and node list
+      await get().kgLoadStats()
+      await get().kgLoadLayerStats()
+      const nodes = get().kgNodeList
+      set({
+        kgNodeList: nodes.map(n =>
+          n.name === nodeName ? { ...n, layer: targetLayer } : n
+        ),
+      })
+    } catch (err) {
+      console.error('[kgPromoteToLayer] failed:', err)
+      throw err
+    }
+  },
+
+  kgVectorSearch: async (query, limit) => {
+    try {
+      const result = await loomRpc<{ results: VectorSearchResult[] }>('memory.vector_search', {
+        query,
+        limit: limit ?? 20,
+      })
+      set({ vectorResults: result.results ?? [] })
+    } catch (err) {
+      console.error('[kgVectorSearch] failed:', err)
+    }
+  },
+
+  kgSetActiveTab: (tab) => {
+    set({ activeTab: tab })
   },
 })

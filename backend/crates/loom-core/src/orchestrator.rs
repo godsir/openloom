@@ -239,6 +239,11 @@ pub trait MemoryStore: Send + Sync {
     async fn get_rich_persona(&self) -> Result<Option<String>> {
         Ok(None)
     }
+    /// Phase 2: Rich persona as structured JSON (serde_json::Value).
+    /// Returns `None` when no sufficient data is available yet.
+    async fn get_rich_persona_structured(&self) -> Result<Option<serde_json::Value>> {
+        Ok(None)
+    }
     async fn feed_knowledge_graph(
         &self,
         entities: &[loom_memory::ExtractedEntity],
@@ -411,9 +416,11 @@ pub trait MemoryStore: Send + Sync {
         Ok(())
     }
     /// Search for entities whose stored embeddings are most similar to the
-    /// query embedding via cosine similarity.
+    /// query string. Falls back to FTS5 text search when embeddings are not
+    /// yet available for the query.
     async fn search_similar_entities(
         &self,
+        _query: &str,
         _embedding: &[f32],
         _limit: usize,
     ) -> Result<Vec<loom_types::KgNode>> {
@@ -1214,6 +1221,8 @@ impl Orchestrator {
                         description,
                         confidence,
                         scope: "global".to_string(),
+                        layer: "semantic".to_string(),
+                        similarity: 0.0,
                     },
                 )
                 .collect())
@@ -1397,6 +1406,104 @@ impl Orchestrator {
             }
         } else {
             Ok((0, 0))
+        }
+    }
+
+    /// Promote a single node to a specific memory layer.
+    pub async fn promote_to_layer(&self, node_name: &str, layer: &str) -> Result<()> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.promote_to_layer(node_name, layer).await
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Get the rich structured persona (Phase 2).
+    pub async fn get_rich_persona(&self) -> Result<Option<String>> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.get_rich_persona().await
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get the rich persona as structured JSON (Phase 2).
+    pub async fn get_rich_persona_structured(&self) -> Result<Option<serde_json::Value>> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.get_rich_persona_structured().await
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Detect session usage patterns (Phase 2).
+    /// Returns a JSON-serialised SessionPatternReport.
+    pub async fn detect_patterns(&self) -> Result<String> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.detect_patterns().await
+        } else {
+            Ok("{}".into())
+        }
+    }
+
+    /// Run a full memory consolidation cycle across layers (Phase 2).
+    /// Returns a JSON-serialised ConsolidationReport.
+    pub async fn run_consolidation_cycle(&self) -> Result<String> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.run_consolidation_cycle().await
+        } else {
+            Ok("noop".into())
+        }
+    }
+
+    /// Run a forgetting cycle: prune low-importance, stale entities (Phase 3).
+    /// Returns a JSON-serialised ForgettingReport.
+    pub async fn run_forgetting_cycle(&self, min_importance: f64, max_age_days: i64) -> Result<String> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.run_forgetting_cycle(min_importance, max_age_days).await
+        } else {
+            Ok(r#"{"summary":"noop"}"#.into())
+        }
+    }
+
+    /// Return a health snapshot of the memory system (Phase 3).
+    /// Returns a JSON-serialised MemoryHealth.
+    pub async fn get_memory_health(&self) -> Result<String> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.get_memory_health().await
+        } else {
+            Ok(r#"{"status":"healthy","fragmentation_score":0.0}"#.into())
+        }
+    }
+
+    /// Return the current pipeline status: stage, counts, timings (Phase 3).
+    /// Returns a JSON-serialised pipeline status object.
+    pub async fn get_pipeline_status(&self) -> Result<String> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.get_pipeline_status().await
+        } else {
+            Ok(r#"{"status":"idle"}"#.into())
+        }
+    }
+
+    /// Get per-layer node counts as Vec<(layer_name, count)> (Phase 2).
+    pub async fn get_layer_stats(&self) -> Result<Vec<(String, i64)>> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.get_layer_stats().await
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    /// Search for entities by semantic similarity to a query string.
+    /// Passes the query text as a fallback for FTS5 when vector embeddings
+    /// are not yet available; full embedding-based search will be wired
+    /// in a follow-up phase.
+    pub async fn search_similar_entities(&self, query: &str, limit: usize) -> Result<Vec<loom_types::KgNode>> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.search_similar_entities(query, &[], limit).await
+        } else {
+            Ok(Vec::new())
         }
     }
 

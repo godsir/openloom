@@ -33,8 +33,10 @@
 
   /* Semantic */
   --green:        #10B981;
+  --green-rgb:    16,185,129;
   --green-light:  rgba(16,185,129,0.10);
   --amber:        #F59E0B;
+  --amber-rgb:    245,158,11;
   --amber-light:  rgba(245,158,11,0.10);
   --red:          #EF4444;
   --red-light:    rgba(239,68,68,0.10);

@@ -1,0 +1,461 @@
+/* ── New Maintenance sections (Consolidation, Forgetting, Pipeline, Layers) ── */
+
+/* Section container — matches existing .section pattern */
+.mtSection {
+  margin-bottom: 32px;
+}
+
+.mtSectionTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+/* ── Consolidation ── */
+
+.consolidationActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.runBtn {
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #fff;
+  background: var(--accent);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.runBtn:hover:not(:disabled) {
+  background: rgba(var(--accent-rgb), 0.85);
+}
+
+.runBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.runBtnDanger {
+  composes: runBtn;
+  background: var(--red);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.runBtnDanger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.85);
+}
+
+/* Result display */
+.resultBox {
+  padding: 12px 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+}
+
+.resultGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.resultItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.resultLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.resultValue {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.resultSummary {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+/* Error display */
+.errorBox {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: var(--r-sm);
+}
+
+.errorText {
+  font-size: 11px;
+  color: var(--red);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* ── Active Forgetting ── */
+
+.forgettingControls {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.sliderGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 140px;
+}
+
+.sliderLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.sliderRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider {
+  width: 100px;
+  height: 4px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+.sliderValue {
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 500;
+  min-width: 32px;
+}
+
+.inputGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 80px;
+}
+
+.inputLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.numberInput {
+  width: 72px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-sm);
+  outline: none;
+}
+
+.numberInput:focus {
+  border-color: var(--border-accent);
+}
+
+/* ── Pipeline Status ── */
+
+.pipelineGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.stageCard {
+  padding: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stageHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stageDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.stageDotIdle {
+  background: var(--text-muted);
+}
+
+.stageDotActive {
+  background: var(--accent);
+  box-shadow: 0 0 4px rgba(var(--accent-rgb), 0.5);
+}
+
+.stageDotCompleted {
+  background: var(--green);
+}
+
+.stageName {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.stageTime {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.stageTrigger {
+  margin-top: auto;
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.08);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: all 0.15s;
+  align-self: flex-start;
+}
+
+.stageTrigger:hover {
+  background: rgba(var(--accent-rgb), 0.16);
+}
+
+.pipelineSummary {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.pipelineSummary span {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* ── Layer Stats ── */
+
+.layerBarList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.layerBarItem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.layerBarName {
+  font-size: 11px;
+  color: var(--text-secondary);
+  min-width: 64px;
+  text-transform: capitalize;
+}
+
+.layerBarTrack {
+  flex: 1;
+  height: 20px;
+  background: var(--bg-input);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  position: relative;
+}
+
+.layerBarFill {
+  height: 100%;
+  border-radius: var(--r-sm);
+  transition: width 0.3s ease;
+}
+
+.layerBarCount {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.layerBarPct {
+  font-size: 10px;
+  color: var(--text-muted);
+  min-width: 40px;
+  text-align: right;
+}
+
+/* Per-layer entity list */
+.layerEntitySection {
+  margin-top: 4px;
+}
+
+.layerEntityTitle {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.layerEntityList {
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.layerEntityRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s;
+}
+
+.layerEntityRow:last-child {
+  border-bottom: none;
+}
+
+.layerEntityRow:hover {
+  background: var(--bg-active);
+}
+
+.layerEntityInfo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.layerEntityName {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.layerEntityType {
+  font-size: 10px;
+  padding: 1px 5px;
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--accent);
+  border-radius: var(--r-sm);
+}
+
+.layerEntityCurr {
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 1px 5px;
+  background: var(--bg-input);
+  border-radius: var(--r-sm);
+  text-transform: capitalize;
+}
+
+.layerEntityActions {
+  display: flex;
+  gap: 2px;
+}
+
+.layerActionBtn {
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.06);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.layerActionBtn:hover {
+  background: rgba(var(--accent-rgb), 0.14);
+}
+
+.layerActionBtnActive {
+  composes: layerActionBtn;
+  color: #fff;
+  background: var(--accent);
+}
+
+.layerRefreshBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.layerModeToggle {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-input);
+  border-radius: var(--r-sm);
+  padding: 2px;
+}
+
+.layerModeBtn {
+  padding: 3px 10px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.layerModeBtn:hover {
+  color: var(--text);
+}
+
+.layerModeBtnActive {
+  composes: layerModeBtn;
+  color: var(--text);
+  background: var(--bg);
+}
+
+/* Loading */
+.loadingText {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px 0;
+}

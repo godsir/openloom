@@ -1,0 +1,472 @@
+/* ── Panel container ── */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.refreshBtn {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.08);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.refreshBtn:hover {
+  background: rgba(var(--accent-rgb), 0.14);
+}
+
+/* ── Section ── */
+.section {
+  margin-bottom: 22px;
+}
+
+.sectionTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 10px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Proficiency badges (Tech Stack) ── */
+.badgeCloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.proficiencyBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--r-sm);
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid;
+  transition: transform 0.15s;
+  cursor: default;
+}
+
+.proficiencyBadge:hover {
+  transform: scale(1.05);
+}
+
+.badgeLevel {
+  font-size: 9px;
+  opacity: 0.8;
+  font-weight: 400;
+}
+
+/* ── Preferences ── */
+.prefList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prefRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--bg-surface);
+  border-radius: var(--r-sm);
+  gap: 12px;
+}
+
+.prefInfo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.prefKey {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.prefValue {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.strengthWrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-width: 80px;
+}
+
+.strengthBar {
+  width: 48px;
+  height: 4px;
+  background: var(--bg-input);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.strengthFill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.strengthLabel {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Goals ── */
+.goalList {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.goalRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  transition: background 0.15s;
+}
+
+.goalRow:hover {
+  background: var(--bg-active);
+}
+
+.goalStatus {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  font-size: 10px;
+  font-weight: 500;
+  border: 1px solid;
+  flex-shrink: 0;
+}
+
+.goalDesc {
+  font-size: 12px;
+  color: var(--text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goalPriority {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.goalPriorityNum {
+  font-size: 10px;
+  margin-left: 2px;
+}
+
+/* ── Working Style ── */
+.styleRow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.styleItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.styleIcon {
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.styleInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.styleLabel {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.styleValue {
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.styleDivider {
+  width: 1px;
+  height: 32px;
+  background: var(--border);
+}
+
+.verbosityBars {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.verbosityBar {
+  width: 8px;
+  height: 22px;
+  border-radius: 3px;
+  background: var(--bg-input);
+  transition: background 0.2s;
+}
+
+.verbosityBarActive {
+  background: var(--accent);
+}
+
+/* ── Communication ── */
+.commRow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.commItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.langFlag {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.commLabel {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.commValue {
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.formalityBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--r-sm);
+  font-size: 10px;
+  font-weight: 500;
+  border: 1px solid;
+  flex-shrink: 0;
+}
+
+/* ── Expertise tag cloud ── */
+.tagCloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.tag {
+  display: inline-block;
+  padding: 3px 10px;
+  background: rgba(var(--accent-rgb), 0.08);
+  color: var(--accent);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--r-sm);
+  font-weight: 500;
+}
+
+.tags {
+  font-size: 10px;
+}
+
+.tagm {
+  font-size: 11px;
+  padding: 4px 12px;
+}
+
+.tagl {
+  font-size: 13px;
+  padding: 5px 14px;
+  font-weight: 600;
+}
+
+.tagxl {
+  font-size: 15px;
+  padding: 6px 16px;
+  font-weight: 600;
+  background: rgba(var(--accent-rgb), 0.14);
+}
+
+/* ── Behavioural patterns ── */
+.patternList {
+  margin: 0;
+  padding: 0 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.patternItem {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.patternItem::marker {
+  color: var(--accent);
+}
+
+/* ── Footer ── */
+.footer {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.timestamp {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ── Empty / Loading states ── */
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  gap: 8px;
+}
+
+.emptyIcon {
+  font-size: 40px;
+  opacity: 0.6;
+  margin-bottom: 8px;
+}
+
+.emptyTitle {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.emptyHint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+  max-width: 280px;
+  text-align: center;
+  line-height: 1.6;
+}
+
+.miniEmpty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px 0;
+}
+
+/* ── Spinner ── */
+.spinnerWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  gap: 12px;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--bg-input);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinnerLabel {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── Error ── */
+.errorBanner {
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  background: var(--red-light);
+  color: var(--red);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--r-md);
+  font-size: 12px;
+}
+
+/* ── Badge color tokens (fallback values for when CSS vars not defined) ── */
+/* These provide sensible defaults while allowing theme overrides */
+:global(:root) {
+  --badge-gray: #6b7280;
+  --badge-gray-bg: rgba(107, 114, 128, 0.12);
+  --badge-blue: #3b82f6;
+  --badge-blue-bg: rgba(59, 130, 246, 0.12);
+  --badge-green: #22c55e;
+  --badge-green-bg: rgba(34, 197, 94, 0.12);
+  --badge-gold: #f59e0b;
+  --badge-gold-bg: rgba(245, 158, 11, 0.12);
+  --badge-red: #ef4444;
+  --badge-red-bg: rgba(239, 68, 68, 0.12);
+}

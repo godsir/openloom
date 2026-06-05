@@ -313,7 +313,11 @@ async fn handle_marketplace_list(state: &AppState) -> Result<Value, JsonRpcError
     let home = dirs::home_dir().unwrap_or_default();
     let plugins_dir = home.join(".loom").join("plugins");
     let skills_dir = home.join(".loom").join("skills");
-    let results = loom_marketplace::list_with_status(&plugins_dir, &skills_dir);
+    let results = tokio::task::spawn_blocking(move || {
+        loom_marketplace::list_with_status(&plugins_dir, &skills_dir)
+    })
+    .await
+    .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
     let results_json: Vec<serde_json::Value> = results
         .iter()
         .map(|p| serde_json::to_value(p).unwrap_or_default())
@@ -365,17 +369,23 @@ async fn handle_marketplace_uninstall(state: &AppState, p: &Value) -> Result<Val
     // Try both dirs — the entry could be a plugin or a skill.
     let plugin_path = plugins_dir.join(entry_id);
     let skill_path = skills_dir.join(entry_id);
-    let target_dir = if plugin_path.exists() {
-        &plugins_dir
+    let target_dir: std::path::PathBuf = if plugin_path.exists() {
+        plugins_dir.clone()
     } else if skill_path.exists() {
-        &skills_dir
+        skills_dir.clone()
     } else {
         return Err(err(
             ErrorCode::InternalError,
             &format!("'{}' is not installed", entry_id),
         ));
     };
-    match loom_marketplace::uninstall(entry_id, target_dir) {
+    let entry_id_owned = entry_id.to_string();
+    match tokio::task::spawn_blocking(move || {
+        loom_marketplace::uninstall(&entry_id_owned, &target_dir)
+    })
+    .await
+    .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?
+    {
         Ok(()) => {
             let mut pm = loom_plugins::PluginManager::new();
             let n = pm.discover(&home).unwrap_or(0);
