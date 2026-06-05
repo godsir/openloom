@@ -1,6 +1,20 @@
 .panel {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+}
+
+.mainTabs {
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+  display: flex;
+  gap: 4px;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
 }
 
 /* Search bar */
@@ -724,14 +738,7 @@
   cursor: not-allowed;
 }
 
-/* Main tabs (知识图谱 / 维护) */
-.mainTabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 20px;
-  border-bottom: 1px solid var(--border);
-}
-
+/* Main tab buttons */
 .mainTab {
   padding: 10px 16px;
   background: none;

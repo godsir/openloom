@@ -215,7 +215,17 @@ export default function SettingsModal({
             </>
           )}
 
-          {tab === 'kg' && <KgTab />}
+          {tab === 'kg' && (
+            <>
+              <div className={styles.contentHeader}>
+                <h3 className={styles.sectionTitle}>记忆系统</h3>
+                <p className={styles.sectionDesc}>知识图谱 · 用户画像 · 模式洞察 · 记忆健康</p>
+              </div>
+              <div className={styles.contentBody}>
+                <KgTab />
+              </div>
+            </>
+          )}
           {tab === 'token' && <TokenTab />}
           {tab === 'about' && <AboutTab wsState={wsState} />}
         </div>
