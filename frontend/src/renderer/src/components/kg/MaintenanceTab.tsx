@@ -117,6 +117,26 @@ function layerColor(layer: string): string {
   return LAYER_COLORS[layer] ?? 'var(--text-muted)'
 }
 
+function translateLayerName(name: string): string {
+  const map: Record<string, string> = {
+    working: '工作记忆',
+    episodic: '情景记忆',
+    semantic: '语义记忆',
+    global: '全局记忆',
+  }
+  return map[name] ?? name
+}
+
+function translateLayerNameShort(name: string): string {
+  const map: Record<string, string> = {
+    working: '工作',
+    episodic: '情景',
+    semantic: '语义',
+    global: '全局',
+  }
+  return map[name] ?? name.slice(0, 3)
+}
+
 // ── Pipeline stage labels ──
 const STAGE_LABELS: Record<string, string> = {
   extraction: '实体提取',
@@ -130,6 +150,9 @@ const STAGE_LABELS: Record<string, string> = {
 export default function MaintenanceTab() {
   // ── Existing state ──
   const cognitionList = useStore(s => s.cognitionList)
+  const cognitionPage = useStore(s => s.cognitionPage)
+  const cognitionPageSize = useStore(s => s.cognitionPageSize)
+  const cognitionSetPage = useStore(s => s.cognitionSetPage)
   const cognitionSubjects = useStore(s => s.cognitionSubjects)
   const cognitionListBySubject = useStore(s => s.cognitionListBySubject)
   const cognitionListSubjects = useStore(s => s.cognitionListSubjects)
@@ -252,6 +275,13 @@ export default function MaintenanceTab() {
   const layerOrder = ['working', 'episodic', 'semantic', 'global']
   const pipelineStages = ['extraction', 'consolidation', 'generalization', 'active_forgetting', 'self_evaluation']
 
+  // ── Pagination ──
+  const totalPages = Math.max(1, Math.ceil(cognitionList.length / cognitionPageSize))
+  const paginatedCognitions = cognitionList.slice(
+    cognitionPage * cognitionPageSize,
+    (cognitionPage + 1) * cognitionPageSize
+  )
+
   return (
     <div className={mt.maintenanceTab}>
       {/* ══════════════════════════════════════════════════════════════════
@@ -305,13 +335,15 @@ export default function MaintenanceTab() {
           </div>
           <div className={mt.mgmtCardDesc}>基于重要性评分自动清理低价值陈旧记忆</div>
           <div className={mt.forgettingControls}>
-            <div className={mt.sliderGroup}>
-              <span className={mt.sliderLabel}>阈值 {forgetImportance.toFixed(2)}</span>
-              <input type="range" className={mt.slider} min={0} max={1} step={0.05} value={forgetImportance} onChange={e => setForgetImportance(parseFloat(e.target.value))} />
-            </div>
-            <div className={mt.inputGroup}>
-              <span className={mt.inputLabel}>最大天数</span>
-              <input type="number" className={mt.numberInput} min={1} max={365} value={forgetMaxAge} onChange={e => setForgetMaxAge(Math.max(1, Math.min(365, parseInt(e.target.value, 10) || 60)))} />
+            <div className={mt.forgettingParams}>
+              <div className={mt.sliderGroup}>
+                <span className={mt.sliderLabel}>阈值 {forgetImportance.toFixed(2)}</span>
+                <input type="range" className={mt.slider} min={0} max={1} step={0.05} value={forgetImportance} onChange={e => setForgetImportance(parseFloat(e.target.value))} />
+              </div>
+              <div className={mt.inputGroup}>
+                <span className={mt.inputLabel}>最大天数</span>
+                <input type="number" className={mt.numberInput} min={1} max={365} value={forgetMaxAge} onChange={e => setForgetMaxAge(Math.max(1, Math.min(365, parseInt(e.target.value, 10) || 60)))} />
+              </div>
             </div>
             <button className={mt.runBtnDanger} onClick={handleForgetting} disabled={forgetting}>
               {forgetting ? '执行中...' : '执行遗忘'}
@@ -376,7 +408,7 @@ export default function MaintenanceTab() {
                 const pct = totalLayerNodes > 0 ? Math.round((ls.node_count / totalLayerNodes) * 100) : 0
                 return (
                   <div key={ls.layer_name} className={mt.layerBarItem}>
-                    <span className={mt.layerBarName}>{ls.layer_name}</span>
+                    <span className={mt.layerBarName}>{translateLayerName(ls.layer_name)}</span>
                     <div className={mt.layerBarTrack}>
                       <div className={mt.layerBarFill} style={{ width: `${pct}%`, background: layerColor(ls.layer_name) }} />
                       <span className={mt.layerBarCount}>{ls.node_count}</span>
@@ -395,7 +427,7 @@ export default function MaintenanceTab() {
               const otherLayers = layerOrder.filter(l => l !== layer)
               return (
                 <div key={layer} className={mt.layerEntitySection}>
-                  <div className={mt.layerEntityTitle}>{layer} ({nodes.length})</div>
+                  <div className={mt.layerEntityTitle}>{translateLayerName(layer)} ({nodes.length})</div>
                   <div className={mt.layerEntityList}>
                     {nodes.map(n => (
                       <div key={n.node_id || n.name} className={mt.layerEntityRow}>
@@ -405,8 +437,8 @@ export default function MaintenanceTab() {
                         </div>
                         <div className={mt.layerEntityActions}>
                           {otherLayers.map(tl => (
-                            <button key={tl} className={mt.layerActionBtn} onClick={() => handlePromoteToLayer(n.name, tl)} title={`移至 ${tl}`}>
-                              {tl.slice(0, 3)}
+                            <button key={tl} className={mt.layerActionBtn} onClick={() => handlePromoteToLayer(n.name, tl)} title={`移至 ${translateLayerName(tl)}`}>
+                              {translateLayerNameShort(tl)}
                             </button>
                           ))}
                         </div>
@@ -423,7 +455,7 @@ export default function MaintenanceTab() {
       {/* ══════════════════════════════════════════════════════════════════
           Cognition Records
           ══════════════════════════════════════════════════════════════════ */}
-      <div className={mt.section}>
+      <div className={mt.sectionFill}>
         <div className={mt.sectionTitle}>认知记录</div>
         <div className={mt.filterRow}>
           <label className={mt.filterLabel}>主体:</label>
@@ -452,9 +484,38 @@ export default function MaintenanceTab() {
           {cognitionList.length === 0 ? (
             <div className={mt.emptyState}>暂无认知记录</div>
           ) : (
-            cognitionList.map(c => <CognitionRow key={c.id} cognition={c} />)
+            paginatedCognitions.map(c => <CognitionRow key={c.id} cognition={c} />)
           )}
         </div>
+        {cognitionList.length > 0 && (
+          <div className={mt.pagination}>
+            <span className={mt.pageInfo}>
+              共 {cognitionList.length} 条，第 {cognitionPage + 1}/{totalPages} 页
+            </span>
+            <div className={mt.pageControls}>
+              <button
+                className={mt.pageBtn}
+                disabled={cognitionPage === 0}
+                onClick={() => cognitionSetPage(0)}
+              >首页</button>
+              <button
+                className={mt.pageBtn}
+                disabled={cognitionPage === 0}
+                onClick={() => cognitionSetPage(cognitionPage - 1)}
+              >上一页</button>
+              <button
+                className={mt.pageBtn}
+                disabled={cognitionPage >= totalPages - 1}
+                onClick={() => cognitionSetPage(cognitionPage + 1)}
+              >下一页</button>
+              <button
+                className={mt.pageBtn}
+                disabled={cognitionPage >= totalPages - 1}
+                onClick={() => cognitionSetPage(totalPages - 1)}
+              >末页</button>
+            </div>
+          </div>
+        )}
       </div>
 
       <PromoteDialog open={promoteOpen} onClose={() => setPromoteOpen(false)} />

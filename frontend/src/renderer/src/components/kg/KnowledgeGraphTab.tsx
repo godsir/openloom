@@ -59,7 +59,6 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
   const kgWalkFrom = useStore(s => s.kgWalkFrom)
   const kgLoadGraph = useStore(s => s.kgLoadGraph)
   const kgLoadStats = useStore(s => s.kgLoadStats)
-  const kgClearGraph = useStore(s => s.kgClearGraph)
   const kgListNodes = useStore(s => s.kgListNodes)
   const kgNodeDelete = useStore(s => s.kgNodeDelete)
   const kgEdgeDelete = useStore(s => s.kgEdgeDelete)
@@ -200,10 +199,24 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
     [kgNodeDelete, showConfirm],
   )
 
-  const handleClearGraph = useCallback(() => {
-    userClearedGraph.current = true
-    kgClearGraph()
-  }, [kgClearGraph])
+  const handleRefreshGraph = useCallback(() => {
+    userClearedGraph.current = false
+    const list = kgSearchResults.length > 0 ? kgSearchResults : kgNodeList
+    const seen = new Set(['USER'])
+    const extras: string[] = []
+    for (const n of list) {
+      if (!seen.has(n.name)) {
+        seen.add(n.name)
+        extras.push(n.name)
+        if (extras.length >= 4) break
+      }
+    }
+    const seeds = ['USER', ...extras]
+    const effectiveScope = scopeFilter === 'all' ? undefined
+      : scopeFilter === 'session' ? (currentSessionId ?? undefined)
+      : scopeFilter
+    kgLoadGraph(seeds, 2, effectiveScope)
+  }, [kgSearchResults, kgNodeList, kgLoadGraph, scopeFilter, currentSessionId])
 
   const handleDeleteEdge = useCallback(
     async (source: string, target: string, relation: string) => {
@@ -229,43 +242,41 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
 
   return (
     <div className={styles.panel}>
-      <div className={styles.stickyBar}>
-      <div className={styles.searchRow}>
-        <input
-          className={styles.searchInput}
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="筛选实体..."
-        />
-        <Select
-          value={scopeFilter}
-          options={[
-            { value: 'all', label: '全部范围' },
-            { value: 'global', label: '全局' },
-            { value: 'session', label: '会话级' },
-          ]}
-          onChange={v => setScopeFilter(v as 'all' | 'global' | 'session')}
-          variant="form"
-        />
-        <button className={styles.searchBtn} onClick={handleSearch}>
-          搜索
-        </button>
-      </div>
-
-      {kgStats && (
-        <div className={styles.stats}>
-          <span>
-            实体 <span className={styles.statValue}>{kgStats.node_count}</span>
-          </span>
-          <span>
-            关系 <span className={styles.statValue}>{kgStats.edge_count}</span>
-          </span>
+      {/* Search bar + stats — list view only */}
+      {initialSubTab === 'list' && (
+        <div className={styles.stickyBar}>
+          <div className={styles.searchRow}>
+            <input
+              className={styles.searchInput}
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="筛选实体..."
+            />
+            <Select
+              value={scopeFilter}
+              options={[
+                { value: 'all', label: '全部范围' },
+                { value: 'global', label: '全局' },
+                { value: 'session', label: '会话级' },
+              ]}
+              onChange={v => setScopeFilter(v as 'all' | 'global' | 'session')}
+              variant="form"
+            />
+            <button className={styles.searchBtn} onClick={handleSearch}>
+              搜索
+            </button>
+          </div>
+          {kgStats && (
+            <div className={styles.stats}>
+              <span>实体 <span className={styles.statValue}>{kgStats.node_count}</span></span>
+              <span>关系 <span className={styles.statValue}>{kgStats.edge_count}</span></span>
+            </div>
+          )}
         </div>
       )}
-      </div>{/* stickyBar */}
 
-      {/* Tabs */}
+      {/* Tabs — graph view toolbar */}
       {initialSubTab === 'graph' && hasData && (
         <div className={styles.tabs}>
           <button className={styles.labelToggleBtn} onClick={() => setShowLabels(v => !v)} title={showLabels ? '隐藏标签' : '显示标签'}>
@@ -275,7 +286,12 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
             {isFullscreen ? '⤓' : '⤢'}
           </button>
           {kgGraph && (
-            <button className={styles.clearBtn} onClick={handleClearGraph}>清除图谱</button>
+            <button className={styles.clearBtn} onClick={handleRefreshGraph}>刷新图谱</button>
+          )}
+          {kgStats && (
+            <span className={styles.tabsStats}>
+              实体 {kgStats.node_count} · 关系 {kgStats.edge_count}
+            </span>
           )}
         </div>
       )}

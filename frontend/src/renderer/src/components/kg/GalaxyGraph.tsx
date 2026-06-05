@@ -246,24 +246,131 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
   // ── Position initialization ───────────────────────────────────────
   const ensurePositions = useCallback(() => {
     const pos = positionsRef.current
+    const nodeList = nodesRef.current
+    const edgeList = edgesRef.current
 
-    for (const n of nodesRef.current) {
-      if (!pos.has(n.name)) {
-        const seed = hashString(n.name)
-        const rng = pseudoRandom(seed)
-        const angle = rng() * Math.PI * 2
-        const radius = 40 + rng() * 200
-        pos.set(n.name, {
-          x: Math.cos(angle) * radius,
-          y: Math.sin(angle) * radius,
-          vx: (rng() - 0.5) * 4,
-          vy: (rng() - 0.5) * 4,
-          pinned: false,
-        })
+    // Determine which nodes need initial positions
+    const newNodes = nodeList.filter(n => !pos.has(n.name))
+    if (newNodes.length === 0) {
+      // Just clean up removed nodes
+      const names = new Set(nodeList.map(n => n.name))
+      for (const key of pos.keys()) {
+        if (!names.has(key)) pos.delete(key)
+      }
+      return
+    }
+
+    // Full-load heuristic: >30% nodes are new or position map is empty
+    const isFullLoad = pos.size === 0 || newNodes.length > nodeList.length * 0.3
+
+    if (isFullLoad) {
+      // ── Full load: galaxy-aware spatial pre-positioning ────────────
+      pos.clear()
+
+      // Build non-USER adjacency to detect galaxies (connected components)
+      const adj = new Map<string, string[]>()
+      for (const n of nodeList) adj.set(n.name, [])
+      for (const e of edgeList) {
+        if (e.source !== 'USER' && e.target !== 'USER') {
+          adj.get(e.source)?.push(e.target)
+          adj.get(e.target)?.push(e.source)
+        }
+      }
+
+      // BFS to find galaxies (connected components excluding USER)
+      const visited = new Set<string>()
+      const galaxies: string[][] = []
+      for (const n of nodeList) {
+        if (n.name === 'USER' || visited.has(n.name)) continue
+        const comp: string[] = []
+        const stack = [n.name]
+        while (stack.length > 0) {
+          const curr = stack.pop()!
+          if (visited.has(curr)) continue
+          visited.add(curr)
+          comp.push(curr)
+          for (const nb of adj.get(curr) || []) {
+            if (!visited.has(nb) && nb !== 'USER') stack.push(nb)
+          }
+        }
+        if (comp.length > 0) galaxies.push(comp)
+      }
+
+      // USER at center
+      pos.set('USER', { x: 0, y: 0, vx: 0, vy: 0, pinned: false })
+
+      // Place each galaxy at a distinct angle around USER
+      const galaxyRadius = 340   // distance from USER to galaxy centre
+      const clusterRadius = 150  // scatter radius within galaxy
+      for (let gi = 0; gi < galaxies.length; gi++) {
+        const angle = (gi / Math.max(galaxies.length, 1)) * Math.PI * 2
+        const gx = Math.cos(angle) * galaxyRadius
+        const gy = Math.sin(angle) * galaxyRadius
+        for (const name of galaxies[gi]) {
+          const rng = pseudoRandom(hashString(name + ':' + gi))
+          const la = rng() * Math.PI * 2
+          const lr = 20 + rng() * clusterRadius
+          pos.set(name, {
+            x: gx + Math.cos(la) * lr,
+            y: gy + Math.sin(la) * lr,
+            vx: (rng() - 0.5) * 2,
+            vy: (rng() - 0.5) * 2,
+            pinned: false,
+          })
+        }
+      }
+
+      // Orphan nodes (no non-USER edges) → far outer ring
+      for (const n of nodeList) {
+        if (!pos.has(n.name)) {
+          const rng = pseudoRandom(hashString(n.name))
+          const a = rng() * Math.PI * 2
+          const r = 480 + rng() * 180
+          pos.set(n.name, {
+            x: Math.cos(a) * r,
+            y: Math.sin(a) * r,
+            vx: (rng() - 0.5) * 2,
+            vy: (rng() - 0.5) * 2,
+            pinned: false,
+          })
+        }
+      }
+    } else {
+      // ── Incremental add: place near connected neighbours ───────────
+      for (const n of newNodes) {
+        let cx = 0; let cy = 0; let count = 0
+        for (const e of edgeList) {
+          if (e.source === n.name) {
+            const tp = pos.get(e.target); if (tp) { cx += tp.x; cy += tp.y; count++ }
+          }
+          if (e.target === n.name) {
+            const sp = pos.get(e.source); if (sp) { cx += sp.x; cy += sp.y; count++ }
+          }
+        }
+        const rng = pseudoRandom(hashString(n.name))
+        if (count > 0) {
+          cx /= count; cy /= count
+          pos.set(n.name, {
+            x: cx + (rng() - 0.5) * 60,
+            y: cy + (rng() - 0.5) * 60,
+            vx: (rng() - 0.5) * 2,
+            vy: (rng() - 0.5) * 2,
+            pinned: false,
+          })
+        } else {
+          pos.set(n.name, {
+            x: (rng() - 0.5) * 400,
+            y: (rng() - 0.5) * 400,
+            vx: (rng() - 0.5) * 2,
+            vy: (rng() - 0.5) * 2,
+            pinned: false,
+          })
+        }
       }
     }
 
-    const names = new Set(nodesRef.current.map(n => n.name))
+    // Clean up removed nodes
+    const names = new Set(nodeList.map(n => n.name))
     for (const key of pos.keys()) {
       if (!names.has(key)) pos.delete(key)
     }
@@ -492,6 +599,7 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
 
   // ── Animation + physics loop ──────────────────────────────────────
   const stableFramesRef = useRef(0)
+  const MAX_PHYSICS_FRAMES = 400 // hard cap: ~6.7s @ 60fps
 
   useEffect(() => {
     let running = true
@@ -505,20 +613,23 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       ensurePositions()
 
       let physicsRan = false
-      // Run physics for first 60 frames (1s), then only when unstable
-      if (!stable || frameCount < 60) {
+      // Run physics until stable (with verification countdown), then stop forever
+      if (stableFramesRef.current < 20 && frameCount < MAX_PHYSICS_FRAMES) {
         stable = stepPhysics()
         physicsRan = true
         if (stable) {
           stableFramesRef.current++
-          if (stableFramesRef.current < 20) stable = false
         } else {
           stableFramesRef.current = 0
         }
+      } else if (stableFramesRef.current < 20) {
+        // Hard cap reached — force stable
+        stable = true
+        stableFramesRef.current = 20
       }
 
       // Determine if we should draw this frame
-      const isIdle = stable && !userActiveRef.current && frameCount > 60
+      const isIdle = stable && stableFramesRef.current >= 20 && !userActiveRef.current
       const timeSinceLastDraw = timestamp - lastDrawTimeRef.current
 
       if (isIdle) {

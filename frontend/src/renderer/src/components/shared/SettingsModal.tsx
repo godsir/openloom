@@ -221,7 +221,7 @@ export default function SettingsModal({
                 <h3 className={styles.sectionTitle}>记忆系统</h3>
                 <p className={styles.sectionDesc}>知识图谱 · 用户画像 · 模式洞察 · 记忆健康</p>
               </div>
-              <div className={styles.contentBody}>
+              <div className={`${styles.contentBody} ${styles.contentBodyFlush}`}>
                 <KgTab />
               </div>
             </>

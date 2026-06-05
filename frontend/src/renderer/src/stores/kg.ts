@@ -9,6 +9,8 @@ export interface KgSlice {
   kgStats: KgStats | null
   kgNodeList: KgNode[]
   cognitionList: Cognition[]
+  cognitionPage: number
+  cognitionPageSize: number
   cognitionSubjects: string[]
   cognitionSnapshots: Record<number, CognitionHistory[]>
   memoryHealth: MemoryHealth | null
@@ -31,6 +33,7 @@ export interface KgSlice {
   kgNodeDelete: (name: string) => Promise<void>
   kgEdgeDelete: (source: string, target: string, relation: string) => Promise<void>
   cognitionListBySubject: (subject: string, scope?: string) => Promise<void>
+  cognitionSetPage: (page: number) => void
   cognitionListSubjects: () => Promise<void>
   cognitionLoadSnapshots: (cognitionId: number) => Promise<void>
   kgPrune: (olderThanDays: number) => Promise<void>
@@ -55,6 +58,8 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
   kgStats: null,
   kgNodeList: [],
   cognitionList: [],
+  cognitionPage: 0,
+  cognitionPageSize: 20,
   cognitionSubjects: [],
   cognitionSnapshots: {},
   memoryHealth: null,
@@ -122,65 +127,117 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
   },
 
   kgLoadGraph: async (seeds, maxDepth = 2, scope) => {
-    // Walk from each seed sequentially. Each walk discovers one "galaxy" —
-    // a connected component with all its internal edges. Skip seeds already
-    // covered by a previous walk's galaxy.
+    // ── Approach C: Galaxy-aware graph loading ───────────────────────
+    // Phase 1: Walk USER depth 1 → discover galaxy centres (1-hop neighbours)
+    // Phase 2: Walk each centre depth=maxDepth → build its galaxy
+    // Phase 3: Filter cross-galaxy edges (keep only intra-galaxy + USER edges)
     const nodeMap = new Map<string, KgNode>()
     const edgeMap = new Map<string, KgEdge>()
+    const nodeGalaxy = new Map<string, number>() // galaxyId per node (0 = USER core)
 
-    const addResult = (r: KgGraph) => {
-      for (const n of r.nodes || []) {
-        if (!nodeMap.has(n.name)) nodeMap.set(n.name, n)
-      }
-      for (const e of r.edges || []) {
-        const key = `${e.source}||${e.target}||${e.relation_type}`
-        if (!edgeMap.has(key)) edgeMap.set(key, e)
-      }
+    const edgeKey = (e: KgEdge) => `${e.source}||${e.target}||${e.relation_type}`
+
+    const addNode = (n: KgNode, galaxyId: number) => {
+      if (nodeMap.has(n.name)) return
+      nodeMap.set(n.name, n)
+      nodeGalaxy.set(n.name, galaxyId)
     }
 
-    for (const name of seeds) {
-      if (nodeMap.has(name)) continue
-      try {
-        const result = await loomRpc<KgGraph>('kg.walk', { start_name: name, max_depth: maxDepth, scope, limit: 50 })
-        addResult(result)
-      } catch (err) {
-        console.error('[kgLoadGraph] walk failed for seed:', name, err)
-      }
+    const addEdge = (e: KgEdge) => {
+      const key = edgeKey(e)
+      if (!edgeMap.has(key)) edgeMap.set(key, e)
     }
 
-    // Add remaining nodes from kgNodeList as single-star galaxies.
-    // These are entities with no relationships yet — they show up as
-    // isolated stars in the cosmic view, distinct from the connected galaxies.
-    if (nodeMap.size === 0 || get().kgNodeList.length > nodeMap.size) {
-      for (const n of get().kgNodeList) {
-        if (!nodeMap.has(n.name)) nodeMap.set(n.name, n)
-      }
+    const addResult = (r: KgGraph, galaxyId: number) => {
+      for (const n of r.nodes || []) addNode(n, galaxyId)
+      for (const e of r.edges || []) addEdge(e)
     }
 
-    // Fetch ALL edges between loaded nodes to ensure complete connectivity
-    // This fills in any edges that walk might have missed due to depth/limit constraints
-    if (nodeMap.size > 1) {
-      try {
-        const nodeNames = Array.from(nodeMap.keys())
-        const { edges } = await loomRpc<{ edges: KgEdge[] }>('kg.edges_between', { node_names: nodeNames, scope })
-        for (const e of edges || []) {
-          const key = `${e.source}||${e.target}||${e.relation_type}`
-          if (!edgeMap.has(key)) {
-            edgeMap.set(key, e)
-          }
+    // ── Phase 1: Walk USER depth 1 to discover galaxy centres ──────
+    let userResult: KgGraph | null = null
+    try {
+      userResult = await loomRpc<KgGraph>('kg.walk', {
+        start_name: 'USER', max_depth: 1, scope, limit: 100,
+      })
+    } catch (err) {
+      console.error('[kgLoadGraph] USER walk failed:', err)
+    }
+
+    const userNodes = userResult?.nodes || []
+    const hasUserNode = userNodes.some(n => n.name === 'USER')
+    const galaxyCenters = userNodes.filter(n => n.name !== 'USER')
+
+    if (hasUserNode && galaxyCenters.length > 0) {
+      // ── Galaxies form around USER's 1-hop neighbours ──────────────
+      // USER + its direct edges → galaxy 0 (central cluster)
+      addNode({ node_id: 0, name: 'USER', entity_type: 'Person', description: '', confidence: 1.0, scope: 'global' } as KgNode, 0)
+      addResult(userResult, 0)
+
+      // Walk each galaxy centre (up to 6) to build its galaxy
+      const centers = galaxyCenters.slice(0, 6)
+      for (let gi = 0; gi < centers.length; gi++) {
+        const center = centers[gi]
+        try {
+          const galaxyResult = await loomRpc<KgGraph>('kg.walk', {
+            start_name: center.name, max_depth: maxDepth, scope, limit: 60,
+          })
+          addResult(galaxyResult, gi + 1) // galaxy 1, 2, 3, ...
+        } catch (err) {
+          console.error('[kgLoadGraph] galaxy walk failed for:', center.name, err)
         }
-      } catch (err) {
-        console.error('[kgLoadGraph] edges_between failed:', err)
       }
-    }
 
-    set({
-      kgGraph: {
-        nodes: [...nodeMap.values()],
-        edges: [...edgeMap.values()],
-      },
-      kgSelectedNode: null,
-    })
+      // ── Phase 3: Drop cross-galaxy edges ──────────────────────────
+      const galaxyEdges: KgEdge[] = []
+      for (const e of edgeMap.values()) {
+        const srcG = nodeGalaxy.get(e.source)
+        const tgtG = nodeGalaxy.get(e.target)
+        if (srcG === undefined || tgtG === undefined) {
+          galaxyEdges.push(e) // keep (shouldn't happen)
+        } else if (srcG === tgtG) {
+          galaxyEdges.push(e) // same galaxy — keep
+        } else if (e.source === 'USER' || e.target === 'USER') {
+          galaxyEdges.push(e) // USER ↔ galaxy — keep
+        }
+        // else: cross-galaxy edge → silently dropped
+      }
+
+      // Add orphan nodes from kgNodeList as distant stars
+      if (get().kgNodeList.length > nodeMap.size) {
+        for (const n of get().kgNodeList) {
+          if (!nodeMap.has(n.name)) addNode(n, 999)
+        }
+      }
+
+      set({
+        kgGraph: { nodes: [...nodeMap.values()], edges: galaxyEdges },
+        kgSelectedNode: null,
+      })
+    } else {
+      // ── Fallback: no USER neighbours → walk from seed list ────────
+      for (const name of seeds) {
+        const depth = name === 'USER' ? 1 : maxDepth
+        try {
+          const result = await loomRpc<KgGraph>('kg.walk', {
+            start_name: name, max_depth: depth, scope, limit: 100,
+          })
+          addResult(result, name === 'USER' ? 0 : 99)
+        } catch (err) {
+          console.error('[kgLoadGraph] walk failed for seed:', name, err)
+        }
+      }
+
+      if (nodeMap.size === 0 || get().kgNodeList.length > nodeMap.size) {
+        for (const n of get().kgNodeList) {
+          if (!nodeMap.has(n.name)) addNode(n, 999)
+        }
+      }
+
+      set({
+        kgGraph: { nodes: [...nodeMap.values()], edges: [...edgeMap.values()] },
+        kgSelectedNode: null,
+      })
+    }
   },
 
   kgLoadStats: async () => {
@@ -222,9 +279,13 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
 
   cognitionListBySubject: async (subject, scope) => {
     const result = await loomRpc<{ rows: Cognition[] }>('cognitions.list', {
-      subject, scope, limit: 50, offset: 0,
+      subject, scope, limit: 200, offset: 0,
     })
-    set({ cognitionList: result.rows ?? [] })
+    set({ cognitionList: result.rows ?? [], cognitionPage: 0 })
+  },
+
+  cognitionSetPage: (page) => {
+    set({ cognitionPage: page })
   },
 
   cognitionListSubjects: async () => {
