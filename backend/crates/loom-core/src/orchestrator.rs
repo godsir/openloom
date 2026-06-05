@@ -2673,11 +2673,51 @@ impl Orchestrator {
         assistant_response: String,
         event_id: i64,
     ) {
-        // Build LLM client before spawning (requires &self for config lookup).
-        let llm_client: Option<Arc<dyn CloudClient>> = self
+        // Build LLM client before spawning.
+        // Three-tier fallback:
+        //   1. Dedicated entity model from ~/.loom/auxiliary.json
+        //   2. Current chat model (cloud_client)
+        //   3. Direct connect from active model config (handles pure-local Ollama/LM Studio)
+        let mut llm_client: Option<Arc<dyn CloudClient>> = self
             .build_auxiliary_client("entity")
             .await
             .or_else(|| self.cloud_client.try_read().ok().and_then(|g| g.clone()));
+
+        if llm_client.is_none() {
+            // Pure-local fallback: connect directly from model config.
+            // No auxiliary.json or prior cloud_client needed.
+            if let Some(model_name) = self.active_model_name.try_read().ok().and_then(|g| g.clone()) {
+                let configs = self.model_configs.read().await;
+                if let Some(config) = configs.get(&model_name) {
+                    if let Some(ref model) = config.model {
+                        let base_url = config.base_url.clone().unwrap_or_else(|| {
+                            match config.backend {
+                                loom_types::ModelBackend::LmStudio => "http://localhost:1234/v1".into(),
+                                loom_types::ModelBackend::Ollama => "http://localhost:11434/v1".into(),
+                                loom_types::ModelBackend::Custom => "http://localhost:8080/v1".into(),
+                                _ => String::new(),
+                            }
+                        });
+                        if !base_url.is_empty() {
+                            match loom_inference::InferenceEngine::connect(
+                                &base_url, model, config.context_size,
+                            )
+                            .await
+                            {
+                                Ok(engine) => {
+                                    llm_client = Some(Arc::new(engine));
+                                }
+                                Err(e) => {
+                                    tracing::debug!(
+                                        "entity extraction: local fallback connect failed — {e}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         let extract_model = llm_client
             .as_ref()

@@ -25,10 +25,13 @@ async fn handle_plugins_list(state: &AppState) -> Result<Value, JsonRpcError> {
     let _ = state; // uses direct filesystem + PluginManager
     let home = dirs::home_dir().unwrap_or_default();
     let mut plugin_manager = loom_plugins::PluginManager::new();
-    let _ = tokio::task::spawn_blocking(move || plugin_manager.discover(&home))
-        .await
-        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?
-        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    let home_for_spawn = home.clone();
+    let plugin_manager = tokio::task::spawn_blocking(move || {
+        let _ = plugin_manager.discover(&home_for_spawn);
+        plugin_manager
+    })
+    .await
+    .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
 
     let mut plugins: Vec<Value> = Vec::new();
     for plugin in plugin_manager.discovered() {
@@ -159,11 +162,15 @@ async fn handle_plugins_reload(state: &AppState) -> Result<Value, JsonRpcError> 
     match super::skills::reload_skills_into_orchestrator(&state.orchestrator).await {
         Ok(count) => {
             let home = dirs::home_dir().unwrap_or_default();
+            let home_for_spawn = home.clone();
             let mut plugin_manager = loom_plugins::PluginManager::new();
-            let n = tokio::task::spawn_blocking(move || plugin_manager.discover(&home))
-                .await
-                .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?
-                .unwrap_or(0);
+            let plugin_manager = tokio::task::spawn_blocking(move || {
+                plugin_manager.discover(&home_for_spawn).unwrap_or(0);
+                plugin_manager
+            })
+            .await
+            .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+            let n = plugin_manager.discovered().len();
             if n > 0 {
                 state
                     .orchestrator
