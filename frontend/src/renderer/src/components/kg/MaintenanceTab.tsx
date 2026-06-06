@@ -75,6 +75,8 @@ function CognitionRow({ cognition }: { cognition: Cognition }) {
   const [expanded, setExpanded] = useState(false)
   const cognitionSnapshots = useStore(s => s.cognitionSnapshots)
   const cognitionLoadSnapshots = useStore(s => s.cognitionLoadSnapshots)
+  const cognitionDelete = useStore(s => s.cognitionDelete)
+  const addToast = useStore(s => s.addToast)
   const snapshots = cognitionSnapshots[cognition.id] ?? []
 
   const handleExpand = () => {
@@ -82,6 +84,18 @@ function CognitionRow({ cognition }: { cognition: Cognition }) {
       cognitionLoadSnapshots(cognition.id)
     }
     setExpanded(!expanded)
+  }
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      const ok = await cognitionDelete(cognition.id)
+      if (ok) {
+        addToast?.({ type: 'success', message: `已删除认知: ${cognition.trait_name}` })
+      }
+    } catch (err) {
+      addToast?.({ type: 'error', message: `删除失败: ${String(err)}` })
+    }
   }
 
   return (
@@ -95,6 +109,9 @@ function CognitionRow({ cognition }: { cognition: Cognition }) {
           {cognition.version > 1 ? `已更新 ${cognition.version - 1} 次` : '首次记录'}
         </span>
         <ScopeBadge scope={cognition.scope} />
+        <button className={mt.deleteBtn} onClick={handleDelete} title="删除此认知">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14"/></svg>
+        </button>
       </div>
       {expanded && (
         <div className={mt.cognitionExpanded}>

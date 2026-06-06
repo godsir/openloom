@@ -253,7 +253,7 @@ impl RichPersona {
 /// Build tech_stack from `uses_*` cognitions and kg_nodes of type "Technology".
 fn assemble_tech_stack(conn: &Connection) -> Result<Vec<TechProficiency>> {
     let cognition = CognitionStore::new(conn);
-    let rows = cognition.query_by_subject("USER", None, 200, 0)?;
+    let rows = cognition.query_by_subject("USER", Some("global"), 200, 0)?;
 
     let mut tech_map: HashMap<String, (f64, i64)> = HashMap::new();
 
@@ -311,7 +311,7 @@ fn assemble_tech_stack(conn: &Connection) -> Result<Vec<TechProficiency>> {
 /// and English equivalents (prefers_*, dislikes_*).
 fn assemble_preferences(conn: &Connection) -> Result<Vec<Preference>> {
     let cognition = CognitionStore::new(conn);
-    let rows = cognition.query_by_subject("USER", None, 200, 0)?;
+    let rows = cognition.query_by_subject("USER", Some("global"), 200, 0)?;
 
     let mut prefs: Vec<Preference> = Vec::new();
 
@@ -391,7 +391,7 @@ fn assemble_preferences(conn: &Connection) -> Result<Vec<Preference>> {
 /// and English equivalents (goal_*).
 fn assemble_goals(conn: &Connection) -> Result<Vec<Goal>> {
     let cognition = CognitionStore::new(conn);
-    let rows = cognition.query_by_subject("USER", None, 200, 0)?;
+    let rows = cognition.query_by_subject("USER", Some("global"), 200, 0)?;
 
     let mut goals: Vec<Goal> = Vec::new();
 
@@ -418,9 +418,12 @@ fn assemble_goals(conn: &Connection) -> Result<Vec<Goal>> {
             || combined_lower.contains("working on");
 
         if is_goal {
-            let status = if row.value.contains("完成") || row.value.contains("done") {
+            // Check both trait_name and value for status keywords — status
+            // indicators (完成/done/放弃/abandoned) often appear in the trait
+            // prefix rather than the value description.
+            let status = if combined_lower.contains("完成") || combined_lower.contains("done") {
                 GoalStatus::Achieved
-            } else if row.value.contains("放弃") || row.value.contains("abandoned") {
+            } else if combined_lower.contains("放弃") || combined_lower.contains("abandoned") {
                 GoalStatus::Abandoned
             } else {
                 GoalStatus::Active
@@ -449,7 +452,7 @@ fn assemble_goals(conn: &Connection) -> Result<Vec<Goal>> {
 /// Infer working style from conversation-pattern cognitions.
 fn assemble_working_style(conn: &Connection) -> Result<WorkingStyle> {
     let cognition = CognitionStore::new(conn);
-    let rows = cognition.query_by_subject("USER", None, 50, 0)?;
+    let rows = cognition.query_by_subject("USER", Some("global"), 50, 0)?;
 
     let mut code_first = 0u32;
     let mut plan_first = 0u32;
@@ -530,7 +533,7 @@ fn assemble_working_style(conn: &Connection) -> Result<WorkingStyle> {
 /// and language-related cognitions.
 fn assemble_communication(conn: &Connection) -> Result<CommunicationStyle> {
     let cognition = CognitionStore::new(conn);
-    let rows = cognition.query_by_subject("USER", None, 50, 0)?;
+    let rows = cognition.query_by_subject("USER", Some("global"), 50, 0)?;
 
     let mut lang_signal = String::new();
     let mut casual = 0u32;
@@ -710,7 +713,7 @@ fn assemble_expertise_areas(conn: &Connection) -> Result<Vec<String>> {
 /// Surface recurring behavioural patterns from cognitions.
 fn assemble_behavioural_patterns(conn: &Connection) -> Result<Vec<String>> {
     let cognition = CognitionStore::new(conn);
-    let rows = cognition.query_by_subject("USER", None, 100, 0)?;
+    let rows = cognition.query_by_subject("USER", Some("global"), 100, 0)?;
 
     let mut patterns: Vec<String> = Vec::new();
 
@@ -909,5 +912,85 @@ impl PersonaProvider for RichPersonaProvider {
     fn invalidate(&self) {
         // The provider owns its assembled persona. To refresh, create a new
         // provider with RichPersonaProvider::assemble(conn).
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn setup_cognition_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS cognitions (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject         TEXT NOT NULL,
+                trait           TEXT NOT NULL,
+                value           TEXT NOT NULL,
+                confidence      REAL NOT NULL DEFAULT 0.5,
+                evidence_count  INTEGER NOT NULL DEFAULT 1,
+                first_seen      INTEGER NOT NULL DEFAULT 0,
+                last_updated    INTEGER NOT NULL DEFAULT 0,
+                version         INTEGER NOT NULL DEFAULT 1,
+                scope           TEXT NOT NULL DEFAULT 'global'
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn insert_cognition(conn: &Connection, subject: &str, trait_name: &str, value: &str, confidence: f64) {
+        conn.execute(
+            "INSERT INTO cognitions (subject, trait, value, confidence) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![subject, trait_name, value, confidence],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_goal_status_from_trait_name() {
+        let conn = setup_cognition_db();
+
+        // Goal where status comes from trait name (e.g., trait="完成_目标")
+        insert_cognition(&conn, "USER", "完成_目标", "学习Rust", 0.8);
+        // Goal where status comes from value (e.g., value contains "完成")
+        insert_cognition(&conn, "USER", "目标_项目", "已完成：开发CLI工具", 0.9);
+        // Active goal (no status keyword in either)
+        insert_cognition(&conn, "USER", "目标_学习", "TypeScript进阶", 0.7);
+
+        let goals = assemble_goals(&conn).unwrap();
+        assert_eq!(goals.len(), 3, "should find 3 goals");
+
+        // Goal 1: status from trait name → Achieved
+        let g1 = goals.iter().find(|g| g.description == "学习Rust").unwrap();
+        assert_eq!(g1.status, GoalStatus::Achieved, "trait '完成_目标' should mark as Achieved");
+
+        // Goal 2: status from value → Achieved
+        let g2 = goals.iter().find(|g| g.description.contains("CLI")).unwrap();
+        assert_eq!(g2.status, GoalStatus::Achieved, "value containing '完成' should mark as Achieved");
+
+        // Goal 3: no status keyword → Active
+        let g3 = goals.iter().find(|g| g.description == "TypeScript进阶").unwrap();
+        assert_eq!(g3.status, GoalStatus::Active, "no status keyword should be Active");
+    }
+
+    #[test]
+    fn test_goal_status_abandoned() {
+        let conn = setup_cognition_db();
+
+        // Abandoned via trait name
+        insert_cognition(&conn, "USER", "放弃_目标", "旧计划", 0.5);
+        // Abandoned via value
+        insert_cognition(&conn, "USER", "goal_old", "已放弃的项目", 0.6);
+
+        let goals = assemble_goals(&conn).unwrap();
+        assert_eq!(goals.len(), 2);
+
+        let g1 = goals.iter().find(|g| g.description == "旧计划").unwrap();
+        assert_eq!(g1.status, GoalStatus::Abandoned);
+
+        let g2 = goals.iter().find(|g| g.description == "已放弃的项目").unwrap();
+        assert_eq!(g2.status, GoalStatus::Abandoned);
     }
 }

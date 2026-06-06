@@ -364,6 +364,7 @@ pub trait MemoryStore: Send + Sync {
         &self,
         cognition_id: i64,
     ) -> Result<Vec<loom_types::CognitionHistory>>;
+    async fn cognition_delete(&self, id: i64) -> Result<bool>;
     // Knowledge graph maintenance
     async fn kg_prune(&self, older_than_days: i64) -> Result<usize>;
     /// Promote high-confidence session-scoped memories to global scope
@@ -1377,6 +1378,14 @@ impl Orchestrator {
             store.cognition_snapshots(cognition_id).await
         } else {
             Ok(Vec::new())
+        }
+    }
+
+    pub async fn cognition_delete(&self, id: i64) -> Result<bool> {
+        if let Some(ref store) = *self.memory_store.read().await {
+            store.cognition_delete(id).await
+        } else {
+            Ok(false)
         }
     }
 

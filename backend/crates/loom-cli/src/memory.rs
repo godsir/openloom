@@ -1435,6 +1435,11 @@ impl MemoryStore for LoomMemoryStore {
             .collect())
     }
 
+    async fn cognition_delete(&self, id: i64) -> Result<bool> {
+        let store = self.memory_db.lock().expect("lock poisoned");
+        loom_memory::CognitionStore::new(store.conn()).delete(id)
+    }
+
     async fn kg_prune(&self, older_than_days: i64) -> Result<usize> {
         let store = self.memory_db.lock().expect("lock poisoned");
         let graph = GraphStore::new(store.conn());

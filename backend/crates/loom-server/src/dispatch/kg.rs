@@ -26,6 +26,7 @@ pub async fn handle(
         "cognitions.list" => Some(handle_cognitions_list(state, p).await),
         "cognitions.snapshots" => Some(handle_cognitions_snapshots(state, p).await),
         "cognitions.subjects" => Some(handle_cognitions_subjects(state).await),
+        "cognitions.delete" => Some(handle_cognitions_delete(state, p).await),
         // Token usage stats
         "stats.token_summary" => Some(handle_stats_token_summary(state, p).await),
         "stats.token_history" => Some(handle_stats_token_history(state, p).await),
@@ -226,6 +227,21 @@ async fn handle_cognitions_subjects(state: &AppState) -> Result<Value, JsonRpcEr
         .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
     Ok(json!({ "subjects": subjects }))
+}
+
+// --- cognitions.delete ---
+
+async fn handle_cognitions_delete(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let id = p
+        .get("id")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| err(ErrorCode::InvalidRequest, "id (integer) required"))?;
+    let deleted = state
+        .orchestrator
+        .cognition_delete(id)
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    Ok(json!({ "deleted": deleted }))
 }
 
 // --- stats.token_summary ---

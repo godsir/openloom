@@ -993,13 +993,75 @@ impl<'a> GraphStore<'a> {
         Ok(rows)
     }
 
-    /// Delete a node by name and optional scope (NULL means all scopes).
+    /// Delete a node by name, cascading to edges, aliases, and evidence.
     pub fn delete_node(&self, name: &str) -> Result<bool> {
-        let affected = self.conn.execute(
-            "DELETE FROM kg_nodes WHERE name = ?1",
-            rusqlite::params![name],
-        )?;
-        Ok(affected > 0)
+        // Resolve the node ID first
+        let node_id: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT id FROM kg_nodes WHERE name = ?1",
+                rusqlite::params![name],
+                |row| row.get(0),
+            )
+            .ok();
+
+        let Some(id) = node_id else {
+            return Ok(false);
+        };
+
+        let id_str = id.to_string();
+
+        // Cascade delete within a transaction
+        let run_delete = || -> Result<bool> {
+            self.conn.execute_batch("BEGIN;")?;
+
+            // 1. Delete evidence referencing edges of this node
+            self.conn.execute(
+                &format!(
+                    "DELETE FROM kg_evidence WHERE edge_id IN (SELECT id FROM kg_edges WHERE source_id IN ({0}) OR target_id IN ({0}))",
+                    id_str
+                ),
+                [],
+            )?;
+
+            // 2. Delete evidence referencing this node directly
+            self.conn.execute(
+                &format!("DELETE FROM kg_evidence WHERE node_id IN ({0})", id_str),
+                [],
+            )?;
+
+            // 3. Delete edges
+            self.conn.execute(
+                &format!(
+                    "DELETE FROM kg_edges WHERE source_id IN ({0}) OR target_id IN ({0})",
+                    id_str
+                ),
+                [],
+            )?;
+
+            // 4. Delete aliases
+            self.conn.execute(
+                &format!("DELETE FROM kg_aliases WHERE node_id IN ({0})", id_str),
+                [],
+            )?;
+
+            // 5. Delete the node
+            self.conn.execute(
+                &format!("DELETE FROM kg_nodes WHERE id IN ({0})", id_str),
+                [],
+            )?;
+
+            self.conn.execute_batch("COMMIT;")?;
+            Ok(true)
+        };
+
+        match run_delete() {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK;");
+                Err(e)
+            }
+        }
     }
 
     /// Delete an edge between two named nodes by relation type.
@@ -2322,5 +2384,68 @@ mod tests {
         // Check serialization round-trips
         let json = serde_json::to_string(&health).unwrap();
         let _roundtripped: GraphHealth = serde_json::from_str(&json).unwrap();
+    }
+
+    #[test]
+    fn test_delete_node_cascades_to_edges_aliases_evidence() {
+        let conn = setup_db();
+        let store = GraphStore::new(&conn);
+
+        // Create a node with an edge, alias, and evidence
+        let node_id = store
+            .upsert_node("test_entity", "concept", "a test entity", 0.8, "global", None)
+            .unwrap();
+        let other_id = store
+            .upsert_node("other_entity", "concept", "another entity", 0.7, "global", None)
+            .unwrap();
+
+        // Edge referencing this node
+        store
+            .upsert_edge(node_id, other_id, "related_to", "test relation", 0.9, "global")
+            .unwrap();
+
+        // Alias for this node
+        store.add_alias(node_id, "te").unwrap();
+
+        // Evidence for this node (needs an event)
+        conn.execute(
+            "INSERT INTO events (source_session) VALUES ('test_session')",
+            [],
+        )
+        .unwrap();
+        let event_id = conn.last_insert_rowid();
+        store.link_evidence_node(node_id, event_id).unwrap();
+
+        // Verify everything exists
+        assert_eq!(store.node_count().unwrap(), 2);
+        assert_eq!(store.edge_count().unwrap(), 1);
+        assert!(store.resolve_node("test_entity").unwrap().is_some());
+        assert!(store.resolve_node("te").unwrap().is_some()); // alias works
+
+        // Delete — should cascade clean all references
+        let deleted = store.delete_node("test_entity").unwrap();
+        assert!(deleted, "delete_node should return true");
+
+        // Node is gone
+        assert!(store.resolve_node("test_entity").unwrap().is_none());
+        // Alias is gone (no longer resolves)
+        assert!(store.resolve_node("te").unwrap().is_none());
+        // Edge is gone
+        assert_eq!(store.edge_count().unwrap(), 0);
+        // Other entity still exists
+        assert!(store.resolve_node("other_entity").unwrap().is_some());
+        // Evidence is cleaned up
+        let ev_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM kg_evidence", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(ev_count, 0, "evidence should be cascade-cleaned");
+    }
+
+    #[test]
+    fn test_delete_nonexistent_node_returns_false() {
+        let conn = setup_db();
+        let store = GraphStore::new(&conn);
+        let deleted = store.delete_node("no_such_entity").unwrap();
+        assert!(!deleted, "deleting nonexistent node should return false");
     }
 }

@@ -36,6 +36,7 @@ export interface KgSlice {
   cognitionSetPage: (page: number) => void
   cognitionListSubjects: () => Promise<void>
   cognitionLoadSnapshots: (cognitionId: number) => Promise<void>
+  cognitionDelete: (id: number) => Promise<boolean>
   kgPrune: (olderThanDays: number) => Promise<void>
   memoryPromote: (sessionId: string, minConfidence?: number) => Promise<{ promoted_nodes: number; promoted_cognitions: number }>
   kgLoadHealth: () => Promise<void>
@@ -306,6 +307,14 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
     set(s => ({
       cognitionSnapshots: { ...s.cognitionSnapshots, [cognitionId]: result.snapshots ?? [] },
     }))
+  },
+
+  cognitionDelete: async (id) => {
+    const result = await loomRpc<{ deleted: boolean }>('cognitions.delete', { id })
+    if (result.deleted) {
+      set(s => ({ cognitionList: s.cognitionList.filter(c => c.id !== id) }))
+    }
+    return result.deleted
   },
 
   kgPrune: async (olderThanDays) => {

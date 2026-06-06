@@ -226,6 +226,33 @@
   border-radius: var(--r-sm);
 }
 
+.deleteBtn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.cognitionRow:hover .deleteBtn {
+  opacity: 0.6;
+}
+
+.deleteBtn:hover {
+  opacity: 1 !important;
+  color: var(--red, #ef4444);
+  border-color: var(--red, #ef4444);
+  background: rgba(239, 68, 68, 0.08);
+}
+
 .cognitionExpanded {
   padding: 0 12px 12px;
   border-top: 1px solid var(--border);

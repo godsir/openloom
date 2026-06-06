@@ -175,10 +175,13 @@ impl<'a> CognitionStore<'a> {
         Ok(rows.collect::<std::result::Result<Vec<String>, _>>()?)
     }
 
-    pub fn delete(&self, id: i64) -> Result<()> {
+    pub fn delete(&self, id: i64) -> Result<bool> {
+        // Cascade: delete snapshots first (FK without ON DELETE CASCADE)
         self.conn
+            .execute("DELETE FROM cognition_snapshots WHERE cognition_id = ?1", params![id])?;
+        let affected = self.conn
             .execute("DELETE FROM cognitions WHERE id = ?1", params![id])?;
-        Ok(())
+        Ok(affected > 0)
     }
 
     /// Promote cognitions with the given scope to "global" where confidence >= threshold.
