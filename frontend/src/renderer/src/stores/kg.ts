@@ -173,18 +173,21 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
       addNode({ node_id: 0, name: 'USER', entity_type: 'Person', description: '', confidence: 1.0, scope: 'global' } as KgNode, 0)
       addResult(userResult, 0)
 
-      // Walk each galaxy centre (up to 6) to build its galaxy
+      // Walk each galaxy centre (up to 6) in parallel
       const centers = galaxyCenters.slice(0, 6)
-      for (let gi = 0; gi < centers.length; gi++) {
-        const center = centers[gi]
-        try {
-          const galaxyResult = await loomRpc<KgGraph>('kg.walk', {
+      const galaxyResults = await Promise.all(
+        centers.map(center =>
+          loomRpc<KgGraph>('kg.walk', {
             start_name: center.name, max_depth: maxDepth, scope, limit: 60,
+          }).catch(err => {
+            console.error('[kgLoadGraph] galaxy walk failed for:', center.name, err)
+            return null
           })
-          addResult(galaxyResult, gi + 1) // galaxy 1, 2, 3, ...
-        } catch (err) {
-          console.error('[kgLoadGraph] galaxy walk failed for:', center.name, err)
-        }
+        )
+      )
+      for (let gi = 0; gi < galaxyResults.length; gi++) {
+        const result = galaxyResults[gi]
+        if (result) addResult(result, gi + 1)
       }
 
       // ── Phase 3: Drop cross-galaxy edges ──────────────────────────
@@ -214,17 +217,20 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
         kgSelectedNode: null,
       })
     } else {
-      // ── Fallback: no USER neighbours → walk from seed list ────────
-      for (const name of seeds) {
-        const depth = name === 'USER' ? 1 : maxDepth
-        try {
-          const result = await loomRpc<KgGraph>('kg.walk', {
+      // ── Fallback: no USER neighbours → walk from seed list in parallel
+      const walkResults = await Promise.all(
+        seeds.map(name => {
+          const depth = name === 'USER' ? 1 : maxDepth
+          return loomRpc<KgGraph>('kg.walk', {
             start_name: name, max_depth: depth, scope, limit: 100,
+          }).then(result => ({ name, result })).catch(err => {
+            console.error('[kgLoadGraph] walk failed for seed:', name, err)
+            return { name, result: null as KgGraph | null }
           })
-          addResult(result, name === 'USER' ? 0 : 99)
-        } catch (err) {
-          console.error('[kgLoadGraph] walk failed for seed:', name, err)
-        }
+        })
+      )
+      for (const { name, result } of walkResults) {
+        if (result) addResult(result, name === 'USER' ? 0 : 99)
       }
 
       if (nodeMap.size === 0 || get().kgNodeList.length > nodeMap.size) {
