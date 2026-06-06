@@ -317,47 +317,60 @@ fn assemble_preferences(conn: &Connection) -> Result<Vec<Preference>> {
 
     for row in &rows {
         let tn = &row.trait_name;
+        let combined = format!("{} {}", tn, row.value);
+        let combined_lower = combined.to_lowercase();
 
-        // Chinese patterns
+        // Exact trait name prefixes
         if tn.starts_with("喜欢_") || tn.starts_with("习惯_") {
             prefs.push(Preference {
                 key: "preference".into(),
                 value: row.value.clone(),
                 strength: (row.confidence * 0.9).clamp(0.0, 1.0),
-                evidence: vec![format!(
-                    "cognition#{}: confidence={:.2}, evidence_count={}",
-                    row.id, row.confidence, row.evidence_count
-                )],
+                evidence: vec![format!("cognition#{}", row.id)],
             });
         } else if tn.starts_with("讨厌_") || tn.starts_with("不喜欢_") {
             prefs.push(Preference {
                 key: "dislike".into(),
                 value: row.value.clone(),
                 strength: (row.confidence * 0.9).clamp(0.0, 1.0),
-                evidence: vec![format!(
-                    "cognition#{}: confidence={:.2}, evidence_count={}",
-                    row.id, row.confidence, row.evidence_count
-                )],
+                evidence: vec![format!("cognition#{}", row.id)],
             });
         } else if tn.starts_with("prefers_") {
             prefs.push(Preference {
                 key: tn.replacen("prefers_", "", 1),
                 value: row.value.clone(),
                 strength: (row.confidence * 0.85).clamp(0.0, 1.0),
-                evidence: vec![format!(
-                    "cognition#{}: confidence={:.2}, evidence_count={}",
-                    row.id, row.confidence, row.evidence_count
-                )],
+                evidence: vec![format!("cognition#{}", row.id)],
             });
         } else if tn.starts_with("dislikes_") {
             prefs.push(Preference {
                 key: format!("dislike_{}", tn.replacen("dislikes_", "", 1)),
                 value: row.value.clone(),
                 strength: (row.confidence * 0.85).clamp(0.0, 1.0),
-                evidence: vec![format!(
-                    "cognition#{}: confidence={:.2}, evidence_count={}",
-                    row.id, row.confidence, row.evidence_count
-                )],
+                evidence: vec![format!("cognition#{}", row.id)],
+            });
+        }
+        // Broad keyword matching in trait_name + value combined
+        else if combined_lower.contains("偏好")
+            || combined_lower.contains("喜欢")
+            || combined_lower.contains("preference")
+            || combined_lower.contains("prefer")
+        {
+            prefs.push(Preference {
+                key: "preference".into(),
+                value: row.value.clone(),
+                strength: (row.confidence * 0.7).clamp(0.0, 1.0),
+                evidence: vec![format!("cognition#{}", row.id)],
+            });
+        } else if combined_lower.contains("讨厌")
+            || combined_lower.contains("不喜欢")
+            || combined_lower.contains("dislike")
+        {
+            prefs.push(Preference {
+                key: "dislike".into(),
+                value: row.value.clone(),
+                strength: (row.confidence * 0.7).clamp(0.0, 1.0),
+                evidence: vec![format!("cognition#{}", row.id)],
             });
         }
     }
@@ -384,13 +397,27 @@ fn assemble_goals(conn: &Connection) -> Result<Vec<Goal>> {
 
     for row in &rows {
         let tn = &row.trait_name;
+        let combined = format!("{} {}", tn, row.value);
+        let combined_lower = combined.to_lowercase();
 
-        if tn.starts_with("想_")
+        let is_goal = tn.starts_with("想_")
             || tn.starts_with("需要_")
             || tn.starts_with("计划_")
             || tn.starts_with("目标_")
             || tn.starts_with("goal_")
-        {
+            || tn.starts_with("intent_")
+            || tn.starts_with("working_on_")
+            || combined_lower.contains("目标")
+            || combined_lower.contains("想实现")
+            || combined_lower.contains("打算")
+            || combined_lower.contains("计划")
+            || combined_lower.contains("需要")
+            || combined_lower.contains("goal")
+            || combined_lower.contains("want to")
+            || combined_lower.contains("plan to")
+            || combined_lower.contains("working on");
+
+        if is_goal {
             let status = if row.value.contains("完成") || row.value.contains("done") {
                 GoalStatus::Achieved
             } else if row.value.contains("放弃") || row.value.contains("abandoned") {
@@ -569,69 +596,107 @@ fn assemble_communication(conn: &Connection) -> Result<CommunicationStyle> {
     })
 }
 
-/// Derive expertise areas from kg_nodes entity types and technology clusters.
+/// Derive expertise areas from kg_nodes content — Technology + Topic nodes,
+/// with inference from node names. entity_type labels (Concept/Person/etc.)
+/// are NOT meaningful as expertise areas.
 fn assemble_expertise_areas(conn: &Connection) -> Result<Vec<String>> {
     let mut areas: Vec<String> = Vec::new();
 
-    // Collect distinct entity_types from kg_nodes (excluding granular tech types).
-    // GROUP BY with COUNT gives actual frequency; DISTINCT with window function
-    // always produces COUNT=1 per group, making ORDER BY useless.
+    // Primary: collect high-frequency Technology/Tool/Language/Framework nodes by name.
+    // These are the most reliable signal for what the user actually works with.
+    let mut tech_names: Vec<String> = Vec::new();
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT entity_type, COUNT(*) AS cnt FROM kg_nodes
-         WHERE entity_type NOT IN ('Technology','Tool','Language','Framework','Library')
+        "SELECT name FROM kg_nodes
+         WHERE entity_type IN ('Technology','Tool','Language','Framework','Library')
          AND scope != 'test'
-         GROUP BY entity_type
-         ORDER BY cnt DESC LIMIT 15",
-    ) && let Ok(et_rows) = stmt.query_map([], |r| r.get::<_, String>(0))
+         ORDER BY COALESCE(evidence_count, 1) DESC LIMIT 30",
+    ) && let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0))
     {
-        for r in et_rows.flatten() {
-            areas.push(r);
-        }
+        tech_names = rows.flatten().collect();
     }
 
-    // Fall back to technology-name-based inference when entity_types are sparse
-    if areas.is_empty() {
-        // Query Technology nodes from kg_nodes sorted by evidence_count
-        if let Ok(mut stmt) = conn.prepare(
-            "SELECT name FROM kg_nodes WHERE entity_type = 'Technology'
-             ORDER BY COALESCE(evidence_count, 1) DESC LIMIT 20",
-        ) && let Ok(tech_rows) = stmt.query_map([], |r| r.get::<_, String>(0))
-        {
-            let tech_names: Vec<String> = tech_rows.flatten().collect();
-            let tech_strs: Vec<&str> = tech_names.iter().map(|s| s.as_str()).collect();
+    // Secondary: Topic nodes with high evidence (subject matter expertise)
+    let mut topic_names: Vec<String> = Vec::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT name FROM kg_nodes
+         WHERE entity_type IN ('Topic','Concept')
+         AND scope != 'test'
+         ORDER BY COALESCE(evidence_count, 1) DESC LIMIT 10",
+    ) && let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0))
+    {
+        topic_names = rows.flatten().collect();
+    }
 
-            if tech_strs
-                .iter()
-                .any(|n| n.contains("Rust") || n.contains("Go") || n.contains("Python"))
-            {
-                areas.push("backend".into());
-            }
-            if tech_strs.iter().any(|n| {
-                n.contains("React")
-                    || n.contains("Vue")
-                    || n.contains("CSS")
-                    || n.contains("TypeScript")
-            }) {
-                areas.push("frontend".into());
-            }
-            if tech_strs
-                .iter()
-                .any(|n| n.contains("Docker") || n.contains("K8s") || n.contains("nginx"))
-            {
-                areas.push("DevOps".into());
-            }
-            if tech_strs
-                .iter()
-                .any(|n| n.contains("AI") || n.contains("Tensor") || n.contains("PyTorch"))
-            {
-                areas.push("AI/ML".into());
-            }
-            if tech_strs
-                .iter()
-                .any(|n| n.contains("SQL") || n.contains("Postgres") || n.contains("Redis"))
-            {
-                areas.push("databases".into());
-            }
+    let tech_strs: Vec<&str> = tech_names.iter().map(|s| s.as_str()).collect();
+
+    // Infer broad domains from tech node names
+    if tech_strs.iter().any(|n| {
+        let l = n.to_lowercase();
+        l.contains("rust") || l.contains(" go") || l.contains("python")
+            || l.contains("java") || l.contains("c++") || l.contains("c#")
+            || l.contains("ruby") || l.contains("swift") || l.contains("kotlin")
+    }) {
+        areas.push("backend".into());
+    }
+    if tech_strs.iter().any(|n| {
+        let l = n.to_lowercase();
+        l.contains("react") || l.contains("vue") || l.contains("angular")
+            || l.contains("css") || l.contains("typescript") || l.contains("javascript")
+            || l.contains("html") || l.contains("svelte") || l.contains("next")
+    }) {
+        areas.push("frontend".into());
+    }
+    if tech_strs.iter().any(|n| {
+        let l = n.to_lowercase();
+        l.contains("docker") || l.contains("kubernetes") || l.contains("k8s")
+            || l.contains("nginx") || l.contains("terraform") || l.contains("ansible")
+            || l.contains("ci/cd") || l.contains("github action")
+    }) {
+        areas.push("DevOps".into());
+    }
+    if tech_strs.iter().any(|n| {
+        let l = n.to_lowercase();
+        l.contains("ai") || l.contains("ml") || l.contains("tensor")
+            || l.contains("pytorch") || l.contains("llm") || l.contains("gpt")
+            || l.contains("hugging") || l.contains("model")
+    }) {
+        areas.push("AI/ML".into());
+    }
+    if tech_strs.iter().any(|n| {
+        let l = n.to_lowercase();
+        l.contains("sql") || l.contains("postgres") || l.contains("mysql")
+            || l.contains("redis") || l.contains("mongo") || l.contains("sqlite")
+            || l.contains("database") || l.contains("influx")
+    }) {
+        areas.push("databases".into());
+    }
+    if tech_strs.iter().any(|n| {
+        let l = n.to_lowercase();
+        l.contains("android") || l.contains("ios") || l.contains("flutter")
+            || l.contains("react native") || l.contains("swift") || l.contains("kotlin")
+    }) {
+        areas.push("mobile".into());
+    }
+    if tech_strs.iter().any(|n| {
+        let l = n.to_lowercase();
+        l.contains("aws") || l.contains("azure") || l.contains("gcp")
+            || l.contains("cloud") || l.contains("lambda") || l.contains("s3")
+    }) {
+        areas.push("cloud".into());
+    }
+    if tech_strs.iter().any(|n| {
+        let l = n.to_lowercase();
+        l.contains("security") || l.contains("auth") || l.contains("oauth")
+            || l.contains("jwt") || l.contains("ssl") || l.contains("tls")
+    }) {
+        areas.push("security".into());
+    }
+
+    // Append high-signal topic names directly (capitalised, de-duplicated)
+    for topic in topic_names.iter().take(5) {
+        let t = topic.trim().to_string();
+        if !t.is_empty() && !areas.iter().any(|a| a.to_lowercase() == t.to_lowercase()) {
+            areas.push(t);
         }
     }
 
