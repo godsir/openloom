@@ -134,6 +134,12 @@ export default function App() {
     window.loom.onModelConfigChanged(() => {
       handleModelsChanged()
     })
+    // Navigate from tray menu
+    window.loom.onNavigate((route: string) => {
+      if (route === '/settings') {
+        useStore.getState().setSettingsOpen(true)
+      }
+    })
   }, [])
 
   const handleRetry = () => {

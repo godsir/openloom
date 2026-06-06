@@ -1,7 +1,7 @@
 import { Tray, Menu, BrowserWindow, app, nativeImage } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
-import { togglePetDnd, getPetDnd, setOnDndChanged } from './pet'
+import { togglePetDnd, getPetDnd, setOnDndChanged, isPetEnabled, togglePet, setOnPetToggled } from './pet'
 
 let tray: Tray | null = null
 let mainWindow: BrowserWindow | null = null
@@ -14,6 +14,7 @@ function getIconPath(): string {
 }
 
 function buildMenu(): Menu {
+  const petOn = isPetEnabled()
   const dnd = getPetDnd()
   return Menu.buildFromTemplate([
     {
@@ -23,9 +24,24 @@ function buildMenu(): Menu {
         mainWindow?.focus()
       },
     },
+    { type: 'separator' },
+    {
+      label: petOn ? '隐藏桌宠' : '显示桌宠',
+      click: () => { togglePet() },
+    },
     {
       label: dnd ? '关闭勿扰模式' : '开启勿扰模式',
+      enabled: petOn,
       click: () => { togglePetDnd() },
+    },
+    { type: 'separator' },
+    {
+      label: '设置...',
+      click: () => {
+        mainWindow?.show()
+        mainWindow?.focus()
+        mainWindow?.webContents.send('navigate', '/settings')
+      },
     },
     { type: 'separator' },
     {
@@ -59,4 +75,5 @@ export function createTray(mw: BrowserWindow): void {
   })
 
   setOnDndChanged(refreshMenu)
+  setOnPetToggled(refreshMenu)
 }

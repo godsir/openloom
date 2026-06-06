@@ -31,6 +31,8 @@ export interface LoomApi {
   onEngineStateChanged: (cb: (payload: { state: string; port: number | null }) => void) => void
   /** Model config files changed on disk — renderer should refresh via model.list. */
   onModelConfigChanged: (cb: () => void) => void
+  /** Navigate to a route (triggered from tray menu). */
+  onNavigate: (cb: (route: string) => void) => void
 }
 
 interface PetMeta {
@@ -78,4 +80,8 @@ contextBridge.exposeInMainWorld('loom', {
   restartEngine: () => ipcRenderer.invoke('engine:restart'),
   onEngineStateChanged: (cb) => ipcRenderer.on('engine:state-changed', (_e, payload) => cb(payload)),
   onModelConfigChanged: (cb: () => void) => ipcRenderer.on('model-config-changed', () => cb()),
+  /** Navigate to a route (triggered from tray menu). */
+  onNavigate: (cb: (route: string) => void) => {
+    ipcRenderer.on('navigate', (_e, route: string) => cb(route))
+  },
 } satisfies LoomApi)

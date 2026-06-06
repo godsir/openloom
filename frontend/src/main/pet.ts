@@ -154,6 +154,7 @@ function registerPetIpc(): void {
     petEnabled = on
     setStoreKey('petEnabled', on)
     if (on) create(); else close()
+    if (onPetToggled) onPetToggled()
     return on
   })
 }
@@ -245,4 +246,18 @@ export function togglePetDnd(): boolean {
 
 export function getPetDnd(): boolean { return dndEnabled }
 
+export function isPetEnabled(): boolean { return petEnabled }
+
 export function setOnDndChanged(cb: (() => void) | null): void { onDndChanged = cb }
+
+// Callback for pet enabled/disabled changes (fired from toggle handler)
+let onPetToggled: (() => void) | null = null
+export function setOnPetToggled(cb: (() => void) | null): void { onPetToggled = cb }
+
+export function togglePet(): boolean {
+  petEnabled = !petEnabled
+  setStoreKey('petEnabled', petEnabled)
+  if (petEnabled) create(); else close()
+  if (onPetToggled) onPetToggled()
+  return petEnabled
+}
