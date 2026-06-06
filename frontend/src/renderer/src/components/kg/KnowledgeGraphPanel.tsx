@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useStore } from '../../stores'
 import KnowledgeGraphTab from './KnowledgeGraphTab'
 import MaintenanceTab from './MaintenanceTab'
@@ -14,6 +14,15 @@ export default function KnowledgeGraphPanel() {
   // ── Pattern data (connected wrapper inline) ──
   const patternReport = useStore(s => s.patternReport)
   const kgLoadPatterns = useStore(s => s.kgLoadPatterns)
+
+  // Auto-load patterns data when tab becomes active
+  const loadedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (activeTab === 'patterns' && !loadedRef.current.has('patterns')) {
+      loadedRef.current.add('patterns')
+      kgLoadPatterns()
+    }
+  }, [activeTab, kgLoadPatterns])
 
   return (
     <div className={styles.panel}>

@@ -262,6 +262,32 @@ function CommunicationSection({ language, formality }: { language: string; forma
 
 function ExpertiseSection({ areas }: { areas: string[] }) {
   if (areas.length === 0) return null
+
+  // Common expertise area Chinese translations
+  const areaCN: Record<string, string> = {
+    'frontend': '前端开发', 'backend': '后端开发', 'fullstack': '全栈开发',
+    'devops': '运维部署', 'data-engineering': '数据工程', 'data-science': '数据科学',
+    'machine-learning': '机器学习', 'deep-learning': '深度学习', 'ai': '人工智能',
+    'nlp': '自然语言处理', 'computer-vision': '计算机视觉',
+    'rust': 'Rust', 'python': 'Python', 'typescript': 'TypeScript',
+    'javascript': 'JavaScript', 'golang': 'Go', 'java': 'Java',
+    'cpp': 'C++', 'csharp': 'C#', 'swift': 'Swift', 'kotlin': 'Kotlin',
+    'react': 'React', 'vue': 'Vue', 'angular': 'Angular', 'svelte': 'Svelte',
+    'nodejs': 'Node.js', 'deno': 'Deno',
+    'sql': 'SQL', 'nosql': 'NoSQL', 'postgresql': 'PostgreSQL', 'mongodb': 'MongoDB',
+    'redis': 'Redis', 'docker': 'Docker', 'kubernetes': 'K8s',
+    'linux': 'Linux', 'windows': 'Windows', 'macos': 'macOS',
+    'git': 'Git', 'github': 'GitHub', 'ci-cd': 'CI/CD',
+    'testing': '测试', 'security': '安全', 'performance': '性能优化',
+    'api-design': 'API设计', 'system-design': '系统设计', 'architecture': '架构设计',
+    'web': 'Web开发', 'mobile': '移动开发', 'embedded': '嵌入式',
+    'blockchain': '区块链', 'cloud': '云计算', 'iot': '物联网',
+    'open-source': '开源', 'agile': '敏捷开发',
+  }
+
+  function translate(area: string): string {
+    return areaCN[area.toLowerCase()] ?? area
+  }
   // Weight: larger font for items appearing earlier (which have higher count)
   const sizes = ['s', 'm', 'l', 'xl']
   return (
@@ -272,7 +298,7 @@ function ExpertiseSection({ areas }: { areas: string[] }) {
           const size = sizes[Math.min(i, sizes.length - 1)]
           return (
             <span key={area} className={`${styles.tag} ${styles[`tag${size}`]}`}>
-              {area}
+              {translate(area)}
             </span>
           )
         })}
