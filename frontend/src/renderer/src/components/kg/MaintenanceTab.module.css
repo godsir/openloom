@@ -7,7 +7,6 @@
   gap: 0;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
 }
 
 /* Two-column card grid — responsive: drops to single column when narrow */
@@ -27,7 +26,6 @@
   flex-direction: column;
   gap: 10px;
   min-width: 0;
-  overflow: hidden;
 }
 
 .mgmtCardTitle {
@@ -64,7 +62,6 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
   margin-bottom: 0;
 }
 
@@ -149,9 +146,6 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
 }
 
 .emptyState {
