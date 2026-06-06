@@ -1,5 +1,8 @@
+import { useState } from 'react'
 import styles from './PatternPanel.module.css'
 import type { SessionPatternReport, TopicPattern, ToolPreference, LearningPath, TimePattern } from '../../types/bindings'
+
+const TOPIC_PAGE_SIZE = 15
 
 interface PatternPanelProps {
   report: SessionPatternReport | null
@@ -27,15 +30,18 @@ function confidenceColor(confidence: number): string {
 // ── Topics Section ────────────────────────────────────────────────────
 
 function TopicsSection({ topics }: { topics: TopicPattern[] }) {
+  const [showAll, setShowAll] = useState(false)
+
   if (topics.length === 0) {
     return <div className={styles.sectionEmpty}>暂无话题数据</div>
   }
 
   const maxCount = Math.max(...topics.map(t => t.session_count), 1)
+  const displayed = showAll ? topics : topics.slice(0, TOPIC_PAGE_SIZE)
 
   return (
     <div className={styles.topicList}>
-      {topics.map((t, i) => (
+      {displayed.map((t, i) => (
         <div key={i} className={styles.topicItem}>
           <div className={styles.topicHeader}>
             <span className={styles.topicName}>{t.topic}</span>
@@ -54,6 +60,11 @@ function TopicsSection({ topics }: { topics: TopicPattern[] }) {
           </div>
         </div>
       ))}
+      {topics.length > TOPIC_PAGE_SIZE && (
+        <button className={styles.showMoreBtn} onClick={() => setShowAll(!showAll)}>
+          {showAll ? '收起' : `显示全部 (${topics.length} 项)`}
+        </button>
+      )}
     </div>
   )
 }
