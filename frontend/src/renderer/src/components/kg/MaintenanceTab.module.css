@@ -7,7 +7,6 @@
   gap: 0;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
 }
 
 /* Two-column card grid — responsive: drops to single column when narrow */
