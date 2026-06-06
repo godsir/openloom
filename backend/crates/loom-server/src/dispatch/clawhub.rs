@@ -200,10 +200,11 @@ async fn enrich_install_status(items: Vec<Value>) -> Vec<Value> {
 async fn handle_clawhub_list(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
     let search = p.get("search").and_then(|v| v.as_str()).unwrap_or("");
     let force = p.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+    let base_url = p.get("base_url").and_then(|v| v.as_str()).unwrap_or(CLAWHUB_BASE);
 
     // Search results are not cached
     if !search.is_empty() {
-        let skills = fetch_search_results(search).await?;
+        let skills = fetch_search_results(base_url, search).await?;
         let _ = state;
         return Ok(json!({ "skills": skills }));
     }
@@ -215,7 +216,7 @@ async fn handle_clawhub_list(state: &AppState, p: &Value) -> Result<Value, JsonR
     }
 
     // Fetch fresh data
-    let skills = fetch_skill_list().await?;
+    let skills = fetch_skill_list(base_url).await?;
     write_cache(skills.clone()).await;
     let enriched = enrich_install_status(skills).await;
     Ok(json!({ "skills": enriched, "cached": false }))
@@ -228,16 +229,16 @@ async fn build_http_client() -> Result<reqwest::Client, JsonRpcError> {
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))
 }
 
-async fn fetch_skill_list() -> Result<Vec<Value>, JsonRpcError> {
+async fn fetch_skill_list(base_url: &str) -> Result<Vec<Value>, JsonRpcError> {
     let client = build_http_client().await?;
-    let base_url = format!("{}/api/v1/skills", CLAWHUB_BASE);
+    let list_url = format!("{}/api/v1/skills", base_url);
 
     let mut all_items: Vec<ClawhubSkillItem> = Vec::new();
     let mut cursor: Option<String> = None;
 
     // Paginate through all pages using the nextCursor field
     loop {
-        let mut url = base_url.clone();
+        let mut url = list_url.clone();
         if let Some(ref c) = cursor {
             url = format!("{}?cursor={}", url, urlencoding::encode(c));
         }
@@ -294,11 +295,11 @@ async fn fetch_skill_list() -> Result<Vec<Value>, JsonRpcError> {
     Ok(skills)
 }
 
-async fn fetch_search_results(search: &str) -> Result<Vec<Value>, JsonRpcError> {
+async fn fetch_search_results(base_url: &str, search: &str) -> Result<Vec<Value>, JsonRpcError> {
     let client = build_http_client().await?;
     let url = format!(
         "{}/api/v1/search?q={}",
-        CLAWHUB_BASE,
+        base_url,
         urlencoding::encode(search)
     );
 
@@ -319,7 +320,7 @@ async fn fetch_search_results(search: &str) -> Result<Vec<Value>, JsonRpcError> 
             if let Some(results) = search_resp.results {
                 let mut items = Vec::new();
                 for r in results {
-                    let detail_url = format!("{}/api/v1/skills/{}", CLAWHUB_BASE, r.slug);
+                    let detail_url = format!("{}/api/v1/skills/{}", base_url, r.slug);
                     if let Ok(detail_resp) = client
                         .get(&detail_url)
                         .header("User-Agent", "openLoom/0.2")
@@ -388,8 +389,9 @@ async fn handle_clawhub_install(state: &AppState, p: &Value) -> Result<Value, Js
         .get("slug")
         .and_then(|v| v.as_str())
         .ok_or_else(|| err(ErrorCode::InvalidRequest, "slug required"))?;
+    let base_url = p.get("base_url").and_then(|v| v.as_str()).unwrap_or(CLAWHUB_BASE);
 
-    let download_url = format!("{}/api/v1/download?slug={}", CLAWHUB_BASE, slug);
+    let download_url = format!("{}/api/v1/download?slug={}", base_url, slug);
     let target_dir = skills_dir().join(slug);
 
     // Create target directory

@@ -2,6 +2,7 @@
 
 use loom_types::{AgentConfig, ErrorCode, JsonRpcError, SandboxConfig};
 use serde_json::{Value, json};
+use std::path::Path;
 
 use super::err;
 use crate::AppState;
@@ -39,7 +40,7 @@ pub async fn handle(
         "config.get_defaults" => Some(handle_config_get_defaults(state).await),
         "config.set_defaults" => Some(handle_config_set_defaults(state, p).await),
         // Marketplace
-        "marketplace.list" => Some(handle_marketplace_list(state).await),
+        "marketplace.list" => Some(handle_marketplace_list(state, p).await),
         "marketplace.install" => Some(handle_marketplace_install(state, p).await),
         "marketplace.uninstall" => Some(handle_marketplace_uninstall(state, p).await),
         "marketplace.update" => Some(handle_marketplace_update(state, p).await),
@@ -308,21 +309,120 @@ async fn handle_config_set_sandbox(state: &AppState, p: &Value) -> Result<Value,
 
 // --- marketplace.list ---
 
-async fn handle_marketplace_list(state: &AppState) -> Result<Value, JsonRpcError> {
+async fn handle_marketplace_list(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
     let _ = state;
     let home = dirs::home_dir().unwrap_or_default();
     let plugins_dir = home.join(".loom").join("plugins");
     let skills_dir = home.join(".loom").join("skills");
+
+    let catalog_url = p
+        .get("catalog_url")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+
+    let mut all_entries: Vec<loom_marketplace::MarketPlugin> =
+        loom_marketplace::default_catalog().plugins;
+
+    // If a remote catalog URL is provided, fetch and append its entries
+    if let Some(url) = catalog_url {
+        if let Some(remote) = fetch_remote_catalog(url).await {
+            all_entries.extend(remote.plugins);
+        }
+    }
+
+    // Build results with install status
     let results = tokio::task::spawn_blocking(move || {
-        loom_marketplace::list_with_status(&plugins_dir, &skills_dir)
+        all_entries
+            .iter()
+            .map(|entry| {
+                let target_dir = match entry.kind {
+                    loom_marketplace::MarketEntryKind::Plugin => &plugins_dir,
+                    loom_marketplace::MarketEntryKind::Skill => &skills_dir,
+                };
+                let (installed, installed_version, installed_path) =
+                    check_installed_status(&entry.id, target_dir);
+                let has_update = installed
+                    && installed_version.is_some()
+                    && version_newer(
+                        &entry.version,
+                        installed_version.as_deref().unwrap_or("0"),
+                    );
+                serde_json::json!({
+                    "id": entry.id,
+                    "name": entry.name,
+                    "description": entry.description,
+                    "version": entry.version,
+                    "author": entry.author,
+                    "git_url": entry.git_url,
+                    "category": entry.category,
+                    "kind": entry.kind.to_string(),
+                    "tags": entry.tags,
+                    "homepage": entry.homepage,
+                    "installed": installed,
+                    "has_update": has_update,
+                    "installed_version": installed_version,
+                    "installed_path": installed_path,
+                })
+            })
+            .collect::<Vec<_>>()
     })
     .await
     .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
-    let results_json: Vec<serde_json::Value> = results
-        .iter()
-        .map(|p| serde_json::to_value(p).unwrap_or_default())
-        .collect();
-    Ok(json!({ "plugins": results_json }))
+
+    Ok(json!({ "plugins": results }))
+}
+
+async fn fetch_remote_catalog(url: &str) -> Option<loom_marketplace::MarketplaceCatalog> {
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .ok()?;
+    let resp = client
+        .get(url)
+        .header("User-Agent", "openLoom/0.2")
+        .send()
+        .await
+        .ok()?;
+    let body = resp.text().await.ok()?;
+    serde_json::from_str::<loom_marketplace::MarketplaceCatalog>(&body).ok()
+}
+
+fn check_installed_status(entry_id: &str, target_dir: &Path) -> (bool, Option<String>, Option<String>) {
+    let dir = target_dir.join(entry_id);
+    if !dir.exists() || !dir.is_dir() {
+        return (false, None, None);
+    }
+    let version = try_read_version(&dir);
+    (true, version, Some(dir.to_string_lossy().to_string()))
+}
+
+fn try_read_version(entry_dir: &Path) -> Option<String> {
+    // Read version.txt if present
+    let version_file = entry_dir.join("version.txt");
+    if let Ok(v) = std::fs::read_to_string(&version_file) {
+        let v = v.trim().to_string();
+        if !v.is_empty() {
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn version_newer(newer: &str, older: &str) -> bool {
+    let parse = |v: &str| -> Vec<u32> {
+        v.split(|c: char| !c.is_ascii_digit())
+            .filter_map(|s| s.parse::<u32>().ok())
+            .collect()
+    };
+    let a = parse(newer);
+    let b = parse(older);
+    for i in 0..a.len().max(b.len()) {
+        let av = a.get(i).copied().unwrap_or(0);
+        let bv = b.get(i).copied().unwrap_or(0);
+        if av > bv { return true; }
+        if av < bv { return false; }
+    }
+    false
 }
 
 // --- marketplace.install ---

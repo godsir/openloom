@@ -23,8 +23,8 @@ export interface MarketPlugin {
 }
 
 /** List all entries in the marketplace catalog with install status. */
-export function listMarketplace(): Promise<{ plugins: MarketPlugin[] }> {
-  return loomRpc<{ plugins: MarketPlugin[] }>('marketplace.list')
+export function listMarketplace(catalogUrl?: string): Promise<{ plugins: MarketPlugin[] }> {
+  return loomRpc<{ plugins: MarketPlugin[] }>('marketplace.list', catalogUrl ? { catalog_url: catalogUrl } : undefined)
 }
 
 /** Install an entry from the marketplace by its catalog ID. */

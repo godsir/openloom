@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
-import { IconFolder, IconPackage, IconRefresh, IconSearch, IconChevronRight, IconChevronDown } from '../../utils/icons'
+import { IconFolder, IconPackage, IconRefresh, IconSearch, IconChevronRight, IconChevronDown, IconStore } from '../../utils/icons'
 import { renderMarkdown } from '../../utils/markdown'
 import { sanitizeHtml } from '../../utils/markdown-sanitizer'
 import styles from '../shared/SettingsModal.module.css'
+import SkillMarketTab from './SkillMarketTab'
 
 interface SkillInfo {
   name: string
@@ -39,6 +40,7 @@ export default function SkillsTab() {
   const [refreshing, setRefreshing] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const [view, setView] = useState<'installed' | 'market'>('installed')
 
   const toggleGroup = (group: string) => {
     setCollapsedGroups(prev => {
@@ -179,8 +181,26 @@ export default function SkillsTab() {
     <>
       <div className={styles.contentHeader}>
         <div className={styles.sectionHeaderRow}>
-          <h3 className={styles.sectionTitle}>技能</h3>
-          <span className={styles.skillCountBadge}>{skills.length} 个</span>
+          <h3 className={styles.sectionTitle}>
+            技能
+            <span className={styles.pluginsCountBadge}>{skills.length} 个</span>
+          </h3>
+          <div className={styles.marketplaceKindToggle}>
+            <button
+              className={`${styles.marketplaceKindBtn} ${view === 'installed' ? styles.marketplaceKindActive : ''}`}
+              onClick={() => setView('installed')}
+            >
+              <IconPackage size={13} />
+              已安装
+            </button>
+            <button
+              className={`${styles.marketplaceKindBtn} ${view === 'market' ? styles.marketplaceKindActive : ''}`}
+              onClick={() => setView('market')}
+            >
+              <IconStore size={13} />
+              市场
+            </button>
+          </div>
           <button
             onClick={async () => { setRefreshing(true); await loadSkills(); setRefreshing(false) }}
             disabled={refreshing || loading}
@@ -190,26 +210,11 @@ export default function SkillsTab() {
             <IconRefresh size={14} />
           </button>
         </div>
-        <p className={styles.sectionDesc}>管理技能定义 — 支持文件夹或 ZIP 导入</p>
-      </div>
-      <div className={styles.contentBody}>
-        {error && <p className={styles.toolsError}>{error}</p>}
-
-        <div className={styles.skillActions}>
-          <button onClick={handleImportFolder} disabled={importing} className={styles.mcpAddBtn}>
-            {importing ? '导入中...' : <><IconFolder size={14} /> 导入文件夹</>}
-          </button>
-          <button onClick={handleImportZip} disabled={importing} className={styles.mcpAddBtn}>
-            {importing ? '导入中...' : <><IconPackage size={14} /> 导入 ZIP</>}
-          </button>
-        </div>
-
-        {/* Search */}
-        <div className={styles.skillSearchWrap}>
-          <IconSearch size={13} className={styles.skillSearchIcon} />
+        <div className={styles.pluginsSearchWrap}>
+          <IconSearch size={13} className={styles.pluginsSearchIcon} />
           <input
             type="text"
-            className={styles.skillSearchInput}
+            className={styles.pluginsSearchInput}
             placeholder="搜索技能名称或描述..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
@@ -218,8 +223,24 @@ export default function SkillsTab() {
             <button className={styles.skillSearchClear} onClick={() => setSearchQuery('')}>&times;</button>
           )}
         </div>
+        <p className={styles.sectionDesc}>管理技能定义 — 支持文件夹或 ZIP 导入</p>
+      </div>
+      {view === 'market' ? (
+        <SkillMarketTab hideHeader />
+      ) : (
+        <div className={styles.contentBody}>
+          {error && <p className={styles.toolsError}>{error}</p>}
 
-        {loading ? (
+          <div className={styles.skillActions}>
+            <button onClick={handleImportFolder} disabled={importing} className={styles.mcpAddBtn}>
+              {importing ? '导入中...' : <><IconFolder size={14} /> 导入文件夹</>}
+            </button>
+            <button onClick={handleImportZip} disabled={importing} className={styles.mcpAddBtn}>
+              {importing ? '导入中...' : <><IconPackage size={14} /> 导入 ZIP</>}
+            </button>
+          </div>
+
+          {loading ? (
           <p className={styles.toolsEmpty}>加载中...</p>
         ) : (
           <>
@@ -296,7 +317,8 @@ export default function SkillsTab() {
             </p>
           </>
         )}
-      </div>
+        </div>
+      )}
     </>
   )
 }

@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
-import { IconBot, IconSearch, IconChevronDown, IconPuzzle, IconGlobe, IconFile, IconServer, IconZap, IconCommand, IconMessageSquare, IconClock, IconRefresh, IconPackage, IconSettings } from '../../utils/icons'
+import { IconBot, IconSearch, IconChevronDown, IconPuzzle, IconGlobe, IconFile, IconServer, IconZap, IconCommand, IconMessageSquare, IconClock, IconRefresh, IconPackage, IconSettings, IconStore } from '../../utils/icons'
 import styles from '../shared/SettingsModal.module.css'
+import MarketplaceTab from './MarketplaceTab'
 
 interface HookHandlerInfo {
   type: string  // 'command' | 'prompt' | 'agent'
@@ -67,6 +68,7 @@ export default function PluginsTab() {
   const [expandedPlugin, setExpandedPlugin] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const [view, setView] = useState<'installed' | 'market'>('installed')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -129,38 +131,55 @@ export default function PluginsTab() {
   return (
     <>
       <div className={styles.contentHeader}>
-        <div className={styles.pluginsHeader}>
-          <div className={styles.sectionHeaderRow}>
-            <h3 className={styles.sectionTitle}>
-              插件
-              <span className={styles.pluginsCountBadge}>{plugins.length} 个</span>
-            </h3>
+        <div className={styles.sectionHeaderRow}>
+          <h3 className={styles.sectionTitle}>
+            插件
+            <span className={styles.pluginsCountBadge}>{plugins.length} 个</span>
+          </h3>
+          <div className={styles.marketplaceKindToggle}>
             <button
-              onClick={handleRefresh}
-              disabled={refreshing || loading}
-              className={styles.refreshBtn}
-              title="重新扫描插件"
+              className={`${styles.marketplaceKindBtn} ${view === 'installed' ? styles.marketplaceKindActive : ''}`}
+              onClick={() => setView('installed')}
             >
-              <IconRefresh size={14} />
+              <IconPackage size={13} />
+              已安装
+            </button>
+            <button
+              className={`${styles.marketplaceKindBtn} ${view === 'market' ? styles.marketplaceKindActive : ''}`}
+              onClick={() => setView('market')}
+            >
+              <IconStore size={13} />
+              市场
             </button>
           </div>
-          <div className={styles.pluginsSearchWrap}>
-            <IconSearch size={14} className={styles.pluginsSearchIcon} />
-            <input
-              className={styles.pluginsSearchInput}
-              type="text"
-              placeholder="搜索插件..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-            />
-          </div>
-          <p className={styles.pluginsDesc}>
-            从插件目录自动发现，点击展开查看详情
-          </p>
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing || loading}
+            className={styles.refreshBtn}
+            title="重新扫描插件"
+          >
+            <IconRefresh size={14} />
+          </button>
         </div>
+        <div className={styles.pluginsSearchWrap}>
+          <IconSearch size={14} className={styles.pluginsSearchIcon} />
+          <input
+            className={styles.pluginsSearchInput}
+            type="text"
+            placeholder="搜索插件..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+          />
+        </div>
+        <p className={styles.sectionDesc}>
+          从插件目录自动发现，点击展开查看详情
+        </p>
       </div>
-      <div className={styles.contentBody}>
-        {error && <p className={styles.toolsError}>{error}</p>}
+      {view === 'market' ? (
+        <MarketplaceTab mode="plugin" hideHeader />
+      ) : (
+        <div className={styles.contentBody}>
+          {error && <p className={styles.toolsError}>{error}</p>}
         {loading ? (
           <p className={styles.toolsEmpty}>加载中...</p>
         ) : filteredPlugins.length === 0 ? (
@@ -531,7 +550,8 @@ export default function PluginsTab() {
             })}
           </>
         )}
-      </div>
+        </div>
+      )}
     </>
   )
 }

@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useStore } from '../../stores'
-import { IconRefresh, IconSearch, IconSparkles, IconCheck, IconTrash, IconExternalLink } from '../../utils/icons'
+import { IconRefresh, IconSearch, IconSparkles, IconCheck, IconTrash, IconExternalLink, IconSettings } from '../../utils/icons'
 import { loomRpc } from '../../services/jsonrpc'
 import styles from '../shared/SettingsModal.module.css'
+
+const PREF_KEY_SKILL_MARKET_URL = 'skillMarketBaseUrl'
+const DEFAULT_SKILL_MARKET_URL = 'https://clawhub.ai'
 
 interface ClawhubSkill {
   id: string
@@ -19,7 +22,7 @@ interface ClawhubSkill {
   source: string
 }
 
-export default function SkillMarketTab() {
+export default function SkillMarketTab({ hideHeader }: { hideHeader?: boolean }) {
   const [skills, setSkills] = useState<ClawhubSkill[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -28,14 +31,16 @@ export default function SkillMarketTab() {
   const [refreshing, setRefreshing] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(25)
+  const [baseUrl, setBaseUrl] = useState(DEFAULT_SKILL_MARKET_URL)
+  const [showSourceConfig, setShowSourceConfig] = useState(false)
 
-  const load = useCallback(async (search?: string, force = false) => {
+  const load = useCallback(async (search?: string, force = false, url?: string) => {
     setLoading(true)
     setError(null)
     try {
       const res = await loomRpc<{ skills: ClawhubSkill[]; cached?: boolean }>(
         'clawhub.list',
-        { ...(search ? { search } : {}), force }
+        { ...(search ? { search } : {}), force, base_url: url || baseUrl }
       )
       setSkills(res.skills ?? [])
       setCurrentPage(1)
@@ -44,19 +49,33 @@ export default function SkillMarketTab() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [baseUrl])
 
-  useEffect(() => { load() }, [load])
+  // Load custom base URL from preferences on mount
+  useEffect(() => {
+    window.loom.getPreference(PREF_KEY_SKILL_MARKET_URL, DEFAULT_SKILL_MARKET_URL).then((url: string) => {
+      if (url && url !== baseUrl) setBaseUrl(url)
+      load(undefined, false, url || DEFAULT_SKILL_MARKET_URL)
+    }).catch(() => load())
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveBaseUrl = async (url: string) => {
+    setBaseUrl(url)
+    await window.loom.setPreference(PREF_KEY_SKILL_MARKET_URL, url)
+    setRefreshing(true)
+    await load(undefined, true, url)
+    setRefreshing(false)
+  }
 
   // Debounced search
   useEffect(() => {
     const timer = setTimeout(() => load(searchQuery || undefined), 400)
     return () => clearTimeout(timer)
-  }, [searchQuery])
+  }, [searchQuery, load])
 
   const handleRefresh = async () => {
     setRefreshing(true)
-    await load(undefined, true) // force refresh
+    await load(undefined, true)
     setRefreshing(false)
   }
 
@@ -140,27 +159,66 @@ export default function SkillMarketTab() {
 
   return (
     <>
-      <div className={styles.contentHeader}>
-        <div className={styles.sectionHeaderRow}>
-          <div>
-            <h3 className={styles.sectionTitle}>技能市场</h3>
-            <p className={styles.sectionDesc}>
-              Clawhub 社区技能注册表 · {skills.length} 个技能
-              {installedCount > 0 && (
-                <span className={styles.marketplaceInstalledSummary}>
-                  {installedCount} 已安装
-                </span>
-              )}
-            </p>
+      {!hideHeader && (
+        <div className={styles.contentHeader}>
+          <div className={styles.sectionHeaderRow}>
+            <div>
+              <h3 className={styles.sectionTitle}>技能市场</h3>
+              <p className={styles.sectionDesc}>
+                Clawhub 社区技能注册表 · {skills.length} 个技能
+                {installedCount > 0 && (
+                  <span className={styles.marketplaceInstalledSummary}>
+                    {installedCount} 已安装
+                  </span>
+                )}
+              </p>
+            </div>
+            <button onClick={handleRefresh} disabled={refreshing} className={styles.refreshBtn} title="刷新">
+              <IconRefresh size={14} />
+            </button>
           </div>
-          <button onClick={handleRefresh} disabled={refreshing} className={styles.refreshBtn} title="刷新">
-            <IconRefresh size={14} />
-          </button>
         </div>
-      </div>
+      )}
 
       <div className={styles.contentBody}>
         {error && <p className={styles.toolsError}>{error}</p>}
+
+        {/* Custom market source */}
+        <div className={styles.marketplaceSourceRow}>
+          <button
+            className={styles.marketplaceCategoryBtn}
+            onClick={() => setShowSourceConfig(!showSourceConfig)}
+          >
+            <IconSettings size={11} />
+            {showSourceConfig ? '收起' : '自定义源'}
+          </button>
+          {showSourceConfig && (
+            <div className={styles.marketplaceSourceForm}>
+              <input
+                className={styles.pluginsSearchInput}
+                type="text"
+                placeholder="输入技能市场 API 地址..."
+                value={baseUrl}
+                onChange={e => setBaseUrl(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') saveBaseUrl(baseUrl) }}
+              />
+              <button
+                className={styles.mcpConnectBtn}
+                onClick={() => saveBaseUrl(baseUrl)}
+              >
+                加载
+              </button>
+              {baseUrl !== DEFAULT_SKILL_MARKET_URL && (
+                <button
+                  className={styles.mcpCancelBtn}
+                  onClick={() => saveBaseUrl(DEFAULT_SKILL_MARKET_URL)}
+                >
+                  重置
+                </button>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Search */}
         <div className={styles.pluginsSearchWrap}>

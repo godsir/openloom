@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useStore } from '../../stores'
-import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconPackage, IconStore } from '../../utils/icons'
+import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconPackage } from '../../utils/icons'
 import Overlay from './Overlay'
 import AgentConfigPanel from './AgentConfigPanel'
 import { loomRpc } from '../../services/jsonrpc'
@@ -12,13 +12,11 @@ import ModelsTab from '../settings/ModelsTab'
 import McpLspTab from '../settings/McpTab'
 import SkillsTab from '../settings/SkillsTab'
 import PluginsTab from '../settings/PluginsTab'
-import MarketplaceTab from '../settings/MarketplaceTab'
-import SkillMarketTab from '../settings/SkillMarketTab'
 import AboutTab from '../settings/AboutTab'
 import TokenTab from '../settings/TokenTab'
 import KgTab from '../settings/KgTab'
 
-type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pluginMarket' | 'skillMarket' | 'pet' | 'kg' | 'token' | 'about'
+type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'about'
 
 function GlobalDefaultsSection() {
   const [maxIterations, setMaxIterations] = useState(30)
@@ -51,34 +49,34 @@ function GlobalDefaultsSection() {
   if (!loaded) return null
 
   return (
-    <div style={{ marginBottom: 24, padding: '12px 16px', background: 'var(--bg-card)', borderRadius: 'var(--r-md)', border: '1px solid var(--border)' }}>
-      <h4 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>全局默认值</h4>
-      <p style={{ margin: '0 0 12px', fontSize: 11, color: 'var(--text-muted)' }}>对所有智能体生效的全局默认值</p>
-      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+    <div className={styles.globalDefaultsCard}>
+      <h4 className={styles.globalDefaultsTitle}>全局默认值</h4>
+      <p className={styles.globalDefaultsDesc}>对所有智能体生效的全局默认值</p>
+      <div className={styles.globalDefaultsRow}>
         <div>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>最大迭代次数</label>
+          <label className={styles.globalDefaultsFieldLabel}>最大迭代次数</label>
           <input
             type="number" min={1} max={200}
             value={maxIterations}
             onChange={(e) => setMaxIterations(Number(e.target.value) || 30)}
-            style={{ width: 80, height: 28, padding: '0 8px', fontSize: 12, color: 'var(--text)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}
+            className={styles.globalDefaultsInput}
           />
-          <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 6 }}>单轮最多 LLM 调用次数</span>
+          <span className={styles.globalDefaultsHint}>单轮最多 LLM 调用次数</span>
         </div>
         <div>
-          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Token 预算上限</label>
+          <label className={styles.globalDefaultsFieldLabel}>Token 预算上限</label>
           <input
             type="number" min={0} step={1000}
             value={maxPromptBudget}
             onChange={(e) => setMaxPromptBudget(Number(e.target.value) || 0)}
-            style={{ width: 100, height: 28, padding: '0 8px', fontSize: 12, color: 'var(--text)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}
+            className={`${styles.globalDefaultsInput} ${styles.globalDefaultsInputWide}`}
           />
-          <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 6 }}>累计 prompt token 上限（0=不限）</span>
+          <span className={styles.globalDefaultsHint}>累计 prompt token 上限（0=不限）</span>
         </div>
         <button
           onClick={save}
           disabled={saving}
-          style={{ height: 28, padding: '0 14px', fontSize: 12, fontWeight: 500, color: '#fff', background: 'var(--accent)', border: 'none', borderRadius: 'var(--r-sm)', cursor: 'pointer' }}
+          className={styles.globalDefaultsSaveBtn}
         >
           {saving ? '保存中...' : '保存'}
         </button>
@@ -102,15 +100,8 @@ const tabGroups: { label: string; items: { id: Tab; label: string; icon: React.R
     items: [
       { id: 'workspace', label: '工作空间', icon: <IconFolder size={14} /> },
       { id: 'mcp', label: 'MCP / LSP', icon: <IconTerminal size={14} /> },
-      { id: 'skills', label: '本地技能', icon: <IconSparkles size={14} /> },
-      { id: 'plugins', label: '本地插件', icon: <IconPackage size={14} /> },
-    ],
-  },
-  {
-    label: '市场',
-    items: [
-      { id: 'pluginMarket', label: '插件市场', icon: <IconPackage size={14} /> },
-      { id: 'skillMarket', label: '技能市场', icon: <IconStore size={14} /> },
+      { id: 'plugins', label: '插件', icon: <IconPackage size={14} /> },
+      { id: 'skills', label: '技能', icon: <IconSparkles size={14} /> },
     ],
   },
   {
@@ -200,8 +191,6 @@ export default function SettingsModal({
 
           {tab === 'skills' && <SkillsTab />}
           {tab === 'plugins' && <PluginsTab />}
-          {tab === 'pluginMarket' && <MarketplaceTab mode="plugin" />}
-          {tab === 'skillMarket' && <SkillMarketTab />}
 
           {tab === 'pet' && (
             <>

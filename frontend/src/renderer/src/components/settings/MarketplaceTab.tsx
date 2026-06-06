@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useStore } from '../../stores'
-import { IconRefresh, IconSearch, IconPackage, IconSparkles, IconStore, IconGlobe, IconCheck, IconZap, IconTrash, IconExternalLink } from '../../utils/icons'
+import { IconRefresh, IconSearch, IconPackage, IconSparkles, IconStore, IconGlobe, IconCheck, IconZap, IconTrash, IconExternalLink, IconSettings } from '../../utils/icons'
 import { listMarketplace, installMarketPlugin, uninstallMarketPlugin, updateMarketPlugin, type MarketPlugin } from '../../services/marketplace'
 import styles from '../shared/SettingsModal.module.css'
 
 const MARKETPLACE_CATEGORIES = ['全部', 'Security', 'Development', 'Productivity', 'Workflow', 'Research', 'Design']
+const PREF_KEY_CATALOG_URL = 'marketplaceCatalogUrl'
 
-export default function MarketplaceTab({ mode }: { mode?: 'plugin' }) {
+export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; hideHeader?: boolean }) {
   const [plugins, setPlugins] = useState<MarketPlugin[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -15,12 +16,14 @@ export default function MarketplaceTab({ mode }: { mode?: 'plugin' }) {
   const [activeKind, setActiveKind] = useState<string>(mode === 'plugin' ? 'plugin' : 'plugin')
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set())
   const [refreshing, setRefreshing] = useState(false)
+  const [catalogUrl, setCatalogUrl] = useState('')
+  const [showSourceConfig, setShowSourceConfig] = useState(false)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (url?: string) => {
     setLoading(true)
     setError(null)
     try {
-      const res = await listMarketplace()
+      const res = await listMarketplace(url || undefined)
       setPlugins(res.plugins ?? [])
     } catch (e: any) {
       setError(`加载失败: ${e.message || e}`)
@@ -29,11 +32,25 @@ export default function MarketplaceTab({ mode }: { mode?: 'plugin' }) {
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  // Load custom catalog URL from preferences on mount
+  useEffect(() => {
+    window.loom.getPreference(PREF_KEY_CATALOG_URL, '').then((url: string) => {
+      if (url) setCatalogUrl(url)
+      load(url || undefined)
+    }).catch(() => load())
+  }, [load])
+
+  const saveCatalogUrl = async (url: string) => {
+    setCatalogUrl(url)
+    await window.loom.setPreference(PREF_KEY_CATALOG_URL, url)
+    setRefreshing(true)
+    await load(url || undefined)
+    setRefreshing(false)
+  }
 
   const handleRefresh = async () => {
     setRefreshing(true)
-    await load()
+    await load(catalogUrl || undefined)
     setRefreshing(false)
   }
 
@@ -104,44 +121,83 @@ export default function MarketplaceTab({ mode }: { mode?: 'plugin' }) {
 
   return (
     <>
-      <div className={styles.contentHeader}>
-        <div className={styles.pluginsHeader}>
-          <div className={styles.sectionHeaderRow}>
-            <h3 className={styles.sectionTitle}>
-              市场
-              <span className={styles.pluginsCountBadge}>{plugins.length} 个</span>
-              {installedCount > 0 && (
-                <span className={styles.marketplaceInstalledSummary}>
-                  {installedCount} 已安装
-                </span>
-              )}
-            </h3>
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing || loading}
-              className={styles.refreshBtn}
-              title="刷新市场"
-            >
-              <IconRefresh size={14} />
-            </button>
+      {!hideHeader && (
+        <div className={styles.contentHeader}>
+          <div className={styles.pluginsHeader}>
+            <div className={styles.sectionHeaderRow}>
+              <h3 className={styles.sectionTitle}>
+                市场
+                <span className={styles.pluginsCountBadge}>{plugins.length} 个</span>
+                {installedCount > 0 && (
+                  <span className={styles.marketplaceInstalledSummary}>
+                    {installedCount} 已安装
+                  </span>
+                )}
+              </h3>
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing || loading}
+                className={styles.refreshBtn}
+                title="刷新市场"
+              >
+                <IconRefresh size={14} />
+              </button>
+            </div>
+            <div className={styles.pluginsSearchWrap}>
+              <IconSearch size={14} className={styles.pluginsSearchIcon} />
+              <input
+                className={styles.pluginsSearchInput}
+                type="text"
+                placeholder="搜索插件名称、描述、标签或作者..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <p className={styles.pluginsDesc}>
+              浏览和安装社区插件，扩展 AI 助手的能力
+            </p>
           </div>
-          <div className={styles.pluginsSearchWrap}>
-            <IconSearch size={14} className={styles.pluginsSearchIcon} />
-            <input
-              className={styles.pluginsSearchInput}
-              type="text"
-              placeholder="搜索插件名称、描述、标签或作者..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-            />
-          </div>
-          <p className={styles.pluginsDesc}>
-            浏览和安装社区插件，扩展 AI 助手的能力
-          </p>
         </div>
-      </div>
+      )}
       <div className={styles.contentBody}>
         {error && <p className={styles.toolsError}>{error}</p>}
+
+        {/* Custom market source */}
+        <div className={styles.marketplaceSourceRow}>
+          <button
+            className={styles.marketplaceCategoryBtn}
+            onClick={() => setShowSourceConfig(!showSourceConfig)}
+          >
+            <IconSettings size={11} />
+            {showSourceConfig ? '收起' : '自定义源'}
+          </button>
+          {showSourceConfig && (
+            <div className={styles.marketplaceSourceForm}>
+              <input
+                className={styles.pluginsSearchInput}
+                type="text"
+                placeholder="输入市场目录 JSON URL..."
+                value={catalogUrl}
+                onChange={e => setCatalogUrl(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') saveCatalogUrl(catalogUrl) }}
+              />
+              <button
+                className={styles.mcpConnectBtn}
+                onClick={() => saveCatalogUrl(catalogUrl)}
+              >
+                加载
+              </button>
+              {catalogUrl && (
+                <button
+                  className={styles.mcpCancelBtn}
+                  onClick={() => saveCatalogUrl('')}
+                >
+                  重置
+                </button>
+              )}
+            </div>
+          )}
+        </div>
 
         {!mode && (
           <div className={styles.marketplaceKindToggle}>
