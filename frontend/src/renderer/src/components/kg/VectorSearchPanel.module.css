@@ -149,11 +149,49 @@
   gap: 4px;
 }
 
+.emptyStateTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
 .emptyStateHint {
   font-size: 11px;
   color: var(--text-muted);
   opacity: 0.6;
   max-width: 280px;
+}
+
+.sampleQueries {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.sampleLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.sampleChip {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.08);
+  border: 1px solid rgba(var(--accent-rgb), 0.15);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+
+.sampleChip:hover {
+  background: rgba(var(--accent-rgb), 0.16);
+  border-color: rgba(var(--accent-rgb), 0.25);
 }
 
 .errorState {

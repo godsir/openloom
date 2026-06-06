@@ -27,13 +27,14 @@ export default function VectorSearchPanel({ onEntitySelected }: VectorSearchPane
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const handleSearch = useCallback(async () => {
-    const q = query.trim()
+  const handleSearch = useCallback(async (overrideQuery?: string) => {
+    const q = (overrideQuery ?? query).trim()
     if (!q) return
     setError(null)
     setLoading(true)
     try {
       await kgVectorSearch(q)
+      if (overrideQuery) setQuery(overrideQuery)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -132,10 +133,16 @@ export default function VectorSearchPanel({ onEntitySelected }: VectorSearchPane
 
       {!error && !loading && vectorResults.length === 0 && (
         <div className={styles.emptyState}>
-          <span>输入概念或关键词进行语义搜索</span>
+          <span className={styles.emptyStateTitle}>语义搜索</span>
           <span className={styles.emptyStateHint}>
-            输入概念、描述或关键词，AI 将基于向量嵌入查找语义上最相近的知识图谱实体
+            输入概念、描述或关键词，基于向量嵌入查找语义相近的知识图谱实体
           </span>
+          <div className={styles.sampleQueries}>
+            <span className={styles.sampleLabel}>试试：</span>
+            {['Python', '机器学习', '前端开发', '性能优化'].map(q => (
+              <button key={q} className={styles.sampleChip} onClick={() => handleSearch(q)}>{q}</button>
+            ))}
+          </div>
         </div>
       )}
     </div>
