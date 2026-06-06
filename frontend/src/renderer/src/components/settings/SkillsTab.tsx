@@ -202,7 +202,14 @@ export default function SkillsTab() {
             </button>
           </div>
           <button
-            onClick={async () => { setRefreshing(true); await loadSkills(); setRefreshing(false) }}
+            onClick={async () => {
+              setRefreshing(true)
+              try {
+                await loomRpc('skills.reload')
+                await loadSkills()
+              } catch { /* ignore reload errors */ }
+              setRefreshing(false)
+            }}
             disabled={refreshing || loading}
             className={styles.refreshBtn}
             title="重新扫描技能"

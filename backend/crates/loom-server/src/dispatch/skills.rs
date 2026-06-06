@@ -19,6 +19,7 @@ pub async fn handle(
         "skills.get" => Some(handle_skills_get(state, p).await),
         "skills.import" => Some(handle_skills_import(state, p).await),
         "skills.delete" => Some(handle_skills_delete(state, p).await),
+        "skills.reload" => Some(handle_skills_reload(state).await),
         _ => None,
     }
 }
@@ -118,6 +119,18 @@ async fn handle_skills_delete(state: &AppState, p: &Value) -> Result<Value, Json
     // Refresh orchestrator skill state
     let _ = reload_skills_into_orchestrator(&state.orchestrator).await;
     Ok(json!({ "ok": true }))
+}
+
+// --- skills.reload ---
+
+async fn handle_skills_reload(state: &AppState) -> Result<Value, JsonRpcError> {
+    match reload_skills_into_orchestrator(&state.orchestrator).await {
+        Ok(count) => {
+            tracing::info!("[skills.reload] {} skills reloaded", count);
+            Ok(json!({ "ok": true, "skill_count": count }))
+        }
+        Err(e) => Err(err(ErrorCode::InternalError, &e)),
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -397,20 +397,17 @@ export default function TokenUsagePanel() {
 
   // Handlers
   const handleTimeRangeChange = useCallback((r: 'all' | 'today' | '7d' | '30d') => {
-    setLoadError(null)
     setTimeRange(r)
   }, [setTimeRange])
 
   const handleReset = useCallback(async () => {
     const ok = await useStore.getState().showConfirm('重置用量', '确定要清除所有 Token 用量记录吗？此操作不可撤销。', true)
     if (ok) {
-      setLoadError(null)
       useStore.getState().resetTokenUsage()
     }
   }, [])
 
   const handleRetry = useCallback(() => {
-    setLoadError(null)
     setTimeRange(timeRange)
   }, [timeRange, setTimeRange])
 
