@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import AppShell from './components/app/AppShell'
 import SettingsModal from './components/shared/SettingsModal'
+import ScheduledTasksModal from './components/shared/ScheduledTasksModal'
 import UpdateModal from './components/shared/UpdateModal'
 
 import Onboarding from './components/shared/Onboarding'
@@ -20,6 +21,8 @@ export default function App() {
   const retryCleanupRef = useRef<(() => void) | null>(null)
   const settingsOpen = useStore((s) => s.settingsOpen)
   const setSettingsOpen = useStore((s) => s.setSettingsOpen)
+  const scheduledTasksOpen = useStore((s) => s.scheduledTasksOpen)
+  const setScheduledTasksOpen = useStore((s) => s.setScheduledTasksOpen)
   const theme = useStore((s) => s.theme)
   const confirm = useStore((s) => s.confirm)
   const set = useStore.setState
@@ -196,6 +199,7 @@ export default function App() {
     <ErrorBoundary>
       <AppShell>
         <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+        <ScheduledTasksModal open={scheduledTasksOpen} onClose={() => setScheduledTasksOpen(false)} />
         <ToastContainer />
       </AppShell>
       <ConfirmDialog

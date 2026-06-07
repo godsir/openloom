@@ -1,0 +1,404 @@
+/* ── Card ─────────────────────────────────────────────────────── */
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 12px;
+  margin-bottom: 8px;
+  background: var(--bg-card);
+}
+
+.cardTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cardInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.cardNameRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.cardName {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.cardCron {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 2px;
+}
+
+.cardCronRaw {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.cardCmd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.cardMeta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ── Badges ───────────────────────────────────────────────────── */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.badgeEnabled { background: var(--green); color: #fff; }
+.badgeDisabled { background: var(--text-muted); color: #fff; }
+.badgeRunning { background: #3b82f6; color: #fff; }
+.badgeSuccess { background: var(--green); color: #fff; }
+.badgeFailed { background: var(--red); color: #fff; }
+.badgeTimeout { background: var(--amber); color: #fff; }
+
+/* ── Form ─────────────────────────────────────────────────────── */
+
+.formRow {
+  margin-bottom: 16px;
+}
+
+.formLabel {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+
+.formInput {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.formInput:focus {
+  border-color: var(--border-accent);
+}
+
+.formTextarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  resize: vertical;
+  outline: none;
+  font-family: var(--font-mono);
+}
+
+.formTextarea:focus {
+  border-color: var(--border-accent);
+}
+
+.formHint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+/* ── Presets ──────────────────────────────────────────────────── */
+
+.presetRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.presetTag {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: 11px;
+  cursor: pointer;
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-family: inherit;
+  transition: all 0.12s;
+}
+
+.presetTag:hover {
+  border-color: var(--border-accent);
+  color: var(--text);
+}
+
+.presetTagActive {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+/* ── Mode toggle ──────────────────────────────────────────────── */
+
+.modeRow {
+  display: flex;
+  gap: 6px;
+}
+
+.modeBtn {
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  transition: all 0.12s;
+}
+
+.modeBtn:hover {
+  border-color: var(--border-accent);
+}
+
+.modeBtnActive {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+/* ── Buttons ──────────────────────────────────────────────────── */
+
+.btnAdd {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border: 1px solid rgba(var(--accent-rgb), 0.2);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.btnAdd:hover { background: var(--accent-medium); }
+
+.btnCancel {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.btnCancel:hover { color: var(--text); }
+
+.btnSave {
+  height: 28px;
+  padding: 0 14px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.btnSave:hover { opacity: 0.85; }
+.btnSave:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btnBack {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+  margin-bottom: 12px;
+  font-family: inherit;
+}
+
+.btnBack:hover { opacity: 0.8; }
+
+.iconBtn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--r-sm);
+}
+
+.iconBtn:hover {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+/* ── Misc ─────────────────────────────────────────────────────── */
+
+.countBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+  border-radius: 9px;
+  margin-left: 6px;
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inlineIcon {
+  flex-shrink: 0;
+}
+
+.backIcon {
+  transform: rotate(90deg);
+}
+
+.errorText {
+  font-size: 11px;
+  color: var(--red);
+  margin-bottom: 12px;
+}
+
+.errorCount {
+  color: var(--red);
+}
+
+.empty {
+  padding: 40px 20px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.emptyIcon {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+/* ── History table ────────────────────────────────────────────── */
+
+.histHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.histRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.histRow:last-child { border-bottom: none; }
+
+.histTime {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 120px;
+}
+
+.histStatus {
+  min-width: 60px;
+}
+
+.histStdout {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.histExit {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 40px;
+  text-align: right;
+}

@@ -130,6 +130,8 @@
 }
 
 .dateLabel {
+  display: flex;
+  align-items: center;
   padding: 12px 12px 6px;
   font-size: 10px;
   font-weight: 600;
@@ -144,6 +146,94 @@
   align-items: center;
   padding: 14px 16px;
   border-top: 1px solid var(--border);
+}
+
+/* ── Cron section ──────────────────────────────────────────────── */
+
+.cronSection {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+
+.sectionAddBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  margin-left: auto;
+}
+
+.sectionAddBtn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.cronItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  transition: background 0.1s;
+}
+
+.cronItem:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.cronItemActive {
+  background: rgba(var(--accent-rgb), 0.1);
+}
+
+.cronItemIcon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.cronItemContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.cronItemName {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.cronItemPaused {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.cronItemDesc {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+.cronItemTime {
+  color: var(--text-muted);
+}
+
+.cronItemText {
+  font-size: 11px;
+  color: var(--text);
+}
+
+.cronItemMuted {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .createBtn {

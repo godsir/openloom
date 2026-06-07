@@ -1,0 +1,137 @@
+//! JSON-RPC dispatch for `cron.*` methods.
+//!
+//! Methods: cron.list, cron.create, cron.delete, cron.pause, cron.resume,
+//!          cron.history, cron.run_now
+
+use std::sync::Arc;
+
+use anyhow::Result;
+use loom_cron::job::SessionMode;
+use loom_types::{ErrorCode, JsonRpcError};
+use serde_json::{Value, json};
+
+use crate::dispatch::err;
+use crate::AppState;
+
+pub async fn handle(
+    state: &AppState,
+    method: &str,
+    params: &Value,
+) -> Option<Result<Value, JsonRpcError>> {
+    let cron = state.orchestrator.cron_scheduler().await?;
+
+    match method {
+        "cron.list" => Some(handle_list(&cron).await),
+        "cron.create" => Some(handle_create(&cron, params).await),
+        "cron.delete" => Some(handle_delete(&cron, params).await),
+        "cron.pause" => Some(handle_pause(&cron, params).await),
+        "cron.resume" => Some(handle_resume(&cron, params).await),
+        "cron.history" => Some(handle_history(&cron, params).await),
+        "cron.run_now" => Some(handle_run_now(&cron, params).await),
+        _ => None,
+    }
+}
+
+// ── Handlers ──────────────────────────────────────────────────────────────────
+
+async fn handle_list(cron: &Arc<loom_cron::CronScheduler>) -> Result<Value, JsonRpcError> {
+    match cron.list_jobs() {
+        Ok(jobs) => Ok(serde_json::to_value(jobs).unwrap_or_default()),
+        Err(e) => Err(err(ErrorCode::InternalError, &e.to_string())),
+    }
+}
+
+async fn handle_create(
+    cron: &Arc<loom_cron::CronScheduler>,
+    params: &Value,
+) -> Result<Value, JsonRpcError> {
+    let name = get_str(params, "name")?;
+    let cron_expr = get_str(params, "cron_expression")?;
+    let command = get_str(params, "command")?;
+    let session_mode = get_str(params, "session_mode")
+        .map(|s| match s {
+            "current" => SessionMode::Current,
+            _ => SessionMode::Isolated,
+        })
+        .unwrap_or(SessionMode::Isolated);
+    let timeout_secs = params
+        .get("timeout_secs")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(300)
+        .clamp(1, 3600);
+
+    match cron.add_job(name, cron_expr, command, session_mode, timeout_secs).await {
+        Ok(id) => Ok(json!({ "id": id })),
+        Err(e) => Err(err(ErrorCode::InternalError, &e.to_string())),
+    }
+}
+
+async fn handle_delete(
+    cron: &Arc<loom_cron::CronScheduler>,
+    params: &Value,
+) -> Result<Value, JsonRpcError> {
+    let job_id = get_str(params, "id")?;
+    match cron.remove_job(job_id).await {
+        Ok(()) => Ok(json!({ "deleted": true })),
+        Err(e) => Err(err(ErrorCode::InternalError, &e.to_string())),
+    }
+}
+
+async fn handle_pause(
+    cron: &Arc<loom_cron::CronScheduler>,
+    params: &Value,
+) -> Result<Value, JsonRpcError> {
+    let job_id = get_str(params, "id")?;
+    match cron.pause_job(job_id).await {
+        Ok(()) => Ok(json!({ "paused": true })),
+        Err(e) => Err(err(ErrorCode::InternalError, &e.to_string())),
+    }
+}
+
+async fn handle_resume(
+    cron: &Arc<loom_cron::CronScheduler>,
+    params: &Value,
+) -> Result<Value, JsonRpcError> {
+    let job_id = get_str(params, "id")?;
+    match cron.resume_job(job_id).await {
+        Ok(()) => Ok(json!({ "resumed": true })),
+        Err(e) => Err(err(ErrorCode::InternalError, &e.to_string())),
+    }
+}
+
+async fn handle_history(
+    cron: &Arc<loom_cron::CronScheduler>,
+    params: &Value,
+) -> Result<Value, JsonRpcError> {
+    let job_id = get_str(params, "id")?;
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20)
+        .clamp(1, 1000) as usize;
+
+    match cron.get_history(job_id, limit) {
+        Ok(history) => Ok(serde_json::to_value(history).unwrap_or_default()),
+        Err(e) => Err(err(ErrorCode::InternalError, &e.to_string())),
+    }
+}
+
+async fn handle_run_now(
+    cron: &Arc<loom_cron::CronScheduler>,
+    params: &Value,
+) -> Result<Value, JsonRpcError> {
+    let job_id = get_str(params, "id")?;
+    match cron.run_now(job_id).await {
+        Ok(run_id) => Ok(json!({ "run_id": run_id })),
+        Err(e) => Err(err(ErrorCode::InternalError, &e.to_string())),
+    }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn get_str<'a>(params: &'a Value, key: &str) -> Result<&'a str, JsonRpcError> {
+    params
+        .get(key)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| err(ErrorCode::InvalidRequest, &format!("missing or invalid '{}'", key)))
+}

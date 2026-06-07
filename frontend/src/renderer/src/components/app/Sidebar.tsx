@@ -1,7 +1,9 @@
-import { useState, useMemo, useRef, useEffect } from 'react'
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useStore } from '../../stores'
 import SessionItem from './SessionItem'
-import { IconPlus, IconSearch, IconTrash, IconPin, IconPinOff, IconCheck, IconX } from '../../utils/icons'
+import { IconPlus, IconSearch, IconTrash, IconPin, IconPinOff, IconCheck, IconX, IconCalendarClock, IconPlay, IconPause } from '../../utils/icons'
+import { loomRpc } from '../../services/jsonrpc'
+import type { CronJobSummary } from '../../stores/cron'
 import styles from './Sidebar.module.css'
 
 function getDateGroup(modified: string): string {
@@ -17,6 +19,31 @@ function getDateGroup(modified: string): string {
   return `${d.getMonth() + 1}月${d.getDate()}日`
 }
 
+function describeCron(expr: string): string {
+  const p = expr.trim().split(/\s+/)
+  if (p.length !== 7) return expr
+  if (p[0] === '0' && p[1] === '*' && p.slice(2).every(f => f === '*')) return '每分钟'
+  if (p[0] === '0' && p[1].startsWith('*/') && p.slice(2).every(f => f === '*')) return `每${p[1].slice(2)}分钟`
+  if (p[0] === '0' && p[1] === '0' && p.slice(2).every(f => f === '*')) return '每小时'
+  if (p[0] === '0' && p[1] === '0' && /^\d+$/.test(p[2]) && p.slice(3).every(f => f === '*')) return `每天 ${p[2]}:00`
+  if (p[0] === '0' && p[1] !== '*' && /^\d+$/.test(p[1]) && p[5] !== '*' && /^\d+$/.test(p[5])) {
+    const dow = ['日', '一', '二', '三', '四', '五', '六'][parseInt(p[5])] || ''
+    return `每周${dow} ${p[2]}:${p[1].padStart(2, '0')}`
+  }
+  return expr
+}
+
+function relativeTime(ts: number | null): string {
+  if (!ts) return ''
+  const diff = Date.now() - ts * 1000
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return '刚刚'
+  if (mins < 60) return `${mins}分钟前`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}小时前`
+  return `${Math.floor(hrs / 24)}天前`
+}
+
 export default function Sidebar() {
   const sessions = useStore((s) => s.sessions)
   const pinnedIds = useStore((s) => s.pinnedIds)
@@ -28,8 +55,30 @@ export default function Sidebar() {
   const unpinSessions = useStore((s) => s.unpinSessions)
   const selectAllSessions = useStore((s) => s.selectAllSessions)
   const deselectAllSessions = useStore((s) => s.deselectAllSessions)
+  const setScheduledTasksOpen = useStore((s) => s.setScheduledTasksOpen)
   const [query, setQuery] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Cron jobs for sidebar display
+  const [cronJobs, setCronJobs] = useState<CronJobSummary[]>([])
+  const [cronLoading, setCronLoading] = useState(false)
+
+  const loadCronJobs = useCallback(async () => {
+    setCronLoading(true)
+    try {
+      const res = await loomRpc<CronJobSummary[]>('cron.list')
+      setCronJobs(Array.isArray(res) ? res : [])
+    } catch { /* ignore if cron scheduler not initialized */ }
+    finally { setCronLoading(false) }
+  }, [])
+
+  useEffect(() => { loadCronJobs() }, [loadCronJobs])
+
+  // Refresh cron jobs when modal closes
+  const openScheduledTasks = () => {
+    setScheduledTasksOpen(true)
+    loadCronJobs()
+  }
 
   useEffect(() => { inputRef.current?.focus() }, [])
 
@@ -50,7 +99,6 @@ export default function Sidebar() {
 
   const dateGroups = useMemo(() => {
     const unpinned = filtered.filter(s => !pinnedIds.has(s.path))
-    // Sort by modified descending (most recent first) within each group
     unpinned.sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
     const map = new Map<string, typeof unpinned>()
     const order: string[] = []
@@ -80,6 +128,8 @@ export default function Sidebar() {
   const selectedUnpinned = useMemo(() => {
     return [...selectedSessionIds].filter(id => !pinnedIds.has(id))
   }, [selectedSessionIds, pinnedIds])
+
+  const activeCronEditId = useStore((s) => s.cronEditJobId)
 
   return (
     <aside className={styles.sidebar}>
@@ -124,6 +174,50 @@ export default function Sidebar() {
               <button onClick={() => setQuery('')} className={styles.searchClear}>
                 <IconX size={11} />
               </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── 定时任务 section ─────────────────────────────── */}
+      {!selectionMode && (
+        <div className={styles.cronSection}>
+          <div className={styles.dateGroup}>
+            <div className={`${styles.dateLabel} ${styles.cronSectionLabel}`}>
+              <span>定时任务</span>
+              <button className={styles.sectionAddBtn} onClick={openScheduledTasks} title="新建定时任务">
+                <IconPlus size={12} />
+              </button>
+            </div>
+            {cronLoading ? (
+              <div className={styles.cronItem}>
+                <span className={styles.cronItemText}>加载中...</span>
+              </div>
+            ) : cronJobs.length === 0 ? (
+              <div className={styles.cronItem} onClick={openScheduledTasks}>
+                <IconCalendarClock size={13} className={styles.cronItemIcon} />
+                <span className={styles.cronItemMuted}>暂无定时任务</span>
+              </div>
+            ) : (
+              cronJobs.slice(0, 5).map(job => (
+                <div
+                  key={job.id}
+                  className={`${styles.cronItem} ${activeCronEditId === job.id ? styles.cronItemActive : ''}`}
+                  onClick={() => { useStore.getState().setCronEditJobId(job.id); setScheduledTasksOpen(true) }}
+                >
+                  <IconCalendarClock size={13} className={styles.cronItemIcon} />
+                  <div className={styles.cronItemContent}>
+                    <div className={styles.cronItemName}>
+                      {job.name}
+                      {!job.enabled && <IconPause size={10} className={styles.cronItemPaused} />}
+                    </div>
+                    <div className={styles.cronItemDesc}>
+                      {describeCron(job.cron_expression)}
+                      {job.last_run && <span className={styles.cronItemTime}> · {relativeTime(job.last_run)}</span>}
+                    </div>
+                  </div>
+                </div>
+              ))
             )}
           </div>
         </div>

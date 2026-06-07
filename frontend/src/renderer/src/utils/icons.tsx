@@ -61,7 +61,12 @@ export {
   Globe as IconGlobe,
   Server as IconServer,
   Store as IconStore,
+  CalendarClock as IconCalendarClock,
   Clock as IconClock,
+  History as IconHistory,
+  Pause as IconPause,
+  Play as IconPlay,
+  StopCircle as IconStopCircle,
 } from 'lucide-react'
 
 export function IconStarFilled({ size = 16, className = '' }: { size?: number; className?: string }) {

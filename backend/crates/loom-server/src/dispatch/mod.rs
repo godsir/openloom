@@ -8,6 +8,7 @@
 
 mod chat;
 mod clawhub;
+mod cron;
 mod kg;
 mod lsp;
 mod mcp;
@@ -83,6 +84,9 @@ pub async fn dispatch_method(
         return result;
     }
     if let Some(result) = tool::handle(state, method, &p).await {
+        return result;
+    }
+    if let Some(result) = cron::handle(state, method, &p).await {
         return result;
     }
     if let Some(result) = clawhub::handle(state, method, &p).await {

@@ -24,6 +24,7 @@ export interface UiSlice {
   sidebarOpen: boolean
   permissionDrawerOpen: boolean
   thinkingDrawerOpen: boolean
+  scheduledTasksOpen: boolean
   setTheme: (theme: ThemeId) => void
   setFontSize: (size: FontSizeId) => void
   setSettingsOpen: (open: boolean) => void
@@ -31,6 +32,7 @@ export interface UiSlice {
   toggleSidebar: () => void
   setPermissionDrawerOpen: (open: boolean) => void
   setThinkingDrawerOpen: (open: boolean) => void
+  setScheduledTasksOpen: (open: boolean) => void
 }
 
 function applyFontSize(size: FontSizeId) {
@@ -48,6 +50,7 @@ export const createUiSlice: StateCreator<UiSlice> = (set, get) => ({
   sidebarOpen: true,
   permissionDrawerOpen: false,
   thinkingDrawerOpen: false,
+  scheduledTasksOpen: false,
 
   setTheme: (theme) => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -76,4 +79,5 @@ export const createUiSlice: StateCreator<UiSlice> = (set, get) => ({
   toggleSidebar: () => set({ sidebarOpen: !get().sidebarOpen }),
   setPermissionDrawerOpen: (open) => set({ permissionDrawerOpen: open }),
   setThinkingDrawerOpen: (open) => set({ thinkingDrawerOpen: open }),
+  setScheduledTasksOpen: (open) => set({ scheduledTasksOpen: open }),
 })

@@ -162,6 +162,7 @@ use crate::event_bus::{AgentEvent, EventBus};
 use crate::hooks::{HookContext, HookRegistry};
 use crate::slash_router::SlashRouter;
 use crate::tool_registry::{AgentTool, SpawnAgentTool, SpawnContext, ToolRegistry};
+use loom_cron::CronScheduler;
 
 /// The central orchestrator for openLoom v2.
 pub struct Orchestrator {
@@ -209,6 +210,11 @@ pub struct Orchestrator {
     consolidation_count: Arc<AtomicU64>,
     /// Phase 3: Pipeline scheduler gates stage transitions by count + time.
     pipeline_scheduler: Arc<tokio::sync::Mutex<PipelineScheduler>>,
+    /// Cron scheduler for user-defined periodic tasks (backed by cron.db).
+    /// Initialised asynchronously via `init_cron_scheduler()` after construction.
+    cron_scheduler: Arc<RwLock<Option<Arc<CronScheduler>>>>,
+    /// Handle to the cron scheduler's background loop (for graceful shutdown).
+    cron_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 /// Trait for memory backends (SqliteEventStore, etc.)
@@ -772,6 +778,33 @@ impl Orchestrator {
             extraction_count: Arc::new(AtomicU64::new(0)),
             consolidation_count: Arc::new(AtomicU64::new(0)),
             pipeline_scheduler: Arc::new(tokio::sync::Mutex::new(PipelineScheduler::new())),
+            cron_scheduler: Arc::new(RwLock::new(None)),
+            cron_handle: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Initialise the cron scheduler. Must be called after construction (async).
+    /// The scheduler is backed by `<data_dir>/cron.db`. Starts the background loop.
+    pub async fn init_cron_scheduler(&self) -> anyhow::Result<()> {
+        let db_path = self.data_dir.join("cron.db");
+        let scheduler = Arc::new(CronScheduler::new(db_path).await?);
+        let handle = scheduler.start();
+        *self.cron_scheduler.write().await = Some(scheduler);
+        *self.cron_handle.write().await = Some(handle);
+        tracing::info!("cron scheduler initialised and started");
+        Ok(())
+    }
+
+    /// Return the cron scheduler, if initialised.
+    pub async fn cron_scheduler(&self) -> Option<Arc<CronScheduler>> {
+        self.cron_scheduler.read().await.clone()
+    }
+
+    /// Stop the cron scheduler background loop.
+    pub async fn stop_cron_scheduler(&self) {
+        if let Some(handle) = self.cron_handle.write().await.take() {
+            handle.abort();
+            tracing::info!("cron scheduler loop stopped");
         }
     }
 
@@ -5189,6 +5222,9 @@ impl Orchestrator {
     /// Graceful shutdown: cancel all inflight agents, drain with 10s timeout,
     /// close SQLite memory store, then drop MCP connections.
     pub async fn shutdown(&self) {
+        // 0. Stop cron scheduler first so no new jobs are spawned during shutdown
+        self.stop_cron_scheduler().await;
+
         // 1. Cancel all non-terminal agents so their loops exit
         let agents = self.pool.list().await;
         for a in &agents {

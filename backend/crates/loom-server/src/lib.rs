@@ -124,7 +124,12 @@ pub async fn serve(
     // Phase 3: Start background forgetting loop (hourly check, 7-day interval gate).
     state.orchestrator.spawn_forgetting_loop();
 
-    let app = build_router(state);
+    // Initialise and start the cron scheduler (user-defined periodic tasks).
+    if let Err(e) = state.orchestrator.init_cron_scheduler().await {
+        tracing::warn!(error = %e, "failed to initialise cron scheduler — periodic tasks disabled");
+    }
+
+    let app = build_router(state.clone());
     let addr = format!("{}:{}", host, port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     let actual_addr = listener.local_addr()?;
@@ -144,5 +149,9 @@ pub async fn serve(
         .await?;
 
     tracing::info!("loom-server shutdown complete");
+
+    // Gracefully stop the cron scheduler.
+    state.orchestrator.stop_cron_scheduler().await;
+
     Ok(())
 }

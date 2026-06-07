@@ -15,7 +15,6 @@ import PluginsTab from '../settings/PluginsTab'
 import AboutTab from '../settings/AboutTab'
 import TokenTab from '../settings/TokenTab'
 import KgTab from '../settings/KgTab'
-
 type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'about'
 
 function GlobalDefaultsSection() {
