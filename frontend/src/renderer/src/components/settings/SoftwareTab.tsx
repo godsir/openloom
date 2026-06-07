@@ -136,7 +136,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
   const sendShortcut = useStore((s) => s.sendShortcut)
   const [autoStart, setAutoStart] = useState(false)
   const [closeToTray, setCloseToTray] = useState(true)
-  const [autoTitle, setAutoTitle] = useState(false)
+  const [autoTitle, setAutoTitle] = useState(true)
   const [uiFont, setUiFont] = useState('')
   const [codeFont, setCodeFont] = useState('')
   const [disableHwAccel, setDisableHwAccel] = useState(false)
@@ -151,7 +151,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
     Promise.all([
       window.loom.getPreference('autoStart', false),
       window.loom.getPreference('closeToTray', true),
-      window.loom.getPreference('autoTitle', false),
+      window.loom.getPreference('autoTitle', true),
       window.loom.getPreference('uiFont', ''),
       window.loom.getPreference('codeFont', ''),
       window.loom.getPreference('customTheme', { bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' }),

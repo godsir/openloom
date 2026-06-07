@@ -2,19 +2,36 @@ import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { sendMessage } from '../../services/sendMessage'
 import { IconCopy, IconTrash, IconRefresh, IconRotateCcw } from '../../utils/icons'
+import type { ContentBlock } from '../../stores/chat'
 import styles from './MessageFooterActions.module.css'
 
-interface Props { messageId: string; role: 'user' | 'assistant'; timestamp: string; usage?: { prompt: number; completion: number } }
+interface Props {
+  messageId: string
+  role: 'user' | 'assistant'
+  timestamp: string
+  usage?: { prompt: number; completion: number }
+  blocks?: ContentBlock[]
+}
 
 function formatTokens(n: number): string {
   if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
   return String(n)
 }
 
-export default function MessageFooterActions({ messageId, role, timestamp, usage }: Props) {
+export default function MessageFooterActions({ messageId, role, timestamp, usage, blocks = [] }: Props) {
   const deleteMessage = useStore((s) => s.deleteMessage)
   const currentSessionId = useStore((s) => s.currentSessionId)
   const streaming = useStore((s) => currentSessionId ? s.streamingSessionIds.has(currentSessionId) : false)
+
+  // Count tool calls, skill calls, and thinking blocks
+  // tool_group = live streaming; shell = hydrated from history
+  const toolCount = blocks.filter(b => b.type === 'tool_group').reduce((sum, b) => {
+    const tools = (b as any).tools
+    return sum + (Array.isArray(tools) ? tools.length : 1)
+  }, 0) + blocks.filter(b => b.type === 'shell').length
+  const skillCount = blocks.filter(b => b.type === 'skill').length
+  const thinkCount = blocks.filter(b => b.type === 'thinking').length
+  const totalTools = toolCount + skillCount
 
   const handleCopy = () => {
     const msgs = useStore.getState().messagesBySession.get(currentSessionId || '')
@@ -29,7 +46,6 @@ export default function MessageFooterActions({ messageId, role, timestamp, usage
 
   const handleDelete = async () => {
     if (!currentSessionId) return
-    // Find message index in the session to tell the backend which one to delete
     const msgs = useStore.getState().messagesBySession.get(currentSessionId)
     const index = msgs?.findIndex(m => m.id === messageId) ?? -1
     if (index >= 0) {
@@ -38,7 +54,6 @@ export default function MessageFooterActions({ messageId, role, timestamp, usage
     deleteMessage(currentSessionId, messageId)
   }
 
-  // Resend: re-send this user message (with images) to get a new AI response
   const handleResend = async () => {
     if (!currentSessionId || streaming) return
     const msgs = useStore.getState().messagesBySession.get(currentSessionId)
@@ -69,19 +84,16 @@ export default function MessageFooterActions({ messageId, role, timestamp, usage
     await sendMessage({ sessionId: currentSessionId, content, attachedFiles })
   }
 
-  // Retry: re-request AI response for the previous user message
   const handleRetry = async () => {
     if (!currentSessionId || streaming) return
     const msgs = useStore.getState().messagesBySession.get(currentSessionId)
     const msgIndex = msgs?.findIndex((m) => m.id === messageId) ?? -1
     if (msgIndex <= 0) return
 
-    // Find the previous user message
     const prevMsgs = msgs!.slice(0, msgIndex)
     const prevUserMsg = [...prevMsgs].reverse().find((m) => m.role === 'user')
     if (!prevUserMsg) return
 
-    // Delete the current assistant message first
     handleDelete()
 
     const textBlock = prevUserMsg.blocks.find((b) => b.type === 'text')
@@ -116,6 +128,16 @@ export default function MessageFooterActions({ messageId, role, timestamp, usage
       {usage && (usage.prompt > 0 || usage.completion > 0) && (
         <span className={styles.tokens} title={`输入 ${usage.prompt} tokens · 输出 ${usage.completion} tokens`}>
           {formatTokens(usage.prompt)}&nbsp;↑&nbsp;{formatTokens(usage.completion)}&nbsp;↓
+        </span>
+      )}
+      {role === 'assistant' && totalTools > 0 && (
+        <span className={styles.tokens} title={`调用了 ${toolCount} 个工具${skillCount > 0 ? `、${skillCount} 个技能` : ''}`}>
+          · {totalTools} 个工具
+        </span>
+      )}
+      {role === 'assistant' && thinkCount > 0 && (
+        <span className={styles.tokens} title={`${thinkCount} 次思考`}>
+          · {thinkCount} 次思考
         </span>
       )}
       {role === 'user' && (

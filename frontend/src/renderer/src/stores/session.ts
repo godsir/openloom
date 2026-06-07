@@ -82,8 +82,36 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
     }
     try {
       const result = await loomRpc<{ messages: any[] }>('session.messages', { session_id: id })
-      const msgs = (result.messages || [])
-        .filter((m: any) => m.role !== 'tool' && m.role !== 'Tool') // tool messages already shown as assistant blocks
+      const allMsgs: any[] = result.messages || []
+
+      // Merge tool_result content into the preceding assistant message so
+      // parseContentParts can pair tool_call ↔ tool_result within one array.
+      for (let i = 0; i < allMsgs.length; i++) {
+        const m = allMsgs[i]
+        const role = typeof m.role === 'string' ? m.role.toLowerCase() : ''
+        if (role === 'tool' && i > 0) {
+          // Find the preceding assistant message (skip over other tool msgs)
+          let prev = i - 1
+          while (prev >= 0) {
+            const pr = typeof allMsgs[prev].role === 'string' ? allMsgs[prev].role.toLowerCase() : ''
+            if (pr === 'assistant') break
+            prev--
+          }
+          if (prev >= 0) {
+            const assistantContent = allMsgs[prev].content
+            if (Array.isArray(assistantContent)) {
+              const toolParts = Array.isArray(m.content) ? m.content : []
+              assistantContent.push(...toolParts)
+            }
+          }
+        }
+      }
+
+      const rawMsgs = allMsgs
+        .filter((m: any) => {
+          const role = typeof m.role === 'string' ? m.role.toLowerCase() : ''
+          return role !== 'tool'
+        })
         .map((m: any, i: number) => ({
         id: `hist-${id}-${i}`,
         role: parseRole(m.role),
@@ -98,7 +126,55 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
           contextWindow: m.usage.context_window || 0,
         } : undefined,
       }))
+
+      // Merge consecutive assistant messages into one (agent loop iterations
+      // produce multiple Assistant rows per turn; the frontend expects a single
+      // message with all blocks combined).
+      const msgs = rawMsgs.reduce((acc: typeof rawMsgs, msg) => {
+        if (msg.role === 'assistant' && acc.length > 0 && acc[acc.length - 1].role === 'assistant') {
+          const prev = acc[acc.length - 1]
+          prev.blocks = [...prev.blocks, ...msg.blocks]
+          // Use the last message's usage (final turn has complete token count)
+          if (msg.usage) prev.usage = msg.usage
+          prev.timestamp = msg.timestamp
+          return acc
+        }
+        acc.push(msg)
+        return acc
+      }, [] as typeof rawMsgs)
+
       ;(get() as any).hydrateMessages?.(id, msgs)
+
+      // Rebuild sessionCumulative from hydrated message history
+      const store = get() as any
+      store.clearSessionUsage?.(id)
+      store.clearSessionCumulative?.(id)
+      let latestUsage: any = null
+      for (const m of msgs) {
+        if (m.role === 'assistant' && m.usage) {
+          latestUsage = m.usage
+          store.accumulateSessionUsage?.(id, {
+            prompt: m.usage.prompt || 0,
+            completion: m.usage.completion || 0,
+            model: m.usage.model || '',
+            contextWindow: m.usage.contextWindow || 0,
+            cached: m.usage.cached || 0,
+            cacheRead: m.usage.cacheRead || 0,
+            cacheWrite: m.usage.cacheWrite || 0,
+          })
+        }
+      }
+      if (latestUsage) {
+        store.setSessionUsage?.(id, {
+          prompt: latestUsage.prompt || 0,
+          completion: latestUsage.completion || 0,
+          model: latestUsage.model || store.currentModel || '',
+          contextWindow: latestUsage.contextWindow || 0,
+          cached: latestUsage.cached || 0,
+          cacheRead: latestUsage.cacheRead || 0,
+          cacheWrite: latestUsage.cacheWrite || 0,
+        })
+      }
     } catch {
       ;(get() as any).addToast?.({ type: 'error', message: '加载消息历史失败' })
     }
@@ -275,10 +351,13 @@ function parseContentParts(content: any, sessionId: string, port: number): any[]
 
     // Serde tagged enum format (snake_case): { "text": { "text": "..." } }
     if ('thinking' in part) {
-      const text = part.thinking?.text || ''
+      const thinking = part.thinking
+      const text = typeof thinking === 'string' ? thinking : (thinking?.text || '')
       blocks.push({ type: 'thinking', content: text, sealed: true })
     } else if ('text' in part) {
-      const text = part.text?.text || ''
+      const t = part.text
+      // Handle both { text: "string" } and { text: { text: "string" } }
+      const text = typeof t === 'string' ? t : (t?.text || t?.content || '')
       blocks.push({ type: 'text', html: sanitizeHtml(renderMarkdown(text)), source: text })
     } else if ('tool_call' in part) {
       const tc = part.tool_call
@@ -323,10 +402,26 @@ function parseContentParts(content: any, sessionId: string, port: number): any[]
         const content = tr.content
         const resultText = typeof content === 'string' ? content : (content != null ? JSON.stringify(content) : '')
         // Find the last shell block without a result and attach it
+        let paired = false
         for (let j = blocks.length - 1; j >= 0; j--) {
           if (blocks[j].type === 'shell' && !blocks[j].result) {
             blocks[j].result = resultText
+            paired = true
             break
+          }
+        }
+        // If no matching shell block found, create a standalone entry
+        if (!paired) {
+          const toolName = tr.name || 'unknown'
+          if (toolName !== 'request_tools') {
+            blocks.push({
+              type: 'shell',
+              toolName,
+              status: 'done',
+              args: {},
+              result: resultText,
+              sealed: true,
+            })
           }
         }
       }
@@ -408,8 +503,9 @@ function parseContentParts(content: any, sessionId: string, port: number): any[]
       }
       continue
     } else {
-      // Unknown format — render as text
-      const text = JSON.stringify(part)
+      // Unknown format — try to extract text content before falling back to JSON
+      const extracted = part.content || part.text || part.data || ''
+      const text = typeof extracted === 'string' ? extracted : JSON.stringify(part)
       blocks.push({ type: 'text', html: sanitizeHtml(renderMarkdown(text)), source: text })
     }
   }

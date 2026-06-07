@@ -2,12 +2,12 @@ import type { Message } from '../../stores/chat'
 import { useStore } from '../../stores'
 import FileBlock from './FileBlock'
 import MessageFooterActions from './MessageFooterActions'
-import { useCallback, useRef, useEffect } from 'react'
+import { useCallback, useRef, useEffect, memo } from 'react'
 import styles from './UserMessage.module.css'
 
 const IMAGE_EXT = /\.(png|jpg|jpeg|gif|webp|svg|bmp|ico)(\?.*)?$/i
 
-export default function UserMessage({ message }: { message: Message }) {
+const UserMessage = memo(function UserMessage({ message }: { message: Message }) {
   const textBlock = message.blocks.find((b) => b.type === 'text')
   const imageBlocks = message.blocks.filter((b) => b.type === 'image')
   const fileBlocks = message.blocks.filter((b) => b.type === 'file')
@@ -91,7 +91,12 @@ export default function UserMessage({ message }: { message: Message }) {
       </div>
     </div>
   )
-}
+}, (prev, next) => {
+  return prev.message.id === next.message.id &&
+    prev.message.blocks === next.message.blocks
+})
+
+export default UserMessage
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

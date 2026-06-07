@@ -104,11 +104,21 @@ impl ContextAssembler {
 
     /// Keep the most recent messages that fit within `max_tokens`, scanning
     /// from newest to oldest. Uses tiktoken for precise token counting.
+    ///
+    /// `Tool`-role messages (standalone tool-result rows) are excluded
+    /// entirely — their content is already reflected in the assistant's
+    /// text reply, and sending them causes orphaned-tool-message 400 errors.
     fn truncate_history(&self, history: &[Message], max_tokens: usize) -> Vec<Message> {
         let bpe = bpe();
         let mut token_count = 0usize;
         let mut included: Vec<usize> = Vec::new();
         for (i, msg) in history.iter().enumerate().rev() {
+            // Skip standalone tool-result messages — they are not needed for
+            // continuation context and produce invalid sequences when paired
+            // assistant+tool_call messages are absent or truncated away.
+            if msg.role == loom_types::Role::Tool {
+                continue;
+            }
             let text = msg.text_content();
             let msg_tokens = bpe.encode_with_special_tokens(&text).len();
             if token_count + msg_tokens > max_tokens {
@@ -125,6 +135,7 @@ impl ContextAssembler {
                 msg.compact_for_llm();
                 msg
             })
+            .filter(|msg| !msg.content.is_empty())
             .collect()
     }
 

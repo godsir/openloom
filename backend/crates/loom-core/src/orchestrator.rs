@@ -1634,12 +1634,23 @@ impl Orchestrator {
         );
 
         let request = loom_types::CompletionRequest {
-            messages: vec![Message {
-                role: Role::User,
-                content: vec![ContentPart::Text { text: prompt }],
-                timestamp: chrono::Utc::now(),
-                usage: None,
-            }],
+            messages: vec![
+                Message {
+                    role: Role::System,
+                    content: vec![ContentPart::Text {
+                        text: "You are a concise title editor. Output only the title, nothing else.".to_string(),
+                    }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+                Message {
+                    role: Role::User,
+                    // /no_thinking disables extended reasoning on Qwen3 models
+                    content: vec![ContentPart::Text { text: format!("/no_thinking\n{}", prompt) }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+            ],
             tools: vec![],
             tool_choice: None,
             prompt: String::new(),
@@ -1659,19 +1670,31 @@ impl Orchestrator {
                 .ok_or_else(|| anyhow::anyhow!("No cloud client configured"))?
         };
         let response = client.complete(request).await?;
-        let title = response.text.trim().to_string();
+        let raw_title = response.text.trim().to_string();
+        tracing::info!(session_id, raw_title = %raw_title, "auto_title: LLM returned");
 
-        // Sanitize: keep only Chinese chars, letters, digits, spaces
-        let title: String = title
+        // Strip surrounding quotes/brackets the model sometimes adds,
+        // then keep only printable non-control characters, collapse whitespace.
+        let stripped = raw_title
+            .trim_matches(|c| matches!(c, '"' | '\'' | '「' | '」' | '《' | '》' | '【' | '】' | '(' | ')' | '（' | '）'))
+            .trim();
+        let title: String = stripped
             .chars()
-            .filter(|c| c.is_alphanumeric() || *c == ' ' || ('\u{4e00}'..='\u{9fff}').contains(c))
-            .take(10)
+            .filter(|c| !c.is_control())
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(20)
             .collect();
 
         if title.is_empty() {
+            tracing::warn!(session_id, raw_title = %raw_title, "auto_title: sanitized title is empty");
             anyhow::bail!("generated empty title");
         }
 
+        tracing::info!(session_id, title = %title, "auto_title: final title");
         Ok(title)
     }
 

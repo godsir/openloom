@@ -123,10 +123,19 @@ impl Message {
             .join("")
     }
 
-    /// Strip display-only content before sending to the LLM.
+    /// Strip tool/skill invocation details before sending history to the LLM.
     ///
-    /// - Removes `Thinking` blocks (the LLM doesn't need its own prior reasoning).
-    /// - Truncates large `ToolResult` blocks (>2000 chars) to a compact summary.
+    /// When assembling context for a *continuation* turn we only need the
+    /// human-readable text of each prior message — the model does not need to
+    /// see how it previously called tools or what they returned.  Keeping
+    /// those details wastes tokens and can produce invalid message sequences
+    /// (orphaned `tool` role messages) that cause HTTP 400 errors on
+    /// OpenAI-compatible providers.
+    ///
+    /// Specifically this removes:
+    /// - `Thinking` blocks — the model's prior reasoning is not needed.
+    /// - `ToolCall` parts — the call metadata is irrelevant for continuation.
+    /// - `ToolResult` parts — already summarised in the assistant's text reply.
     ///
     /// The full content is preserved in the database for frontend display;
     /// this only affects the in-memory copy assembled for context.
@@ -135,30 +144,10 @@ impl Message {
 
         for part in self.content.drain(..) {
             match part {
-                ContentPart::Thinking { .. } => {
-                    // Drop thinking — not needed for LLM context
-                }
-                ContentPart::ToolResult {
-                    ref result,
-                    tool_call_id,
-                    name,
-                } if result.len() > 2000 => {
-                    let char_cut = result
-                        .char_indices()
-                        .nth(500)
-                        .map(|(i, _)| i)
-                        .unwrap_or(result.len());
-                    let truncated = format!(
-                        "{}...\n[{} chars truncated from context]",
-                        &result[..char_cut],
-                        result.len() - char_cut
-                    );
-                    new_content.push(ContentPart::ToolResult {
-                        tool_call_id,
-                        name,
-                        result: truncated,
-                    });
-                }
+                // Drop these entirely — not needed for LLM context.
+                ContentPart::Thinking { .. }
+                | ContentPart::ToolCall { .. }
+                | ContentPart::ToolResult { .. } => {}
                 other => {
                     new_content.push(other);
                 }

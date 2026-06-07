@@ -184,6 +184,18 @@ impl OpenAIClient {
             )
         };
 
+        // Some thinking/reasoning models (e.g. Qwen3) put their response in
+        // `reasoning_content` and leave `content` empty in non-streaming mode.
+        // Fall back to reasoning_content so callers always get usable text.
+        let raw_text = if raw_text.is_empty() {
+            choice["reasoning_content"]
+                .as_str()
+                .unwrap_or("")
+                .to_string()
+        } else {
+            raw_text
+        };
+
         let mut tool_calls: Vec<ToolCall> = choice["tool_calls"]
             .as_array()
             .map(|arr| {
@@ -249,6 +261,10 @@ impl OpenAIClient {
                     if !name.is_empty() {
                         obj["name"] = serde_json::json!(name);
                     }
+                } else {
+                    // Empty tool message — fall back to user message with empty text
+                    obj["role"] = serde_json::json!("user");
+                    obj["content"] = serde_json::json!("");
                 }
                 return obj;
             }
@@ -312,13 +328,18 @@ impl OpenAIClient {
             let all_texts: Vec<&str> = texts.iter().copied()
                 .chain(thinking_texts.iter().map(|s| s.as_str()))
                 .collect();
+            // When all text content is empty (e.g. image-only message after
+            // stripping, or a stale empty user turn from DB) use a single
+            // space instead of "" — empty-string content causes HTTP 400 on
+            // most OpenAI-compatible providers.
             if all_texts.is_empty() && tc_vals.is_empty() {
-                obj["content"] = serde_json::json!("");
+                obj["content"] = serde_json::json!(" ");
             } else if !all_texts.is_empty() {
                 obj["content"] = serde_json::json!(all_texts.join("\n"));
                 if !tc_vals.is_empty() { obj["tool_calls"] = serde_json::json!(tc_vals); }
             } else {
-                obj["content"] = serde_json::Value::Null;
+                // Tool-call-only assistant message — omit content entirely
+                // (some providers reject both null and "" when tool_calls present)
                 obj["tool_calls"] = serde_json::json!(tc_vals);
             }
             obj
@@ -488,23 +509,15 @@ impl CloudClient for OpenAIClient {
             .send()
             .await?;
         if !resp.status().is_success() {
-            // Log just the tools and last 2 messages for debugging
-            let tools_json = serde_json::to_string_pretty(&req.tools).unwrap_or_default();
-            let last_msgs: Vec<_> = messages.iter().rev().take(2).collect();
-            let msgs_json = serde_json::to_string_pretty(&last_msgs).unwrap_or_default();
-            tracing::error!(
-                status = %resp.status(),
-                body_len = serde_json::to_string(&body).unwrap_or_default().len(),
-                tool_count = req.tools.len(),
-                "API 400 — tools:\n{}\nlast_msgs:\n{}",
-                tools_json,
-                msgs_json
-            );
-            anyhow::bail!(
-                "API error {}: {}",
-                resp.status(),
-                resp.text().await.unwrap_or_default()
-            );
+            // Log ALL message shapes to find the real problem
+            let shapes: Vec<serde_json::Value> = messages.iter().enumerate().map(|(i, m)| {
+                let c = &m["content"];
+                let ct = if c.is_array() { "arr" } else if c.is_string() { "str" } else if c.is_null() { "nil" } else { "?" };
+                serde_json::json!({"i":i,"r":m["role"],"ct":ct,"tc":m.get("tool_calls").is_some(),"tcid":m.get("tool_call_id").is_some()})
+            }).collect();
+            tracing::error!(status=%resp.status(), n=shapes.len(), shapes=%serde_json::to_string(&shapes).unwrap_or_default(), "API400");
+            if messages.len() > 3 { tracing::error!(msg3=%serde_json::to_string(&messages[3]).unwrap_or_default(), "API400 msg[3]"); }
+            anyhow::bail!("API error {}: {}", resp.status(), resp.text().await.unwrap_or_default());
         }
         use futures::StreamExt;
         let mut stream = resp.bytes_stream();

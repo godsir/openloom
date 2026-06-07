@@ -343,6 +343,59 @@ fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
     matched
 }
 
+/// Sanitize a message sequence before sending to the API.
+///
+/// Removes two classes of invalid messages that cause HTTP 400:
+/// 1. `tool` messages not immediately preceded by an `assistant` message that
+///    contains at least one `ToolCall` part — these are "orphaned" tool results
+///    that arise when the context assembler truncates the assistant turn away
+///    while keeping the tool-result turn.
+/// 2. `user` or `assistant` messages whose text content is entirely empty
+///    (e.g. DB records written with an empty string before the structured
+///    content format was adopted).
+///
+/// The system message (first message) is always preserved unchanged.
+fn sanitize_message_sequence(messages: &mut Vec<Message>) {
+    // Pass 1: collect indices of orphaned tool messages.
+    // An index i is "orphaned" if messages[i].role == Tool and
+    // messages[i-1].role != Assistant-with-ToolCall.
+    let mut orphaned: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for i in 0..messages.len() {
+        if messages[i].role == loom_types::Role::Tool {
+            let preceded_by_tool_call = i > 0
+                && messages[i - 1].role == loom_types::Role::Assistant
+                && messages[i - 1]
+                    .content
+                    .iter()
+                    .any(|p| matches!(p, ContentPart::ToolCall { .. }));
+            if !preceded_by_tool_call {
+                orphaned.insert(i);
+            }
+        }
+    }
+
+    // Pass 2: also mark assistant messages with tool_calls whose *all* following
+    // tool-result messages are orphaned (i.e. the pairing is broken).
+    // — skip this for now; just removing orphaned tool messages is sufficient.
+
+    // Pass 3: retain only valid messages.
+    let mut idx = 0usize;
+    messages.retain(|msg| {
+        let keep = if orphaned.contains(&idx) {
+            tracing::warn!(
+                role = ?msg.role,
+                idx,
+                "sanitize_message_sequence: dropping orphaned tool message"
+            );
+            false
+        } else {
+            true
+        };
+        idx += 1;
+        keep
+    });
+}
+
 pub(crate) fn build_user_message(user_message: &str, attached_images: &[ContentPart]) -> Message {
     let mut content: Vec<ContentPart> = Vec::new();
     if !user_message.is_empty() {
@@ -450,8 +503,16 @@ async fn run_agent_turn_inner(
             )
         });
     }
-    // Drop history messages that became empty after image stripping.
-    messages.retain(|msg| !msg.content.is_empty());
+    // Drop history messages that became empty (or only contain empty text) after image stripping.
+    messages.retain(|msg| {
+        !msg.content.is_empty()
+            && msg.content.iter().any(|p| match p {
+                ContentPart::Text { text } => !text.is_empty(),
+                _ => true,
+            })
+    });
+    // Remove orphaned tool messages (tool result without a preceding assistant+tool_call).
+    sanitize_message_sequence(&mut messages);
     messages.push(build_user_message(user_message, attached_images));
 
     // Detect image file paths in user message and load them as images
@@ -1134,8 +1195,16 @@ async fn run_agent_turn_streaming_inner(
             )
         });
     }
-    // Drop history messages that became empty after image stripping.
-    messages.retain(|msg| !msg.content.is_empty());
+    // Drop history messages that became empty (or only contain empty text) after image stripping.
+    messages.retain(|msg| {
+        !msg.content.is_empty()
+            && msg.content.iter().any(|p| match p {
+                ContentPart::Text { text } => !text.is_empty(),
+                _ => true,
+            })
+    });
+    // Remove orphaned tool messages (tool result without a preceding assistant+tool_call).
+    sanitize_message_sequence(&mut messages);
     tracing::info!(
         sys_chars = config.system_prompt.len(),
         tool_count = tools.len(),

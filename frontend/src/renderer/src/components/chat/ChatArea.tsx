@@ -12,8 +12,12 @@ const EMPTY: never[] = []
 
 export default function ChatArea() {
   const sessionId = useStore(s => s.currentSessionId)
+  // Use a stable selector: only trigger re-render when the array reference or
+  // its element references actually change (shallow compare).
   const messagesBySession = useStore(s => s.messagesBySession)
-  const messages = sessionId ? (messagesBySession.get(sessionId) ?? EMPTY) : EMPTY
+  const messages: any[] = useMemo(() => {
+    return sessionId ? (messagesBySession.get(sessionId) ?? EMPTY) : EMPTY
+  }, [sessionId, messagesBySession])
   const streamingIds = useStore(s => s.streamingSessionIds)
   const isStreaming = sessionId ? streamingIds.has(sessionId) : false
   const inlineErrors = useStore(s => s.inlineErrors)
@@ -21,7 +25,12 @@ export default function ChatArea() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
   const [showScrollBtn, setShowScrollBtn] = useState(false)
-  const timelineAnchors = useMemo(() => buildTimelineAnchors(messages as any[]), [messages])
+
+  // Track message count for efficient auto-scroll (avoids full array dep)
+  const msgCount = messages.length
+  const lastMsgBlocksLen = messages.length > 0 ? messages[messages.length - 1].blocks?.length ?? 0 : 0
+
+  const timelineAnchors = useMemo(() => buildTimelineAnchors(messages as any[]), [msgCount])
   const lightboxSrc = useStore(s => s.lightbox.lightboxSrc)
   const openLightbox = useStore(s => s.openLightbox)
   const closeLightbox = useStore(s => s.closeLightbox)
@@ -30,7 +39,7 @@ export default function ChatArea() {
   useEffect(() => {
     if (!autoScrollRef.current || !scrollRef.current) return
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-  }, [messages])
+  }, [msgCount, lastMsgBlocksLen])
 
   // Reset auto-scroll flag on session switch
   useEffect(() => {
@@ -94,11 +103,16 @@ export default function ChatArea() {
         </div>
       ) : (
         <div className={styles.chatScroll} ref={scrollRef} onScroll={handleScroll}>
-          {messages.map(msg => (
+          {messages.map((msg, idx) => (
             <div key={msg.id} className={styles.messageGap} data-message-id={msg.id}>
               {msg.role === 'user'
                 ? <UserMessage message={msg} />
-                : <AssistantMessage message={msg} sessionId={sessionId} />
+                : <AssistantMessage
+                    message={msg}
+                    sessionId={sessionId}
+                    isStreaming={isStreaming}
+                    isStreamingActive={isStreaming && idx === messages.length - 1}
+                  />
               }
             </div>
           ))}

@@ -1,11 +1,15 @@
 import type { Message, ContentBlock } from '../stores/chat'
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
 // Parse user message content blocks from raw text + attachments
 export function parseUserContent(text: string, files?: string[]): ContentBlock[] {
   const blocks: ContentBlock[] = []
 
   if (text) {
-    blocks.push({ type: 'text', html: text, source: text })
+    blocks.push({ type: 'text', html: escapeHtml(text).replace(/\n/g, '<br>'), source: text })
   }
 
   if (files) {

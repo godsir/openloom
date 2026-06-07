@@ -27,7 +27,7 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
   const msgId = crypto.randomUUID()
   const blocks: any[] = []
   if (content) {
-    blocks.push({ type: 'text', html: escapeHtml(content), source: content })
+    blocks.push({ type: 'text', html: escapeHtml(content).replace(/\n/g, '<br>'), source: content })
   }
   for (const f of attachedFiles) {
     if (f.mimeType.startsWith('image/')) {
@@ -57,10 +57,10 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
   const safetyTimer = setTimeout(() => {
     const buf = streamBufferManager.snapshot(sid)
     if (buf && buf.messageId === aiMsgId) {
-      useStore.getState().removeStreamingSession(sid)
-      streamBufferManager.clear(sid)
+      // Do a final flush before clearing so truncated content is preserved
+      streamBufferManager.handleStreamEnd(sid)
     }
-  }, 180_000)
+  }, 300_000) // 5 min safety timeout for long agent loops
 
   // Pet: user sends message → run right excitedly → wait for response
   import('./pet-sync').then(m => m.sendPetState('runRight'))
@@ -111,8 +111,9 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
     clearTimeout(safetyTimer)
     const buf = streamBufferManager.snapshot(sid)
     if (buf && buf.messageId === aiMsgId) {
-      useStore.getState().removeStreamingSession(sid)
-      streamBufferManager.clear(sid)
+      // stream_end notification may not have arrived yet (or at all on error)
+      // — do a final flush to preserve any accumulated content
+      streamBufferManager.handleStreamEnd(sid)
     }
     // Update current session's modified time in sidebar
     const now = new Date().toISOString()

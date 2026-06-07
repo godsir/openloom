@@ -100,7 +100,7 @@ export default function InputArea() {
   }, [sessionId])
 
   useEffect(() => {
-    if (sessionId && (text || attachedFiles.length > 0)) {
+    if (sessionId) {
       const t = setTimeout(() => saveDraft(sessionId, { text, attachedFiles }), 300)
       return () => clearTimeout(t)
     }

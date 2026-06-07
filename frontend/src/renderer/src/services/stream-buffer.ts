@@ -106,7 +106,10 @@ class StreamBufferManager {
 
   handleStreamDelta(sessionId: string, delta: string): void {
     // Ignore deltas arriving after stream has ended (late WebSocket frames)
-    if (!useStore.getState().streamingSessionIds.has(sessionId)) return
+    if (!useStore.getState().streamingSessionIds.has(sessionId)) {
+      console.warn('[stream-buffer] Delta dropped — session not streaming:', sessionId, 'delta:', delta.slice(0, 40))
+      return
+    }
     const buf = this.ensureBuffer(sessionId)
     // Defensive: if buffer has no messageId, stream wasn't properly started
     if (!buf.messageId) return
@@ -266,7 +269,7 @@ class StreamBufferManager {
     const buf = this.ensureBuffer(sessionId)
     if (buf.rafId) { cancelAnimationFrame(buf.rafId); buf.rafId = null }
     buf.inThinking = false
-    this.flush(buf, sessionId)
+    this.flush(buf, sessionId, true)
     const usage = useStore.getState().usageBySession.get(sessionId)
     if (buf.messageId && usage && (usage.prompt || usage.completion)) {
       useStore.getState().setMessageUsage(sessionId, buf.messageId, { ...usage })
@@ -280,7 +283,7 @@ class StreamBufferManager {
 
   private async maybeAutoTitle(sessionId: string): Promise<void> {
     try {
-      const enabled = await window.loom.getPreference<boolean>('autoTitle', false)
+      const enabled = await window.loom.getPreference<boolean>('autoTitle', true)
       if (!enabled) return
       // Only fire for untitled sessions
       const sessions = useStore.getState().sessions
@@ -290,9 +293,11 @@ class StreamBufferManager {
       const { loomRpc: rpc } = await import('../services/jsonrpc')
       const result = await rpc<{ title: string }>('session.auto_title', { session_id: sessionId })
       if (result?.title) {
-        useStore.getState().renameSession(sessionId, result.title)
+        // Backend already persisted the rename; just refresh the sidebar list silently.
+        await useStore.getState().loadSessions()
       }
-    } catch {
+    } catch (e) {
+      console.warn('[auto-title] failed:', e)
       // Best-effort, silently ignore failures
     }
   }
@@ -346,7 +351,7 @@ class StreamBufferManager {
     }
   }
 
-  private flush(buf: BufferState, sessionId: string): void {
+  private flush(buf: BufferState, sessionId: string, final = false): void {
     if (!buf.messageId) return
 
     const blocks: Array<{ type: string; [key: string]: unknown }> = []
@@ -355,6 +360,7 @@ class StreamBufferManager {
       skillCalls: buf.skillCalls.length,
       thinking: buf.thinkingAcc.length > 0,
       text: buf.textAcc.length > 0,
+      final,
     })
 
     // Display order: vision → thinking → shells → skills → images → text
@@ -430,7 +436,7 @@ class StreamBufferManager {
     }
 
     if (buf.textAcc) {
-      const html = this.renderMarkdown(buf.textAcc)
+      const html = this.renderMarkdown(buf.textAcc, final)
       blocks.push({ type: 'text', html, source: buf.textAcc })
     }
 
@@ -448,7 +454,10 @@ class StreamBufferManager {
   }
 
   // Render markdown at newline boundaries to avoid flicker (tables, code fences).
-  private renderMarkdown(source: string): string {
+  // When final=true (stream end), render the entire source through markdown
+  // to avoid leaving the last line as escaped HTML.
+  private renderMarkdown(source: string, final = false): string {
+    if (final) return sanitizeHtml(renderMarkdown(source))
     // Only render complete lines — incomplete last line stays as source
     const lastNewline = source.lastIndexOf('\n')
     const stable = lastNewline >= 0 ? source.slice(0, lastNewline) : ''

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, memo } from 'react'
 import type { Message } from '../../stores/chat'
 import { useStore } from '../../stores'
 import ThinkingBlock from './ThinkingBlock'
@@ -13,15 +13,19 @@ import MessageFooterActions from './MessageFooterActions'
 import TypingIndicator from '../shared/TypingIndicator'
 import styles from './AssistantMessage.module.css'
 
-export default function AssistantMessage({ message, sessionId }: { message: Message; sessionId: string | null }) {
+const AssistantMessage = memo(function AssistantMessage({
+  message,
+  sessionId,
+  isStreaming = false,
+  isStreamingActive = false,
+}: {
+  message: Message
+  sessionId: string | null
+  isStreaming?: boolean
+  isStreamingActive?: boolean
+}) {
   const openLightbox = useStore(s => s.openLightbox)
   const agent = useStore(s => sessionId ? s.getSessionAgent(sessionId) : undefined)
-  const messages = useStore(s => sessionId ? (s.messagesBySession.get(sessionId) ?? []) : [])
-
-  const isStreaming = useStore(s => sessionId ? s.streamingSessionIds.has(sessionId) : false)
-  // Only show streaming indicator on the LAST assistant message in an active stream
-  const isLastAssistant = messages.length > 0 && messages[messages.length - 1].id === message.id
-  const isStreamingActive = isStreaming && isLastAssistant
 
   const avatarContent = useMemo(() => {
     if (agent?.avatar) {
@@ -64,7 +68,6 @@ export default function AssistantMessage({ message, sessionId }: { message: Mess
                     src={src}
                     alt={(block.name as string) || 'image'}
                     className={styles.imageBlockImg}
-                    style={{ cursor: src ? 'zoom-in' : 'default' }}
                     onClick={() => {
                       console.log('[lightbox] assistant img click, src len=', src?.length)
                       if (src) openLightbox(src)
@@ -98,9 +101,17 @@ export default function AssistantMessage({ message, sessionId }: { message: Mess
           </div>
         )}
         {message.blocks.length > 0 && (
-          <MessageFooterActions messageId={message.id} role="assistant" timestamp={message.timestamp} usage={message.usage} />
+          <MessageFooterActions messageId={message.id} role="assistant" timestamp={message.timestamp} usage={message.usage} blocks={message.blocks} />
         )}
       </div>
     </div>
   )
-}
+}, (prev, next) => {
+  return prev.message.id === next.message.id &&
+    prev.message.blocks === next.message.blocks &&
+    prev.sessionId === next.sessionId &&
+    prev.isStreaming === next.isStreaming &&
+    prev.isStreamingActive === next.isStreamingActive
+})
+
+export default AssistantMessage

@@ -79,7 +79,8 @@ export default function ContextRing() {
     DEFAULT_MAX_TOKENS
 
   const pct = Math.min((total / scale) * 100, 100)
-  const circ = 2 * Math.PI * 7
+  const RADIUS = 13
+  const circ = 2 * Math.PI * RADIUS
   const offset = circ * (1 - pct / 100)
   const color = pct > 80 ? 'var(--red)' : pct > 50 ? 'var(--amber)' : 'var(--accent)'
 
@@ -99,14 +100,14 @@ export default function ContextRing() {
 
   return (
     <div className={styles.wrapper}>
-      <svg width="18" height="18" className={styles.ring}>
-        <circle cx="9" cy="9" r="7" fill="none" stroke="rgba(34,211,238,0.12)" strokeWidth="2" />
-        <circle cx="9" cy="9" r="7" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round"
+      <svg width="32" height="32" className={styles.ring}>
+        <circle cx="16" cy="16" r="13" fill="none" stroke="rgba(34,211,238,0.12)" strokeWidth="3" />
+        <circle cx="16" cy="16" r="13" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round"
           strokeDasharray={circ} strokeDashoffset={offset}
           className={styles.ringProgress} />
       </svg>
       <span className={styles.centerLabel}>
-        {total >= 1000000 ? `${(total / 1000000).toFixed(1)}M` : total >= 1000 ? `${(total / 1000).toFixed(0)}k` : total}
+        {pct >= 100 ? '100%' : pct >= 10 ? `${Math.round(pct)}%` : `${pct.toFixed(1)}%`}
       </span>
 
       <div className={styles.tooltip}>

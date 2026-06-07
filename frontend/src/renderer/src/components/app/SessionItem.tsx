@@ -38,6 +38,8 @@ export default function SessionItem({ session }: { session: SessionSummary }) {
   const handleClick = () => {
     if (selectionMode) {
       toggleSessionSelect(sid)
+    } else if (isActive) {
+      useStore.getState().setCurrentSessionId(null)
     } else {
       switchSession(sid)
     }
