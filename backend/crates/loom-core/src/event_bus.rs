@@ -86,6 +86,14 @@ pub enum AgentEvent {
     },
     /// Memory (KG/cognitions) was updated for a session — frontend can refresh KG display.
     MemoryUpdated { session_id: String },
+    /// A new plan was created.
+    PlanCreated { plan_id: String, title: String },
+    /// A plan was updated.
+    PlanUpdated { plan_id: String },
+    /// A session goal was set.
+    GoalSet { session_id: String, description: String },
+    /// A todo item status changed.
+    TodoStatusChanged { session_id: String, todo_id: String, status: String },
 }
 
 /// A lightweight event bus using tokio broadcast.

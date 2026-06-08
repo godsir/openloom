@@ -85,6 +85,9 @@ function filePathPlugin(md: MarkdownIt) {
   }
 }
 
+// File path pattern for extracting file paths from fence info strings
+const FILE_PATH_RE = /([A-Za-z]:\\(?:\S+?\\)*\S+\.\w{1,10}|\/(?:\S+\/)+\S+\.\w{1,10})/
+
 // Mermaid diagram support — outputs a placeholder div that TextBlock's
 // useEffect replaces with a rendered SVG via the lazy-loaded mermaid library.
 function mermaidPlugin(md: MarkdownIt) {
@@ -99,7 +102,17 @@ function mermaidPlugin(md: MarkdownIt) {
       const escaped = md.utils.escapeHtml(token.content)
       return `<div class="mermaid-placeholder" data-mermaid-source="${escaped}"><pre><code class="language-mermaid">${escaped}</code></pre></div>`
     }
-    return defaultFence(tokens, idx, options, env, self)
+
+    // Extract file path from fence info (e.g. "typescript /path/to/file.ts" or "python D:\code\file.py")
+    const fpMatch = info.match(FILE_PATH_RE)
+    const filePath = fpMatch ? fpMatch[1] : ''
+    const lang = filePath ? info.replace(fpMatch[0], '').trim() : info
+    const escaped = md.utils.escapeHtml(token.content)
+    const dataAttrs = filePath
+      ? ` data-file-path="${md.utils.escapeHtml(filePath)}"`
+      : ''
+
+    return `<div class="code-block-wrapper"${dataAttrs}><pre><code${lang ? ` class="language-${md.utils.escapeHtml(lang)}"` : ''}>${escaped}</code></pre></div>`
   }
 }
 

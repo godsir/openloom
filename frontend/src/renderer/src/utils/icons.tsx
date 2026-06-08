@@ -67,6 +67,11 @@ export {
   Pause as IconPause,
   Play as IconPlay,
   StopCircle as IconStopCircle,
+  ArrowLeft as IconArrowLeft,
+  Save as IconSave,
+  MoreHorizontal as IconMoreHorizontal,
+  FilePlus as IconFilePlus,
+  FolderOpen as IconFolderOpen,
 } from 'lucide-react'
 
 export function IconStarFilled({ size = 16, className = '' }: { size?: number; className?: string }) {

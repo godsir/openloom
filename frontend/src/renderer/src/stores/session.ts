@@ -25,6 +25,7 @@ export interface SessionSlice {
   pinnedIds: Set<string>
   selectedSessionIds: Set<string>
   sessionWorkspaces: Record<string, string>
+  defaultWorkspace: string | null
   setSessions: (sessions: SessionSummary[]) => void
   setCurrentSessionId: (id: string | null) => void
   createSession: () => Promise<string>
@@ -49,6 +50,7 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
   pinnedIds: new Set(),
   selectedSessionIds: new Set(),
   sessionWorkspaces: {},
+  defaultWorkspace: null,
 
   setSessions: (sessions) => set({ sessions }),
   setCurrentSessionId: (currentSessionId) => set({ currentSessionId }),
@@ -262,7 +264,7 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
       agentName: s.agent_config_name || null,
       cwd: null,
       pinnedAt: null,
-    }))
+    })).filter((s: SessionSummary) => !(s.title || '').startsWith('[写]'))
     set({ sessions: mapped })
     // Restore agent bindings for all sessions
     const bindings: Record<string, string> = {}
@@ -284,7 +286,13 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
         // Ignore errors for individual sessions
       }
     }
-    set({ sessionWorkspaces: workspaces })
+    // Also load the default workspace (no session_id)
+    let defaultWorkspace: string | null = null
+    try {
+      const result = await loomRpc<{ workspace: string | null }>('workspace.get', {})
+      defaultWorkspace = result.workspace
+    } catch { /* ignore */ }
+    set({ sessionWorkspaces: workspaces, defaultWorkspace })
   },
 
   setSessionWorkspace: (id, path) => {

@@ -1171,3 +1171,99 @@ fn extract_text(html: &str) -> String {
     let text = dom.text().collect::<Vec<_>>().join(" ");
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
+
+// ============================================================================
+// ScheduleReminder — AI 自行判断何时调用，无需硬编码正则
+// ============================================================================
+
+use std::sync::Arc;
+
+pub struct ScheduleReminder {
+    pub cron: Arc<tokio::sync::RwLock<Option<Arc<loom_cron::CronScheduler>>>>,
+}
+
+#[async_trait]
+impl AgentTool for ScheduleReminder {
+    fn tool_name(&self) -> &str {
+        "schedule_reminder"
+    }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "schedule_reminder".into(),
+            description: concat!(
+                "Create a scheduled reminder or recurring task. ",
+                "Use this when the user asks you to remind them about something, ",
+                "set an alarm, create a recurring task, or schedule a future notification. ",
+                "Accept 'at' (one-time), 'daily' (every day at HH:MM), or 'interval' (every N minutes). ",
+                "Cron expression follows 7-field format: sec min hour day month day_of_week year."
+            ).into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Short name (max 20 chars)" },
+                    "description": { "type": "string", "description": "What to remind about — will be sent to the AI when triggered" },
+                    "cron_expression": { "type": "string", "description": "7-field cron: sec min hour day month day_of_week year. E.g. '0 0 9 * * * *' for daily 9am. For one-shot tasks, calculate the exact future time." },
+                    "kind": { "type": "string", "enum": ["at", "daily", "interval"], "description": "Schedule kind" }
+                },
+                "required": ["name", "cron_expression", "kind"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let name = arguments["name"].as_str().unwrap_or("Reminder");
+        let desc = arguments["description"].as_str().unwrap_or(name);
+        let cron_expr = arguments["cron_expression"].as_str().unwrap_or("");
+        let kind = arguments["kind"].as_str().unwrap_or("at");
+
+        if cron_expr.is_empty() {
+            return Ok(ToolResult {
+                content: "cron_expression is required".into(),
+                is_error: true,
+                structured_content: None,
+            });
+        }
+
+        let cron = self.cron.read().await;
+        let Some(scheduler) = cron.as_ref() else {
+            return Ok(ToolResult { content: "Cron scheduler not available".into(), is_error: true, structured_content: None });
+        };
+
+        match loom_cron::job::SessionMode::Isolated {
+            mode => {
+                match scheduler.add_job(name, cron_expr, desc, mode, 300).await {
+                    Ok(id) => {
+                        let label = match kind {
+                            "daily" => format!("每天执行"),
+                            "interval" => format!("定时执行"),
+                            _ => format!("一次性"),
+                        };
+                        Ok(ToolResult {
+                            content: format!("已创建{}定时任务「{}」(id: {})", label, name, &id[..8]),
+                            is_error: false,
+                            structured_content: Some(serde_json::json!({
+                                "id": id, "name": name, "cron": cron_expr
+                            })),
+                        })
+                    }
+                    Err(e) => Ok(ToolResult {
+                        content: format!("创建定时任务失败: {}", e),
+                        is_error: true,
+                        structured_content: None,
+                    }),
+                }
+            }
+        }
+    }
+
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
+}

@@ -155,12 +155,34 @@ export const FileDiffCard = memo(function FileDiffCard({ fileName, filePath, old
   const maxDelay = 2000
   const perLineDelay = totalLines > 0 ? Math.min(maxDelay / totalLines, 30) : 0
 
+  // Compute data attributes for inline selection context
+  const dataAttrs: Record<string, string> = {}
+  if (filePath) {
+    dataAttrs['data-file-path'] = filePath
+    if (diff && diff.hunks.length > 0) {
+      // Use first hunk's line numbers as start line
+      const firstHunk = diff.hunks[0]
+      const firstLine = firstHunk.lines[0]
+      if (firstLine) {
+        const sl = firstLine.type === 'add' ? firstLine.newNum : firstLine.oldNum
+        if (sl != null) dataAttrs['data-start-line'] = String(sl)
+      }
+      // Use last hunk's line numbers as end line
+      const lastHunk = diff.hunks[diff.hunks.length - 1]
+      const lastLine = lastHunk.lines[lastHunk.lines.length - 1]
+      if (lastLine) {
+        const el = lastLine.type === 'del' ? lastLine.oldNum : lastLine.newNum
+        if (el != null) dataAttrs['data-end-line'] = String(el)
+      }
+    }
+  }
+
   const handleOpenFile = () => {
     window.loom?.openFile?.(filePath)
   }
 
   return (
-    <div className={styles.diffCard}>
+    <div className={styles.diffCard} {...dataAttrs}>
       <div className={styles.diffCardHeader} onClick={() => setCollapsed(v => !v)}>
         <div className={styles.diffCardTitleRow}>
           <span className={styles.diffCardIcon}>

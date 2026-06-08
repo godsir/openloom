@@ -5,7 +5,7 @@ export interface LoomApi {
   getAppVersion: () => Promise<string>
   selectFolder: () => Promise<string | null>
   selectFiles: (options?: { filters?: { name: string; extensions: string[] }[] }) => Promise<string[]>
-  readFile: (filePath: string) => Promise<string | null>
+  readFile: (filePath: string, options?: { startLine?: number; endLine?: number }) => Promise<string | null>
   openExternal: (url: string) => Promise<void>
   openFolder: (filePath: string) => void
   openFile: (filePath: string) => Promise<void>
@@ -33,6 +33,11 @@ export interface LoomApi {
   onModelConfigChanged: (cb: () => void) => void
   /** Navigate to a route (triggered from tray menu). */
   onNavigate: (cb: (route: string) => void) => void
+  /** Workspace file write methods */
+  readWorkspaceImage: (filePath: string, workspaceRoot: string) => Promise<{ok: boolean; dataUrl?: string; mimeType?: string; message?: string}>
+  copyWriteDocumentAsRichText: (filePath: string, workspaceRoot: string, content: string) => Promise<{ok: boolean; message?: string}>
+  watchFile: (filePath: string, workspaceRoot: string) => Promise<{ok: boolean}>
+  unwatchFile: (filePath: string, workspaceRoot: string) => Promise<{ok: boolean}>
 }
 
 interface PetMeta {
@@ -55,7 +60,8 @@ contextBridge.exposeInMainWorld('loom', {
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   selectFiles: (options?: { filters?: { name: string; extensions: string[] }[] }) =>
     ipcRenderer.invoke('select-files', options),
-  readFile: (filePath: string) => ipcRenderer.invoke('read-file', filePath),
+  readFile: (filePath: string, options?: { startLine?: number; endLine?: number }) =>
+    ipcRenderer.invoke('read-file', filePath, options),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   openFolder: (filePath: string) => { ipcRenderer.invoke('open-folder', filePath) },
   openFile: (filePath: string) => ipcRenderer.invoke('open-file', filePath),
@@ -84,4 +90,8 @@ contextBridge.exposeInMainWorld('loom', {
   onNavigate: (cb: (route: string) => void) => {
     ipcRenderer.on('navigate', (_e, route: string) => cb(route))
   },
+  readWorkspaceImage: (filePath: string, workspaceRoot: string) => ipcRenderer.invoke('write:read-image', { filePath, workspaceRoot }),
+  copyWriteDocumentAsRichText: (filePath: string, workspaceRoot: string, content: string) => ipcRenderer.invoke('write:copy-rich-text', { filePath, workspaceRoot, content }),
+  watchFile: (filePath: string, workspaceRoot: string) => ipcRenderer.invoke('write:watch-file', { filePath, workspaceRoot }),
+  unwatchFile: (filePath: string, workspaceRoot: string) => ipcRenderer.invoke('write:unwatch-file', { filePath, workspaceRoot }),
 } satisfies LoomApi)

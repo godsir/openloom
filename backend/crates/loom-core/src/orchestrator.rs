@@ -18,8 +18,8 @@ use loom_memory::{
 use loom_security::merge_multi_permissions;
 use loom_skills::SkillPermissionConfig;
 use loom_types::{
-    AgentConfig, CompletionRequest, ContentPart, Message, ModelBackend, PipelineStage, Role,
-    SandboxConfig, SessionId, SkillPermissions, StreamDelta,
+    AgentConfig, CompactionConfig, CompletionRequest, ContentPart, EngineEvent, Message,
+    ModelBackend, PipelineStage, Role, SandboxConfig, SessionId, SkillPermissions, StreamDelta,
 };
 use tokio::sync::{RwLock, mpsc};
 
@@ -163,6 +163,7 @@ use crate::hooks::{HookContext, HookRegistry};
 use crate::slash_router::SlashRouter;
 use crate::tool_registry::{AgentTool, SpawnAgentTool, SpawnContext, ToolRegistry};
 use loom_cron::CronScheduler;
+use loom_context::compact_history;
 
 /// The central orchestrator for openLoom v2.
 pub struct Orchestrator {
@@ -215,6 +216,13 @@ pub struct Orchestrator {
     cron_scheduler: Arc<RwLock<Option<Arc<CronScheduler>>>>,
     /// Handle to the cron scheduler's background loop (for graceful shutdown).
     cron_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
+    /// Compaction configuration for session history compression.
+    compaction_config: CompactionConfig,
+    /// Engine-level event broadcast channel (EngineEvent variants).
+    /// Uses tokio::sync::broadcast (type-erased after creation) — the same
+    /// infrastructure as AgentEvent, but a separate typed sender for
+    /// compaction, heartbeat, token-usage, and other infrastructure events.
+    engine_events: tokio::sync::broadcast::Sender<EngineEvent>,
 }
 
 /// Trait for memory backends (SqliteEventStore, etc.)
@@ -729,6 +737,12 @@ impl Orchestrator {
         let _ = registry.register(Arc::new(crate::builtin_tools::WebSearchTool));
         let _ = registry.register(Arc::new(crate::builtin_tools::WebFetchTool));
 
+        // ScheduleReminder — AI can decide when to call, for creating/managing timed reminders
+        let cron_scheduler: Arc<RwLock<Option<Arc<CronScheduler>>>> = Arc::new(RwLock::new(None));
+        let _ = registry.register(Arc::new(crate::builtin_tools::ScheduleReminder {
+            cron: cron_scheduler.clone(),
+        }));
+
         // Register Claude Code-style tool name aliases (always-on, no-op when unused).
         // These allow the model to call e.g. "Read" and have it resolve to "file_read".
         let _ = registry.register_alias("Read", "file_read");
@@ -778,8 +792,13 @@ impl Orchestrator {
             extraction_count: Arc::new(AtomicU64::new(0)),
             consolidation_count: Arc::new(AtomicU64::new(0)),
             pipeline_scheduler: Arc::new(tokio::sync::Mutex::new(PipelineScheduler::new())),
-            cron_scheduler: Arc::new(RwLock::new(None)),
+            cron_scheduler,
             cron_handle: Arc::new(RwLock::new(None)),
+            compaction_config: CompactionConfig::default(),
+            engine_events: {
+                let (tx, _) = tokio::sync::broadcast::channel(256);
+                tx
+            },
         }
     }
 
@@ -1659,40 +1678,39 @@ impl Orchestrator {
         }
 
         let prompt = format!(
-            "你是一位标题编辑。根据以下对话内容，生成一个 5-10 个汉字的简短会话标题。\n\
-             只输出标题本身，不要加引号、不要解释、不要换行。\n\n\
-             用户: {}\nAI: {}",
+            "用户消息: {}\nAI 回复: {}",
             truncate_str(&user_text, 200),
             truncate_str(&ai_text, 300),
         );
 
+        // Use a single combined system+user message to avoid the model
+        // echoing the instruction.  The system role and the user's
+        // /no_thinking prefix are intentionally omitted: thinking-budget
+        // models can consume the tiny max_tokens budget with reasoning
+        // tokens, leaving nothing for the actual title.
         let request = loom_types::CompletionRequest {
-            messages: vec![
-                Message {
-                    role: Role::System,
-                    content: vec![ContentPart::Text {
-                        text: "You are a concise title editor. Output only the title, nothing else.".to_string(),
-                    }],
-                    timestamp: chrono::Utc::now(),
-                    usage: None,
-                },
-                Message {
-                    role: Role::User,
-                    // /no_thinking disables extended reasoning on Qwen3 models
-                    content: vec![ContentPart::Text { text: format!("/no_thinking\n{}", prompt) }],
-                    timestamp: chrono::Utc::now(),
-                    usage: None,
-                },
-            ],
+            messages: vec![Message {
+                role: Role::User,
+                content: vec![ContentPart::Text {
+                    text: format!(
+                        "为以下对话生成一个5-10个汉字的简短标题。只输出标题，不要任何其他文字。\n\n{}",
+                        prompt,
+                    ),
+                }],
+                timestamp: chrono::Utc::now(),
+                usage: None,
+            }],
             tools: vec![],
-            tool_choice: None,
+            tool_choice: Some(loom_types::ToolChoice::None),
             prompt: String::new(),
-            max_tokens: 32,
+            max_tokens: 128,
             temperature: 0.3,
             top_p: 1.0,
-            stop: vec!["\n".to_string()],
+            stop: vec!["\n".to_string(), "。".to_string()],
             stream: false,
-            thinking_budget: None,
+            // Explicitly disable extended thinking/reasoning so the model
+            // doesn't burn the output budget on invisible chain-of-thought.
+            thinking_budget: Some(0),
         };
 
         let client = {
@@ -3635,7 +3653,7 @@ impl Orchestrator {
             }
             tracing::info!(session_id, "[orchestrator] step: history loaded");
         }
-        let history = self.session_history(session_id).await;
+        let mut history = self.session_history(session_id).await;
         tracing::info!(
             session_id,
             hist_len = history.len(),
@@ -4143,6 +4161,73 @@ impl Orchestrator {
         let disallowed = agent_config.disallowed_tools.clone();
         let cancel = self.pool.cancel_token(&agent_id).await?;
 
+        // ── Session compaction (if enabled) ──
+        if self.compaction_config.enabled {
+            if !history.is_empty() {
+                let total_tokens: usize = history.iter()
+                    .map(|m| m.text_content().len() / 4) // rough estimate
+                    .sum();
+                let budget = loop_config.max_prompt_budget.max(8192);
+                let threshold = (budget as f32 * self.compaction_config.trigger_threshold_pct) as usize;
+
+                if total_tokens > threshold {
+                    let start = std::time::Instant::now();
+                    match compact_history(&history, &self.compaction_config, None) {
+                        Ok(result) if result.items_compacted > 0 => {
+                            tracing::info!(
+                                tokens_before = result.tokens_before,
+                                tokens_after = result.tokens_after,
+                                savings_pct = %result.savings_pct,
+                                items_compacted = result.items_compacted,
+                                strategies = ?result.strategies_used,
+                                "session compaction completed"
+                            );
+                            // Only use compacted history for this LLM call — do NOT
+                            // persist it back into session_histories (the original
+                            // uncompacted history stays canonical).
+                            history = result.compacted_history;
+
+                            // Force next prefix check to miss — compacted history has different shape
+                            client.prefix_cache_reset(); // reset stats
+                            // Also clear the stored prefix digest
+                            if client.prefix_digest_snapshot().is_some() {
+                                client.prefix_digest_restore(None);
+                            }
+
+                            tracing::info!(
+                                session_id,
+                                duration_ms = start.elapsed().as_millis(),
+                                tool_outputs_truncated = result.tool_outputs_truncated,
+                                base64_elided = result.base64_payloads_elided,
+                                loops_collapsed = result.repetitive_loops_collapsed,
+                                llm_summarization_used = result.llm_summarization_performed,
+                                "compaction details"
+                            );
+
+                            // Emit compaction event via engine_events broadcast
+                            let _ = self.engine_events.send(EngineEvent::CompactionPerformed {
+                                session_id: session_id.to_string(),
+                                tokens_before: result.tokens_before,
+                                tokens_after: result.tokens_after,
+                                savings_pct: result.savings_pct,
+                                items_compacted: result.items_compacted,
+                                strategies: result.strategies_used.iter().map(|s| format!("{:?}", s)).collect(),
+                                tool_outputs_truncated: result.tool_outputs_truncated,
+                                base64_elided: result.base64_payloads_elided,
+                                loops_collapsed: result.repetitive_loops_collapsed,
+                                llm_summarization_used: result.llm_summarization_performed,
+                                duration_ms: start.elapsed().as_millis() as u64,
+                            });
+                        }
+                        Ok(_) => {} // No compaction needed
+                        Err(e) => {
+                            tracing::warn!(error = %e, "session compaction failed, continuing");
+                        }
+                    }
+                }
+            }
+        }
+
         // Always run the full agent path — the intent classifier was an
         // over-optimization that caused workspace/skills/persona/KG to be
         // silently dropped in direct-reply mode.
@@ -4648,7 +4733,7 @@ impl Orchestrator {
         {
             tracing::warn!(session_id = %session_id, error = %e, "Failed to load conversation history from DB");
         }
-        let history = self.session_history(session_id).await;
+        let mut history = self.session_history(session_id).await;
 
         // Get workspace path for this session
         let workspace_path = if let Some(ref store) = *self.memory_store.read().await {
@@ -4881,6 +4966,74 @@ impl Orchestrator {
             },
             ..Default::default()
         };
+
+        // ── Session compaction (if enabled) ──
+        if self.compaction_config.enabled {
+            if !history.is_empty() {
+                let total_tokens: usize = history.iter()
+                    .map(|m| m.text_content().len() / 4) // rough estimate
+                    .sum();
+                let budget = config.max_prompt_budget.max(8192);
+                let threshold = (budget as f32 * self.compaction_config.trigger_threshold_pct) as usize;
+
+                if total_tokens > threshold {
+                    let start = std::time::Instant::now();
+                    match compact_history(&history, &self.compaction_config, None) {
+                        Ok(result) if result.items_compacted > 0 => {
+                            tracing::info!(
+                                tokens_before = result.tokens_before,
+                                tokens_after = result.tokens_after,
+                                savings_pct = %result.savings_pct,
+                                items_compacted = result.items_compacted,
+                                strategies = ?result.strategies_used,
+                                "session compaction completed (streaming)"
+                            );
+                            // Only use compacted history for this LLM call — do NOT
+                            // persist it back into session_histories (the original
+                            // uncompacted history stays canonical).
+                            history = result.compacted_history;
+
+                            // Force next prefix check to miss — compacted history has different shape
+                            client.prefix_cache_reset(); // reset stats
+                            // Also clear the stored prefix digest
+                            if client.prefix_digest_snapshot().is_some() {
+                                client.prefix_digest_restore(None);
+                            }
+
+                            tracing::info!(
+                                session_id,
+                                duration_ms = start.elapsed().as_millis(),
+                                tool_outputs_truncated = result.tool_outputs_truncated,
+                                base64_elided = result.base64_payloads_elided,
+                                loops_collapsed = result.repetitive_loops_collapsed,
+                                llm_summarization_used = result.llm_summarization_performed,
+                                "compaction details (streaming)"
+                            );
+
+                            // Emit compaction event via engine_events broadcast
+                            let _ = self.engine_events.send(EngineEvent::CompactionPerformed {
+                                session_id: session_id.to_string(),
+                                tokens_before: result.tokens_before,
+                                tokens_after: result.tokens_after,
+                                savings_pct: result.savings_pct,
+                                items_compacted: result.items_compacted,
+                                strategies: result.strategies_used.iter().map(|s| format!("{:?}", s)).collect(),
+                                tool_outputs_truncated: result.tool_outputs_truncated,
+                                base64_elided: result.base64_payloads_elided,
+                                loops_collapsed: result.repetitive_loops_collapsed,
+                                llm_summarization_used: result.llm_summarization_performed,
+                                duration_ms: start.elapsed().as_millis() as u64,
+                            });
+                        }
+                        Ok(_) => {} // No compaction needed
+                        Err(e) => {
+                            tracing::warn!(error = %e, "session compaction failed (streaming), continuing");
+                        }
+                    }
+                }
+            }
+        }
+
         let result = run_agent_turn_streaming_with_images(
             client.as_ref(),
             &registry,

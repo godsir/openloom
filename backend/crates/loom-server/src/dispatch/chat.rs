@@ -332,6 +332,10 @@ fn is_text_extension(name: &str) -> bool {
 }
 
 /// Read text-based non-image attached files and return formatted content for the prompt.
+///
+/// Prefers the `content` field (file content read in the renderer via FileReader,
+/// which works in Electron's sandbox mode where `File.path` is unavailable).
+/// Falls back to reading from `path` on disk for backward compatibility.
 fn parse_attached_file_contents(p: &Value) -> String {
     let files = p
         .get("attached_files")
@@ -344,13 +348,29 @@ fn parse_attached_file_contents(p: &Value) -> String {
     for file in files {
         let mime_type = file.get("mime_type").and_then(|v| v.as_str()).unwrap_or("");
         let name = file.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-        let path = file.get("path").and_then(|v| v.as_str()).unwrap_or("");
 
         // Images are handled by parse_attached_images separately
         if mime_type.starts_with("image/") {
             continue;
         }
+
+        // ── Primary path: content was read in the renderer (sandbox-safe) ──
+        if let Some(content) = file.get("content").and_then(|v| v.as_str()) {
+            if content.is_empty() {
+                tracing::warn!(%name, "attached file has empty content from frontend");
+                continue;
+            }
+            result.push_str(&format!(
+                "\n\n<attached_file name=\"{name}\">\n{content}\n</attached_file>",
+            ));
+            tracing::info!(%name, len = content.len(), "attached file content injected (from frontend)");
+            continue;
+        }
+
+        // ── Fallback: read file from disk path (legacy / non-sandbox) ──
+        let path = file.get("path").and_then(|v| v.as_str()).unwrap_or("");
         if path.is_empty() {
+            tracing::warn!(%name, "attached file has no content and no path — skipping");
             continue;
         }
 
@@ -358,12 +378,12 @@ fn parse_attached_file_contents(p: &Value) -> String {
         let metadata = match std::fs::metadata(path) {
             Ok(m) => m,
             Err(_) => {
-                tracing::debug!(%name, %path, "attached file not found on disk");
+                tracing::warn!(%name, %path, "attached file not found on disk");
                 continue;
             }
         };
         if metadata.len() > 512_000 {
-            tracing::debug!(%name, size = metadata.len(), "attached file too large, skipping");
+            tracing::warn!(%name, size = metadata.len(), "attached file too large (>500KB), skipping");
             continue;
         }
 
@@ -388,10 +408,10 @@ fn parse_attached_file_contents(p: &Value) -> String {
                 result.push_str(&format!(
                     "\n\n<attached_file name=\"{name}\">\n{content}\n</attached_file>",
                 ));
-                tracing::info!(%name, len = content.len(), "attached file content injected");
+                tracing::info!(%name, len = content.len(), "attached file content injected (from disk)");
             }
             Err(e) => {
-                tracing::debug!(%name, error = %e, "failed to read attached file");
+                tracing::warn!(%name, %path, error = %e, "failed to read attached file from disk (possibly wrong encoding for non-UTF-8 file)");
             }
         }
     }

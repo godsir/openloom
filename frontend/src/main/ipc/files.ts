@@ -15,9 +15,19 @@ export function registerFileIpc(): void {
     return result.canceled ? [] : result.filePaths
   })
 
-  ipcMain.handle('read-file', async (_, filePath: string) => {
+  ipcMain.handle('read-file', async (_event, filePath: string, options?: {
+    startLine?: number   // 1-based, inclusive
+    endLine?: number     // 1-based, inclusive
+  }) => {
     try {
-      return readFileSync(filePath, 'utf-8')
+      const full = readFileSync(filePath, 'utf-8')
+      if (!options || (options.startLine == null && options.endLine == null)) {
+        return full
+      }
+      const lines = full.split('\n')
+      const start = Math.max(0, (options.startLine ?? 1) - 1)
+      const end = Math.min(lines.length, (options.endLine ?? lines.length))
+      return lines.slice(start, end).join('\n')
     } catch {
       return null
     }

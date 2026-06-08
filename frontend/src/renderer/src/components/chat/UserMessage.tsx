@@ -1,6 +1,7 @@
 import type { Message } from '../../stores/chat'
 import { useStore } from '../../stores'
 import FileBlock from './FileBlock'
+import QuotedSelectionCard from '../input/QuotedSelectionCard'
 import MessageFooterActions from './MessageFooterActions'
 import { useCallback, useRef, useEffect, memo } from 'react'
 import styles from './UserMessage.module.css'
@@ -11,7 +12,8 @@ const UserMessage = memo(function UserMessage({ message }: { message: Message })
   const textBlock = message.blocks.find((b) => b.type === 'text')
   const imageBlocks = message.blocks.filter((b) => b.type === 'image')
   const fileBlocks = message.blocks.filter((b) => b.type === 'file')
-  const hasVisualBlocks = imageBlocks.length > 0 || fileBlocks.length > 0
+  const quotedSelectionBlocks = message.blocks.filter((b) => b.type === 'quoted_selection')
+  const hasVisualBlocks = imageBlocks.length > 0 || fileBlocks.length > 0 || quotedSelectionBlocks.length > 0
   const openLightbox = useStore(s => s.openLightbox)
   const textRef = useRef<HTMLDivElement>(null)
 
@@ -57,6 +59,17 @@ const UserMessage = memo(function UserMessage({ message }: { message: Message })
         <div className={styles.content}>
           {hasVisualBlocks && (
             <div className={styles.attachments}>
+              {quotedSelectionBlocks.length > 0 && (
+                <div className={styles.quotedSelections}>
+                  {quotedSelectionBlocks.map((block, i) => (
+                    <QuotedSelectionCard
+                      key={`qs-${i}`}
+                      text={(block.text as string) || ''}
+                      filePath={block.filePath as string | undefined}
+                    />
+                  ))}
+                </div>
+              )}
               {imageBlocks.map((block, i) => (
                 <div key={`img-${i}`} className={styles.imagePreview}>
                   <img

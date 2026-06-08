@@ -24,12 +24,14 @@ pub mod message;
 pub mod mode;
 pub mod permission;
 pub mod persona;
+pub mod plan;
 pub mod role;
 pub mod router;
 pub mod session;
 pub mod tool;
 
 // Re-export all public types at crate root for ergonomic imports
+pub use config::compaction::*;
 pub use config::model_config::*;
 pub use config::*;
 pub use event::*;
@@ -43,6 +45,7 @@ pub use message::*;
 pub use mode::*;
 pub use permission::*;
 pub use persona::*;
+pub use plan::*;
 pub use role::*;
 pub use router::*;
 pub use session::*;

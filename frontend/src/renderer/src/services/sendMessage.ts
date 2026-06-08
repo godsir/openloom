@@ -2,6 +2,7 @@ import { loomRpc } from './jsonrpc'
 import { useStore } from '../stores'
 import { streamBufferManager } from './stream-buffer'
 import type { AttachedFile } from '../stores/input'
+import type { QuotedSelection } from '../stores/selectionContext'
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -14,21 +15,38 @@ export interface SendMessageOptions {
   skills?: string[]
   /** For retry: skip appending a new user message (content is already in history). */
   skipUserMessage?: boolean
+  /** Quoted selections captured via Ctrl+Shift+I inline editor. */
+  quotedSelections?: QuotedSelection[]
 }
 
 /**
  * Send a message to the backend and manage the streaming state.
  * This is extracted from InputArea so it can be reused by resend/retry buttons.
  */
-export async function sendMessage({ sessionId, content, attachedFiles = [], skills, skipUserMessage }: SendMessageOptions): Promise<void> {
+export async function sendMessage({ sessionId, content, attachedFiles = [], skills, skipUserMessage, quotedSelections = [] }: SendMessageOptions): Promise<void> {
   const sid = sessionId
   useStore.getState().ensureSession(sid)
 
   const msgId = crypto.randomUUID()
   const blocks: any[] = []
+
+  // 1. Quoted selections first (context before instruction)
+  for (const qs of quotedSelections) {
+    blocks.push({
+      type: 'quoted_selection',
+      text: qs.text,
+      filePath: qs.filePath,
+      startLine: qs.startLine,
+      endLine: qs.endLine,
+    })
+  }
+
+  // 2. Text content
   if (content) {
     blocks.push({ type: 'text', html: escapeHtml(content).replace(/\n/g, '<br>'), source: content })
   }
+
+  // 3. Attached files/images
   for (const f of attachedFiles) {
     if (f.mimeType.startsWith('image/')) {
       blocks.push({ type: 'image', path: f.path, name: f.name, mimeType: f.mimeType, thumbnail: f.thumbnail })
@@ -57,7 +75,6 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
   const safetyTimer = setTimeout(() => {
     const buf = streamBufferManager.snapshot(sid)
     if (buf && buf.messageId === aiMsgId) {
-      // Do a final flush before clearing so truncated content is preserved
       streamBufferManager.handleStreamEnd(sid)
     }
   }, 300_000) // 5 min safety timeout for long agent loops
@@ -101,6 +118,13 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
         size: f.size,
         mime_type: f.mimeType,
         thumbnail: f.thumbnail,
+        content: f.content,
+      })),
+      quoted_selections: quotedSelections.map(q => ({
+        text: q.text,
+        file_path: q.filePath || '',
+        start_line: q.startLine || 0,
+        end_line: q.endLine || 0,
       })),
     })
   }
@@ -111,8 +135,6 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
     clearTimeout(safetyTimer)
     const buf = streamBufferManager.snapshot(sid)
     if (buf && buf.messageId === aiMsgId) {
-      // stream_end notification may not have arrived yet (or at all on error)
-      // — do a final flush to preserve any accumulated content
       streamBufferManager.handleStreamEnd(sid)
     }
     // Update current session's modified time in sidebar

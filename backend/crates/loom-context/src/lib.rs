@@ -10,7 +10,40 @@
 
 use anyhow::Result;
 use loom_types::Message;
+use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
+
+pub mod compaction;
+pub use compaction::{CompactionResult, CompactionStrategy, compact_history};
+
+/// Deterministic SHA256 fingerprint of the stable prompt prefix.
+///
+/// Computed by [`ContextAssembler::compute_prefix_digest`] and carried
+/// through the agent loop into each inference provider for cache-hit
+/// detection and breakpoint injection.
+///
+/// The `combined_hash` covers the full assembled stable prefix string
+/// (system_prompt + persona + summary + kg_context + tool_catalog)
+/// in the exact order they appear in the system message.  Per-component
+/// hashes enable drift attribution in logs — the system can say
+/// "cache miss (system_prompt changed)" instead of just "cache miss".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrefixDigest {
+    /// SHA256 hex of the assembled stable prefix string.
+    pub combined_hash: String,
+    /// SHA256 of the base system prompt only.
+    pub system_hash: String,
+    /// SHA256 of the persona block, or SHA256("") if no persona.
+    pub persona_hash: String,
+    /// SHA256 of the conversation summary block, or SHA256("") if no summary.
+    pub summary_hash: String,
+    /// SHA256 of the KG context block, or SHA256("") if no KG context.
+    pub kg_hash: String,
+    /// SHA256 of the tool catalog block, or SHA256("") if none.
+    pub catalog_hash: String,
+    /// Estimated token count of the stable prefix (via tiktoken cl100k_base).
+    pub prefix_token_count: usize,
+}
 
 /// Shared tiktoken BPE instance — initialised once, reused for all assemblies.
 fn bpe() -> &'static tiktoken_rs::CoreBPE {
@@ -143,10 +176,69 @@ impl ContextAssembler {
     /// Delegates to SummaryEngine — this is the entry point called from
     /// the agent loop when history grows too large.
     pub async fn compact(&self, _history: &[Message]) -> Result<Vec<Message>> {
-        // Now wired through SummaryEngine in orchestrator.
-        // This method is kept for API compatibility; actual summarization
-        // happens in process_message_streaming via SummaryEngine::summarize().
-        Ok(Vec::new())
+        // Legacy API — delegates to compact_history with default config.
+        let config = loom_types::CompactionConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let result = compaction::compact_history(_history, &config, None)?;
+        Ok(result.compacted_history)
+    }
+
+    /// Compact conversation history with explicit configuration.
+    pub async fn compact_with_config(
+        &self,
+        history: &[Message],
+        config: &loom_types::CompactionConfig,
+    ) -> Result<compaction::CompactionResult> {
+        compaction::compact_history(history, config, None)
+    }
+
+    /// Compute a SHA256 fingerprint of the stable prefix **without** building
+    /// the full message array.
+    ///
+    /// This is intentionally a pure function of the prefix components (not the
+    /// history) so it can be used for cache-hit detection independently of the
+    /// dynamic suffix.
+    pub fn compute_prefix_digest(&self, opts: &AssembleOptions) -> PrefixDigest {
+        let persona = opts.persona.as_deref().unwrap_or("");
+        let summary = opts.summary.as_deref().unwrap_or("");
+        let kg = opts.kg_context.as_deref().unwrap_or("");
+        let catalog = opts.tool_catalog.as_deref().unwrap_or("");
+
+        let system_hash = hex::encode(Sha256::digest(self.system_prompt.as_bytes()));
+        let persona_hash = hex::encode(Sha256::digest(persona.as_bytes()));
+        let summary_hash = hex::encode(Sha256::digest(summary.as_bytes()));
+        let kg_hash = hex::encode(Sha256::digest(kg.as_bytes()));
+        let catalog_hash = hex::encode(Sha256::digest(catalog.as_bytes()));
+
+        // Build the same stable prefix string that build() would produce.
+        let mut combined = self.system_prompt.clone();
+        if !persona.is_empty() {
+            combined.push_str(&format!("\n\n## User Profile\n{}", persona));
+        }
+        if !summary.is_empty() {
+            combined.push_str(&format!("\n\n## Conversation Summary\n{}", summary));
+        }
+        if !kg.is_empty() {
+            combined.push_str(&format!("\n\n{}", kg));
+        }
+        if !catalog.is_empty() {
+            combined.push_str(&format!("\n\n## Available Tools\n{}", catalog));
+        }
+
+        let combined_hash = hex::encode(Sha256::digest(combined.as_bytes()));
+        let prefix_token_count = bpe().encode_with_special_tokens(&combined).len();
+
+        PrefixDigest {
+            combined_hash,
+            system_hash,
+            persona_hash,
+            summary_hash,
+            kg_hash,
+            catalog_hash,
+            prefix_token_count,
+        }
     }
 }
 
@@ -156,5 +248,82 @@ impl Default for ContextAssembler {
             "You are a helpful AI assistant with access to tools and long-term memory.",
             8192,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_digest_deterministic() {
+        let assembler = ContextAssembler::new("test system prompt", 8192);
+        let opts = AssembleOptions::default();
+        let d1 = assembler.compute_prefix_digest(&opts);
+        let d2 = assembler.compute_prefix_digest(&opts);
+        assert_eq!(d1.combined_hash, d2.combined_hash);
+        assert_eq!(d1.system_hash, d2.system_hash);
+        assert!(d1.prefix_token_count > 0);
+    }
+
+    #[test]
+    fn test_digest_system_prompt_change() {
+        let a1 = ContextAssembler::new("prompt A", 8192);
+        let a2 = ContextAssembler::new("prompt B", 8192);
+        let opts = AssembleOptions::default();
+        let d1 = a1.compute_prefix_digest(&opts);
+        let d2 = a2.compute_prefix_digest(&opts);
+        assert_ne!(d1.combined_hash, d2.combined_hash);
+        assert_ne!(d1.system_hash, d2.system_hash);
+    }
+
+    #[test]
+    fn test_digest_persona_change() {
+        let assembler = ContextAssembler::new("sys", 8192);
+        let d1 = assembler.compute_prefix_digest(&AssembleOptions {
+            persona: Some("persona A".into()),
+            ..Default::default()
+        });
+        let d2 = assembler.compute_prefix_digest(&AssembleOptions {
+            persona: Some("persona B".into()),
+            ..Default::default()
+        });
+        assert_ne!(d1.combined_hash, d2.combined_hash);
+        assert_ne!(d1.persona_hash, d2.persona_hash);
+    }
+
+    #[test]
+    fn test_digest_per_component_independence() {
+        let assembler = ContextAssembler::new("sys", 8192);
+        let base = assembler.compute_prefix_digest(&AssembleOptions::default());
+
+        let with_persona = assembler.compute_prefix_digest(&AssembleOptions {
+            persona: Some("a persona".into()),
+            ..Default::default()
+        });
+        assert_ne!(base.persona_hash, with_persona.persona_hash);
+        assert_eq!(base.system_hash, with_persona.system_hash);
+        assert_ne!(base.combined_hash, with_persona.combined_hash);
+    }
+
+    #[test]
+    fn test_digest_history_independence() {
+        let assembler = ContextAssembler::new("sys", 8192);
+        let d1 = assembler.compute_prefix_digest(&AssembleOptions {
+            history: vec![],
+            ..Default::default()
+        });
+        let d2 = assembler.compute_prefix_digest(&AssembleOptions {
+            history: vec![Message {
+                role: loom_types::Role::User,
+                content: vec![loom_types::ContentPart::Text {
+                    text: "hello".into(),
+                }],
+                timestamp: chrono::Utc::now(),
+                usage: None,
+            }],
+            ..Default::default()
+        });
+        assert_eq!(d1.combined_hash, d2.combined_hash);
     }
 }

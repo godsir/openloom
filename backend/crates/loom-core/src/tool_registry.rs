@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use loom_types::{ToolDefinition, ToolProgress};
+use loom_types::{CompactionConfig, ToolDefinition, ToolProgress};
 use tokio::sync::RwLock;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -333,6 +333,7 @@ impl AgentTool for SpawnAgentTool {
             event_bus: None,
             pending_permissions: None,
             sandbox: config.sandbox.clone(),
+            compaction_config: CompactionConfig::default(),
         };
         drop(config);
 

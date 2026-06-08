@@ -96,6 +96,20 @@ pub enum EngineEvent {
         status: String,
         error: Option<String>,
     },
+    /// Session compaction was performed (infrastructure event).
+    CompactionPerformed {
+        session_id: String,
+        tokens_before: usize,
+        tokens_after: usize,
+        savings_pct: f64,
+        items_compacted: usize,
+        strategies: Vec<String>,
+        tool_outputs_truncated: usize,
+        base64_elided: usize,
+        loops_collapsed: usize,
+        llm_summarization_used: bool,
+        duration_ms: u64,
+    },
 }
 
 /// Risk level for tool calls requiring user approval.

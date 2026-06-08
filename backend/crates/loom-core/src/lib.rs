@@ -11,6 +11,7 @@ pub mod builtin_tools;
 pub mod event_bus;
 pub mod hooks;
 pub mod orchestrator;
+pub mod plan_prompts;
 pub mod slash_router;
 pub mod tool_context;
 pub mod tool_registry;

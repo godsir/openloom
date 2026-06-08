@@ -1,23 +1,26 @@
 //! JSON-RPC 2.0 dispatch — routes incoming requests to orchestrator methods.
 //!
-//! Supported: system, agent, chat, session, config, mcp, lsp, tools, skills, plugins.
+//! Supported: system, agent, chat, completion, session, config, mcp, lsp, tools, skills, plugins.
 //!
 //! Each submodule exports a `handle` function returning
 //! `Option<Result<Value, JsonRpcError>>`.  The main match in this file
 //! delegates to each sub-handler in sequence.
 
 mod chat;
+mod completion;
 mod clawhub;
 mod cron;
 mod kg;
 mod lsp;
 mod mcp;
 mod model;
+mod plan;
 mod plugins;
 pub mod session;
 mod skills;
 mod system;
 mod tool;
+mod vfs;
 
 // Re-export SessionStore for crate::dispatch::SessionStore access (used by lib.rs).
 pub use session::SessionStore;
@@ -59,6 +62,9 @@ pub async fn dispatch_method(
     if let Some(result) = chat::handle(state, method, &p).await {
         return result;
     }
+    if let Some(result) = completion::handle(state, method, &p).await {
+        return result;
+    }
     if let Some(result) = session::handle(state, method, &p).await {
         return result;
     }
@@ -86,10 +92,16 @@ pub async fn dispatch_method(
     if let Some(result) = tool::handle(state, method, &p).await {
         return result;
     }
+    if let Some(result) = vfs::handle(state, method, &p).await {
+        return result;
+    }
     if let Some(result) = cron::handle(state, method, &p).await {
         return result;
     }
     if let Some(result) = clawhub::handle(state, method, &p).await {
+        return result;
+    }
+    if let Some(result) = plan::handle(state, method, &p).await {
         return result;
     }
 

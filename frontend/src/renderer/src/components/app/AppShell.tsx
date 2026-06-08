@@ -3,7 +3,10 @@ import { useStore } from '../../stores'
 import Sidebar from './Sidebar'
 import WindowControls from './WindowControls'
 import ChatWorkspace from '../chat/ChatWorkspace'
-import { IconPanelLeftClose, IconPanelLeft, IconAlertCircle, IconWifiOff, IconRefresh, IconRotateCcw, IconSettings } from '../../utils/icons'
+import { WriteWorkspaceView } from '../write/WriteWorkspaceView'
+import { PlanPanel } from '../plan/PlanPanel'
+import { TodoPanel } from '../todo/TodoPanel'
+import { IconPanelLeftClose, IconPanelLeft, IconAlertCircle, IconWifiOff, IconRefresh, IconRotateCcw, IconSettings, IconEdit, IconMessageSquare } from '../../utils/icons'
 import { connectWebSocket } from '../../services/websocket'
 import styles from './AppShell.module.css'
 
@@ -14,6 +17,8 @@ export default function AppShell({ children }: { children?: ReactNode }) {
   const wsState = useStore(s => s.wsState)
   const engineState = useStore(s => s.engineState)
   const port = useStore(s => s.port)
+  const appMode = useStore(s => s.appMode)
+  const setAppMode = useStore(s => s.setAppMode)
   const [reconnecting, setReconnecting] = useState(false)
   const [restarting, setRestarting] = useState(false)
 
@@ -63,6 +68,22 @@ export default function AppShell({ children }: { children?: ReactNode }) {
           <button onClick={() => setSettingsOpen(true)} className={styles.toggleBtn} title="设置">
             <IconSettings size={16} />
           </button>
+          <button
+            onClick={() => {
+              const nextMode = appMode === 'chat' ? 'write' : 'chat'
+              setAppMode(nextMode)
+              // 进入写作模式时收起侧边栏，返回聊天时展开
+              if (nextMode === 'write') {
+                if (sidebarOpen) toggleSidebar()
+              } else {
+                if (!sidebarOpen) toggleSidebar()
+              }
+            }}
+            className={styles.toggleBtn}
+            title={appMode === 'chat' ? '切换到写作模式' : '切换到聊天模式'}
+          >
+            {appMode === 'chat' ? <IconEdit size={16} /> : <IconMessageSquare size={16} />}
+          </button>
         </div>
 
         <div className={styles.titlebarCenter}>
@@ -75,13 +96,16 @@ export default function AppShell({ children }: { children?: ReactNode }) {
       </header>
 
       <div className={styles.body}>
-        <div
-          className={`${styles.sidebarSlot} ${sidebarOpen ? styles.sidebarSlotOpen : ''}`}
-        >
-          <Sidebar />
-        </div>
+        {/* 写作模式下隐藏会话侧边栏 */}
+        {appMode !== 'write' && (
+          <div
+            className={`${styles.sidebarSlot} ${sidebarOpen ? styles.sidebarSlotOpen : ''}`}
+          >
+            <Sidebar />
+          </div>
+        )}
         <main className={styles.main} data-content>
-          <ChatWorkspace />
+          {appMode === 'write' ? <WriteWorkspaceView /> : <ChatWorkspace />}
           {children}
 
           {/* Engine crashed banner */}
@@ -126,6 +150,8 @@ export default function AppShell({ children }: { children?: ReactNode }) {
             </div>
           )}
         </main>
+        {appMode === 'chat' && <PlanPanel />}
+        {appMode === 'chat' && <TodoPanel />}
       </div>
     </div>
   )

@@ -8,6 +8,7 @@ import Onboarding from './components/shared/Onboarding'
 import ErrorBoundary from './components/shared/ErrorBoundary'
 import ToastContainer from './components/shared/ToastContainer'
 import ConfirmDialog from './components/shared/ConfirmDialog'
+import { InlineInput } from './components/input/InlineInput'
 import { bootstrapApp } from './services/bootstrap'
 import { handleModelsChanged } from './services/app-event-actions'
 import { useStore } from './stores'
@@ -145,6 +146,44 @@ export default function App() {
     })
   }, [])
 
+  // Global keyboard listener for inline selection editor (Ctrl+Shift+I)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key === 'I') {
+        const sel = window.getSelection()
+        if (!sel || sel.isCollapsed || !sel.toString().trim()) return
+
+        e.preventDefault()
+        e.stopPropagation()
+
+        const range = sel.getRangeAt(0)
+        const rect = range.getBoundingClientRect()
+
+        // Find file-path context from DOM attributes
+        let filePath = ''
+        let startLine = 0
+        let endLine = 0
+        let el = range.startContainer.parentElement
+        while (el) {
+          const fp = el.getAttribute('data-file-path')
+          if (fp) {
+            filePath = fp
+            const sl = el.getAttribute('data-start-line')
+            const el2 = el.getAttribute('data-end-line')
+            if (sl) startLine = parseInt(sl, 10)
+            if (el2) endLine = parseInt(el2, 10)
+            break
+          }
+          el = el.parentElement
+        }
+
+        useStore.getState().openInlineInput(rect, filePath, startLine, endLine)
+      }
+    }
+    window.addEventListener('keydown', handler, true) // capture phase to beat devtools
+    return () => window.removeEventListener('keydown', handler, true)
+  }, [])
+
   const handleRetry = () => {
     setError(null)
     setReady(false)
@@ -217,6 +256,7 @@ export default function App() {
         }}
       />
       <UpdateModal />
+      <InlineInput />
     </ErrorBoundary>
   )
 }

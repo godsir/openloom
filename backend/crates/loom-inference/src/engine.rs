@@ -1,7 +1,8 @@
 //! InferenceEngine — local inference via OpenAI-compatible HTTP API (LM Studio / Ollama)
 //! and CloudClient trait for provider dispatch.
 
-use crate::cache::PrefixCache;
+use crate::cache::{CacheStatus, PrefixCache};
+use loom_context::PrefixDigest;
 use anyhow::Result;
 use async_trait::async_trait;
 use loom_types::{
@@ -21,6 +22,8 @@ pub struct InferenceEngine {
     model: String,
     http: HttpClient,
     pub prefix_cache: PrefixCache,
+    /// Pending prefix digest for the next request (set by agent loop via set_prefix_digest).
+    pending_digest: std::sync::Mutex<Option<PrefixDigest>>,
 }
 
 impl std::fmt::Debug for InferenceEngine {
@@ -86,6 +89,7 @@ impl InferenceEngine {
             model: model.to_string(),
             http,
             prefix_cache: PrefixCache::new(2),
+            pending_digest: std::sync::Mutex::new(None),
         })
     }
 
@@ -100,6 +104,7 @@ impl InferenceEngine {
             model,
             http,
             prefix_cache: PrefixCache::new(2),
+            pending_digest: std::sync::Mutex::new(None),
         }
     }
 
@@ -110,6 +115,7 @@ impl InferenceEngine {
             model: "dummy".into(),
             http: HttpClient::new(),
             prefix_cache: PrefixCache::new(2),
+            pending_digest: std::sync::Mutex::new(None),
         }
     }
 
@@ -127,12 +133,12 @@ impl InferenceEngine {
     /// Send a completion request to the local endpoint.
     pub async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse> {
         let messages = lower_messages(&req.effective_messages());
-        let eff = req.effective_messages();
-        let (cache_hit, _) = self.prefix_cache.check(&eff);
-        if cache_hit {
-            tracing::info!("KV cache hit — llama.cpp reuses prefix");
-        } else {
-            tracing::info!("KV cache miss — cold prefix");
+        let digest = self.pending_digest.lock().unwrap().clone();
+        let (cache_status, _, _reasons) = self.prefix_cache.check_digest(&digest);
+        match cache_status {
+            CacheStatus::Hit => tracing::info!("KV cache hit -- llama.cpp reuses prefix"),
+            CacheStatus::ColdStart => tracing::info!("KV cache cold start -- local model"),
+            _ => tracing::info!("KV cache miss -- local model"),
         }
 
         let max_tokens = if req.max_tokens > 0 {
@@ -145,6 +151,9 @@ impl InferenceEngine {
             "max_tokens": max_tokens,
             "messages": messages,
         });
+        if !req.stop.is_empty() {
+            body["stop"] = serde_json::json!(req.stop);
+        }
         if !req.tools.is_empty() {
             body["tools"] = build_tools_json(&req.tools);
         }
@@ -219,12 +228,12 @@ impl InferenceEngine {
         token_tx: mpsc::Sender<String>,
     ) -> Result<()> {
         let messages = lower_messages(&req.effective_messages());
-        let eff = req.effective_messages();
-        let (cache_hit, _) = self.prefix_cache.check(&eff);
-        if cache_hit {
-            tracing::info!("KV cache hit (stream)");
-        } else {
-            tracing::info!("KV cache miss (stream)");
+        let digest = self.pending_digest.lock().unwrap().clone();
+        let (cache_status, _, _reasons) = self.prefix_cache.check_digest(&digest);
+        match cache_status {
+            CacheStatus::Hit => tracing::info!("KV cache hit (stream)"),
+            CacheStatus::ColdStart => tracing::info!("KV cache cold start (stream)"),
+            _ => tracing::info!("KV cache miss (stream)"),
         }
         let max_tokens = if req.max_tokens > 0 {
             req.max_tokens
@@ -412,12 +421,12 @@ impl CloudClient for InferenceEngine {
         tx: mpsc::Sender<StreamDelta>,
     ) -> Result<()> {
         let messages = lower_messages(&req.effective_messages());
-        let eff = req.effective_messages();
-        let (cache_hit, _) = self.prefix_cache.check(&eff);
-        if cache_hit {
-            tracing::info!("KV cache hit (structured stream)");
-        } else {
-            tracing::info!("KV cache miss (structured stream)");
+        let digest = self.pending_digest.lock().unwrap().clone();
+        let (cache_status, _, _reasons) = self.prefix_cache.check_digest(&digest);
+        match cache_status {
+            CacheStatus::Hit => tracing::info!("KV cache hit (structured stream)"),
+            CacheStatus::ColdStart => tracing::info!("KV cache cold start (structured stream)"),
+            _ => tracing::info!("KV cache miss (structured stream)"),
         }
 
         let max_tokens = if req.max_tokens > 0 {
@@ -574,6 +583,16 @@ impl CloudClient for InferenceEngine {
     fn prefix_hash_restore(&self, saved: Option<u64>) {
         self.prefix_cache.restore_hash(saved);
     }
+    fn set_prefix_digest(&self, digest: Option<PrefixDigest>) {
+        *self.pending_digest.lock().unwrap() = digest.clone();
+        self.prefix_cache.check_digest(&digest);
+    }
+    fn prefix_digest_snapshot(&self) -> Option<PrefixDigest> {
+        self.prefix_cache.snapshot_digest()
+    }
+    fn prefix_digest_restore(&self, saved: Option<PrefixDigest>) {
+        self.prefix_cache.restore_digest(saved);
+    }
 }
 
 // ── CloudClient trait ───────────────────────────────────────────────
@@ -640,6 +659,14 @@ pub trait CloudClient: Send + Sync {
     }
     /// Restore a previously-saved prefix hash.
     fn prefix_hash_restore(&self, _saved: Option<u64>) {}
+    /// Set the prefix digest for the next request. Default: no-op.
+    fn set_prefix_digest(&self, _digest: Option<PrefixDigest>) {}
+    /// Snapshot prefix digest for save/restore around internal calls. Default: no-op.
+    fn prefix_digest_snapshot(&self) -> Option<PrefixDigest> {
+        None
+    }
+    /// Restore a previously-saved prefix digest. Default: no-op.
+    fn prefix_digest_restore(&self, _saved: Option<PrefixDigest>) {}
 }
 
 // ── helpers ─────────────────────────────────────────────────────────

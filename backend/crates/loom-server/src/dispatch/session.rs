@@ -30,6 +30,8 @@ pub struct SessionData {
     pub messages: Vec<LoomMessage>,
     #[serde(default)]
     pub agent_config_name: Option<String>,
+    pub active_plan_id: Option<String>,
+    pub goal: Option<String>,
 }
 
 fn default_updated_at() -> String {
@@ -54,6 +56,8 @@ impl SessionStore {
             title: cwd.map(|s| s.to_string()),
             messages: Vec::new(),
             agent_config_name: None,
+            active_plan_id: None,
+            goal: None,
         };
         self.sessions
             .write()
@@ -122,6 +126,8 @@ impl SessionStore {
                 title,
                 messages: Vec::new(),
                 agent_config_name: None,
+                active_plan_id: None,
+                goal: None,
             },
         );
     }

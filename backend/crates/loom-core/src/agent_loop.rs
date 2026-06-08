@@ -5,13 +5,14 @@
 //! until the LLM produces a final text response or max iterations is hit.
 
 use anyhow::Result;
-use loom_context::{AssembleOptions, ContextAssembler};
+use loom_context::{AssembleOptions, ContextAssembler, compact_history};
 use loom_inference::engine::CloudClient;
 use loom_plugins::hooks::HookEvent;
 use loom_security::check_permission;
 use loom_types::SkillPermissions;
 use loom_types::{
-    CompletionRequest, CompletionResponse, ContentPart, Message, Role, StreamDelta, ToolDefinition,
+    CompactionConfig, CompletionRequest, CompletionResponse, ContentPart, Message, Role, StreamDelta,
+    ToolDefinition,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -117,6 +118,8 @@ pub struct AgentLoopConfig {
     /// Optional sandbox guard for file/path access control.
     /// When None, no sandbox checks are performed (backward compatible).
     pub sandbox: Option<Arc<loom_security::sandbox::SandboxGuard>>,
+    /// Compaction configuration for mid-turn history compression.
+    pub compaction_config: CompactionConfig,
 }
 
 impl Default for AgentLoopConfig {
@@ -182,6 +185,7 @@ impl Default for AgentLoopConfig {
             event_bus: None,
             pending_permissions: None,
             sandbox: None,
+            compaction_config: CompactionConfig::default(),
         }
     }
 }
@@ -622,6 +626,22 @@ async fn run_agent_turn_inner(
     // Create tool context with workspace path for file operations
     let tool_context = ToolContext::with_workspace(config.workspace_path.clone());
 
+    // ── Prefix digest: compute SHA256 fingerprint of stable prefix ──
+    let digest = assembler.compute_prefix_digest(&AssembleOptions {
+        persona: config.persona.clone(),
+        summary: config.summary.clone(),
+        kg_context: config.kg_context.clone(),
+        tool_catalog: None,
+        history: vec![],
+    });
+    client.set_prefix_digest(Some(digest.clone()));
+    tracing::info!(
+        prefix_hash = %&digest.combined_hash[..12],
+        prefix_tokens = digest.prefix_token_count,
+        "prefix digest computed — estimated cache savings: {} tokens",
+        digest.prefix_token_count,
+    );
+
     for iteration in 0..config.max_iterations {
         // Token budget check: stop if cumulative prompt tokens exceed the budget
         if config.max_prompt_budget > 0 && total_prompt > config.max_prompt_budget {
@@ -673,6 +693,33 @@ async fn run_agent_turn_inner(
                 tool_messages,
                 vision_usage: None,
             });
+        }
+        // Mid-turn compaction check (heuristic-only, no LLM call)
+        if config.compaction_config.enabled && !messages.is_empty() {
+            let total_tokens: usize = messages.iter()
+                .map(|m| m.text_content().len() / 4) // rough estimate
+                .sum();
+            let threshold = (config.max_prompt_budget.max(8192) as f32
+                * config.compaction_config.trigger_threshold_pct) as usize;
+
+            if config.max_prompt_budget > 0 && total_tokens > threshold {
+                match compact_history(&messages, &config.compaction_config, None) {
+                    Ok(result) if result.items_compacted > 0 => {
+                        tracing::info!(
+                            iteration,
+                            tokens_before = result.tokens_before,
+                            tokens_after = result.tokens_after,
+                            "mid-turn compaction — saved {} tokens",
+                            result.tokens_before.saturating_sub(result.tokens_after),
+                        );
+                        messages = result.compacted_history;
+                    }
+                    Err(e) => {
+                        tracing::warn!(iteration, error = %e, "mid-turn compaction failed");
+                    }
+                    _ => {}
+                }
+            }
         }
         // Check for user interruption before each iteration
         if cancel.is_cancelled() {
@@ -1385,6 +1432,22 @@ async fn run_agent_turn_streaming_inner(
     // Create tool context with workspace path for file operations
     let tool_context = ToolContext::with_workspace(config.workspace_path.clone());
 
+    // ── Prefix digest (streaming): compute SHA256 fingerprint of stable prefix ──
+    let digest = assembler.compute_prefix_digest(&AssembleOptions {
+        persona: config.persona.clone(),
+        summary: config.summary.clone(),
+        kg_context: config.kg_context.clone(),
+        tool_catalog: None,
+        history: vec![],
+    });
+    client.set_prefix_digest(Some(digest.clone()));
+    tracing::info!(
+        prefix_hash = %&digest.combined_hash[..12],
+        prefix_tokens = digest.prefix_token_count,
+        "prefix digest computed (streaming) — estimated cache savings: {} tokens",
+        digest.prefix_token_count,
+    );
+
     for iteration in 0..config.max_iterations {
         // Token budget check: stop if cumulative prompt tokens exceed the budget
         if config.max_prompt_budget > 0 && total_prompt > config.max_prompt_budget {
@@ -1436,6 +1499,33 @@ async fn run_agent_turn_streaming_inner(
                 tool_messages,
                 vision_usage: None,
             });
+        }
+        // Mid-turn compaction check (heuristic-only, no LLM call)
+        if config.compaction_config.enabled && !messages.is_empty() {
+            let total_tokens: usize = messages.iter()
+                .map(|m| m.text_content().len() / 4) // rough estimate
+                .sum();
+            let threshold = (config.max_prompt_budget.max(8192) as f32
+                * config.compaction_config.trigger_threshold_pct) as usize;
+
+            if config.max_prompt_budget > 0 && total_tokens > threshold {
+                match compact_history(&messages, &config.compaction_config, None) {
+                    Ok(result) if result.items_compacted > 0 => {
+                        tracing::info!(
+                            iteration,
+                            tokens_before = result.tokens_before,
+                            tokens_after = result.tokens_after,
+                            "mid-turn compaction (streaming) — saved {} tokens",
+                            result.tokens_before.saturating_sub(result.tokens_after),
+                        );
+                        messages = result.compacted_history;
+                    }
+                    Err(e) => {
+                        tracing::warn!(iteration, error = %e, "mid-turn compaction (streaming) failed");
+                    }
+                    _ => {}
+                }
+            }
         }
         // Check for user interruption before each iteration
         if cancel.is_cancelled() {

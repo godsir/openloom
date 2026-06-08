@@ -2,13 +2,14 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use loom_context::PrefixDigest;
 use loom_types::{
     CompletionRequest, CompletionResponse, ContentPart, Message, ModelBackend, ModelConfig,
     StreamDelta, ToolCall, ToolChoice,
 };
 use reqwest::Client as HttpClient;
 
-use crate::cache::PrefixCache;
+use crate::cache::{CacheStatus, PrefixCache};
 use crate::engine::CloudClient;
 use crate::engine::find_sse_boundary;
 
@@ -18,6 +19,8 @@ pub struct OpenAIClient {
     base_url: String,
     http: HttpClient,
     prefix_cache: PrefixCache,
+    /// Pending prefix digest for the next request (set by agent loop via set_prefix_digest).
+    pending_digest: std::sync::Mutex<Option<PrefixDigest>>,
 }
 
 impl OpenAIClient {
@@ -32,6 +35,7 @@ impl OpenAIClient {
             base_url,
             http,
             prefix_cache: PrefixCache::new(2),
+            pending_digest: std::sync::Mutex::new(None),
         }
     }
 
@@ -60,13 +64,22 @@ impl OpenAIClient {
     }
 
     async fn try_complete(&self, req: &CompletionRequest) -> Result<CompletionResponse> {
-        let eff = req.effective_messages();
-        let (cache_hit, _) = self.prefix_cache.check(&eff);
-        if cache_hit {
-            tracing::info!("KV cache hit");
-        } else {
-            tracing::info!("KV cache miss");
+        let digest = self.pending_digest.lock().unwrap().clone();
+        let (cache_status, _, reasons) = self.prefix_cache.check_digest(&digest);
+        match cache_status {
+            CacheStatus::Hit => tracing::info!(
+                prefix_tokens = digest.as_ref().map(|d| d.prefix_token_count),
+                "KV cache hit -- prefix tokens saved"
+            ),
+            CacheStatus::AdditiveMiss => {
+                tracing::info!("KV cache miss (additive) -- prefix unchanged, suffix grew")
+            }
+            CacheStatus::BreakingMiss => {
+                tracing::info!(?reasons, "KV cache miss (breaking) -- prefix changed")
+            }
+            CacheStatus::ColdStart => tracing::info!("KV cache cold start -- first request in sequence"),
         }
+        let eff = req.effective_messages();
         let messages = self.lower_messages(&eff);
         let mut body = serde_json::json!({
             "model": self.model, "messages": messages,
@@ -90,14 +103,15 @@ impl OpenAIClient {
         }
         body["temperature"] = req.temperature.into();
         if let Some(budget) = req.thinking_budget {
-            let effort = if budget <= 2048 {
-                "low"
-            } else if budget <= 8192 {
-                "medium"
+            if budget == 0 {
+                body["reasoning_effort"] = serde_json::json!("none");
             } else {
-                "high"
-            };
-            body["reasoning_effort"] = serde_json::json!(effort);
+                let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };
+                body["reasoning_effort"] = serde_json::json!(effort);
+            }
+        }
+        if !req.stop.is_empty() {
+            body["stop"] = serde_json::json!(req.stop);
         }
 
         // Debug: log request body length for troubleshooting (try_complete)
@@ -359,11 +373,13 @@ impl CloudClient for OpenAIClient {
         tx: tokio::sync::mpsc::Sender<String>,
     ) -> Result<()> {
         let eff = req.effective_messages();
-        let (cache_hit, _) = self.prefix_cache.check(&eff);
-        if cache_hit {
-            tracing::info!("KV cache hit (stream)");
-        } else {
-            tracing::info!("KV cache miss (stream)");
+        let digest = self.pending_digest.lock().unwrap().clone();
+        let (cache_status, _, _reasons) = self.prefix_cache.check_digest(&digest);
+        match cache_status {
+            CacheStatus::Hit => tracing::info!("KV cache hit (stream)"),
+            CacheStatus::BreakingMiss => tracing::info!("KV cache miss (stream -- breaking)"),
+            CacheStatus::AdditiveMiss => tracing::info!("KV cache miss (stream -- additive)"),
+            CacheStatus::ColdStart => tracing::info!("KV cache cold start (stream)"),
         }
         let messages = self.lower_messages(&eff);
         let mut body = serde_json::json!({
@@ -375,14 +391,15 @@ impl CloudClient for OpenAIClient {
         }
         body["temperature"] = req.temperature.into();
         if let Some(budget) = req.thinking_budget {
-            let effort = if budget <= 2048 {
-                "low"
-            } else if budget <= 8192 {
-                "medium"
+            if budget == 0 {
+                body["reasoning_effort"] = serde_json::json!("none");
             } else {
-                "high"
-            };
-            body["reasoning_effort"] = serde_json::json!(effort);
+                let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };
+                body["reasoning_effort"] = serde_json::json!(effort);
+            }
+        }
+        if !req.stop.is_empty() {
+            body["stop"] = serde_json::json!(req.stop);
         }
         if !req.tools.is_empty() {
             body["tools"] = serde_json::json!(req.tools.iter().map(|t| serde_json::json!({
@@ -470,11 +487,13 @@ impl CloudClient for OpenAIClient {
         tx: tokio::sync::mpsc::Sender<StreamDelta>,
     ) -> Result<()> {
         let eff = req.effective_messages();
-        let (cache_hit, _) = self.prefix_cache.check(&eff);
-        if cache_hit {
-            tracing::info!("KV cache hit (structured stream)");
-        } else {
-            tracing::info!("KV cache miss (structured stream)");
+        let digest = self.pending_digest.lock().unwrap().clone();
+        let (cache_status, _, _reasons) = self.prefix_cache.check_digest(&digest);
+        match cache_status {
+            CacheStatus::Hit => tracing::info!("KV cache hit (structured stream)"),
+            CacheStatus::BreakingMiss => tracing::info!("KV cache miss (structured stream -- breaking)"),
+            CacheStatus::AdditiveMiss => tracing::info!("KV cache miss (structured stream -- additive)"),
+            CacheStatus::ColdStart => tracing::info!("KV cache cold start (structured stream)"),
         }
         let messages = self.lower_messages(&eff);
         let mut body = serde_json::json!({
@@ -486,14 +505,15 @@ impl CloudClient for OpenAIClient {
         }
         body["temperature"] = req.temperature.into();
         if let Some(budget) = req.thinking_budget {
-            let effort = if budget <= 2048 {
-                "low"
-            } else if budget <= 8192 {
-                "medium"
+            if budget == 0 {
+                body["reasoning_effort"] = serde_json::json!("none");
             } else {
-                "high"
-            };
-            body["reasoning_effort"] = serde_json::json!(effort);
+                let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };
+                body["reasoning_effort"] = serde_json::json!(effort);
+            }
+        }
+        if !req.stop.is_empty() {
+            body["stop"] = serde_json::json!(req.stop);
         }
         if !req.tools.is_empty() {
             body["tools"] = serde_json::json!(req.tools.iter().map(|t| serde_json::json!({
@@ -633,6 +653,18 @@ impl CloudClient for OpenAIClient {
     }
     fn prefix_hash_restore(&self, saved: Option<u64>) {
         self.prefix_cache.restore_hash(saved);
+    }
+
+    fn set_prefix_digest(&self, digest: Option<PrefixDigest>) {
+        *self.pending_digest.lock().unwrap() = digest;
+    }
+
+    fn prefix_digest_snapshot(&self) -> Option<PrefixDigest> {
+        self.prefix_cache.snapshot_digest()
+    }
+
+    fn prefix_digest_restore(&self, saved: Option<PrefixDigest>) {
+        self.prefix_cache.restore_digest(saved);
     }
 }
 

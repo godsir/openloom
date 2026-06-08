@@ -147,6 +147,10 @@ fn agent_event_method(event: &AgentEvent) -> &'static str {
         AgentEvent::TokenUsage { .. } => "chat.token_usage",
         AgentEvent::PermissionRequest { .. } => "tool.permission_request",
         AgentEvent::MemoryUpdated { .. } => "memory.updated",
+        AgentEvent::PlanCreated { .. } => "plan.created",
+        AgentEvent::PlanUpdated { .. } => "plan.updated",
+        AgentEvent::GoalSet { .. } => "goal.set",
+        AgentEvent::TodoStatusChanged { .. } => "todo.status_changed",
     }
 }
 
@@ -224,6 +228,18 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
                 "args": args,
                 "risk": risk,
             })
+        }
+        AgentEvent::PlanCreated { plan_id, title } => {
+            json!({ "plan_id": plan_id, "title": title })
+        }
+        AgentEvent::PlanUpdated { plan_id } => {
+            json!({ "plan_id": plan_id })
+        }
+        AgentEvent::GoalSet { session_id, description } => {
+            json!({ "session_id": session_id, "description": description })
+        }
+        AgentEvent::TodoStatusChanged { session_id, todo_id, status } => {
+            json!({ "session_id": session_id, "todo_id": todo_id, "status": status })
         }
         _ => json!({}),
     }

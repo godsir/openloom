@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use loom_context::PrefixDigest;
 use loom_types::{
     CompletionRequest, CompletionResponse, ContentPart, Message, ModelBackend, StreamDelta,
     ToolCall, ToolChoice,
@@ -9,7 +10,7 @@ use loom_types::{
 use reqwest::Client as HttpClient;
 use tokio::sync::mpsc;
 
-use crate::cache::PrefixCache;
+use crate::cache::{CacheStatus, PrefixCache};
 use crate::engine::CloudClient;
 
 pub struct AnthropicClient {
@@ -18,6 +19,8 @@ pub struct AnthropicClient {
     base_url: String,
     http: HttpClient,
     prefix_cache: PrefixCache,
+    /// Pending prefix digest for the next request (set by agent loop via set_prefix_digest).
+    pending_digest: std::sync::Mutex<Option<PrefixDigest>>,
 }
 
 impl AnthropicClient {
@@ -40,6 +43,7 @@ impl AnthropicClient {
             base_url,
             http,
             prefix_cache: PrefixCache::new(2),
+            pending_digest: std::sync::Mutex::new(None),
         }
     }
 
@@ -71,21 +75,32 @@ impl AnthropicClient {
 
     async fn try_complete(&self, req: &CompletionRequest) -> Result<CompletionResponse> {
         let eff = req.effective_messages();
-        let (cache_hit, _) = self.prefix_cache.check(&eff);
-        if cache_hit {
-            tracing::info!("KV cache hit");
-        } else {
-            tracing::info!("KV cache miss");
+        let digest = self.pending_digest.lock().unwrap().clone();
+        let (cache_status, _, reasons) = self.prefix_cache.check_digest(&digest);
+        match cache_status {
+            CacheStatus::Hit => tracing::info!("KV cache hit -- prefix unchanged"),
+            CacheStatus::BreakingMiss => {
+                tracing::info!(?reasons, "KV cache miss (breaking) -- prefix changed");
+            }
+            CacheStatus::AdditiveMiss => {
+                tracing::info!("KV cache miss (additive) -- prefix unchanged, suffix grew");
+            }
+            CacheStatus::ColdStart => {
+                tracing::info!("KV cache cold start -- first request in sequence");
+            }
         }
-        let (system_prompt, messages) = self.lower_messages(&eff);
+        let (system_prompt, messages) = self.lower_messages(&eff, &digest, cache_status);
         let max_tokens = if req.max_tokens > 0 {
             req.max_tokens
         } else {
             128000
         };
         let mut body = serde_json::json!({"model": self.model, "max_tokens": max_tokens, "temperature": req.temperature, "messages": messages});
+        if !req.stop.is_empty() {
+            body["stop_sequences"] = serde_json::json!(req.stop);
+        }
         if let Some(sys) = system_prompt {
-            body["system"] = serde_json::json!(sys);
+            body["system"] = sys.clone();
         }
         if !req.tools.is_empty() {
             let tools: Vec<serde_json::Value> = req.tools.iter().map(|t| {
@@ -107,7 +122,11 @@ impl AnthropicClient {
             }
         }
         if let Some(budget) = req.thinking_budget {
-            body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget});
+            if budget > 0 {
+                // Anthropic requires budget_tokens >= 1024; 0 means "disable".
+                body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget});
+            }
+            // budget == 0 → don't set thinking at all (extended thinking off)
         }
 
         let url = self.messages_url();
@@ -154,7 +173,12 @@ impl AnthropicClient {
         })
     }
 
-    fn lower_messages(&self, messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
+    fn lower_messages(
+        &self,
+        messages: &[Message],
+        _digest: &Option<PrefixDigest>,
+        cache_status: CacheStatus,
+    ) -> (Option<serde_json::Value>, Vec<serde_json::Value>) {
         let system_text = messages
             .iter()
             .filter(|m| m.role.as_str() == "system")
@@ -165,14 +189,23 @@ impl AnthropicClient {
             })
             .collect::<Vec<_>>()
             .join("\n\n");
-        let system_prompt = if system_text.is_empty() {
+        let cache_hit = matches!(cache_status, CacheStatus::Hit);
+        let system_prompt: Option<serde_json::Value> = if system_text.is_empty() {
             None
         } else {
-            Some(system_text)
+            if cache_hit {
+                Some(serde_json::json!([{
+                    "type": "text",
+                    "text": system_text,
+                    "cache_control": { "type": "ephemeral" }
+                }]))
+            } else {
+                Some(serde_json::json!(system_text))
+            }
         };
         let msgs: Vec<serde_json::Value> = messages.iter()
             .filter(|m| m.role.as_str() != "system")
-            .map(|msg| {
+            .enumerate().map(|(i, msg)| {
             // Anthropic Messages API only supports "user" and "assistant" roles.
             // Tool results must be wrapped in user messages (not a separate "tool" role).
             let anthropic_role = match msg.role.as_str() {
@@ -198,7 +231,18 @@ impl AnthropicClient {
                     serde_json::json!({"type": "text", "text": "[image omitted]"})
                 }
             }).collect();
-            serde_json::json!({"role": anthropic_role, "content": content})
+            let mut msg_json = serde_json::json!({"role": anthropic_role, "content": content});
+            if cache_hit && i == 0 {
+                if let Some(content_arr) = msg_json
+                    .get_mut("content")
+                    .and_then(|c| c.as_array_mut())
+                    .and_then(|arr| arr.last_mut())
+                {
+                    content_arr["cache_control"] =
+                        serde_json::json!({ "type": "ephemeral" });
+                }
+            }
+            msg_json
         }).collect();
         (system_prompt, msgs)
     }
@@ -267,13 +311,15 @@ impl CloudClient for AnthropicClient {
         tx: tokio::sync::mpsc::Sender<String>,
     ) -> Result<()> {
         let eff = req.effective_messages();
-        let (cache_hit, _) = self.prefix_cache.check(&eff);
-        if cache_hit {
-            tracing::info!("KV cache hit (stream)");
-        } else {
-            tracing::info!("KV cache miss (stream)");
+        let digest = self.pending_digest.lock().unwrap().clone();
+        let (cache_status, _, _reasons) = self.prefix_cache.check_digest(&digest);
+        match cache_status {
+            CacheStatus::Hit => tracing::info!("KV cache hit (stream)"),
+            CacheStatus::BreakingMiss => tracing::info!("KV cache miss (stream -- breaking)"),
+            CacheStatus::AdditiveMiss => tracing::info!("KV cache miss (stream -- additive)"),
+            CacheStatus::ColdStart => tracing::info!("KV cache cold start (stream)"),
         }
-        let (system_prompt, messages) = self.lower_messages(&eff);
+        let (system_prompt, messages) = self.lower_messages(&eff, &digest, cache_status);
         let max_tokens = if req.max_tokens > 0 {
             req.max_tokens
         } else {
@@ -281,10 +327,14 @@ impl CloudClient for AnthropicClient {
         };
         let mut body = serde_json::json!({"model": self.model, "max_tokens": max_tokens, "temperature": req.temperature, "messages": messages, "stream": true});
         if let Some(sys) = system_prompt {
-            body["system"] = serde_json::json!(sys);
+            body["system"] = sys.clone();
         }
         if let Some(budget) = req.thinking_budget {
-            body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget});
+            if budget > 0 {
+                // Anthropic requires budget_tokens >= 1024; 0 means "disable".
+                body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget});
+            }
+            // budget == 0 → don't set thinking at all (extended thinking off)
         }
         if !req.tools.is_empty() {
             let tools: Vec<serde_json::Value> = req.tools.iter().map(|t| {
@@ -367,13 +417,15 @@ impl CloudClient for AnthropicClient {
         use futures::StreamExt;
 
         let eff = req.effective_messages();
-        let (cache_hit, _) = self.prefix_cache.check(&eff);
-        if cache_hit {
-            tracing::info!("KV cache hit (structured stream)");
-        } else {
-            tracing::info!("KV cache miss (structured stream)");
+        let digest = self.pending_digest.lock().unwrap().clone();
+        let (cache_status, _, _reasons) = self.prefix_cache.check_digest(&digest);
+        match cache_status {
+            CacheStatus::Hit => tracing::info!("KV cache hit (stream)"),
+            CacheStatus::BreakingMiss => tracing::info!("KV cache miss (stream -- breaking)"),
+            CacheStatus::AdditiveMiss => tracing::info!("KV cache miss (stream -- additive)"),
+            CacheStatus::ColdStart => tracing::info!("KV cache cold start (stream)"),
         }
-        let (system_prompt, messages) = self.lower_messages(&eff);
+        let (system_prompt, messages) = self.lower_messages(&eff, &digest, cache_status);
         let max_tokens = if req.max_tokens > 0 {
             req.max_tokens
         } else {
@@ -381,10 +433,14 @@ impl CloudClient for AnthropicClient {
         };
         let mut body = serde_json::json!({"model": self.model, "max_tokens": max_tokens, "temperature": req.temperature, "messages": messages, "stream": true});
         if let Some(sys) = system_prompt {
-            body["system"] = serde_json::json!(sys);
+            body["system"] = sys.clone();
         }
         if let Some(budget) = req.thinking_budget {
-            body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget});
+            if budget > 0 {
+                // Anthropic requires budget_tokens >= 1024; 0 means "disable".
+                body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget});
+            }
+            // budget == 0 → don't set thinking at all (extended thinking off)
         }
         if !req.tools.is_empty() {
             let tools: Vec<serde_json::Value> = req.tools.iter().map(|t| {
@@ -543,6 +599,18 @@ impl CloudClient for AnthropicClient {
     }
     fn prefix_hash_restore(&self, saved: Option<u64>) {
         self.prefix_cache.restore_hash(saved);
+    }
+
+    fn set_prefix_digest(&self, digest: Option<PrefixDigest>) {
+        *self.pending_digest.lock().unwrap() = digest;
+    }
+
+    fn prefix_digest_snapshot(&self) -> Option<PrefixDigest> {
+        self.prefix_cache.snapshot_digest()
+    }
+
+    fn prefix_digest_restore(&self, saved: Option<PrefixDigest>) {
+        self.prefix_cache.restore_digest(saved);
     }
 }
 

@@ -9,6 +9,9 @@ export interface AttachedFile {
   size: number
   mimeType: string
   thumbnail?: string
+  /** Text content read in the renderer (for non-image files).
+   *  Sent to backend so it doesn't need to read from disk (works in sandbox mode). */
+  content?: string
 }
 
 export interface Draft {

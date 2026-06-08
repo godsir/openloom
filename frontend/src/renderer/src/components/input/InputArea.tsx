@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useStore } from '../../stores'
+import type { SendShortcut } from '../../stores/input'
 import { loomRpc } from '../../services/jsonrpc'
 import { streamBufferManager } from '../../services/stream-buffer'
 import { sendMessage } from '../../services/sendMessage'
@@ -9,8 +10,9 @@ import AgentSelector from './AgentSelector'
 import ThinkingLevelButton from './ThinkingLevelButton'
 import PermissionModeButton from './PermissionModeButton'
 import AttachedFiles from './AttachedFiles'
+import QuotedSelectionCard from './QuotedSelectionCard'
 import { IconImage, IconPaperclip, IconSparkles, IconX, IconCheck } from '../../utils/icons'
-import type { AttachedFile } from '../../stores/input'
+import { CodeMirrorInput } from './CodeMirrorInput'
 import styles from './InputArea.module.css'
 
 interface SkillInfo {
@@ -25,6 +27,20 @@ interface SkillInfo {
 
 export default function InputArea() {
   const [text, setText] = useState('')
+
+  // 点击外部关闭发送快捷键下拉
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (!target.closest(`.${styles.sendSplit}`)) {
+        document.querySelectorAll(`.${styles.sendSplitCaret}`).forEach(el => {
+          (el as HTMLElement).dataset.open = '0'
+        })
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
@@ -42,6 +58,9 @@ export default function InputArea() {
   const switchSession = useStore(s => s.switchSession)
   const wsState = useStore(s => s.wsState)
   const sendShortcut = useStore(s => s.sendShortcut)
+  const fimEnabled = useStore(s => s.fimEnabled)
+  const quotedSelections = useStore(s => s.quotedSelections)
+  const removeQuotedSelection = useStore(s => s.removeQuotedSelection)
   const { saveDraft, restoreDraft } = useStore.getState()
   const sessionWorkspace = sessionId ? sessionWorkspaces[sessionId] : undefined
 
@@ -113,7 +132,7 @@ export default function InputArea() {
     return id
   }, [sessionId, createSession, switchSession])
 
-  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+  const handlePaste = useCallback((e: React.ClipboardEvent | ClipboardEvent) => {
     const items = e.clipboardData?.items
     if (!items) return
 
@@ -152,9 +171,16 @@ export default function InputArea() {
   const processFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return
 
+    const MAX_FILE_SIZE = 512_000 // 500 KB, matches backend
+
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
       let thumbnail: string | undefined
+      let content: string | undefined
+
+      // Resolve real file path — Electron sandbox strips File.path,
+      // so we also read content in the renderer as the primary data channel.
+      const filePath: string = (file as any).path ?? ''
 
       if (file.type.startsWith('image/')) {
         thumbnail = await new Promise<string>((resolve) => {
@@ -162,14 +188,34 @@ export default function InputArea() {
           reader.onload = () => resolve(reader.result as string)
           reader.readAsDataURL(file)
         })
+      } else if (file.size > 0) {
+        // Read non-image file content in the renderer so the backend
+        // doesn't need to access the file on disk (sandbox-safe).
+        if (file.size <= MAX_FILE_SIZE) {
+          try {
+            content = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader()
+              reader.onload = () => resolve(reader.result as string)
+              reader.onerror = () => reject(reader.error)
+              reader.readAsText(file)
+            })
+          } catch {
+            // File read failed; still attach the file metadata so the
+            // backend can try to read from path as fallback.
+            content = undefined
+          }
+        }
+        // Files over MAX_FILE_SIZE have content=undefined; the backend
+        // will skip them with a visible message.
       }
 
       setAttachedFiles(prev => [...prev, {
-        path: (file as any).path ?? '',
+        path: filePath,
         name: file.name,
         size: file.size,
         mimeType: file.type || 'application/octet-stream',
         thumbnail,
+        content,
       }])
     }
 
@@ -239,16 +285,20 @@ export default function InputArea() {
 
   const handleSend = async () => {
     const content = text.trim()
-    if ((!content && attachedFiles.length === 0) || sendingRef.current || (sessionId && useStore.getState().streamingSessionIds.has(sessionId))) return
+    const { quotedSelections } = useStore.getState()
+    const hasContent = content || attachedFiles.length > 0 || quotedSelections.length > 0
+    if (!hasContent || sendingRef.current || (sessionId && useStore.getState().streamingSessionIds.has(sessionId))) return
     sendingRef.current = true
     setText('')
     const filesToSend = attachedFiles
     setAttachedFiles([])
+    const selectionsToSend = [...quotedSelections]
+    useStore.getState().clearQuotedSelections()
 
     try {
       const sid = await ensureSession()
       if (!sid) { sendingRef.current = false; setText(content); setAttachedFiles(filesToSend); return }
-      await sendMessage({ sessionId: sid, content, attachedFiles: filesToSend, skills: selectedSkills.length > 0 ? selectedSkills : undefined })
+      await sendMessage({ sessionId: sid, content, attachedFiles: filesToSend, skills: selectedSkills.length > 0 ? selectedSkills : undefined, quotedSelections: selectionsToSend })
     } finally {
       sendingRef.current = false
     }
@@ -362,17 +412,40 @@ export default function InputArea() {
               <AttachedFiles files={attachedFiles} onRemove={handleRemoveFile} />
             </div>
           )}
-          <textarea
-            ref={textareaRef}
-            value={text}
-            onChange={e => setText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            placeholder={placeholder}
-            rows={2}
-            disabled={!isConnected}
-            className={styles.textarea}
-          />
+          {quotedSelections.length > 0 && (
+            <div className={styles.attachmentsArea}>
+              {quotedSelections.map(qs => (
+                <QuotedSelectionCard
+                  key={qs.id}
+                  text={qs.text}
+                  filePath={qs.filePath}
+                  onRemove={() => removeQuotedSelection(qs.id)}
+                />
+              ))}
+            </div>
+          )}
+          {fimEnabled ? (
+            <CodeMirrorInput
+              value={text}
+              onChange={setText}
+              onSend={handleSend}
+              onPaste={handlePaste}
+              placeholder={placeholder}
+              disabled={!isConnected}
+            />
+          ) : (
+            <textarea
+              ref={textareaRef}
+              value={text}
+              onChange={e => setText(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              placeholder={placeholder}
+              rows={2}
+              disabled={!isConnected}
+              className={styles.textarea}
+            />
+          )}
           <div className={styles.toolbar}>
             <input
               ref={imageInputRef}
@@ -457,13 +530,47 @@ export default function InputArea() {
                 停止
               </button>
             ) : (
-              <button
-                onClick={handleSend}
-                disabled={(!text.trim() && attachedFiles.length === 0) || !isConnected}
-                className={styles.sendBtn}
-              >
-                发送
-              </button>
+              <div className={styles.sendSplit}>
+                <button
+                  onClick={handleSend}
+                  disabled={(!text.trim() && attachedFiles.length === 0 && quotedSelections.length === 0) || !isConnected}
+                  className={styles.sendSplitMain}
+                >
+                  发送
+                </button>
+                <button
+                  className={styles.sendSplitCaret}
+                  title="发送快捷键"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    const btn = e.currentTarget
+                    const rect = btn.getBoundingClientRect()
+                    // Toggle dropdown via a data attribute on the button
+                    const open = btn.dataset.open === '1'
+                    btn.dataset.open = open ? '0' : '1'
+                  }}
+                >
+                  <svg width="8" height="5" viewBox="0 0 8 5"><path d="M0 0l4 5 4-5z" fill="currentColor"/></svg>
+                </button>
+                <div className={styles.sendShortcutMenu} onMouseDown={(e) => e.preventDefault()}>
+                  {(['enter', 'ctrl+enter', 'shift+enter'] as SendShortcut[]).map(k => (
+                    <div
+                      key={k}
+                      className={`${styles.sendShortcutItem} ${sendShortcut === k ? styles.sendShortcutItemActive : ''}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        useStore.getState().setSendShortcut(k)
+                        // Close the dropdown
+                        const caret = (e.currentTarget.closest(`.${styles.sendSplit}`) as HTMLElement)?.querySelector(`.${styles.sendSplitCaret}`) as HTMLElement | null
+                        if (caret) { caret.dataset.open = '0'; caret.blur() }
+                      }}
+                    >
+                      {k === 'enter' ? '↵ Enter' : k === 'ctrl+enter' ? '⌃ Ctrl+Enter' : '⇧ Shift+Enter'}
+                      {sendShortcut === k && <IconCheck size={11} style={{ marginLeft: 'auto' }} />}
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
         </div>

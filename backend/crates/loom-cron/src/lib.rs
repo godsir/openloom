@@ -6,6 +6,7 @@
 //! Jobs are persisted to `cron.db` (separate from memory.db) and automatically
 //! restored on restart.
 
+pub mod detector;
 pub mod job;
 pub mod storage;
 

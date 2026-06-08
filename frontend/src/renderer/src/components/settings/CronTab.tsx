@@ -86,11 +86,12 @@ interface FormData {
   name: string
   cron_expression: string
   command: string
+  task_type: 'shell' | 'ai_prompt'
   timeout_secs: number
   session_mode: 'isolated' | 'current'
 }
 
-const EMPTY_FORM: FormData = { name: '', cron_expression: '', command: '', timeout_secs: 300, session_mode: 'isolated' }
+const EMPTY_FORM: FormData = { name: '', cron_expression: '', command: '', task_type: 'shell', timeout_secs: 300, session_mode: 'isolated' }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -142,7 +143,7 @@ export default function CronTab() {
   // ── Form ───────────────────────────────────────────────────────────────
 
   const openForm = (job?: CronJobSummary) => {
-    setForm(job ? { name: job.name, cron_expression: job.cron_expression, command: job.command, timeout_secs: 300, session_mode: job.session_mode } : EMPTY_FORM)
+    setForm(job ? { name: job.name, cron_expression: job.cron_expression, command: job.command, task_type: (job as any).task_type || 'shell', timeout_secs: 300, session_mode: job.session_mode } : EMPTY_FORM)
     setFormErr(null)
     setView({ kind: 'form', editJob: job })
   }
@@ -151,10 +152,10 @@ export default function CronTab() {
     const f = { name: form.name.trim(), expr: form.cron_expression.trim(), cmd: form.command.trim() }
     if (!f.name) { setFormErr('名称不能为空'); return }
     if (!f.expr) { setFormErr('Cron 表达式不能为空'); return }
-    if (!f.cmd) { setFormErr('命令不能为空'); return }
+    if (!f.cmd) { setFormErr(form.task_type === 'ai_prompt' ? '提示词不能为空' : '命令不能为空'); return }
     setSaving(true)
     try {
-      const params = { name: f.name, cron_expression: f.expr, command: f.cmd, session_mode: form.session_mode, timeout_secs: Math.max(1, Math.min(3600, form.timeout_secs)) }
+      const params = { name: f.name, cron_expression: f.expr, command: f.cmd, task_type: form.task_type, session_mode: form.session_mode, timeout_secs: Math.max(1, Math.min(3600, form.timeout_secs)) }
       if (view.kind === 'form' && view.editJob) {
         await loomRpc('cron.update', { id: view.editJob.id, ...params })
       } else {
@@ -199,8 +200,20 @@ export default function CronTab() {
           </div>
 
           <div className={styles.formRow}>
-            <label className={styles.formLabel}>Shell 命令</label>
-            <textarea className={styles.formTextarea} value={form.command} onChange={e => setForm({ ...form, command: e.target.value })} placeholder="echo 'hello'" rows={3} />
+            <label className={styles.formLabel}>任务类型</label>
+            <div className={styles.modeRow}>
+              <button type="button" className={`${styles.modeBtn} ${form.task_type === 'shell' ? styles.modeBtnActive : ''}`} onClick={() => setForm({ ...form, task_type: 'shell' })}>Shell 命令</button>
+              <button type="button" className={`${styles.modeBtn} ${form.task_type === 'ai_prompt' ? styles.modeBtnActive : ''}`} onClick={() => setForm({ ...form, task_type: 'ai_prompt' })}>AI 提示词</button>
+            </div>
+          </div>
+
+          <div className={styles.formRow}>
+            <label className={styles.formLabel}>{form.task_type === 'ai_prompt' ? 'AI 提示词（定时发送给 AI 执行）' : 'Shell 命令'}</label>
+            {form.task_type === 'ai_prompt' ? (
+              <textarea className={styles.formTextarea} value={form.command} onChange={e => setForm({ ...form, command: e.target.value })} placeholder="每天早上9点帮我拉取最新代码并总结变更" rows={4} />
+            ) : (
+              <textarea className={styles.formTextarea} value={form.command} onChange={e => setForm({ ...form, command: e.target.value })} placeholder="echo 'hello'" rows={3} />
+            )}
           </div>
 
           <div className={styles.formRow}>
@@ -277,7 +290,7 @@ export default function CronTab() {
             <button className={styles.btnAdd} onClick={() => openForm()}><IconPlus size={13} />新建</button>
           </div>
         </div>
-        <p className={sharedStyles.sectionDesc}>管理服务端定时执行的 Shell 命令</p>
+        <p className={sharedStyles.sectionDesc}>管理定时执行的 Shell 命令和 AI 提示词任务</p>
       </div>
 
       <div className={sharedStyles.contentBody}>
@@ -303,7 +316,7 @@ export default function CronTab() {
                       {describeCron(job.cron_expression)}
                       <span className={styles.cardCronRaw}>{job.cron_expression}</span>
                     </div>
-                    <div className={styles.cardCmd}>{job.command}</div>
+                    <div className={styles.cardCmd}>{job.command.slice(0, 80)}{job.command.length > 80 ? '...' : ''}</div>
                   </div>
                   <div className={styles.cardActions}>
                     <button className={styles.iconBtn} title="立即执行" disabled={b} onClick={() => doAction('cron.run_now', job.id)}><IconPlay size={14} /></button>

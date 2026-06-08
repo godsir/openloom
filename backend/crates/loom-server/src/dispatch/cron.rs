@@ -1,11 +1,12 @@
 //! JSON-RPC dispatch for `cron.*` methods.
 //!
 //! Methods: cron.list, cron.create, cron.delete, cron.pause, cron.resume,
-//!          cron.history, cron.run_now
+//!          cron.history, cron.run_now, cron.detect
 
 use std::sync::Arc;
 
 use anyhow::Result;
+use loom_cron::detector;
 use loom_cron::job::SessionMode;
 use loom_types::{ErrorCode, JsonRpcError};
 use serde_json::{Value, json};
@@ -18,6 +19,11 @@ pub async fn handle(
     method: &str,
     params: &Value,
 ) -> Option<Result<Value, JsonRpcError>> {
+    // cron.detect can work without cron scheduler
+    if method == "cron.detect" {
+        return Some(handle_detect(state, params).await);
+    }
+
     let cron = state.orchestrator.cron_scheduler().await?;
 
     match method {
@@ -29,6 +35,62 @@ pub async fn handle(
         "cron.history" => Some(handle_history(&cron, params).await),
         "cron.run_now" => Some(handle_run_now(&cron, params).await),
         _ => None,
+    }
+}
+
+// ── detect ──
+
+async fn handle_detect(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let message = p.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    if message.is_empty() || !detector::pre_scan(message) {
+        return Ok(json!({ "should_create": false }));
+    }
+
+    let now = chrono::Utc::now();
+    let prompt = detector::build_extraction_prompt(message, &now);
+
+    let result = state
+        .orchestrator
+        .with_cloud_client(|client| {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(async {
+                let req = loom_types::CompletionRequest {
+                    messages: vec![loom_types::Message::user(&prompt)],
+                    ..Default::default()
+                };
+                match client.complete(req).await {
+                    Ok(resp) => {
+                        let text = resp.text.trim().to_string();
+                        match detector::parse_extraction_response(&text) {
+                            Ok(detected) => {
+                                if detected.should_create {
+                                    Ok(json!({
+                                        "should_create": true,
+                                        "name": detected.name,
+                                        "body": detected.body,
+                                        "cron_expression": detected.cron_expression,
+                                        "kind": detected.kind,
+                                        "confirmation": detected.confirmation,
+                                    }))
+                                } else {
+                                    Ok(json!({ "should_create": false }))
+                                }
+                            }
+                            Err(e) => Err(anyhow::anyhow!("parse error: {}", e)),
+                        }
+                    }
+                    Err(e) => Err(anyhow::anyhow!("LLM error: {}", e)),
+                }
+            })
+        })
+        .await;
+
+    match result {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            tracing::warn!(error = %e, "cron.detect skipped");
+            Ok(json!({ "should_create": false }))
+        }
     }
 }
 

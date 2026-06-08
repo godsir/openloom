@@ -3,7 +3,7 @@ import { IconX } from '../../utils/icons'
 interface Props {
   text: string
   filePath?: string
-  onRemove: () => void
+  onRemove?: () => void
 }
 
 export default function QuotedSelectionCard({ text, filePath, onRemove }: Props) {
@@ -23,12 +23,14 @@ export default function QuotedSelectionCard({ text, filePath, onRemove }: Props)
           {preview}
         </p>
       </div>
-      <button
-        onClick={onRemove}
-        className="shrink-0 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors-fast"
-      >
-        <IconX size={12} />
-      </button>
+      {onRemove && (
+        <button
+          onClick={onRemove}
+          className="shrink-0 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors-fast"
+        >
+          <IconX size={12} />
+        </button>
+      )}
     </div>
   )
 }

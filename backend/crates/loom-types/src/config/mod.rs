@@ -2,6 +2,7 @@
 //!
 //! Consumers: loom-core (engine config), loom-server (config.* RPC methods), loom-cli (config command)
 
+pub mod compaction;
 pub mod model_config;
 
 use serde::{Deserialize, Serialize};
