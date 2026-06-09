@@ -5,6 +5,17 @@
 //! schedule parsing and a custom `tokio::time::interval`-based loop.
 //! Jobs are persisted to `cron.db` (separate from memory.db) and automatically
 //! restored on restart.
+//!
+//! ## Architecture
+//!
+//! Instead of executing shell commands, each cron job stores an **AI prompt**
+//! (natural language instruction). When a job fires, the prompt is sent to
+//! the AI via a [`PromptExecutor`] implementation provided by the host
+//! (typically the Orchestrator). The AI processes the instruction and returns
+//! a response — it can call tools, search the web, read files, etc.
+//!
+//! To use: call [`CronScheduler::set_prompt_executor`] after construction
+//! to wire up the AI backend.
 
 pub mod detector;
 pub mod job;
@@ -21,6 +32,24 @@ use uuid::Uuid;
 
 use job::{CronJob, CronRunHistory, RunStatus, SessionMode};
 use storage::CronStorage;
+
+// ── Prompt Executor ────────────────────────────────────────────────────────────
+
+/// Executes an AI prompt and returns the response text.
+///
+/// The host (Orchestrator) provides an implementation that sends the prompt
+/// to a configured LLM and returns the completion text. The executor may
+/// allow the AI to call tools (search, file I/O, etc.) depending on the
+/// host's configuration.
+pub trait PromptExecutor: Send + Sync {
+    /// Execute a prompt and return the AI's response.
+    /// Returns an error if no AI backend is available or the request fails.
+    fn execute(
+        &self,
+        prompt: &str,
+        timeout_secs: u64,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + '_>>;
+}
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
@@ -40,6 +69,8 @@ pub struct CronScheduler {
     db_path: PathBuf,
     /// Set of job IDs currently executing (prevents concurrent execution of the same job).
     running: Arc<RwLock<HashSet<String>>>,
+    /// AI prompt executor — set by the host after construction.
+    prompt_executor: RwLock<Option<Arc<dyn PromptExecutor>>>,
 }
 
 impl CronScheduler {
@@ -69,10 +100,18 @@ impl CronScheduler {
             storage,
             db_path,
             running: Arc::new(RwLock::new(HashSet::new())),
+            prompt_executor: RwLock::new(None),
         })
     }
 
-    /// Start the scheduler loop. Runs until `stop()` is called.
+    /// Set the AI prompt executor. Must be called before jobs will execute
+    /// successfully — without it, firing jobs will log an error and record
+    /// a failure.
+    pub async fn set_prompt_executor(&self, executor: Arc<dyn PromptExecutor>) {
+        *self.prompt_executor.write().await = Some(executor);
+    }
+
+    /// Start the scheduler loop. Runs until the returned JoinHandle is aborted.
     /// Spawns as a background task; stores the JoinHandle for graceful shutdown.
     pub fn start(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let this = self.clone();
@@ -97,12 +136,15 @@ impl CronScheduler {
 
     // ── Job management ────────────────────────────────────────────────────
 
-    /// Add a new cron job.
+    /// Add a new cron job with an AI prompt.
+    ///
+    /// The `prompt` is a natural language instruction that will be sent to
+    /// the AI each time this job fires (e.g. "检查服务器状态并发送报告").
     pub async fn add_job(
         &self,
         name: &str,
         cron_expression: &str,
-        command: &str,
+        prompt: &str,
         session_mode: SessionMode,
         timeout_secs: u64,
     ) -> Result<String> {
@@ -123,7 +165,7 @@ impl CronScheduler {
             id: id.clone(),
             name: name.to_string(),
             cron_expression: cron_expression.to_string(),
-            command: command.to_string(),
+            prompt: prompt.to_string(),
             enabled: true,
             session_mode,
             timeout_secs,
@@ -218,7 +260,8 @@ impl CronScheduler {
         self.running.write().await.insert(job_id.to_string());
 
         let run_id = Uuid::new_v4().to_string();
-        Self::execute_job(&self.storage, &job, &run_id).await;
+        let executor = self.prompt_executor.read().await.clone();
+        Self::execute_job(&self.storage, &job, &run_id, executor.as_deref()).await;
 
         // Remove from running set.
         self.running.write().await.remove(job_id);
@@ -258,17 +301,23 @@ impl CronScheduler {
             let run_id = Uuid::new_v4().to_string();
             let running = self.running.clone();
             let jid = job_id.clone();
+            let executor = self.prompt_executor.read().await.clone();
 
             tokio::spawn(async move {
-                Self::execute_job(&storage, &job, &run_id).await;
+                Self::execute_job(&storage, &job, &run_id, executor.as_deref()).await;
                 // Remove from running set after completion.
                 running.write().await.remove(&jid);
             });
         }
     }
 
-    /// Execute a single job: record history, run the command, update results.
-    async fn execute_job(storage: &Arc<CronStorage>, job: &CronJob, run_id: &str) {
+    /// Execute a single job: record history, send prompt to AI, update results.
+    async fn execute_job(
+        storage: &Arc<CronStorage>,
+        job: &CronJob,
+        run_id: &str,
+        executor: Option<&dyn PromptExecutor>,
+    ) {
         let now = chrono::Utc::now().timestamp();
 
         // Record start.
@@ -278,36 +327,42 @@ impl CronScheduler {
             started_at: now,
             finished_at: None,
             status: RunStatus::Running,
-            stdout: None,
-            stderr: None,
-            exit_code: None,
+            response: None,
+            error_message: None,
         }) {
             tracing::warn!(run_id = %run_id, job_id = %job.id, error = %e, "failed to insert run history start");
         }
 
         tracing::info!(run_id = %run_id, job_id = %job.id, name = %job.name, "cron job triggered");
 
-        let result = execute_command(&job.command, job.timeout_secs).await;
-        let finished_at = chrono::Utc::now().timestamp();
-
-        let (status, exit_code) = match &result {
-            Ok((_, code)) if *code == 0 => (RunStatus::Completed, Some(0)),
-            Ok((_, code)) => (RunStatus::Failed, Some(*code)),
-            Err(_) => (RunStatus::TimedOut, None),
+        let result = match executor {
+            Some(exec) => exec.execute(&job.prompt, job.timeout_secs).await,
+            None => {
+                tracing::error!(
+                    run_id = %run_id,
+                    job_id = %job.id,
+                    "no prompt executor configured — cannot execute AI prompt"
+                );
+                Err(anyhow::anyhow!(
+                    "No AI backend configured. Set up a model first — the cron scheduler \
+                     requires an AI prompt executor to process job instructions."
+                ))
+            }
         };
 
-        let (stdout, stderr) = match result {
-            Ok((out, _)) => (Some(out), None),
-            Err(e) => (None, Some(e.to_string())),
+        let finished_at = chrono::Utc::now().timestamp();
+
+        let (status, response, error_message) = match &result {
+            Ok(text) => (RunStatus::Completed, Some(text.clone()), None),
+            Err(e) => (RunStatus::Failed, None, Some(e.to_string())),
         };
 
         if let Err(e) = storage.update_history(
             run_id,
             finished_at,
             &status,
-            stdout.as_deref(),
-            stderr.as_deref(),
-            exit_code,
+            response.as_deref(),
+            error_message.as_deref(),
         ) {
             tracing::warn!(run_id = %run_id, job_id = %job.id, error = %e, "failed to update run history result");
         }
@@ -325,96 +380,25 @@ impl CronScheduler {
     }
 }
 
-// ── Command execution ─────────────────────────────────────────────────────────
-
-async fn execute_command(command: &str, timeout_secs: u64) -> Result<(String, i32)> {
-    run_shell_command(command, timeout_secs).await
-}
-
-/// Execute a shell command with timeout.
-///
-/// Uses `spawn()` with a channel-based timeout to prevent zombie processes
-/// when the timeout fires. On timeout, the child process is killed via
-/// platform-specific means (taskkill / kill). The trust boundary here is
-/// that this is a local-first personal assistant where the user is the
-/// only operator; commands run with the user's own privileges.
-async fn run_shell_command(command: &str, timeout_secs: u64) -> Result<(String, i32)> {
-    let cmd_str = command.to_string();
-    tokio::task::spawn_blocking(move || {
-        // Note: /D disables AutoRun, /S strips leading/trailing quotes.
-        // This is acceptable for a local-first personal assistant where
-        // the user is the only operator.
-        #[cfg(windows)]
-        let mut cmd = std::process::Command::new("cmd");
-        #[cfg(windows)]
-        cmd.args(["/D", "/S", "/C", &cmd_str]);
-        #[cfg(not(windows))]
-        let mut cmd = std::process::Command::new("sh");
-        #[cfg(not(windows))]
-        cmd.args(["-c", &cmd_str]);
-
-        let child = cmd
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()?;
-
-        let pid = child.id();
-        let timeout = std::time::Duration::from_secs(timeout_secs);
-
-        // Use a channel so we can implement timeout with process kill.
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(child.wait_with_output());
-        });
-
-        match rx.recv_timeout(timeout) {
-            Ok(output_result) => {
-                let output = output_result?;
-                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let code = output.status.code().unwrap_or(-1);
-                Ok((stdout, code))
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                // Timed out — kill the child to prevent zombie processes.
-                #[cfg(windows)]
-                {
-                    let _ = std::process::Command::new("taskkill")
-                        .args(["/PID", &pid.to_string(), "/F"])
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .status();
-                }
-                #[cfg(not(windows))]
-                {
-                    let _ = std::process::Command::new("kill")
-                        .args(["-9", &pid.to_string()])
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .status();
-                }
-                Err(anyhow::anyhow!("command timed out after {}s", timeout_secs))
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(anyhow::anyhow!(
-                "command wait thread disconnected unexpectedly"
-            )),
-        }
-    })
-    .await
-    .map_err(|e| anyhow::anyhow!("spawn_blocking failed: {}", e))?
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::pin::Pin;
 
-    #[test]
-    fn test_execute_command_echo() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let (stdout, code) = rt.block_on(execute_command("echo hello", 5)).unwrap();
-        assert!(stdout.contains("hello"));
-        assert_eq!(code, 0);
+    /// A test executor that echoes the prompt back (no real AI).
+    struct EchoExecutor;
+
+    impl PromptExecutor for EchoExecutor {
+        fn execute(
+            &self,
+            prompt: &str,
+            _timeout_secs: u64,
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + '_>> {
+            let result = Ok(format!("[AI response to: {}]", prompt));
+            Box::pin(std::future::ready(result))
+        }
     }
 
     #[test]
@@ -446,7 +430,7 @@ mod tests {
             .add_job(
                 "test",
                 "0 0 */6 * * * *",
-                "echo hello",
+                "帮我检查系统状态",
                 SessionMode::Isolated,
                 300,
             )
@@ -457,6 +441,7 @@ mod tests {
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].name, "test");
         assert_eq!(jobs[0].cron_expression, "0 0 */6 * * * *");
+        assert_eq!(jobs[0].prompt, "帮我检查系统状态");
         assert!(jobs[0].enabled);
         assert_eq!(jobs[0].id, id);
     }
@@ -471,7 +456,7 @@ mod tests {
             .add_job(
                 "bad",
                 "not a cron expression",
-                "echo hi",
+                "do something",
                 SessionMode::Isolated,
                 300,
             )
@@ -489,7 +474,7 @@ mod tests {
             .add_job(
                 "pause test",
                 "0 * * * * * *",
-                "echo hi",
+                "check status",
                 SessionMode::Isolated,
                 300,
             )
@@ -515,7 +500,7 @@ mod tests {
             .add_job(
                 "delete me",
                 "0 * * * * * *",
-                "echo bye",
+                "do cleanup",
                 SessionMode::Isolated,
                 300,
             )
@@ -528,16 +513,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_now() {
+    async fn test_run_now_with_executor() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("cron.db");
         let scheduler = CronScheduler::new(db_path).await.unwrap();
+        scheduler.set_prompt_executor(Arc::new(EchoExecutor)).await;
 
         let id = scheduler
             .add_job(
                 "run now test",
                 "0 0 0 1 1 * *",
-                "echo instant",
+                "检查天气",
                 SessionMode::Isolated,
                 5,
             )
@@ -553,6 +539,39 @@ mod tests {
         let history = scheduler.get_history(&id, 1).unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].id, run_id);
+        assert_eq!(history[0].status, RunStatus::Completed);
+        assert!(history[0]
+            .response
+            .as_deref()
+            .unwrap_or("")
+            .contains("检查天气"));
+    }
+
+    #[tokio::test]
+    async fn test_run_now_without_executor_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("cron.db");
+        let scheduler = CronScheduler::new(db_path).await.unwrap();
+        // No executor set — should fail
+
+        let id = scheduler
+            .add_job(
+                "no executor test",
+                "0 0 0 1 1 * *",
+                "检查天气",
+                SessionMode::Isolated,
+                5,
+            )
+            .await
+            .unwrap();
+
+        let _run_id = scheduler.run_now(&id).await.unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        let history = scheduler.get_history(&id, 1).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].status, RunStatus::Failed);
+        assert!(history[0].error_message.is_some());
     }
 
     #[tokio::test]
@@ -567,7 +586,7 @@ mod tests {
                 .add_job(
                     "persistent",
                     "0 0 0 * * * *",
-                    "echo persist",
+                    "每日报告",
                     SessionMode::Isolated,
                     300,
                 )
@@ -581,6 +600,7 @@ mod tests {
             let jobs = scheduler.list_jobs().unwrap();
             assert_eq!(jobs.len(), 1);
             assert_eq!(jobs[0].name, "persistent");
+            assert_eq!(jobs[0].prompt, "每日报告");
             assert!(jobs[0].enabled);
         }
     }

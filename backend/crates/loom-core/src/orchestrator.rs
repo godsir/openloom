@@ -804,9 +804,17 @@ impl Orchestrator {
 
     /// Initialise the cron scheduler. Must be called after construction (async).
     /// The scheduler is backed by `<data_dir>/cron.db`. Starts the background loop.
+    /// Also wires up the AI prompt executor so cron jobs can execute AI instructions.
     pub async fn init_cron_scheduler(&self) -> anyhow::Result<()> {
         let db_path = self.data_dir.join("cron.db");
         let scheduler = Arc::new(CronScheduler::new(db_path).await?);
+
+        // Wire up the AI prompt executor — cron jobs send their prompts to the LLM.
+        let cloud_client = self.cloud_client.clone();
+        scheduler
+            .set_prompt_executor(Arc::new(CronPromptExecutor { cloud_client }))
+            .await;
+
         let handle = scheduler.start();
         *self.cron_scheduler.write().await = Some(scheduler);
         *self.cron_handle.write().await = Some(handle);
@@ -5849,4 +5857,58 @@ async fn llm_extract_entities(
     }
 
     Ok((entities, relationships, prompt_tokens, completion_tokens))
+}
+
+// ============================================================================
+// CronPromptExecutor — bridges the cron scheduler to the AI backend
+// ============================================================================
+
+use loom_cron::PromptExecutor;
+
+/// Executes cron job prompts by sending them to the configured cloud LLM.
+///
+/// Each cron job stores a natural language AI instruction (prompt). When
+/// the job fires, this executor sends the prompt to the LLM and returns
+/// the response. The AI can call tools during execution.
+struct CronPromptExecutor {
+    cloud_client: Arc<tokio::sync::RwLock<Option<Arc<dyn CloudClient>>>>,
+}
+
+impl PromptExecutor for CronPromptExecutor {
+    fn execute(
+        &self,
+        prompt: &str,
+        timeout_secs: u64,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + '_>> {
+        let client_opt = self.cloud_client.clone();
+        let prompt = prompt.to_string();
+
+        Box::pin(async move {
+            let client = {
+                let guard = client_opt.read().await;
+                guard
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("No cloud client configured — set up a model first"))?
+            };
+
+            let req = loom_types::CompletionRequest {
+                messages: vec![loom_types::Message::user(&prompt)],
+                ..Default::default()
+            };
+
+            match tokio::time::timeout(
+                tokio::time::Duration::from_secs(timeout_secs),
+                client.complete(req),
+            )
+            .await
+            {
+                Ok(Ok(resp)) => Ok(resp.text.trim().to_string()),
+                Ok(Err(e)) => Err(anyhow::anyhow!("AI request failed: {}", e)),
+                Err(_) => Err(anyhow::anyhow!(
+                    "AI request timed out after {}s",
+                    timeout_secs
+                )),
+            }
+        })
+    }
 }

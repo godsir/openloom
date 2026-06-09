@@ -2,6 +2,10 @@
 //!
 //! Methods: cron.list, cron.create, cron.delete, cron.pause, cron.resume,
 //!          cron.history, cron.run_now, cron.detect
+//!
+//! v2: Jobs store an AI prompt (natural language instruction) instead of a
+//!     shell command. When a job fires, the prompt is sent to the AI for
+//!     execution via the PromptExecutor.
 
 use std::sync::Arc;
 
@@ -67,7 +71,7 @@ async fn handle_detect(state: &AppState, p: &Value) -> Result<Value, JsonRpcErro
                                     Ok(json!({
                                         "should_create": true,
                                         "name": detected.name,
-                                        "body": detected.body,
+                                        "prompt": detected.body,
                                         "cron_expression": detected.cron_expression,
                                         "kind": detected.kind,
                                         "confirmation": detected.confirmation,
@@ -109,7 +113,18 @@ async fn handle_create(
 ) -> Result<Value, JsonRpcError> {
     let name = get_str(params, "name")?;
     let cron_expr = get_str(params, "cron_expression")?;
-    let command = get_str(params, "command")?;
+    // prompt is the AI instruction (v2); accept "command" as fallback for v1 compatibility
+    let prompt = params
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .or_else(|| params.get("command").and_then(|v| v.as_str()))
+        .unwrap_or("");
+    if prompt.is_empty() {
+        return Err(err(
+            ErrorCode::InvalidRequest,
+            "missing or invalid 'prompt' (AI instruction for the cron job)",
+        ));
+    }
     let session_mode = get_str(params, "session_mode")
         .map(|s| match s {
             "current" => SessionMode::Current,
@@ -122,7 +137,10 @@ async fn handle_create(
         .unwrap_or(300)
         .clamp(1, 3600);
 
-    match cron.add_job(name, cron_expr, command, session_mode, timeout_secs).await {
+    match cron
+        .add_job(name, cron_expr, prompt, session_mode, timeout_secs)
+        .await
+    {
         Ok(id) => Ok(json!({ "id": id })),
         Err(e) => Err(err(ErrorCode::InternalError, &e.to_string())),
     }
@@ -195,5 +213,5 @@ fn get_str<'a>(params: &'a Value, key: &str) -> Result<&'a str, JsonRpcError> {
     params
         .get(key)
         .and_then(|v| v.as_str())
-        .ok_or_else(|| err(ErrorCode::InvalidRequest, &format!("missing or invalid '{}'", key)))
+        .ok_or_else(|| err(ErrorCode::InternalError, &format!("missing or invalid '{}'", key)))
 }

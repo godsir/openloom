@@ -1174,6 +1174,7 @@ fn extract_text(html: &str) -> String {
 
 // ============================================================================
 // ScheduleReminder — AI 自行判断何时调用，无需硬编码正则
+// v2: 存储 AI 提示词而非 shell 命令，触发时由 AI 执行
 // ============================================================================
 
 use std::sync::Arc;
@@ -1192,9 +1193,11 @@ impl AgentTool for ScheduleReminder {
         ToolDefinition {
             name: "schedule_reminder".into(),
             description: concat!(
-                "Create a scheduled reminder or recurring task. ",
+                "Create a scheduled AI task. ",
                 "Use this when the user asks you to remind them about something, ",
-                "set an alarm, create a recurring task, or schedule a future notification. ",
+                "set an alarm, create a recurring task, or schedule a future action. ",
+                "The 'prompt' is a natural language instruction that will be sent to the AI ",
+                "when the schedule fires — the AI will execute it with full tool access. ",
                 "Accept 'at' (one-time), 'daily' (every day at HH:MM), or 'interval' (every N minutes). ",
                 "Cron expression follows 7-field format: sec min hour day month day_of_week year."
             ).into(),
@@ -1202,7 +1205,7 @@ impl AgentTool for ScheduleReminder {
                 "type": "object",
                 "properties": {
                     "name": { "type": "string", "description": "Short name (max 20 chars)" },
-                    "description": { "type": "string", "description": "What to remind about — will be sent to the AI when triggered" },
+                    "prompt": { "type": "string", "description": "AI instruction to execute when triggered. Natural language describing what the AI should do (e.g. '检查服务器状态并发送报告', '提醒用户提交代码'). This is NOT a shell command." },
                     "cron_expression": { "type": "string", "description": "7-field cron: sec min hour day month day_of_week year. E.g. '0 0 9 * * * *' for daily 9am. For one-shot tasks, calculate the exact future time." },
                     "kind": { "type": "string", "enum": ["at", "daily", "interval"], "description": "Schedule kind" }
                 },
@@ -1219,7 +1222,11 @@ impl AgentTool for ScheduleReminder {
         _context: &ToolContext,
     ) -> Result<ToolResult> {
         let name = arguments["name"].as_str().unwrap_or("Reminder");
-        let desc = arguments["description"].as_str().unwrap_or(name);
+        // prompt is the AI instruction (v2); accept "description" as fallback for v1 compatibility
+        let prompt = arguments["prompt"]
+            .as_str()
+            .or_else(|| arguments["description"].as_str())
+            .unwrap_or(name);
         let cron_expr = arguments["cron_expression"].as_str().unwrap_or("");
         let kind = arguments["kind"].as_str().unwrap_or("at");
 
@@ -1236,30 +1243,27 @@ impl AgentTool for ScheduleReminder {
             return Ok(ToolResult { content: "Cron scheduler not available".into(), is_error: true, structured_content: None });
         };
 
-        match loom_cron::job::SessionMode::Isolated {
-            mode => {
-                match scheduler.add_job(name, cron_expr, desc, mode, 300).await {
-                    Ok(id) => {
-                        let label = match kind {
-                            "daily" => format!("每天执行"),
-                            "interval" => format!("定时执行"),
-                            _ => format!("一次性"),
-                        };
-                        Ok(ToolResult {
-                            content: format!("已创建{}定时任务「{}」(id: {})", label, name, &id[..8]),
-                            is_error: false,
-                            structured_content: Some(serde_json::json!({
-                                "id": id, "name": name, "cron": cron_expr
-                            })),
-                        })
-                    }
-                    Err(e) => Ok(ToolResult {
-                        content: format!("创建定时任务失败: {}", e),
-                        is_error: true,
-                        structured_content: None,
-                    }),
-                }
+        let mode = loom_cron::job::SessionMode::Isolated;
+        match scheduler.add_job(name, cron_expr, prompt, mode, 300).await {
+            Ok(id) => {
+                let label = match kind {
+                    "daily" => "每天 AI 执行",
+                    "interval" => "定时 AI 执行",
+                    _ => "一次性 AI 任务",
+                };
+                Ok(ToolResult {
+                    content: format!("已创建{}「{}」(id: {})", label, name, &id[..8]),
+                    is_error: false,
+                    structured_content: Some(serde_json::json!({
+                        "id": id, "name": name, "cron": cron_expr, "prompt": prompt
+                    })),
+                })
             }
+            Err(e) => Ok(ToolResult {
+                content: format!("创建定时任务失败: {}", e),
+                is_error: true,
+                structured_content: None,
+            }),
         }
     }
 

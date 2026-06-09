@@ -31,13 +31,13 @@ pub struct CronJob {
     pub name: String,
     /// Standard 5-field or 6-field cron expression (e.g. "0 */6 * * *").
     pub cron_expression: String,
-    /// Shell command to execute.
-    pub command: String,
+    /// AI prompt — natural language instruction sent to the AI when this job fires.
+    pub prompt: String,
     /// Whether this job is actively scheduled.
     pub enabled: bool,
     /// Execution isolation mode.
     pub session_mode: SessionMode,
-    /// Timeout in seconds for the command (default 300).
+    /// Timeout in seconds for the AI execution (default 300).
     pub timeout_secs: u64,
     /// Unix timestamp (seconds) when this job was created.
     pub created_at: i64,
@@ -74,12 +74,10 @@ pub struct CronRunHistory {
     pub finished_at: Option<i64>,
     /// Execution outcome.
     pub status: RunStatus,
-    /// Captured stdout.
-    pub stdout: Option<String>,
-    /// Captured stderr.
-    pub stderr: Option<String>,
-    /// Process exit code.
-    pub exit_code: Option<i32>,
+    /// AI response text (when execution completed successfully).
+    pub response: Option<String>,
+    /// Error message (when execution failed or timed out).
+    pub error_message: Option<String>,
 }
 
 /// Summary returned by list operations — lighter than full CronJob + last result.
@@ -88,7 +86,7 @@ pub struct CronJobSummary {
     pub id: String,
     pub name: String,
     pub cron_expression: String,
-    pub command: String,
+    pub prompt: String,
     pub enabled: bool,
     pub session_mode: SessionMode,
     pub last_run: Option<i64>,
@@ -105,7 +103,7 @@ impl From<&CronJob> for CronJobSummary {
             id: job.id.clone(),
             name: job.name.clone(),
             cron_expression: job.cron_expression.clone(),
-            command: job.command.clone(),
+            prompt: job.prompt.clone(),
             enabled: job.enabled,
             session_mode: job.session_mode.clone(),
             last_run: job.last_run,

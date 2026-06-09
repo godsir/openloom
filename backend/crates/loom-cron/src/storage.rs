@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS cron_jobs (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
     cron_expression TEXT NOT NULL,
-    command         TEXT NOT NULL,
+    prompt          TEXT NOT NULL DEFAULT '',
     enabled         INTEGER NOT NULL DEFAULT 1,
     session_mode    TEXT NOT NULL DEFAULT 'isolated',
     timeout_secs    INTEGER NOT NULL DEFAULT 300,
@@ -30,14 +30,13 @@ CREATE TABLE IF NOT EXISTS cron_jobs (
 );
 
 CREATE TABLE IF NOT EXISTS cron_run_history (
-    id          TEXT PRIMARY KEY,
-    job_id      TEXT NOT NULL REFERENCES cron_jobs(id) ON DELETE CASCADE,
-    started_at  INTEGER NOT NULL,
-    finished_at INTEGER,
-    status      TEXT NOT NULL DEFAULT 'running',
-    stdout      TEXT,
-    stderr      TEXT,
-    exit_code   INTEGER
+    id            TEXT PRIMARY KEY,
+    job_id        TEXT NOT NULL REFERENCES cron_jobs(id) ON DELETE CASCADE,
+    started_at    INTEGER NOT NULL,
+    finished_at   INTEGER,
+    status        TEXT NOT NULL DEFAULT 'running',
+    response      TEXT,
+    error_message TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_cron_jobs_enabled ON cron_jobs(enabled);
@@ -46,12 +45,101 @@ CREATE INDEX IF NOT EXISTS idx_cron_history_job_id ON cron_run_history(job_id);
 CREATE INDEX IF NOT EXISTS idx_cron_history_started_at ON cron_run_history(started_at);
 ";
 
+// ── Migration: rename command→prompt, stdout→response, stderr→error_message ──
+
+/// Attempt to migrate from v1 (command/stdout/stderr/exit_code) to v2 (prompt/response/error_message).
+/// This is a best-effort migration; if the v2 schema already exists, it's a no-op.
+fn migrate_v1_to_v2(conn: &Connection) -> Result<()> {
+    // Check if migration is needed: look for 'command' column in cron_jobs
+    let needs_migration: bool = {
+        let mut stmt = conn.prepare("PRAGMA table_info(cron_jobs)")?;
+        let rows: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .collect();
+        rows.iter().any(|name| name == "command")
+    };
+
+    if !needs_migration {
+        // Already v2 schema or fresh install — nothing to do.
+        // But ensure 'prompt' column exists (fresh install should have it from DDL)
+        return Ok(());
+    }
+
+    tracing::info!("migrating cron.db from v1 (shell command) to v2 (AI prompt)");
+
+    // Migrate cron_jobs: recreate table with 'prompt' replacing 'command'
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS cron_jobs_v2 (
+            id              TEXT PRIMARY KEY,
+            name            TEXT NOT NULL,
+            cron_expression TEXT NOT NULL,
+            prompt          TEXT NOT NULL DEFAULT '',
+            enabled         INTEGER NOT NULL DEFAULT 1,
+            session_mode    TEXT NOT NULL DEFAULT 'isolated',
+            timeout_secs    INTEGER NOT NULL DEFAULT 300,
+            created_at      INTEGER NOT NULL,
+            last_run        INTEGER,
+            next_run        INTEGER,
+            run_count       INTEGER NOT NULL DEFAULT 0,
+            error_count     INTEGER NOT NULL DEFAULT 0
+        );
+
+        INSERT OR IGNORE INTO cron_jobs_v2
+            (id, name, cron_expression, prompt, enabled, session_mode,
+             timeout_secs, created_at, last_run, next_run, run_count, error_count)
+        SELECT id, name, cron_expression, command, enabled, session_mode,
+               timeout_secs, created_at, last_run, next_run, run_count, error_count
+        FROM cron_jobs;
+
+        DROP TABLE cron_jobs;
+        ALTER TABLE cron_jobs_v2 RENAME TO cron_jobs;",
+    )?;
+
+    // Migrate cron_run_history: recreate with 'response' + 'error_message' replacing 'stdout'/'stderr'/'exit_code'
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS cron_run_history_v2 (
+            id            TEXT PRIMARY KEY,
+            job_id        TEXT NOT NULL REFERENCES cron_jobs(id) ON DELETE CASCADE,
+            started_at    INTEGER NOT NULL,
+            finished_at   INTEGER,
+            status        TEXT NOT NULL DEFAULT 'running',
+            response      TEXT,
+            error_message TEXT
+        );
+
+        INSERT OR IGNORE INTO cron_run_history_v2
+            (id, job_id, started_at, finished_at, status, response, error_message)
+        SELECT id, job_id, started_at, finished_at, status,
+               -- If old run succeeded, stdout becomes the response; stderr becomes error_message
+               CASE WHEN status = 'completed' THEN stdout ELSE NULL END,
+               CASE WHEN status IN ('failed', 'timed_out') THEN
+                   COALESCE(stderr, 'shell command execution (v1 legacy)')
+               ELSE NULL END
+        FROM cron_run_history;
+
+        DROP TABLE cron_run_history;
+        ALTER TABLE cron_run_history_v2 RENAME TO cron_run_history;",
+    )?;
+
+    // Recreate indexes
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_cron_jobs_enabled ON cron_jobs(enabled);
+         CREATE INDEX IF NOT EXISTS idx_cron_jobs_next_run ON cron_jobs(next_run);
+         CREATE INDEX IF NOT EXISTS idx_cron_history_job_id ON cron_run_history(job_id);
+         CREATE INDEX IF NOT EXISTS idx_cron_history_started_at ON cron_run_history(started_at);",
+    )?;
+
+    tracing::info!("cron.db v1→v2 migration complete");
+    Ok(())
+}
+
 // ── Storage ───────────────────────────────────────────────────────────────────
 
 /// Manages the standalone `cron.db` SQLite database.
 ///
 /// Wraps `rusqlite::Connection` in a `Mutex` so the storage is `Send + Sync`
-/// and can be shared across tokio tasks (required by `tokio-cron-scheduler`).
+/// and can be shared across tokio tasks.
 pub struct CronStorage {
     conn: Mutex<Connection>,
 }
@@ -70,6 +158,10 @@ impl CronStorage {
              PRAGMA foreign_keys=ON;",
         )?;
         conn.execute_batch(DDL)?;
+        // Run migration from v1 (shell command) to v2 (AI prompt) if needed
+        if let Err(e) = migrate_v1_to_v2(&conn) {
+            tracing::warn!(error = %e, "cron db migration v1→v2 had issues; continuing");
+        }
         tracing::info!(path = %db_path.display(), "cron storage opened");
         Ok(Self {
             conn: Mutex::new(conn),
@@ -82,14 +174,14 @@ impl CronStorage {
     pub fn insert_job(&self, job: &CronJob) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO cron_jobs (id, name, cron_expression, command, enabled, session_mode,
+            "INSERT INTO cron_jobs (id, name, cron_expression, prompt, enabled, session_mode,
              timeout_secs, created_at, last_run, next_run, run_count, error_count)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 job.id,
                 job.name,
                 job.cron_expression,
-                job.command,
+                job.prompt,
                 job.enabled as i32,
                 job.session_mode.to_string(),
                 job.timeout_secs,
@@ -107,7 +199,7 @@ impl CronStorage {
     pub fn load_all_jobs(&self) -> Result<Vec<CronJob>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, cron_expression, command, enabled, session_mode,
+            "SELECT id, name, cron_expression, prompt, enabled, session_mode,
                     timeout_secs, created_at, last_run, next_run, run_count, error_count
              FROM cron_jobs
              ORDER BY created_at",
@@ -118,7 +210,7 @@ impl CronStorage {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 cron_expression: row.get(2)?,
-                command: row.get(3)?,
+                prompt: row.get(3)?,
                 enabled: row.get::<_, i32>(4)? != 0,
                 session_mode: parse_session_mode(&mode_str),
                 timeout_secs: row.get(6)?,
@@ -183,7 +275,7 @@ impl CronStorage {
     pub fn get_job(&self, job_id: &str) -> Result<Option<CronJob>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, cron_expression, command, enabled, session_mode,
+            "SELECT id, name, cron_expression, prompt, enabled, session_mode,
                     timeout_secs, created_at, last_run, next_run, run_count, error_count
              FROM cron_jobs WHERE id = ?1",
         )?;
@@ -193,7 +285,7 @@ impl CronStorage {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 cron_expression: row.get(2)?,
-                command: row.get(3)?,
+                prompt: row.get(3)?,
                 enabled: row.get::<_, i32>(4)? != 0,
                 session_mode: parse_session_mode(&mode_str),
                 timeout_secs: row.get(6)?,
@@ -217,17 +309,16 @@ impl CronStorage {
     pub fn insert_history(&self, h: &CronRunHistory) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO cron_run_history (id, job_id, started_at, finished_at, status, stdout, stderr, exit_code)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO cron_run_history (id, job_id, started_at, finished_at, status, response, error_message)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 h.id,
                 h.job_id,
                 h.started_at,
                 h.finished_at,
                 run_status_str(&h.status),
-                h.stdout,
-                h.stderr,
-                h.exit_code,
+                h.response,
+                h.error_message,
             ],
         )?;
         Ok(())
@@ -239,20 +330,18 @@ impl CronStorage {
         run_id: &str,
         finished_at: i64,
         status: &RunStatus,
-        stdout: Option<&str>,
-        stderr: Option<&str>,
-        exit_code: Option<i32>,
+        response: Option<&str>,
+        error_message: Option<&str>,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE cron_run_history SET finished_at = ?1, status = ?2, stdout = ?3, stderr = ?4, exit_code = ?5
-             WHERE id = ?6",
+            "UPDATE cron_run_history SET finished_at = ?1, status = ?2, response = ?3, error_message = ?4
+             WHERE id = ?5",
             params![
                 finished_at,
                 run_status_str(status),
-                stdout,
-                stderr,
-                exit_code,
+                response,
+                error_message,
                 run_id,
             ],
         )?;
@@ -263,7 +352,7 @@ impl CronStorage {
     pub fn load_history(&self, job_id: &str, limit: usize) -> Result<Vec<CronRunHistory>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, job_id, started_at, finished_at, status, stdout, stderr, exit_code
+            "SELECT id, job_id, started_at, finished_at, status, response, error_message
              FROM cron_run_history
              WHERE job_id = ?1
              ORDER BY started_at DESC
@@ -277,9 +366,8 @@ impl CronStorage {
                 started_at: row.get(2)?,
                 finished_at: row.get(3)?,
                 status: parse_run_status(&status_str),
-                stdout: row.get(5)?,
-                stderr: row.get(6)?,
-                exit_code: row.get(7)?,
+                response: row.get(5)?,
+                error_message: row.get(6)?,
             })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -335,7 +423,7 @@ mod tests {
             id: id.into(),
             name: name.into(),
             cron_expression: cron.into(),
-            command: "echo hello".into(),
+            prompt: "帮我检查系统状态".into(),
             enabled: true,
             session_mode: SessionMode::Isolated,
             timeout_secs: 300,
@@ -457,16 +545,15 @@ mod tests {
             started_at: 1700000000,
             finished_at: Some(1700000005),
             status: RunStatus::Completed,
-            stdout: Some("hello\n".into()),
-            stderr: None,
-            exit_code: Some(0),
+            response: Some("系统状态正常".into()),
+            error_message: None,
         };
         storage.insert_history(&h).unwrap();
 
         let history = storage.load_history("j1", 10).unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].status, RunStatus::Completed);
-        assert_eq!(history[0].exit_code, Some(0));
+        assert_eq!(history[0].response.as_deref(), Some("系统状态正常"));
     }
 
     #[test]
@@ -487,9 +574,8 @@ mod tests {
                     started_at: 1700000000 + i * 100,
                     finished_at: Some(1700000005 + i * 100),
                     status: RunStatus::Completed,
-                    stdout: None,
-                    stderr: None,
-                    exit_code: Some(0),
+                    response: None,
+                    error_message: None,
                 })
                 .unwrap();
         }
