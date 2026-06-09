@@ -24,7 +24,20 @@ describe('grapheme', () => {
 describe('format', () => {
   it('formats relative dates', async () => {
     const { formatSessionDate } = await import('../utils/format')
+    const t = (key: string, vars?: Record<string, string | number>) => {
+      const map: Record<string, string> = {
+        'time.justNow': '刚刚',
+        'time.minutesAgo': '{n} 分钟前',
+        'time.hoursAgo': '{n} 小时前',
+        'time.daysAgo': '{n} 天前',
+      }
+      let text = map[key] || key
+      if (vars) {
+        text = text.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? `{${k}}`))
+      }
+      return text
+    }
     const now = new Date().toISOString()
-    expect(formatSessionDate(now)).toBe('刚刚')
+    expect(formatSessionDate(now, t)).toBe('刚刚')
   })
 })
