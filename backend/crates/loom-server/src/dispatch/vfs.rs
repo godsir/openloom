@@ -22,11 +22,41 @@ fn resolve_path(p: &Value) -> Result<PathBuf, JsonRpcError> {
     let workspace = p.get("workspace_root").and_then(|v| v.as_str()).unwrap_or("");
     let relative = p.get("path").and_then(|v| v.as_str()).unwrap_or("");
     let full = PathBuf::from(workspace).join(relative);
-    // Path traversal protection
-    let canonical = full.canonicalize().unwrap_or(full.clone());
-    let ws_canonical = PathBuf::from(workspace).canonicalize().unwrap_or(PathBuf::from(workspace));
-    if !canonical.starts_with(&ws_canonical) {
-        return Err(err(ErrorCode::PermissionDenied, "path outside workspace"));
+    // Path traversal protection: canonicalize the workspace, then check
+    // that the resolved full path starts with it.  If canonicalize fails
+    // (e.g. the file doesn't exist yet for a write/create), compare the
+    // workspace after canonicalizing it and check that the full path's
+    // parent chain reaches the workspace root.
+    let ws_canonical = PathBuf::from(workspace).canonicalize().unwrap_or_else(|_| PathBuf::from(workspace));
+    if full.exists() {
+        if let Ok(canonical) = full.canonicalize() {
+            if !canonical.starts_with(&ws_canonical) {
+                return Err(err(ErrorCode::PermissionDenied, "path outside workspace"));
+            }
+        }
+    } else if let Some(parent) = full.parent() {
+        // File doesn't exist yet (write / create) — check its parent
+        if parent.exists() {
+            if let Ok(parent_canonical) = parent.canonicalize() {
+                if !parent_canonical.starts_with(&ws_canonical) {
+                    return Err(err(ErrorCode::PermissionDenied, "path outside workspace"));
+                }
+            }
+        } else {
+            // Parent doesn't exist — walk up to nearest existing ancestor
+            let mut ancestor = parent.to_path_buf();
+            while !ancestor.exists() {
+                match ancestor.parent() {
+                    Some(p) => ancestor = p.to_path_buf(),
+                    None => break,
+                }
+            }
+            if let Ok(ancestor_canonical) = ancestor.canonicalize() {
+                if !ancestor_canonical.starts_with(&ws_canonical) {
+                    return Err(err(ErrorCode::PermissionDenied, "path outside workspace"));
+                }
+            }
+        }
     }
     Ok(full)
 }
