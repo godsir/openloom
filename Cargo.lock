@@ -1430,7 +1430,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "loom-bridge"
-version = "0.2.20"
+version = "0.3.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1446,7 +1446,7 @@ dependencies = [
 
 [[package]]
 name = "loom-cli"
-version = "0.2.20"
+version = "0.3.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1474,7 +1474,7 @@ dependencies = [
 
 [[package]]
 name = "loom-context"
-version = "0.2.20"
+version = "0.3.21"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1490,7 +1490,7 @@ dependencies = [
 
 [[package]]
 name = "loom-core"
-version = "0.2.20"
+version = "0.3.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1537,7 +1537,7 @@ dependencies = [
 
 [[package]]
 name = "loom-inference"
-version = "0.2.20"
+version = "0.3.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1555,7 +1555,7 @@ dependencies = [
 
 [[package]]
 name = "loom-lsp"
-version = "0.2.20"
+version = "0.3.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1568,7 +1568,7 @@ dependencies = [
 
 [[package]]
 name = "loom-marketplace"
-version = "0.2.20"
+version = "0.3.21"
 dependencies = [
  "anyhow",
  "dirs",
@@ -1583,7 +1583,7 @@ dependencies = [
 
 [[package]]
 name = "loom-mcp"
-version = "0.2.20"
+version = "0.3.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1599,7 +1599,7 @@ dependencies = [
 
 [[package]]
 name = "loom-memory"
-version = "0.2.20"
+version = "0.3.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1619,7 +1619,7 @@ dependencies = [
 
 [[package]]
 name = "loom-plugins"
-version = "0.2.20"
+version = "0.3.21"
 dependencies = [
  "anyhow",
  "serde",
@@ -1630,7 +1630,7 @@ dependencies = [
 
 [[package]]
 name = "loom-security"
-version = "0.2.20"
+version = "0.3.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1645,7 +1645,7 @@ dependencies = [
 
 [[package]]
 name = "loom-server"
-version = "0.2.20"
+version = "0.3.21"
 dependencies = [
  "anyhow",
  "axum",
@@ -1675,7 +1675,7 @@ dependencies = [
 
 [[package]]
 name = "loom-skills"
-version = "0.2.20"
+version = "0.3.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1689,7 +1689,7 @@ dependencies = [
 
 [[package]]
 name = "loom-types"
-version = "0.2.20"
+version = "0.3.21"
 dependencies = [
  "anyhow",
  "async-trait",

@@ -22,6 +22,7 @@ export interface UiSlice {
   fontSize: FontSizeId
   settingsOpen: boolean
   sidebarOpen: boolean
+  writeFileSidebarOpen: boolean
   permissionDrawerOpen: boolean
   thinkingDrawerOpen: boolean
   scheduledTasksOpen: boolean
@@ -31,6 +32,7 @@ export interface UiSlice {
   setSettingsOpen: (open: boolean) => void
   setSidebarOpen: (open: boolean) => void
   toggleSidebar: () => void
+  toggleWriteFileSidebar: () => void
   setPermissionDrawerOpen: (open: boolean) => void
   setThinkingDrawerOpen: (open: boolean) => void
   setScheduledTasksOpen: (open: boolean) => void
@@ -50,6 +52,7 @@ export const createUiSlice: StateCreator<UiSlice> = (set, get) => ({
   fontSize: 'default',
   settingsOpen: false,
   sidebarOpen: true,
+  writeFileSidebarOpen: true,
   permissionDrawerOpen: false,
   thinkingDrawerOpen: false,
   scheduledTasksOpen: false,
@@ -80,6 +83,7 @@ export const createUiSlice: StateCreator<UiSlice> = (set, get) => ({
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   toggleSidebar: () => set({ sidebarOpen: !get().sidebarOpen }),
+  toggleWriteFileSidebar: () => set({ writeFileSidebarOpen: !get().writeFileSidebarOpen }),
   setPermissionDrawerOpen: (open) => set({ permissionDrawerOpen: open }),
   setThinkingDrawerOpen: (open) => set({ thinkingDrawerOpen: open }),
   setScheduledTasksOpen: (open) => set({ scheduledTasksOpen: open }),

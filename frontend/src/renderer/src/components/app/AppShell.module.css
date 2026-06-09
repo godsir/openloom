@@ -54,16 +54,49 @@
 }
 
 .titlebarCenter {
-  flex: 1;
-  text-align: center;
-  min-width: 0;
-  overflow: hidden;
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  min-width: 0; overflow: hidden;
 }
 
-.appTitle {
-  font-size: 13px;
-  font-weight: 500;
+/* ── 模式切换滑块 ── */
+.modeToggle {
+  position: relative; display: flex; align-items: center; gap: 2px;
+  padding: 3px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  -webkit-app-region: no-drag;
+}
+
+.modeToggle::before {
+  content: '';
+  position: absolute; top: 3px; bottom: 3px; left: 3px;
+  width: calc(50% - 3px);
+  background: var(--bg-card); border-radius: var(--r-sm);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 0; pointer-events: none;
+}
+
+.modeToggle[data-active="write"]::before {
+  transform: translateX(100%);
+}
+
+.modeToggleOption {
+  position: relative; z-index: 1;
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 14px; font-size: 12px; font-weight: 500;
+  border: none; border-radius: var(--r-sm); cursor: pointer;
+  color: var(--text-muted); background: transparent;
+  transition: color var(--dur-fast) var(--ease-out);
+  white-space: nowrap; font-family: inherit;
+  -webkit-app-region: no-drag; user-select: none;
+}
+
+.modeToggleOption:hover:not(.modeToggleOptionActive) {
   color: var(--text-secondary);
+}
+
+.modeToggleOptionActive {
+  color: var(--text) !important;
 }
 
 .titlebarRight {

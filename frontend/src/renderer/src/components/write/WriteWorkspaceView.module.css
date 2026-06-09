@@ -1,106 +1,292 @@
-.root { display: flex; flex-direction: column; height: 100%; background: var(--bg-canvas); }
+/* ── Root ── */
+.root { display: flex; flex-direction: column; height: 100%; background: var(--bg); }
 
 /* ── 工具栏 ── */
 .toolbar {
-  display: flex; align-items: center; gap: 6px; padding: 5px 10px;
-  border-bottom: 1px solid var(--border); background: var(--bg-card); flex-shrink: 0;
-  min-height: 36px;
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+  border-bottom: 1px solid var(--border); background: var(--bg-card);
+  flex-shrink: 0; min-height: 38px; -webkit-app-region: no-drag;
+}
+
+.toolbarGroup {
+  display: flex; align-items: center; gap: 4px;
+}
+
+.toolbarDivider {
+  width: 1px; height: 18px; background: var(--border); margin: 0 4px; flex-shrink: 0;
 }
 
 .toolbarBtn {
-  display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 3px 7px;
-  border: 1px solid var(--border); border-radius: 4px; background: var(--bg);
-  color: var(--text); cursor: pointer; white-space: nowrap;
+  display: flex; align-items: center; gap: 4px; font-size: 11px;
+  padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--bg); color: var(--text); cursor: pointer; white-space: nowrap;
+  transition: all var(--dur-fast) var(--ease-out);
 }
-.toolbarBtn:hover { background: var(--surface-hover); }
+.toolbarBtn:hover { background: var(--bg-active); }
 
 .toolbarBtnGhost {
-  display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 3px 6px;
-  border: none; border-radius: 4px; background: transparent; color: var(--text-muted); cursor: pointer; white-space: nowrap;
+  display: flex; align-items: center; gap: 4px; font-size: 11px;
+  padding: 4px 6px; border: none; border-radius: var(--r-sm);
+  background: transparent; color: var(--text-muted); cursor: pointer;
+  white-space: nowrap; transition: all var(--dur-fast) var(--ease-out);
 }
-.toolbarBtnGhost:hover { color: var(--text); background: var(--surface-hover); }
-.toolbarBtnGhostActive { color: var(--accent); background: var(--accent-soft); }
+.toolbarBtnGhost:hover { color: var(--text); background: var(--bg-active); }
 
-.fileName { font-size: 12px; color: var(--text); font-weight: 500; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toolbarBtnAccent {
+  composes: toolbarBtnGhost;
+  color: var(--accent);
+}
+.toolbarBtnAccent:hover { background: var(--accent-subtle); }
+
+.workspacePath {
+  font-size: 11px; color: var(--text-secondary); max-width: 160px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: pointer; padding: 2px 4px; border-radius: 3px;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.workspacePath:hover { color: var(--text); background: var(--bg-active); }
+
+.fileName {
+  font-size: 12px; color: var(--text); font-weight: 600;
+  max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 .spacer { flex: 1; }
 
 /* ── 主体 ── */
-.body { flex: 1; display: flex; overflow: hidden; }
+.body { flex: 1; display: flex; overflow: hidden; min-height: 0; }
 
 /* ── 文件侧栏 ── */
-.fileSidebar { width: 180px; border-right: 1px solid var(--border); background: var(--bg-sidebar); flex-shrink: 0; display: flex; flex-direction: column; }
-.fileSidebarHeader { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 11px; color: var(--text-muted); font-weight: 500; }
-.fileList { flex: 1; overflow: auto; }
-.fileListHint { padding: 14px; font-size: 11px; color: var(--text-muted); text-align: center; }
+.fileSidebar {
+  width: 200px; border-right: 1px solid var(--border);
+  background: var(--bg-surface); flex-shrink: 0;
+  display: flex; flex-direction: column; min-width: 0;
+  transition: width var(--dur-normal) var(--ease-out),
+              opacity var(--dur-normal) var(--ease-out),
+              border-width var(--dur-normal) var(--ease-out);
+  overflow: hidden;
+}
+.fileSidebarCollapsed {
+  width: 0; border-right-width: 0; opacity: 0;
+}
+
+.fileSidebarHeader {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px; font-size: 11px; color: var(--text-muted);
+  font-weight: 600; letter-spacing: 0.3px; user-select: none;
+}
+
+.fileSidebarNewBtn {
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: transparent; color: var(--text-muted); cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.fileSidebarNewBtn:hover { color: var(--accent); border-color: var(--border-accent); background: var(--accent-subtle); }
+
+.fileList { flex: 1; overflow: auto; padding: 2px 6px 8px; }
+
+.fileListHint {
+  padding: 20px 10px; font-size: 11px; color: var(--text-muted);
+  text-align: center; line-height: 1.7;
+}
 
 .fileItem {
-  display: flex; align-items: center; gap: 5px; padding: 4px 8px; font-size: 11px; cursor: pointer;
-  color: var(--text); border-left: 2px solid transparent; position: relative; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: flex; align-items: center; gap: 6px; padding: 5px 8px;
+  font-size: 12px; cursor: pointer; color: var(--text-secondary);
+  border-radius: var(--r-sm); margin-bottom: 1px; position: relative;
+  transition: all var(--dur-fast) var(--ease-out);
 }
-.fileItem:hover { background: var(--surface-hover); }
-.fileItemActive { composes: fileItem; color: var(--accent); background: var(--accent-soft); border-left-color: var(--accent); }
-.fileItemName { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.fileItem:hover { background: var(--bg-active); color: var(--text); }
 
-.fileItemActions { display: none; gap: 1px; position: absolute; right: 2px; top: 50%; transform: translateY(-50%); background: var(--bg-card); border-radius: 3px; padding: 1px; }
-.fileItem:hover .fileItemActions { display: flex; }
-.fileItemAction { display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; border: none; border-radius: 2px; background: transparent; color: var(--text-muted); cursor: pointer; }
-.fileItemAction:hover { color: var(--text); background: var(--surface-hover); }
+.fileItemActive {
+  composes: fileItem;
+  color: var(--accent) !important; background: var(--accent-subtle) !important;
+  font-weight: 500;
+}
+
+.fileItemIcon { flex-shrink: 0; opacity: 0.4; }
+.fileItemActive .fileItemIcon { opacity: 1; }
+
+.fileItemName { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.fileItemActions {
+  display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s var(--ease-out);
+}
+.fileItem:hover .fileItemActions,
+.fileItemActive .fileItemActions { opacity: 1; }
+
+.fileItemAction {
+  display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border: none; border-radius: 3px;
+  background: transparent; color: var(--text-muted); cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.fileItemAction:hover { color: var(--text); background: var(--bg-active); }
 
 /* ── 空状态 ── */
-.emptyState { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text-muted); font-size: 13px; }
-.emptyIcon { color: var(--text-muted); opacity: 0.25; }
+.emptyState {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px; color: var(--text-muted); font-size: 13px;
+}
+.emptyIcon { color: var(--text-muted); opacity: 0.15; }
 
-.workspacePromptBtn { display: flex; align-items: center; gap: 6px; padding: 6px 14px; font-size: 13px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent-soft); color: var(--accent); cursor: pointer; }
-.workspacePromptBtn:hover { background: var(--accent); color: #fff; }
+.workspacePromptBtn {
+  display: flex; align-items: center; gap: 6px; padding: 7px 16px;
+  font-size: 13px; border: 1px solid var(--border-accent); border-radius: var(--r-md);
+  background: var(--accent-subtle); color: var(--accent); cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.workspacePromptBtn:hover { background: var(--accent); color: var(--bg); }
 
 /* ── 编辑器 ── */
 .editorArea { flex: 1; display: flex; min-width: 0; }
-.editor { flex: 1; padding: 20px 24px; border: none; resize: none; font-family: var(--font-mono); font-size: 14px; background: transparent; color: var(--text); outline: none; line-height: 1.7; tab-size: 2; }
-.editor::placeholder { color: var(--text-muted); opacity: 0.5; }
+
+.editor {
+  flex: 1; padding: 24px 28px; border: none; resize: none;
+  font-family: var(--font-mono); font-size: 14px; background: transparent;
+  color: var(--text); outline: none; line-height: 1.75; tab-size: 2;
+}
+.editor::placeholder { color: var(--text-muted); opacity: 0.4; }
 
 /* ── 预览 ── */
-.preview { flex: 1; padding: 20px 24px; overflow: auto; line-height: 1.7; font-size: 14px; color: var(--text); }
+.preview { flex: 1; padding: 24px 28px; overflow: auto; line-height: 1.75; font-size: 14px; color: var(--text); }
 .preview h1 { font-size: 22px; margin: 14px 0 6px; font-weight: 600; }
 .preview h2 { font-size: 18px; margin: 12px 0 5px; font-weight: 600; }
 .preview h3 { font-size: 15px; margin: 10px 0 4px; font-weight: 600; }
 .preview p { margin: 6px 0; }
-.preview code { background: var(--surface-subtle); padding: 2px 5px; border-radius: 3px; font-size: 13px; font-family: var(--font-mono); }
-.preview pre { background: var(--surface-subtle); padding: 10px 14px; border-radius: 6px; overflow-x: auto; margin: 10px 0; }
+.preview code { background: var(--bg-active); padding: 2px 5px; border-radius: 3px; font-size: 13px; font-family: var(--font-mono); }
+.preview pre { background: var(--bg-active); padding: 10px 14px; border-radius: var(--r-md); overflow-x: auto; margin: 10px 0; }
 .preview pre code { background: none; padding: 0; }
-.preview blockquote { border-left: 3px solid var(--accent); padding-left: 10px; color: var(--text-muted); margin: 10px 0; }
+.preview blockquote { border-left: 3px solid var(--accent); padding-left: 10px; color: var(--text-secondary); margin: 10px 0; }
 
-/* ── AI 助手 ── */
-.assistantBackdrop { position: fixed; inset: 0; z-index: 9990; background: rgba(0,0,0,0.25); backdrop-filter: blur(2px); }
-
-.assistantFloating {
-  position: fixed; bottom: 36px; left: 50%; transform: translateX(-50%); z-index: 9991;
-  width: 560px; max-width: calc(100vw - 36px); background: var(--bg-card); border: 1px solid var(--border);
-  border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,0.25); animation: fadeIn 0.2s ease;
+/* ── AI 右侧面板 ── */
+.assistantPanel {
+  width: 280px; border-left: 1px solid var(--border);
+  background: var(--bg-surface); flex-shrink: 0;
+  display: flex; flex-direction: column;
+  transition: width var(--dur-normal) var(--ease-out), opacity var(--dur-normal) var(--ease-out);
+  overflow: hidden;
 }
-.assistantFloatingHeader { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-size: 12px; font-weight: 600; color: var(--text); border-bottom: 1px solid var(--border); }
-.assistantFloatingInput { display: flex; align-items: center; gap: 6px; padding: 8px 12px; }
-.assistantFloatingInput input { flex: 1; border: none; background: transparent; color: var(--text); font-size: 13px; outline: none; padding: 4px 0; }
-.assistantFloatingInput input::placeholder { color: var(--text-muted); opacity: 0.6; }
-.assistantFloatingInput input:disabled { opacity: 0.4; }
+.assistantPanelCollapsed {
+  width: 0; min-width: 0; border-left: none; opacity: 0;
+}
+
+.assistantPanelHeader {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; font-size: 12px; font-weight: 600;
+  color: var(--text); border-bottom: 1px solid var(--border);
+  flex-shrink: 0; user-select: none;
+}
+
+.assistantPanelBody {
+  flex: 1; overflow: auto; padding: 12px;
+  display: flex; flex-direction: column; gap: 8px; min-height: 0;
+}
+
+.assistantContext {
+  font-size: 11px; color: var(--text-muted); line-height: 1.6;
+  padding: 8px 10px; background: var(--bg-card); border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+}
+
+.assistantContextFile {
+  color: var(--text-secondary); font-weight: 500; margin-bottom: 4px;
+  display: flex; align-items: center; gap: 4px;
+}
+
+.assistantSuggestion {
+  font-size: 11px; color: var(--text-muted); padding: 6px 10px;
+  background: transparent; border: 1px solid var(--border); border-radius: var(--r-sm);
+  cursor: pointer; transition: all var(--dur-fast) var(--ease-out);
+  text-align: left; width: 100%;
+}
+.assistantSuggestion:hover {
+  color: var(--text); border-color: var(--border-accent);
+  background: var(--accent-subtle);
+}
+
+.assistantPanelFooter {
+  padding: 10px 12px; border-top: 1px solid var(--border); flex-shrink: 0;
+}
+
+.assistantInputRow {
+  display: flex; align-items: center; gap: 6px;
+}
+
+.assistantInput {
+  flex: 1; border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: 7px 10px; font-size: 12px; background: var(--bg-card);
+  color: var(--text); outline: none; font-family: inherit;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.assistantInput:focus { border-color: var(--accent); }
+.assistantInput::placeholder { color: var(--text-muted); opacity: 0.6; }
+.assistantInput:disabled { opacity: 0.4; }
 
 .assistantSendBtn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
-  height: 28px; min-width: 52px; padding: 0 12px; font-size: 11px; font-weight: 600;
-  color: var(--bg); background: var(--accent); border: none; border-radius: var(--r-md);
-  cursor: pointer; transition: all 0.15s; flex-shrink: 0; white-space: nowrap;
+  display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border: none; border-radius: var(--r-sm);
+  background: var(--accent); color: var(--bg); cursor: pointer;
+  flex-shrink: 0; transition: all var(--dur-fast) var(--ease-out);
 }
 .assistantSendBtn:hover { background: var(--accent-hover); }
-.assistantSendBtnDisabled { opacity: 0.3; cursor: default; }
-.assistantSendBtnDisabled:hover { background: var(--accent); }
+.assistantSendBtn:disabled { opacity: 0.3; cursor: default; }
 
 /* ── 弹窗 ── */
-.modalBackdrop { position: fixed; inset: 0; z-index: 9995; background: rgba(0,0,0,0.3); animation: fadeIn 0.15s ease; }
-.modalDialog { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 9996; width: 340px; max-width: calc(100vw-32px); background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.25); padding: 18px; animation: fadeIn 0.2s ease; }
-.modalTitle { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 10px; }
-.modalInput { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-size: 13px; background: var(--bg); color: var(--text); outline: none; margin-bottom: 12px; }
+.modalBackdrop {
+  position: fixed; inset: 0; z-index: 9995; background: var(--bg-overlay);
+  animation: fadeIn var(--dur-fast) var(--ease-out);
+}
+
+.modalDialog {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  z-index: 9996; width: 360px; max-width: calc(100vw - 32px);
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--r-xl); box-shadow: var(--shadow-lg);
+  padding: 20px; animation: fadeIn var(--dur-normal) var(--ease-out);
+}
+
+.modalTitle { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 12px; }
+
+.modalInput {
+  width: 100%; box-sizing: border-box; border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: 8px 10px; font-size: 13px;
+  background: var(--bg); color: var(--text); outline: none; margin-bottom: 12px;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
 .modalInput:focus { border-color: var(--accent); }
 
-/* ── Toast ── */
-.toast { position: fixed; bottom: 20px; right: 20px; padding: 7px 14px; border-radius: 6px; font-size: 12px; background: var(--bg-card); border: 1px solid var(--border); color: var(--text); box-shadow: 0 2px 8px rgba(0,0,0,0.1); z-index: 9999; animation: fadeIn 0.2s ease; }
+.modalFooter {
+  display: flex; gap: 8px; justify-content: flex-end;
+}
 
-@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.modalBtnCancel {
+  composes: toolbarBtn;
+}
+
+.modalBtnConfirm {
+  composes: toolbarBtn;
+  border-color: var(--accent); color: var(--accent);
+}
+.modalBtnConfirm:hover { background: var(--accent-subtle); }
+
+.modalBtnDanger {
+  composes: toolbarBtn;
+  border-color: var(--red); color: var(--red);
+}
+.modalBtnDanger:hover { background: var(--red-light); }
+
+/* ── Toast ── */
+.toast {
+  position: fixed; bottom: 20px; right: 20px; padding: 8px 16px;
+  border-radius: var(--r-md); font-size: 12px; background: var(--bg-card);
+  border: 1px solid var(--border); color: var(--text);
+  box-shadow: var(--shadow-lg); z-index: 9999;
+  animation: fadeIn var(--dur-normal) var(--ease-out);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

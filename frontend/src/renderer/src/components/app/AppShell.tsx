@@ -13,6 +13,8 @@ import styles from './AppShell.module.css'
 export default function AppShell({ children }: { children?: ReactNode }) {
   const sidebarOpen = useStore(s => s.sidebarOpen)
   const toggleSidebar = useStore(s => s.toggleSidebar)
+  const writeFileSidebarOpen = useStore(s => s.writeFileSidebarOpen)
+  const toggleWriteFileSidebar = useStore(s => s.toggleWriteFileSidebar)
   const setSettingsOpen = useStore(s => s.setSettingsOpen)
   const wsState = useStore(s => s.wsState)
   const engineState = useStore(s => s.engineState)
@@ -26,12 +28,16 @@ export default function AppShell({ children }: { children?: ReactNode }) {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
         e.preventDefault()
-        toggleSidebar()
+        if (appMode === 'write') {
+          toggleWriteFileSidebar()
+        } else {
+          toggleSidebar()
+        }
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [toggleSidebar])
+  }, [appMode, toggleSidebar, toggleWriteFileSidebar])
 
   const handleReconnect = async () => {
     setReconnecting(true)
@@ -62,32 +68,52 @@ export default function AppShell({ children }: { children?: ReactNode }) {
     <div className={styles.shell}>
       <header className={styles.titlebar}>
         <div className={styles.titlebarLeft}>
-          <button onClick={toggleSidebar} className={styles.toggleBtn} title="⌘B 切换侧边栏">
-            {sidebarOpen ? <IconPanelLeftClose size={16} /> : <IconPanelLeft size={16} />}
+          <button
+            onClick={() => {
+              if (appMode === 'write') {
+                toggleWriteFileSidebar()
+              } else {
+                toggleSidebar()
+              }
+            }}
+            className={styles.toggleBtn}
+            title="⌘B 切换侧边栏"
+          >
+            {appMode === 'write'
+              ? (writeFileSidebarOpen ? <IconPanelLeftClose size={16} /> : <IconPanelLeft size={16} />)
+              : (sidebarOpen ? <IconPanelLeftClose size={16} /> : <IconPanelLeft size={16} />)
+            }
           </button>
           <button onClick={() => setSettingsOpen(true)} className={styles.toggleBtn} title="设置">
             <IconSettings size={16} />
           </button>
-          <button
-            onClick={() => {
-              const nextMode = appMode === 'chat' ? 'write' : 'chat'
-              setAppMode(nextMode)
-              // 进入写作模式时收起侧边栏，返回聊天时展开
-              if (nextMode === 'write') {
-                if (sidebarOpen) toggleSidebar()
-              } else {
-                if (!sidebarOpen) toggleSidebar()
-              }
-            }}
-            className={styles.toggleBtn}
-            title={appMode === 'chat' ? '切换到写作模式' : '切换到聊天模式'}
-          >
-            {appMode === 'chat' ? <IconEdit size={16} /> : <IconMessageSquare size={16} />}
-          </button>
         </div>
 
         <div className={styles.titlebarCenter}>
-          <span className={styles.appTitle}>openLoom</span>
+          <div className={styles.modeToggle} data-active={appMode} role="radiogroup" aria-label="模式切换">
+            <button
+              className={`${styles.modeToggleOption} ${appMode === 'chat' ? styles.modeToggleOptionActive : ''}`}
+              onClick={() => {
+                if (appMode === 'chat') return
+                setAppMode('chat')
+                if (!sidebarOpen) toggleSidebar()
+              }}
+            >
+              <IconMessageSquare size={13} />
+              <span>对话</span>
+            </button>
+            <button
+              className={`${styles.modeToggleOption} ${appMode === 'write' ? styles.modeToggleOptionActive : ''}`}
+              onClick={() => {
+                if (appMode === 'write') return
+                setAppMode('write')
+                if (sidebarOpen) toggleSidebar()
+              }}
+            >
+              <IconEdit size={13} />
+              <span>写作</span>
+            </button>
+          </div>
         </div>
 
         <div className={styles.titlebarRight}>

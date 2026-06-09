@@ -1,6 +1,6 @@
 ﻿[package]
 name = "loom-inference"
-version = "0.2.20"
+version = "0.3.21"
 edition = "2024"
 description = "Inference engine for openLoom v2 �?provider dispatch (Anthropic, OpenAI, DeepSeek, LM Studio, Ollama)"
 
