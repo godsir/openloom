@@ -38,6 +38,8 @@ export interface LoomApi {
   copyWriteDocumentAsRichText: (filePath: string, workspaceRoot: string, content: string) => Promise<{ok: boolean; message?: string}>
   watchFile: (filePath: string, workspaceRoot: string) => Promise<{ok: boolean}>
   unwatchFile: (filePath: string, workspaceRoot: string) => Promise<{ok: boolean}>
+  /** Show a native OS notification (Windows toast / macOS notification center) */
+  showNotification: (title: string, body: string) => Promise<void>
 }
 
 interface PetMeta {
@@ -94,4 +96,5 @@ contextBridge.exposeInMainWorld('loom', {
   copyWriteDocumentAsRichText: (filePath: string, workspaceRoot: string, content: string) => ipcRenderer.invoke('write:copy-rich-text', { filePath, workspaceRoot, content }),
   watchFile: (filePath: string, workspaceRoot: string) => ipcRenderer.invoke('write:watch-file', { filePath, workspaceRoot }),
   unwatchFile: (filePath: string, workspaceRoot: string) => ipcRenderer.invoke('write:unwatch-file', { filePath, workspaceRoot }),
+  showNotification: (title: string, body: string) => ipcRenderer.invoke('show-notification', title, body),
 } satisfies LoomApi)

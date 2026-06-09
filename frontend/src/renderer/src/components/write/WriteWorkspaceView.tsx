@@ -32,7 +32,9 @@ const QUICK_SUGGESTIONS = [
 
 export const WriteWorkspaceView: React.FC = () => {
   const appMode = useStore(s => s.appMode)
+  const setAppMode = useStore(s => s.setAppMode)
   const createSession = useStore(s => s.createSession)
+  const switchSession = useStore(s => s.switchSession)
   const sessionWorkspaces = useStore(s => s.sessionWorkspaces)
   const defaultWorkspace = useStore(s => s.defaultWorkspace)
   const writeFileSidebarOpen = useStore(s => s.writeFileSidebarOpen)
@@ -226,8 +228,11 @@ export const WriteWorkspaceView: React.FC = () => {
         ? `[写作上下文]\n当前文件: ${activeFilePath}\n\n${fileContent}\n\n[用户指令]\n${msg}`
         : msg
       await sendMessage({ sessionId: sid, content })
+      // 切换到对话模式查看 AI 回复
+      setAppMode('chat')
+      switchSession(sid)
     } catch { showToast('发送失败') }
-  }, [assistantText, activeFilePath, fileContent, ensureSession, showToast])
+  }, [assistantText, activeFilePath, fileContent, ensureSession, showToast, setAppMode, switchSession])
 
   if (appMode !== 'write') return null
 

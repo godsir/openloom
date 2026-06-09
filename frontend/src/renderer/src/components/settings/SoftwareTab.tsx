@@ -140,6 +140,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
   const [uiFont, setUiFont] = useState('')
   const [codeFont, setCodeFont] = useState('')
   const [disableHwAccel, setDisableHwAccel] = useState(false)
+  const [taskCompleteNotification, setTaskCompleteNotification] = useState(false)
   const [thinkingExpand, setThinkingExpand] = useState(false)
   const [toolExpand, setToolExpand] = useState(true)
   const [skillExpand, setSkillExpand] = useState(false)
@@ -159,8 +160,9 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
       window.loom.getPreference('thinkingExpandDefault', false),
       window.loom.getPreference('toolExpandDefault', true),
       window.loom.getPreference('skillExpandDefault', false),
+      window.loom.getPreference('taskCompleteNotification', false),
       window.loom.getPlatform(),
-    ]).then(([as, ct, at, uf, cf, cc, dha, te, toe, se, plat]) => {
+    ]).then(([as, ct, at, uf, cf, cc, dha, te, toe, se, tcn, plat]) => {
       setAutoStart(as)
       setCloseToTray(ct)
       setAutoTitle(at)
@@ -176,6 +178,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
       setThinkingExpand(te as boolean)
       setToolExpand(toe as boolean)
       setSkillExpand(se as boolean)
+      setTaskCompleteNotification(tcn as boolean)
       setIsWin32(plat === 'win32')
       setLoaded(true)
     })
@@ -212,6 +215,15 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
     useStore.getState().addToast({
       type: 'success',
       message: val ? '已关闭硬件加速，重启后生效' : '已开启硬件加速，重启后生效',
+    })
+  }
+
+  const handleTaskCompleteNotification = async (val: boolean) => {
+    setTaskCompleteNotification(val)
+    await window.loom.setPreference('taskCompleteNotification', val)
+    useStore.getState().addToast({
+      type: 'success',
+      message: val ? '已开启任务完成通知' : '已关闭任务完成通知',
     })
   }
 
@@ -465,6 +477,26 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                   </div>
                 </div>
               )}
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>任务完成通知</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>AI 回复完成后通过系统通知提醒</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${taskCompleteNotification ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleTaskCompleteNotification(true)}
+                  >
+                    开启
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!taskCompleteNotification ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleTaskCompleteNotification(false)}
+                  >
+                    关闭
+                  </button>
+                </div>
+              </div>
             </>
           )}
         </div>

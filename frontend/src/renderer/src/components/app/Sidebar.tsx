@@ -56,6 +56,7 @@ export default function Sidebar() {
   const selectAllSessions = useStore((s) => s.selectAllSessions)
   const deselectAllSessions = useStore((s) => s.deselectAllSessions)
   const setScheduledTasksOpen = useStore((s) => s.setScheduledTasksOpen)
+  const scheduledTasksOpen = useStore((s) => s.scheduledTasksOpen)
   const [query, setQuery] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -75,6 +76,10 @@ export default function Sidebar() {
   useEffect(() => { loadCronJobs() }, [loadCronJobs])
 
   // Refresh cron jobs when modal closes
+  useEffect(() => {
+    if (!scheduledTasksOpen) loadCronJobs()
+  }, [scheduledTasksOpen, loadCronJobs])
+
   const openScheduledTasks = () => {
     setScheduledTasksOpen(true)
     loadCronJobs()
@@ -186,7 +191,7 @@ export default function Sidebar() {
             <div className={`${styles.dateLabel} ${styles.cronSectionLabel}`}>
               <span>定时任务</span>
               <button className={styles.sectionAddBtn} onClick={openScheduledTasks} title="新建定时任务">
-                <IconPlus size={12} />
+                <IconPlus size={15} />
               </button>
             </div>
             {cronLoading ? (
@@ -223,6 +228,16 @@ export default function Sidebar() {
         </div>
       )}
 
+      {/* ── 会话 header（不随列表滚动）── */}
+      {!selectionMode && (
+        <div className={styles.sessionHeader}>
+          <span>会话</span>
+          <button className={styles.sectionAddBtn} onClick={handleCreate} title="新建会话">
+            <IconPlus size={15} />
+          </button>
+        </div>
+      )}
+
       <div className={styles.sessionList}>
         {filtered.length === 0 ? (
           <div className={styles.emptyState}>
@@ -248,11 +263,6 @@ export default function Sidebar() {
         )}
       </div>
 
-      <div className={styles.bottom}>
-        <button onClick={handleCreate} className={styles.createBtn}>
-          <IconPlus size={13} /> 新建会话
-        </button>
-      </div>
     </aside>
   )
 }

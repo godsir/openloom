@@ -5,7 +5,7 @@
 
 /* Left nav */
 .nav {
-  width: 175px;
+  width: 200px;
   flex-shrink: 0;
   background: var(--bg-surface);
   border-right: 1px solid var(--border);

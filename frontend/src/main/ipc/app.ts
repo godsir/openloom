@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, app } from 'electron'
+import { ipcMain, BrowserWindow, app, Notification } from 'electron'
 import * as path from 'path'
 import { getStoreKey, setStoreKey } from '../store'
 import { checkForUpdates, downloadUpdate, installUpdate } from '../updater'
@@ -68,5 +68,12 @@ export function registerAppIpc(): void {
   // Engine restart
   ipcMain.handle('engine:restart', async () => {
     return restartEngine()
+  })
+
+  // Native OS notification
+  ipcMain.handle('show-notification', (_, title: string, body: string) => {
+    if (!Notification.isSupported()) return
+    const n = new Notification({ title, body })
+    n.show()
   })
 }

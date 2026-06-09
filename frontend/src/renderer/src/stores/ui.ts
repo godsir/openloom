@@ -26,7 +26,7 @@ export interface UiSlice {
   permissionDrawerOpen: boolean
   thinkingDrawerOpen: boolean
   scheduledTasksOpen: boolean
-  appMode: 'chat' | 'write'
+  appMode: 'chat' | 'write' | 'settings'
   setTheme: (theme: ThemeId) => void
   setFontSize: (size: FontSizeId) => void
   setSettingsOpen: (open: boolean) => void
@@ -36,7 +36,7 @@ export interface UiSlice {
   setPermissionDrawerOpen: (open: boolean) => void
   setThinkingDrawerOpen: (open: boolean) => void
   setScheduledTasksOpen: (open: boolean) => void
-  setAppMode: (mode: 'chat' | 'write') => void
+  setAppMode: (mode: 'chat' | 'write' | 'settings') => void
 }
 
 function applyFontSize(size: FontSizeId) {

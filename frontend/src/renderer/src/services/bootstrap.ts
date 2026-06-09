@@ -51,6 +51,14 @@ export async function bootstrapApp(): Promise<() => void> {
         import('./pet-sync').then(m => m.sendPetState('jump'))
         setTimeout(() => import('./pet-sync').then(m => m.sendPetState('runLeft')), 1500)
         setTimeout(() => import('./pet-sync').then(m => m.sendPetState('idle')), 3000)
+        // Native OS notification on task complete (if enabled in settings)
+        window.loom.getPreference<boolean>('taskCompleteNotification', false).then((enabled) => {
+          if (enabled) {
+            const title = 'openLoom'
+            const body = 'AI 已完成回复'
+            window.loom.showNotification(title, body)
+          }
+        })
         break
       case 'chat.token_usage':
         if (p) {

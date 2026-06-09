@@ -99,12 +99,20 @@
   color: var(--text) !important;
 }
 
+.titlebarPageTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  user-select: none;
+}
+
 .titlebarRight {
   display: flex;
   align-items: center;
   gap: 12px;
   flex-shrink: 0;
   align-self: stretch;
+  margin-right: -16px;
   -webkit-app-region: no-drag;
 }
 

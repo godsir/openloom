@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import AppShell from './components/app/AppShell'
-import SettingsModal from './components/shared/SettingsModal'
 import ScheduledTasksModal from './components/shared/ScheduledTasksModal'
 import UpdateModal from './components/shared/UpdateModal'
 
@@ -20,8 +19,6 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const retryCleanupRef = useRef<(() => void) | null>(null)
-  const settingsOpen = useStore((s) => s.settingsOpen)
-  const setSettingsOpen = useStore((s) => s.setSettingsOpen)
   const scheduledTasksOpen = useStore((s) => s.scheduledTasksOpen)
   const setScheduledTasksOpen = useStore((s) => s.setScheduledTasksOpen)
   const theme = useStore((s) => s.theme)
@@ -141,7 +138,7 @@ export default function App() {
     // Navigate from tray menu
     window.loom.onNavigate((route: string) => {
       if (route === '/settings') {
-        useStore.getState().setSettingsOpen(true)
+        useStore.getState().setAppMode('settings')
       }
     })
   }, [])
@@ -237,7 +234,6 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AppShell>
-        <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
         <ScheduledTasksModal open={scheduledTasksOpen} onClose={() => setScheduledTasksOpen(false)} />
         <ToastContainer />
       </AppShell>

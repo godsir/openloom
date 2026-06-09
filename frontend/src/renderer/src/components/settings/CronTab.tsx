@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { loomRpc } from '../../services/jsonrpc'
+import { useStore } from '../../stores'
 import {
   IconPlus, IconPlay, IconPause, IconTrash, IconRefresh,
-  IconClock, IconHistory, IconCalendarClock, IconChevronDown,
+  IconClock, IconHistory, IconCalendarClock, IconChevronDown, IconEdit,
 } from '../../utils/icons'
 import type { CronJobSummary, CronRunHistory } from '../../stores/cron'
 import sharedStyles from '../shared/SettingsModal.module.css'
@@ -96,6 +97,8 @@ const EMPTY_FORM: FormData = { name: '', cron_expression: '', command: '', task_
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function CronTab() {
+  const cronEditJobId = useStore((s) => s.cronEditJobId)
+  const setCronEditJobId = useStore((s) => s.setCronEditJobId)
   const [jobs, setJobs] = useState<CronJobSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -122,6 +125,24 @@ export default function CronTab() {
 
   useEffect(() => { loadJobs() }, [loadJobs])
 
+  // ── Form ───────────────────────────────────────────────────────────────
+
+  const openForm = (job?: CronJobSummary) => {
+    setForm(job ? { name: job.name, cron_expression: job.cron_expression, command: job.command, task_type: (job as any).task_type || 'shell', timeout_secs: 300, session_mode: job.session_mode } : EMPTY_FORM)
+    setFormErr(null)
+    setView({ kind: 'form', editJob: job })
+  }
+
+  // Open editor when triggered from sidebar
+  useEffect(() => {
+    if (!cronEditJobId || jobs.length === 0) return
+    const job = jobs.find(j => j.id === cronEditJobId)
+    if (job) {
+      openForm(job)
+      setCronEditJobId(null)
+    }
+  }, [cronEditJobId, jobs])
+
   const loadHist = useCallback(async (jobId: string) => {
     setHistLoading(true)
     try {
@@ -140,13 +161,7 @@ export default function CronTab() {
     finally { setBusy(null); await loadJobs() }
   }
 
-  // ── Form ───────────────────────────────────────────────────────────────
-
-  const openForm = (job?: CronJobSummary) => {
-    setForm(job ? { name: job.name, cron_expression: job.cron_expression, command: job.command, task_type: (job as any).task_type || 'shell', timeout_secs: 300, session_mode: job.session_mode } : EMPTY_FORM)
-    setFormErr(null)
-    setView({ kind: 'form', editJob: job })
-  }
+  // ── Save Form ───────────────────────────────────────────────────────────
 
   const saveForm = async () => {
     const f = { name: form.name.trim(), expr: form.cron_expression.trim(), cmd: form.command.trim() }
@@ -324,6 +339,7 @@ export default function CronTab() {
                       ? <button className={styles.iconBtn} title="暂停" disabled={b} onClick={() => doAction('cron.pause', job.id)}><IconPause size={14} /></button>
                       : <button className={styles.iconBtn} title="恢复" disabled={b} onClick={() => doAction('cron.resume', job.id)}><IconPlay size={14} /></button>
                     }
+                    <button className={styles.iconBtn} title="编辑" disabled={b} onClick={() => openForm(job)}><IconEdit size={14} /></button>
                     <button className={styles.iconBtn} title="删除" disabled={b} onClick={() => doAction('cron.delete', job.id)}><IconTrash size={14} /></button>
                     <button className={styles.iconBtn} title="历史" disabled={b} onClick={() => { setView({ kind: 'history', job }); loadHist(job.id) }}><IconHistory size={14} /></button>
                   </div>
