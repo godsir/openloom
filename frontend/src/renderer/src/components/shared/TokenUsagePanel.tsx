@@ -2,6 +2,7 @@ import { useEffect, useMemo, useCallback, useState, useRef } from 'react'
 import { BarChart3, TrendingUp, Zap, Database, AlertCircle } from 'lucide-react'
 import { onWsConnected } from '../../services/websocket'
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import styles from './TokenUsagePanel.module.css'
 
 const LOCAL_BACKENDS = new Set(['LmStudio', 'Ollama'])
@@ -12,7 +13,6 @@ const BACKEND_LABELS: Record<string, string> = {
   DeepSeek: 'DeepSeek',
   LmStudio: 'LM Studio',
   Ollama: 'Ollama',
-  Custom: '自定义',
 }
 
 function getProviderLabel(backend: string, backendLabel?: string): string {
@@ -83,12 +83,13 @@ function LoadingSkeleton() {
 // ── Error state ──
 
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const { t } = useLocale()
   return (
     <div className={styles.errorState}>
       <div className={styles.errorIcon}><AlertCircle size={28} /></div>
-      <h4 className={styles.errorTitle}>加载失败</h4>
-      <p className={styles.errorDesc}>{message || '无法加载 Token 用量数据'}</p>
-      <button className={styles.errorRetryBtn} onClick={onRetry}>重试</button>
+      <h4 className={styles.errorTitle}>{t('tokens.loadFailed')}</h4>
+      <p className={styles.errorDesc}>{message || t('tokens.loadFailedDesc')}</p>
+      <button className={styles.errorRetryBtn} onClick={onRetry}>{t('common.retry')}</button>
     </div>
   )
 }
@@ -113,6 +114,7 @@ interface TrendChartProps {
 }
 
 function TrendChart({ history }: TrendChartProps) {
+  const { t } = useLocale()
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerW, setContainerW] = useState(600)
   const [tooltip, setTooltip] = useState<TooltipData>({
@@ -179,15 +181,15 @@ function TrendChart({ history }: TrendChartProps) {
   return (
     <div className={styles.chartContainer}>
       <div className={styles.chartHeader}>
-        <h4 className={styles.sectionTitle}>用量趋势</h4>
+        <h4 className={styles.sectionTitle}>{t('tokens.usageTrend')}</h4>
         <div className={styles.chartLegend}>
           <span className={styles.chartLegendItem}>
             <span className={styles.chartLegendDot} style={{ background: '#22d3ee' }} />
-            Prompt
+            {t('tokens.prompt')}
           </span>
           <span className={styles.chartLegendItem}>
             <span className={styles.chartLegendDot} style={{ background: '#a78bfa' }} />
-            Completion
+            {t('tokens.completion')}
           </span>
         </div>
       </div>
@@ -209,25 +211,25 @@ function TrendChart({ history }: TrendChartProps) {
             </linearGradient>
           </defs>
           {/* Y-axis labels + grid lines */}
-          {yTicks.map((t, i) => (
+          {yTicks.map((tick, i) => (
             <g key={`ytick-${i}`}>
               <line
                 x1={CHART_PADDING_LEFT}
-                y1={t.y}
+                y1={tick.y}
                 x2={chartW + CHART_PADDING_LEFT}
-                y2={t.y}
+                y2={tick.y}
                 stroke="var(--border-light)"
                 strokeDasharray="3 3"
               />
               <text
                 x={CHART_PADDING_LEFT - 6}
-                y={t.y + 3}
+                y={tick.y + 3}
                 textAnchor="end"
                 fontSize="9"
                 fill="var(--text-muted)"
                 fontFamily="var(--font-mono)"
               >
-                {t.label}
+                {tick.label}
               </text>
             </g>
           ))}
@@ -308,14 +310,14 @@ function TrendChart({ history }: TrendChartProps) {
           <div className={styles.tooltipDate}>{tooltip.date}</div>
           <div className={styles.tooltipRow}>
             <span className={styles.tooltipDot} style={{ background: '#22d3ee' }} />
-            Prompt: {formatNumber(tooltip.prompt)}
+            {t('tokens.prompt')}: {formatNumber(tooltip.prompt)}
           </div>
           <div className={styles.tooltipRow}>
             <span className={styles.tooltipDot} style={{ background: '#a78bfa' }} />
-            Completion: {formatNumber(tooltip.completion)}
+            {t('tokens.completion')}: {formatNumber(tooltip.completion)}
           </div>
           <div className={styles.tooltipRow}>
-            合计: {formatNumber(tooltip.prompt + tooltip.completion)}
+            {t('tokens.total')}: {formatNumber(tooltip.prompt + tooltip.completion)}
           </div>
         </div>
       )}
@@ -326,6 +328,7 @@ function TrendChart({ history }: TrendChartProps) {
 // ── Main component ──
 
 export default function TokenUsagePanel() {
+  const { t } = useLocale()
   const sessionTotal = useStore((s) => s.sessionTotal)
   const summary = useStore((s) => s.summary)
   const loading = useStore((s) => s.loading)
@@ -401,11 +404,11 @@ export default function TokenUsagePanel() {
   }, [setTimeRange])
 
   const handleReset = useCallback(async () => {
-    const ok = await useStore.getState().showConfirm('重置用量', '确定要清除所有 Token 用量记录吗？此操作不可撤销。', true)
+    const ok = await useStore.getState().showConfirm(t('tokens.resetTitle'), t('tokens.resetConfirm'), true)
     if (ok) {
       useStore.getState().resetTokenUsage()
     }
-  }, [])
+  }, [t])
 
   const handleRetry = useCallback(() => {
     setTimeRange(timeRange)
@@ -418,23 +421,23 @@ export default function TokenUsagePanel() {
         <div className={styles.heroNumbers}>
           <div className={styles.heroMain}>
             <div className={styles.totalHeroValue}>{formatTokens(grandTotal)}</div>
-            <div className={styles.totalHeroLabel}>总 Token 消耗</div>
+            <div className={styles.totalHeroLabel}>{t('tokens.totalConsumption')}</div>
           </div>
           {totalCost > 0 && (
             <div className={styles.heroMain}>
               <div className={`${styles.totalHeroValue} ${styles.costValue}`}>{formatCost(totalCost)}</div>
-              <div className={styles.totalHeroLabel}>预估费用</div>
+              <div className={styles.totalHeroLabel}>{t('tokens.estimatedCost')}</div>
             </div>
           )}
         </div>
         <div className={styles.totalHeroBreakdown}>
           <span className={styles.totalHeroBreakdownItem}>
             <span className={styles.totalHeroDot} style={{ background: '#22d3ee' }} />
-            Prompt {formatNumber(summary?.total_prompt_tokens || 0)}
+            {t('tokens.prompt')} {formatNumber(summary?.total_prompt_tokens || 0)}
           </span>
           <span className={styles.totalHeroBreakdownItem}>
             <span className={styles.totalHeroDot} style={{ background: '#a78bfa' }} />
-            Completion {formatNumber(summary?.total_completion_tokens || 0)}
+            {t('tokens.completion')} {formatNumber(summary?.total_completion_tokens || 0)}
           </span>
           <span className={styles.totalHeroBreakdownItem}>
             <span className={styles.totalHeroDot} style={{ background: '#34d399' }} />
@@ -446,7 +449,7 @@ export default function TokenUsagePanel() {
       {/* Session real-time badge */}
       {sessionTotal.requests > 0 && (
         <div className={styles.sessionBadge}>
-          本次会话已消耗：<strong>{formatNumber(sessionTotal.prompt + sessionTotal.completion)}</strong> tokens ({sessionTotal.requests} 请求)
+          {t('tokens.sessionConsumed', { tokens: formatNumber(sessionTotal.prompt + sessionTotal.completion), requests: String(sessionTotal.requests) })}
         </div>
       )}
 
@@ -459,7 +462,7 @@ export default function TokenUsagePanel() {
             </div>
             <div className={styles.metricBody}>
               <div className={styles.metricValue}>{formatNumber(totalRequests)}</div>
-              <div className={styles.metricLabel}>请求次数</div>
+              <div className={styles.metricLabel}>{t('tokens.requestCount')}</div>
             </div>
           </div>
           {avgLatency > 0 && (
@@ -469,7 +472,7 @@ export default function TokenUsagePanel() {
               </div>
               <div className={styles.metricBody}>
                 <div className={styles.metricValue}>{formatLatency(avgLatency)}</div>
-                <div className={styles.metricLabel}>平均延迟</div>
+                <div className={styles.metricLabel}>{t('tokens.avgLatency')}</div>
               </div>
             </div>
           )}
@@ -480,7 +483,7 @@ export default function TokenUsagePanel() {
               </div>
               <div className={styles.metricBody}>
                 <div className={styles.metricValue}>{formatPercent(cacheHitRate)}</div>
-                <div className={styles.metricLabel}>缓存命中率</div>
+                <div className={styles.metricLabel}>{t('tokens.cacheHitRate')}</div>
               </div>
             </div>
           )}
@@ -490,7 +493,7 @@ export default function TokenUsagePanel() {
       {/* Time range selector */}
       <div className={styles.timeRangeRow}>
         <span className={styles.dataPointInfo}>
-          {loading ? '加载中...' : hasData ? `${rankedModels.length} 个模型 / ${totalRequests} 次请求` : ''}
+          {loading ? t('common.loading') : hasData ? t('tokens.modelsCount', { models: String(rankedModels.length), requests: String(totalRequests) }) : ''}
         </span>
         <div className={styles.timeRangeToggle}>
           {(['today', '7d', '30d', 'all'] as const).map((r) => (
@@ -499,16 +502,16 @@ export default function TokenUsagePanel() {
               className={`${styles.timeRangeBtn} ${timeRange === r ? styles.timeRangeBtnActive : ''}`}
               onClick={() => handleTimeRangeChange(r)}
             >
-              {r === 'all' ? '全部' : r === 'today' ? '今天' : r === '7d' ? '近7天' : '近30天'}
+              {r === 'all' ? t('tokens.all') : r === 'today' ? t('tokens.today') : r === '7d' ? t('tokens.last7days') : t('tokens.last30days')}
             </button>
           ))}
           {hasData && (
             <button
               className={styles.resetBtn}
               onClick={handleReset}
-              title="清除所有记录"
+              title={t('tokens.clearRecords')}
             >
-              重置
+              {t('common.reset')}
             </button>
           )}
         </div>
@@ -523,9 +526,9 @@ export default function TokenUsagePanel() {
       {!hasData && !loading && !loadError ? (
         <div className={styles.emptyState}>
           <div className={styles.emptyIcon}><BarChart3 size={32} /></div>
-          <h4 className={styles.emptyTitle}>暂无数据</h4>
-          <p className={styles.emptyDesc}>发送消息后，Token 消耗会自动记录并在此展示</p>
-          <p className={styles.emptyHint}>选择时间范围后数据将在此显示</p>
+          <h4 className={styles.emptyTitle}>{t('common.empty')}</h4>
+          <p className={styles.emptyDesc}>{t('tokens.emptyDesc')}</p>
+          <p className={styles.emptyHint}>{t('tokens.emptyHint')}</p>
         </div>
       ) : (
         <>
@@ -533,7 +536,7 @@ export default function TokenUsagePanel() {
           {loading && hasData && (
             <div className={styles.loadingOverlay}>
               <div className={styles.loadingSpinner} />
-              <span className={styles.loadingText}>刷新中...</span>
+              <span className={styles.loadingText}>{t('tokens.refreshing')}</span>
             </div>
           )}
 
@@ -552,7 +555,7 @@ export default function TokenUsagePanel() {
 
             return (
               <div className={styles.leaderboard}>
-                <h4 className={styles.sectionTitle}>模型消耗排名</h4>
+                <h4 className={styles.sectionTitle}>{t('tokens.modelRanking')}</h4>
                 <div className={styles.podium}>
                   {podiumEntries.map(({ model, rank, cls, medal }) => {
                     const pct = grandTotal > 0 ? ((model.total / grandTotal) * 100).toFixed(1) : '0'
@@ -565,7 +568,7 @@ export default function TokenUsagePanel() {
                         {info && (
                           <div className={styles.podiumBadges}>
                             <span className={`${styles.modelBadge} ${isLocalModel(info.backend) ? styles.badgeLocal : styles.badgeCloud}`}>
-                              {isLocalModel(info.backend) ? '本地' : '云端'}
+                              {isLocalModel(info.backend) ? t('tokens.local') : t('tokens.cloud')}
                             </span>
                             <span className={styles.modelBadgeProvider}>
                               {getProviderLabel(info.backend, info.backendLabel)}
@@ -576,9 +579,9 @@ export default function TokenUsagePanel() {
                         <div className={styles.podiumPct}>{pct}%</div>
                         {hasPrice && <div className={styles.podiumCost}>{formatCost(model.cost)}</div>}
                         <div className={styles.podiumStats}>
-                          <span>输入 {formatNumber(model.prompt)}</span>
-                          <span>输出 {formatNumber(model.completion)}</span>
-                          <span>{model.requests} 次</span>
+                          <span>{t('tokens.input')} {formatNumber(model.prompt)}</span>
+                          <span>{t('tokens.output')} {formatNumber(model.completion)}</span>
+                          <span>{t('tokens.times', { n: model.requests })}</span>
                         </div>
                       </div>
                     )
@@ -591,7 +594,7 @@ export default function TokenUsagePanel() {
           {/* Cost by provider breakdown */}
           {costByProvider.length > 1 && (
             <div className={styles.providerCostSection}>
-              <h4 className={styles.sectionTitle}>供应商费用分布</h4>
+              <h4 className={styles.sectionTitle}>{t('tokens.providerCostDist')}</h4>
               <div className={styles.providerCostList}>
                 {costByProvider.map((p) => {
                   const barPct = maxProviderCost > 0 ? (p.cost / maxProviderCost) * 100 : 0
@@ -609,7 +612,7 @@ export default function TokenUsagePanel() {
                       </div>
                       <div className={styles.providerCostMeta}>
                         <span>{formatTokens(p.tokens)} tokens</span>
-                        <span>{p.requests} 请求</span>
+                        <span>{p.requests} {t('tokens.requests')}</span>
                       </div>
                     </div>
                   )
@@ -621,21 +624,21 @@ export default function TokenUsagePanel() {
           {/* Model detail table */}
           {rankedModels.length > 0 && (
             <div className={styles.modelTableWrapper}>
-              <h4 className={styles.sectionTitle}>模型明细</h4>
+              <h4 className={styles.sectionTitle}>{t('tokens.modelDetails')}</h4>
               <div className={styles.modelTableScroll}>
                 <table className={styles.modelTable}>
                   <thead>
                     <tr>
-                      <th>#</th>
-                      <th>模型</th>
-                      <th>供应商</th>
-                      <th>请求</th>
-                      <th>输入(未命中)</th>
-                      <th>输入(命中)</th>
-                      <th>缓写</th>
-                      <th>输出</th>
-                      <th>合计</th>
-                      <th>费用</th>
+                      <th>{t('tokens.number')}</th>
+                      <th>{t('tokens.model')}</th>
+                      <th>{t('tokens.provider')}</th>
+                      <th>{t('tokens.requests')}</th>
+                      <th>{t('tokens.inputUncached')}</th>
+                      <th>{t('tokens.inputCached')}</th>
+                      <th>{t('tokens.cacheWrite')}</th>
+                      <th>{t('tokens.output')}</th>
+                      <th>{t('tokens.total')}</th>
+                      <th>{t('tokens.cost')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -647,15 +650,13 @@ export default function TokenUsagePanel() {
                       const cacheMiss = m.cache_miss_tokens ?? (m.prompt - cacheHit || 0)
                       const cacheWrite = m.cache_write_tokens ?? m.cached ?? 0
 
-                      // Ensure the ranked model includes typed cache fields for the table
-                      // (they are already part of TokenSummary.by_model — no need for `as any`)
                       return (
                         <tr key={m.model}>
                           <td className={styles.rankCell}>{i + 1}</td>
                           <td className={styles.modelNameCell}>
                             <div className={styles.modelNameInner} title={m.model}>
                               {m.model}
-                              {local && <span className={`${styles.modelBadge} ${styles.badgeLocal}`}>本地</span>}
+                              {local && <span className={`${styles.modelBadge} ${styles.badgeLocal}`}>{t('tokens.local')}</span>}
                             </div>
                           </td>
                           <td className={styles.providerCell}>

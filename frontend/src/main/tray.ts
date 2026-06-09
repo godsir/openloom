@@ -2,6 +2,7 @@ import { Tray, Menu, BrowserWindow, app, nativeImage } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { togglePetDnd, getPetDnd, setOnDndChanged, isPetEnabled, togglePet, setOnPetToggled } from './pet'
+import { t } from './i18n'
 
 let tray: Tray | null = null
 let mainWindow: BrowserWindow | null = null
@@ -18,7 +19,7 @@ function buildMenu(): Menu {
   const dnd = getPetDnd()
   return Menu.buildFromTemplate([
     {
-      label: '显示 openLoom',
+      label: t('tray.showLoom'),
       click: () => {
         mainWindow?.show()
         mainWindow?.focus()
@@ -26,17 +27,17 @@ function buildMenu(): Menu {
     },
     { type: 'separator' },
     {
-      label: petOn ? '隐藏桌宠' : '显示桌宠',
+      label: petOn ? t('tray.hidePet') : t('tray.showPet'),
       click: () => { togglePet() },
     },
     {
-      label: dnd ? '关闭勿扰模式' : '开启勿扰模式',
+      label: dnd ? t('tray.dndOff') : t('tray.dndOn'),
       enabled: petOn,
       click: () => { togglePetDnd() },
     },
     { type: 'separator' },
     {
-      label: '设置...',
+      label: t('tray.settings'),
       click: () => {
         mainWindow?.show()
         mainWindow?.focus()
@@ -45,7 +46,7 @@ function buildMenu(): Menu {
     },
     { type: 'separator' },
     {
-      label: '退出',
+      label: t('tray.quit'),
       click: () => {
         app.quit()
       },

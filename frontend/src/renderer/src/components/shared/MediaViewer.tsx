@@ -35,7 +35,7 @@ export default function MediaViewer({ open, src, alt, onClose }: MediaViewerProp
           onClick={onClose}
           className="flex items-center gap-1 px-2.5 py-1 bg-[var(--bg-card)]/80 rounded-[var(--r-sm)] text-[var(--text-light)] hover:text-[var(--text)] transition-colors-fast backdrop-blur-sm"
         >
-          <IconX size={12} /> 关闭
+          <IconX size={12} /> {t('common.close')}
         </button>
       </div>
 

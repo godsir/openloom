@@ -4,9 +4,11 @@ import type { SessionSummary } from '../../stores/session'
 import { rpc } from '../../services/rpc-toast'
 import ContextMenu, { ContextMenuItem } from '../shared/ContextMenu'
 import { IconPin, IconPinOff } from '../../utils/icons'
+import { useLocale, t as i18nT } from '../../i18n'
 import styles from './SessionItem.module.css'
 
 export default function SessionItem({ session }: { session: SessionSummary }) {
+  const { t } = useLocale()
   const currentId = useStore(s => s.currentSessionId)
   const switchSession = useStore(s => s.switchSession)
   const renameSession = useStore(s => s.renameSession)
@@ -77,13 +79,13 @@ export default function SessionItem({ session }: { session: SessionSummary }) {
         <div className={styles.content}>
           <div className={styles.title}>
             {isStreaming && <span className={styles.streamingDot} />}
-            {session.title || session.firstMessage?.slice(0, 40) || `会话 ${sid.slice(0, 8)}`}
+            {session.title || session.firstMessage?.slice(0, 40) || i18nT('sidebar.sessionDefault', { id: sid.slice(0, 8) })}
           </div>
           {(session.modified || session.messageCount > 0) && (
             <div className={styles.meta}>
               {session.modified && <span>{relativeTime(session.modified)}</span>}
               {session.modified && session.messageCount > 0 && <span>·</span>}
-              {session.messageCount > 0 && <span>{session.messageCount}条消息</span>}
+              {session.messageCount > 0 && <span>{i18nT('sidebar.messageCount', { n: session.messageCount })}</span>}
               {session.createdAt && <>
                 <span>·</span>
                 <span className={styles.createTime}>{formatDate(session.createdAt)}</span>
@@ -100,16 +102,16 @@ export default function SessionItem({ session }: { session: SessionSummary }) {
       )}
       {!selectionMode && (
         <ContextMenu open={menuOpen} x={menuPos.x} y={menuPos.y} onClose={() => setMenuOpen(false)}>
-          <ContextMenuItem onClick={()=>{setMenuOpen(false);setRenaming(true);setTitleDraft(session.title||'')}}>重命名</ContextMenuItem>
+          <ContextMenuItem onClick={()=>{setMenuOpen(false);setRenaming(true);setTitleDraft(session.title||'')}}>{t('sidebar.rename')}</ContextMenuItem>
           <ContextMenuItem onClick={async ()=>{
             setMenuOpen(false)
             const path = await window.loom.selectFolder()
             if (path) {
               useStore.getState().setSessionWorkspace(sid, path)
-              await rpc('workspace.set_session', { session_id: sid, path }, '工作区已设置')
+              await rpc('workspace.set_session', { session_id: sid, path }, i18nT('sidebar.setWorkspace') + ' (' + i18nT('common.done') + ')')
             }
-          }}>设置工作区</ContextMenuItem>
-          <ContextMenuItem onClick={async ()=>{setMenuOpen(false); const ok = await useStore.getState().showConfirm('删除会话', '确定删除此会话？', true); if(ok)deleteSession(sid)}} danger>删除</ContextMenuItem>
+          }}>{t('sidebar.setWorkspace')}</ContextMenuItem>
+          <ContextMenuItem onClick={async ()=>{setMenuOpen(false); const ok = await useStore.getState().showConfirm(t('sidebar.deleteSession'), t('sidebar.deleteConfirm'), true); if(ok)deleteSession(sid)}} danger>{t('common.delete')}</ContextMenuItem>
         </ContextMenu>
       )}
     </div>
@@ -120,15 +122,15 @@ function relativeTime(iso: string): string {
   if (!iso) return ''
   const diff = Date.now() - new Date(iso).getTime()
   const mins = Math.floor(diff / 60000)
-  if (mins < 1) return '刚刚'
-  if (mins < 60) return `${mins}分钟前`
+  if (mins < 1) return i18nT('time.justNow')
+  if (mins < 60) return i18nT('time.minutesAgo', { n: mins })
   const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}小时前`
+  if (hrs < 24) return i18nT('time.hoursAgo', { n: hrs })
   const days = Math.floor(hrs / 24)
-  if (days < 30) return `${days}天前`
+  if (days < 30) return i18nT('time.daysAgo', { n: days })
   const months = Math.floor(days / 30)
-  if (months < 12) return `${months}个月前`
-  return `${Math.floor(months / 12)}年前`
+  if (months < 12) return i18nT('time.monthsAgo', { n: months })
+  return i18nT('time.yearsAgo', { n: Math.floor(months / 12) })
 }
 
 function formatDate(iso: string): string {
@@ -139,7 +141,7 @@ function formatDate(iso: string): string {
   const month = d.getMonth() + 1
   const day = d.getDate()
   if (year === now.getFullYear()) {
-    return `${month}月${day}日`
+    return i18nT('sidebar.dateFormat', { month, day })
   }
-  return `${year}年${month}月${day}日`
+  return i18nT('sidebar.dateFormatYear', { year, month, day })
 }

@@ -1,8 +1,10 @@
 import type { ContentBlock } from '../../stores/chat'
+import { useLocale } from '../../i18n'
 import { IconZap, IconCheck, IconLoader } from '../../utils/icons'
 
 export default function SubagentCard({ block }: { block: ContentBlock }) {
-  const name = (block.name as string) || '子 Agent'
+  const { t } = useLocale()
+  const name = (block.name as string) || t('chat.subAgent')
   const status = (block.streamStatus as string) || 'running'
   const summary = (block.summary as string) || ''
 

@@ -2,6 +2,7 @@
 // For now, provides the basic markdown-it renderer.
 import MarkdownIt from 'markdown-it'
 import katex from 'katex'
+import { t } from '../i18n'
 
 const md = new MarkdownIt({
   html: false,
@@ -53,7 +54,7 @@ function filePathPlugin(md: MarkdownIt) {
       const path = match[0]
       const escaped = md.utils.escapeHtml(path)
       result += `<span class="file-path-wrapper"><code>${escaped}</code>` +
-        `<button class="open-file-btn" data-file-path="${escaped}" title="打开文件">打开</button></span>`
+        `<button class="open-file-btn" data-file-path="${escaped}" title="${t('common.openFile')}">${t('common.open')}</button></span>`
       lastIndex = match.index + path.length
     }
     result += md.utils.escapeHtml(content.slice(lastIndex))

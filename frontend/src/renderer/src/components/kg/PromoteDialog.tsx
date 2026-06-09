@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import { loomRpc } from '../../services/jsonrpc'
 import Select from '../shared/Select'
 import type { KgNode, Cognition } from '../../types/bindings'
@@ -34,6 +35,7 @@ function ConfBar({ value }: { value: number }) {
 }
 
 export default function PromoteDialog({ open, onClose }: PromoteDialogProps) {
+  const { t } = useLocale()
   const sessions = useStore(s => s.sessions)
   const loadSessions = useStore(s => s.loadSessions)
 
@@ -50,9 +52,10 @@ export default function PromoteDialog({ open, onClose }: PromoteDialogProps) {
     if (open) loadSessions()
   }, [open, loadSessions])
 
+  const msgLabel = (count: number) => t('sidebar.messageCount', { n: String(count) })
   const sessionOptions = sessions.map(s => ({
     value: s.path,
-    label: `${s.title || s.path.slice(0, 20)} (${s.messageCount ?? 0} 条消息)`,
+    label: `${s.title || s.path.slice(0, 20)} (${msgLabel(s.messageCount ?? 0)})`,
   }))
 
   const loadSessionData = useCallback(async (sessionId: string) => {
@@ -121,13 +124,13 @@ export default function PromoteDialog({ open, onClose }: PromoteDialogProps) {
         const store = useStore.getState() as any
         store.addToast?.({
           type: 'success',
-          message: `已提升 ${result.promoted_nodes} 个实体、${result.promoted_cognitions} 条认知为全局记忆`,
+          message: t('kg.promote.promoteSuccess', { nodes: String(result.promoted_nodes), cognitions: String(result.promoted_cognitions) }),
         })
       }
     } catch (err) {
       console.error('Promote failed:', err)
       const store = useStore.getState() as any
-      store.addToast?.({ type: 'error', message: '提升失败，请重试' })
+      store.addToast?.({ type: 'error', message: t('kg.promote.promoteFailed') })
     } finally {
       setPromoting(false)
     }
@@ -143,23 +146,23 @@ export default function PromoteDialog({ open, onClose }: PromoteDialogProps) {
       <div className={styles.backdrop} onClick={onClose} />
       <div className={styles.dialog}>
         <div className={styles.header}>
-          <h2 className={styles.title}>提升会话记忆为全局</h2>
+          <h2 className={styles.title}>{t('kg.promoteTitle')}</h2>
           <button className={styles.closeBtn} onClick={onClose}>&times;</button>
         </div>
 
         <div className={styles.toolbar}>
           <div className={styles.toolbarField}>
-            <label className={styles.label}>选择会话</label>
+            <label className={styles.label}>{t('kg.selectSession')}</label>
             <Select
               value={selectedSessionId}
               options={sessionOptions}
               onChange={setSelectedSessionId}
-              placeholder="-- 选择要提升的会话 --"
+              placeholder={`-- ${t('kg.selectSession')} --`}
               variant="form"
             />
           </div>
           <div className={styles.toolbarField}>
-            <label className={styles.label}>置信度阈值</label>
+            <label className={styles.label}>{t('kg.promote.confidenceThreshold')}</label>
             <Select
               value={String(threshold)}
               options={THRESHOLD_OPTIONS}
@@ -171,20 +174,20 @@ export default function PromoteDialog({ open, onClose }: PromoteDialogProps) {
 
         <div className={styles.content}>
           {!selectedSessionId ? (
-            <div className={styles.emptyState}>请先选择一个会话</div>
+            <div className={styles.emptyState}>{t('kg.promote.selectSessionFirst')}</div>
           ) : loading ? (
-            <div className={styles.emptyState}>加载中...</div>
+            <div className={styles.emptyState}>{t('common.loading')}</div>
           ) : (
             <>
               <div className={styles.sectionHeader}>
-                <span className={styles.sectionTitle}>实体 ({entities.length})</span>
+                <span className={styles.sectionTitle}>{t('kg.promote.entitiesCount', { entities: String(entities.length) })} ({entities.length})</span>
                 <div className={styles.sectionActions}>
-                  <button className={styles.linkBtn} onClick={selectAllEntities}>全选</button>
-                  <button className={styles.linkBtn} onClick={deselectAllEntities}>取消</button>
+                  <button className={styles.linkBtn} onClick={selectAllEntities}>{t('common.selectAll')}</button>
+                  <button className={styles.linkBtn} onClick={deselectAllEntities}>{t('common.deselect')}</button>
                 </div>
               </div>
               {entities.length === 0 ? (
-                <div className={styles.emptyHint}>暂无符合条件的实体</div>
+                <div className={styles.emptyHint}>{t('kg.promote.noEntities')}</div>
               ) : (
                 <div className={styles.list}>
                   {entities.map(e => (
@@ -198,7 +201,7 @@ export default function PromoteDialog({ open, onClose }: PromoteDialogProps) {
                       <div className={styles.itemBody}>
                         <div className={styles.itemName}>
                           {e.name}
-                          <span className={styles.itemType}>{e.entity_type}</span>
+                          <span className={styles.itemType}>{t(`kg.entityType.${e.entity_type}`) ?? e.entity_type}</span>
                         </div>
                         {e.description && <div className={styles.itemDesc}>{e.description}</div>}
                       </div>
@@ -209,14 +212,14 @@ export default function PromoteDialog({ open, onClose }: PromoteDialogProps) {
               )}
 
               <div className={styles.sectionHeader}>
-                <span className={styles.sectionTitle}>认知记录 ({cognitions.length})</span>
+                <span className={styles.sectionTitle}>{t('kg.promote.cognitionsCount', { cognitions: String(cognitions.length) })} ({cognitions.length})</span>
                 <div className={styles.sectionActions}>
-                  <button className={styles.linkBtn} onClick={selectAllCognitions}>全选</button>
-                  <button className={styles.linkBtn} onClick={deselectAllCognitions}>取消</button>
+                  <button className={styles.linkBtn} onClick={selectAllCognitions}>{t('common.selectAll')}</button>
+                  <button className={styles.linkBtn} onClick={deselectAllCognitions}>{t('common.deselect')}</button>
                 </div>
               </div>
               {cognitions.length === 0 ? (
-                <div className={styles.emptyHint}>暂无符合条件的认知记录</div>
+                <div className={styles.emptyHint}>{t('kg.promote.noCognitions')}</div>
               ) : (
                 <div className={styles.list}>
                   {cognitions.map(c => (
@@ -244,16 +247,16 @@ export default function PromoteDialog({ open, onClose }: PromoteDialogProps) {
 
         <div className={styles.footer}>
           <div className={styles.footerStats}>
-            已选 {entityCount} 个实体 + {cogCount} 条认知
+            {t('kg.promote.selectedCount', { entities: String(entityCount), cognitions: String(cogCount) })}
           </div>
           <div className={styles.footerActions}>
-            <button className={styles.cancelBtn} onClick={onClose}>取消</button>
+            <button className={styles.cancelBtn} onClick={onClose}>{t('common.cancel')}</button>
             <button
               className={styles.promoteBtn}
               onClick={handlePromote}
               disabled={promoting || !selectedSessionId || (entityCount === 0 && cogCount === 0)}
             >
-              {promoting ? '提升中...' : `提升为全局记忆 (${entityCount + cogCount})`}
+              {promoting ? t('kg.promote.promoting') : `${t('kg.promote.promoteAction')} (${entityCount + cogCount})`}
             </button>
           </div>
         </div>

@@ -71,9 +71,29 @@ export function registerAppIpc(): void {
   })
 
   // Native OS notification
-  ipcMain.handle('show-notification', (_, title: string, body: string) => {
-    if (!Notification.isSupported()) return
-    const n = new Notification({ title, body })
-    n.show()
+  ipcMain.handle('show-notification', (event, title: string, body: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    try {
+      if (Notification.isSupported()) {
+        const n = new Notification({ title, body, icon: path.join(__dirname, '../../src/asset/loom_logo_dev.ico') })
+        n.on('click', () => {
+          if (win) {
+            if (win.isMinimized()) win.restore()
+            win.show()
+            win.focus()
+          }
+        })
+        n.show()
+        console.log('[notification] native notification shown:', title)
+        return
+      }
+    } catch (e) {
+      console.warn('[notification] native notification failed:', e)
+    }
+    // Fallback: flash the window to get user's attention
+    console.log('[notification] falling back to flashFrame')
+    if (win) {
+      win.flashFrame(true)
+    }
   })
 }

@@ -1,4 +1,5 @@
 import { StateCreator } from 'zustand'
+import { t } from '../i18n'
 
 export interface UpdateState {
   status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'no-update' | 'error'
@@ -101,7 +102,7 @@ export const createUpdateSlice: StateCreator<UpdateSlice> = (set, get) => ({
     try {
       await window.loom.checkForUpdates()
     } catch {
-      set({ update: { ...get().update, status: 'error', error: '检查更新失败' } })
+      set({ update: { ...get().update, status: 'error', error: t('updates.checkFailed') } })
     }
   },
 
@@ -138,7 +139,7 @@ export const createUpdateSlice: StateCreator<UpdateSlice> = (set, get) => ({
     try {
       await window.loom.downloadUpdate()
     } catch {
-      set({ update: { ...get().update, status: 'error', error: '下载失败' } })
+      set({ update: { ...get().update, status: 'error', error: t('updates.downloadFailed') } })
     }
   },
 

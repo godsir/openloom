@@ -1,7 +1,9 @@
 import type { ContentBlock } from '../../stores/chat'
+import { useLocale } from '../../i18n'
 import { IconFile, IconExternalLink } from '../../utils/icons'
 
 export default function FileBlock({ block }: { block: ContentBlock }) {
+  const { t } = useLocale()
   const name = (block.name as string) || 'file'
   const filePath = (block.path as string) || ''
   const size = block.size as number | undefined
@@ -16,7 +18,7 @@ export default function FileBlock({ block }: { block: ContentBlock }) {
       {filePath && (
         <button onClick={() => window.loom.openFile(filePath)}
           className="flex items-center gap-1 text-[10px] text-[var(--accent)] hover:text-[var(--accent-hover)] transition-colors">
-          <IconExternalLink size={9} /> 打开
+          <IconExternalLink size={9} /> {t('common.open')}
         </button>
       )}
     </div>

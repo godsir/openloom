@@ -1,5 +1,6 @@
 import { StateCreator } from 'zustand'
 import { loomRpc } from '../services/jsonrpc'
+import { t } from '../i18n'
 
 export interface TokenUsageRecord {
   session_id: string
@@ -100,7 +101,7 @@ export const createTokenStatsSlice: StateCreator<TokenStatsSlice> = (set, get) =
       const data = await loomRpc<TokenSummary>('stats.token_summary', { from, to })
       set({ summary: data, loading: false })
     } catch (e: any) {
-      set({ loading: false, loadError: e?.message ?? '获取Token摘要失败' })
+      set({ loading: false, loadError: e?.message ?? t('tokens.getSummaryFailed') })
     }
   },
 
@@ -110,7 +111,7 @@ export const createTokenStatsSlice: StateCreator<TokenStatsSlice> = (set, get) =
       const data = await loomRpc<{ points: TokenHistoryPoint[] }>('stats.token_history', { from, to, granularity })
       set({ history: data.points || [], loading: false })
     } catch (e: any) {
-      set({ loading: false, loadError: e?.message ?? '获取历史数据失败' })
+      set({ loading: false, loadError: e?.message ?? t('tokens.getHistoryFailed') })
     }
   },
 

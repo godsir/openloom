@@ -1,6 +1,8 @@
 // DOM-based HTML sanitizer for markdown output.
 // Strips remote images and dangerous tags while preserving safe formatting.
 
+import { t } from '../i18n'
+
 const ALLOWED_TAGS = new Set([
   'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
   'p', 'br', 'hr',
@@ -52,7 +54,7 @@ export function sanitizeHtml(html: string): string {
         if (BLOCKED_SRC_RE.test(src)) {
           el.setAttribute('data-blocked-src', src)
           el.removeAttribute('src')
-          el.setAttribute('title', '点击加载远程图片')
+          el.setAttribute('title', t('common.clickToLoadImage'))
           el.classList.add('blocked-image')
         }
       }

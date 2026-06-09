@@ -4,6 +4,7 @@ import type { SendShortcut } from '../../stores/input'
 import { loomRpc } from '../../services/jsonrpc'
 import { streamBufferManager } from '../../services/stream-buffer'
 import { sendMessage } from '../../services/sendMessage'
+import { useLocale } from '../../i18n'
 import ContextRing from './ContextRing'
 import ModelSelector from './ModelSelector'
 import AgentSelector from './AgentSelector'
@@ -26,6 +27,7 @@ interface SkillInfo {
 
 
 export default function InputArea() {
+  const { t } = useLocale()
   const [text, setText] = useState('')
 
   // 点击外部关闭发送快捷键下拉
@@ -266,7 +268,7 @@ export default function InputArea() {
     if (msgs) {
       const updated = msgs.map(m => {
         if (m.role === 'assistant' && m.blocks.length === 0) {
-          return { ...m, blocks: [{ type: 'text', html: '<em>已停止生成</em>', source: '' }] as any }
+          return { ...m, blocks: [{ type: 'text', html: `<em>${t('chat.stopped')}</em>`, source: '' }] as any }
         }
         return m
       })
@@ -366,14 +368,14 @@ export default function InputArea() {
 
   const isConnected = wsState === 'connected'
   const placeholder = !isConnected
-    ? '正在连接...'
+    ? t('app.connecting')
     : !sessionId
-      ? '开始新对话...'
+      ? t('input.startChat')
       : sendShortcut === 'ctrl+enter'
-        ? '输入消息，Ctrl+Enter 发送 · Enter 换行'
+        ? t('chat.placeholderCtrlEnter')
         : sendShortcut === 'shift+enter'
-          ? '输入消息，Shift+Enter 发送 · Enter 换行'
-          : '输入消息，Enter 发送 · Ctrl+Enter 换行'
+          ? t('chat.placeholder', { modifier: 'Shift+Enter', other: 'Enter' })
+          : t('chat.placeholderEnter')
 
   return (
     <div
@@ -466,7 +468,7 @@ export default function InputArea() {
               onClick={() => imageInputRef.current?.click()}
               disabled={!isConnected || streaming}
               className={styles.fileActionBtn}
-              title="插入图片"
+              title={t('input.insertImage')}
             >
               <IconImage size={15} />
             </button>
@@ -474,7 +476,7 @@ export default function InputArea() {
               onClick={() => fileInputRef.current?.click()}
               disabled={!isConnected || streaming}
               className={styles.fileActionBtn}
-              title="添加附件"
+              title={t('input.addAttachment')}
             >
               <IconPaperclip size={15} />
             </button>
@@ -483,16 +485,16 @@ export default function InputArea() {
                 onClick={() => setShowSkillPopover(v => !v)}
                 disabled={!isConnected || streaming}
                 className={`${styles.skillBtn} ${selectedSkills.length > 0 ? styles.skillBtnActive : ''}`}
-                title="加载技能"
+                title={t('input.loadSkills')}
               >
                 <IconSparkles size={13} />
                 {selectedSkills.length > 0 && <span>{selectedSkills.length}</span>}
               </button>
               {showSkillPopover && (
                 <div className={styles.skillPopover}>
-                  <div className={styles.skillPopoverHeader}>可用技能</div>
+                  <div className={styles.skillPopoverHeader}>{t('input.availableSkills')}</div>
                   {availableSkills.length === 0 ? (
-                    <div className={styles.skillPopoverEmpty}>暂无技能，可在设置中导入</div>
+                    <div className={styles.skillPopoverEmpty}>{t('input.noSkills')}</div>
                   ) : (
                     availableSkills.map(s => {
                       const isSelected = selectedSkills.includes(s.name)
@@ -527,7 +529,7 @@ export default function InputArea() {
                 onClick={handleStop}
                 className={`${styles.sendBtn} ${styles.stopBtn}`}
               >
-                停止
+                {t('chat.stop')}
               </button>
             ) : (
               <div className={styles.sendSplit}>
@@ -536,11 +538,11 @@ export default function InputArea() {
                   disabled={(!text.trim() && attachedFiles.length === 0 && quotedSelections.length === 0) || !isConnected}
                   className={styles.sendSplitMain}
                 >
-                  发送
+                  {t('chat.send')}
                 </button>
                 <button
                   className={styles.sendSplitCaret}
-                  title="发送快捷键"
+                  title={t('input.sendShortcut')}
                   onClick={(e) => {
                     e.stopPropagation()
                     const btn = e.currentTarget

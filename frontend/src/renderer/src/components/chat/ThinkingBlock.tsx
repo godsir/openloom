@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect } from 'react'
+import { useLocale } from '../../i18n'
 import type { ContentBlock } from '../../stores/chat'
 import { IconChevronRight, IconChevronDown, IconBrain } from '../../utils/icons'
 import styles from './ThinkingBlock.module.css'
 
 export default function ThinkingBlock({ block }: { block: ContentBlock }) {
+  const { t } = useLocale()
   const [expanded, setExpanded] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   const sealed = block.sealed as boolean
@@ -30,7 +32,7 @@ export default function ThinkingBlock({ block }: { block: ContentBlock }) {
       >
         {expanded ? <IconChevronDown size={10} /> : <IconChevronRight size={10} />}
         <IconBrain size={12} className={styles.icon} />
-        <span className={styles.label}>思考过程</span>
+        <span className={styles.label}>{t('chat.thinkingProcess')}</span>
         {elapsed != null && <span className={styles.label}>· {elapsed}s</span>}
         {!sealed && <span className={styles.dot} />}
       </button>

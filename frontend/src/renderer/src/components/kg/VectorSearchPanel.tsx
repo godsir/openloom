@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import type { VectorSearchResult } from '../../types/bindings'
 import styles from './VectorSearchPanel.module.css'
 
@@ -19,6 +20,7 @@ interface VectorSearchPanelProps {
 }
 
 export default function VectorSearchPanel({ onEntitySelected }: VectorSearchPanelProps) {
+  const { t } = useLocale()
   const vectorResults = useStore(s => s.vectorResults)
   const kgVectorSearch = useStore(s => s.kgVectorSearch)
   const kgWalkFrom = useStore(s => s.kgWalkFrom)
@@ -68,27 +70,27 @@ export default function VectorSearchPanel({ onEntitySelected }: VectorSearchPane
           value={query}
           onChange={e => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="语义搜索"
+          placeholder={t('kg.semanticSearch')}
         />
         <button
           className={styles.searchBtn}
           onClick={handleSearch}
           disabled={loading || !query.trim()}
         >
-          {loading ? '搜索中...' : '搜索'}
+          {loading ? t('kg.searching') : t('kg.search')}
         </button>
       </div>
 
       <div className={styles.hint}>
-        基于语义向量的相似实体搜索，查找概念上相近的知识图谱实体
+        {t('kg.vectorHint')}
       </div>
 
       {error && (
         <div className={styles.errorState}>
-          <span>向量搜索暂不可用</span>
+          <span>{t('kg.vectorUnavailable')}</span>
           <span className={styles.emptyStateHint}>{error}</span>
           <button className={styles.retryBtn} onClick={handleSearch}>
-            重试
+            {t('common.retry')}
           </button>
         </div>
       )}
@@ -96,7 +98,7 @@ export default function VectorSearchPanel({ onEntitySelected }: VectorSearchPane
       {!error && loading && (
         <div className={styles.loadingState}>
           <span className={styles.spinner} />
-          <span>正在搜索语义相似的实体...</span>
+          <span>{t('kg.vectorSearching')}</span>
         </div>
       )}
 
@@ -117,7 +119,7 @@ export default function VectorSearchPanel({ onEntitySelected }: VectorSearchPane
                     background: entityColor(r.entity_type) + '18',
                   }}
                 >
-                  {r.entity_type}
+                  {t(`kg.entityType.${r.entity_type}`) ?? r.entity_type}
                 </span>
                 <span className={styles.resultSim}>
                   {(r.similarity * 100).toFixed(0)}%
@@ -133,13 +135,13 @@ export default function VectorSearchPanel({ onEntitySelected }: VectorSearchPane
 
       {!error && !loading && vectorResults.length === 0 && (
         <div className={styles.emptyState}>
-          <span className={styles.emptyStateTitle}>语义搜索</span>
+          <span className={styles.emptyStateTitle}>{t('kg.semanticSearch')}</span>
           <span className={styles.emptyStateHint}>
-            输入概念、描述或关键词，基于向量嵌入查找语义相近的知识图谱实体
+            {t('kg.vectorEmptyHint')}
           </span>
           <div className={styles.sampleQueries}>
-            <span className={styles.sampleLabel}>试试：</span>
-            {['Python', '机器学习', '前端开发', '性能优化'].map(q => (
+            <span className={styles.sampleLabel}>{t('kg.tryThese')}</span>
+            {[t('kg.samplePython'), t('kg.sampleML'), t('kg.sampleFrontend'), t('kg.samplePerf')].map(q => (
               <button key={q} className={styles.sampleChip} onClick={() => handleSearch(q)}>{q}</button>
             ))}
           </div>

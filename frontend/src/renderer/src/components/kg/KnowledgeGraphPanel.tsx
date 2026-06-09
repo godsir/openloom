@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import KnowledgeGraphTab from './KnowledgeGraphTab'
 import MaintenanceTab from './MaintenanceTab'
 import MemoryHealthPanel from './MemoryHealthPanel'
@@ -9,6 +10,7 @@ import VectorSearchPanel from './VectorSearchPanel'
 import styles from './KnowledgeGraphPanel.module.css'
 
 export default function KnowledgeGraphPanel() {
+  const { t } = useLocale()
   const [activeTab, setActiveTab] = useState<'graph' | 'kg' | 'vector' | 'persona' | 'patterns' | 'health' | 'maintenance'>('graph')
 
   // ── Pattern data (connected wrapper inline) ──
@@ -30,31 +32,31 @@ export default function KnowledgeGraphPanel() {
         <button
           className={`${styles.mainTab} ${activeTab === 'graph' ? styles.mainTabActive : ''}`}
           onClick={() => setActiveTab('graph')}
-        >星图</button>
+        >{t('kg.tab.graph')}</button>
         <button
           className={`${styles.mainTab} ${activeTab === 'kg' ? styles.mainTabActive : ''}`}
           onClick={() => setActiveTab('kg')}
-        >知识库</button>
+        >{t('kg.tab.knowledgeBase')}</button>
         <button
           className={`${styles.mainTab} ${activeTab === 'vector' ? styles.mainTabActive : ''}`}
           onClick={() => setActiveTab('vector')}
-        >语义</button>
+        >{t('kg.tab.semantic')}</button>
         <button
           className={`${styles.mainTab} ${activeTab === 'persona' ? styles.mainTabActive : ''}`}
           onClick={() => setActiveTab('persona')}
-        >画像</button>
+        >{t('kg.tab.persona')}</button>
         <button
           className={`${styles.mainTab} ${activeTab === 'patterns' ? styles.mainTabActive : ''}`}
           onClick={() => setActiveTab('patterns')}
-        >模式</button>
+        >{t('kg.tab.patterns')}</button>
         <button
           className={`${styles.mainTab} ${activeTab === 'health' ? styles.mainTabActive : ''}`}
           onClick={() => setActiveTab('health')}
-        >健康</button>
+        >{t('kg.tab.health')}</button>
         <button
           className={`${styles.mainTab} ${activeTab === 'maintenance' ? styles.mainTabActive : ''}`}
           onClick={() => setActiveTab('maintenance')}
-        >维护</button>
+        >{t('kg.tab.maintenance')}</button>
       </div>
       {activeTab === 'graph' && <KnowledgeGraphTab initialSubTab="graph" />}
       {activeTab === 'kg' && <KnowledgeGraphTab initialSubTab="list" />}

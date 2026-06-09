@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { IconBot, IconSearch, IconChevronDown, IconPuzzle, IconGlobe, IconFile, IconServer, IconZap, IconCommand, IconMessageSquare, IconClock, IconRefresh, IconPackage, IconSettings, IconStore } from '../../utils/icons'
+import { useLocale, t as _t } from '../../i18n'
 import styles from '../shared/SettingsModal.module.css'
 import MarketplaceTab from './MarketplaceTab'
 
@@ -48,10 +49,13 @@ function getGroupKey(source: string): string {
   return source || 'other'
 }
 
-const GROUP_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
-  loom: { label: 'openLoom', icon: <IconPuzzle size={14} /> },
-  openclaw: { label: 'OpenClaw (兼容)', icon: <IconGlobe size={14} /> },
-  claude: { label: 'Claude Code (兼容)', icon: <IconBot size={14} /> },
+function useGroupConfig(): Record<string, { label: string; icon: React.ReactNode }> {
+  const { t } = useLocale()
+  return {
+    loom: { label: 'openLoom', icon: <IconPuzzle size={14} /> },
+    openclaw: { label: t('plugins.openclawCompat'), icon: <IconGlobe size={14} /> },
+    claude: { label: t('plugins.claudeCodeCompat'), icon: <IconBot size={14} /> },
+  }
 }
 
 function hasDetails(plugin: PluginInfo): boolean {
@@ -61,6 +65,7 @@ function hasDetails(plugin: PluginInfo): boolean {
 }
 
 export default function PluginsTab() {
+  const { t } = useLocale()
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -70,6 +75,8 @@ export default function PluginsTab() {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [view, setView] = useState<'installed' | 'market'>('installed')
 
+  const GROUP_CONFIG = useGroupConfig()
+
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -77,7 +84,7 @@ export default function PluginsTab() {
       const res = await loomRpc<{ plugins: PluginInfo[] }>('plugins.list')
       setPlugins(res.plugins ?? [])
     } catch (e: any) {
-      setError(`加载失败: ${e.message || e}`)
+      setError(_t('plugins.loadFailed', { message: e.message || e }))
     } finally {
       setLoading(false)
     }
@@ -133,8 +140,8 @@ export default function PluginsTab() {
       <div className={styles.contentHeader}>
         <div className={styles.sectionHeaderRow}>
           <h3 className={styles.sectionTitle}>
-            插件
-            <span className={styles.pluginsCountBadge}>{plugins.length} 个</span>
+            {t('plugins.title')}
+            <span className={styles.pluginsCountBadge}>{t('plugins.countBadge', { n: plugins.length })}</span>
           </h3>
           <div className={styles.marketplaceKindToggle}>
             <button
@@ -142,21 +149,21 @@ export default function PluginsTab() {
               onClick={() => setView('installed')}
             >
               <IconPackage size={13} />
-              已安装
+              {t('plugins.installed')}
             </button>
             <button
               className={`${styles.marketplaceKindBtn} ${view === 'market' ? styles.marketplaceKindActive : ''}`}
               onClick={() => setView('market')}
             >
               <IconStore size={13} />
-              市场
+              {t('plugins.market')}
             </button>
           </div>
           <button
             onClick={handleRefresh}
             disabled={refreshing || loading}
             className={styles.refreshBtn}
-            title="重新扫描插件"
+            title={t('plugins.rescan')}
           >
             <IconRefresh size={14} />
           </button>
@@ -166,13 +173,13 @@ export default function PluginsTab() {
           <input
             className={styles.pluginsSearchInput}
             type="text"
-            placeholder="搜索插件..."
+            placeholder={t('plugins.searchPlaceholder')}
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
           />
         </div>
         <p className={styles.sectionDesc}>
-          从插件目录自动发现，点击展开查看详情
+          {t('plugins.description')}
         </p>
       </div>
       {view === 'market' ? (
@@ -181,12 +188,12 @@ export default function PluginsTab() {
         <div className={styles.contentBody}>
           {error && <p className={styles.toolsError}>{error}</p>}
         {loading ? (
-          <p className={styles.toolsEmpty}>加载中...</p>
+          <p className={styles.toolsEmpty}>{t('common.loading')}</p>
         ) : filteredPlugins.length === 0 ? (
           <div className={styles.pluginsEmptyState}>
-            <p className={styles.pluginsEmptyTitle}>未发现插件</p>
+            <p className={styles.pluginsEmptyTitle}>{t('plugins.noPlugins')}</p>
             <p className={styles.pluginsEmptyHelp}>
-              将插件放入 ~/.loom/plugins/、~/.claude/plugins/ 或 ~/.openclaw/plugins/ 目录
+              {t('plugins.noPluginsHelp')}
             </p>
           </div>
         ) : (
@@ -246,7 +253,7 @@ export default function PluginsTab() {
                               </div>
                               <div className={styles.pluginCardRight}>
                                 {plugin.has_settings && (
-                                  <span className={styles.pluginCardSettingsIcon} title="含设置项">
+                                  <span className={styles.pluginCardSettingsIcon} title={t('plugins.hasSettings')}>
                                     <IconSettings size={12} />
                                   </span>
                                 )}
@@ -421,7 +428,7 @@ export default function PluginsTab() {
                               </div>
                               <div className={styles.pluginCardRight}>
                                 {plugin.has_settings && (
-                                  <span className={styles.pluginCardSettingsIcon} title="含设置项">
+                                  <span className={styles.pluginCardSettingsIcon} title={t('plugins.hasSettings')}>
                                     <IconSettings size={12} />
                                   </span>
                                 )}

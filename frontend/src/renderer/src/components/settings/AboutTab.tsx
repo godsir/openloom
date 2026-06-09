@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
+import { useLocale } from '../../i18n'
 import styles from '../shared/SettingsModal.module.css'
 import logoDev from '../../assets/loom_logo_dev.png'
 import logoRelease from '../../assets/loom_logo.png'
@@ -13,6 +14,7 @@ interface SystemHealth {
 }
 
 export default function AboutTab({ wsState }: { wsState: string }) {
+  const { t } = useLocale()
   const [health, setHealth] = useState<SystemHealth | null>(null)
   const [healthError, setHealthError] = useState(false)
   const [appVersion, setAppVersion] = useState('...')
@@ -40,8 +42,8 @@ export default function AboutTab({ wsState }: { wsState: string }) {
   return (
     <>
       <div className={styles.contentHeader}>
-        <h3 className={styles.sectionTitle}>关于</h3>
-        <p className={styles.sectionDesc}>版本、更新和连接信息</p>
+        <h3 className={styles.sectionTitle}>{t('about.title')}</h3>
+        <p className={styles.sectionDesc}>{t('about.subtitle')}</p>
       </div>
       <div className={styles.contentBody}>
         <div className={styles.aboutSection}>
@@ -59,7 +61,7 @@ export default function AboutTab({ wsState }: { wsState: string }) {
               </div>
             </div>
             <p className={styles.aboutAppTag}>
-              本地优先的私人 AI 助理。所有数据存储在本地。
+              {t('about.descriptionFull')}
             </p>
             <a
               className={styles.aboutGitLink}
@@ -75,7 +77,7 @@ export default function AboutTab({ wsState }: { wsState: string }) {
             </a>
             {dataDir && (
               <div className={styles.aboutDataRow}>
-                <span className={styles.aboutDataLabel}>数据目录</span>
+                <span className={styles.aboutDataLabel}>{t('about.dataDir')}</span>
                 <span className={styles.aboutDataPath}>{dataDir}</span>
               </div>
             )}
@@ -84,85 +86,85 @@ export default function AboutTab({ wsState }: { wsState: string }) {
 
           {/* System status */}
           <div className={styles.aboutCard}>
-            <h4 className={styles.aboutCardTitle}>系统状态</h4>
+            <h4 className={styles.aboutCardTitle}>{t('about.systemStatus')}</h4>
             <div className={styles.aboutStatGrid}>
               <div className={styles.aboutStatItem}>
-                <span className={styles.aboutStatLabel}>后端连接</span>
+                <span className={styles.aboutStatLabel}>{t('about.backendConnection')}</span>
                 <span className={`${styles.aboutStatValue} ${connected ? styles.aboutStatOk : styles.aboutStatWarn}`}>
                   {connected ? `localhost:${port}` : wsState}
                 </span>
               </div>
               <div className={styles.aboutStatItem}>
-                <span className={styles.aboutStatLabel}>当前模型</span>
-                <span className={styles.aboutStatValue}>{currentModel || '未选择'}</span>
+                <span className={styles.aboutStatLabel}>{t('about.currentModel')}</span>
+                <span className={styles.aboutStatValue}>{currentModel || t('about.noModel')}</span>
               </div>
               {health && (
                 <>
                   <div className={styles.aboutStatItem}>
-                    <span className={styles.aboutStatLabel}>Agent 数量</span>
+                    <span className={styles.aboutStatLabel}>{t('about.agentCount')}</span>
                     <span className={styles.aboutStatValue}>{health.agent_count}</span>
                   </div>
                   <div className={styles.aboutStatItem}>
-                    <span className={styles.aboutStatLabel}>工具数量</span>
+                    <span className={styles.aboutStatLabel}>{t('about.toolCount')}</span>
                     <span className={styles.aboutStatValue}>{health.tool_count}</span>
                   </div>
                 </>
               )}
             </div>
-            {healthError && <p className={styles.toolsError}>系统信息加载失败</p>}
+            {healthError && <p className={styles.toolsError}>{t('about.systemLoadFailed')}</p>}
           </div>
 
           {/* Auto-update */}
           <div className={styles.aboutCard}>
-            <h4 className={styles.aboutCardTitle}>自动更新</h4>
+            <h4 className={styles.aboutCardTitle}>{t('about.autoUpdate')}</h4>
             <div className={styles.aboutUpdateBody}>
               {update.status === 'checking' && (
-                <p className={styles.updateStatusText}>正在检查更新...</p>
+                <p className={styles.updateStatusText}>{t('about.checkingUpdate')}</p>
               )}
               {update.status === 'available' && (
                 <p className={styles.updateStatusAccent}>
-                  {update.version ? `发现新版本 ${update.version}` : '发现新版本'}
+                  {update.version ? t('about.newVersionAvailable', { version: update.version }) : t('about.newVersionFound')}
                 </p>
               )}
               {update.status === 'downloading' && (
                 <>
-                  <p className={styles.updateStatusAccent}>{update.progress.toFixed(0)}% 下载中</p>
+                  <p className={styles.updateStatusAccent}>{t('about.downloading', { progress: update.progress.toFixed(0) })}</p>
                   <div className={styles.updateProgressBar}>
                     <div className={styles.updateProgressFill} style={{ width: `${update.progress}%` }} />
                   </div>
                 </>
               )}
               {update.status === 'downloaded' && (
-                <p className={styles.updateStatusAccent}>更新已就绪，重启后生效</p>
+                <p className={styles.updateStatusAccent}>{t('about.readyToInstall')}</p>
               )}
               {(update.status === 'no-update' || update.status === 'idle') && (
-                <p className={styles.updateStatusText}>已是最新版本</p>
+                <p className={styles.updateStatusText}>{t('about.upToDate')}</p>
               )}
               {update.status === 'error' && (
-                <p className={styles.updateStatusError}>{update.error ?? '检查更新失败'}</p>
+                <p className={styles.updateStatusError}>{update.error ?? t('updates.checkFailed')}</p>
               )}
             </div>
             <div className={styles.aboutUpdateActions}>
               {(update.status === 'idle' || update.status === 'no-update' || update.status === 'error') && (
                 <>
                   <button className={styles.mcpConnectBtn} onClick={checkUpdate}>
-                    检查更新
+                    {t('about.checkUpdate')}
                   </button>
                   {isDev && (
                     <button className={styles.mcpDisconnectBtn} onClick={simulateUpdateFlow}>
-                      测试更新
+                      {t('about.testUpdate')}
                     </button>
                   )}
                 </>
               )}
               {update.status === 'available' && (
                 <button className={styles.mcpConnectBtn} onClick={downloadUpdate}>
-                  下载更新
+                  {t('about.downloadUpdate')}
                 </button>
               )}
               {update.status === 'downloaded' && (
                 <button className={styles.mcpConnectBtn} onClick={installUpdate}>
-                  立即重启
+                  {t('about.restartNow')}
                 </button>
               )}
             </div>

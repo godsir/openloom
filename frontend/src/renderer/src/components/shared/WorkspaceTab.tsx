@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
+import { useLocale } from '../../i18n'
 import settingsStyles from './SettingsModal.module.css'
 import styles from './WorkspaceTab.module.css'
 
@@ -14,6 +15,7 @@ interface SandboxConfig {
 }
 
 export default function WorkspaceTab() {
+  const { t } = useLocale()
   const [defaultPath, setDefaultPath] = useState('')
   const [loading, setLoading] = useState(true)
   const [sandbox, setSandbox] = useState<SandboxConfig>({ enabled: false, workspace_only: true, allowed_paths: [], denied_paths: [], allow_loom_data: false })
@@ -55,18 +57,18 @@ export default function WorkspaceTab() {
     const path = await window.loom.selectFolder()
     if (path) {
       setDefaultPath(path)
-      await rpc('workspace.set_default', { path }, '默认工作空间已更新')
+      await rpc('workspace.set_default', { path }, t('workspace.workspaceSet'))
     }
   }
 
   const handleClear = async () => {
     setDefaultPath('')
-    await rpc('workspace.set_default', { path: '' }, '默认工作空间已清除')
+    await rpc('workspace.set_default', { path: '' }, t('workspace.workspaceCleared'))
   }
 
   const handleResetSession = async (sid: string) => {
     useStore.getState().setSessionWorkspace(sid, defaultPath)
-    await rpc('workspace.set_session', { session_id: sid, path: defaultPath }, '已重置为默认工作空间')
+    await rpc('workspace.set_session', { session_id: sid, path: defaultPath }, t('workspace.resetToDefaultDone'))
   }
 
   const sessionsWithWorkspace = Object.entries(sessionWorkspaces)
@@ -77,35 +79,35 @@ export default function WorkspaceTab() {
     })
 
   if (loading) {
-    return <p className={settingsStyles.toolsEmpty}>加载中...</p>
+    return <p className={settingsStyles.toolsEmpty}>{t('common.loading')}</p>
   }
 
   return (
     <div className={settingsStyles.aboutSection}>
-      {/* ── 默认工作空间 ── */}
-      <div className={settingsStyles.themeLabel}>默认工作空间</div>
+      {/* Default workspace */}
+      <div className={settingsStyles.themeLabel}>{t('workspace.defaultWorkspace')}</div>
 
       <div className={settingsStyles.aboutRow}>
         <div>
-          <span className={settingsStyles.aboutLabel}>当前路径</span>
+          <span className={settingsStyles.aboutLabel}>{t('workspace.currentPath')}</span>
           <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, wordBreak: 'break-all', fontFamily: 'var(--font-mono)' }}>
-            {defaultPath || '未设置 — 使用应用启动目录'}
+            {defaultPath || t('workspace.notSet')}
           </p>
         </div>
       </div>
 
       <div className={settingsStyles.aboutRow}>
         <div>
-          <span className={settingsStyles.aboutLabel}>工作目录</span>
-          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>所有会话默认使用此目录，AI 在此创建和读取文件</p>
+          <span className={settingsStyles.aboutLabel}>{t('workspace.workDir')}</span>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('workspace.workDirDesc')}</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={handleSelectFolder} className={settingsStyles.mcpTransportBtn} style={defaultPath ? {} : { background: 'var(--accent)', color: '#fff', borderColor: 'var(--accent)' }}>
-            选择文件夹
+            {t('workspace.selectFolder')}
           </button>
           {defaultPath && (
             <button onClick={handleClear} className={settingsStyles.mcpTransportBtn}>
-              清除
+              {t('common.clear')}
             </button>
           )}
         </div>
@@ -113,11 +115,11 @@ export default function WorkspaceTab() {
 
       <hr className={settingsStyles.sectionDivider} />
 
-      {/* ── 会话工作空间 ── */}
-      <div className={settingsStyles.themeLabel}>会话工作空间</div>
+      {/* Session workspace */}
+      <div className={settingsStyles.themeLabel}>{t('workspace.sessionWorkspace')}</div>
 
       {sessionsWithWorkspace.length === 0 ? (
-        <p className={settingsStyles.toolsEmpty}>暂无覆盖了工作空间的会话 — 右键侧边栏会话可快速设置</p>
+        <p className={settingsStyles.toolsEmpty}>{t('workspace.noOverridesDesc')}</p>
       ) : (
         sessionsWithWorkspace.map(({ sid, path, title }) => (
           <div key={sid} className={settingsStyles.aboutRow}>
@@ -128,7 +130,7 @@ export default function WorkspaceTab() {
               </p>
             </div>
             <button onClick={() => handleResetSession(sid)} className={settingsStyles.mcpTransportBtn}>
-              重置为默认
+              {t('workspace.resetToDefault')}
             </button>
           </div>
         ))
@@ -136,26 +138,26 @@ export default function WorkspaceTab() {
 
       <hr className={settingsStyles.sectionDivider} />
 
-      {/* ── 文件沙盒 ── */}
-      <div className={settingsStyles.themeLabel}>文件沙盒</div>
+      {/* File sandbox */}
+      <div className={settingsStyles.themeLabel}>{t('workspace.sandbox')}</div>
 
       <div className={settingsStyles.aboutRow}>
         <div>
-          <span className={settingsStyles.aboutLabel}>启用沙盒</span>
-          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>限制 AI 对文件系统的访问范围，防止误删或泄露敏感文件</p>
+          <span className={settingsStyles.aboutLabel}>{t('workspace.sandboxEnable') || t('workspace.sandbox')}</span>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('workspace.sandboxDesc')}</p>
         </div>
         <div className={settingsStyles.mcpTransportToggle}>
           <button
             className={`${settingsStyles.mcpTransportBtn} ${sandbox.enabled ? settingsStyles.mcpTransportActive : ''}`}
             onClick={() => updateSandbox({ enabled: true })}
           >
-            开启
+            {t('workspace.sandboxOn')}
           </button>
           <button
             className={`${settingsStyles.mcpTransportBtn} ${!sandbox.enabled ? settingsStyles.mcpTransportActive : ''}`}
             onClick={() => updateSandbox({ enabled: false })}
           >
-            关闭
+            {t('workspace.sandboxOff')}
           </button>
         </div>
       </div>
@@ -164,50 +166,50 @@ export default function WorkspaceTab() {
         <>
           <div className={settingsStyles.aboutRow}>
             <div>
-              <span className={settingsStyles.aboutLabel}>仅限工作区</span>
-              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>所有文件操作限制在工作区目录内</p>
+              <span className={settingsStyles.aboutLabel}>{t('workspace.wsOnly')}</span>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('workspace.wsOnlyDesc')}</p>
             </div>
             <div className={settingsStyles.mcpTransportToggle}>
               <button
                 className={`${settingsStyles.mcpTransportBtn} ${sandbox.workspace_only ? settingsStyles.mcpTransportActive : ''}`}
                 onClick={() => updateSandbox({ workspace_only: true })}
               >
-                开启
+                {t('workspace.sandboxOn')}
               </button>
               <button
                 className={`${settingsStyles.mcpTransportBtn} ${!sandbox.workspace_only ? settingsStyles.mcpTransportActive : ''}`}
                 onClick={() => updateSandbox({ workspace_only: false })}
               >
-                关闭
+                {t('workspace.sandboxOff')}
               </button>
             </div>
           </div>
 
           <div className={settingsStyles.aboutRow}>
             <div>
-              <span className={settingsStyles.aboutLabel}>允许访问 .loom 数据目录</span>
-              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>放行 ~/.loom/ 下的技能、记忆数据库和 MCP 配置</p>
+              <span className={settingsStyles.aboutLabel}>{t('workspace.allowLoomData')}</span>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('workspace.allowLoomDataDesc')}</p>
             </div>
             <div className={settingsStyles.mcpTransportToggle}>
               <button
                 className={`${settingsStyles.mcpTransportBtn} ${sandbox.allow_loom_data ? settingsStyles.mcpTransportActive : ''}`}
                 onClick={() => updateSandbox({ allow_loom_data: true })}
               >
-                开启
+                {t('workspace.sandboxOn')}
               </button>
               <button
                 className={`${settingsStyles.mcpTransportBtn} ${!sandbox.allow_loom_data ? settingsStyles.mcpTransportActive : ''}`}
                 onClick={() => updateSandbox({ allow_loom_data: false })}
               >
-                关闭
+                {t('workspace.sandboxOff')}
               </button>
             </div>
           </div>
 
           <div className={settingsStyles.aboutRow}>
             <div>
-              <span className={settingsStyles.aboutLabel}>额外允许的路径</span>
-              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>工作区之外允许访问的目录，每行一个</p>
+              <span className={settingsStyles.aboutLabel}>{t('workspace.extraAllowed')}</span>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('workspace.extraAllowedDesc')}</p>
             </div>
           </div>
           <textarea
@@ -220,8 +222,8 @@ export default function WorkspaceTab() {
 
           <div className={settingsStyles.aboutRow}>
             <div>
-              <span className={settingsStyles.aboutLabel}>额外拒绝的路径</span>
-              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>始终禁止访问的路径（优先级最高）</p>
+              <span className={settingsStyles.aboutLabel}>{t('workspace.extraDenied')}</span>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('workspace.extraDeniedDesc')}</p>
             </div>
           </div>
           <textarea
@@ -233,7 +235,7 @@ export default function WorkspaceTab() {
           />
 
           <div className={styles.builtinNote}>
-            <span className={styles.builtinLabel}>内置禁止访问：</span>
+            <span className={styles.builtinLabel}>{t('workspace.builtinDeny')}</span>
             <span className={styles.builtinPatterns}>
               ~/.ssh, ~/.aws, .env, *.pem, *.key, *.p12, *.pfx, *.crt, *.jks, /etc/passwd, /etc/shadow, Windows\System32\config{sandbox.allow_loom_data ? '' : ', .loom/'}
             </span>

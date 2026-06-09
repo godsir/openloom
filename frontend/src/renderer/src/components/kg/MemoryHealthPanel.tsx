@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import styles from './MemoryHealthPanel.module.css'
 
 // ── helpers ──
@@ -16,17 +17,6 @@ function hashHue(s: string): number {
 
 function entityColor(type: string): string {
   return `hsl(${hashHue(type)}, 55%, 58%)`
-}
-
-// Entity type → Chinese label map
-const ENTITY_TYPE_CN: Record<string, string> = {
-  Technology: '技术',
-  Person: '人物',
-  Project: '项目',
-  Concept: '概念',
-  Tool: '工具',
-  Topic: '话题',
-  Organization: '组织',
 }
 
 function formatPct(v: number): string {
@@ -53,7 +43,6 @@ function layerColor(name: string): string {
   for (const [key, cls] of Object.entries(LAYER_COLORS)) {
     if (lower.includes(key)) return cls
   }
-  // fallback: no special color
   return ''
 }
 
@@ -64,6 +53,7 @@ const GAUGE_CIRC = 2 * Math.PI * GAUGE_R
 // ── component ──
 
 export default function MemoryHealthPanel() {
+  const { t } = useLocale()
   const memoryHealth = useStore(s => s.memoryHealth)
   const qualityReport = useStore(s => s.qualityReport)
   const kgLoadHealth = useStore(s => s.kgLoadHealth)
@@ -77,16 +67,13 @@ export default function MemoryHealthPanel() {
     setError(null)
     try {
       await Promise.all([kgLoadHealth(), kgLoadQuality()])
-      // Give the store a tick to update; if both are still null the RPC failed silently
-      // We check via a follow-up read — but since our selectors are reactive, just catch
-      // any thrown errors from the RPC layer.
     } catch (e: any) {
-      setError(e?.message ?? '未知错误')
+      setError(e?.message ?? t('kg.health.unknownError'))
       console.error('[MemoryHealthPanel] load failed:', e)
     } finally {
       setLoading(false)
     }
-  }, [kgLoadHealth, kgLoadQuality])
+  }, [kgLoadHealth, kgLoadQuality, t])
 
   // Load on mount
   useEffect(() => {
@@ -136,11 +123,11 @@ export default function MemoryHealthPanel() {
   const statusLabel = useMemo(() => {
     if (!memoryHealth?.status) return ''
     switch (memoryHealth.status) {
-      case 'critical': return '危险'
-      case 'degraded': return '欠佳'
-      default: return '健康'
+      case 'critical': return t('kg.health.status.critical')
+      case 'degraded': return t('kg.health.status.degraded')
+      default: return t('kg.health.status.healthy')
     }
-  }, [memoryHealth])
+  }, [memoryHealth, t])
 
   // Layer distribution sorted
   const layers = useMemo(() => {
@@ -166,11 +153,11 @@ export default function MemoryHealthPanel() {
     return (
       <div className={styles.panel}>
         <div className={styles.header}>
-          <span className={styles.title}>记忆力健康</span>
+          <span className={styles.title}>{t('kg.health.title')}</span>
         </div>
         <div className={styles.loadingState}>
           <div className={styles.loadingSpinner} />
-          <span className={styles.loadingText}>加载健康数据...</span>
+          <span className={styles.loadingText}>{t('kg.health.loading')}</span>
         </div>
       </div>
     )
@@ -181,13 +168,13 @@ export default function MemoryHealthPanel() {
     return (
       <div className={styles.panel}>
         <div className={styles.header}>
-          <span className={styles.title}>记忆力健康</span>
+          <span className={styles.title}>{t('kg.health.title')}</span>
         </div>
         <div className={styles.errorState}>
           <span className={styles.errorIcon}>!</span>
-          <span className={styles.errorText}>加载失败: {error}</span>
+          <span className={styles.errorText}>{t('kg.health.loadFailed', { error })}</span>
           <button className={styles.retryBtn} onClick={loadData}>
-            重试
+            {t('common.retry')}
           </button>
         </div>
       </div>
@@ -199,18 +186,18 @@ export default function MemoryHealthPanel() {
     return (
       <div className={styles.panel}>
         <div className={styles.header}>
-          <span className={styles.title}>记忆力健康</span>
+          <span className={styles.title}>{t('kg.health.title')}</span>
           <button className={styles.refreshBtn} onClick={loadData} disabled={loading}>
             <span className={`${styles.refreshIcon} ${loading ? styles.spinning : ''}`}>
               {loading ? '⟳' : '↻'}
             </span>
-            刷新
+            {t('common.refresh')}
           </button>
         </div>
         <div className={styles.emptyState}>
-          暂无健康数据
+          {t('kg.health.noData')}
           <div className={styles.emptyHint}>
-            点击刷新按钮获取最新的记忆系统健康状态
+            {t('kg.health.refreshHint')}
           </div>
         </div>
       </div>
@@ -223,12 +210,12 @@ export default function MemoryHealthPanel() {
     <div className={styles.panel}>
       {/* Header */}
       <div className={styles.header}>
-        <span className={styles.title}>记忆力健康</span>
+        <span className={styles.title}>{t('kg.health.title')}</span>
         <button className={styles.refreshBtn} onClick={loadData} disabled={loading}>
           <span className={`${styles.refreshIcon} ${loading ? styles.spinning : ''}`}>
             {loading ? '⟳' : '↻'}
           </span>
-          刷新
+          {t('common.refresh')}
         </button>
       </div>
 
@@ -236,7 +223,7 @@ export default function MemoryHealthPanel() {
       <div className={styles.topRow}>
         {/* Health gauge */}
         <div className={styles.gaugeSection}>
-          <span className={styles.gaugeLabel}>健康指数</span>
+          <span className={styles.gaugeLabel}>{t('kg.health.score')}</span>
           <div className={styles.gaugeRing}>
             <svg
               className={styles.gaugeSvg}
@@ -276,18 +263,18 @@ export default function MemoryHealthPanel() {
         {/* Card grid */}
         <div className={styles.cardGrid}>
           <div className={styles.statCard}>
-            <span className={styles.cardLabel}>实体总数</span>
+            <span className={styles.cardLabel}>{t('kg.health.totalNodes')}</span>
             <span className={styles.cardValue}>
               {memoryHealth?.total_nodes?.toLocaleString() ?? '--'}
             </span>
             <span className={styles.cardSubtext}>
               {memoryHealth?.total_edges != null
-                ? `${memoryHealth.total_edges} 条关系`
+                ? t('kg.health.edgeCount', { n: String(memoryHealth.total_edges) })
                 : ''}
             </span>
           </div>
           <div className={styles.statCard}>
-            <span className={styles.cardLabel}>平均置信度</span>
+            <span className={styles.cardLabel}>{t('kg.health.avgConfidence')}</span>
             <span className={styles.cardValue}>
               {qualityReport?.avg_confidence != null
                 ? formatPct(qualityReport.avg_confidence)
@@ -295,23 +282,23 @@ export default function MemoryHealthPanel() {
             </span>
             <span className={styles.cardSubtext}>
               {qualityReport?.total_entities != null
-                ? `共 ${qualityReport.total_entities} 实体`
+                ? t('kg.health.totalEntities', { n: String(qualityReport.total_entities) })
                 : ''}
             </span>
           </div>
           <div className={styles.statCard}>
-            <span className={styles.cardLabel}>孤立节点</span>
+            <span className={styles.cardLabel}>{t('kg.health.orphanNodes')}</span>
             <span className={styles.cardValue}>
               {memoryHealth?.orphan_nodes?.toLocaleString() ?? '--'}
             </span>
-            <span className={styles.cardSubtext}>无关系连接的实体</span>
+            <span className={styles.cardSubtext}>{t('kg.health.orphanHint')}</span>
           </div>
           <div className={styles.statCard}>
-            <span className={styles.cardLabel}>陈旧节点</span>
+            <span className={styles.cardLabel}>{t('kg.health.staleNodes')}</span>
             <span className={styles.cardValue}>
               {memoryHealth?.stale_nodes?.toLocaleString() ?? '--'}
             </span>
-            <span className={styles.cardSubtext}>超过 90 天未更新</span>
+            <span className={styles.cardSubtext}>{t('kg.health.staleHint')}</span>
           </div>
         </div>
       </div>
@@ -319,14 +306,15 @@ export default function MemoryHealthPanel() {
       {/* Layer distribution bar chart */}
       {layers.length > 0 && (
         <div className={styles.section}>
-          <span className={styles.sectionHeader}>层级分布</span>
+          <span className={styles.sectionHeader}>{t('kg.health.layerDistribution')}</span>
           <div className={styles.barChart}>
             {layers.map(([name, count]) => {
               const pct = maxLayerCount > 0 ? (count / maxLayerCount) * 100 : 0
               const fillCls = layerColor(name)
+              const layerNameTranslated = t(`kg.layer.${name.toLowerCase()}`) ?? name
               return (
                 <div key={name} className={styles.barRow}>
-                  <span className={styles.barLabel}>{name}</span>
+                  <span className={styles.barLabel}>{layerNameTranslated}</span>
                   <div className={styles.barTrack}>
                     <div
                       className={`${styles.barFill} ${fillCls}`}
@@ -348,7 +336,7 @@ export default function MemoryHealthPanel() {
       {/* Entity type distribution */}
       {typeDistribution.length > 0 && (
         <div className={styles.section}>
-          <span className={styles.sectionHeader}>实体类型分布</span>
+          <span className={styles.sectionHeader}>{t('kg.health.entityTypeDistribution')}</span>
           <div className={styles.typeList}>
             {typeDistribution.slice(0, 12).map(([name, count]) => (
               <div key={name} className={styles.typeRow}>
@@ -357,7 +345,7 @@ export default function MemoryHealthPanel() {
                     className={styles.typeDot}
                     style={{ background: entityColor(name) }}
                   />
-                  <span className={styles.typeName}>{ENTITY_TYPE_CN[name] ?? name}</span>
+                  <span className={styles.typeName}>{t(`kg.entityType.${name}`) ?? name}</span>
                 </div>
                 <span className={styles.typeCount}>{count.toLocaleString()}</span>
               </div>
@@ -370,11 +358,11 @@ export default function MemoryHealthPanel() {
       {memoryHealth?.checked_at && (
         <div className={styles.footer}>
           <span className={styles.footerText}>
-            检查时间: {formatTs(memoryHealth.checked_at)}
+            {t('kg.health.checkedAt', { time: formatTs(memoryHealth.checked_at) })}
           </span>
           {error && (
             <span className={styles.footerText} style={{ color: 'var(--red)' }}>
-              刷新出错: {error}
+              {t('kg.health.refreshError', { error })}
             </span>
           )}
         </div>

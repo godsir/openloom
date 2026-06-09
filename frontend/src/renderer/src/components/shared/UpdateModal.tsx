@@ -1,5 +1,6 @@
 import Overlay from './Overlay'
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import styles from './UpdateModal.module.css'
 
 function formatBytes(bytes: number): string {
@@ -15,6 +16,7 @@ function formatSpeed(bps: number): string {
 }
 
 export default function UpdateModal() {
+  const { t } = useLocale()
   const update = useStore((s) => s.update)
   const modalOpen = useStore((s) => s.updateModalOpen)
   const dismissUpdate = useStore((s) => s.dismissUpdate)
@@ -32,21 +34,21 @@ export default function UpdateModal() {
   }
 
   return (
-    <Overlay open={show} onClose={handleClose} title="更新" size="md">
+    <Overlay open={show} onClose={handleClose} title={t('updates.title')} size="md">
       <div className={styles.container}>
         {status === 'available' && (
           <>
             <div className={styles.versionHeader}>
-              发现新版本 {version}
+              {t('updates.found', { version: version || '' })}
             </div>
-            <div className={styles.versionSub}>建议更新到最新版本以获得新功能与安全修复</div>
+            <div className={styles.versionSub}>{t('updates.recommend')}</div>
             {releaseNotes && (
               <div className={styles.releaseNotes}>{releaseNotes}</div>
             )}
             <div className={styles.actions}>
-              <button className={styles.dismissBtn} onClick={dismissUpdate}>稍后再说</button>
-              <button className={styles.secondaryBtn} onClick={backgroundDownload}>后台下载</button>
-              <button className={styles.primaryBtn} onClick={downloadUpdate}>下载更新</button>
+              <button className={styles.dismissBtn} onClick={dismissUpdate}>{t('updates.later')}</button>
+              <button className={styles.secondaryBtn} onClick={backgroundDownload}>{t('updates.backgroundDownload')}</button>
+              <button className={styles.primaryBtn} onClick={downloadUpdate}>{t('updates.download')}</button>
             </div>
           </>
         )}
@@ -54,7 +56,7 @@ export default function UpdateModal() {
         {status === 'downloading' && (
           <>
             <div className={styles.versionHeader}>
-              正在下载 {version}
+              {t('updates.downloading', { version: version || '' })}
             </div>
             <div className={styles.progressSection}>
               <div className={styles.progressPercent}>{progress.toFixed(0)}%</div>
@@ -72,24 +74,24 @@ export default function UpdateModal() {
         {status === 'downloaded' && (
           <>
             <div className={styles.versionHeader}>
-              {version} 下载完成
+              {t('updates.downloadComplete', { version: version || '' })}
             </div>
             <div className={styles.downloadedInfo}>
-              更新已准备就绪，重启应用即可生效。
+              {t('updates.readyToInstall')}
             </div>
             <div className={styles.actions}>
-              <button className={styles.dismissBtn} onClick={dismissUpdate}>稍后重启</button>
-              <button className={styles.primaryBtn} onClick={installUpdate}>立即重启</button>
+              <button className={styles.dismissBtn} onClick={dismissUpdate}>{t('updates.restartLater')}</button>
+              <button className={styles.primaryBtn} onClick={installUpdate}>{t('updates.restartNow')}</button>
             </div>
           </>
         )}
 
         {status === 'error' && (
           <>
-            <div className={styles.versionHeader}>更新失败</div>
+            <div className={styles.versionHeader}>{t('updates.failed')}</div>
             <div className={styles.errorMessage}>{error}</div>
             <div className={styles.actions}>
-              <button className={styles.dismissBtn} onClick={dismissUpdate}>关闭</button>
+              <button className={styles.dismissBtn} onClick={dismissUpdate}>{t('common.close')}</button>
             </div>
           </>
         )}

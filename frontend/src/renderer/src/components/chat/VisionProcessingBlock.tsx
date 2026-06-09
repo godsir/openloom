@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useLocale } from '../../i18n'
 import { IconEye, IconChevronRight, IconChevronDown, IconCheck, IconLoader, IconXCircle } from '../../utils/icons'
 import styles from './VisionProcessingBlock.module.css'
 
@@ -25,6 +26,7 @@ function BatchStatusIcon({ status }: { status: string }) {
 }
 
 export default function VisionProcessingBlock({ block }: Props) {
+  const { t } = useLocale()
   const [expanded, setExpanded] = useState(false)
   const status = block.status ?? 'running'
   const batches = block.batches ?? []
@@ -34,8 +36,8 @@ export default function VisionProcessingBlock({ block }: Props) {
   const allDone = status === 'done'
 
   const label = hasBatches && totalCount > 1
-    ? `图片分析 ${doneCount}/${totalCount}`
-    : block.content || (status === 'waiting' ? '辅助视觉已完成，主模型生成中' : '辅助视觉正在处理图片')
+    ? t('chat.visionProgress', { done: doneCount, total: totalCount })
+    : block.content || (status === 'waiting' ? t('chat.visionCompleted') : t('chat.visionProcessingImage'))
 
   return (
     <div className={`${styles.block} ${allDone ? styles.blockDone : ''}`}>
@@ -69,7 +71,7 @@ export default function VisionProcessingBlock({ block }: Props) {
               <div key={batch.batchIndex} className={styles.batchRow}>
                 <BatchStatusIcon status={batch.status} />
                 <span className={styles.batchLabel}>
-                  第 {batch.batchIndex + 1} 批
+                  {t('chat.visionBatch', { n: batch.batchIndex + 1 })}
                   {batch.totalBatches > 1 && ` / ${batch.totalBatches}`}
                 </span>
                 {batch.result && (

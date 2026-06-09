@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, memo } from 'react'
+import { useLocale } from '../../i18n'
 import type { TimelineAnchor } from './timeline-anchors'
 import styles from './ChatTimelineNavigator.module.css'
 
@@ -14,6 +15,7 @@ const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
   scrollRef,
   onManualNavigate,
 }: Props) {
+  const { t } = useLocale()
   const [activeId, setActiveId] = useState<string | null>(null)
 
   // Track visible anchor based on scroll position (which anchor is above the viewport top)
@@ -74,14 +76,14 @@ const ChatTimelineNavigator = memo(function ChatTimelineNavigator({
   if (anchors.length === 0) return null
 
   return (
-    <nav className={styles.nav} aria-label="对话跳转导航">
+    <nav className={styles.nav} aria-label={t('chat.timelineNav')}>
       <div className={styles.card}>
         {anchors.map(a => (
           <button
             key={a.messageId}
             className={`${styles.marker} ${a.messageId === activeId ? styles.markerActive : ''}`}
             onClick={() => jumpTo(a)}
-            aria-label={`跳转到 ${a.label}`}
+            aria-label={t('chat.jumpTo', { label: a.label })}
           >
             <span className={styles.label}>{a.label}</span>
             <span className={styles.line} style={{ width: `${a.markerWidthEm}em` }} />

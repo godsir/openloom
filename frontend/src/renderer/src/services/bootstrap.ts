@@ -6,6 +6,7 @@ import {
 import { loomSubscribe, loomRpc } from './jsonrpc'
 import { streamBufferManager } from './stream-buffer'
 import { useStore } from '../stores'
+import { t } from '../i18n'
 
 async function waitForPort(maxWait = 10000): Promise<number> {
   const start = Date.now()
@@ -55,7 +56,7 @@ export async function bootstrapApp(): Promise<() => void> {
         window.loom.getPreference<boolean>('taskCompleteNotification', false).then((enabled) => {
           if (enabled) {
             const title = 'openLoom'
-            const body = 'AI 已完成回复'
+            const body = t('chat.aiReplied')
             window.loom.showNotification(title, body)
           }
         })
@@ -126,9 +127,9 @@ export async function bootstrapApp(): Promise<() => void> {
           const store = useStore.getState()
           // Format risk label with color indicator
           const riskLabel = risk === 'High'
-            ? '⚠ 高风险操作 — 可能修改文件或执行命令'
+            ? t('permissions.highRisk')
             : risk === 'Medium'
-            ? '● 中风险操作 — 涉及文件读取或网络访问'
+            ? t('permissions.mediumRisk')
             : ''
           // Extract key detail for context
           const detail = toolArgs
@@ -137,12 +138,12 @@ export async function bootstrapApp(): Promise<() => void> {
           // Build structured message with line breaks
           const parts: string[] = []
           if (riskLabel) parts.push(riskLabel)
-          parts.push(`工具: ${toolName}`)
-          if (detail) parts.push(`目标: ${detail}`)
-          parts.push('是否允许执行此操作？')
+          parts.push(t('permissions.toolName', { name: toolName }))
+          if (detail) parts.push(t('permissions.targetPath', { path: detail }))
+          parts.push(t('permissions.confirmPrompt'))
           const msg = parts.join('\n')
           store.showConfirm(
-            `工具权限确认`,
+            t('permissions.toolConfirm'),
             msg,
             risk === 'High',
           ).then((approved: boolean) => {

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { useLocale } from '../../i18n'
 import type { ContentBlock } from '../../stores/chat'
 import { IconChevronRight, IconChevronDown, IconTerminal, IconSearch, IconGlobe, IconFile, IconFileText, IconEdit, IconTrash, IconFolder } from '../../utils/icons'
 import { FileDiffCard } from './FileDiffCard'
@@ -7,6 +8,7 @@ import styles from './ShellBlock.module.css'
 const FILE_DIFF_TOOLS = new Set(['file_write', 'file_edit'])
 
 export default function ShellBlock({ block }: { block: ContentBlock }) {
+  const { t } = useLocale()
   const [expanded, setExpanded] = useState(true)
   const bodyRef = useRef<HTMLDivElement>(null)
   const sealed = block.sealed as boolean
@@ -62,7 +64,7 @@ export default function ShellBlock({ block }: { block: ContentBlock }) {
               {status === 'running' && !result && (
                 <span className={styles.cursor} />
               )}
-              {result || (sealed ? '(no output)' : '')}
+              {result || (sealed ? t('chat.noOutput') : '')}
             </pre>
           )}
         </div>

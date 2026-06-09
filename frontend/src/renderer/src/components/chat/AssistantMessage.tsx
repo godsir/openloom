@@ -1,4 +1,5 @@
 import { useMemo, memo } from 'react'
+import { useLocale } from '../../i18n'
 import type { Message } from '../../stores/chat'
 import { useStore } from '../../stores'
 import ThinkingBlock from './ThinkingBlock'
@@ -26,6 +27,7 @@ const AssistantMessage = memo(function AssistantMessage({
 }) {
   const openLightbox = useStore(s => s.openLightbox)
   const agent = useStore(s => sessionId ? s.getSessionAgent(sessionId) : undefined)
+  const { t } = useLocale()
 
   const avatarContent = useMemo(() => {
     if (agent?.avatar) {
@@ -86,7 +88,7 @@ const AssistantMessage = memo(function AssistantMessage({
         })}
         {message.blocks.length === 0 && isStreamingActive && (
           <div className={styles.thinkingHint}>
-            <span>思考中</span>
+            <span>{t('chat.thinking')}</span>
             <TypingIndicator />
           </div>
         )}
@@ -97,7 +99,7 @@ const AssistantMessage = memo(function AssistantMessage({
         )}
         {message.blocks.length === 0 && !isStreaming && (
           <div className={styles.thinkingHint}>
-            <span>已停止生成</span>
+            <span>{t('chat.stopped')}</span>
           </div>
         )}
         {message.blocks.length > 0 && (

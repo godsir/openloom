@@ -28,6 +28,195 @@ canvas{display:block;flex-shrink:0;pointer-events:auto}
   <canvas id="c"></canvas>
 </div>
 <script>
+// ── i18n ──────────────────────────────────────────────────────────────────────
+var TX = {
+  'zh-CN': {
+    // State bubbles
+    'pet.replying': '正在回复...',
+    'pet.working': '工作中...',
+    'pet.checking': '检查结果...',
+    'pet.done': '搞定!',
+    'pet.error': '出错了',
+    'pet.waiting': '等待响应...',
+    'pet.coming': '来了!',
+    'pet.leavingAction': '溜了~',
+    // Bubble messages
+    'pet.leaving': '我走了',
+    'pet.goodbye': '好，不吵你了~',
+    'pet.back': '我回来啦！',
+    'pet.switchPet': '切换宠物',
+    'pet.breakReminder': '该休息一下啦！站起来走走~',
+    'pet.dndExit': '点击退出勿扰',
+    // Click lines
+    'pet.click.0': '你好呀！',
+    'pet.click.1': '今天写代码了吗？',
+    'pet.click.2': '休息一下吧~',
+    'pet.click.3': '加油！',
+    'pet.click.4': '你最棒了！',
+    'pet.click.5': '有 bug 别慌，慢慢来',
+    'pet.click.6': '喝杯水吧',
+    'pet.click.7': '记得站起来活动活动',
+    'pet.click.8': '今天的你很努力！',
+    'pet.click.9': '代码写得不错哦',
+    'pet.click.10': '我在看着你呢',
+    'pet.click.11': '有什么需要帮忙的吗？',
+    'pet.click.12': '累了就摸摸我~',
+    'pet.click.13': '冲冲冲！',
+    'pet.click.14': '保持专注！',
+    'pet.click.15': '你是最厉害的程序员',
+    'pet.click.16': '该起来走走了',
+    'pet.click.17': '要不要来杯咖啡？',
+    'pet.click.18': '别卷了别卷了',
+    'pet.click.19': '嘿嘿~',
+    'pet.click.20': '一切都会好起来的',
+    'pet.click.21': '相信自己！',
+    'pet.click.22': '今天天气不错',
+    'pet.click.23': '记得吃午饭哦',
+    'pet.click.24': '再写一行就休息！',
+    'pet.click.25': '我陪你一起加班',
+    'pet.click.26': '这个需求做完了吗？',
+    'pet.click.27': '你头发还在吗',
+    'pet.click.28': '摸鱼摸鱼~',
+    'pet.click.29': '给你一朵小花花',
+    'pet.click.30': '能量满满！',
+    'pet.click.31': '今晚吃什么？',
+    'pet.click.32': '右键可以开勿扰模式哦~',
+    'pet.click.33': '觉得我碍事就开勿扰吧',
+    'pet.click.34': '想安静一会？试试勿扰模式',
+    // Idle lines
+    'pet.idle.0': '主人在吗？',
+    'pet.idle.1': '好无聊呀...',
+    'pet.idle.2': '咕噜咕噜...',
+    'pet.idle.3': '喵~',
+    'pet.idle.4': '今天天气不错',
+    'pet.idle.5': '什么时候下班呀？',
+    'pet.idle.6': '想去外面看看',
+    'pet.idle.7': '肚子有点饿了',
+    'pet.idle.8': '要不要摸我一下？',
+    'pet.idle.9': '发会儿呆...',
+    'pet.idle.10': '数数窗外的云',
+    'pet.idle.11': '该起来走走啦',
+    'pet.idle.12': '想念代码的味道',
+    'pet.idle.13': '要不要写点什么呢？',
+    'pet.idle.14': '你的咖啡凉了哦',
+    'pet.idle.15': '我有点困了...',
+    'pet.idle.16': '外面是不是有人叫我？',
+    'pet.idle.17': '帮你盯着屏幕呢',
+    'pet.idle.18': '键盘声真好听',
+    'pet.idle.19': '什么时候再写代码呀？',
+    'pet.idle.20': '桌上的小零食可以吃吗',
+    'pet.idle.21': '这个bug我来帮你抓',
+    'pet.idle.22': '思考中...',
+    'pet.idle.23': '咪啾~',
+    'pet.idle.24': '偷偷打个哈欠',
+    'pet.idle.25': '翻个身继续躺'
+  },
+  'en-US': {
+    // State bubbles
+    'pet.replying': 'Replying...',
+    'pet.working': 'Working...',
+    'pet.checking': 'Checking...',
+    'pet.done': 'Done!',
+    'pet.error': 'Error',
+    'pet.waiting': 'Waiting...',
+    'pet.coming': 'Coming!',
+    'pet.leavingAction': 'Bye~',
+    // Bubble messages
+    'pet.leaving': 'Bye!',
+    'pet.goodbye': 'Alright, I\'ll be quiet~',
+    'pet.back': 'I\'m back!',
+    'pet.switchPet': 'Switch Pet',
+    'pet.breakReminder': 'Time for a break! Stand up and stretch~',
+    'pet.dndExit': 'Click to exit DND',
+    // Click lines
+    'pet.click.0': 'Hello there!',
+    'pet.click.1': 'Coding today?',
+    'pet.click.2': 'Take a break~',
+    'pet.click.3': 'You can do it!',
+    'pet.click.4': 'You\'re the best!',
+    'pet.click.5': 'Don\'t panic over bugs, take it easy.',
+    'pet.click.6': 'Drink some water',
+    'pet.click.7': 'Remember to stand up and stretch',
+    'pet.click.8': 'You worked hard today!',
+    'pet.click.9': 'Nice code!',
+    'pet.click.10': 'I\'m watching over you',
+    'pet.click.11': 'Need any help?',
+    'pet.click.12': 'Pet me when you\'re tired~',
+    'pet.click.13': 'Go go go!',
+    'pet.click.14': 'Stay focused!',
+    'pet.click.15': 'You\'re the best programmer',
+    'pet.click.16': 'Time to walk around',
+    'pet.click.17': 'How about a cup of coffee?',
+    'pet.click.18': 'Don\'t overwork yourself',
+    'pet.click.19': 'Hehe~',
+    'pet.click.20': 'Everything will be fine',
+    'pet.click.21': 'Believe in yourself!',
+    'pet.click.22': 'Nice weather today',
+    'pet.click.23': 'Don\'t forget lunch!',
+    'pet.click.24': 'One more line then rest!',
+    'pet.click.25': 'I\'ll work overtime with you',
+    'pet.click.26': 'Is this feature request done?',
+    'pet.click.27': 'Still have your hair?',
+    'pet.click.28': 'Slacking off~',
+    'pet.click.29': 'Here\'s a little flower for you',
+    'pet.click.30': 'Full of energy!',
+    'pet.click.31': 'What\'s for dinner tonight?',
+    'pet.click.32': 'Right-click for DND mode~',
+    'pet.click.33': 'Find me annoying? Try DND mode',
+    'pet.click.34': 'Need quiet? Try DND mode',
+    // Idle lines
+    'pet.idle.0': 'Is master here?',
+    'pet.idle.1': 'So bored...',
+    'pet.idle.2': 'Grumble grumble...',
+    'pet.idle.3': 'Meow~',
+    'pet.idle.4': 'Nice weather today',
+    'pet.idle.5': 'When do we get off work?',
+    'pet.idle.6': 'Want to go outside...',
+    'pet.idle.7': 'Getting hungry...',
+    'pet.idle.8': 'Wanna pet me?',
+    'pet.idle.9': 'Zoning out...',
+    'pet.idle.10': 'Counting clouds outside',
+    'pet.idle.11': 'Time to walk around',
+    'pet.idle.12': 'Missing the smell of code',
+    'pet.idle.13': 'Shall we write something?',
+    'pet.idle.14': 'Your coffee is getting cold',
+    'pet.idle.15': 'I\'m getting sleepy...',
+    'pet.idle.16': 'Is someone calling me outside?',
+    'pet.idle.17': 'Watching the screen for you',
+    'pet.idle.18': 'The keyboard sounds so nice',
+    'pet.idle.19': 'When will you code again?',
+    'pet.idle.20': 'Can I eat the snacks on the desk?',
+    'pet.idle.21': 'Let me help you catch this bug',
+    'pet.idle.22': 'Thinking...',
+    'pet.idle.23': 'Mijiu~',
+    'pet.idle.24': 'Sneakily yawning',
+    'pet.idle.25': 'Rolling over to keep lying'
+  }
+};
+
+function getLocale() {
+  try {
+    var stored = localStorage.getItem('loom-locale');
+    if (stored === 'zh-CN' || stored === 'en-US') return stored;
+  } catch(e) {}
+  return (document.documentElement.lang === 'en-US') ? 'en-US' : 'zh-CN';
+}
+
+var locale = getLocale();
+var pack = TX[locale] || TX['zh-CN'];
+
+function t(key) {
+  return pack[key] != null ? pack[key] : key;
+}
+
+// Build translated arrays
+var CLICK_LINES = [];
+for (var ci = 0; ci < 35; ci++) { CLICK_LINES.push(t('pet.click.' + ci)); }
+
+var IDLE_LINES = [];
+for (var ii = 0; ii < 26; ii++) { IDLE_LINES.push(t('pet.idle.' + ii)); }
+</script>
+<script>
 var FW = 192, FH = 208, COLS = 9, ROWS = 9, FRAMES = 6;
 var PETDEX_STATES = {
   idle: 0, runRight: 1, runLeft: 2, wave: 3, jump: 4,
@@ -72,14 +261,14 @@ window.petApi.onCommand(function(cmd) {
   } else if (cmd === 'hide') {
     bc.postMessage({ type: 'cmd', cmd: 'toggle', value: false });
   } else if (cmd === 'close') {
-    showBubble('我走了');
+    showBubble(t('pet.leaving'));
     setTimeout(function() {
       bc.postMessage({ type: 'cmd', cmd: 'toggle', value: false });
     }, 3000);
   } else if (cmd === 'dnd:on') {
-    dndMode = true; resetUnlock(); showBubble('好，不吵你了~', 2000);
+    dndMode = true; resetUnlock(); showBubble(t('pet.goodbye'), 2000);
   } else if (cmd === 'dnd:off') {
-    dndMode = false; resetUnlock(); showBubble('我回来啦！', 2000);
+    dndMode = false; resetUnlock(); showBubble(t('pet.back'), 2000);
   }
 });
 
@@ -140,14 +329,14 @@ function resize(size) {
 
 // --- State-to-bubble mapping ---
 var STATE_BUBBLES = {
-  wave: '正在回复...',
-  dash: '工作中...',
-  inspect: '检查结果...',
-  jump: '搞定!',
-  failed: '出错了',
-  wait: '等待响应...',
-  runRight: '来了!',
-  runLeft: '溜了~',
+  wave: t('pet.replying'),
+  dash: t('pet.working'),
+  inspect: t('pet.checking'),
+  jump: t('pet.done'),
+  failed: t('pet.error'),
+  wait: t('pet.waiting'),
+  runRight: t('pet.coming'),
+  runLeft: t('pet.leavingAction'),
 };
 
 // BroadcastChannel
@@ -167,7 +356,7 @@ bc.onmessage = function(e) {
     resize(d.size);
   } else if (d.type === 'pet' && d.petId) {
     loadPet(d.petId);
-    showBubble('切换宠物', 1500);
+    showBubble(t('pet.switchPet'), 1500);
   } else if (d.type === 'bubble' && d.text) {
     bumpActivity();
     showBubble(d.text, d.duration || 2000);
@@ -214,7 +403,7 @@ canvas.addEventListener('mousemove', function(e) {
         unlockTimer = setTimeout(function() {
           unlockActive = true;
           setMouseIgnored(false);
-          showBubble('点击退出勿扰', 0);
+          showBubble(t('pet.dndExit'), 0);
           unlockDismissTimer = setTimeout(resetUnlock, 5000);
         }, 2000);
       }
@@ -259,19 +448,6 @@ canvas.addEventListener('click', function(e) {
 });
 
 // --- Click vs drag ---
-var CLICK_LINES = [
-  '你好呀！', '今天写代码了吗？', '休息一下吧~', '加油！', '你最棒了！',
-  '有 bug 别慌，慢慢来', '喝杯水吧', '记得站起来活动活动',
-  '今天的你很努力！', '代码写得不错哦', '我在看着你呢',
-  '有什么需要帮忙的吗？', '累了就摸摸我~', '冲冲冲！',
-  '保持专注！', '你是最厉害的程序员', '该起来走走了',
-  '要不要来杯咖啡？', '别卷了别卷了', '嘿嘿~',
-  '一切都会好起来的', '相信自己！', '今天天气不错',
-  '记得吃午饭哦', '再写一行就休息！', '我陪你一起加班',
-  '这个需求做完了吗？', '你头发还在吗', '摸鱼摸鱼~',
-  '给你一朵小花花', '能量满满！', '今晚吃什么？',
-  '右键可以开勿扰模式哦~', '觉得我碍事就开勿扰吧', '想安静一会？试试勿扰模式'
-];
 var startX = 0, startY = 0;
 
 canvas.addEventListener('mousedown', function(e) {
@@ -291,15 +467,6 @@ var clickReturnTimer = null;
 
 // --- Idle autonomous behavior ---
 var IDLE_STATES = ['wave', 'jump', 'runRight', 'runLeft', 'inspect'];
-var IDLE_LINES = [
-  '主人在吗？', '好无聊呀...', '咕噜咕噜...', '喵~', '今天天气不错',
-  '什么时候下班呀？', '想去外面看看', '肚子有点饿了', '要不要摸我一下？',
-  '发会儿呆...', '数数窗外的云', '该起来走走啦', '想念代码的味道',
-  '要不要写点什么呢？', '你的咖啡凉了哦', '我有点困了...',
-  '外面是不是有人叫我？', '帮你盯着屏幕呢', '键盘声真好听',
-  '什么时候再写代码呀？', '桌上的小零食可以吃吗', '这个bug我来帮你抓',
-  '思考中...', '咪啾~', '偷偷打个哈欠', '翻个身继续躺'
-];
 var lastActivity = Date.now();
 var nextIdleAt = lastActivity + 30000;
 var idleTimer = null;
@@ -313,7 +480,7 @@ function checkBreakReminder() {
   if (Date.now() - lastBreakReminder > breakIntervalMin * 60000) {
     lastBreakReminder = Date.now();
     currentState = 'wave'; frame = 0; tick = 0;
-    showBubble('该休息一下啦！站起来走走~', 5000);
+    showBubble(t('pet.breakReminder'), 5000);
     if (clickReturnTimer) clearTimeout(clickReturnTimer);
     clickReturnTimer = setTimeout(function() { currentState = 'idle'; frame = 0; tick = 0; }, 3000);
   }

@@ -47,9 +47,10 @@ export default function SlashCommandMenu({ query, commands, onSelect, onClose }:
 export function getBuiltinCommands(
   createSession: () => void,
   clearInput: () => void,
+  t: (key: string, vars?: Record<string, string | number>) => string,
 ): SlashCommand[] {
   return [
-    { name: 'new', description: '新建会话', execute: () => createSession() },
-    { name: 'clear', description: '清空输入', execute: () => clearInput() },
+    { name: 'new', description: t('chat.newSession'), execute: () => createSession() },
+    { name: 'clear', description: t('chat.clearInput'), execute: () => clearInput() },
   ]
 }

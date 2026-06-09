@@ -3,6 +3,7 @@ import { join, extname } from 'path'
 import { homedir } from 'os'
 import { existsSync, mkdirSync, readdirSync, readFileSync, copyFileSync } from 'fs'
 import { getStoreKey, setStoreKey } from './store'
+import { t } from './i18n'
 
 const SIZE_VALUES: Record<string, number> = { small: 128, medium: 192, large: 256 }
 const PADDING = 48 // extra space for bubble above
@@ -109,13 +110,13 @@ function registerPetIpc(): void {
 
   ipcMain.on('pet:context-menu', () => {
     const menu = Menu.buildFromTemplate([
-      { label: '大小：小 (128px)', click: () => sendPetCommand('size:small') },
-      { label: '大小：中 (192px)', click: () => sendPetCommand('size:medium') },
-      { label: '大小：大 (256px)', click: () => sendPetCommand('size:large') },
+      { label: t('pet.sizeSmall'), click: () => sendPetCommand('size:small') },
+      { label: t('pet.sizeMedium'), click: () => sendPetCommand('size:medium') },
+      { label: t('pet.sizeLarge'), click: () => sendPetCommand('size:large') },
       { type: 'separator' },
-      { label: dndEnabled ? '关闭勿扰模式' : '开启勿扰模式', click: () => { togglePetDnd() } },
+      { label: dndEnabled ? t('tray.dndOff') : t('tray.dndOn'), click: () => { togglePetDnd() } },
       { type: 'separator' },
-      { label: '关闭桌宠', click: () => sendPetCommand('close') },
+      { label: t('pet.closePet'), click: () => sendPetCommand('close') },
     ])
     menu.popup({ window: petWindow! })
   })

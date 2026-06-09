@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import ContextMenu, { ContextMenuItem } from './ContextMenu'
+import { useLocale } from '../../i18n'
 import styles from './ImageLightbox.module.css'
 
 interface Props {
@@ -8,6 +9,7 @@ interface Props {
 }
 
 export default function ImageLightbox({ src, onClose }: Props) {
+  const { t } = useLocale()
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 })
   const [loadError, setLoadError] = useState(false)
@@ -124,7 +126,7 @@ export default function ImageLightbox({ src, onClose }: Props) {
     >
       <div className={styles.backdrop} />
       {loadError ? (
-        <p className={styles.errorMsg}>图片加载失败，即将关闭...</p>
+        <p className={styles.errorMsg}>{t('common.imageLoadError')}</p>
       ) : (
         <img
           ref={imgRef}
@@ -144,15 +146,15 @@ export default function ImageLightbox({ src, onClose }: Props) {
         />
       )}
       <div className={styles.toolbar} onClick={e => e.stopPropagation()}>
-        <button className={styles.toolBtn} onClick={() => setScale(s => Math.min(8, s + 0.3))} title="放大">+</button>
-        <button className={styles.toolBtn} onClick={() => setScale(s => Math.max(0.2, s - 0.3))} title="缩小">−</button>
-        <button className={styles.toolBtn} onClick={() => { setScale(1); setOffset({ x: 0, y: 0 }) }} title="重置">1:1</button>
-        <button className={styles.closeBtn} onClick={close} title="关闭 (Esc)">✕</button>
+        <button className={styles.toolBtn} onClick={() => setScale(s => Math.min(8, s + 0.3))} title={t('common.zoomIn')}>+</button>
+        <button className={styles.toolBtn} onClick={() => setScale(s => Math.max(0.2, s - 0.3))} title={t('common.zoomOut')}>−</button>
+        <button className={styles.toolBtn} onClick={() => { setScale(1); setOffset({ x: 0, y: 0 }) }} title={t('common.resetZoom')}>1:1</button>
+        <button className={styles.closeBtn} onClick={close} title={t('common.closeWithKey', { key: 'Esc' })}>✕</button>
       </div>
-      <span className={styles.hint}>滚轮缩放 · 拖拽移动 · 双击重置 · Esc 关闭</span>
+      <span className={styles.hint}>{t('common.imageHint')}</span>
       <ContextMenu open={menuOpen} x={menuPos.x} y={menuPos.y} onClose={() => setMenuOpen(false)}>
-        <ContextMenuItem onClick={handleCopy}>复制图片</ContextMenuItem>
-        <ContextMenuItem onClick={handleSave}>保存图片</ContextMenuItem>
+        <ContextMenuItem onClick={handleCopy}>{t('common.copyImage')}</ContextMenuItem>
+        <ContextMenuItem onClick={handleSave}>{t('common.saveImage')}</ContextMenuItem>
       </ContextMenu>
     </div>
   )

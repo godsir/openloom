@@ -3,6 +3,7 @@ import { useStore } from '../stores'
 import { streamBufferManager } from './stream-buffer'
 import type { AttachedFile } from '../stores/input'
 import type { QuotedSelection } from '../stores/selectionContext'
+import { t } from '../i18n'
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -129,7 +130,7 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
     })
   }
   catch (e: any) {
-    useStore.getState().setInlineError(sid, e.message || '发送失败')
+    useStore.getState().setInlineError(sid, e.message || t('sessions.sendFailed'))
   }
   finally {
     clearTimeout(safetyTimer)

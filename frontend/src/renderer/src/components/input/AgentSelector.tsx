@@ -1,9 +1,11 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
+import { useLocale } from '../../i18n'
 import Select from '../shared/Select'
 
 export default function AgentSelector() {
+  const { t } = useLocale()
   const agents = useStore((s) => s.agents)
   const currentSessionId = useStore((s) => s.currentSessionId)
   const bindingName = useStore((s) => currentSessionId ? s.sessionAgentBindings[currentSessionId] : undefined)
@@ -16,14 +18,14 @@ export default function AgentSelector() {
   const validAgents = agents.filter((a) => a.name && a.name !== 'default')
   const options = useMemo(
     () => [
-      { value: '', label: '默认 Agent' },
+      { value: '', label: t('input.defaultAgent') },
       ...validAgents.map((a) => ({
         value: a.name,
         label: a.name,
         avatar: (a as any).avatar ?? null,
       })),
     ],
-    [validAgents],
+    [validAgents, t],
   )
 
   const handleChange = (value: string) => {

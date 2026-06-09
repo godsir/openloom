@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import { IconFilePlus, IconFileText, IconEdit, IconTrash, IconSend, IconFolderOpen, IconPlus, IconSparkles } from '../../utils/icons'
 import { renderMarkdown } from '../../utils/markdown'
 import Select from '../shared/Select'
@@ -11,23 +12,9 @@ interface FileEntry { name: string; is_directory: boolean }
 type PreviewMode = 'source' | 'split' | 'preview'
 type ModalKind = 'none' | 'newFile' | 'rename' | 'delete'
 
-const PREVIEW_OPTIONS = [
-  { value: 'source' as const, label: '编辑' },
-  { value: 'split' as const, label: '分屏' },
-  { value: 'preview' as const, label: '预览' },
-]
-
 const FILE_EXT_OPTIONS = [
   { value: '.md', label: '.md' },
   { value: '.txt', label: '.txt' },
-]
-
-const QUICK_SUGGESTIONS = [
-  '润色这段文字',
-  '翻译成英文',
-  '扩写到 500 字',
-  '总结要点',
-  '改写为更正式的语气',
 ]
 
 export const WriteWorkspaceView: React.FC = () => {
@@ -38,6 +25,22 @@ export const WriteWorkspaceView: React.FC = () => {
   const sessionWorkspaces = useStore(s => s.sessionWorkspaces)
   const defaultWorkspace = useStore(s => s.defaultWorkspace)
   const writeFileSidebarOpen = useStore(s => s.writeFileSidebarOpen)
+
+  const { t } = useLocale()
+
+  const previewOptions = [
+    { value: 'source' as const, label: t('write.previewEdit') },
+    { value: 'split' as const, label: t('write.previewSplit') },
+    { value: 'preview' as const, label: t('write.previewPreview') },
+  ]
+
+  const quickSuggestions = [
+    { key: 'write.suggestionPolish', text: t('write.suggestionPolish') },
+    { key: 'write.suggestionTranslate', text: t('write.suggestionTranslate') },
+    { key: 'write.suggestionExpand', text: t('write.suggestionExpand') },
+    { key: 'write.suggestionSummarize', text: t('write.suggestionSummarize') },
+    { key: 'write.suggestionFormal', text: t('write.suggestionFormal') },
+  ]
 
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null)
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null)
@@ -90,11 +93,11 @@ export const WriteWorkspaceView: React.FC = () => {
   const ensureSession = useCallback(async () => {
     if (writeSessionId) return writeSessionId
     const sid = await createSession()
-    try { await loomRpc('session.rename', { session_id: sid, title: '写作助手' }) } catch {}
+    try { await loomRpc('session.rename', { session_id: sid, title: t('write.sessionTitle') }) } catch {}
     setWriteSessionId(sid)
     localStorage.setItem('loom:writeSessionId', sid)
     return sid
-  }, [writeSessionId, createSession])
+  }, [writeSessionId, createSession, t])
 
   // 进入写模式时自动创建会话
   useEffect(() => {
@@ -115,9 +118,9 @@ export const WriteWorkspaceView: React.FC = () => {
         const textFiles = result.entries.filter(e => !e.is_directory && /\.(md|txt|markdown)$/i.test(e.name))
         setFiles(textFiles.sort((a, b) => a.name.localeCompare(b.name)))
       }
-    } catch (e: any) { showToast('读取目录失败: ' + String(e).slice(0, 40)) }
+    } catch (e: any) { showToast(t('write.readDirFailed', { error: String(e).slice(0, 40) })) }
     setLoadingFiles(false)
-  }, [workspaceRoot, showToast])
+  }, [workspaceRoot, showToast, t])
 
   useEffect(() => { if (workspaceRoot) loadFiles() }, [workspaceRoot, loadFiles])
 
@@ -129,9 +132,9 @@ export const WriteWorkspaceView: React.FC = () => {
       const result = await loomRpc<{ ok: boolean; content: string }>('vfs.read_file', { workspace_root: workspaceRoot, path: name })
       if (result.ok) {
         setActiveFilePath(name); setFileContent(result.content); setLastSaved(result.content); setDirty(false)
-      } else { showToast('读取失败') }
-    } catch (e: any) { showToast('打开失败: ' + String(e).slice(0, 40)) }
-  }, [workspaceRoot, dirty, activeFilePath, fileContent, showToast])
+      } else { showToast(t('write.readFailed')) }
+    } catch (e: any) { showToast(t('write.openFailed', { error: String(e).slice(0, 40) })) }
+  }, [workspaceRoot, dirty, activeFilePath, fileContent, showToast, t])
 
   // 保存
   const saveFile = useCallback(async (path: string, content: string) => {
@@ -139,8 +142,8 @@ export const WriteWorkspaceView: React.FC = () => {
     try {
       await loomRpc('vfs.write_file', { workspace_root: workspaceRoot, path, content })
       setLastSaved(content); setDirty(false)
-    } catch (e: any) { showToast('保存失败: ' + String(e).slice(0, 40)) }
-  }, [workspaceRoot, showToast])
+    } catch (e: any) { showToast(t('write.saveFailed', { error: String(e).slice(0, 40) })) }
+  }, [workspaceRoot, showToast, t])
 
   // 自动保存
   useEffect(() => {
@@ -190,21 +193,21 @@ export const WriteWorkspaceView: React.FC = () => {
         const content = '# ' + title + '\n\n'
         await loomRpc('vfs.write_file', { workspace_root: workspaceRoot, path: name, content })
         setActiveFilePath(name); setFileContent(content); setLastSaved(content); setDirty(false)
-        loadFiles(); showToast('文件已创建')
+        loadFiles(); showToast(t('write.fileCreated'))
       } else if (modal.kind === 'rename' && modal.targetName) {
         const newName = modalInput.trim()
         if (!newName || newName === modal.targetName) return
         await loomRpc('vfs.rename', { workspace_root: workspaceRoot, path: modal.targetName, new_name: newName })
         if (activeFilePath === modal.targetName) setActiveFilePath(newName)
-        loadFiles(); showToast('已重命名')
+        loadFiles(); showToast(t('write.fileRenamed'))
       } else if (modal.kind === 'delete' && modal.targetName) {
         await loomRpc('vfs.delete', { workspace_root: workspaceRoot, path: modal.targetName })
         if (activeFilePath === modal.targetName) { setActiveFilePath(null); setFileContent(''); setDirty(false) }
-        loadFiles(); showToast('已删除')
+        loadFiles(); showToast(t('write.fileDeleted'))
       }
       setModal({ kind: 'none' })
-    } catch (e: any) { showToast('操作失败: ' + (e?.message || String(e)).slice(0, 40)) }
-  }, [modal, modalInput, fileExt, workspaceRoot, activeFilePath, loadFiles, showToast])
+    } catch (e: any) { showToast(t('write.operationFailed', { error: (e?.message || String(e)).slice(0, 40) })) }
+  }, [modal, modalInput, fileExt, workspaceRoot, activeFilePath, loadFiles, showToast, t])
 
   // 选目录
   const pickWorkspace = useCallback(async () => {
@@ -224,6 +227,7 @@ export const WriteWorkspaceView: React.FC = () => {
     const sid = await ensureSession()
     setAssistantText('')
     try {
+      // LLM-facing prompt — keep Chinese
       const content = activeFilePath
         ? `[写作上下文]\n当前文件: ${activeFilePath}\n\n${fileContent}\n\n[用户指令]\n${msg}`
         : msg
@@ -231,13 +235,13 @@ export const WriteWorkspaceView: React.FC = () => {
       // 切换到对话模式查看 AI 回复
       setAppMode('chat')
       switchSession(sid)
-    } catch { showToast('发送失败') }
-  }, [assistantText, activeFilePath, fileContent, ensureSession, showToast, setAppMode, switchSession])
+    } catch { showToast(t('write.sendFailed')) }
+  }, [assistantText, activeFilePath, fileContent, ensureSession, showToast, setAppMode, switchSession, t])
 
   if (appMode !== 'write') return null
 
   const previewHtml = previewMode !== 'source' && fileContent ? renderMarkdown(fileContent) : ''
-  const editorPlaceholder = activeFilePath ? '开始写作...' : '选择或新建文件后开始写作'
+  const editorPlaceholder = activeFilePath ? t('write.startWriting') : t('write.selectOrNewFile')
 
   return (
     <div className={styles.root}>
@@ -246,16 +250,16 @@ export const WriteWorkspaceView: React.FC = () => {
       <div className={styles.toolbar}>
         {!workspaceRoot ? (
           <button className={styles.toolbarBtn} onClick={pickWorkspace}>
-            <IconFolderOpen size={12} />选择目录
+            <IconFolderOpen size={12} />{t('write.selectDirectory')}
           </button>
         ) : (
           <div className={styles.toolbarGroup}>
-            <span className={styles.workspacePath} onClick={pickWorkspace} title="点击切换目录">
+            <span className={styles.workspacePath} onClick={pickWorkspace} title={t('write.clickSwitchDir')}>
               {workspaceRoot.split(/[/\\]/).pop() || workspaceRoot}
             </span>
             <button className={styles.toolbarBtnGhost}
               onClick={() => (window as any).loom?.openFolder?.(workspaceRoot)}
-              title="在文件管理器中打开" style={{ padding: '2px 4px' }}>
+              title={t('write.openInExplorer')} style={{ padding: '2px 4px' }}>
               <IconFolderOpen size={13} />
             </button>
           </div>
@@ -270,13 +274,13 @@ export const WriteWorkspaceView: React.FC = () => {
 
         <div className={styles.spacer} />
 
-        <Select value={previewMode} options={PREVIEW_OPTIONS} onChange={setPreviewMode} variant="pill" />
+        <Select value={previewMode} options={previewOptions} onChange={setPreviewMode} variant="pill" />
 
         {workspaceRoot && (
           <button
             className={assistantPanelOpen ? styles.toolbarBtnAccent : styles.toolbarBtnGhost}
             onClick={() => setAssistantPanelOpen(o => !o)}
-            title={assistantPanelOpen ? '收起AI面板' : '展开AI面板'}>
+            title={assistantPanelOpen ? t('write.collapseAIPanel') : t('write.expandAIPanel')}>
             <IconSparkles size={13} />
           </button>
         )}
@@ -288,20 +292,20 @@ export const WriteWorkspaceView: React.FC = () => {
         {workspaceRoot && (
           <div className={`${styles.fileSidebar} ${!writeFileSidebarOpen ? styles.fileSidebarCollapsed : ''}`}>
             <div className={styles.fileSidebarHeader}>
-              <span>文件列表</span>
+              <span>{t('write.fileList')}</span>
               <button className={styles.fileSidebarNewBtn}
                 onClick={() => { setModalInput(''); setFileExt('.md'); setModal({ kind: 'newFile' }) }}
-                title="新建文件">
+                title={t('write.newFile')}>
                 <IconPlus size={13} />
               </button>
             </div>
             <div className={styles.fileList}>
               {loadingFiles ? (
-                <div className={styles.fileListHint}>加载中...</div>
+                <div className={styles.fileListHint}>{t('common.loading')}</div>
               ) : files.length === 0 ? (
                 <div className={styles.fileListHint}>
-                  暂无文件<br />
-                  <span style={{ fontSize: 10, opacity: 0.5 }}>点击 + 新建一个</span>
+                  {t('write.noFiles')}<br />
+                  <span style={{ fontSize: 10, opacity: 0.5 }}>{t('write.clickPlusNew')}</span>
                 </div>
               ) : (
                 files.map(f => (
@@ -313,12 +317,12 @@ export const WriteWorkspaceView: React.FC = () => {
                     <div className={styles.fileItemActions}>
                       <button className={styles.fileItemAction}
                         onClick={e => { e.stopPropagation(); setModalInput(f.name); setModal({ kind: 'rename', targetName: f.name }) }}
-                        title="重命名">
+                        title={t('common.rename')}>
                         <IconEdit size={11} />
                       </button>
                       <button className={styles.fileItemAction}
                         onClick={e => { e.stopPropagation(); setModal({ kind: 'delete', targetName: f.name }) }}
-                        title="删除">
+                        title={t('common.delete')}>
                         <IconTrash size={11} />
                       </button>
                     </div>
@@ -333,18 +337,18 @@ export const WriteWorkspaceView: React.FC = () => {
         {!workspaceRoot ? (
           <div className={styles.emptyState}>
             <IconFolderOpen size={48} className={styles.emptyIcon} />
-            <span>选择工作目录开始写作</span>
+            <span>{t('write.selectDirStart')}</span>
             <button className={styles.workspacePromptBtn} onClick={pickWorkspace}>
-              <IconFolderOpen size={16} />选择目录
+              <IconFolderOpen size={16} />{t('write.selectDirectory')}
             </button>
           </div>
         ) : !activeFilePath ? (
           <div className={styles.emptyState}>
             <IconFileText size={40} className={styles.emptyIcon} />
-            <span>选择文件或新建文件</span>
+            <span>{t('write.selectOrNewFilePrompt')}</span>
             <button className={styles.workspacePromptBtn}
               onClick={() => { setModalInput(''); setFileExt('.md'); setModal({ kind: 'newFile' }) }}>
-              <IconFilePlus size={16} />新建文件
+              <IconFilePlus size={16} />{t('write.newFile')}
             </button>
           </div>
         ) : previewMode === 'preview' ? (
@@ -375,7 +379,7 @@ export const WriteWorkspaceView: React.FC = () => {
           <div className={`${styles.assistantPanel} ${!assistantPanelOpen ? styles.assistantPanelCollapsed : ''}`}>
             <div className={styles.assistantPanelHeader}>
               <IconSparkles size={13} />
-              <span>AI 写作助手</span>
+              <span>{t('write.aiWritingAssistant')}</span>
             </div>
 
             <div className={styles.assistantPanelBody}>
@@ -384,21 +388,21 @@ export const WriteWorkspaceView: React.FC = () => {
                   <div className={styles.assistantContextFile}>
                     <IconFileText size={11} />{activeFilePath.split('/').pop()}
                   </div>
-                  <span>已打开，可在下方输入指令让 AI 帮你处理文本。</span>
+                  <span>{t('write.aiContextWithFile')}</span>
                 </div>
               ) : (
                 <div className={styles.assistantContext}>
-                  打开一个文件后，AI 可以帮你润色、翻译、扩写、总结等。
+                  {t('write.aiContextNoFile')}
                 </div>
               )}
 
               <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: '4px 0 2px', fontWeight: 500 }}>
-                快捷指令
+                {t('write.quickCommands')}
               </div>
-              {QUICK_SUGGESTIONS.map(s => (
-                <button key={s} className={styles.assistantSuggestion}
-                  onClick={() => handleAssistantSend(s)}>
-                  {s}
+              {quickSuggestions.map(s => (
+                <button key={s.key} className={styles.assistantSuggestion}
+                  onClick={() => handleAssistantSend(s.text)}>
+                  {s.text}
                 </button>
               ))}
             </div>
@@ -412,11 +416,11 @@ export const WriteWorkspaceView: React.FC = () => {
                     if (e.key !== 'Enter' || e.shiftKey) return
                     e.preventDefault(); handleAssistantSend()
                   }}
-                  placeholder="输入指令..."
+                  placeholder={t('write.inputInstruction')}
                 />
                 <button className={styles.assistantSendBtn}
                   onClick={() => handleAssistantSend()}
-                  disabled={!assistantText.trim()} title="发送">
+                  disabled={!assistantText.trim()} title={t('chat.send')}>
                   <IconSend size={13} />
                 </button>
               </div>
@@ -432,16 +436,16 @@ export const WriteWorkspaceView: React.FC = () => {
       {modal.kind !== 'none' && (
         <div className={styles.modalDialog}>
           <div className={styles.modalTitle}>
-            {modal.kind === 'newFile' ? '新建文件' : modal.kind === 'rename' ? '重命名' : '确认删除'}
+            {modal.kind === 'newFile' ? t('write.newFile') : modal.kind === 'rename' ? t('common.rename') : t('write.confirmDeleteTitle')}
           </div>
           {modal.kind === 'delete' ? (
             <>
               <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.5 }}>
-                确定要删除「{modal.targetName}」？此操作不可撤销。
+                {t('write.deleteConfirmMsg', { name: modal.targetName || '' })}
               </div>
               <div className={styles.modalFooter}>
-                <button className={styles.modalBtnCancel} onClick={() => setModal({ kind: 'none' })}>取消</button>
-                <button className={styles.modalBtnDanger} onClick={confirmModal}>删除</button>
+                <button className={styles.modalBtnCancel} onClick={() => setModal({ kind: 'none' })}>{t('common.cancel')}</button>
+                <button className={styles.modalBtnDanger} onClick={confirmModal}>{t('common.delete')}</button>
               </div>
             </>
           ) : (
@@ -453,7 +457,7 @@ export const WriteWorkspaceView: React.FC = () => {
                     value={modalInput}
                     onChange={e => setModalInput(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') confirmModal(); if (e.key === 'Escape') setModal({ kind: 'none' }) }}
-                    placeholder="文件名，如：笔记" />
+                    placeholder={t('write.fileNamePlaceholder')} />
                   <Select value={fileExt} options={FILE_EXT_OPTIONS} onChange={setFileExt} variant="pill" />
                 </div>
               ) : (
@@ -461,11 +465,11 @@ export const WriteWorkspaceView: React.FC = () => {
                   value={modalInput}
                   onChange={e => setModalInput(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') confirmModal(); if (e.key === 'Escape') setModal({ kind: 'none' }) }}
-                  placeholder="新文件名" />
+                  placeholder={t('write.newFileName')} />
               )}
               <div className={styles.modalFooter}>
-                <button className={styles.modalBtnCancel} onClick={() => setModal({ kind: 'none' })}>取消</button>
-                <button className={styles.modalBtnConfirm} onClick={confirmModal}>确定</button>
+                <button className={styles.modalBtnCancel} onClick={() => setModal({ kind: 'none' })}>{t('common.cancel')}</button>
+                <button className={styles.modalBtnConfirm} onClick={confirmModal}>{t('common.confirm')}</button>
               </div>
             </>
           )}

@@ -10,6 +10,9 @@ import { startConfigWatcher } from './config-watcher'
 
 // Windows tuning.
 if (process.platform === 'win32') {
+  // Required for native Windows toast notifications (Notification API).
+  app.setAppUserModelId('com.openloom.desktop')
+
   // Keep timers running so streaming flushes stay smooth when the window
   // is in the background or partially occluded.
   app.commandLine.appendSwitch('disable-background-timer-throttling')

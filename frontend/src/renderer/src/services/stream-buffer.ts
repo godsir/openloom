@@ -1,6 +1,7 @@
 import { useStore } from '../stores'
 import { renderMarkdown } from '../utils/markdown'
 import { sanitizeHtml } from '../utils/markdown-sanitizer'
+import { t } from '../i18n'
 
 const FLUSH_INTERVAL = 16
 
@@ -377,10 +378,10 @@ class StreamBufferManager {
         type: 'vision_processing',
         status: allDone ? 'done' : buf.inVision ? 'running' : 'waiting',
         content: totalCount > 1
-          ? `正在分析图片 ${doneCount}/${totalCount}`
+          ? t('chat.visionProgress', { done: doneCount, total: totalCount })
           : buf.inVision
-            ? '辅助视觉正在处理图片'
-            : '辅助视觉已完成，主模型生成中',
+            ? t('chat.visionProcessingImage')
+            : t('chat.visionCompleted'),
         batches: buf.visionBatches.map(b => ({
           batchIndex: b.batchIndex,
           totalBatches: b.totalBatches,

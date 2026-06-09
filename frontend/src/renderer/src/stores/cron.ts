@@ -6,7 +6,7 @@ export interface CronJobSummary {
   id: string
   name: string
   cron_expression: string
-  command: string
+  prompt: string
   enabled: boolean
   session_mode: 'isolated' | 'current'
   last_run: number | null
@@ -22,9 +22,8 @@ export interface CronRunHistory {
   started_at: number
   finished_at: number | null
   status: 'running' | 'completed' | 'failed' | 'timed_out'
-  stdout: string | null
-  stderr: string | null
-  exit_code: number | null
+  response: string | null
+  error_message: string | null
 }
 
 // --- Slice ---

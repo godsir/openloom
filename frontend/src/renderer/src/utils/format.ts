@@ -8,7 +8,11 @@ export function escapeHtml(text: string): string {
     .replace(/"/g, '&quot;')
 }
 
-export function formatSessionDate(dateStr: string): string {
+export function formatSessionDate(
+  dateStr: string,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+  locale?: string
+): string {
   const date = new Date(dateStr)
   const now = new Date()
   const diff = now.getTime() - date.getTime()
@@ -16,11 +20,11 @@ export function formatSessionDate(dateStr: string): string {
   const hours = Math.floor(diff / 3600000)
   const days = Math.floor(diff / 86400000)
 
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes} 分钟前`
-  if (hours < 24) return `${hours} 小时前`
-  if (days < 7) return `${days} 天前`
-  return date.toLocaleDateString('zh-CN')
+  if (minutes < 1) return t('time.justNow')
+  if (minutes < 60) return t('time.minutesAgo', { n: minutes })
+  if (hours < 24) return t('time.hoursAgo', { n: hours })
+  if (days < 7) return t('time.daysAgo', { n: days })
+  return date.toLocaleDateString(locale || 'zh-CN')
 }
 
 export function toSlash(text: string): string {

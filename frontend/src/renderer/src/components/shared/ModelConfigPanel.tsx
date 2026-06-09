@@ -4,6 +4,7 @@ import { rpc } from '../../services/rpc-toast'
 import { useStore } from '../../stores'
 import { IconEye, IconWrench, IconBrain, IconX, IconSearch } from '../../utils/icons'
 import Select from './Select'
+import { useLocale } from '../../i18n'
 import type { ModelConfig, ModelListItem, ModelBackend } from '../../types/bindings'
 import styles from './ModelConfig.module.css'
 
@@ -81,6 +82,7 @@ function formatContext(n: number): string {
 }
 
 export default function ModelConfigPanel() {
+  const { t } = useLocale()
   const [models, setModels] = useState<ModelListItem[]>([])
   const [initialLoading, setInitialLoading] = useState(true)
   const mountedRef = useRef(true)
@@ -195,7 +197,7 @@ export default function ModelConfigPanel() {
         base_url: normalizeBaseUrl(baseUrl, apiFormat),
         api_key_env: selected.isCustom ? selected.envVar : undefined,
       })
-      useStore.getState().addToast({ type: 'success', message: `API Key 已保存 (${result.env_name})` })
+      useStore.getState().addToast({ type: 'success', message: t('modelPanel.apiKeySavedMsg', { env: result.env_name }) })
       const envVarName = result.env_name
       const providerModels = getProviderModels(selected, models)
       for (const m of providerModels) {
@@ -254,7 +256,7 @@ export default function ModelConfigPanel() {
         await saveCustomProviders(next)
       }
       setUrlSaveStatus('ok')
-      useStore.getState().addToast({ type: 'success', message: 'Base URL 已保存' })
+      useStore.getState().addToast({ type: 'success', message: t('modelPanel.baseUrlSaved') })
       await refresh()
     } catch {
       setUrlSaveStatus('fail')
@@ -274,7 +276,7 @@ export default function ModelConfigPanel() {
       setDiscovered(result.models || [])
     } catch (e: any) {
       console.error('Failed to discover models:', e)
-      useStore.getState().addToast({ type: 'error', message: '模型发现失败: ' + (e.message || e) })
+      useStore.getState().addToast({ type: 'error', message: t('modelPanel.discoverFailed', { message: e.message || e }) })
       setDiscovered([])
     } finally {
       setDiscovering(false)
@@ -285,7 +287,7 @@ export default function ModelConfigPanel() {
     if (!selected) return
     const modelId = model.id
     const name = modelId.split('/').pop() || modelId
-    const ok = await useStore.getState().showConfirm('添加模型', `确认添加模型 "${name}"？`, false)
+    const ok = await useStore.getState().showConfirm(t('modelPanel.addModelTitle'), t('modelPanel.addModelConfirm', { name }), false)
     if (!ok) return
     const envName = selected.isCustom
       ? selected.envVar || 'OPENLOOM_API_KEY'
@@ -301,7 +303,7 @@ export default function ModelConfigPanel() {
         api_key_env: envName,
         api_format: apiFormat,
         context_size: model.context_length || 4096,
-      }, `模型 "${name}" 已添加`)
+      }, t('modelPanel.added', { name }))
       await refresh()
       setDiscovered(prev => prev.filter(m => m.id !== modelId))
     } catch (e: any) {
@@ -310,17 +312,17 @@ export default function ModelConfigPanel() {
   }
 
   const handleDeleteModel = async (name: string) => {
-    const ok = await useStore.getState().showConfirm('删除模型', `确定删除 "${name}"？`, true)
+    const ok = await useStore.getState().showConfirm(t('modelPanel.deleteModelTitle'), t('modelPanel.deleteModelConfirm', { name }), true)
     if (!ok) return
     try {
-      await rpc('model.config.delete', { name }, `模型 "${name}" 已删除`)
+      await rpc('model.config.delete', { name }, t('modelPanel.deleted', { name }))
       await refresh()
     } catch { /* toast already shown */ }
   }
 
   const handleSetActive = async (name: string) => {
     try {
-      await rpc('model.config.set_active', { name }, `已切换到 "${name}"`)
+      await rpc('model.config.set_active', { name }, t('modelPanel.switchTo', { name }))
       await refresh()
     } catch { /* toast already shown */ }
   }
@@ -401,7 +403,7 @@ export default function ModelConfigPanel() {
         output_price: editForm.output_price,
         cache_read_price: editForm.cache_read_price,
         cache_write_price: editForm.cache_write_price,
-      }, '模型已更新')
+      }, t('modelPanel.updated'))
       setEditingModel(null)
       await refresh()
     } catch { /* toast already shown */ }
@@ -410,9 +412,9 @@ export default function ModelConfigPanel() {
   const handleDeleteCustom = async (entry: ProviderEntry) => {
     const providerModels = models.filter(m => (m.backend_label || '') === entry.label)
     const detail = providerModels.length > 0
-      ? `已配置的 ${providerModels.length} 个模型也将一并删除。`
-      : '该供应商下暂无模型。'
-    const ok = await useStore.getState().showConfirm('删除供应商', `确定删除供应商 "${entry.label}"？${detail}`, true)
+      ? t('modelPanel.deleteProviderModels', { n: providerModels.length })
+      : t('modelPanel.deleteProviderNoModels')
+    const ok = await useStore.getState().showConfirm(t('modelPanel.deleteProviderTitle'), t('modelPanel.deleteProviderConfirm', { label: entry.label, detail }), true)
     if (!ok) return
     for (const m of providerModels) {
       try { await loomRpc('model.config.delete', { name: m.name }) } catch { /* ignore */ }
@@ -492,7 +494,7 @@ export default function ModelConfigPanel() {
       setCustomFormat('openai')
       setCustomEnvVar('OPENLOOM_API_KEY')
       await refresh()
-      useStore.getState().addToast({ type: 'success', message: `供应商 "${newLabel}" 已更新` })
+      useStore.getState().addToast({ type: 'success', message: t('modelPanel.providerUpdated', { label: newLabel }) })
       return
     }
 
@@ -576,7 +578,7 @@ export default function ModelConfigPanel() {
     : ''
 
   if (initialLoading) {
-    return <div className={styles.pvLayout}><div className={styles.pvEmpty} style={{ padding: 40, textAlign: 'center' }}>加载中...</div></div>
+    return <div className={styles.pvLayout}><div className={styles.pvEmpty} style={{ padding: 40, textAlign: 'center' }}>{t('common.loading')}</div></div>
   }
 
   return (
@@ -602,7 +604,7 @@ export default function ModelConfigPanel() {
 
         {providers.some(p => p.isCustom) && (
           <>
-            <div className={styles.pvSectionHeader}>自定义供应商</div>
+            <div className={styles.pvSectionHeader}>{t('modelPanel.customProvider')}</div>
             {providers.filter(p => p.isCustom).map((p) => {
               const count = getModelCount(p)
               const hasKey = count > 0 || (verifyStatus === 'ok' && selectedId === p.id)
@@ -619,7 +621,7 @@ export default function ModelConfigPanel() {
                   <button
                     onClick={(e) => { e.stopPropagation(); handleStartEditCustom(p) }}
                     className={styles.pvListEdit}
-                    title="编辑供应商"
+                    title={t('modelPanel.editProvider')}
                   >
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
@@ -629,7 +631,7 @@ export default function ModelConfigPanel() {
                   <button
                     onClick={(e) => { e.stopPropagation(); handleDeleteCustom(p) }}
                     className={styles.pvListDelete}
-                    title="删除供应商"
+                    title={t('modelPanel.deleteProvider')}
                   >
                     <IconX size={10} />
                   </button>
@@ -644,7 +646,7 @@ export default function ModelConfigPanel() {
             <input
               value={customName}
               onChange={e => setCustomName(e.target.value)}
-              placeholder="供应商名称"
+              placeholder={t('modelPanel.providerName')}
               className={styles.pvCustomInput}
               autoFocus
             />
@@ -657,31 +659,31 @@ export default function ModelConfigPanel() {
             <Select
               value={customFormat}
               options={[
-                { value: 'openai', label: 'OpenAI 格式' },
-                { value: 'anthropic', label: 'Anthropic 格式' },
+                { value: 'openai', label: t('modelPanel.openaiFormat') },
+                { value: 'anthropic', label: t('modelPanel.anthropicFormat') },
               ]}
               onChange={(v) => setCustomFormat(v as 'openai' | 'anthropic')}
             />
             <input
               value={customEnvVar}
               onChange={e => setCustomEnvVar(e.target.value)}
-              placeholder="环境变量名 (如 OPENLOOM_API_KEY)"
+              placeholder={t('modelPanel.envVarPlaceholder')}
               className={styles.pvCustomInput}
             />
             <div className={styles.pvCustomActions}>
-              <button onClick={() => { setShowCustomForm(false); setEditingCustomId(null); setCustomName(''); setCustomUrl(''); setCustomFormat('openai'); setCustomEnvVar('OPENLOOM_API_KEY') }} className={styles.pvCustomBtn}>取消</button>
-              <button onClick={handleAddCustom} disabled={!customName.trim() || !customUrl.trim()} className={styles.pvCustomBtnPrimary}>{editingCustomId ? '保存' : '添加'}</button>
+              <button onClick={() => { setShowCustomForm(false); setEditingCustomId(null); setCustomName(''); setCustomUrl(''); setCustomFormat('openai'); setCustomEnvVar('OPENLOOM_API_KEY') }} className={styles.pvCustomBtn}>{t('common.cancel')}</button>
+              <button onClick={handleAddCustom} disabled={!customName.trim() || !customUrl.trim()} className={styles.pvCustomBtnPrimary}>{editingCustomId ? t('common.save') : t('common.edit')}</button>
             </div>
           </div>
         ) : (
-          <button onClick={() => setShowCustomForm(true)} className={styles.pvAddBtn}>+ 添加自定义供应商</button>
+          <button onClick={() => setShowCustomForm(true)} className={styles.pvAddBtn}>{t('modelPanel.addCustomProvider')}</button>
         )}
       </div>
 
       {/* Right: provider detail */}
       <div className={styles.pvDetail}>
         {!selected ? (
-          <div className={styles.pvEmpty}>选择一个供应商</div>
+          <div className={styles.pvEmpty}>{t('modelPanel.selectProvider')}</div>
         ) : (
           <>
             {/* Header */}
@@ -693,12 +695,12 @@ export default function ModelConfigPanel() {
             {/* Credentials card */}
             <div className={styles.pvCredCard}>
               <div className={styles.pvCredRow}>
-                <span className={styles.pvCredLabel}>API Key</span>
+                <span className={styles.pvCredLabel}>{t('modelPanel.apiKey')}</span>
                 <input
                   type="password"
                   value={apiKey}
                   onChange={e => { setApiKey(e.target.value); setVerifyStatus('idle') }}
-                  placeholder={verifyStatus === 'ok' ? '● 已保存' : keyAlreadySet ? '●●●● 环境变量已配置' : '输入 API Key...'}
+                  placeholder={verifyStatus === 'ok' ? t('modelPanel.apiKeySaved') : keyAlreadySet ? t('modelPanel.apiKeyMasked') : t('modelPanel.apiKeyPlaceholder')}
                   className={styles.pvCredInput}
                 />
                 <button
@@ -706,11 +708,11 @@ export default function ModelConfigPanel() {
                   disabled={!apiKey.trim()}
                   className={`${styles.pvSaveBtn} ${verifyStatus === 'ok' ? styles.pvSaveOk : ''} ${verifyStatus === 'fail' ? styles.pvSaveFail : ''}`}
                 >
-                  {verifyStatus === 'testing' ? '…' : verifyStatus === 'ok' ? '✓ 已保存' : verifyStatus === 'fail' ? '✗ 失败' : '保存'}
+                  {verifyStatus === 'testing' ? '…' : verifyStatus === 'ok' ? t('modelPanel.apiKeySavedBtn') : verifyStatus === 'fail' ? t('modelPanel.apiKeyFailedBtn') : t('common.save')}
                 </button>
               </div>
               <div className={styles.pvCredRow}>
-                <span className={styles.pvCredLabel}>Base URL</span>
+                <span className={styles.pvCredLabel}>{t('modelPanel.baseUrl')}</span>
                 <input
                   value={baseUrl}
                   onChange={e => { setBaseUrl(e.target.value); setUrlSaveStatus('idle') }}
@@ -723,11 +725,11 @@ export default function ModelConfigPanel() {
                   disabled={!baseUrl.trim() || urlSaveStatus === 'saving'}
                   className={`${styles.pvSaveBtn} ${urlSaveStatus === 'ok' ? styles.pvSaveOk : ''} ${urlSaveStatus === 'fail' ? styles.pvSaveFail : ''}`}
                 >
-                  {urlSaveStatus === 'saving' ? '...' : urlSaveStatus === 'ok' ? '✓ 已保存' : urlSaveStatus === 'fail' ? '✗ 失败' : '保存'}
+                  {urlSaveStatus === 'saving' ? '...' : urlSaveStatus === 'ok' ? t('modelPanel.baseUrlSavedBtn') : urlSaveStatus === 'fail' ? t('modelPanel.baseUrlFailedBtn') : t('common.save')}
                 </button>
               </div>
               <div className={styles.pvCredRow}>
-                <span className={styles.pvCredLabel}>API 格式</span>
+                <span className={styles.pvCredLabel}>{t('modelPanel.apiFormat')}</span>
                 <div className={styles.pvToggle}>
                   <button
                     className={`${styles.pvToggleBtn} ${apiFormat === 'openai' ? styles.pvToggleActive : ''}`}
@@ -754,7 +756,7 @@ export default function ModelConfigPanel() {
                   <input
                     value={modelQuery}
                     onChange={e => setModelQuery(e.target.value)}
-                    placeholder={`搜索模型 (${providerModels.length + newDiscovered.length} 个)...`}
+                    placeholder={t('modelPanel.searchPlaceholder', { total: String(providerModels.length + newDiscovered.length) })}
                     className={styles.pvSearchInput}
                   />
                   {modelQuery && (
@@ -768,14 +770,14 @@ export default function ModelConfigPanel() {
                   disabled={discovering || !baseUrl.trim()}
                   className={styles.pvFetchBtn}
                 >
-                  {discovering ? '获取中...' : '获取模型'}
+                  {discovering ? t('modelPanel.fetching') : t('modelPanel.fetchModels')}
                 </button>
               </div>
 
               {/* Empty state */}
               {filteredConfigured.length === 0 && filteredDiscovered.length === 0 && (
                 <p className={styles.pvNoModels}>
-                  {q ? '无匹配模型' : '暂无模型，点击"获取模型"拉取列表'}
+                  {q ? t('modelPanel.noMatching') : t('modelPanel.noModels')}
                 </p>
               )}
 
@@ -783,7 +785,7 @@ export default function ModelConfigPanel() {
               {filteredConfigured.length > 0 && (
                 <div className={styles.pvModelSection}>
                   <div className={styles.pvModelSectionHeader}>
-                    <span>已配置 ({filteredConfigured.length}){q && <span className={styles.pvModelFilterHint}> — 共 {providerModels.length} 个</span>}</span>
+                    <span>{t('modelPanel.configured')} ({filteredConfigured.length}){q && <span className={styles.pvModelFilterHint}>{t('modelPanel.filterHint', { n: providerModels.length })}</span>}</span>
                   </div>
                   <div className={styles.pvModelList}>
                     {filteredConfigured.map(m => (
@@ -804,38 +806,38 @@ export default function ModelConfigPanel() {
                               <span
                                 className={styles.pvModelName}
                                 onClick={e => { e.stopPropagation(); startRename(m) }}
-                                title="点击重命名"
+                                title={t('modelPanel.clickToRename')}
                               >
                                 {m.name}
                               </span>
                             )}
                             {m.context_size ? <span className={styles.pvModelCtx}>{formatContext(m.context_size)}</span> : null}
                             <div className={styles.pvModelCaps}>
-                              {m.capabilities?.vision && <span title="视觉"><IconEye size={11} /></span>}
-                              {m.capabilities?.reasoning && <span title="推理"><IconBrain size={11} /></span>}
-                              {m.capabilities?.function_calling && <span title="工具"><IconWrench size={11} /></span>}
+                              {m.capabilities?.vision && <span title={t('modelPanel.vision')}><IconEye size={11} /></span>}
+                              {m.capabilities?.reasoning && <span title={t('modelPanel.reasoning')}><IconBrain size={11} /></span>}
+                              {m.capabilities?.function_calling && <span title={t('modelPanel.toolCalling')}><IconWrench size={11} /></span>}
                             </div>
                           </div>
                           <div className={styles.pvModelActions}>
-                            <button onClick={() => handleStartEdit(m)} className={styles.pvModelBtn}>编辑</button>
-                            {!m.is_active && <button onClick={() => handleSetActive(m.name)} className={styles.pvModelBtn}>激活</button>}
-                            {m.is_active && <span className={styles.pvModelActiveBadge}>当前</span>}
-                            <button onClick={() => handleDeleteModel(m.name)} className={styles.pvModelBtnDanger}>删除</button>
+                            <button onClick={() => handleStartEdit(m)} className={styles.pvModelBtn}>{t('common.edit')}</button>
+                            {!m.is_active && <button onClick={() => handleSetActive(m.name)} className={styles.pvModelBtn}>{t('modelPanel.activate')}</button>}
+                            {m.is_active && <span className={styles.pvModelActiveBadge}>{t('modelPanel.current')}</span>}
+                            <button onClick={() => handleDeleteModel(m.name)} className={styles.pvModelBtnDanger}>{t('common.delete')}</button>
                           </div>
                         </div>
                         {editingModel === m.name && (
                           <div className={styles.pvEditForm}>
                             <div className={styles.pvEditRow}>
-                              <label className={styles.pvEditLabel}>名称</label>
+                              <label className={styles.pvEditLabel}>{t('modelPanel.displayName')}</label>
                               <input
                                 className={styles.pvEditInput}
                                 value={editForm.name}
                                 onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
-                                placeholder="显示名称"
+                                placeholder={t('modelPanel.displayName')}
                               />
                             </div>
                             <div className={styles.pvEditRow}>
-                              <label className={styles.pvEditLabel}>模型 ID</label>
+                              <label className={styles.pvEditLabel}>{t('modelPanel.modelId')}</label>
                               <input
                                 className={styles.pvEditInput}
                                 value={editForm.model}
@@ -844,7 +846,7 @@ export default function ModelConfigPanel() {
                               />
                             </div>
                             <div className={styles.pvEditRow}>
-                              <label className={styles.pvEditLabel}>Base URL</label>
+                              <label className={styles.pvEditLabel}>{t('modelPanel.baseUrl')}</label>
                               <input
                                 className={styles.pvEditInput}
                                 value={editForm.base_url}
@@ -853,17 +855,17 @@ export default function ModelConfigPanel() {
                               />
                             </div>
                             <div className={styles.pvEditRow}>
-                              <label className={styles.pvEditLabel}>API Key 环境变量</label>
+                              <label className={styles.pvEditLabel}>{t('modelPanel.apiKeyEnvVar')}</label>
                               <input
                                 className={styles.pvEditInput}
                                 value={editForm.api_key_env || ''}
                                 onChange={e => setEditForm(f => ({ ...f, api_key_env: e.target.value }))}
-                                placeholder={selected?.isCustom ? '如 BAILIAN_API_KEY' : '自动生成（无需填写）'}
+                                placeholder={selected?.isCustom ? t('modelPanel.customEnvPlaceholder') : t('modelPanel.autoGenPlaceholder')}
                               />
                             </div>
                             <div className={styles.pvEditRowHalf}>
                               <div className={styles.pvEditRow}>
-                                <label className={styles.pvEditLabel}>上下文窗口</label>
+                                <label className={styles.pvEditLabel}>{t('modelPanel.contextWindow')}</label>
                                 <input
                                   className={styles.pvEditInput}
                                   type="number"
@@ -872,84 +874,84 @@ export default function ModelConfigPanel() {
                                 />
                               </div>
                               <div className={styles.pvEditRow}>
-                                <label className={styles.pvEditLabel}>最大输出</label>
+                                <label className={styles.pvEditLabel}>{t('modelPanel.maxOutput')}</label>
                                 <input
                                   className={styles.pvEditInput}
                                   type="number"
                                   value={editForm.max_output_tokens ?? ''}
                                   onChange={e => setEditForm(f => ({ ...f, max_output_tokens: e.target.value ? Number(e.target.value) : undefined }))}
-                                  placeholder="默认"
+                                  placeholder={t('modelPanel.defaultPlaceholder')}
                                 />
                               </div>
                             </div>
                             <div className={styles.pvEditRow}>
-                              <label className={styles.pvEditLabel}>能力</label>
+                              <label className={styles.pvEditLabel}>{t('modelPanel.capabilities')}</label>
                               <div className={styles.pvCheckboxRow}>
                                 <label className={styles.pvCheckboxLabel}>
                                   <input type="checkbox" checked={editForm.vision} onChange={e => setEditForm(f => ({ ...f, vision: e.target.checked }))} />
-                                  视觉
+                                  {t('modelPanel.vision')}
                                 </label>
                                 <label className={styles.pvCheckboxLabel}>
                                   <input type="checkbox" checked={editForm.reasoning} onChange={e => setEditForm(f => ({ ...f, reasoning: e.target.checked }))} />
-                                  推理
+                                  {t('modelPanel.reasoning')}
                                 </label>
                                 <label className={styles.pvCheckboxLabel}>
                                   <input type="checkbox" checked={editForm.function_calling} onChange={e => setEditForm(f => ({ ...f, function_calling: e.target.checked }))} />
-                                  工具调用
+                                  {t('modelPanel.toolCalling')}
                                 </label>
                               </div>
                             </div>
                             <div className={styles.pvField}>
-                              <label className={styles.pvEditLabel}>输入价格 — 未命中缓存 (¥/百万 Token)</label>
+                              <label className={styles.pvEditLabel}>{t('modelPanel.inputPriceUncached')}</label>
                               <input
                                 type="number"
                                 min="0"
                                 step="0.01"
                                 value={editForm.input_price ?? ''}
-                                placeholder="如 DeepSeek: 7.26"
+                                placeholder="e.g. DeepSeek: 7.26"
                                 onChange={e => setEditForm(f => ({ ...f, input_price: parseFloat(e.target.value) || 0 }))}
                                 className={styles.pvEditInput}
                               />
                             </div>
                             <div className={styles.pvField}>
-                              <label className={styles.pvEditLabel}>输入价格 — 缓存命中 (¥/百万 Token)</label>
+                              <label className={styles.pvEditLabel}>{t('modelPanel.inputPriceCached')}</label>
                               <input
                                 type="number"
                                 min="0"
                                 step="0.01"
                                 value={editForm.cache_read_price ?? ''}
-                                placeholder="如 DeepSeek: 1.45"
+                                placeholder="e.g. DeepSeek: 1.45"
                                 onChange={e => setEditForm(f => ({ ...f, cache_read_price: parseFloat(e.target.value) || 0 }))}
                                 className={styles.pvEditInput}
                               />
                             </div>
                             <div className={styles.pvField}>
-                              <label className={styles.pvEditLabel}>缓存写入价格 (¥/百万 Token)</label>
+                              <label className={styles.pvEditLabel}>{t('modelPanel.cacheWritePrice')}</label>
                               <input
                                 type="number"
                                 min="0"
                                 step="0.01"
                                 value={editForm.cache_write_price ?? ''}
-                                placeholder="如 DeepSeek: 7.26"
+                                placeholder="e.g. DeepSeek: 7.26"
                                 onChange={e => setEditForm(f => ({ ...f, cache_write_price: parseFloat(e.target.value) || 0 }))}
                                 className={styles.pvEditInput}
                               />
                             </div>
                             <div className={styles.pvField}>
-                              <label className={styles.pvEditLabel}>输出价格 (¥/百万 Token)</label>
+                              <label className={styles.pvEditLabel}>{t('modelPanel.outputPrice')}</label>
                               <input
                                 type="number"
                                 min="0"
                                 step="0.01"
                                 value={editForm.output_price ?? ''}
-                                placeholder="如 DeepSeek: 29.04"
+                                placeholder="e.g. DeepSeek: 29.04"
                                 onChange={e => setEditForm(f => ({ ...f, output_price: parseFloat(e.target.value) || 0 }))}
                                 className={styles.pvEditInput}
                               />
                             </div>
                             <div className={styles.pvEditActions}>
-                              <button onClick={handleCancelEdit} className={styles.pvEditCancelBtn}>取消</button>
-                              <button onClick={handleSaveEdit} disabled={!editForm.name.trim()} className={styles.pvEditSaveBtn}>保存</button>
+                              <button onClick={handleCancelEdit} className={styles.pvEditCancelBtn}>{t('common.cancel')}</button>
+                              <button onClick={handleSaveEdit} disabled={!editForm.name.trim()} className={styles.pvEditSaveBtn}>{t('common.save')}</button>
                             </div>
                           </div>
                         )}
@@ -963,8 +965,8 @@ export default function ModelConfigPanel() {
               {filteredDiscovered.length > 0 && (
                 <div className={styles.pvModelSection}>
                   <div className={styles.pvModelSectionHeader}>
-                    可添加 ({filteredDiscovered.length})
-                    {q && <span className={styles.pvModelFilterHint}> — 共 {newDiscovered.length} 个</span>}
+                    {t('modelPanel.addable')} ({filteredDiscovered.length})
+                    {q && <span className={styles.pvModelFilterHint}>{t('modelPanel.filterHint', { n: newDiscovered.length })}</span>}
                   </div>
                   <div className={styles.pvModelList}>
                     {filteredDiscovered.map(m => (
@@ -975,7 +977,7 @@ export default function ModelConfigPanel() {
                             <span className={styles.pvModelCtx}>{formatContext(m.context_length)}</span>
                           )}
                         </div>
-                        <span className={styles.pvAddModelBtn}>+ 添加</span>
+                        <span className={styles.pvAddModelBtn}>{t('modelPanel.addModel')}</span>
                       </div>
                     ))}
                   </div>

@@ -2,91 +2,95 @@ import { useState, useEffect } from 'react'
 import { useStore } from '../../stores'
 import { type ThemeId, type FontSizeId, FONT_SIZE_MAP } from '../../stores/ui'
 import type { SendShortcut } from '../../stores/input'
+import { useLocale, t as _t, LOCALES } from '../../i18n'
+import type { Locale } from '../../i18n'
 import Select, { type SelectOption } from '../shared/Select'
 import styles from '../shared/SettingsModal.module.css'
 
 // ── Static font lists (bundled + system fallbacks) ──
 
-/** UI fonts: each option shows its own font face in the dropdown */
-const UI_FONT_OPTIONS: SelectOption[] = [
-  { value: '', label: '系统默认' },
-  {
-    value: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif',
-    label: 'Inter — 现代无衬线',
-    fontFamily: 'Inter, sans-serif',
-  },
-  {
-    value: '"Microsoft YaHei", "微软雅黑", "PingFang SC", sans-serif',
-    label: '微软雅黑',
-    fontFamily: '"Microsoft YaHei", sans-serif',
-  },
-  {
-    value: '"PingFang SC", "苹方", "Microsoft YaHei", sans-serif',
-    label: '苹方 (PingFang SC)',
-    fontFamily: '"PingFang SC", sans-serif',
-  },
-  {
-    value: '"LXGW WenKai", "霞鹜文楷", "KaiTi", "楷体", serif',
-    label: '霞鹜文楷 — 楷体',
-    fontFamily: '"LXGW WenKai", "KaiTi", serif',
-  },
-  {
-    value: '"Noto Sans SC", "Microsoft YaHei", sans-serif',
-    label: 'Noto Sans SC — 思源黑体',
-    fontFamily: '"Noto Sans SC", sans-serif',
-  },
-]
+function useUiFontOptions(): SelectOption[] {
+  return [
+    { value: '', label: _t('software.systemDefault') },
+    {
+      value: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif',
+      label: _t('software.fontInter'),
+      fontFamily: 'Inter, sans-serif',
+    },
+    {
+      value: '"Microsoft YaHei", "微软雅黑", "PingFang SC", sans-serif',
+      label: _t('software.fontYahei'),
+      fontFamily: '"Microsoft YaHei", sans-serif',
+    },
+    {
+      value: '"PingFang SC", "苹方", "Microsoft YaHei", sans-serif',
+      label: _t('software.fontPingfang'),
+      fontFamily: '"PingFang SC", sans-serif',
+    },
+    {
+      value: '"LXGW WenKai", "霞鹜文楷", "KaiTi", "楷体", serif',
+      label: _t('software.fontWenkai'),
+      fontFamily: '"LXGW WenKai", "KaiTi", serif',
+    },
+    {
+      value: '"Noto Sans SC", "Microsoft YaHei", sans-serif',
+      label: _t('software.fontNotosans'),
+      fontFamily: '"Noto Sans SC", sans-serif',
+    },
+  ]
+}
 
-/** Code / monospace fonts */
-const CODE_FONT_OPTIONS: SelectOption[] = [
-  { value: '', label: '系统默认' },
-  {
-    value: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", monospace',
-    label: 'JetBrains Mono',
-    fontFamily: '"JetBrains Mono", monospace',
-  },
-  {
-    value: '"Fira Code", "JetBrains Mono", "Cascadia Code", "Consolas", monospace',
-    label: 'Fira Code',
-    fontFamily: '"Fira Code", monospace',
-  },
-  {
-    value: '"Cascadia Code", "JetBrains Mono", "Fira Code", "Consolas", monospace',
-    label: 'Cascadia Code',
-    fontFamily: '"Cascadia Code", monospace',
-  },
-  {
-    value: '"IBM Plex Mono", "JetBrains Mono", "Consolas", monospace',
-    label: 'IBM Plex Mono',
-    fontFamily: '"IBM Plex Mono", monospace',
-  },
-  {
-    value: '"Source Code Pro", "JetBrains Mono", "Fira Code", monospace',
-    label: 'Source Code Pro',
-    fontFamily: '"Source Code Pro", monospace',
-  },
-  {
-    value: '"Inconsolata", "JetBrains Mono", "Consolas", monospace',
-    label: 'Inconsolata',
-    fontFamily: 'Inconsolata, monospace',
-  },
-  {
-    value: '"Consolas", "JetBrains Mono", "Fira Code", monospace',
-    label: 'Consolas',
-    fontFamily: 'Consolas, monospace',
-  },
-]
+function useCodeFontOptions(): SelectOption[] {
+  return [
+    { value: '', label: _t('software.systemDefault') },
+    {
+      value: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", monospace',
+      label: _t('software.fontJetbrains'),
+      fontFamily: '"JetBrains Mono", monospace',
+    },
+    {
+      value: '"Fira Code", "JetBrains Mono", "Cascadia Code", "Consolas", monospace',
+      label: _t('software.fontFiracode'),
+      fontFamily: '"Fira Code", monospace',
+    },
+    {
+      value: '"Cascadia Code", "JetBrains Mono", "Fira Code", "Consolas", monospace',
+      label: _t('software.fontCascadia'),
+      fontFamily: '"Cascadia Code", monospace',
+    },
+    {
+      value: '"IBM Plex Mono", "JetBrains Mono", "Consolas", monospace',
+      label: _t('software.fontIbmplex'),
+      fontFamily: '"IBM Plex Mono", monospace',
+    },
+    {
+      value: '"Source Code Pro", "JetBrains Mono", "Fira Code", monospace',
+      label: _t('software.fontSourcecode'),
+      fontFamily: '"Source Code Pro", monospace',
+    },
+    {
+      value: '"Inconsolata", "JetBrains Mono", "Consolas", monospace',
+      label: _t('software.fontInconsolata'),
+      fontFamily: 'Inconsolata, monospace',
+    },
+    {
+      value: '"Consolas", "JetBrains Mono", "Fira Code", monospace',
+      label: _t('software.fontConsolas'),
+      fontFamily: 'Consolas, monospace',
+    },
+  ]
+}
 
 export const THEMES: { id: ThemeId; label: string; bg: string; surface: string; text: string; accent: string }[] = [
-  { id: 'dark', label: '暗色', bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' },
-  { id: 'light', label: '亮色', bg: '#ffffff', surface: '#f1f5f9', text: '#0f172a', accent: '#0d9488' },
-  { id: 'midnight', label: '星夜', bg: '#0b1120', surface: '#0f172a', text: '#e2e8f0', accent: '#a5bff8' },
-  { id: 'warm-paper', label: '素笺', bg: '#fdfbf7', surface: '#f5f0e8', text: '#2d2416', accent: '#b05a30' },
-  { id: 'neon-pink', label: '紫夜', bg: '#1a1a1d', surface: '#222225', text: '#f0e0e8', accent: '#e6397c' },
-  { id: 'ember', label: '熔岩', bg: '#000026', surface: '#060630', text: '#ffe0c0', accent: '#ff770f' },
-  { id: 'navy-gold', label: '鎏金', bg: '#050F2E', surface: '#0A1A45', text: '#e2e8f0', accent: '#FFE76F' },
-  { id: 'umber-cream', label: '摩卡', bg: '#2D1B14', surface: '#3D271D', text: '#fff8f0', accent: '#D8C7B5' },
-  { id: 'custom', label: '自定义', bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' },
+  { id: 'dark', label: _t('theme.dark'), bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' },
+  { id: 'light', label: _t('theme.light'), bg: '#ffffff', surface: '#f1f5f9', text: '#0f172a', accent: '#0d9488' },
+  { id: 'midnight', label: _t('theme.midnight'), bg: '#0b1120', surface: '#0f172a', text: '#e2e8f0', accent: '#a5bff8' },
+  { id: 'warm-paper', label: _t('theme.warmPaper'), bg: '#fdfbf7', surface: '#f5f0e8', text: '#2d2416', accent: '#b05a30' },
+  { id: 'neon-pink', label: _t('theme.neonPink'), bg: '#1a1a1d', surface: '#222225', text: '#f0e0e8', accent: '#e6397c' },
+  { id: 'ember', label: _t('theme.ember'), bg: '#000026', surface: '#060630', text: '#ffe0c0', accent: '#ff770f' },
+  { id: 'navy-gold', label: _t('theme.navyGold'), bg: '#050F2E', surface: '#0A1A45', text: '#e2e8f0', accent: '#FFE76F' },
+  { id: 'umber-cream', label: _t('theme.umberCream'), bg: '#2D1B14', surface: '#3D271D', text: '#fff8f0', accent: '#D8C7B5' },
+  { id: 'custom', label: _t('theme.custom'), bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' },
 ]
 
 export function hexToRgb(hex: string): [number, number, number] {
@@ -131,6 +135,7 @@ export function applyCustomTheme(c: { bg: string; surface: string; text: string;
 }
 
 export default function SoftwareTab({ theme, setTheme }: { theme: string; setTheme: (t: any) => void }) {
+  const { t, locale, setLocale } = useLocale()
   const fontSize = useStore((s) => s.fontSize)
   const setFontSize = useStore((s) => s.setFontSize)
   const sendShortcut = useStore((s) => s.sendShortcut)
@@ -147,6 +152,8 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
   const [isWin32, setIsWin32] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [customColors, setCustomColors] = useState({ bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' })
+  const UI_FONT_OPTIONS = useUiFontOptions()
+  const CODE_FONT_OPTIONS = useCodeFontOptions()
 
   useEffect(() => {
     Promise.all([
@@ -194,19 +201,19 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
   const handleAutoTitle = async (val: boolean) => {
     setAutoTitle(val)
     await window.loom.setPreference('autoTitle', val)
-    useStore.getState().addToast({ type: 'success', message: val ? '已开启 AI 自动命名' : '已关闭 AI 自动命名' })
+    useStore.getState().addToast({ type: 'success', message: val ? t('software.autoNameEnabled') : t('software.autoNameDisabled') })
   }
 
   const handleAutoStart = async (val: boolean) => {
     setAutoStart(val)
     await window.loom.setPreference('autoStart', val)
-    useStore.getState().addToast({ type: 'success', message: val ? '已开启开机自启动' : '已关闭开机自启动' })
+    useStore.getState().addToast({ type: 'success', message: val ? t('software.autoStartEnabled') : t('software.autoStartDisabled') })
   }
 
   const handleCloseToTray = async (val: boolean) => {
     setCloseToTray(val)
     await window.loom.setPreference('closeToTray', val)
-    useStore.getState().addToast({ type: 'success', message: val ? '关闭按钮将最小化到托盘' : '关闭按钮将退出程序' })
+    useStore.getState().addToast({ type: 'success', message: val ? t('software.minimizeToTrayToast') : t('software.quitAppToast') })
   }
 
   const handleDisableHwAccel = async (val: boolean) => {
@@ -214,7 +221,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
     await window.loom.setPreference('disableHardwareAcceleration', val)
     useStore.getState().addToast({
       type: 'success',
-      message: val ? '已关闭硬件加速，重启后生效' : '已开启硬件加速，重启后生效',
+      message: val ? t('software.hwAccelDisabled') : t('software.hwAccelEnabled'),
     })
   }
 
@@ -223,32 +230,36 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
     await window.loom.setPreference('taskCompleteNotification', val)
     useStore.getState().addToast({
       type: 'success',
-      message: val ? '已开启任务完成通知' : '已关闭任务完成通知',
+      message: val ? t('software.taskNotifEnabled') : t('software.taskNotifDisabled'),
     })
   }
 
   const handleThinkingExpand = async (val: boolean) => {
     setThinkingExpand(val)
     await window.loom.setPreference('thinkingExpandDefault', val)
-    useStore.getState().addToast({ type: 'success', message: val ? '思考块默认展开' : '思考块默认折叠' })
+    useStore.getState().addToast({ type: 'success', message: val ? t('software.thinkingExpanded') : t('software.thinkingCollapsed') })
   }
 
   const handleToolExpand = async (val: boolean) => {
     setToolExpand(val)
     await window.loom.setPreference('toolExpandDefault', val)
-    useStore.getState().addToast({ type: 'success', message: val ? '工具块默认展开' : '工具块默认折叠' })
+    useStore.getState().addToast({ type: 'success', message: val ? t('software.toolExpanded') : t('software.toolCollapsed') })
   }
 
   const handleSkillExpand = async (val: boolean) => {
     setSkillExpand(val)
     await window.loom.setPreference('skillExpandDefault', val)
-    useStore.getState().addToast({ type: 'success', message: val ? '技能块默认展开' : '技能块默认折叠' })
+    useStore.getState().addToast({ type: 'success', message: val ? t('software.skillExpanded') : t('software.skillCollapsed') })
   }
 
   const handleSendShortcut = (val: string) => {
     useStore.getState().setSendShortcut(val as SendShortcut)
-    const labels: Record<string, string> = { enter: 'Enter 发送', 'ctrl+enter': 'Ctrl+Enter 发送', 'shift+enter': 'Shift+Enter 发送' }
-    useStore.getState().addToast({ type: 'success', message: `发送快捷键已切换为 ${labels[val] ?? val}` })
+    const labels: Record<string, string> = {
+      enter: t('software.sendShortcutEnter'),
+      'ctrl+enter': t('software.sendShortcutCtrlEnter'),
+      'shift+enter': t('software.sendShortcutShiftEnter'),
+    }
+    useStore.getState().addToast({ type: 'success', message: _t('software.sendShortcutChanged', { label: labels[val] ?? val }) })
   }
 
   const handleUiFont = async (val: string) => {
@@ -266,7 +277,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
       document.documentElement.style.removeProperty('-webkit-text-stroke')
     }
     await window.loom.setPreference('uiFont', val)
-    useStore.getState().addToast({ type: 'success', message: val ? '界面字体已更新' : '已恢复系统默认字体' })
+    useStore.getState().addToast({ type: 'success', message: val ? t('software.uiFontUpdated') : t('software.uiFontReset') })
   }
 
   const handleCodeFont = async (val: string) => {
@@ -277,87 +288,87 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
       document.documentElement.style.removeProperty('--font-mono')
     }
     await window.loom.setPreference('codeFont', val)
-    useStore.getState().addToast({ type: 'success', message: val ? '代码字体已更新' : '已恢复系统默认等宽字体' })
+    useStore.getState().addToast({ type: 'success', message: val ? t('software.codeFontUpdated') : t('software.codeFontReset') })
   }
 
   return (
     <>
       <div className={styles.contentHeader}>
-        <h3 className={styles.sectionTitle}>通用</h3>
-        <p className={styles.sectionDesc}>外观、字体与软件行为</p>
+        <h3 className={styles.sectionTitle}>{t('settings.software')}</h3>
+        <p className={styles.sectionDesc}>{t('software.description')}</p>
       </div>
       <div className={styles.contentBody}>
-        {/* ── 聊天设置 ── */}
+        {/* Chat Settings */}
         <div className={styles.aboutSection}>
-          <div className={styles.themeLabel}>聊天设置</div>
+          <div className={styles.themeLabel}>{t('software.chatSettings')}</div>
           {!loaded ? (
-            <p className={styles.toolsEmpty}>加载中...</p>
+            <p className={styles.toolsEmpty}>{t('common.loading')}</p>
           ) : (
             <>
               <div className={styles.aboutRow}>
                 <div>
-                  <span className={styles.aboutLabel}>思考块默认展开</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>AI 的思考过程内容块是否默认展开显示</p>
+                  <span className={styles.aboutLabel}>{t('software.thinkingExpand')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.thinkingExpandDesc')}</p>
                 </div>
                 <div className={styles.mcpTransportToggle}>
                   <button
                     className={`${styles.mcpTransportBtn} ${thinkingExpand ? styles.mcpTransportActive : ''}`}
                     onClick={() => handleThinkingExpand(true)}
                   >
-                    展开
+                    {t('software.expand')}
                   </button>
                   <button
                     className={`${styles.mcpTransportBtn} ${!thinkingExpand ? styles.mcpTransportActive : ''}`}
                     onClick={() => handleThinkingExpand(false)}
                   >
-                    折叠
+                    {t('software.collapse')}
                   </button>
                 </div>
               </div>
               <div className={styles.aboutRow}>
                 <div>
-                  <span className={styles.aboutLabel}>工具块默认展开</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>命令执行、文件读写等工具调用内容块是否默认展开</p>
+                  <span className={styles.aboutLabel}>{t('software.toolExpand')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.toolExpandDesc')}</p>
                 </div>
                 <div className={styles.mcpTransportToggle}>
                   <button
                     className={`${styles.mcpTransportBtn} ${toolExpand ? styles.mcpTransportActive : ''}`}
                     onClick={() => handleToolExpand(true)}
                   >
-                    展开
+                    {t('software.expand')}
                   </button>
                   <button
                     className={`${styles.mcpTransportBtn} ${!toolExpand ? styles.mcpTransportActive : ''}`}
                     onClick={() => handleToolExpand(false)}
                   >
-                    折叠
+                    {t('software.collapse')}
                   </button>
                 </div>
               </div>
               <div className={styles.aboutRow}>
                 <div>
-                  <span className={styles.aboutLabel}>技能块默认展开</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>AI 调用的技能 (Skill) 内容块是否默认展开显示</p>
+                  <span className={styles.aboutLabel}>{t('software.skillExpand')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.skillExpandDesc')}</p>
                 </div>
                 <div className={styles.mcpTransportToggle}>
                   <button
                     className={`${styles.mcpTransportBtn} ${skillExpand ? styles.mcpTransportActive : ''}`}
                     onClick={() => handleSkillExpand(true)}
                   >
-                    展开
+                    {t('software.expand')}
                   </button>
                   <button
                     className={`${styles.mcpTransportBtn} ${!skillExpand ? styles.mcpTransportActive : ''}`}
                     onClick={() => handleSkillExpand(false)}
                   >
-                    折叠
+                    {t('software.collapse')}
                   </button>
                 </div>
               </div>
               <div className={styles.aboutRow}>
                 <div>
-                  <span className={styles.aboutLabel}>发送快捷键</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>输入框中发送消息的快捷键，设为非 Enter 时 Enter 变为换行</p>
+                  <span className={styles.aboutLabel}>{t('software.sendShortcut')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.sendShortcutDesc')}</p>
                 </div>
                 <div className={styles.mcpTransportToggle}>
                   <button
@@ -386,79 +397,79 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
 
         <hr className={styles.sectionDivider} />
 
-        {/* ── 行为 ── */}
+        {/* Behavior */}
         <div className={styles.aboutSection}>
-          <div className={styles.themeLabel}>行为</div>
+          <div className={styles.themeLabel}>{t('software.behavior')}</div>
           {!loaded ? (
-            <p className={styles.toolsEmpty}>加载中...</p>
+            <p className={styles.toolsEmpty}>{t('common.loading')}</p>
           ) : (
             <>
               <div className={styles.aboutRow}>
                 <div>
-                  <span className={styles.aboutLabel}>AI 自动命名会话</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>首次对话后由 AI 提取 2-7 字标题</p>
+                  <span className={styles.aboutLabel}>{t('software.autoName')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.autoNameDesc')}</p>
                 </div>
                 <div className={styles.mcpTransportToggle}>
                   <button
                     onClick={() => handleAutoTitle(true)}
                     className={`${styles.mcpTransportBtn} ${autoTitle ? styles.mcpTransportActive : ''}`}
                   >
-                    开启
+                    {t('software.enable')}
                   </button>
                   <button
                     onClick={() => handleAutoTitle(false)}
                     className={`${styles.mcpTransportBtn} ${!autoTitle ? styles.mcpTransportActive : ''}`}
                   >
-                    关闭
+                    {t('software.disable')}
                   </button>
                 </div>
               </div>
               <div className={styles.aboutRow}>
                 <div>
-                  <span className={styles.aboutLabel}>关闭按钮行为</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>点击标题栏关闭按钮时的操作</p>
+                  <span className={styles.aboutLabel}>{t('software.closeBehavior')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.closeBehaviorDesc')}</p>
                 </div>
                 <div className={styles.mcpTransportToggle}>
                   <button
                     className={`${styles.mcpTransportBtn} ${closeToTray ? styles.mcpTransportActive : ''}`}
                     onClick={() => handleCloseToTray(true)}
                   >
-                    最小化到托盘
+                    {t('software.minimizeToTray')}
                   </button>
                   <button
                     className={`${styles.mcpTransportBtn} ${!closeToTray ? styles.mcpTransportActive : ''}`}
                     onClick={() => handleCloseToTray(false)}
                   >
-                    退出程序
+                    {t('software.quitApp')}
                   </button>
                 </div>
               </div>
               <div className={styles.aboutRow}>
                 <div>
-                  <span className={styles.aboutLabel}>开机自启动</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>系统启动时自动运行 openLoom</p>
+                  <span className={styles.aboutLabel}>{t('software.autoStart')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.autoStartDesc')}</p>
                 </div>
                 <div className={styles.mcpTransportToggle}>
                   <button
                     className={`${styles.mcpTransportBtn} ${autoStart ? styles.mcpTransportActive : ''}`}
                     onClick={() => handleAutoStart(true)}
                   >
-                    开启
+                    {t('software.enable')}
                   </button>
                   <button
                     className={`${styles.mcpTransportBtn} ${!autoStart ? styles.mcpTransportActive : ''}`}
                     onClick={() => handleAutoStart(false)}
                   >
-                    关闭
+                    {t('software.disable')}
                   </button>
                 </div>
               </div>
               {isWin32 && (
                 <div className={styles.aboutRow}>
                   <div>
-                    <span className={styles.aboutLabel}>硬件加速</span>
+                    <span className={styles.aboutLabel}>{t('software.hwAccel')}</span>
                     <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
-                      Win11 上若出现光标、动画闪烁，可关闭硬件加速。需重启程序生效
+                      {t('software.hwAccelDesc')}
                     </p>
                   </div>
                   <div className={styles.mcpTransportToggle}>
@@ -466,35 +477,49 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                       className={`${styles.mcpTransportBtn} ${!disableHwAccel ? styles.mcpTransportActive : ''}`}
                       onClick={() => handleDisableHwAccel(false)}
                     >
-                      开启
+                      {t('software.enable')}
                     </button>
                     <button
                       className={`${styles.mcpTransportBtn} ${disableHwAccel ? styles.mcpTransportActive : ''}`}
                       onClick={() => handleDisableHwAccel(true)}
                     >
-                      关闭
+                      {t('software.disable')}
                     </button>
                   </div>
                 </div>
               )}
               <div className={styles.aboutRow}>
                 <div>
-                  <span className={styles.aboutLabel}>任务完成通知</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>AI 回复完成后通过系统通知提醒</p>
+                  <span className={styles.aboutLabel}>{t('software.taskCompleteNotification')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.taskCompleteNotificationDesc')}</p>
                 </div>
                 <div className={styles.mcpTransportToggle}>
                   <button
                     className={`${styles.mcpTransportBtn} ${taskCompleteNotification ? styles.mcpTransportActive : ''}`}
                     onClick={() => handleTaskCompleteNotification(true)}
                   >
-                    开启
+                    {t('software.enable')}
                   </button>
                   <button
                     className={`${styles.mcpTransportBtn} ${!taskCompleteNotification ? styles.mcpTransportActive : ''}`}
                     onClick={() => handleTaskCompleteNotification(false)}
                   >
-                    关闭
+                    {t('software.disable')}
                   </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>{t('software.language')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.languageDesc')}</p>
+                </div>
+                <div style={{ width: 180 }}>
+                  <Select
+                    value={locale}
+                    options={LOCALES.map(l => ({ value: l.code, label: l.label }))}
+                    onChange={(v) => setLocale(v as Locale)}
+                    variant="form"
+                  />
                 </div>
               </div>
             </>
@@ -503,17 +528,17 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
 
         <hr className={styles.sectionDivider} />
 
-        {/* ── 字体 ── */}
+        {/* Font */}
         <div className={styles.aboutSection}>
-          <div className={styles.themeLabel}>字体</div>
+          <div className={styles.themeLabel}>{t('software.font')}</div>
           {!loaded ? (
-            <p className={styles.toolsEmpty}>加载中...</p>
+            <p className={styles.toolsEmpty}>{t('common.loading')}</p>
           ) : (
             <>
               <div className={styles.aboutRow}>
                 <div>
-                  <span className={styles.aboutLabel}>界面字体</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>菜单、对话和通用文本的字体</p>
+                  <span className={styles.aboutLabel}>{t('software.uiFont')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.uiFontDesc')}</p>
                 </div>
                 <div style={{ width: 240 }}>
                   <Select
@@ -526,8 +551,8 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
               </div>
               <div className={styles.aboutRow}>
                 <div>
-                  <span className={styles.aboutLabel}>代码字体</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>代码块、Shell 输出等位置的等宽字体</p>
+                  <span className={styles.aboutLabel}>{t('software.codeFont')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.codeFontDesc')}</p>
                 </div>
                 <div style={{ width: 240 }}>
                   <Select
@@ -539,9 +564,9 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                 </div>
               </div>
               <div className={styles.fontPreview}>
-                <div className={styles.fontPreviewLabel}>预览</div>
+                <div className={styles.fontPreviewLabel}>{t('software.preview')}</div>
                 <pre className={styles.fontPreviewCode} style={{ fontFamily: codeFont || undefined }}>
-                  {`fn main() {\n  println!("你好，openLoom");\n}`}
+                  {`fn main() {\n  println!("Hello, openLoom");\n}`}
                 </pre>
               </div>
             </>
@@ -550,23 +575,23 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
 
         <hr className={styles.sectionDivider} />
 
-        {/* ── 外观 ── */}
+        {/* Appearance */}
         <div className={styles.aboutSection}>
-          <div className={styles.themeLabel}>外观</div>
+          <div className={styles.themeLabel}>{t('software.appearance')}</div>
 
           {/* Theme */}
           <div className={styles.themeGrid}>
-            {THEMES.map((t) => {
-              const previewColors = t.id === 'custom' ? customColors : { bg: t.bg, surface: t.surface, text: t.text, accent: t.accent }
+            {THEMES.map((th) => {
+              const previewColors = th.id === 'custom' ? customColors : { bg: th.bg, surface: th.surface, text: th.text, accent: th.accent }
               return (
               <button
-                key={t.id}
+                key={th.id}
                 onClick={() => {
-                  setTheme(t.id)
-                  if (t.id === 'custom') applyCustomTheme(customColors)
-                  useStore.getState().addToast({ type: 'success', message: `主题已切换为${t.label}` })
+                  setTheme(th.id)
+                  if (th.id === 'custom') applyCustomTheme(customColors)
+                  useStore.getState().addToast({ type: 'success', message: _t('software.themeChanged', { theme: _t(`theme.${th.id}`) }) })
                 }}
-                className={`${styles.themeCard} ${theme === t.id ? styles.themeCardActive : ''}`}
+                className={`${styles.themeCard} ${theme === th.id ? styles.themeCardActive : ''}`}
               >
                 <div
                   className={styles.themePreview}
@@ -593,8 +618,8 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                     </div>
                   </div>
                 </div>
-                <span className={`${styles.themeName} ${theme === t.id ? styles.themeNameActive : ''}`}>
-                  {t.label}
+                <span className={`${styles.themeName} ${theme === th.id ? styles.themeNameActive : ''}`}>
+                  {_t(`theme.${th.id}`)}
                 </span>
               </button>
             )})}
@@ -605,7 +630,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
               <div className={styles.customColorRow}>
                 <label className={styles.customColorLabel}>
                   <span className={styles.customColorSwatch} style={{ background: customColors.bg }} />
-                  背景色
+                 {t('software.bgColor')}
                 </label>
                 <input
                   type="color"
@@ -617,7 +642,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
               <div className={styles.customColorRow}>
                 <label className={styles.customColorLabel}>
                   <span className={styles.customColorSwatch} style={{ background: customColors.surface }} />
-                  表面色
+                  {t('software.surfaceColor')}
                 </label>
                 <input
                   type="color"
@@ -629,7 +654,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
               <div className={styles.customColorRow}>
                 <label className={styles.customColorLabel}>
                   <span className={styles.customColorSwatch} style={{ background: customColors.text }} />
-                  文字色
+                  {t('software.textColor')}
                 </label>
                 <input
                   type="color"
@@ -641,7 +666,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
               <div className={styles.customColorRow}>
                 <label className={styles.customColorLabel}>
                   <span className={styles.customColorSwatch} style={{ background: customColors.accent }} />
-                  强调色
+                  {t('software.accentColor')}
                 </label>
                 <input
                   type="color"
@@ -657,17 +682,17 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
             <>
               <div className={styles.aboutRow}>
                 <div>
-                  <span className={styles.aboutLabel}>字体大小</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>调整对话和输入区域的文字大小</p>
+                  <span className={styles.aboutLabel}>{t('software.fontSize')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.fontSizeDesc')}</p>
                 </div>
                 <div className={styles.mcpTransportToggle}>
-                  {(Object.entries(FONT_SIZE_MAP) as [FontSizeId, { label: string; px: number }][]).map(([id, { label }]) => (
+                  {(Object.entries(FONT_SIZE_MAP) as [FontSizeId, { label: string; px: number }][]).map(([id]) => (
                     <button
                       key={id}
                       className={`${styles.mcpTransportBtn} ${fontSize === id ? styles.mcpTransportActive : ''}`}
                       onClick={() => setFontSize(id)}
                     >
-                      {label}
+                      {_t(`textSize.${id}`)}
                     </button>
                   ))}
                 </div>

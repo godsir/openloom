@@ -5,6 +5,7 @@ import { rpc } from '../../services/rpc-toast'
 import { IconFolder, IconPackage, IconRefresh, IconSearch, IconChevronRight, IconChevronDown, IconStore } from '../../utils/icons'
 import { renderMarkdown } from '../../utils/markdown'
 import { sanitizeHtml } from '../../utils/markdown-sanitizer'
+import { useLocale, t as _t } from '../../i18n'
 import styles from '../shared/SettingsModal.module.css'
 import SkillMarketTab from './SkillMarketTab'
 
@@ -19,17 +20,18 @@ interface SkillInfo {
 
 /** Derive a source category from a skill's on-disk path. */
 function skillSource(path: string | undefined): { group: string; icon: string } {
-  if (!path) return { group: '其他', icon: 'M' }
+  if (!path) return { group: _t('skills.sourceOther'), icon: 'M' }
   const p = path.replace(/\\/g, '/')
-  if (p.includes('.claude/plugins') || p.includes('.claude/skills')) return { group: 'Claude Code (兼容)', icon: 'C' }
-  if (p.includes('.openclaw')) return { group: 'OpenClaw (兼容)', icon: 'O' }
-  if (p.includes('.codex')) return { group: 'Codex (兼容)', icon: 'X' }
-  if (p.includes('.loom/skills')) return { group: 'openLoom 用户', icon: 'L' }
-  if (p.includes('.loom/plugins')) return { group: 'openLoom 插件', icon: 'P' }
-  return { group: '其他', icon: 'M' }
+  if (p.includes('.claude/plugins') || p.includes('.claude/skills')) return { group: _t('skills.sourceClaudeCode'), icon: 'C' }
+  if (p.includes('.openclaw')) return { group: _t('skills.sourceOpenclaw'), icon: 'O' }
+  if (p.includes('.codex')) return { group: _t('skills.sourceCodex'), icon: 'X' }
+  if (p.includes('.loom/skills')) return { group: _t('skills.sourceLoomUser'), icon: 'L' }
+  if (p.includes('.loom/plugins')) return { group: _t('skills.sourceLoomPlugin'), icon: 'P' }
+  return { group: _t('skills.sourceOther'), icon: 'M' }
 }
 
 export default function SkillsTab() {
+  const { t } = useLocale()
   const [skills, setSkills] = useState<SkillInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -58,7 +60,7 @@ export default function SkillsTab() {
       const res = await loomRpc<{ skills: SkillInfo[] }>('skills.list')
       setSkills(res.skills ?? [])
     } catch (e: any) {
-      setError(`加载失败: ${e.message || e}`)
+      setError(_t('skills.loadFailed', { message: e.message || e }))
     } finally {
       setLoading(false)
     }
@@ -90,7 +92,7 @@ export default function SkillsTab() {
       const res = await loomRpc<{ content: string }>('skills.get', { name })
       setSkillContent(res.content ?? '')
     } catch (e: any) {
-      setSkillContent(`加载失败: ${e.message || e}`)
+      setSkillContent(_t('skills.loadFailed', { message: e.message || e }))
     } finally {
       setLoadingContent(false)
     }
@@ -119,17 +121,17 @@ export default function SkillsTab() {
             files.push({ path: relPath, content })
           }
 
-          await rpc('skills.import', { name: skillName, files }, `Skill "${skillName}" 已导入`)
+          await rpc('skills.import', { name: skillName, files }, _t('skills.importSuccess', { name: skillName }))
           await loadSkills()
         } catch (e: any) {
-          setError(`导入失败: ${e.message || e}`)
+          setError(_t('skills.importFailed', { message: e.message || e }))
         } finally {
           setImporting(false)
         }
       }
       input.click()
     } catch (e: any) {
-      setError(`导入失败: ${e.message || e}`)
+      setError(_t('skills.importFailed', { message: e.message || e }))
     }
   }
 
@@ -147,25 +149,25 @@ export default function SkillsTab() {
           const { readZipEntries } = await import('../../utils/zip-reader')
           const files = readZipEntries(arrayBuffer)
           const skillName = zipFile.name.replace(/\.zip$/i, '')
-          await rpc('skills.import', { name: skillName, files }, `Skill "${skillName}" 已导入`)
+          await rpc('skills.import', { name: skillName, files }, _t('skills.importSuccess', { name: skillName }))
           await loadSkills()
         } catch (e: any) {
-          setError(`ZIP 导入失败: ${e.message || e}`)
+          setError(_t('skills.importFailed', { message: e.message || e }))
         } finally {
           setImporting(false)
         }
       }
       input.click()
     } catch (e: any) {
-      setError(`导入失败: ${e.message || e}`)
+      setError(_t('skills.importFailed', { message: e.message || e }))
     }
   }
 
   const handleDelete = async (name: string) => {
-    const ok = await useStore.getState().showConfirm('删除 Skill', `确定删除 Skill "${name}"？`, true)
+    const ok = await useStore.getState().showConfirm(t('skills.deleteConfirmTitle'), _t('skills.deleteConfirmMessage', { name }), true)
     if (!ok) return
     try {
-      await rpc('skills.delete', { name }, `Skill "${name}" 已删除`)
+      await rpc('skills.delete', { name }, _t('skills.deleteSuccess', { name }))
       await loadSkills()
     } catch { /* toast already shown */ }
   }
@@ -182,8 +184,8 @@ export default function SkillsTab() {
       <div className={styles.contentHeader}>
         <div className={styles.sectionHeaderRow}>
           <h3 className={styles.sectionTitle}>
-            技能
-            <span className={styles.pluginsCountBadge}>{skills.length} 个</span>
+            {t('skills.title')}
+            <span className={styles.pluginsCountBadge}>{t('skills.countBadge', { n: skills.length })}</span>
           </h3>
           <div className={styles.marketplaceKindToggle}>
             <button
@@ -191,14 +193,14 @@ export default function SkillsTab() {
               onClick={() => setView('installed')}
             >
               <IconPackage size={13} />
-              已安装
+              {t('skills.installed')}
             </button>
             <button
               className={`${styles.marketplaceKindBtn} ${view === 'market' ? styles.marketplaceKindActive : ''}`}
               onClick={() => setView('market')}
             >
               <IconStore size={13} />
-              市场
+              {t('skills.market')}
             </button>
           </div>
           <button
@@ -212,7 +214,7 @@ export default function SkillsTab() {
             }}
             disabled={refreshing || loading}
             className={styles.refreshBtn}
-            title="重新扫描技能"
+            title={t('skills.rescan')}
           >
             <IconRefresh size={14} />
           </button>
@@ -222,7 +224,7 @@ export default function SkillsTab() {
           <input
             type="text"
             className={styles.pluginsSearchInput}
-            placeholder="搜索技能名称或描述..."
+            placeholder={t('skills.searchPlaceholder')}
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
           />
@@ -230,7 +232,7 @@ export default function SkillsTab() {
             <button className={styles.skillSearchClear} onClick={() => setSearchQuery('')}>&times;</button>
           )}
         </div>
-        <p className={styles.sectionDesc}>管理技能定义 — 支持文件夹或 ZIP 导入</p>
+        <p className={styles.sectionDesc}>{t('skills.description')}</p>
       </div>
       {view === 'market' ? (
         <SkillMarketTab hideHeader />
@@ -240,20 +242,20 @@ export default function SkillsTab() {
 
           <div className={styles.skillActions}>
             <button onClick={handleImportFolder} disabled={importing} className={styles.mcpAddBtn}>
-              {importing ? '导入中...' : <><IconFolder size={14} /> 导入文件夹</>}
+              {importing ? t('skills.importing') : <><IconFolder size={14} /> {t('skills.importFolder')}</>}
             </button>
             <button onClick={handleImportZip} disabled={importing} className={styles.mcpAddBtn}>
-              {importing ? '导入中...' : <><IconPackage size={14} /> 导入 ZIP</>}
+              {importing ? t('skills.importing') : <><IconPackage size={14} /> {t('skills.importZip')}</>}
             </button>
           </div>
 
           {loading ? (
-          <p className={styles.toolsEmpty}>加载中...</p>
+          <p className={styles.toolsEmpty}>{t('common.loading')}</p>
         ) : (
           <>
             <div className={styles.skillList}>
               {filtered.length === 0 ? (
-                <p className={styles.toolsEmpty}>{searchQuery ? '无匹配结果' : '暂无已发现的 Skill'}</p>
+                <p className={styles.toolsEmpty}>{searchQuery ? t('skills.noResults') : t('skills.noDiscovered')}</p>
               ) : (
                 Object.entries(grouped).map(([group, { icon, skills: groupSkills }]) => (
                   <div key={group} className={styles.skillGroup}>
@@ -295,7 +297,7 @@ export default function SkillsTab() {
                             className={styles.mcpDisconnectBtn}
                             onClick={(e) => { e.stopPropagation(); handleDelete(skill.name) }}
                           >
-                            删除
+                            {t('common.delete')}
                           </button>
                         </div>
                       </div>
@@ -306,7 +308,7 @@ export default function SkillsTab() {
                     {isSelected && (
                       <div className={styles.skillDetail}>
                         {loadingContent ? (
-                          <p className={styles.toolsEmpty}>加载中...</p>
+                          <p className={styles.toolsEmpty}>{t('common.loading')}</p>
                         ) : (
                           <div className={styles.skillDetailRendered} dangerouslySetInnerHTML={{ __html: renderBody(skillContent!) }} />
                         )}
@@ -320,7 +322,7 @@ export default function SkillsTab() {
               )))}
             </div>
             <p className={styles.lspInfoText}>
-              Skills 从 ~/.loom/skills/ 和插件目录自动发现。点击查看完整定义。
+              {t('skills.infoText')}
             </p>
           </>
         )}

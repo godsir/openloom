@@ -3,32 +3,36 @@ import { useStore } from '../../stores'
 import SessionItem from './SessionItem'
 import { IconPlus, IconSearch, IconTrash, IconPin, IconPinOff, IconCheck, IconX, IconCalendarClock, IconPlay, IconPause } from '../../utils/icons'
 import { loomRpc } from '../../services/jsonrpc'
+import { useLocale, t as i18nT } from '../../i18n'
 import type { CronJobSummary } from '../../stores/cron'
 import styles from './Sidebar.module.css'
 
 function getDateGroup(modified: string): string {
-  if (!modified) return '今天'
+  if (!modified) return i18nT('sidebar.today')
   const d = new Date(modified)
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const yesterday = new Date(today)
   yesterday.setDate(yesterday.getDate() - 1)
   const day = new Date(d.getFullYear(), d.getMonth(), d.getDate())
-  if (day >= today) return '今天'
-  if (day >= yesterday) return '昨天'
-  return `${d.getMonth() + 1}月${d.getDate()}日`
+  if (day >= today) return i18nT('sidebar.today')
+  if (day >= yesterday) return i18nT('sidebar.yesterday')
+  const month = d.getMonth() + 1
+  const date = d.getDate()
+  return i18nT('sidebar.dateFormat', { month, day: date })
 }
 
 function describeCron(expr: string): string {
   const p = expr.trim().split(/\s+/)
   if (p.length !== 7) return expr
-  if (p[0] === '0' && p[1] === '*' && p.slice(2).every(f => f === '*')) return '每分钟'
-  if (p[0] === '0' && p[1].startsWith('*/') && p.slice(2).every(f => f === '*')) return `每${p[1].slice(2)}分钟`
-  if (p[0] === '0' && p[1] === '0' && p.slice(2).every(f => f === '*')) return '每小时'
-  if (p[0] === '0' && p[1] === '0' && /^\d+$/.test(p[2]) && p.slice(3).every(f => f === '*')) return `每天 ${p[2]}:00`
+  if (p[0] === '0' && p[1] === '*' && p.slice(2).every(f => f === '*')) return i18nT('sidebar.everyMinute')
+  if (p[0] === '0' && p[1].startsWith('*/') && p.slice(2).every(f => f === '*')) return i18nT('sidebar.everyNMinutes', { n: p[1].slice(2) })
+  if (p[0] === '0' && p[1] === '0' && p.slice(2).every(f => f === '*')) return i18nT('sidebar.everyHour')
+  if (p[0] === '0' && p[1] === '0' && /^\d+$/.test(p[2]) && p.slice(3).every(f => f === '*')) return i18nT('sidebar.everyDayAt', { hour: p[2] })
   if (p[0] === '0' && p[1] !== '*' && /^\d+$/.test(p[1]) && p[5] !== '*' && /^\d+$/.test(p[5])) {
-    const dow = ['日', '一', '二', '三', '四', '五', '六'][parseInt(p[5])] || ''
-    return `每周${dow} ${p[2]}:${p[1].padStart(2, '0')}`
+    const dowMap = [i18nT('sidebar.dowSun'), i18nT('sidebar.dowMon'), i18nT('sidebar.dowTue'), i18nT('sidebar.dowWed'), i18nT('sidebar.dowThu'), i18nT('sidebar.dowFri'), i18nT('sidebar.dowSat')]
+    const dow = dowMap[parseInt(p[5])] || ''
+    return i18nT('sidebar.everyWeekAt', { dow, hour: p[2], minute: p[1].padStart(2, '0') })
   }
   return expr
 }
@@ -37,14 +41,15 @@ function relativeTime(ts: number | null): string {
   if (!ts) return ''
   const diff = Date.now() - ts * 1000
   const mins = Math.floor(diff / 60000)
-  if (mins < 1) return '刚刚'
-  if (mins < 60) return `${mins}分钟前`
+  if (mins < 1) return i18nT('time.justNow')
+  if (mins < 60) return i18nT('time.minutesAgo', { n: mins })
   const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}小时前`
-  return `${Math.floor(hrs / 24)}天前`
+  if (hrs < 24) return i18nT('time.hoursAgo', { n: hrs })
+  return i18nT('time.daysAgo', { n: Math.floor(hrs / 24) })
 }
 
 export default function Sidebar() {
+  const { t } = useLocale()
   const sessions = useStore((s) => s.sessions)
   const pinnedIds = useStore((s) => s.pinnedIds)
   const selectedSessionIds = useStore((s) => s.selectedSessionIds)
@@ -122,7 +127,7 @@ export default function Sidebar() {
 
   const handleBatchDelete = async () => {
     const ids = [...selectedSessionIds]
-    const ok = await useStore.getState().showConfirm('批量删除', `确定删除选中的 ${ids.length} 个会话？`, true)
+    const ok = await useStore.getState().showConfirm(t('sidebar.batchDelete'), t('sidebar.batchDeleteConfirm', { n: ids.length }), true)
     if (ok) await deleteSessions(ids)
   }
 
@@ -140,25 +145,25 @@ export default function Sidebar() {
     <aside className={styles.sidebar}>
       {selectionMode ? (
         <div className={styles.batchBar}>
-          <span className={styles.batchCount}>已选 {selectedCount} 项</span>
+          <span className={styles.batchCount}>{t('common.selected', { count: selectedCount })}</span>
           <div className={styles.batchActions}>
-            <button onClick={selectAllSessions} className={styles.batchBtn} title="全选">
+            <button onClick={selectAllSessions} className={styles.batchBtn} title={t('common.selectAll')}>
               <IconCheck size={13} />
             </button>
-            <button onClick={deselectAllSessions} className={styles.batchBtn} title="取消选择">
+            <button onClick={deselectAllSessions} className={styles.batchBtn} title={t('common.deselect')}>
               <IconX size={13} />
             </button>
             {selectedUnpinned.length > 0 && (
-              <button onClick={() => pinSessions(selectedUnpinned)} className={styles.batchBtn} title="置顶">
+              <button onClick={() => pinSessions(selectedUnpinned)} className={styles.batchBtn} title={t('sidebar.pin')}>
                 <IconPin size={13} />
               </button>
             )}
             {selectedPinned.length > 0 && (
-              <button onClick={() => unpinSessions(selectedPinned)} className={styles.batchBtn} title="取消置顶">
+              <button onClick={() => unpinSessions(selectedPinned)} className={styles.batchBtn} title={t('sidebar.unpin')}>
                 <IconPinOff size={13} />
               </button>
             )}
-            <button onClick={handleBatchDelete} className={`${styles.batchBtn} ${styles.batchDanger}`} title="删除">
+            <button onClick={handleBatchDelete} className={`${styles.batchBtn} ${styles.batchDanger}`} title={t('common.delete')}>
               <IconTrash size={13} />
             </button>
           </div>
@@ -172,7 +177,7 @@ export default function Sidebar() {
               value={query}
               onChange={e => setQuery(e.target.value)}
               onKeyDown={e => e.key === 'Escape' && setQuery('')}
-              placeholder="搜索会话..."
+              placeholder={t('sidebar.searchPlaceholder')}
               className={styles.searchInput}
             />
             {query && (
@@ -189,19 +194,19 @@ export default function Sidebar() {
         <div className={styles.cronSection}>
           <div className={styles.dateGroup}>
             <div className={`${styles.dateLabel} ${styles.cronSectionLabel}`}>
-              <span>定时任务</span>
-              <button className={styles.sectionAddBtn} onClick={openScheduledTasks} title="新建定时任务">
+              <span>{t('sidebar.cronTasks')}</span>
+              <button className={styles.sectionAddBtn} onClick={openScheduledTasks} title={t('sidebar.newCronTask')}>
                 <IconPlus size={15} />
               </button>
             </div>
             {cronLoading ? (
               <div className={styles.cronItem}>
-                <span className={styles.cronItemText}>加载中...</span>
+                <span className={styles.cronItemText}>{t('common.loading')}</span>
               </div>
             ) : cronJobs.length === 0 ? (
               <div className={styles.cronItem} onClick={openScheduledTasks}>
                 <IconCalendarClock size={13} className={styles.cronItemIcon} />
-                <span className={styles.cronItemMuted}>暂无定时任务</span>
+                <span className={styles.cronItemMuted}>{t('sidebar.noCronTasks')}</span>
               </div>
             ) : (
               cronJobs.slice(0, 5).map(job => (
@@ -231,8 +236,8 @@ export default function Sidebar() {
       {/* ── 会话 header（不随列表滚动）── */}
       {!selectionMode && (
         <div className={styles.sessionHeader}>
-          <span>会话</span>
-          <button className={styles.sectionAddBtn} onClick={handleCreate} title="新建会话">
+          <span>{t('sidebar.sessions')}</span>
+          <button className={styles.sectionAddBtn} onClick={handleCreate} title={t('sidebar.newSession')}>
             <IconPlus size={15} />
           </button>
         </div>
@@ -242,14 +247,14 @@ export default function Sidebar() {
         {filtered.length === 0 ? (
           <div className={styles.emptyState}>
             <p className={styles.emptyText}>
-              {query ? '无匹配会话' : '暂无会话'}
+              {query ? t('sidebar.noResults') : t('sidebar.noSessions')}
             </p>
           </div>
         ) : (
           <>
             {pinned.length > 0 && (
               <div className={styles.dateGroup}>
-                <div className={styles.dateLabel}>已置顶</div>
+                <div className={styles.dateLabel}>{t('sidebar.pinned')}</div>
                 {pinned.map(s => <SessionItem key={s.path} session={s} />)}
               </div>
             )}

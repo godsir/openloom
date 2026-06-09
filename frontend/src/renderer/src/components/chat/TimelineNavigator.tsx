@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { useLocale } from '../../i18n'
 import type { Message } from '../../stores/chat'
 
 interface Anchor { id: string; index: number; label: string }
@@ -21,6 +22,7 @@ interface TimelineNavigatorProps {
 }
 
 export default function TimelineNavigator({ messages, onScrollTo }: TimelineNavigatorProps) {
+  const { t } = useLocale()
   const anchors = useMemo(() => buildTimelineAnchors(messages), [messages])
   if (anchors.length <= 1) return null
 
@@ -31,7 +33,7 @@ export default function TimelineNavigator({ messages, onScrollTo }: TimelineNavi
           key={a.id}
           onClick={() => onScrollTo(a.index)}
           className="text-[9px] font-mono text-[var(--text-muted)] hover:text-[var(--text-light)] py-0.5 leading-none transition-colors-fast"
-          title={`跳转到第 ${a.label} 轮`}
+          title={t('chat.jumpToTurn', { label: a.label })}
         >
           {a.label}
         </button>

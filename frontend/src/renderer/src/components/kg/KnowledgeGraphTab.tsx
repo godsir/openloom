@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import GalaxyGraph from './GalaxyGraph'
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import Select from '../shared/Select'
 import type { KgNode } from '../../types/bindings'
 import StarField from './StarField'
@@ -17,26 +18,7 @@ function entityColor(type: string): string {
   return `hsl(${hashHue(type)}, 70%, 62%)`
 }
 
-const ENTITY_TYPE_CN: Record<string, string> = {
-  Technology: '技术', Person: '人物', Project: '项目', Concept: '概念',
-  Tool: '工具', Topic: '话题', Organization: '组织',
-}
-
-function entityTypeCn(type: string): string {
-  return ENTITY_TYPE_CN[type] ?? type
-}
-
 const PAGE_SIZE = 20
-
-const RELATION_LABELS: Record<string, string> = {
-  uses: '使用', works_on: '参与', knows: '了解',
-  interested_in: '感兴趣', dislikes: '不喜欢', depends_on: '依赖',
-  part_of: '属于', created_by: '创建者', related_to: '相关',
-}
-
-function translateRelation(rel: string): string {
-  return RELATION_LABELS[rel] ?? rel.replace(/_/g, ' ')
-}
 
 interface GraphNode {
   id: string
@@ -50,6 +32,7 @@ interface GraphNode {
 }
 
 export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialSubTab?: 'list' | 'graph' }) {
+  const { t } = useLocale()
   const kgStats = useStore(s => s.kgStats)
   const kgSearchResults = useStore(s => s.kgSearchResults)
   const kgGraph = useStore(s => s.kgGraph)
@@ -80,6 +63,14 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
   /** Suppresses auto-populate after user intentionally clears the graph */
   const userClearedGraph = useRef(false)
 
+  const entityTypeCn = useCallback((type: string): string => {
+    return t(`kg.entityType.${type}`) ?? type
+  }, [t])
+
+  const translateRelation = useCallback((rel: string): string => {
+    return t(`kg.relation.${rel}`) ?? rel.replace(/_/g, ' ')
+  }, [t])
+
   useEffect(() => {
     kgLoadStats()
     const effectiveScope = scopeFilter === 'all' ? undefined
@@ -89,19 +80,12 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
   }, [kgLoadStats, kgListNodes, scopeFilter, currentSessionId])
 
   // Auto-populate graph when switching to graph tab with no data.
-  // Walk from the first few listed nodes in parallel and merge results,
-  // so all connected components and their edges appear.
-  // Skip if user intentionally cleared the graph.
   useEffect(() => {
     if (activeTab !== 'graph') {
-      // Reset the clear-flag when user leaves the graph tab,
-      // so auto-populate works again when they return.
       userClearedGraph.current = false
       return
     }
     if (!kgGraph && !userClearedGraph.current) {
-      // Always include USER as the central seed, then pick distinct
-      // seeds from across the list so all galaxies get discovered.
       const list = kgSearchResults.length > 0 ? kgSearchResults : kgNodeList
       const seen = new Set(['USER'])
       const extras: string[] = []
@@ -192,11 +176,11 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
 
   const handleDeleteNode = useCallback(
     async (name: string) => {
-      const ok = await showConfirm('删除实体', `确定删除 "${name}" 及其所有关系？`, true)
+      const ok = await showConfirm(t('kg.deleteEntity'), t('kg.deleteEntityConfirm', { name }), true)
       if (!ok) return
       kgNodeDelete(name)
     },
-    [kgNodeDelete, showConfirm],
+    [kgNodeDelete, showConfirm, t],
   )
 
   const handleRefreshGraph = useCallback(() => {
@@ -251,26 +235,26 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
               value={query}
               onChange={e => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="筛选实体..."
+              placeholder={t('kg.filterPlaceholder')}
             />
             <Select
               value={scopeFilter}
               options={[
-                { value: 'all', label: '全部范围' },
-                { value: 'global', label: '全局' },
-                { value: 'session', label: '会话级' },
+                { value: 'all', label: t('kg.scope.all') },
+                { value: 'global', label: t('kg.scope.global') },
+                { value: 'session', label: t('kg.scope.session') },
               ]}
               onChange={v => setScopeFilter(v as 'all' | 'global' | 'session')}
               variant="form"
             />
             <button className={styles.searchBtn} onClick={handleSearch}>
-              搜索
+              {t('common.search')}
             </button>
           </div>
           {kgStats && (
             <div className={styles.stats}>
-              <span>实体 <span className={styles.statValue}>{kgStats.node_count}</span></span>
-              <span>关系 <span className={styles.statValue}>{kgStats.edge_count}</span></span>
+              <span>{t('kg.entities')} <span className={styles.statValue}>{kgStats.node_count}</span></span>
+              <span>{t('kg.relations')} <span className={styles.statValue}>{kgStats.edge_count}</span></span>
             </div>
           )}
         </div>
@@ -279,18 +263,18 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
       {/* Tabs — graph view toolbar */}
       {initialSubTab === 'graph' && hasData && (
         <div className={styles.tabs}>
-          <button className={styles.labelToggleBtn} onClick={() => setShowLabels(v => !v)} title={showLabels ? '隐藏标签' : '显示标签'}>
+          <button className={styles.labelToggleBtn} onClick={() => setShowLabels(v => !v)} title={showLabels ? t('kg.hideLabels') : t('kg.showLabels')}>
             {showLabels ? 'Aa' : 'Aa'}
           </button>
-          <button className={styles.fullscreenBtn} onClick={() => setIsFullscreen(!isFullscreen)} title={isFullscreen ? '退出全屏' : '全屏查看'}>
+          <button className={styles.fullscreenBtn} onClick={() => setIsFullscreen(!isFullscreen)} title={isFullscreen ? t('kg.exitFullscreen') : t('kg.fullscreen')}>
             {isFullscreen ? '⤓' : '⤢'}
           </button>
           {kgGraph && (
-            <button className={styles.clearBtn} onClick={handleRefreshGraph}>刷新图谱</button>
+            <button className={styles.clearBtn} onClick={handleRefreshGraph}>{t('kg.refreshGraph')}</button>
           )}
           {kgStats && (
             <span className={styles.tabsStats}>
-              实体 {kgStats.node_count} · 关系 {kgStats.edge_count}
+              {t('kg.entities')} {kgStats.node_count} · {t('kg.relations')} {kgStats.edge_count}
             </span>
           )}
         </div>
@@ -300,7 +284,7 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
         <div className={styles.nodeList}>
           {displayNodes.length === 0 ? (
             <div className={styles.canvasEmpty}>
-              暂无实体。知识图谱会在与 AI 对话过程中自动积累。
+              {t('kg.emptyEntityList')}
             </div>
           ) : (
             <>
@@ -321,15 +305,15 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
                       {n.scope && n.scope !== 'global' && (
                         <span className={styles.scopeBadge}>{n.scope.slice(0, 6)}</span>
                       )}
-                      <span className={styles.nodeItemConf} title="AI 对该实体信息的把握程度">
-                        确信 {(n.confidence * 100).toFixed(0)}%
+                      <span className={styles.nodeItemConf} title={t('kg.confidenceTooltip')}>
+                        {t('kg.confidence')} {(n.confidence * 100).toFixed(0)}%
                       </span>
                     </div>
                     <div className={styles.nodeItemActions}>
-                      <button className={styles.actionBtn} onClick={() => handleExpand(n.name)}>关联</button>
-                      <button className={styles.actionBtn} onClick={() => handleWalk(n.name)}>关系网</button>
+                      <button className={styles.actionBtn} onClick={() => handleExpand(n.name)}>{t('kg.viewRelated')}</button>
+                      <button className={styles.actionBtn} onClick={() => handleWalk(n.name)}>{t('kg.expandNetwork')}</button>
                       <span className={styles.actionDivider} />
-                      <button className={styles.actionBtnDanger} onClick={() => handleDeleteNode(n.name)}>删除</button>
+                      <button className={styles.actionBtnDanger} onClick={() => handleDeleteNode(n.name)}>{t('common.delete')}</button>
                     </div>
                   </div>
                   {n.description && <div className={styles.nodeItemDesc}>{n.description}</div>}
@@ -338,12 +322,12 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
               {/* Pagination */}
               {totalPages > 1 && (
                 <div className={styles.pagination}>
-                  <button className={styles.pageBtn} disabled={safePage === 0} onClick={() => setListPage(p => Math.max(0, p - 1))}>上一页</button>
+                  <button className={styles.pageBtn} disabled={safePage === 0} onClick={() => setListPage(p => Math.max(0, p - 1))}>{t('kg.previousPage')}</button>
                   <span className={styles.pageInfo}>
                     {safePage + 1} / {totalPages}
-                    <span className={styles.pageTotal}>（共 {displayNodes.length} 条）</span>
+                    <span className={styles.pageTotal}>{t('kg.totalItems', { n: String(displayNodes.length) })}</span>
                   </span>
-                  <button className={styles.pageBtn} disabled={safePage >= totalPages - 1} onClick={() => setListPage(p => Math.min(totalPages - 1, p + 1))}>下一页</button>
+                  <button className={styles.pageBtn} disabled={safePage >= totalPages - 1} onClick={() => setListPage(p => Math.min(totalPages - 1, p + 1))}>{t('kg.nextPage')}</button>
                 </div>
               )}
             </>
@@ -357,10 +341,10 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
             {chartSize.w > 0 && <StarField width={chartSize.w} height={chartSize.h} className={styles.starField} />}
             {!hasData ? (
               <div className={styles.canvasEmpty}>
-                <span>{kgNodeList.length > 0 ? '正在加载图谱...' : '星图暂无数据'}</span>
+                <span>{kgNodeList.length > 0 ? t('kg.loadingGraph') : t('kg.noGraphData')}</span>
                 {kgNodeList.length === 0 && (
                   <span className={styles.canvasEmptyHint}>
-                    在与 AI 对话过程中，知识图谱会自动积累实体与关系，构建属于你的认知网络
+                    {t('kg.graphAutoHint')}
                   </span>
                 )}
               </div>
@@ -378,21 +362,21 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
           {/* Edge list */}
           {hasData && kgGraph && (
             <div className={styles.edgeList}>
-              <div className={styles.edgeListTitle}>关系列表 ({kgGraph.edges.length})</div>
+              <div className={styles.edgeListTitle}>{t('kg.relationList')} ({kgGraph.edges.length})</div>
               {kgGraph.edges.map((e, i) => {
                 const srcName = e.source
                 const tgtName = e.target
                 return (
                   <div key={i} className={styles.edgeItem}>
                     <span className={styles.edgeNode}>{srcName}</span>
-                    <span className={styles.edgeRel}>{translateRelation(e.relation_type) || '相关'}</span>
+                    <span className={styles.edgeRel}>{translateRelation(e.relation_type) || t('kg.related')}</span>
                     <span className={styles.edgeNode}>{tgtName}</span>
                     <button
                       className={styles.edgeDelBtn}
                       onClick={() =>
                         handleDeleteEdge(srcName, tgtName, e.relation_type)
                       }
-                      title="删除关系"
+                      title={t('kg.deleteRelation')}
                     >
                       x
                     </button>
@@ -416,7 +400,7 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
         })()}
       </div>
 
-      {/* Tooltip popup — single instance rendered at root level with fixed positioning */}
+      {/* Tooltip popup */}
       {tooltip && (
         <div
           className={styles.tooltip}
@@ -433,17 +417,17 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
             <div className={styles.tooltipDesc}>{tooltip.node.description}</div>
           )}
           <div className={styles.tooltipConf}>
-            确信度 {(tooltip.node.confidence * 100).toFixed(0)}%
+            {t('kg.confidence')} {(tooltip.node.confidence * 100).toFixed(0)}%
           </div>
           <div className={styles.tooltipActions}>
             <button className={styles.tooltipBtn} onClick={() => handleExpand(tooltip.node.name)}>
-              查看关联
+              {t('kg.viewRelated')}
             </button>
             <button className={styles.tooltipBtn} onClick={() => handleWalk(tooltip.node.name)}>
-              展开关系网
+              {t('kg.expandNetwork')}
             </button>
             <button className={styles.tooltipBtn} onClick={() => setTooltip(null)}>
-              关闭
+              {t('common.close')}
             </button>
           </div>
         </div>
@@ -463,7 +447,7 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
           <button
             className={styles.fullscreenLabelBtn}
             onClick={() => setShowLabels(v => !v)}
-            title={showLabels ? '隐藏标签' : '显示标签'}
+            title={showLabels ? t('kg.hideLabels') : t('kg.showLabels')}
           >
             {showLabels ? 'Aa' : 'Aa'}
           </button>
@@ -473,7 +457,7 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
               setTooltip(null)
               setIsFullscreen(false)
             }}
-            title="退出全屏"
+            title={t('kg.exitFullscreen')}
           >
             ✕
           </button>

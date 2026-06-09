@@ -2,17 +2,20 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useStore } from '../../stores'
 import { IconRefresh, IconSearch, IconPackage, IconSparkles, IconStore, IconGlobe, IconCheck, IconZap, IconTrash, IconExternalLink, IconSettings } from '../../utils/icons'
 import { listMarketplace, installMarketPlugin, uninstallMarketPlugin, updateMarketPlugin, type MarketPlugin } from '../../services/marketplace'
+import { useLocale, t as _t } from '../../i18n'
 import styles from '../shared/SettingsModal.module.css'
 
-const MARKETPLACE_CATEGORIES = ['全部', 'Security', 'Development', 'Productivity', 'Workflow', 'Research', 'Design']
+const ALL_CATEGORY = '__all__'
+const MARKETPLACE_CATEGORIES = [ALL_CATEGORY, 'Security', 'Development', 'Productivity', 'Workflow', 'Research', 'Design']
 const PREF_KEY_CATALOG_URL = 'marketplaceCatalogUrl'
 
 export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; hideHeader?: boolean }) {
+  const { t } = useLocale()
   const [plugins, setPlugins] = useState<MarketPlugin[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [activeCategory, setActiveCategory] = useState<string>('全部')
+  const [activeCategory, setActiveCategory] = useState<string>(ALL_CATEGORY)
   const [activeKind, setActiveKind] = useState<string>(mode === 'plugin' ? 'plugin' : 'plugin')
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set())
   const [refreshing, setRefreshing] = useState(false)
@@ -26,7 +29,7 @@ export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; 
       const res = await listMarketplace(url || undefined)
       setPlugins(res.plugins ?? [])
     } catch (e: any) {
-      setError(`加载失败: ${e.message || e}`)
+      setError(_t('marketplace.loadFailed', { message: e.message || e }))
     } finally {
       setLoading(false)
     }
@@ -62,24 +65,24 @@ export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; 
     try {
       await installMarketPlugin(pluginId)
       await load()
-      useStore.getState().addToast({ type: 'success', message: `${pluginId} 安装成功` })
+      useStore.getState().addToast({ type: 'success', message: _t('marketplace.installSuccess', { id: pluginId }) })
     } catch (e: any) {
-      useStore.getState().addToast({ type: 'error', message: `安装失败: ${e.message || e}` })
+      useStore.getState().addToast({ type: 'error', message: _t('marketplace.installFailed', { message: e.message || e }) })
     } finally {
       removeBusy(pluginId)
     }
   }
 
   const handleUninstall = async (pluginId: string) => {
-    const ok = await useStore.getState().showConfirm('卸载', `确认卸载 "${pluginId}"？此操作将删除目录。`, true)
+    const ok = await useStore.getState().showConfirm(t('marketplace.uninstallConfirmTitle'), _t('marketplace.uninstallConfirmMessage', { id: pluginId }), true)
     if (!ok) return
     addBusy(pluginId)
     try {
       await uninstallMarketPlugin(pluginId)
       await load()
-      useStore.getState().addToast({ type: 'success', message: `${pluginId} 已卸载` })
+      useStore.getState().addToast({ type: 'success', message: _t('marketplace.uninstallSuccess', { id: pluginId }) })
     } catch (e: any) {
-      useStore.getState().addToast({ type: 'error', message: `卸载失败: ${e.message || e}` })
+      useStore.getState().addToast({ type: 'error', message: _t('marketplace.uninstallFailed', { message: e.message || e }) })
     } finally {
       removeBusy(pluginId)
     }
@@ -90,9 +93,9 @@ export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; 
     try {
       await updateMarketPlugin(pluginId)
       await load()
-      useStore.getState().addToast({ type: 'success', message: `${pluginId} 已更新` })
+      useStore.getState().addToast({ type: 'success', message: _t('marketplace.updateSuccess', { id: pluginId }) })
     } catch (e: any) {
-      useStore.getState().addToast({ type: 'error', message: `更新失败: ${e.message || e}` })
+      useStore.getState().addToast({ type: 'error', message: _t('marketplace.updateFailed', { message: e.message || e }) })
     } finally {
       removeBusy(pluginId)
     }
@@ -102,13 +105,13 @@ export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; 
     const q = searchQuery.toLowerCase().trim()
     return plugins.filter(p => {
       if (p.kind !== activeKind) return false
-      if (activeCategory !== '全部' && p.category !== activeCategory) return false
+      if (activeCategory !== ALL_CATEGORY && p.category !== activeCategory) return false
       if (!q) return true
       return (
         p.name.toLowerCase().includes(q) ||
         p.description.toLowerCase().includes(q) ||
         p.author.toLowerCase().includes(q) ||
-        p.tags.some(t => t.toLowerCase().includes(q))
+        p.tags.some(tag => tag.toLowerCase().includes(q))
       )
     })
   }, [plugins, searchQuery, activeCategory, activeKind])
@@ -126,11 +129,11 @@ export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; 
           <div className={styles.pluginsHeader}>
             <div className={styles.sectionHeaderRow}>
               <h3 className={styles.sectionTitle}>
-                市场
-                <span className={styles.pluginsCountBadge}>{plugins.length} 个</span>
+                {t('marketplace.title')}
+                <span className={styles.pluginsCountBadge}>{t('marketplace.countBadge', { n: plugins.length })}</span>
                 {installedCount > 0 && (
                   <span className={styles.marketplaceInstalledSummary}>
-                    {installedCount} 已安装
+                    {t('marketplace.installedSummary', { n: installedCount })}
                   </span>
                 )}
               </h3>
@@ -138,7 +141,7 @@ export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; 
                 onClick={handleRefresh}
                 disabled={refreshing || loading}
                 className={styles.refreshBtn}
-                title="刷新市场"
+                title={t('marketplace.refresh')}
               >
                 <IconRefresh size={14} />
               </button>
@@ -148,13 +151,13 @@ export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; 
               <input
                 className={styles.pluginsSearchInput}
                 type="text"
-                placeholder="搜索插件名称、描述、标签或作者..."
+                placeholder={t('marketplace.searchPlaceholder')}
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
               />
             </div>
             <p className={styles.pluginsDesc}>
-              浏览和安装社区插件，扩展 AI 助手的能力
+              {t('marketplace.description')}
             </p>
           </div>
         </div>
@@ -169,14 +172,14 @@ export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; 
             onClick={() => setShowSourceConfig(!showSourceConfig)}
           >
             <IconSettings size={11} />
-            {showSourceConfig ? '收起' : '自定义源'}
+            {showSourceConfig ? t('marketplace.hideSource') : t('marketplace.customSource')}
           </button>
           {showSourceConfig && (
             <div className={styles.marketplaceSourceForm}>
               <input
                 className={styles.pluginsSearchInput}
                 type="text"
-                placeholder="输入市场目录 JSON URL..."
+                placeholder={t('marketplace.urlPlaceholder')}
                 value={catalogUrl}
                 onChange={e => setCatalogUrl(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') saveCatalogUrl(catalogUrl) }}
@@ -185,14 +188,14 @@ export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; 
                 className={styles.mcpConnectBtn}
                 onClick={() => saveCatalogUrl(catalogUrl)}
               >
-                加载
+                {t('marketplace.load')}
               </button>
               {catalogUrl && (
                 <button
                   className={styles.mcpCancelBtn}
                   onClick={() => saveCatalogUrl('')}
                 >
-                  重置
+                  {t('marketplace.reset')}
                 </button>
               )}
             </div>
@@ -203,18 +206,18 @@ export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; 
           <div className={styles.marketplaceKindToggle}>
             <button
               className={`${styles.marketplaceKindBtn} ${activeKind === 'plugin' ? styles.marketplaceKindActive : ''}`}
-              onClick={() => { setActiveKind('plugin'); setActiveCategory('全部') }}
+              onClick={() => { setActiveKind('plugin'); setActiveCategory(ALL_CATEGORY) }}
             >
               <IconPackage size={13} />
-              插件
+              {t('marketplace.plugins')}
               <span className={styles.marketplaceKindCount}>{kindCounts.plugin}</span>
             </button>
             <button
               className={`${styles.marketplaceKindBtn} ${activeKind === 'skill' ? styles.marketplaceKindActive : ''}`}
-              onClick={() => { setActiveKind('skill'); setActiveCategory('全部') }}
+              onClick={() => { setActiveKind('skill'); setActiveCategory(ALL_CATEGORY) }}
             >
               <IconSparkles size={13} />
-              技能
+              {t('marketplace.skills')}
               <span className={styles.marketplaceKindCount}>{kindCounts.skill}</span>
             </button>
           </div>
@@ -228,25 +231,25 @@ export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; 
               className={`${styles.marketplaceCategoryBtn} ${activeCategory === cat ? styles.marketplaceCategoryActive : ''}`}
               onClick={() => setActiveCategory(cat)}
             >
-              {cat}
+              {cat === ALL_CATEGORY ? t('common.selectAll') : cat}
             </button>
           ))}
         </div>
 
         {loading ? (
-          <p className={styles.toolsEmpty}>加载中...</p>
+          <p className={styles.toolsEmpty}>{t('common.loading')}</p>
         ) : filtered.length === 0 ? (
           <div className={styles.marketplaceEmptyState}>
             <div className={styles.marketplaceEmptyIcon}>
               <IconStore size={32} />
             </div>
             <p className={styles.pluginsEmptyTitle}>
-              {searchQuery || activeCategory !== '全部' ? '无匹配结果' : '暂无可用插件'}
+              {searchQuery || activeCategory !== ALL_CATEGORY ? t('marketplace.noResults') : t('marketplace.noPlugins')}
             </p>
             <p className={styles.pluginsEmptyHelp}>
-              {searchQuery || activeCategory !== '全部'
-                ? '尝试其他关键词或清除筛选条件'
-                : '市场目录加载为空，请刷新重试'}
+              {searchQuery || activeCategory !== ALL_CATEGORY
+                ? t('marketplace.tryOtherFilters')
+                : t('marketplace.catalogEmpty')}
             </p>
           </div>
         ) : (
@@ -281,24 +284,24 @@ export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; 
                         <>
                           <span className={styles.marketplaceInstalledBadge}>
                             <IconCheck size={11} />
-                            已安装{plugin.installed_version ? ` v${plugin.installed_version}` : ''}
+                            {t('marketplace.installed')}{plugin.installed_version ? ` v${plugin.installed_version}` : ''}
                           </span>
                           {plugin.has_update && (
                             <span className={styles.marketplaceUpdateBadge}>
                               <IconZap size={10} />
-                              更新可用 v{plugin.version}
+                              {t('marketplace.updateAvailable', { version: plugin.version })}
                             </span>
                           )}
                         </>
                       ) : (
-                        <span className={styles.marketplaceNotInstalled}>未安装</span>
+                        <span className={styles.marketplaceNotInstalled}>{t('marketplace.notInstalled')}</span>
                       )}
                     </div>
                     <div className={styles.marketplaceCardActions}>
                       {plugin.homepage && (
                         <button
                           className={styles.marketplaceCardLinkBtn}
-                          title="查看主页"
+                          title={t('marketplace.viewHomepage')}
                           onClick={() => window.loom.openExternal(plugin.homepage!)}
                         >
                           <IconExternalLink size={14} />
@@ -312,7 +315,7 @@ export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; 
                               onClick={() => handleUpdate(plugin.id)}
                               disabled={isBusy}
                             >
-                              {isBusy ? '更新中...' : <><IconRefresh size={11} /> 更新</>}
+                              {isBusy ? t('marketplace.updating') : <><IconRefresh size={11} /> {t('marketplace.update')}</>}
                             </button>
                           )}
                           <button
@@ -320,7 +323,7 @@ export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; 
                             onClick={() => handleUninstall(plugin.id)}
                             disabled={isBusy}
                           >
-                            {isBusy ? '卸载中...' : <><IconTrash size={11} /> 卸载</>}
+                            {isBusy ? t('marketplace.uninstalling') : <><IconTrash size={11} /> {t('marketplace.uninstall')}</>}
                           </button>
                         </>
                       ) : (
@@ -329,7 +332,7 @@ export default function MarketplaceTab({ mode, hideHeader }: { mode?: 'plugin'; 
                           onClick={() => handleInstall(plugin.id)}
                           disabled={isBusy}
                         >
-                          {isBusy ? '安装中...' : <><IconPackage size={11} /> 安装</>}
+                          {isBusy ? t('marketplace.installing') : <><IconPackage size={11} /> {t('marketplace.install')}</>}
                         </button>
                       )}
                     </div>

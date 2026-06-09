@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useLocale } from '../../i18n'
 import styles from './PatternPanel.module.css'
 import type { SessionPatternReport, TopicPattern, ToolPreference, LearningPath, TimePattern } from '../../types/bindings'
 
@@ -29,11 +30,11 @@ function confidenceColor(confidence: number): string {
 
 // ── Topics Section ────────────────────────────────────────────────────
 
-function TopicsSection({ topics }: { topics: TopicPattern[] }) {
+function TopicsSection({ topics, t }: { topics: TopicPattern[]; t: (key: string, vars?: Record<string, string | number>) => string }) {
   const [showAll, setShowAll] = useState(false)
 
   if (topics.length === 0) {
-    return <div className={styles.sectionEmpty}>暂无话题数据</div>
+    return <div className={styles.sectionEmpty}>{t('kg.patterns.noTopics')}</div>
   }
 
   const maxCount = Math.max(...topics.map(t => t.session_count), 1)
@@ -45,7 +46,7 @@ function TopicsSection({ topics }: { topics: TopicPattern[] }) {
         <div key={i} className={styles.topicItem}>
           <div className={styles.topicHeader}>
             <span className={styles.topicName}>{t.topic}</span>
-            <span className={styles.topicBadge}>{t.session_count} 次</span>
+            <span className={styles.topicBadge}>{t('kg.patterns.times', { n: String(t.session_count) })}</span>
           </div>
           <div className={styles.topicBar}>
             <div
@@ -55,14 +56,14 @@ function TopicsSection({ topics }: { topics: TopicPattern[] }) {
           </div>
           <div className={styles.topicMeta}>
             <span>{formatDate(t.first_seen)}</span>
-            <span className={styles.topicMetaSep}>至</span>
+            <span className={styles.topicMetaSep}>{t('kg.patterns.to')}</span>
             <span>{formatDate(t.last_seen)}</span>
           </div>
         </div>
       ))}
       {topics.length > TOPIC_PAGE_SIZE && (
         <button className={styles.showMoreBtn} onClick={() => setShowAll(!showAll)}>
-          {showAll ? '收起' : `显示全部 (${topics.length} 项)`}
+          {showAll ? t('kg.patterns.collapse') : t('kg.patterns.showAllCount', { n: String(topics.length) })}
         </button>
       )}
     </div>
@@ -71,9 +72,9 @@ function TopicsSection({ topics }: { topics: TopicPattern[] }) {
 
 // ── Tools Section ─────────────────────────────────────────────────────
 
-function ToolsSection({ tools }: { tools: ToolPreference[] }) {
+function ToolsSection({ tools, t }: { tools: ToolPreference[]; t: (key: string, vars?: Record<string, string | number>) => string }) {
   if (tools.length === 0) {
-    return <div className={styles.sectionEmpty}>暂无工具使用数据</div>
+    return <div className={styles.sectionEmpty}>{t('kg.patterns.noTools')}</div>
   }
 
   const maxCount = Math.max(...tools.map(t => t.usage_count), 1)
@@ -88,7 +89,7 @@ function ToolsSection({ tools }: { tools: ToolPreference[] }) {
             <span
               className={styles.toolConf}
               style={{ color: confidenceColor(t.avg_confidence) }}
-              title={`平均置信度 ${(t.avg_confidence * 100).toFixed(0)}%`}
+              title={t('kg.patterns.avgConfidence', { pct: (t.avg_confidence * 100).toFixed(0) })}
             >
               {(t.avg_confidence * 100).toFixed(0)}%
             </span>
@@ -114,9 +115,9 @@ function ToolsSection({ tools }: { tools: ToolPreference[] }) {
 
 // ── Learning Progression Section ──────────────────────────────────────
 
-function LearningSection({ learning }: { learning: LearningPath[] }) {
+function LearningSection({ learning, t }: { learning: LearningPath[]; t: (key: string, vars?: Record<string, string | number>) => string }) {
   if (learning.length === 0) {
-    return <div className={styles.sectionEmpty}>暂无学习进度数据</div>
+    return <div className={styles.sectionEmpty}>{t('kg.patterns.noLearning')}</div>
   }
 
   return (
@@ -149,9 +150,9 @@ function LearningSection({ learning }: { learning: LearningPath[] }) {
 
 // ── Time Patterns Section (24-hour bar chart) ────────────────────────
 
-function TimeSection({ patterns }: { patterns: TimePattern[] }) {
+function TimeSection({ patterns, t }: { patterns: TimePattern[]; t: (key: string, vars?: Record<string, string | number>) => string }) {
   if (patterns.length === 0) {
-    return <div className={styles.sectionEmpty}>暂无时间模式数据</div>
+    return <div className={styles.sectionEmpty}>{t('kg.patterns.noTimePatterns')}</div>
   }
 
   // Build 24-hour frequency map
@@ -194,6 +195,8 @@ function TimeSection({ patterns }: { patterns: TimePattern[] }) {
 // ── Panel ─────────────────────────────────────────────────────────────
 
 export default function PatternPanel({ report, onRefresh }: PatternPanelProps) {
+  const { t } = useLocale()
+
   const isEmpty = !report || (
     report.topics.length === 0 &&
     report.tools.length === 0 &&
@@ -204,17 +207,17 @@ export default function PatternPanel({ report, onRefresh }: PatternPanelProps) {
   return (
     <div className={styles.panel}>
       <div className={styles.header}>
-        <h2 className={styles.title}>会话模式</h2>
-        <button className={styles.refreshBtn} onClick={onRefresh} title="刷新模式数据">
-          ↻ 刷新
+        <h2 className={styles.title}>{t('kg.patterns.title')}</h2>
+        <button className={styles.refreshBtn} onClick={onRefresh} title={t('kg.patterns.refreshTooltip')}>
+          {'↻'} {t('kg.patterns.refresh')}
         </button>
       </div>
 
       {isEmpty && (
         <div className={styles.fullEmpty}>
-          <p className={styles.fullEmptyText}>暂无模式数据</p>
+          <p className={styles.fullEmptyText}>{t('kg.patterns.noData')}</p>
           <p className={styles.fullEmptyHint}>
-            模式数据会在多轮对话后自动分析。点击刷新手动加载最新报告。
+            {t('kg.patterns.noDataHint')}
           </p>
         </div>
       )}
@@ -224,39 +227,39 @@ export default function PatternPanel({ report, onRefresh }: PatternPanelProps) {
           {report.topics.length > 0 && (
             <div className={styles.section}>
               <div className={styles.sectionTitle}>
-                话题频次
+                {t('kg.patterns.topics')}
                 <span className={styles.sectionCount}>{report.topics.length}</span>
               </div>
-              <TopicsSection topics={report.topics} />
+              <TopicsSection topics={report.topics} t={t} />
             </div>
           )}
 
           {report.tools.length > 0 && (
             <div className={styles.section}>
               <div className={styles.sectionTitle}>
-                工具偏好
+                {t('kg.patterns.tools')}
                 <span className={styles.sectionCount}>{report.tools.length}</span>
               </div>
-              <ToolsSection tools={report.tools} />
+              <ToolsSection tools={report.tools} t={t} />
             </div>
           )}
 
           {report.learning.length > 0 && (
             <div className={styles.section}>
               <div className={styles.sectionTitle}>
-                学习进展
+                {t('kg.patterns.learning')}
                 <span className={styles.sectionCount}>{report.learning.length}</span>
               </div>
-              <LearningSection learning={report.learning} />
+              <LearningSection learning={report.learning} t={t} />
             </div>
           )}
 
           {report.time_patterns.length > 0 && (
             <div className={styles.section}>
               <div className={styles.sectionTitle}>
-                活跃时段
+                {t('kg.patterns.activeHours')}
               </div>
-              <TimeSection patterns={report.time_patterns} />
+              <TimeSection patterns={report.time_patterns} t={t} />
             </div>
           )}
         </>

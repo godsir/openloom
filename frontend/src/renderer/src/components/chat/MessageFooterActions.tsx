@@ -1,4 +1,5 @@
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import { loomRpc } from '../../services/jsonrpc'
 import { sendMessage } from '../../services/sendMessage'
 import { IconCopy, IconTrash, IconRefresh, IconRotateCcw } from '../../utils/icons'
@@ -19,6 +20,7 @@ function formatTokens(n: number): string {
 }
 
 export default function MessageFooterActions({ messageId, role, timestamp, usage, blocks = [] }: Props) {
+  const { t } = useLocale()
   const deleteMessage = useStore((s) => s.deleteMessage)
   const currentSessionId = useStore((s) => s.currentSessionId)
   const streaming = useStore((s) => currentSessionId ? s.streamingSessionIds.has(currentSessionId) : false)
@@ -126,34 +128,34 @@ export default function MessageFooterActions({ messageId, role, timestamp, usage
     <div className={`${styles.footer} ${role === 'user' ? styles.footerRight : ''}`}>
       <span className={styles.time}>{time}</span>
       {usage && (usage.prompt > 0 || usage.completion > 0) && (
-        <span className={styles.tokens} title={`输入 ${usage.prompt} tokens · 输出 ${usage.completion} tokens`}>
+        <span className={styles.tokens} title={t('chat.tokensDetail', { input: usage.prompt, output: usage.completion })}>
           {formatTokens(usage.prompt)}&nbsp;↑&nbsp;{formatTokens(usage.completion)}&nbsp;↓
         </span>
       )}
       {role === 'assistant' && totalTools > 0 && (
-        <span className={styles.tokens} title={`调用了 ${toolCount} 个工具${skillCount > 0 ? `、${skillCount} 个技能` : ''}`}>
-          · {totalTools} 个工具
+        <span className={styles.tokens} title={skillCount > 0 ? t('chat.toolsWithSkillsDetail', { tools: toolCount, skills: skillCount }) : t('chat.toolsDetail', { tools: toolCount })}>
+          · {t('chat.toolCount', { n: totalTools })}
         </span>
       )}
       {role === 'assistant' && thinkCount > 0 && (
-        <span className={styles.tokens} title={`${thinkCount} 次思考`}>
-          · {thinkCount} 次思考
+        <span className={styles.tokens} title={t('chat.thinkCount', { n: thinkCount })}>
+          · {t('chat.thinkCount', { n: thinkCount })}
         </span>
       )}
       {role === 'user' && (
-        <button onClick={handleResend} className={styles.btn} title="重新发送" disabled={streaming}>
+        <button onClick={handleResend} className={styles.btn} title={t('chat.resend')} disabled={streaming}>
           <IconRotateCcw size={13} />
         </button>
       )}
       {role === 'assistant' && (
-        <button onClick={handleRetry} className={styles.btn} title="重新回复" disabled={streaming}>
+        <button onClick={handleRetry} className={styles.btn} title={t('chat.reReply')} disabled={streaming}>
           <IconRefresh size={13} />
         </button>
       )}
-      <button onClick={handleCopy} className={styles.btn} title="复制">
+      <button onClick={handleCopy} className={styles.btn} title={t('common.copy')}>
         <IconCopy size={13} />
       </button>
-      <button onClick={handleDelete} className={`${styles.btn} ${styles.btnDanger}`} title="删除">
+      <button onClick={handleDelete} className={`${styles.btn} ${styles.btnDanger}`} title={t('common.delete')}>
         <IconTrash size={13} />
       </button>
     </div>

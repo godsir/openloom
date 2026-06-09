@@ -6,6 +6,7 @@ import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
 import Select from './Select'
 import { IconSparkles } from '../../utils/icons'
+import { useLocale } from '../../i18n'
 import styles from './ConfigPanel.module.css'
 
 function cropImage(img: HTMLImageElement, crop: PixelCrop): Promise<string> {
@@ -28,6 +29,7 @@ function cropImage(img: HTMLImageElement, crop: PixelCrop): Promise<string> {
   return Promise.resolve(canvas.toDataURL('image/png', 0.85))
 }
 
+// System prompt — kept as-is (LLM-facing, not user UI)
 const DEFAULT_PERSONA = `你是 Loom，openLoom 的默认助手。你是一个本地优先的私人 AI 助理内核。
 
 核心能力：
@@ -40,6 +42,7 @@ const DEFAULT_PERSONA = `你是 Loom，openLoom 的默认助手。你是一个�
 你讲中文，风格简洁直接。优先使用本地工具和本地模型，注重用户隐私。回答前先确认用户环境。`
 
 export default function AgentConfigPanel() {
+  const { t } = useLocale()
   const agents = useStore((s) => s.agents)
   const models = useStore((s) => s.models)
   const [showForm, setShowForm] = useState(false)
@@ -127,7 +130,7 @@ export default function AgentConfigPanel() {
   const handleCreate = async () => {
     if (!nameDraft.trim()) return
     try {
-      await rpc('agent.config.create', buildPayload(), 'Agent 已创建')
+      await rpc('agent.config.create', buildPayload(), t('agent.created'))
       await refreshAgents()
       resetForm()
     } catch { /* toast already shown */ }
@@ -151,7 +154,7 @@ export default function AgentConfigPanel() {
     } catch (e: any) {
       useStore.getState().addToast({
         type: 'error',
-        message: `AI 生成失败: ${e.message || e}`,
+        message: t('agent.aiGenerateFailed', { message: e.message || e }),
       })
     } finally {
       setAiGenerating(false)
@@ -169,11 +172,11 @@ export default function AgentConfigPanel() {
       setModelDraft(config.model || modelDraft)
       setSystemPromptDraft(config.system_prompt_override || '')
       setAvatarDraft(config.avatar || avatarDraft)
-      useStore.getState().addToast({ type: 'success', message: 'AI 优化完成' })
+      useStore.getState().addToast({ type: 'success', message: t('agent.aiOptimized') })
     } catch (e: any) {
       useStore.getState().addToast({
         type: 'error',
-        message: `AI 优化失败: ${e.message || e}`,
+        message: t('agent.aiOptimizeFailed', { message: e.message || e }),
       })
     } finally {
       setAiOptimizing(false)
@@ -205,17 +208,17 @@ export default function AgentConfigPanel() {
   const handleUpdate = async () => {
     if (!editingId || !nameDraft.trim()) return
     try {
-      await rpc('agent.config.update', { ...buildPayload(), prev_name: editingId }, 'Agent 已更新')
+      await rpc('agent.config.update', { ...buildPayload(), prev_name: editingId }, t('agent.updated'))
       await refreshAgents()
       resetForm()
     } catch { /* toast already shown */ }
   }
 
   const handleDelete = async (name: string) => {
-    const ok = await useStore.getState().showConfirm('删除 Agent', `确定删除 Agent 配置 "${name}"？`, true)
+    const ok = await useStore.getState().showConfirm(t('agent.deleteConfirmTitle'), t('agent.deleteConfirmMsg', { name }), true)
     if (!ok) return
     try {
-      await rpc('agent.config.delete', { name }, 'Agent 已删除')
+      await rpc('agent.config.delete', { name }, t('agent.deleted'))
       await refreshAgents()
     } catch { /* toast already shown */ }
   }
@@ -239,14 +242,14 @@ export default function AgentConfigPanel() {
 
   const modelOptions = useMemo(
     () => [
-      { value: '', label: '使用默认模型' },
+      { value: '', label: t('agent.useDefaultModel') },
       ...models.map((m) => ({
         value: m.name,
         label: m.name,
         group: m.backend_label || m.backend,
       })),
     ],
-    [models],
+    [models, t],
   )
 
   const filteredAgents = agents.filter((a) => a.name)
@@ -256,12 +259,12 @@ export default function AgentConfigPanel() {
       <div className={styles.header}>
         {!isEditing && (
           <div className={styles.headerButtons}>
-            <button onClick={() => setShowForm(true)} className={styles.addBtn}>+ 新建</button>
+            <button onClick={() => setShowForm(true)} className={styles.addBtn}>{t('agent.new')}</button>
             <button
               onClick={() => { setShowAiForm(true); setShowForm(false) }}
               className={styles.aiCreateBtn}
             >
-              <IconSparkles size={12} /> AI 创建
+              <IconSparkles size={12} /> {t('agent.aiCreate')}
             </button>
           </div>
         )}
@@ -280,11 +283,11 @@ export default function AgentConfigPanel() {
               minWidth={40}
               minHeight={40}
             >
-              <img ref={imgRef} src={cropSrc} onLoad={onImageLoad} alt="裁剪预览" />
+              <img ref={imgRef} src={cropSrc} onLoad={onImageLoad} alt={t('agent.cropPreview')} />
             </ReactCrop>
             <div className={styles.cropActions}>
-              <button onClick={cancelCrop} className={styles.cancelBtn}>取消</button>
-              <button onClick={confirmCrop} className={styles.submitBtn}>确认裁剪</button>
+              <button onClick={cancelCrop} className={styles.cancelBtn}>{t('common.cancel')}</button>
+              <button onClick={confirmCrop} className={styles.submitBtn}>{t('agent.confirmCrop')}</button>
             </div>
           </div>
         </div>
@@ -294,25 +297,25 @@ export default function AgentConfigPanel() {
       {showAiForm && !aiGeneratedConfig && (
         <div className={styles.aiSection}>
           <p className={styles.aiHint}>
-            描述你想要创建的 Agent，AI 将自动生成名称、人格和配置。
+            {t('agent.aiHint')}
           </p>
           <textarea
             value={aiDescription}
             onChange={(e) => setAiDescription(e.target.value)}
-            placeholder="例如：一个擅长 Python 代码审查的助手，风格严谨，只使用文件读取和 shell 工具..."
+            placeholder={t('agent.aiPlaceholder')}
             className={styles.aiTextarea}
             disabled={aiGenerating}
           />
           <div className={styles.aiActions}>
             <button onClick={resetForm} className={styles.cancelBtn} disabled={aiGenerating}>
-              取消
+              {t('common.cancel')}
             </button>
             <button
               onClick={handleAiGenerate}
               disabled={!aiDescription.trim() || aiGenerating}
               className={styles.submitBtn}
             >
-              {aiGenerating ? '生成中...' : '生成配置'}
+              {aiGenerating ? t('agent.generating') : t('agent.generateConfig')}
             </button>
           </div>
         </div>
@@ -332,19 +335,19 @@ export default function AgentConfigPanel() {
         <div className={styles.form}>
           {aiGeneratedConfig && (
             <div className={styles.aiGeneratedBadge}>
-              <span><IconSparkles size={11} /> AI 生成</span>
+              <span><IconSparkles size={11} /> {t('agent.aiGenerated')}</span>
               <button onClick={handleRegenerate} className={styles.regenerateBtn}>
-                重新生成
+                {t('agent.regenerate')}
               </button>
             </div>
           )}
           <div className={styles.formRow}>
-            <label className={styles.formLabel}>头像</label>
+            <label className={styles.formLabel}>{t('agent.avatar')}</label>
             <div className={styles.avatarRow}>
               <div
                 className={styles.avatarPreview}
                 onClick={() => fileInputRef.current?.click()}
-                title="点击上传头像"
+                title={t('agent.clickToUpload')}
               >
                 {avatarDraft ? (
                   <img src={avatarDraft} alt="avatar" className={styles.avatarPreviewImg} />
@@ -353,22 +356,22 @@ export default function AgentConfigPanel() {
                 )}
               </div>
               {avatarDraft && (
-                <button onClick={removeAvatar} className={styles.avatarRemoveBtn}>移除</button>
+                <button onClick={removeAvatar} className={styles.avatarRemoveBtn}>{t('common.delete')}</button>
               )}
             </div>
           </div>
 
           <div className={styles.formRow}>
-            <label className={styles.formLabel}>名称 *</label>
+            <label className={styles.formLabel}>*</label>
             <input
               value={nameDraft}
               onChange={(e) => setNameDraft(e.target.value)}
-              placeholder="输入 Agent 名称"
+              placeholder={t('agent.namePlaceholder')}
               className={styles.formInput}
             />
           </div>
           <div className={styles.formRow}>
-            <label className={styles.formLabel}>模型</label>
+            <label className={styles.formLabel}>{t('agent.model')}</label>
             <Select
               value={modelDraft}
               options={modelOptions}
@@ -376,31 +379,31 @@ export default function AgentConfigPanel() {
             />
           </div>
           <div className={styles.formRow}>
-            <label className={styles.formLabel}>Persona</label>
+            <label className={styles.formLabel}>{t('agent.persona')}</label>
             <textarea
               value={personaDraft}
               onChange={(e) => setPersonaDraft(e.target.value)}
-              placeholder="描述 Agent 的核心身份"
+              placeholder={t('agent.personaPlaceholder')}
               className={styles.formTextarea}
             />
           </div>
           <div className={styles.formRow}>
-            <label className={styles.formLabel}>系统提示词</label>
+            <label className={styles.formLabel}>{t('agent.systemPrompt')}</label>
             <textarea
               value={systemPromptDraft}
               onChange={(e) => setSystemPromptDraft(e.target.value)}
-              placeholder="自定义系统指令。留空使用默认。"
+              placeholder={t('agent.systemPromptPlaceholder')}
               className={styles.formTextarea}
             />
           </div>
           <div className={styles.formActions}>
-            <button onClick={resetForm} className={styles.cancelBtn}>取消</button>
+            <button onClick={resetForm} className={styles.cancelBtn}>{t('common.cancel')}</button>
             <button
               onClick={handleCreate}
               disabled={!nameDraft.trim()}
               className={styles.submitBtn}
             >
-              创建
+              {t('common.create')}
             </button>
           </div>
         </div>
@@ -408,7 +411,7 @@ export default function AgentConfigPanel() {
 
       {/* Agent list */}
       {filteredAgents.length === 0 && !isEditing && (
-        <p className={styles.empty}>暂无 Agent 配置，点击"新建"添加</p>
+        <p className={styles.empty}>{t('agent.empty')}</p>
       )}
 
       {(() => {
@@ -418,12 +421,12 @@ export default function AgentConfigPanel() {
         const renderEditForm = () => (
           <div className={styles.inlineForm}>
             <div className={styles.formRow}>
-              <label className={styles.formLabel}>头像</label>
+              <label className={styles.formLabel}>{t('agent.avatar')}</label>
               <div className={styles.avatarRow}>
                 <div
                   className={styles.avatarPreview}
                   onClick={() => fileInputRef.current?.click()}
-                  title="点击上传头像"
+                  title={t('agent.clickToUpload')}
                 >
                   {avatarDraft ? (
                     <img src={avatarDraft} alt="avatar" className={styles.avatarPreviewImg} />
@@ -432,23 +435,23 @@ export default function AgentConfigPanel() {
                   )}
                 </div>
                 {avatarDraft && (
-                  <button onClick={removeAvatar} className={styles.avatarRemoveBtn}>移除</button>
+                  <button onClick={removeAvatar} className={styles.avatarRemoveBtn}>{t('common.delete')}</button>
                 )}
               </div>
             </div>
 
             <div className={styles.formRow}>
-              <label className={styles.formLabel}>名称 {isDefaultAgent ? '' : '*'}</label>
+              <label className={styles.formLabel}>{isDefaultAgent ? 'Loom' : '*'}</label>
               <input
                 value={isDefaultAgent ? 'Loom' : nameDraft}
                 onChange={(e) => setNameDraft(e.target.value)}
-                placeholder="输入 Agent 名称"
+                placeholder={t('agent.namePlaceholder')}
                 className={styles.formInput}
                 disabled={isDefaultAgent}
               />
             </div>
             <div className={styles.formRow}>
-              <label className={styles.formLabel}>模型</label>
+              <label className={styles.formLabel}>{t('agent.model')}</label>
               <Select
                 value={modelDraft}
                 options={modelOptions}
@@ -456,40 +459,40 @@ export default function AgentConfigPanel() {
               />
             </div>
             <div className={styles.formRow}>
-              <label className={styles.formLabel}>Persona{isDefaultAgent ? '（内置）' : ''}</label>
+              <label className={styles.formLabel}>{t('agent.persona')}{isDefaultAgent ? t('agent.personaBuiltin') : ''}</label>
               <textarea
                 value={personaDraft}
                 onChange={(e) => setPersonaDraft(e.target.value)}
-                placeholder="描述 Agent 的核心身份"
+                placeholder={t('agent.personaPlaceholder')}
                 className={styles.formTextarea}
                 disabled={isDefaultAgent}
               />
             </div>
             <div className={styles.formRow}>
-              <label className={styles.formLabel}>系统提示词{isDefaultAgent ? '（内置）' : ''}</label>
+              <label className={styles.formLabel}>{t('agent.systemPrompt')}{isDefaultAgent ? t('agent.systemPromptBuiltin') : ''}</label>
               <textarea
                 value={systemPromptDraft}
                 onChange={(e) => setSystemPromptDraft(e.target.value)}
-                placeholder="自定义系统指令。留空使用默认。"
+                placeholder={t('agent.systemPromptPlaceholder')}
                 className={styles.formTextarea}
                 disabled={isDefaultAgent}
               />
             </div>
             <div className={styles.formActions}>
-              <button onClick={resetForm} className={styles.cancelBtn}>取消</button>
+              <button onClick={resetForm} className={styles.cancelBtn}>{t('common.cancel')}</button>
               <button
                 onClick={handleAiOptimize}
                 disabled={aiOptimizing}
                 className={styles.aiCreateBtn}
               >
-                <IconSparkles size={12} /> {aiOptimizing ? '优化中...' : 'AI 优化'}
+                <IconSparkles size={12} /> {aiOptimizing ? t('agent.optimizing') : t('agent.aiOptimize')}
               </button>
               <button
                 onClick={handleUpdate}
                 disabled={!nameDraft.trim()}
                 className={styles.submitBtn}
               >
-                保存
+                {t('common.save')}
               </button>
             </div>
           </div>
@@ -512,8 +515,8 @@ export default function AgentConfigPanel() {
                   <div className={styles.agentCardHeader}>
                     <span className={styles.agentName}>{a.name === 'default' ? 'Loom' : a.name}</span>
                     <div className={styles.agentBadges}>
-                      {a.name === 'default' && <span className={styles.defaultBadge}>默认</span>}
-                      {a.system_prompt_override && <span className={styles.customBadge}>自定义提示词</span>}
+                      {a.name === 'default' && <span className={styles.defaultBadge}>{t('agent.default')}</span>}
+                      {a.system_prompt_override && <span className={styles.customBadge}>{t('agent.customPrompt')}</span>}
                       {a.model && <span className={styles.modelBadge}>{a.model}</span>}
                     </div>
                   </div>
@@ -524,9 +527,9 @@ export default function AgentConfigPanel() {
                   )}
                 </div>
                 <div className={styles.agentActions}>
-                  <button onClick={() => startEdit(a)} className={styles.editBtn}>编辑</button>
+                  <button onClick={() => startEdit(a)} className={styles.editBtn}>{t('common.edit')}</button>
                   {a.name !== 'default' && (
-                    <button onClick={() => handleDelete(a.name)} className={styles.deleteBtn}>删除</button>
+                    <button onClick={() => handleDelete(a.name)} className={styles.deleteBtn}>{t('common.delete')}</button>
                   )}
                 </div>
               </div>
@@ -540,7 +543,7 @@ export default function AgentConfigPanel() {
             {defaultAgent && renderItem(defaultAgent)}
             {userAgents.length > 0 && (
               <>
-                {defaultAgent && <div className={styles.sectionLabel}>用户创建</div>}
+                {defaultAgent && <div className={styles.sectionLabel}>{t('agent.userCreated')}</div>}
                 {userAgents.map(renderItem)}
               </>
             )}

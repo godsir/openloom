@@ -9,9 +9,11 @@ import { PlanPanel } from '../plan/PlanPanel'
 import { TodoPanel } from '../todo/TodoPanel'
 import { IconPanelLeftClose, IconPanelLeft, IconAlertCircle, IconWifiOff, IconRefresh, IconRotateCcw, IconSettings, IconEdit, IconMessageSquare, IconArrowLeft } from '../../utils/icons'
 import { connectWebSocket } from '../../services/websocket'
+import { useLocale } from '../../i18n'
 import styles from './AppShell.module.css'
 
 export default function AppShell({ children }: { children?: ReactNode }) {
+  const { t } = useLocale()
   const sidebarOpen = useStore(s => s.sidebarOpen)
   const toggleSidebar = useStore(s => s.toggleSidebar)
   const writeFileSidebarOpen = useStore(s => s.writeFileSidebarOpen)
@@ -73,7 +75,7 @@ export default function AppShell({ children }: { children?: ReactNode }) {
             <button
               onClick={() => setAppMode(prevModeRef.current)}
               className={styles.toggleBtn}
-              title="返回"
+              title={t('common.back')}
             >
               <IconArrowLeft size={16} />
             </button>
@@ -88,7 +90,7 @@ export default function AppShell({ children }: { children?: ReactNode }) {
                   }
                 }}
                 className={styles.toggleBtn}
-                title="⌘B 切换侧边栏"
+                title={`⌘B ${t('app.toggleSidebar')}`}
               >
                 {appMode === 'write'
                   ? (writeFileSidebarOpen ? <IconPanelLeftClose size={16} /> : <IconPanelLeft size={16} />)
@@ -101,7 +103,7 @@ export default function AppShell({ children }: { children?: ReactNode }) {
                   setAppMode('settings')
                 }}
                 className={styles.toggleBtn}
-                title="设置"
+                title={t('app.settings')}
               >
                 <IconSettings size={16} />
               </button>
@@ -111,9 +113,9 @@ export default function AppShell({ children }: { children?: ReactNode }) {
 
         <div className={styles.titlebarCenter}>
           {appMode === 'settings' ? (
-            <span className={styles.titlebarPageTitle}>设置</span>
+            <span className={styles.titlebarPageTitle}>{t('app.settings')}</span>
           ) : (
-            <div className={styles.modeToggle} data-active={appMode} role="radiogroup" aria-label="模式切换">
+            <div className={styles.modeToggle} data-active={appMode} role="radiogroup" aria-label={t('app.modeSwitch')}>
               <button
                 className={`${styles.modeToggleOption} ${appMode === 'chat' ? styles.modeToggleOptionActive : ''}`}
                 onClick={() => {
@@ -123,7 +125,7 @@ export default function AppShell({ children }: { children?: ReactNode }) {
                 }}
               >
                 <IconMessageSquare size={13} />
-                <span>对话</span>
+                <span>{t('app.chat')}</span>
               </button>
               <button
                 className={`${styles.modeToggleOption} ${appMode === 'write' ? styles.modeToggleOptionActive : ''}`}
@@ -134,7 +136,7 @@ export default function AppShell({ children }: { children?: ReactNode }) {
                 }}
               >
                 <IconEdit size={13} />
-                <span>写作</span>
+                <span>{t('app.write')}</span>
               </button>
             </div>
           )}
@@ -162,14 +164,14 @@ export default function AppShell({ children }: { children?: ReactNode }) {
           {engineState === 'stopped' && (
             <div className={styles.crashBanner}>
               <IconAlertCircle size={18} />
-              <span className={styles.crashMessage}>引擎已停止</span>
+              <span className={styles.crashMessage}>{t('app.engineStopped')}</span>
               <button
                 className={styles.crashBtn}
                 onClick={handleRestartEngine}
                 disabled={restarting}
               >
                 <IconRotateCcw size={14} className={restarting ? styles.spin : ''} />
-                <span>{restarting ? '重启中...' : '重启引擎'}</span>
+                <span>{restarting ? t('app.restarting') : t('app.restartEngine')}</span>
               </button>
             </div>
           )}
@@ -178,14 +180,14 @@ export default function AppShell({ children }: { children?: ReactNode }) {
           {engineState !== 'stopped' && wsState === 'disconnected' && (
             <div className={styles.crashBanner}>
               <IconWifiOff size={18} />
-              <span className={styles.crashMessage}>引擎连接断开</span>
+              <span className={styles.crashMessage}>{t('app.engineDisconnected')}</span>
               <button
                 className={styles.crashBtn}
                 onClick={handleReconnect}
                 disabled={reconnecting}
               >
                 <IconRefresh size={14} className={reconnecting ? styles.spin : ''} />
-                <span>{reconnecting ? '连接中...' : '重新连接'}</span>
+                <span>{reconnecting ? t('app.connecting') : t('app.reconnect')}</span>
               </button>
             </div>
           )}
@@ -195,7 +197,7 @@ export default function AppShell({ children }: { children?: ReactNode }) {
             <div className={styles.connectionStatus}>
               <span className={styles.connectionDot} data-state={wsState} />
               <span className={styles.connectionText}>
-                {wsState === 'connected' ? '已连接' : '重连中'}
+                {wsState === 'connected' ? t('app.connected') : t('app.reconnecting')}
               </span>
             </div>
           )}

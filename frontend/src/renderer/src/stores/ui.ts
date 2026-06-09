@@ -11,10 +11,10 @@ export interface CustomThemeColors {
 export type FontSizeId = 'small' | 'default' | 'large' | 'xlarge'
 
 export const FONT_SIZE_MAP: Record<FontSizeId, { label: string; px: number }> = {
-  small:   { label: '小 (13px)', px: 13 },
-  default: { label: '默认 (14px)', px: 14 },
-  large:   { label: '大 (15px)', px: 15 },
-  xlarge:  { label: '超大 (16px)', px: 16 },
+  small:   { label: '', px: 13 },
+  default: { label: '', px: 14 },
+  large:   { label: '', px: 15 },
+  xlarge:  { label: '', px: 16 },
 }
 
 export interface UiSlice {

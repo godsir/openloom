@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
+import { useLocale, t as _t } from '../../i18n'
 import styles from '../shared/SettingsModal.module.css'
 
 interface McpTool {
@@ -70,6 +71,7 @@ function parseCsv(text: string): string[] {
 /* ─── MCP Tab ─── */
 
 function McpTab() {
+  const { t } = useLocale()
   const [configs, setConfigs] = useState<McpServerConfig[]>([])
   const [healthByName, setHealthByName] = useState<Record<string, boolean | null>>({})
   const [toolsByServer, setToolsByServer] = useState<Record<string, McpTool[]>>({})
@@ -96,7 +98,7 @@ function McpTab() {
         list = cfgRes.value.configs ?? []
         setConfigs(list)
       } else {
-        setError(`加载 MCP 配置失败: ${cfgRes.reason?.message || cfgRes.reason}`)
+        setError(_t('mcp.loadConfigFailed', { reason: cfgRes.reason?.message || cfgRes.reason }))
       }
 
       // Health for currently connected servers.
@@ -127,7 +129,7 @@ function McpTab() {
         setToolsByServer(grouped)
       }
     } catch (e: any) {
-      setError(`加载失败: ${e.message || e}`)
+      setError(_t('mcp.loadFailed', { message: e.message || e }))
     } finally {
       setLoading(false)
     }
@@ -173,11 +175,11 @@ function McpTab() {
         await loomRpc('mcp.config.delete', { name: editingOriginalName }).catch(() => {})
       }
       await rpc('mcp.connect', { ...buildPayload(editing), persist: true },
-        `MCP "${editing.name}" 已连接`)
+        _t('mcp.connectedToast', { name: editing.name }))
       cancelEdit()
       await loadData()
     } catch (e: any) {
-      setError(`连接失败: ${e.message || e}`)
+      setError(_t('mcp.connectFailed', { message: e.message || e }))
     } finally {
       setBusy(false)
     }
@@ -189,11 +191,11 @@ function McpTab() {
       if (editingOriginalName && editingOriginalName !== editing.name.trim()) {
         await loomRpc('mcp.config.delete', { name: editingOriginalName }).catch(() => {})
       }
-      await rpc('mcp.config.save', buildPayload(editing), `MCP "${editing.name}" 已保存`)
+      await rpc('mcp.config.save', buildPayload(editing), _t('mcp.savedToast', { name: editing.name }))
       cancelEdit()
       await loadData()
     } catch (e: any) {
-      setError(`保存失败: ${e.message || e}`)
+      setError(_t('mcp.saveFailed', { message: e.message || e }))
     } finally {
       setBusy(false)
     }
@@ -202,25 +204,25 @@ function McpTab() {
     setBusy(true)
     try {
       await rpc('mcp.connect', { ...buildPayload(cfg), persist: true },
-        `MCP "${cfg.name}" 已连接`)
+        _t('mcp.connectedToast', { name: cfg.name }))
       await loadData()
     } catch (e: any) {
-      setError(`连接失败: ${e.message || e}`)
+      setError(_t('mcp.connectFailed', { message: e.message || e }))
     } finally {
       setBusy(false)
     }
   }
   const handleDisconnect = async (name: string) => {
     try {
-      await rpc('mcp.disconnect', { name }, `MCP "${name}" 已断开`)
+      await rpc('mcp.disconnect', { name }, _t('mcp.disconnectedToast', { name }))
       await loadData()
     } catch { /* toast already shown */ }
   }
   const handleDelete = async (name: string) => {
-    const ok = await useStore.getState().showConfirm('删除 MCP', `确认删除 MCP "${name}" 的配置？这会断开连接并移除保存的参数。`, true)
+    const ok = await useStore.getState().showConfirm(t('mcp.deleteConfirmTitle'), _t('mcp.deleteConfirmMessage', { name }), true)
     if (!ok) return
     try {
-      await rpc('mcp.config.delete', { name }, `已删除 "${name}"`)
+      await rpc('mcp.config.delete', { name }, _t('mcp.deletedToast', { name }))
       await loadData()
     } catch { /* toast already shown */ }
   }
@@ -235,21 +237,21 @@ function McpTab() {
     <>
       <div className={styles.aboutSection}>
         <div className={styles.sectionHeaderRow}>
-          <h4 className={styles.sectionSubTitle}>MCP 服务</h4>
+          <h4 className={styles.sectionSubTitle}>{t('mcp.title')}</h4>
           {!editing && (
             <button className={styles.mcpAddBtn} onClick={startCreate}>
-              + 添加服务器
+              {t('mcp.addServer')}
             </button>
           )}
         </div>
         {error && <p className={styles.toolsError}>{error}</p>}
         {loading ? (
-          <p className={styles.toolsEmpty}>加载中...</p>
+          <p className={styles.toolsEmpty}>{t('common.loading')}</p>
         ) : (
           <>
             <div className={styles.mcpServerList}>
               {configs.length === 0 ? (
-                <p className={styles.toolsEmpty}>暂无 MCP 服务器配置</p>
+                <p className={styles.toolsEmpty}>{t('mcp.noServerConfig')}</p>
               ) : (
                 configs.map((c) => {
                   const healthState = !c.connected
@@ -269,24 +271,24 @@ function McpTab() {
                           <span className={styles.mcpServerMeta}>
                             {c.transport.toUpperCase()}
                             {c.autostart && ' · autostart'}
-                            {!c.connected && ' · 已断开'}
+                            {!c.connected && ` · ${t('mcp.disconnected')}`}
                           </span>
                         </div>
                         <div className={styles.mcpServerActions}>
                           {c.connected ? (
                             <button className={styles.mcpDisconnectBtn} onClick={() => handleDisconnect(c.name)}>
-                              断开
+                              {t('mcp.disconnect')}
                             </button>
                           ) : (
                             <button className={styles.mcpDisconnectBtn} onClick={() => handleConnectExisting(c)}>
-                              连接
+                              {t('mcp.connect')}
                             </button>
                           )}
                           <button className={styles.mcpDisconnectBtn} onClick={() => startEdit(c)}>
-                            编辑
+                            {t('common.edit')}
                           </button>
                           <button className={styles.mcpDisconnectBtn} onClick={() => handleDelete(c.name)}>
-                            删除
+                            {t('common.delete')}
                           </button>
                         </div>
                       </div>
@@ -339,13 +341,14 @@ interface McpEditorProps {
 }
 
 function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, isEdit }: McpEditorProps) {
+  const { t } = useLocale()
   const v = value
   const set = (patch: Partial<McpServerConfig>) => onChange({ ...v, ...patch })
 
   return (
     <div className={styles.mcpAddForm}>
       <div className={styles.mcpFormRow}>
-        <label className={styles.mcpFormLabel}>名称</label>
+        <label className={styles.mcpFormLabel}>{t('mcp.name')}</label>
         <input
           className={styles.mcpFormInput}
           value={v.name}
@@ -354,7 +357,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
         />
       </div>
       <div className={styles.mcpFormRow}>
-        <label className={styles.mcpFormLabel}>传输类型</label>
+        <label className={styles.mcpFormLabel}>{t('mcp.transport')}</label>
         <div className={styles.mcpTransportToggle}>
           <button
             className={`${styles.mcpTransportBtn} ${v.transport === 'stdio' ? styles.mcpTransportActive : ''}`}
@@ -374,7 +377,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
       {v.transport === 'stdio' ? (
         <>
           <div className={styles.mcpFormRow}>
-            <label className={styles.mcpFormLabel}>命令</label>
+            <label className={styles.mcpFormLabel}>{t('mcp.command')}</label>
             <input
               className={styles.mcpFormInput}
               value={v.command}
@@ -383,7 +386,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
             />
           </div>
           <div className={styles.mcpFormRow}>
-            <label className={styles.mcpFormLabel}>参数（逗号或换行分隔）</label>
+            <label className={styles.mcpFormLabel}>{t('mcp.args')}</label>
             <textarea
               className={`${styles.mcpFormInput} ${styles.mcpFormTextarea}`}
               value={v.args.join('\n')}
@@ -392,7 +395,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
             />
           </div>
           <div className={styles.mcpFormRow}>
-            <label className={styles.mcpFormLabel}>工作目录（可选）</label>
+            <label className={styles.mcpFormLabel}>{t('mcp.workDir')}</label>
             <input
               className={styles.mcpFormInput}
               value={v.cwd ?? ''}
@@ -404,7 +407,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
       ) : (
         <>
           <div className={styles.mcpFormRow}>
-            <label className={styles.mcpFormLabel}>URL</label>
+            <label className={styles.mcpFormLabel}>{t('mcp.url')}</label>
             <input
               className={styles.mcpFormInput}
               value={v.url ?? ''}
@@ -413,7 +416,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
             />
           </div>
           <div className={styles.mcpFormRow}>
-            <label className={styles.mcpFormLabel}>请求头（每行 KEY=VALUE）</label>
+            <label className={styles.mcpFormLabel}>{t('mcp.headers')}</label>
             <textarea
               className={`${styles.mcpFormInput} ${styles.mcpFormTextarea} ${styles.mcpFormTextareaLg}`}
               value={kvToText(v.headers)}
@@ -425,7 +428,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
       )}
 
       <div className={styles.mcpFormRow}>
-        <label className={styles.mcpFormLabel}>环境变量（每行 KEY=VALUE，可选）</label>
+        <label className={styles.mcpFormLabel}>{t('mcp.env')}</label>
         <textarea
           className={`${styles.mcpFormInput} ${styles.mcpFormTextarea}`}
           value={kvToText(v.env)}
@@ -436,7 +439,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
 
       <div className={`${styles.mcpFormRow} ${styles.mcpFormRowHorizontal}`}>
         <div className={styles.mcpFormFlexCell}>
-          <label className={styles.mcpFormLabel}>启动超时(秒)</label>
+          <label className={styles.mcpFormLabel}>{t('mcp.startupTimeout')}</label>
           <input
             className={styles.mcpFormInput}
             type="number"
@@ -446,7 +449,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
           />
         </div>
         <div className={styles.mcpFormFlexCell}>
-          <label className={styles.mcpFormLabel}>工具超时(秒)</label>
+          <label className={styles.mcpFormLabel}>{t('mcp.toolTimeout')}</label>
           <input
             className={styles.mcpFormInput}
             type="number"
@@ -458,7 +461,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
       </div>
 
       <div className={styles.mcpFormRow}>
-        <label className={styles.mcpFormLabel}>仅启用工具（逗号或换行，留空=全部）</label>
+        <label className={styles.mcpFormLabel}>{t('mcp.enabledTools')}</label>
         <textarea
           className={`${styles.mcpFormInput} ${styles.mcpFormTextarea} ${styles.mcpFormTextareaSm}`}
           value={(v.enabled_tools ?? []).join('\n')}
@@ -470,7 +473,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
         />
       </div>
       <div className={styles.mcpFormRow}>
-        <label className={styles.mcpFormLabel}>禁用工具（逗号或换行）</label>
+        <label className={styles.mcpFormLabel}>{t('mcp.disabledTools')}</label>
         <textarea
           className={`${styles.mcpFormInput} ${styles.mcpFormTextarea} ${styles.mcpFormTextareaSm}`}
           value={(v.disabled_tools ?? []).join('\n')}
@@ -490,25 +493,25 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
           onChange={(e) => set({ autostart: e.target.checked })}
         />
         <label htmlFor="mcp-autostart" className={`${styles.mcpFormLabel} ${styles.mcpFormLabelClickable}`}>
-          引擎启动时自动重连
+          {t('mcp.autoReconnect')}
         </label>
       </div>
 
       <div className={styles.mcpFormActions}>
-        <button className={styles.mcpCancelBtn} onClick={onCancel}>取消</button>
+        <button className={styles.mcpCancelBtn} onClick={onCancel}>{t('common.cancel')}</button>
         <button
           className={styles.mcpCancelBtn}
           onClick={onSave}
           disabled={busy || !v.name.trim()}
         >
-          {busy ? '保存中...' : '仅保存'}
+          {busy ? t('mcp.saving') : t('mcp.saveOnly')}
         </button>
         <button
           className={styles.mcpConnectBtn}
           onClick={onSaveAndConnect}
           disabled={busy || !v.name.trim()}
         >
-          {busy ? '连接中...' : isEdit ? '保存并重连' : '保存并连接'}
+          {busy ? t('mcp.connecting') : isEdit ? t('mcp.saveAndReconnect') : t('mcp.saveAndConnect')}
         </button>
       </div>
     </div>
@@ -518,6 +521,7 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
 /* ─── LSP Tab ─── */
 
 function LspTab() {
+  const { t } = useLocale()
   const [servers, setServers] = useState<LspServerInfo[]>([])
   const [supported, setSupported] = useState<{ language: string; command: string }[]>([])
   const [loading, setLoading] = useState(true)
@@ -539,7 +543,7 @@ function LspTab() {
       if (serversRes.status === 'fulfilled') setServers(serversRes.value.servers ?? [])
       if (langRes.status === 'fulfilled') setSupported(langRes.value.languages ?? [])
     } catch (e: any) {
-      setError(`加载失败: ${e.message || e}`)
+      setError(_t('mcp.loadFailed', { message: e.message || e }))
     } finally {
       setLoading(false)
     }
@@ -550,20 +554,20 @@ function LspTab() {
   const handleShutdown = async (language: string) => {
     try {
       await loomRpc('lsp.shutdown', { language })
-      useStore.getState().addToast({ type: 'success', message: `LSP "${language}" 已停止` })
+      useStore.getState().addToast({ type: 'success', message: _t('lsp.serverStopped', { language }) })
       await loadData()
     } catch (e: any) {
-      setError(`停止失败: ${e.message || e}`)
+      setError(_t('lsp.stopFailed', { message: e.message || e }))
     }
   }
 
   const handleShutdownAll = async () => {
     try {
       await loomRpc('lsp.shutdown_all', {})
-      useStore.getState().addToast({ type: 'success', message: '所有 LSP 服务已停止' })
+      useStore.getState().addToast({ type: 'success', message: t('lsp.allStopped') })
       await loadData()
     } catch (e: any) {
-      setError(`停止失败: ${e.message || e}`)
+      setError(_t('lsp.stopFailed', { message: e.message || e }))
     }
   }
 
@@ -573,14 +577,14 @@ function LspTab() {
     try {
       const args = formArgs.trim() ? formArgs.trim().split(/\s+/) : []
       await loomRpc('lsp.start', { language: formLang.trim(), command: formCmd.trim(), args })
-      useStore.getState().addToast({ type: 'success', message: `LSP "${formLang.trim()}" 已启动` })
+      useStore.getState().addToast({ type: 'success', message: _t('lsp.serverStopped', { language: formLang.trim() }) })
       setShowForm(false)
       setFormLang('')
       setFormCmd('')
       setFormArgs('')
       await loadData()
     } catch (e: any) {
-      setError(`启动失败: ${e.message || e}`)
+      setError(_t('lsp.startFailed', { message: e.message || e }))
     } finally {
       setStarting(false)
     }
@@ -600,22 +604,22 @@ function LspTab() {
     <>
       <div className={styles.aboutSection}>
         <div className={styles.sectionHeaderRow}>
-          <h4 className={styles.sectionSubTitle}>LSP 服务</h4>
+          <h4 className={styles.sectionSubTitle}>{t('lsp.title')}</h4>
           {!showForm && (
             <button className={styles.mcpAddBtn} onClick={() => setShowForm(true)}>
-              + 启动语言服务器
+              {t('lsp.startServer')}
             </button>
           )}
         </div>
         {error && <p className={styles.toolsError}>{error}</p>}
         {loading ? (
-          <p className={styles.toolsEmpty}>加载中...</p>
+          <p className={styles.toolsEmpty}>{t('common.loading')}</p>
         ) : (
           <>
             {/* Active servers */}
             <div className={styles.lspServerList}>
               {servers.length === 0 ? (
-                <p className={styles.toolsEmpty}>暂无活跃的语言服务器</p>
+                <p className={styles.toolsEmpty}>{t('lsp.noActiveServers')}</p>
               ) : (
                 <>
                   {servers.map((srv, i) => {
@@ -627,13 +631,13 @@ function LspTab() {
                           className={styles.lspStopBtn}
                           onClick={() => handleShutdown(srv.language ?? srv.name ?? '')}
                         >
-                          停止
+                          {t('lsp.stop')}
                         </button>
                       </div>
                     )
                   })}
                   <button className={styles.lspStopAllBtn} onClick={handleShutdownAll}>
-                    全部停止
+                    {t('lsp.stopAll')}
                   </button>
                 </>
               )}
@@ -643,40 +647,40 @@ function LspTab() {
             {showForm && (
               <div className={styles.mcpAddForm}>
                 <div className={styles.mcpFormRow}>
-                  <label className={styles.mcpFormLabel}>语言 ID</label>
+                  <label className={styles.mcpFormLabel}>{t('lsp.languageId')}</label>
                   <input
                     value={formLang}
                     onChange={e => setFormLang(e.target.value)}
-                    placeholder="如 rust, python, go"
+                    placeholder={'rust, python, go'}
                     className={styles.mcpFormInput}
                   />
                 </div>
                 <div className={styles.mcpFormRow}>
-                  <label className={styles.mcpFormLabel}>命令</label>
+                  <label className={styles.mcpFormLabel}>{t('lsp.command')}</label>
                   <input
                     value={formCmd}
                     onChange={e => setFormCmd(e.target.value)}
-                    placeholder="如 rust-analyzer, pylsp"
+                    placeholder={'rust-analyzer, pylsp'}
                     className={styles.mcpFormInput}
                   />
                 </div>
                 <div className={styles.mcpFormRow}>
-                  <label className={styles.mcpFormLabel}>参数</label>
+                  <label className={styles.mcpFormLabel}>{t('lsp.args')}</label>
                   <input
                     value={formArgs}
                     onChange={e => setFormArgs(e.target.value)}
-                    placeholder="空格分隔，如 --stdio"
+                    placeholder={t('lsp.args')}
                     className={styles.mcpFormInput}
                   />
                 </div>
                 <div className={styles.mcpFormActions}>
-                  <button className={styles.mcpCancelBtn} onClick={() => setShowForm(false)}>取消</button>
+                  <button className={styles.mcpCancelBtn} onClick={() => setShowForm(false)}>{t('common.cancel')}</button>
                   <button
                     className={styles.mcpConnectBtn}
                     onClick={handleStart}
                     disabled={starting || !formLang.trim() || !formCmd.trim()}
                   >
-                    {starting ? '启动中...' : '启动'}
+                    {starting ? t('lsp.starting') : t('lsp.start')}
                   </button>
                 </div>
               </div>
@@ -685,7 +689,7 @@ function LspTab() {
             {/* Supported languages as quick-start pills */}
             {supported.length > 0 && (
               <div className={styles.lspQuickStart}>
-                <div className={styles.toolsSectionLabel}>快速启动（点击预填）</div>
+                <div className={styles.toolsSectionLabel}>{t('lsp.quickStart')}</div>
                 <div className={styles.toolsBadgeGrid}>
                   {supported.map(s => (
                     <button
@@ -702,7 +706,7 @@ function LspTab() {
             )}
 
             <p className={styles.lspInfoText}>
-              LSP 服务器也可按需自动启动 — Agent 打开文件时自动激活对应语言服务器。
+              {t('lsp.infoText')}
             </p>
           </>
         )}

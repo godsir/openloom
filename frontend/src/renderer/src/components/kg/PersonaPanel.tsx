@@ -1,30 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import type { RichPersona, TechProficiency, Preference, Goal, Approach, Verbosity, Formality } from '../../types/bindings'
 import styles from './PersonaPanel.module.css'
 
 // ── helpers ──
-
-const PROFICIENCY_LABELS: Record<string, string> = {
-  Beginner: '初学',
-  Intermediate: '熟练',
-  Advanced: '精通',
-  Expert: '专家',
-}
-
-const PROFICIENCY_COLORS: Record<string, string> = {
-  Beginner: 'var(--badge-gray)',
-  Intermediate: 'var(--badge-blue)',
-  Advanced: 'var(--badge-green)',
-  Expert: 'var(--badge-gold)',
-}
-
-const PROFICIENCY_BG: Record<string, string> = {
-  Beginner: 'var(--badge-gray-bg)',
-  Intermediate: 'var(--badge-blue-bg)',
-  Advanced: 'var(--badge-green-bg)',
-  Expert: 'var(--badge-gold-bg)',
-}
 
 const APPROACH_ICONS: Record<Approach, string> = {
   CodeFirst: '\u{2328}',
@@ -32,46 +12,10 @@ const APPROACH_ICONS: Record<Approach, string> = {
   Conversational: '\u{27F3}',
 }
 
-const APPROACH_LABELS: Record<Approach, string> = {
-  CodeFirst: '代码先行',
-  PlanFirst: '计划先行',
-  Conversational: '对话协作',
-}
-
-const VERBOSITY_LABELS: Record<Verbosity, string> = {
-  Concise: '简洁',
-  Balanced: '均衡',
-  Detailed: '详细',
-}
-
 const VERBOSITY_BARS: Record<Verbosity, number> = {
   Concise: 1,
   Balanced: 2,
   Detailed: 3,
-}
-
-const FORMALITY_LABELS: Record<Formality, string> = {
-  Casual: '随意',
-  Neutral: '中性',
-  Formal: '正式',
-}
-
-const FORMALITY_COLORS: Record<Formality, string> = {
-  Casual: 'var(--badge-green)',
-  Neutral: 'var(--badge-blue)',
-  Formal: 'var(--badge-gold)',
-}
-
-const GOAL_STATUS_LABELS: Record<string, string> = {
-  Active: '进行中',
-  Achieved: '已完成',
-  Abandoned: '已放弃',
-}
-
-const GOAL_STATUS_COLORS: Record<string, string> = {
-  Active: 'var(--badge-green)',
-  Achieved: 'var(--badge-gray)',
-  Abandoned: 'var(--badge-red)',
 }
 
 const LANG_FLAGS: Record<string, string> = {
@@ -100,31 +44,46 @@ function formatTimestamp(iso: string): string {
 }
 
 function langFlag(lang: string): string {
-  // Use text-based locale codes instead of emoji flags
   const codes: Record<string, string> = { 'zh-CN': '中', 'zh-TW': '繁', 'en-US': 'EN', 'en-GB': 'EN', 'ja-JP': '日', 'ko-KR': '한' }
   return codes[lang] ?? lang.slice(0, 2).toUpperCase()
 }
 
 // ── Sub-components ──
 
-function TechStackSection({ techs }: { techs: TechProficiency[] }) {
+function TechStackSection({ techs, t }: {
+  techs: TechProficiency[]
+  t: (key: string, vars?: Record<string, string | number>) => string
+}) {
+  const PROFICIENCY_COLORS: Record<string, string> = {
+    Beginner: 'var(--badge-gray)',
+    Intermediate: 'var(--badge-blue)',
+    Advanced: 'var(--badge-green)',
+    Expert: 'var(--badge-gold)',
+  }
+  const PROFICIENCY_BG: Record<string, string> = {
+    Beginner: 'var(--badge-gray-bg)',
+    Intermediate: 'var(--badge-blue-bg)',
+    Advanced: 'var(--badge-green-bg)',
+    Expert: 'var(--badge-gold-bg)',
+  }
+
   return (
     <div className={styles.section}>
-      <h3 className={styles.sectionTitle}>技术栈</h3>
+      <h3 className={styles.sectionTitle}>{t('kg.persona.techStack')}</h3>
       <div className={styles.badgeCloud}>
-        {techs.map((t) => (
+        {techs.map((tech) => (
           <span
-            key={t.name}
+            key={tech.name}
             className={styles.proficiencyBadge}
             style={{
-              color: PROFICIENCY_COLORS[t.level] ?? PROFICIENCY_COLORS.Beginner,
-              background: PROFICIENCY_BG[t.level] ?? PROFICIENCY_BG.Beginner,
-              borderColor: PROFICIENCY_COLORS[t.level] ?? PROFICIENCY_COLORS.Beginner,
+              color: PROFICIENCY_COLORS[tech.level] ?? PROFICIENCY_COLORS.Beginner,
+              background: PROFICIENCY_BG[tech.level] ?? PROFICIENCY_BG.Beginner,
+              borderColor: PROFICIENCY_COLORS[tech.level] ?? PROFICIENCY_COLORS.Beginner,
             }}
-            title={`${t.name} — ${PROFICIENCY_LABELS[t.level] ?? t.level} (证据: ${t.evidence_count}, 确信: ${(t.confidence * 100).toFixed(0)}%)`}
+            title={`${tech.name} — ${t(`kg.persona.proficiency.${tech.level}`) ?? tech.level} (${t('kg.confidence')}: ${(tech.confidence * 100).toFixed(0)}%)`}
           >
-            {t.name}
-            <span className={styles.badgeLevel}>{PROFICIENCY_LABELS[t.level] ?? t.level}</span>
+            {tech.name}
+            <span className={styles.badgeLevel}>{t(`kg.persona.proficiency.${tech.level}`) ?? tech.level}</span>
           </span>
         ))}
       </div>
@@ -132,12 +91,15 @@ function TechStackSection({ techs }: { techs: TechProficiency[] }) {
   )
 }
 
-function PreferencesSection({ prefs }: { prefs: Preference[] }) {
+function PreferencesSection({ prefs, t }: {
+  prefs: Preference[]
+  t: (key: string, vars?: Record<string, string | number>) => string
+}) {
   return (
     <div className={styles.section}>
-      <h3 className={styles.sectionTitle}>偏好设置</h3>
+      <h3 className={styles.sectionTitle}>{t('kg.persona.preferences')}</h3>
       {prefs.length === 0 ? (
-        <div className={styles.miniEmpty}>暂无偏好数据</div>
+        <div className={styles.miniEmpty}>{t('kg.persona.noPrefs')}</div>
       ) : (
         <div className={styles.prefList}>
           {prefs.map((p, i) => (
@@ -163,12 +125,21 @@ function PreferencesSection({ prefs }: { prefs: Preference[] }) {
   )
 }
 
-function GoalsSection({ goals }: { goals: Goal[] }) {
+function GoalsSection({ goals, t }: {
+  goals: Goal[]
+  t: (key: string, vars?: Record<string, string | number>) => string
+}) {
+  const GOAL_STATUS_COLORS: Record<string, string> = {
+    Active: 'var(--badge-green)',
+    Achieved: 'var(--badge-gray)',
+    Abandoned: 'var(--badge-red)',
+  }
+
   return (
     <div className={styles.section}>
-      <h3 className={styles.sectionTitle}>目标 & 意图</h3>
+      <h3 className={styles.sectionTitle}>{t('kg.persona.goals')}</h3>
       {goals.length === 0 ? (
-        <div className={styles.miniEmpty}>暂无目标数据</div>
+        <div className={styles.miniEmpty}>{t('kg.persona.noGoals')}</div>
       ) : (
         <div className={styles.goalList}>
           {goals.map((g, i) => (
@@ -181,10 +152,10 @@ function GoalsSection({ goals }: { goals: Goal[] }) {
                   borderColor: `${GOAL_STATUS_COLORS[g.status] ?? GOAL_STATUS_COLORS.Active}40`,
                 }}
               >
-                {GOAL_STATUS_LABELS[g.status] ?? g.status}
+                {t(`kg.persona.goalStatus.${g.status}`) ?? g.status}
               </span>
               <span className={styles.goalDesc}>{g.description}</span>
-              <span className={styles.goalPriority} title={`优先级 ${g.priority}/10`}>
+              <span className={styles.goalPriority} title={`${t('kg.persona.goalPriority')}: ${g.priority}/10`}>
                 {'★'.repeat(Math.min(g.priority, 5))}
                 <span className={styles.goalPriorityNum}>{g.priority}</span>
               </span>
@@ -196,18 +167,22 @@ function GoalsSection({ goals }: { goals: Goal[] }) {
   )
 }
 
-function WorkingStyleSection({ approach, verbosity }: { approach: Approach; verbosity: Verbosity }) {
+function WorkingStyleSection({ approach, verbosity, t }: {
+  approach: Approach
+  verbosity: Verbosity
+  t: (key: string, vars?: Record<string, string | number>) => string
+}) {
   const totalBars = 3
   const filled = VERBOSITY_BARS[verbosity] ?? 2
   return (
     <div className={styles.section}>
-      <h3 className={styles.sectionTitle}>工作风格</h3>
+      <h3 className={styles.sectionTitle}>{t('kg.persona.workingStyle')}</h3>
       <div className={styles.styleRow}>
         <div className={styles.styleItem}>
           <span className={styles.styleIcon}>{APPROACH_ICONS[approach] ?? '❓'}</span>
           <div className={styles.styleInfo}>
-            <span className={styles.styleLabel}>协作方式</span>
-            <span className={styles.styleValue}>{APPROACH_LABELS[approach] ?? approach}</span>
+            <span className={styles.styleLabel}>{t('kg.persona.collabStyle')}</span>
+            <span className={styles.styleValue}>{t(`kg.persona.approach.${approach}`) ?? approach}</span>
           </div>
         </div>
         <div className={styles.styleDivider} />
@@ -221,8 +196,8 @@ function WorkingStyleSection({ approach, verbosity }: { approach: Approach; verb
             ))}
           </div>
           <div className={styles.styleInfo}>
-            <span className={styles.styleLabel}>回复详细度</span>
-            <span className={styles.styleValue}>{VERBOSITY_LABELS[verbosity] ?? verbosity}</span>
+            <span className={styles.styleLabel}>{t('kg.persona.replyDetail')}</span>
+            <span className={styles.styleValue}>{t(`kg.persona.verbosity.${verbosity}`) ?? verbosity}</span>
           </div>
         </div>
       </div>
@@ -230,14 +205,24 @@ function WorkingStyleSection({ approach, verbosity }: { approach: Approach; verb
   )
 }
 
-function CommunicationSection({ language, formality }: { language: string; formality: Formality }) {
+function CommunicationSection({ language, formality, t }: {
+  language: string
+  formality: Formality
+  t: (key: string, vars?: Record<string, string | number>) => string
+}) {
+  const FORMALITY_COLORS: Record<Formality, string> = {
+    Casual: 'var(--badge-green)',
+    Neutral: 'var(--badge-blue)',
+    Formal: 'var(--badge-gold)',
+  }
+
   return (
     <div className={styles.section}>
-      <h3 className={styles.sectionTitle}>沟通风格</h3>
+      <h3 className={styles.sectionTitle}>{t('kg.persona.communication')}</h3>
       <div className={styles.commRow}>
         <div className={styles.commItem}>
           <span className={styles.langBadge}>{langFlag(language)}</span>
-          <span className={styles.commLabel}>语言</span>
+          <span className={styles.commLabel}>{t('kg.persona.language')}</span>
           <span className={styles.commValue}>{language}</span>
         </div>
         <div className={styles.styleDivider} />
@@ -250,9 +235,9 @@ function CommunicationSection({ language, formality }: { language: string; forma
               borderColor: `${FORMALITY_COLORS[formality] ?? FORMALITY_COLORS.Neutral}40`,
             }}
           >
-            {FORMALITY_LABELS[formality] ?? formality}
+            {t(`kg.persona.formality.${formality}`) ?? formality}
           </span>
-          <span className={styles.commLabel}>正式度</span>
+          <span className={styles.commLabel}>{t('kg.persona.formality')}</span>
           <span className={styles.commValue}>{formality}</span>
         </div>
       </div>
@@ -260,39 +245,20 @@ function CommunicationSection({ language, formality }: { language: string; forma
   )
 }
 
-function ExpertiseSection({ areas }: { areas: string[] }) {
+function ExpertiseSection({ areas, t }: {
+  areas: string[]
+  t: (key: string, vars?: Record<string, string | number>) => string
+}) {
   if (areas.length === 0) return null
 
-  // Common expertise area Chinese translations
-  const areaCN: Record<string, string> = {
-    'frontend': '前端开发', 'backend': '后端开发', 'fullstack': '全栈开发',
-    'devops': '运维部署', 'data-engineering': '数据工程', 'data-science': '数据科学',
-    'machine-learning': '机器学习', 'deep-learning': '深度学习', 'ai': '人工智能',
-    'nlp': '自然语言处理', 'computer-vision': '计算机视觉',
-    'rust': 'Rust', 'python': 'Python', 'typescript': 'TypeScript',
-    'javascript': 'JavaScript', 'golang': 'Go', 'java': 'Java',
-    'cpp': 'C++', 'csharp': 'C#', 'swift': 'Swift', 'kotlin': 'Kotlin',
-    'react': 'React', 'vue': 'Vue', 'angular': 'Angular', 'svelte': 'Svelte',
-    'nodejs': 'Node.js', 'deno': 'Deno',
-    'sql': 'SQL', 'nosql': 'NoSQL', 'postgresql': 'PostgreSQL', 'mongodb': 'MongoDB',
-    'redis': 'Redis', 'docker': 'Docker', 'kubernetes': 'K8s',
-    'linux': 'Linux', 'windows': 'Windows', 'macos': 'macOS',
-    'git': 'Git', 'github': 'GitHub', 'ci-cd': 'CI/CD',
-    'testing': '测试', 'security': '安全', 'performance': '性能优化',
-    'api-design': 'API设计', 'system-design': '系统设计', 'architecture': '架构设计',
-    'web': 'Web开发', 'mobile': '移动开发', 'embedded': '嵌入式',
-    'blockchain': '区块链', 'cloud': '云计算', 'iot': '物联网',
-    'open-source': '开源', 'agile': '敏捷开发',
-  }
-
   function translate(area: string): string {
-    return areaCN[area.toLowerCase()] ?? area
+    return t(`kg.persona.expertise.${area.toLowerCase()}`) ?? area
   }
   // Weight: larger font for items appearing earlier (which have higher count)
   const sizes = ['s', 'm', 'l', 'xl']
   return (
     <div className={styles.section}>
-      <h3 className={styles.sectionTitle}>专业领域</h3>
+      <h3 className={styles.sectionTitle}>{t('kg.persona.expertise')}</h3>
       <div className={styles.tagCloud}>
         {areas.map((area, i) => {
           const size = sizes[Math.min(i, sizes.length - 1)]
@@ -307,11 +273,14 @@ function ExpertiseSection({ areas }: { areas: string[] }) {
   )
 }
 
-function BehaviouralSection({ patterns }: { patterns: string[] }) {
+function BehaviouralSection({ patterns, t }: {
+  patterns: string[]
+  t: (key: string, vars?: Record<string, string | number>) => string
+}) {
   if (patterns.length === 0) return null
   return (
     <div className={styles.section}>
-      <h3 className={styles.sectionTitle}>行为模式</h3>
+      <h3 className={styles.sectionTitle}>{t('kg.persona.behavioralPatterns')}</h3>
       <ul className={styles.patternList}>
         {patterns.map((p) => (
           <li key={p} className={styles.patternItem}>{p}</li>
@@ -321,11 +290,11 @@ function BehaviouralSection({ patterns }: { patterns: string[] }) {
   )
 }
 
-function Spinner() {
+function Spinner({ t }: { t: (key: string) => string }) {
   return (
     <div className={styles.spinnerWrap}>
       <div className={styles.spinner} />
-      <span className={styles.spinnerLabel}>加载中...</span>
+      <span className={styles.spinnerLabel}>{t('common.loading')}</span>
     </div>
   )
 }
@@ -339,10 +308,12 @@ interface PersonaPanelProps {
 }
 
 export default function PersonaPanel({ persona, onRefresh, loading }: PersonaPanelProps) {
+  const { t } = useLocale()
+
   if (loading) {
     return (
       <div className={styles.panel}>
-        <Spinner />
+        <Spinner t={t} />
       </div>
     )
   }
@@ -357,8 +328,8 @@ export default function PersonaPanel({ persona, onRefresh, loading }: PersonaPan
               <circle cx="12" cy="7" r="4" />
             </svg>
           </div>
-          <p className={styles.emptyTitle}>暂无用户画像数据</p>
-          <p className={styles.emptyHint}>保持与 AI 对话，系统会自动构建你的个人画像</p>
+          <p className={styles.emptyTitle}>{t('kg.persona.noData')}</p>
+          <p className={styles.emptyHint}>{t('kg.persona.noDataHint')}</p>
         </div>
       </div>
     )
@@ -385,8 +356,8 @@ export default function PersonaPanel({ persona, onRefresh, loading }: PersonaPan
               <circle cx="12" cy="7" r="4" />
             </svg>
           </div>
-          <p className={styles.emptyTitle}>暂无用户画像数据</p>
-          <p className={styles.emptyHint}>继续对话，系统将自动构建你的用户画像</p>
+          <p className={styles.emptyTitle}>{t('kg.persona.noData')}</p>
+          <p className={styles.emptyHint}>{t('kg.persona.noDataHint2')}</p>
         </div>
       </div>
     )
@@ -395,29 +366,31 @@ export default function PersonaPanel({ persona, onRefresh, loading }: PersonaPan
   return (
     <div className={styles.panel}>
       <div className={styles.header}>
-        <h2 className={styles.title}>用户画像</h2>
-        <button className={styles.refreshBtn} onClick={onRefresh} title="刷新画像数据">
-          {'↻'} 刷新
+        <h2 className={styles.title}>{t('kg.persona.title')}</h2>
+        <button className={styles.refreshBtn} onClick={onRefresh} title={t('kg.persona.refreshTooltip')}>
+          {'↻'} {t('kg.persona.refresh')}
         </button>
       </div>
 
-      <TechStackSection techs={persona.tech_stack} />
-      <PreferencesSection prefs={persona.preferences} />
-      <GoalsSection goals={persona.goals} />
+      <TechStackSection techs={persona.tech_stack} t={t} />
+      <PreferencesSection prefs={persona.preferences} t={t} />
+      <GoalsSection goals={persona.goals} t={t} />
       <WorkingStyleSection
         approach={persona.working_style.approach}
         verbosity={persona.working_style.verbosity}
+        t={t}
       />
       <CommunicationSection
         language={persona.communication.language}
         formality={persona.communication.formality}
+        t={t}
       />
-      <ExpertiseSection areas={persona.expertise_areas} />
-      <BehaviouralSection patterns={persona.behavioural_patterns} />
+      <ExpertiseSection areas={persona.expertise_areas} t={t} />
+      <BehaviouralSection patterns={persona.behavioural_patterns} t={t} />
 
       <div className={styles.footer}>
         <span className={styles.timestamp}>
-          最后更新: {formatTimestamp(persona.last_updated)}
+          {t('kg.persona.lastUpdated', { time: formatTimestamp(persona.last_updated) })}
         </span>
       </div>
     </div>
@@ -427,6 +400,7 @@ export default function PersonaPanel({ persona, onRefresh, loading }: PersonaPan
 // ── Connected wrapper used by parent tabs ──
 
 export function PersonaPanelConnected() {
+  const { t } = useLocale()
   const personaData = useStore(s => s.personaData)
   const kgLoadPersona = useStore(s => s.kgLoadPersona)
   const [loading, setLoading] = useState(false)
@@ -438,11 +412,11 @@ export function PersonaPanelConnected() {
     try {
       await kgLoadPersona()
     } catch (e: any) {
-      setError(e?.message ?? '加载失败')
+      setError(e?.message ?? t('kg.persona.loadFailed'))
     } finally {
       setLoading(false)
     }
-  }, [kgLoadPersona])
+  }, [kgLoadPersona, t])
 
   // Load on mount
   useEffect(() => {

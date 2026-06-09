@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import Select from './Select'
 import styles from './VisionConfig.module.css'
 
@@ -32,6 +33,7 @@ function sortModels(models: ModelListItem[]): ModelListItem[] {
 }
 
 export default function VisionConfigSection() {
+  const { t } = useLocale()
   const [enabled, setEnabled] = useState(false)
   const [visionModel, setVisionModel] = useState('')
   // Subscribe to the global model list kept in sync by ModelConfigPanel
@@ -50,7 +52,7 @@ export default function VisionConfigSection() {
     const next = !enabled
     setEnabled(next)
     try {
-      await rpc('config.set_vision', { enabled: next, model: visionModel || null }, next ? '视觉辅助已启用' : '视觉辅助已关闭')
+      await rpc('config.set_vision', { enabled: next, model: visionModel || null }, next ? t('vision.enabled') : t('vision.disabled'))
     } catch {
       setEnabled(!next)
     }
@@ -59,7 +61,7 @@ export default function VisionConfigSection() {
   const handleModelChange = async (model: string) => {
     setVisionModel(model)
     try {
-      await rpc('config.set_vision', { enabled, model: model || null }, '视觉模型已更新')
+      await rpc('config.set_vision', { enabled, model: model || null }, t('vision.modelUpdated'))
     } catch { /* toast already shown */ }
   }
 
@@ -81,7 +83,7 @@ export default function VisionConfigSection() {
       const sorted = sortModels(filtered)
 
       return [
-        { value: '', label: '选择视觉模型...' },
+        { value: '', label: t('vision.selectModel') },
         ...sorted.map(m => ({
           value: m.name,
           label: m.name,
@@ -89,29 +91,29 @@ export default function VisionConfigSection() {
         })),
       ]
     },
-    [models],
+    [models, t],
   )
 
   return (
     <div className={styles.visionSection}>
       <div className={styles.visionHeader}>
-        <span className={styles.visionTitle}>视觉辅助模型</span>
+        <span className={styles.visionTitle}>{t('vision.title')}</span>
       </div>
       <p className={styles.visionHint}>
-        当主模型不支持图片时，使用单独的视觉模型分析图片内容并注入上下文。适用于所有不具备视觉能力的模型。
+        {t('vision.hint')}
       </p>
 
       <div className={styles.visionToggleRow}>
-        <span className={styles.visionToggleLabel}>启用视觉辅助</span>
+        <span className={styles.visionToggleLabel}>{t('vision.enable')}</span>
         <button
           onClick={handleToggle}
           className={`${styles.toggle} ${enabled ? styles.toggleOn : ''}`}
-          aria-label="切换视觉辅助"
+          aria-label={t('vision.toggle')}
         />
       </div>
 
       <div className={styles.visionModelRow}>
-        <span className={styles.visionModelLabel}>视觉模型</span>
+        <span className={styles.visionModelLabel}>{t('vision.model')}</span>
         <Select
           value={visionModel}
           options={modelOptions}

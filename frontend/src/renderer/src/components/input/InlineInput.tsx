@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import styles from './InlineInput.module.css'
 
 export const InlineInput: React.FC = () => {
+  const { t } = useLocale()
   const {
     inlineInputOpen,
     inlineInputText,
@@ -72,18 +74,18 @@ export const InlineInput: React.FC = () => {
           value={instructionText}
           onChange={e => setInstructionText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="输入指令，例如: 解释这段代码..."
+          placeholder={t('input.explainCode')}
           className={styles.textarea}
         />
         <div className={styles.actions}>
-          <span className={styles.hint}>Enter 发送 · Esc 取消</span>
-          <button onClick={handleCancel} className={styles.cancelBtn}>取消</button>
+          <span className={styles.hint}>{t('input.inlineEnterEsc')}</span>
+          <button onClick={handleCancel} className={styles.cancelBtn}>{t('common.cancel')}</button>
           <button
             onClick={handleConfirm}
             disabled={!instructionText.trim()}
             className={styles.sendBtn}
           >
-            发送
+{t('chat.send')}
           </button>
         </div>
       </div>

@@ -1,5 +1,6 @@
 import type { Message } from '../../stores/chat'
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import FileBlock from './FileBlock'
 import QuotedSelectionCard from '../input/QuotedSelectionCard'
 import MessageFooterActions from './MessageFooterActions'
@@ -15,6 +16,7 @@ const UserMessage = memo(function UserMessage({ message }: { message: Message })
   const quotedSelectionBlocks = message.blocks.filter((b) => b.type === 'quoted_selection')
   const hasVisualBlocks = imageBlocks.length > 0 || fileBlocks.length > 0 || quotedSelectionBlocks.length > 0
   const openLightbox = useStore(s => s.openLightbox)
+  const { t } = useLocale()
   const textRef = useRef<HTMLDivElement>(null)
 
   const handleTextClick = useCallback((e: MouseEvent) => {
@@ -97,7 +99,7 @@ const UserMessage = memo(function UserMessage({ message }: { message: Message })
               }}
             />
           ) : !hasVisualBlocks ? (
-            <span className={styles.empty}>(空)</span>
+            <span className={styles.empty}>{t('chat.emptyMessage')}</span>
           ) : null}
         </div>
         <MessageFooterActions messageId={message.id} role="user" timestamp={message.timestamp} usage={message.usage} />

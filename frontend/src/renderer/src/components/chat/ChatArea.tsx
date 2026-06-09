@@ -1,4 +1,5 @@
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import { useRef, useEffect, useMemo, useCallback, useState } from 'react'
 import AssistantMessage from './AssistantMessage'
 import UserMessage from './UserMessage'
@@ -34,6 +35,7 @@ export default function ChatArea() {
   const lightboxSrc = useStore(s => s.lightbox.lightboxSrc)
   const openLightbox = useStore(s => s.openLightbox)
   const closeLightbox = useStore(s => s.closeLightbox)
+  const { t } = useLocale()
 
   // Auto-scroll to bottom on new messages when at bottom
   useEffect(() => {
@@ -98,7 +100,7 @@ export default function ChatArea() {
             <div className={styles.emptyLogo}>
               <span className={styles.emptyLogoText}>L</span>
             </div>
-            <p className={styles.emptyHint}>发送消息开始对话</p>
+            <p className={styles.emptyHint}>{t('chat.empty')}</p>
           </div>
         </div>
       ) : (
@@ -126,7 +128,7 @@ export default function ChatArea() {
       )}
       <ChatTimelineNavigator anchors={timelineAnchors} scrollRef={scrollRef} onManualNavigate={() => { autoScrollRef.current = false }} />
       {showScrollBtn && messages.length > 0 && (
-        <button className={styles.scrollToBottom} onClick={scrollToBottom} title="回到底部">
+        <button className={styles.scrollToBottom} onClick={scrollToBottom} title={t('chat.scrollToBottom')}>
           <IconChevronDown size={16} />
         </button>
       )}

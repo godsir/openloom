@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import Select from './Select'
 import styles from './VisionConfig.module.css'
 
@@ -37,6 +38,7 @@ function sortModels(models: ModelListItem[]): ModelListItem[] {
 }
 
 export default function AuxiliaryConfigSection() {
+  const { t } = useLocale()
   const models = useStore(s => s.models) as ModelListItem[]
   const [summaryModel, setSummaryModel] = useState('')
   const [entityModel, setEntityModel] = useState('')
@@ -58,7 +60,7 @@ export default function AuxiliaryConfigSection() {
       await rpc('config.set_auxiliary', {
         summary_model: value || null,
         entity_model: entityModel || null,
-      }, '摘要模型已更新')
+      }, t('models.summaryModelUpdated'))
     } catch { /* toast already shown */ }
   }
 
@@ -68,7 +70,7 @@ export default function AuxiliaryConfigSection() {
       await rpc('config.set_auxiliary', {
         summary_model: summaryModel || null,
         entity_model: value || null,
-      }, '实体提取模型已更新')
+      }, t('models.entityModelUpdated'))
     } catch { /* toast already shown */ }
   }
 
@@ -76,7 +78,7 @@ export default function AuxiliaryConfigSection() {
     () => {
       const sorted = sortModels(models)
       return [
-        { value: '', label: '使用主模型' },
+        { value: '', label: t('models.usePrimaryModel') },
         ...sorted.map(m => ({
           value: m.name,
           label: m.name,
@@ -84,16 +86,16 @@ export default function AuxiliaryConfigSection() {
         })),
       ]
     },
-    [models],
+    [models, t],
   )
 
   if (loading) {
     return (
       <div className={styles.visionSection}>
         <div className={styles.visionHeader}>
-          <span className={styles.visionTitle}>辅助模型配置</span>
+          <span className={styles.visionTitle}>{t('models.auxiliaryConfig')}</span>
         </div>
-        <div className={styles.visionHint}>加载中...</div>
+        <div className={styles.visionHint}>{t('common.loading')}</div>
       </div>
     )
   }
@@ -101,16 +103,15 @@ export default function AuxiliaryConfigSection() {
   return (
     <div className={styles.visionSection}>
       <div className={styles.visionHeader}>
-        <span className={styles.visionTitle}>辅助模型配置</span>
+        <span className={styles.visionTitle}>{t('models.auxiliaryConfig')}</span>
       </div>
 
       <p className={styles.visionHint}>
-        为摘要生成和实体提取任务指定独立的模型，可以使用更便宜或更快的模型来降低成本。
-        留空则使用当前会话的主模型。
+        {t('models.auxiliaryHint')}
       </p>
 
       <div className={styles.visionModelRow}>
-        <span className={styles.visionModelLabel}>摘要模型</span>
+        <span className={styles.visionModelLabel}>{t('models.summaryModel')}</span>
         <Select
           value={summaryModel}
           options={modelOptions}
@@ -120,7 +121,7 @@ export default function AuxiliaryConfigSection() {
       </div>
 
       <div className={styles.visionModelRow} style={{ marginTop: '10px' }}>
-        <span className={styles.visionModelLabel}>实体提取</span>
+        <span className={styles.visionModelLabel}>{t('models.entityExtraction')}</span>
         <Select
           value={entityModel}
           options={modelOptions}

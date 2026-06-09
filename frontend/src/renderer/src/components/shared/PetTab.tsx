@@ -1,26 +1,37 @@
 import { useState, useEffect } from 'react'
+import { useLocale } from '../../i18n'
 import settingsStyles from './SettingsModal.module.css'
 import styles from './PetTab.module.css'
 
 type PetSize = 'small' | 'medium' | 'large'
 const SIZE_MAP: Record<PetSize, number> = { small: 128, medium: 192, large: 256 }
-const SIZE_LABELS: Record<PetSize, string> = { small: '小', medium: '中', large: '大' }
 const SIZE_KEYS: PetSize[] = ['small', 'medium', 'large']
 
-const IDLE_INTERVALS: { value: number; label: string }[] = [
-  { value: 15, label: '15秒' },
-  { value: 30, label: '30秒' },
-  { value: 60, label: '1分钟' },
-  { value: 120, label: '2分钟' },
-  { value: 300, label: '5分钟' },
-]
+function useSizeLabels(): Record<PetSize, string> {
+  const { t } = useLocale()
+  return { small: t('pet.sizeSmallLabel'), medium: t('pet.sizeMediumLabel'), large: t('pet.sizeLargeLabel') }
+}
 
-const BREAK_INTERVALS: { value: number; label: string }[] = [
-  { value: 0, label: '关闭' },
-  { value: 25, label: '25分钟' },
-  { value: 45, label: '45分钟' },
-  { value: 60, label: '60分钟' },
-]
+function useIdleIntervals(): { value: number; label: string }[] {
+  const { t } = useLocale()
+  return [
+    { value: 15, label: t('pet.idle15s') },
+    { value: 30, label: t('pet.idle30s') },
+    { value: 60, label: t('pet.idle1m') },
+    { value: 120, label: t('pet.idle2m') },
+    { value: 300, label: t('pet.idle5m') },
+  ]
+}
+
+function useBreakIntervals(): { value: number; label: string }[] {
+  const { t } = useLocale()
+  return [
+    { value: 0, label: t('common.disable') },
+    { value: 25, label: t('pet.break25m') },
+    { value: 45, label: t('pet.break45m') },
+    { value: 60, label: t('pet.break60m') },
+  ]
+}
 
 interface PetMeta {
   id: string
@@ -42,15 +53,26 @@ const PETDEX_STATES: Record<string, number> = {
 }
 const PETDEX_ROW_FRAMES: Record<string, number> = { '0': 6, '1': 8, '2': 8, '3': 4, '4': 5, '5': 8, '6': 6, '7': 6, '8': 6 }
 
-const STATE_LABELS: Record<string, string> = {
-  idle: '待机', runRight: '向右跑', runLeft: '向左跑', wave: '挥手', jump: '跳跃',
-  failed: '失败', wait: '等待', dash: '奔跑', inspect: '审视',
-  talking: '回复', working: '工作中', thinking: '思考中', happy: '完成', error: '错误',
+function useStateLabels(): Record<string, string> {
+  const { t } = useLocale()
+  return {
+    idle: t('pet.stateIdle'), runRight: t('pet.stateRunRight'), runLeft: t('pet.stateRunLeft'),
+    wave: t('pet.stateWave'), jump: t('pet.stateJump'),
+    failed: t('pet.stateFailed'), wait: t('pet.stateWait'), dash: t('pet.stateDash'), inspect: t('pet.stateInspect'),
+    talking: t('pet.stateTalking'), working: t('pet.stateWorking'), thinking: t('pet.stateThinking'),
+    happy: t('pet.stateHappy'), error: t('pet.stateError'),
+  }
 }
 
 const bc = new BroadcastChannel('pet')
 
 export default function PetTab() {
+  const { t } = useLocale()
+  const SIZE_LABELS = useSizeLabels()
+  const IDLE_INTERVALS = useIdleIntervals()
+  const BREAK_INTERVALS = useBreakIntervals()
+  const STATE_LABELS = useStateLabels()
+
   const [enabled, setEnabled] = useState(false)
   const [size, setSize] = useState<PetSize>('small')
   const [petsDir, setPetsDir] = useState('')
@@ -133,18 +155,18 @@ export default function PetTab() {
     bc.postMessage({ type: 'config', breakInterval: val })
   }
 
-  if (!ready) return <p className={settingsStyles.toolsEmpty}>加载中...</p>
+  if (!ready) return <p className={settingsStyles.toolsEmpty}>{t('common.loading')}</p>
 
   return (
     <div className={settingsStyles.aboutSection}>
-      {/* ── 开关 ── */}
-      <div className={settingsStyles.themeLabel}>桌宠</div>
+      {/* Toggle */}
+      <div className={settingsStyles.themeLabel}>{t('pet.title')}</div>
 
       <div className={settingsStyles.aboutRow}>
         <div>
-          <span className={settingsStyles.aboutLabel}>启用桌宠</span>
+          <span className={settingsStyles.aboutLabel}>{t('pet.enablePet')}</span>
           <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
-            基于 Petdex 精灵图格式，兼容 Codex 宠物生态
+            {t('pet.enablePetDesc')}
           </p>
         </div>
         <div className={settingsStyles.mcpTransportToggle}>
@@ -152,23 +174,23 @@ export default function PetTab() {
             className={`${settingsStyles.mcpTransportBtn} ${enabled ? settingsStyles.mcpTransportActive : ''}`}
             onClick={() => toggle(true)}
           >
-            开启
+            {t('software.enable')}
           </button>
           <button
             className={`${settingsStyles.mcpTransportBtn} ${!enabled ? settingsStyles.mcpTransportActive : ''}`}
             onClick={() => toggle(false)}
           >
-            关闭
+            {t('software.disable')}
           </button>
         </div>
       </div>
 
       <hr className={settingsStyles.sectionDivider} />
 
-      {/* ── 宠物列表 ── */}
+      {/* Pet List */}
       {pets.length > 0 && (
         <>
-          <div className={settingsStyles.themeLabel}>宠物列表</div>
+          <div className={settingsStyles.themeLabel}>{t('pet.petList')}</div>
           <div className={styles.petList}>
             {pets.map(pet => (
               <button
@@ -208,9 +230,9 @@ export default function PetTab() {
                 <div className={styles.petSpecs}>
                   {frameW} x {frameH}
                   <span className={styles.specSep}>/</span>
-                  {cols} x {rows} 格
+                  {cols} x {rows} {t('pet.gridCell')}
                   <span className={styles.specSep}>/</span>
-                  {states.length} 状态
+                  {t('pet.stateCount', { n: states.length })}
                 </div>
               </div>
             </div>
@@ -219,11 +241,11 @@ export default function PetTab() {
         </>
       )}
 
-      {/* ── 显示大小 ── */}
+      {/* Display Size */}
       <div className={settingsStyles.aboutRow}>
         <div>
-          <span className={settingsStyles.aboutLabel}>显示大小</span>
-          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>桌宠的像素尺寸</p>
+          <span className={settingsStyles.aboutLabel}>{t('pet.displaySize')}</span>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('pet.displaySizeDesc')}</p>
         </div>
         <div className={settingsStyles.mcpTransportToggle}>
           {SIZE_KEYS.map(sz => (
@@ -240,11 +262,11 @@ export default function PetTab() {
 
       <hr className={settingsStyles.sectionDivider} />
 
-      {/* ── 发呆间隔 ── */}
+      {/* Idle Interval */}
       <div className={settingsStyles.aboutRow}>
         <div>
-          <span className={settingsStyles.aboutLabel}>发呆间隔</span>
-          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>多久不理桌宠后它开始自己玩耍</p>
+          <span className={settingsStyles.aboutLabel}>{t('pet.idleInterval')}</span>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('pet.idleIntervalDesc')}</p>
         </div>
         <div className={settingsStyles.mcpTransportToggle}>
           {IDLE_INTERVALS.map(iv => (
@@ -261,11 +283,11 @@ export default function PetTab() {
 
       <hr className={settingsStyles.sectionDivider} />
 
-      {/* ── 休息提醒 ── */}
+      {/* Break Reminder */}
       <div className={settingsStyles.aboutRow}>
         <div>
-          <span className={settingsStyles.aboutLabel}>休息提醒</span>
-          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>持续工作多久后提醒休息（关闭 = 不提醒）</p>
+          <span className={settingsStyles.aboutLabel}>{t('pet.breakReminder')}</span>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('pet.breakReminderDesc')}</p>
         </div>
         <div className={settingsStyles.mcpTransportToggle}>
           {BREAK_INTERVALS.map(iv => (
@@ -280,13 +302,13 @@ export default function PetTab() {
         </div>
       </div>
 
-      {/* ── 宠物目录 ── */}
+      {/* Pet Directory */}
       {petsDir && (
         <>
           <hr className={settingsStyles.sectionDivider} />
           <div className={settingsStyles.aboutRow}>
             <div>
-              <span className={settingsStyles.aboutLabel}>宠物目录</span>
+              <span className={settingsStyles.aboutLabel}>{t('pet.petDir')}</span>
               <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, fontFamily: 'var(--font-mono)' }}>
                 {petsDir}
               </p>
@@ -295,16 +317,16 @@ export default function PetTab() {
         </>
       )}
 
-      {/* ── 动画状态 ── */}
+      {/* Animation States */}
       {states.length > 0 && (
         <>
           <hr className={settingsStyles.sectionDivider} />
-          <div className={settingsStyles.themeLabel}>动画状态</div>
+          <div className={settingsStyles.themeLabel}>{t('pet.animStates')}</div>
           <div className={styles.stateTable}>
             <div className={styles.stateHeader}>
-              <span>状态</span>
-              <span>行</span>
-              <span>帧数</span>
+              <span>{t('pet.state')}</span>
+              <span>{t('pet.row')}</span>
+              <span>{t('pet.frames')}</span>
               <span />
             </div>
             {states.map(([name, row]) => {
@@ -317,7 +339,7 @@ export default function PetTab() {
                   <span className={styles.stateMono}>{row}</span>
                   <span className={styles.stateMono}>{frames}</span>
                   <button className={styles.playBtn} onClick={() => testAnim(name)}>
-                    {isActive ? '播放中' : '测试'}
+                    {isActive ? t('pet.playing') : t('pet.test')}
                   </button>
                 </div>
               )

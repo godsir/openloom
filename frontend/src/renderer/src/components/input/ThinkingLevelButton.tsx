@@ -1,17 +1,19 @@
 import { useRef, useEffect } from 'react'
 import { useStore } from '../../stores'
 import { IconLightbulb } from '../../utils/icons'
+import { useLocale } from '../../i18n'
 import type { ThinkingLevel } from '../../stores/model'
 
-const OPTIONS: { id: ThinkingLevel; label: string; desc: string }[] = [
-  { id: 'off', label: 'Off', desc: '不启用思考' },
-  { id: 'auto', label: 'Auto', desc: '自动判断' },
-  { id: 'low', label: 'Low', desc: '2K tokens' },
-  { id: 'medium', label: 'Medium', desc: '8K tokens' },
-  { id: 'high', label: 'High', desc: '32K tokens' },
+const OPTIONS: { id: ThinkingLevel; label: string; descKey: string }[] = [
+  { id: 'off', label: 'Off', descKey: 'input.thinkingOff' },
+  { id: 'auto', label: 'Auto', descKey: 'input.thinkingAuto' },
+  { id: 'low', label: 'Low', descKey: 'input.thinkingLow' },
+  { id: 'medium', label: 'Medium', descKey: 'input.thinkingMedium' },
+  { id: 'high', label: 'High', descKey: 'input.thinkingHigh' },
 ]
 
 export default function ThinkingLevelButton() {
+  const { t } = useLocale()
   const level = useStore((s) => s.thinkingLevel)
   const setLevel = useStore((s) => s.setThinkingLevel)
   const open = useStore((s) => s.thinkingDrawerOpen)
@@ -39,7 +41,7 @@ export default function ThinkingLevelButton() {
       <button
         onClick={() => setOpen(!open)}
         className="pill-neutral"
-        title={`思考: ${current.label}`}
+        title={t('input.thinkingTitle', { level: current.label })}
       >
         <IconLightbulb size={12} /> {current.label}
       </button>
@@ -53,7 +55,7 @@ export default function ThinkingLevelButton() {
             >
               <div className="drawer-item-text">
                 <span className="drawer-item-label">{o.label}</span>
-                <span className="drawer-item-desc">{o.desc}</span>
+                <span className="drawer-item-desc">{t(o.descKey)}</span>
               </div>
             </button>
           ))}

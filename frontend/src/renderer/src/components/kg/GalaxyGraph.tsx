@@ -1,4 +1,5 @@
 import { useRef, useEffect, useCallback } from 'react'
+import { useLocale } from '../../i18n'
 
 interface GraphNode {
   id: string
@@ -41,20 +42,6 @@ function entityHue(type: string): number {
 
 function entityColor(type: string): string {
   return `hsl(${entityHue(type)}, 70%, 62%)`
-}
-
-const RELATION_ZH: Record<string, string> = {
-  uses: '使用', works_on: '参与', knows: '了解',
-  interested_in: '感兴趣', dislikes: '不喜欢', depends_on: '依赖',
-  part_of: '属于', created_by: '创建者', related_to: '相关',
-  has: '拥有', is_a: '是一种', belongs_to: '归属',
-  connects_to: '连接', influences: '影响', produces: '产出',
-  located_in: '位于', works_with: '协作', manages: '管理',
-  reports_to: '汇报', mentions: '提及', prefers: '偏好',
-}
-
-function translateRel(rel: string): string {
-  return RELATION_ZH[rel] ?? rel.replace(/_/g, ' ')
 }
 
 function pseudoRandom(seed: number) {
@@ -179,6 +166,7 @@ const IDLE_FPS = 4          // fps when graph is stable and user is idle
 const IDLE_INTERVAL = 1000 / IDLE_FPS
 
 export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onBackgroundClick }: GalaxyGraphProps) {
+  const { t } = useLocale()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const positionsRef = useRef<Map<string, Position>>(new Map())
   const transformRef = useRef({ x: 0, y: 0, scale: 1 })
@@ -196,6 +184,10 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
   const edgesRef = useRef(edges)
   nodesRef.current = nodes
   edgesRef.current = edges
+
+  const translateRel = useCallback((rel: string): string => {
+    return t(`kg.relation.${rel}`) ?? rel.replace(/_/g, ' ')
+  }, [t])
 
   // ── Draw scheduling ──────────────────────────────────────────────
   const needsDrawRef = useRef(true)
@@ -228,7 +220,6 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
 
   const getAdjacency = useCallback((): Map<string, string[]> => {
     const edgeList = edgesRef.current
-    // Use edge count as a simple version check
     if (adjCacheRef.current.version === edgeList.length) {
       return adjCacheRef.current.map
     }
@@ -249,10 +240,8 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
     const nodeList = nodesRef.current
     const edgeList = edgesRef.current
 
-    // Determine which nodes need initial positions
     const newNodes = nodeList.filter(n => !pos.has(n.name))
     if (newNodes.length === 0) {
-      // Just clean up removed nodes
       const names = new Set(nodeList.map(n => n.name))
       for (const key of pos.keys()) {
         if (!names.has(key)) pos.delete(key)
@@ -260,14 +249,11 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       return
     }
 
-    // Full-load heuristic: >30% nodes are new or position map is empty
     const isFullLoad = pos.size === 0 || newNodes.length > nodeList.length * 0.3
 
     if (isFullLoad) {
-      // ── Full load: galaxy-aware spatial pre-positioning ────────────
       pos.clear()
 
-      // Build non-USER adjacency to detect galaxies (connected components)
       const adj = new Map<string, string[]>()
       for (const n of nodeList) adj.set(n.name, [])
       for (const e of edgeList) {
@@ -277,7 +263,6 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
         }
       }
 
-      // BFS to find galaxies (connected components excluding USER)
       const visited = new Set<string>()
       const galaxies: string[][] = []
       for (const n of nodeList) {
@@ -296,12 +281,10 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
         if (comp.length > 0) galaxies.push(comp)
       }
 
-      // USER at center
       pos.set('USER', { x: 0, y: 0, vx: 0, vy: 0, pinned: false })
 
-      // Place each galaxy at a distinct angle around USER
-      const galaxyRadius = 340   // distance from USER to galaxy centre
-      const clusterRadius = 150  // scatter radius within galaxy
+      const galaxyRadius = 340
+      const clusterRadius = 150
       for (let gi = 0; gi < galaxies.length; gi++) {
         const angle = (gi / Math.max(galaxies.length, 1)) * Math.PI * 2
         const gx = Math.cos(angle) * galaxyRadius
@@ -320,7 +303,6 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
         }
       }
 
-      // Orphan nodes (no non-USER edges) → far outer ring
       for (const n of nodeList) {
         if (!pos.has(n.name)) {
           const rng = pseudoRandom(hashString(n.name))
@@ -336,7 +318,6 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
         }
       }
     } else {
-      // ── Incremental add: place near connected neighbours ───────────
       for (const n of newNodes) {
         let cx = 0; let cy = 0; let count = 0
         for (const e of edgeList) {
@@ -369,7 +350,6 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       }
     }
 
-    // Clean up removed nodes
     const names = new Set(nodeList.map(n => n.name))
     for (const key of pos.keys()) {
       if (!names.has(key)) pos.delete(key)
@@ -384,10 +364,8 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
 
     const adj = getAdjacency()
 
-    // Build spatial hash grid for O(n·k) repulsion
     const grid = buildSpatialHash(nodeList, pos, PHYSICS.gridCellSize)
 
-    // Apply forces
     for (let i = 0; i < nodeList.length; i++) {
       const a = nodeList[i]
       const pa = pos.get(a.name)
@@ -414,7 +392,6 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
         fy += (dy / dist) * force
       }
 
-      // Spring attraction along edges
       const neighbors = adj.get(a.name) || []
       for (const nb of neighbors) {
         const pb = pos.get(nb)
@@ -436,13 +413,17 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       if (Math.abs(pa.vy) < 0.01) pa.vy = 0
     }
 
-    // Update positions and check energy
-    let totalKE = 0
     for (const n of nodeList) {
       const p = pos.get(n.name)
       if (!p || p.pinned) continue
       p.x += p.vx
       p.y += p.vy
+    }
+
+    let totalKE = 0
+    for (const n of nodeList) {
+      const p = pos.get(n.name)
+      if (!p || p.pinned) continue
       totalKE += p.vx * p.vx + p.vy * p.vy
     }
 
@@ -466,7 +447,7 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-    const t = transformRef.current
+    const tr = transformRef.current
     const nodeList = nodesRef.current
     const edgeList = edgesRef.current
     const pos = positionsRef.current
@@ -477,18 +458,16 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
     const cx = w / 2
     const cy = h / 2
     ctx.save()
-    ctx.translate(t.x + cx, t.y + cy)
-    ctx.scale(t.scale, t.scale)
+    ctx.translate(tr.x + cx, tr.y + cy)
+    ctx.scale(tr.scale, tr.scale)
 
-    // ── Viewport culling bounds ─────────────────────────────────────
-    const invScale = 1 / t.scale
+    const invScale = 1 / tr.scale
     const margin = 80
-    const vpMinX = -(t.x + cx) * invScale - margin
-    const vpMaxX = (w - t.x - cx) * invScale + margin
-    const vpMinY = -(t.y + cy) * invScale - margin
-    const vpMaxY = (h - t.y - cy) * invScale + margin
+    const vpMinX = -(tr.x + cx) * invScale - margin
+    const vpMaxX = (w - tr.x - cx) * invScale + margin
+    const vpMinY = -(tr.y + cy) * invScale - margin
+    const vpMaxY = (h - tr.y - cy) * invScale + margin
 
-    // Pre-compute visibility for all nodes
     const nodeVisible = new Map<string, boolean>()
     for (const n of nodeList) {
       const p = pos.get(n.name)
@@ -496,7 +475,7 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       nodeVisible.set(n.name, p.x >= vpMinX && p.x <= vpMaxX && p.y >= vpMinY && p.y <= vpMaxY)
     }
 
-    // ── Draw edges ──────────────────────────────────────────────────
+    // Draw edges
     for (const e of edgeList) {
       const sp = pos.get(e.source)
       const tp = pos.get(e.target)
@@ -508,13 +487,13 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       ctx.moveTo(sp.x, sp.y)
       ctx.lineTo(tp.x, tp.y)
       ctx.strokeStyle = 'hsla(220, 40%, 55%, 0.18)'
-      ctx.lineWidth = 1.0 / t.scale
+      ctx.lineWidth = 1.0 / tr.scale
       ctx.stroke()
 
       if (showLabels) {
         const mx = (sp.x + tp.x) / 2
         const my = (sp.y + tp.y) / 2
-        const fontSize = Math.max(8, 10 / t.scale)
+        const fontSize = Math.max(8, 10 / tr.scale)
         ctx.font = fontSize + 'px sans-serif'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'bottom'
@@ -524,16 +503,16 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
         const pw = tw + fontSize * 0.8
         ctx.fillStyle = 'rgba(10,14,22,0.72)'
         const rx = mx - pw / 2
-        const ry = my - ph - 2 / t.scale
+        const ry = my - ph - 2 / tr.scale
         ctx.beginPath()
         ctx.roundRect(rx, ry, pw, ph, ph / 2)
         ctx.fill()
         ctx.fillStyle = 'rgba(180,210,255,0.75)'
-        ctx.fillText(label, mx, my - 2 / t.scale)
+        ctx.fillText(label, mx, my - 2 / tr.scale)
       }
     }
 
-    // ── Draw nodes ──────────────────────────────────────────────────
+    // Draw nodes
     for (const n of nodeList) {
       const p = pos.get(n.name)
       if (!p || !nodeVisible.get(n.name)) continue
@@ -544,7 +523,6 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       const sat = isUser ? 90 : 70
       const lit = isUser ? 70 : 65
 
-      // USER sun: rotating rays
       if (isUser) {
         const pulse = 1 + Math.sin(now * 1.8) * 0.06
         const r = baseR * pulse
@@ -567,24 +545,21 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
         ctx.beginPath()
         ctx.arc(p.x, p.y, r * 1.7, 0, Math.PI * 2)
         ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${lit}%, 0.22)`
-        ctx.lineWidth = 1 / t.scale
+        ctx.lineWidth = 1 / tr.scale
         ctx.stroke()
       }
 
-      // Draw node using cached sprite
       const sprite = getSprite(n.name, n.entity_type, Math.round(baseR))
       const spriteSize = sprite.width
       const halfSize = spriteSize / 2
       ctx.drawImage(sprite, p.x - halfSize, p.y - halfSize, spriteSize, spriteSize)
 
-      // Label (without shadowBlur for performance)
       if (showLabels) {
-        const fontSize = Math.max(9, 11 / t.scale)
+        const fontSize = Math.max(9, 11 / tr.scale)
         ctx.font = (isUser ? 'bold ' : '') + fontSize + 'px sans-serif'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'top'
-        // Solid background behind text instead of shadow (much faster)
-        const labelY = p.y + baseR + 5 / t.scale
+        const labelY = p.y + baseR + 5 / tr.scale
         const textW = ctx.measureText(n.name).width
         const textH = fontSize * 1.2
         ctx.fillStyle = 'rgba(0,0,0,0.65)'
@@ -595,11 +570,11 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
     }
 
     ctx.restore()
-  }, [showLabels, getSprite])
+  }, [showLabels, getSprite, translateRel])
 
   // ── Animation + physics loop ──────────────────────────────────────
   const stableFramesRef = useRef(0)
-  const MAX_PHYSICS_FRAMES = 400 // hard cap: ~6.7s @ 60fps
+  const MAX_PHYSICS_FRAMES = 400
 
   useEffect(() => {
     let running = true
@@ -613,7 +588,6 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       ensurePositions()
 
       let physicsRan = false
-      // Run physics until stable (with verification countdown), then stop forever
       if (stableFramesRef.current < 20 && frameCount < MAX_PHYSICS_FRAMES) {
         stable = stepPhysics()
         physicsRan = true
@@ -623,17 +597,14 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
           stableFramesRef.current = 0
         }
       } else if (stableFramesRef.current < 20) {
-        // Hard cap reached — force stable
         stable = true
         stableFramesRef.current = 20
       }
 
-      // Determine if we should draw this frame
       const isIdle = stable && stableFramesRef.current >= 20 && !userActiveRef.current
       const timeSinceLastDraw = timestamp - lastDrawTimeRef.current
 
       if (isIdle) {
-        // Idle: only draw at low FPS for subtle animations (USER pulse)
         if (timeSinceLastDraw >= IDLE_INTERVAL && needsDrawRef.current) {
           draw()
           lastDrawTimeRef.current = timestamp
@@ -656,10 +627,9 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
     }
   }, [ensurePositions, stepPhysics, draw])
 
-  // Wake physics when graph data changes
   useEffect(() => {
     stableFramesRef.current = 0
-    adjCacheRef.current.version = -1 // invalidate adjacency cache
+    adjCacheRef.current.version = -1
     const pos = positionsRef.current
     spriteCacheRef.current.clear()
     for (const p of pos.values()) {
@@ -673,13 +643,13 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
   const hitTest = useCallback((sx: number, sy: number): string | null => {
     const canvas = canvasRef.current
     if (!canvas) return null
-    const t = transformRef.current
+    const tr = transformRef.current
     const w = canvas.clientWidth
     const h = canvas.clientHeight
     const cx = w / 2
     const cy = h / 2
-    const wx = (sx - (t.x + cx)) / t.scale
-    const wy = (sy - (t.y + cy)) / t.scale
+    const wx = (sx - (tr.x + cx)) / tr.scale
+    const wy = (sy - (tr.y + cy)) / tr.scale
 
     const pos = positionsRef.current
     const nodeList = nodesRef.current
@@ -707,14 +677,13 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
   }, [])
 
   // ── Mouse handlers ────────────────────────────────────────────────
-  // Track last hit-test time to throttle cursor updates
   const lastHitTestRef = useRef(0)
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     userActiveRef.current = true
     const { x, y } = getCanvasPos(e)
     const hit = hitTest(x, y)
-    const t = transformRef.current
+    const tr = transformRef.current
 
     if (hit) {
       const p = positionsRef.current.get(hit)
@@ -736,7 +705,7 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
         type: 'node', nodeName: hit,
         sx: x, sy: y,
         px: p?.x ?? 0, py: p?.y ?? 0,
-        tx: t.x, ty: t.y,
+        tx: tr.x, ty: tr.y,
         moved: false,
         neighborPins,
       }
@@ -745,7 +714,7 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
         type: 'pan',
         sx: x, sy: y,
         px: 0, py: 0,
-        tx: t.x, ty: t.y,
+        tx: tr.x, ty: tr.y,
         moved: false,
       }
     }
@@ -755,7 +724,6 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const d = dragRef.current
     if (!d) {
-      // Throttle hit-testing for cursor updates to every 50ms
       const now = performance.now()
       if (now - lastHitTestRef.current < 50) return
       lastHitTestRef.current = now
@@ -776,18 +744,18 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
     if (d.type === 'pan') {
       transformRef.current = { ...transformRef.current, x: d.tx + dx, y: d.ty + dy }
     } else if (d.type === 'node' && d.nodeName) {
-      const t = transformRef.current
+      const tr = transformRef.current
       const p = positionsRef.current.get(d.nodeName)
       if (p) {
-        p.x = d.px + dx / t.scale
-        p.y = d.py + dy / t.scale
+        p.x = d.px + dx / tr.scale
+        p.y = d.py + dy / tr.scale
       }
       if (d.neighborPins) {
         for (const [name, init] of d.neighborPins) {
           const np = positionsRef.current.get(name)
           if (np) {
-            np.x = init.px + dx / t.scale
-            np.y = init.py + dy / t.scale
+            np.x = init.px + dx / tr.scale
+            np.y = init.py + dy / tr.scale
           }
         }
       }
@@ -842,21 +810,20 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       e.preventDefault()
       userActiveRef.current = true
       const delta = e.deltaY > 0 ? 0.9 : 1.1
-      const t = transformRef.current
-      const newScale = Math.max(0.05, Math.min(20, t.scale * delta))
+      const tr = transformRef.current
+      const newScale = Math.max(0.05, Math.min(20, tr.scale * delta))
 
       const rect = canvas.getBoundingClientRect()
       const mx = e.clientX - rect.left
       const my = e.clientY - rect.top
-      const ratio = newScale / t.scale
+      const ratio = newScale / tr.scale
       transformRef.current = {
-        x: mx - (mx - t.x) * ratio,
-        y: my - (my - t.y) * ratio,
+        x: mx - (mx - tr.x) * ratio,
+        y: my - (my - tr.y) * ratio,
         scale: newScale,
       }
       needsDrawRef.current = true
 
-      // Reset userActive after a short delay (wheel events don't have an "up")
       clearTimeout((canvas as any).__wheelTimeout)
       ;(canvas as any).__wheelTimeout = setTimeout(() => {
         userActiveRef.current = false

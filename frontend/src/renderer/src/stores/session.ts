@@ -3,6 +3,7 @@ import { loomRpc } from '../services/jsonrpc'
 import { rpc } from '../services/rpc-toast'
 import { renderMarkdown } from '../utils/markdown'
 import { sanitizeHtml } from '../utils/markdown-sanitizer'
+import { t } from '../i18n'
 
 // Matches actual backend SessionData JSON response.
 // Fields are camelCase as returned by serde Serialize.
@@ -56,7 +57,7 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
   setCurrentSessionId: (currentSessionId) => set({ currentSessionId }),
 
   createSession: async () => {
-    const result = await rpc<{ session_id: string }>('session.create', undefined, '会话已创建')
+    const result = await rpc<{ session_id: string }>('session.create', undefined, t('sessions.created'))
     await get().loadSessions()
     return result.session_id
   },
@@ -70,7 +71,7 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
     try {
       await loomRpc('session.switch', { session_id: id })
     } catch {
-      ;(get() as any).addToast?.({ type: 'warning', message: '会话切换失败，部分功能可能异常' })
+      ;(get() as any).addToast?.({ type: 'warning', message: t('sessions.switchFailed') })
     }
     // If this session is currently streaming and we already have its messages
     // cached locally, skip fetching from backend. The backend may not have
@@ -178,17 +179,17 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
         })
       }
     } catch {
-      ;(get() as any).addToast?.({ type: 'error', message: '加载消息历史失败' })
+      ;(get() as any).addToast?.({ type: 'error', message: t('sessions.loadFailed') })
     }
   },
 
   renameSession: async (id, title) => {
-    await rpc('session.rename', { session_id: id, title }, '已重命名')
+    await rpc('session.rename', { session_id: id, title }, t('sessions.renamed'))
     await get().loadSessions()
   },
 
   deleteSession: async (id) => {
-    await rpc('session.delete', { session_id: id }, '会话已删除')
+    await rpc('session.delete', { session_id: id }, t('sessions.deleted'))
     if (get().currentSessionId === id) {
       set({ currentSessionId: null })
     }

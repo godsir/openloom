@@ -1,4 +1,5 @@
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import styles from './ContextRing.module.css'
 
 const DEFAULT_MAX_TOKENS = 200_000
@@ -37,6 +38,7 @@ function calcTurnCost(
 }
 
 export default function ContextRing() {
+  const { t } = useLocale()
   const sessionId = useStore((s) => s.currentSessionId)
   const messages = useStore((s) => sessionId ? s.messagesBySession.get(sessionId) : undefined)
   const liveUsage = useStore((s) => sessionId ? s.usageBySession.get(sessionId) : undefined)
@@ -112,37 +114,37 @@ export default function ContextRing() {
 
       <div className={styles.tooltip}>
         <div className={styles.tooltipRow}>
-          <span>上下文用量</span>
+          <span>{t('input.contextUsage')}</span>
           <span className={styles.tooltipVal}>{pct.toFixed(1)}%</span>
         </div>
         <div className={styles.tooltipRow}>
-          <span>输入 (未命中)</span>
+          <span>{t('input.inputUncached')}</span>
           <span className={styles.tooltipVal}>{fmt(promptNonCache)}</span>
         </div>
         {cacheRead > 0 && (
           <div className={styles.tooltipRow}>
-            <span>输入 (缓存命中)</span>
+            <span>{t('input.inputCached')}</span>
             <span className={styles.tooltipVal}>{fmt(cacheRead)}</span>
           </div>
         )}
         {cacheWrite > 0 && (
           <div className={styles.tooltipRow}>
-            <span>缓存写入</span>
+            <span>{t('input.cacheWrite')}</span>
             <span className={styles.tooltipVal}>{fmt(cacheWrite)}</span>
           </div>
         )}
         <div className={styles.tooltipRow}>
-          <span>输出 tokens</span>
+          <span>{t('input.outputTokens')}</span>
           <span className={styles.tooltipVal}>{fmt(completion)}</span>
         </div>
         <hr className={styles.tooltipDivider} />
         <div className={styles.tooltipRow}>
-          <span>总计</span>
+          <span>{t('input.totalTokens')}</span>
           <span className={styles.tooltipVal}>{fmt(total)} / {fmtScale(scale)}</span>
         </div>
         {hasPrice && (
           <div className={styles.tooltipRow}>
-            <span>本次消耗</span>
+            <span>{t('input.thisCost')}</span>
             <span className={styles.tooltipVal}>{fmtCost(turnCost)}</span>
           </div>
         )}
@@ -150,32 +152,32 @@ export default function ContextRing() {
           <>
             <hr className={styles.tooltipDivider} />
             <div className={styles.tooltipRow}>
-              <span>会话累计请求</span>
-              <span className={styles.tooltipVal}>{sessionCum.requests} 次</span>
+              <span>{t('input.sessionRequests')}</span>
+              <span className={styles.tooltipVal}>{sessionCum.requests}</span>
             </div>
             <div className={styles.tooltipRow}>
-              <span>会话累计输入</span>
+              <span>{t('input.sessionInput')}</span>
               <span className={styles.tooltipVal}>{fmt(sessionCum.prompt)}</span>
             </div>
             <div className={styles.tooltipRow}>
-              <span>会话累计输出</span>
+              <span>{t('input.sessionOutput')}</span>
               <span className={styles.tooltipVal}>{fmt(sessionCum.completion)}</span>
             </div>
             {sessionCum.cacheRead > 0 && (
               <div className={styles.tooltipRow}>
-                <span>会话累计缓存命中</span>
+                <span>{t('input.sessionCacheHit')}</span>
                 <span className={styles.tooltipVal}>{fmt(sessionCum.cacheRead)}</span>
               </div>
             )}
             <div className={styles.tooltipRow}>
-              <span>会话累计消耗</span>
+              <span>{t('input.sessionCost')}</span>
               <span className={styles.tooltipVal}>{fmtCost(sessionCum.cost)}</span>
             </div>
           </>
         )}
         {usage.model && (
           <div className={styles.tooltipRow}>
-            <span>模型</span>
+            <span>{t('input.model')}</span>
             <span className={styles.tooltipVal}>{usage.model}</span>
           </div>
         )}

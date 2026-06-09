@@ -1,4 +1,5 @@
 import { loomRpc } from './jsonrpc'
+import { t } from '../i18n'
 
 /** RPC call with automatic success/error toast feedback. */
 export async function rpc<T = unknown>(
@@ -15,7 +16,7 @@ export async function rpc<T = unknown>(
   } catch (e: any) {
     const { useStore } = await import('../stores')
     const label = errLabel || method
-    useStore.getState().addToast({ type: 'error', message: `${label}失败: ${e.message || e}` })
+    useStore.getState().addToast({ type: 'error', message: t('error.rpcFailed', { method: label, reason: e.message || String(e) }) })
     throw e
   }
 }

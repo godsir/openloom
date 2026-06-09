@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useStore } from '../../stores'
 import { IconRefresh, IconSearch, IconSparkles, IconCheck, IconTrash, IconExternalLink, IconSettings } from '../../utils/icons'
 import { loomRpc } from '../../services/jsonrpc'
+import { useLocale, t as _t } from '../../i18n'
 import styles from '../shared/SettingsModal.module.css'
 
 const PREF_KEY_SKILL_MARKET_URL = 'skillMarketBaseUrl'
@@ -23,6 +24,7 @@ interface ClawhubSkill {
 }
 
 export default function SkillMarketTab({ hideHeader }: { hideHeader?: boolean }) {
+  const { t } = useLocale()
   const [skills, setSkills] = useState<ClawhubSkill[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -45,7 +47,7 @@ export default function SkillMarketTab({ hideHeader }: { hideHeader?: boolean })
       setSkills(res.skills ?? [])
       setCurrentPage(1)
     } catch (e: any) {
-      setError(`加载失败: ${e.message || e}`)
+      setError(_t('skillMarket.loadFailed', { message: e.message || e }))
     } finally {
       setLoading(false)
     }
@@ -83,10 +85,10 @@ export default function SkillMarketTab({ hideHeader }: { hideHeader?: boolean })
     setBusyIds(prev => new Set(prev).add(slug))
     try {
       await loomRpc('clawhub.install', { slug })
-      useStore.getState().addToast({ type: 'success', message: `技能 "${slug}" 安装成功` })
+      useStore.getState().addToast({ type: 'success', message: _t('skillMarket.installSuccess', { slug }) })
       await load(searchQuery || undefined)
     } catch (e: any) {
-      useStore.getState().addToast({ type: 'error', message: `安装失败: ${e.message || e}` })
+      useStore.getState().addToast({ type: 'error', message: _t('skillMarket.installFailed', { message: e.message || e }) })
     } finally {
       setBusyIds(prev => { const next = new Set(prev); next.delete(slug); return next })
     }
@@ -96,10 +98,10 @@ export default function SkillMarketTab({ hideHeader }: { hideHeader?: boolean })
     setBusyIds(prev => new Set(prev).add(slug))
     try {
       await loomRpc('clawhub.uninstall', { slug })
-      useStore.getState().addToast({ type: 'success', message: `技能 "${slug}" 已卸载` })
+      useStore.getState().addToast({ type: 'success', message: _t('skillMarket.uninstallSuccess', { slug }) })
       await load(searchQuery || undefined)
     } catch (e: any) {
-      useStore.getState().addToast({ type: 'error', message: `卸载失败: ${e.message || e}` })
+      useStore.getState().addToast({ type: 'error', message: _t('skillMarket.uninstallFailed', { message: e.message || e }) })
     } finally {
       setBusyIds(prev => { const next = new Set(prev); next.delete(slug); return next })
     }
@@ -112,7 +114,7 @@ export default function SkillMarketTab({ hideHeader }: { hideHeader?: boolean })
       s.name.toLowerCase().includes(q) ||
       s.description.toLowerCase().includes(q) ||
       s.id.toLowerCase().includes(q) ||
-      (s.tags && Object.keys(s.tags).some(t => t.toLowerCase().includes(q)))
+      (s.tags && Object.keys(s.tags).some(tag => tag.toLowerCase().includes(q)))
     )
   }, [skills, searchQuery])
 
@@ -163,17 +165,17 @@ export default function SkillMarketTab({ hideHeader }: { hideHeader?: boolean })
         <div className={styles.contentHeader}>
           <div className={styles.sectionHeaderRow}>
             <div>
-              <h3 className={styles.sectionTitle}>技能市场</h3>
+              <h3 className={styles.sectionTitle}>{t('skillMarket.title')}</h3>
               <p className={styles.sectionDesc}>
-                Clawhub 社区技能注册表 · {skills.length} 个技能
+                {t('skillMarket.clawhubDesc', { n: skills.length })}
                 {installedCount > 0 && (
                   <span className={styles.marketplaceInstalledSummary}>
-                    {installedCount} 已安装
+                    {t('skillMarket.installedSummary', { n: installedCount })}
                   </span>
                 )}
               </p>
             </div>
-            <button onClick={handleRefresh} disabled={refreshing} className={styles.refreshBtn} title="刷新">
+            <button onClick={handleRefresh} disabled={refreshing} className={styles.refreshBtn} title={t('common.refresh')}>
               <IconRefresh size={14} />
             </button>
           </div>
@@ -190,14 +192,14 @@ export default function SkillMarketTab({ hideHeader }: { hideHeader?: boolean })
             onClick={() => setShowSourceConfig(!showSourceConfig)}
           >
             <IconSettings size={11} />
-            {showSourceConfig ? '收起' : '自定义源'}
+            {showSourceConfig ? t('skillMarket.hideSource') : t('skillMarket.customSource')}
           </button>
           {showSourceConfig && (
             <div className={styles.marketplaceSourceForm}>
               <input
                 className={styles.pluginsSearchInput}
                 type="text"
-                placeholder="输入技能市场 API 地址..."
+                placeholder={t('skillMarket.urlPlaceholder')}
                 value={baseUrl}
                 onChange={e => setBaseUrl(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') saveBaseUrl(baseUrl) }}
@@ -206,14 +208,14 @@ export default function SkillMarketTab({ hideHeader }: { hideHeader?: boolean })
                 className={styles.mcpConnectBtn}
                 onClick={() => saveBaseUrl(baseUrl)}
               >
-                加载
+                {t('skillMarket.load')}
               </button>
               {baseUrl !== DEFAULT_SKILL_MARKET_URL && (
                 <button
                   className={styles.mcpCancelBtn}
                   onClick={() => saveBaseUrl(DEFAULT_SKILL_MARKET_URL)}
                 >
-                  重置
+                  {t('skillMarket.reset')}
                 </button>
               )}
             </div>
@@ -227,21 +229,21 @@ export default function SkillMarketTab({ hideHeader }: { hideHeader?: boolean })
             type="text"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            placeholder="搜索 Clawhub 技能..."
+            placeholder={t('skillMarket.searchPlaceholder')}
             className={styles.pluginsSearchInput}
           />
         </div>
 
-        {loading && !refreshing && <p className={styles.toolsEmpty}>加载中...</p>}
+        {loading && !refreshing && <p className={styles.toolsEmpty}>{t('common.loading')}</p>}
 
         {!loading && filtered.length === 0 && (
           <div className={styles.marketplaceEmptyState}>
             <div className={styles.marketplaceEmptyIcon}><IconSparkles size={28} /></div>
             <p className={styles.pluginsEmptyTitle}>
-              {searchQuery ? '未找到匹配的技能' : '暂无技能'}
+              {searchQuery ? t('skillMarket.notFound') : t('skillMarket.noSkills')}
             </p>
             <p className={styles.pluginsEmptyHelp}>
-              {searchQuery ? '尝试其他关键词搜索' : '点击刷新按钮重新加载'}
+              {searchQuery ? t('skillMarket.tryOtherKeywords') : t('skillMarket.clickRefresh')}
             </p>
           </div>
         )}
@@ -273,19 +275,19 @@ export default function SkillMarketTab({ hideHeader }: { hideHeader?: boolean })
               <div className={styles.marketplaceCardFooter}>
                 <div className={styles.marketplaceCardMeta}>
                   {skill.downloads > 0 && (
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>↓ {skill.downloads.toLocaleString()}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{skill.downloads.toLocaleString()}</span>
                   )}
                   {skill.stars > 0 && (
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>★ {skill.stars}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{skill.stars}</span>
                   )}
                   {skill.installed && (
                     <span className={styles.marketplaceInstalledBadge}>
                       <IconCheck size={11} />
-                      已安装{skill.installed_version ? ` v${skill.installed_version}` : ''}
+                      {t('skillMarket.installed')}{skill.installed_version ? ` v${skill.installed_version}` : ''}
                     </span>
                   )}
                   {skill.has_update && (
-                    <span className={styles.marketplaceUpdateBadge}>有更新</span>
+                    <span className={styles.marketplaceUpdateBadge}>{t('skillMarket.updateAvailable')}</span>
                   )}
                 </div>
                 <div className={styles.marketplaceCardActions}>
@@ -294,7 +296,7 @@ export default function SkillMarketTab({ hideHeader }: { hideHeader?: boolean })
                     target="_blank"
                     rel="noopener noreferrer"
                     className={styles.marketplaceCardLinkBtn}
-                    title="在 Clawhub 查看"
+                    title={t('skillMarket.viewOnClawhub')}
                   >
                     <IconExternalLink size={13} />
                   </a>
@@ -305,7 +307,7 @@ export default function SkillMarketTab({ hideHeader }: { hideHeader?: boolean })
                       className={styles.marketplaceUninstallBtn}
                     >
                       <IconTrash size={12} />
-                      卸载
+                      {t('skillMarket.uninstall')}
                     </button>
                   ) : (
                     <button
@@ -313,7 +315,7 @@ export default function SkillMarketTab({ hideHeader }: { hideHeader?: boolean })
                       disabled={busyIds.has(skill.id)}
                       className={styles.marketplaceInstallBtn}
                     >
-                      {busyIds.has(skill.id) ? '安装中...' : '安装'}
+                      {busyIds.has(skill.id) ? t('skillMarket.installing') : t('skillMarket.install')}
                     </button>
                   )}
                 </div>
@@ -326,7 +328,7 @@ export default function SkillMarketTab({ hideHeader }: { hideHeader?: boolean })
         {!loading && filtered.length > 0 && (
           <div className={styles.marketplacePagination}>
             <div className={styles.marketplacePaginationInfo}>
-              {startItem}-{endItem} / {filtered.length} 个技能
+              {t('skillMarket.itemsCount', { start: startItem, end: endItem, total: filtered.length })}
             </div>
             <div className={styles.marketplacePaginationControls}>
               <button
@@ -361,9 +363,9 @@ export default function SkillMarketTab({ hideHeader }: { hideHeader?: boolean })
                 value={pageSize}
                 onChange={e => handlePageSizeChange(Number(e.target.value))}
               >
-                <option value={25}>25/页</option>
-                <option value={50}>50/页</option>
-                <option value={100}>100/页</option>
+                <option value={25}>{t('skillMarket.pageSize25')}</option>
+                <option value={50}>{t('skillMarket.pageSize50')}</option>
+                <option value={100}>{t('skillMarket.pageSize100')}</option>
               </select>
             </div>
           </div>

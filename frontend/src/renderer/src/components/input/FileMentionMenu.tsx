@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { IconImage, IconFileText, IconPaperclip } from '../../utils/icons'
+import { useLocale } from '../../i18n'
 
 interface FileItem { path: string; name: string; kind: string }
 
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export default function FileMentionMenu({ query, onSelect, onClose }: Props) {
+  const { t } = useLocale()
   const [files, setFiles] = useState<FileItem[]>([])
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -34,7 +36,7 @@ export default function FileMentionMenu({ query, onSelect, onClose }: Props) {
     >
       {filtered.length === 0 ? (
         <div className="px-3.5 py-3 text-xs text-[var(--text-muted)]">
-          {query ? '无匹配文件' : '输入文件名搜索...'}
+          {query ? t('input.noMatchingFiles') : t('input.searchFiles')}
         </div>
       ) : (
         filtered.slice(0, 10).map((f) => (

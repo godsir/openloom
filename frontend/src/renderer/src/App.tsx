@@ -11,6 +11,7 @@ import { InlineInput } from './components/input/InlineInput'
 import { bootstrapApp } from './services/bootstrap'
 import { handleModelsChanged } from './services/app-event-actions'
 import { useStore } from './stores'
+import { t } from './i18n'
 import type { PermissionMode } from './stores/input'
 import styles from './App.module.css'
 
@@ -99,7 +100,7 @@ export default function App() {
         }
       } catch (e: any) {
         if (cancelled) return
-        setError(e.message || '启动失败')
+        setError(e.message || t('error.startupFailed'))
       }
     }
     boot()
@@ -190,7 +191,7 @@ export default function App() {
         retryCleanupRef.current = cleanup
         setReady(true)
       })
-      .catch((e: any) => setError(e.message || '启动失败'))
+      .catch((e: any) => setError(e.message || t('error.startupFailed')))
   }
 
   // Error state
@@ -198,10 +199,10 @@ export default function App() {
     return (
       <div className={styles.errorBox}>
         <div className={styles.errorInner}>
-          <h1 className={styles.errorTitle}>启动失败</h1>
+          <h1 className={styles.errorTitle}>{t('error.startupFailed')}</h1>
           <p className={styles.errorMessage}>{error}</p>
           <button onClick={handleRetry} className={styles.retryBtn}>
-            重试
+            {t('common.retry')}
           </button>
         </div>
       </div>

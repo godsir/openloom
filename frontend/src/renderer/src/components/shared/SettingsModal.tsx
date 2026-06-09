@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconPackage } from '../../utils/icons'
 import Overlay from './Overlay'
 import AgentConfigPanel from './AgentConfigPanel'
@@ -18,6 +19,7 @@ import KgTab from '../settings/KgTab'
 type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'about'
 
 function GlobalDefaultsSection() {
+  const { t } = useLocale()
   const [maxIterations, setMaxIterations] = useState(30)
   const [maxPromptBudget, setMaxPromptBudget] = useState(0)
   const [loaded, setLoaded] = useState(false)
@@ -49,69 +51,40 @@ function GlobalDefaultsSection() {
 
   return (
     <div className={styles.globalDefaultsCard}>
-      <h4 className={styles.globalDefaultsTitle}>全局默认值</h4>
-      <p className={styles.globalDefaultsDesc}>对所有智能体生效的全局默认值</p>
+      <h4 className={styles.globalDefaultsTitle}>{t('settings.globalDefaults')}</h4>
+      <p className={styles.globalDefaultsDesc}>{t('settings.globalDefaultsDesc')}</p>
       <div className={styles.globalDefaultsRow}>
         <div>
-          <label className={styles.globalDefaultsFieldLabel}>最大迭代次数</label>
+          <label className={styles.globalDefaultsFieldLabel}>{t('settings.maxIterations')}</label>
           <input
             type="number" min={1} max={200}
             value={maxIterations}
             onChange={(e) => setMaxIterations(Number(e.target.value) || 30)}
             className={styles.globalDefaultsInput}
           />
-          <span className={styles.globalDefaultsHint}>单轮最多 LLM 调用次数</span>
+          <span className={styles.globalDefaultsHint}>{t('settings.maxIterationsHint')}</span>
         </div>
         <div>
-          <label className={styles.globalDefaultsFieldLabel}>Token 预算上限</label>
+          <label className={styles.globalDefaultsFieldLabel}>{t('settings.tokenBudget')}</label>
           <input
             type="number" min={0} step={1000}
             value={maxPromptBudget}
             onChange={(e) => setMaxPromptBudget(Number(e.target.value) || 0)}
             className={`${styles.globalDefaultsInput} ${styles.globalDefaultsInputWide}`}
           />
-          <span className={styles.globalDefaultsHint}>累计 prompt token 上限（0=不限）</span>
+          <span className={styles.globalDefaultsHint}>{t('settings.tokenBudgetHint')}</span>
         </div>
         <button
           onClick={save}
           disabled={saving}
           className={styles.globalDefaultsSaveBtn}
         >
-          {saving ? '保存中...' : '保存'}
+          {saving ? t('settings.saving') : t('common.save')}
         </button>
       </div>
     </div>
   )
 }
-
-const tabGroups: { label: string; items: { id: Tab; label: string; icon: React.ReactNode }[] }[] = [
-  {
-    label: '助手',
-    items: [
-      { id: 'agent', label: '智能体', icon: <IconBot size={14} /> },
-      { id: 'models', label: '模型', icon: <IconBox size={14} /> },
-      { id: 'kg', label: '记忆系统', icon: <IconBrain size={14} /> },
-      { id: 'token', label: 'Token 用量', icon: <IconBarChart size={14} /> },
-    ],
-  },
-  {
-    label: '工具与扩展',
-    items: [
-      { id: 'workspace', label: '工作空间', icon: <IconFolder size={14} /> },
-      { id: 'mcp', label: 'MCP / LSP', icon: <IconTerminal size={14} /> },
-      { id: 'plugins', label: '插件', icon: <IconPackage size={14} /> },
-      { id: 'skills', label: '技能', icon: <IconSparkles size={14} /> },
-    ],
-  },
-  {
-    label: '系统',
-    items: [
-      { id: 'software', label: '通用', icon: <IconSettings size={14} /> },
-      { id: 'pet', label: '桌宠', icon: <IconPawPrint size={14} /> },
-      { id: 'about', label: '关于', icon: <IconInfo size={14} /> },
-    ],
-  },
-]
 
 export default function SettingsModal({
   open,
@@ -120,10 +93,40 @@ export default function SettingsModal({
   open: boolean
   onClose: () => void
 }) {
+  const { t } = useLocale()
   const theme = useStore((s) => s.theme)
   const setTheme = useStore((s) => s.setTheme)
   const wsState = useStore((s) => s.wsState)
   const [tab, setTab] = useState<Tab>('software')
+
+  const tabGroups: { label: string; items: { id: Tab; label: string; icon: React.ReactNode }[] }[] = [
+    {
+      label: t('settings.assistantGroup'),
+      items: [
+        { id: 'agent', label: t('settings.agent'), icon: <IconBot size={14} /> },
+        { id: 'models', label: t('settings.models'), icon: <IconBox size={14} /> },
+        { id: 'kg', label: t('settings.memorySystem'), icon: <IconBrain size={14} /> },
+        { id: 'token', label: t('settings.tokenUsage'), icon: <IconBarChart size={14} /> },
+      ],
+    },
+    {
+      label: t('settings.toolsGroup'),
+      items: [
+        { id: 'workspace', label: t('settings.workspace'), icon: <IconFolder size={14} /> },
+        { id: 'mcp', label: t('settings.mcpLsp'), icon: <IconTerminal size={14} /> },
+        { id: 'plugins', label: t('settings.plugins'), icon: <IconPackage size={14} /> },
+        { id: 'skills', label: t('settings.skills'), icon: <IconSparkles size={14} /> },
+      ],
+    },
+    {
+      label: t('settings.systemGroup'),
+      items: [
+        { id: 'software', label: t('settings.software'), icon: <IconSettings size={14} /> },
+        { id: 'pet', label: t('settings.pet'), icon: <IconPawPrint size={14} /> },
+        { id: 'about', label: t('settings.about'), icon: <IconInfo size={14} /> },
+      ],
+    },
+  ]
 
   return (
     <Overlay open={open} onClose={onClose} size="lg">
@@ -132,14 +135,14 @@ export default function SettingsModal({
           {tabGroups.map((group, gi) => (
             <div key={gi} className={styles.navGroup}>
               <div className={styles.navLabel}>{group.label}</div>
-              {group.items.map((t) => (
+              {group.items.map((tabItem) => (
                 <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className={`${styles.navItem} ${tab === t.id ? styles.navActive : ''}`}
+                  key={tabItem.id}
+                  onClick={() => setTab(tabItem.id)}
+                  className={`${styles.navItem} ${tab === tabItem.id ? styles.navActive : ''}`}
                 >
-                  <span className={styles.navIcon}>{t.icon}</span>
-                  {t.label}
+                  <span className={styles.navIcon}>{tabItem.icon}</span>
+                  {tabItem.label}
                 </button>
               ))}
             </div>
@@ -152,8 +155,8 @@ export default function SettingsModal({
           {tab === 'agent' && (
             <>
               <div className={styles.contentHeader}>
-                <h3 className={styles.sectionTitle}>智能体配置</h3>
-                <p className={styles.sectionDesc}>管理智能体角色和行为</p>
+                <h3 className={styles.sectionTitle}>{t('settings.agentConfig')}</h3>
+                <p className={styles.sectionDesc}>{t('settings.agentConfigDesc')}</p>
               </div>
               <div className={styles.contentBody}>
                 <GlobalDefaultsSection />
@@ -167,8 +170,8 @@ export default function SettingsModal({
           {tab === 'workspace' && (
             <>
               <div className={styles.contentHeader}>
-                <h3 className={styles.sectionTitle}>工作空间</h3>
-                <p className={styles.sectionDesc}>配置文件操作的默认工作目录</p>
+                <h3 className={styles.sectionTitle}>{t('settings.workspace')}</h3>
+                <p className={styles.sectionDesc}>{t('settings.workspaceDesc')}</p>
               </div>
               <div className={styles.contentBody}>
                 <WorkspaceTab />
@@ -179,8 +182,8 @@ export default function SettingsModal({
           {tab === 'mcp' && (
             <>
               <div className={styles.contentHeader}>
-                <h3 className={styles.sectionTitle}>MCP / LSP</h3>
-                <p className={styles.sectionDesc}>外部工具协议和语言服务器</p>
+                <h3 className={styles.sectionTitle}>{t('settings.mcpLsp')}</h3>
+                <p className={styles.sectionDesc}>{t('settings.mcpLspDesc')}</p>
               </div>
               <div className={styles.contentBody}>
                 <McpLspTab />
@@ -194,8 +197,8 @@ export default function SettingsModal({
           {tab === 'pet' && (
             <>
               <div className={styles.contentHeader}>
-                <h3 className={styles.sectionTitle}>桌宠</h3>
-                <p className={styles.sectionDesc}>桌面宠物伙伴设置</p>
+                <h3 className={styles.sectionTitle}>{t('settings.pet')}</h3>
+                <p className={styles.sectionDesc}>{t('settings.petDesc')}</p>
               </div>
               <div className={styles.contentBody}>
                 <PetTab />
@@ -206,8 +209,8 @@ export default function SettingsModal({
           {tab === 'kg' && (
             <>
               <div className={styles.contentHeader}>
-                <h3 className={styles.sectionTitle}>记忆系统</h3>
-                <p className={styles.sectionDesc}>知识图谱 · 用户画像 · 模式洞察 · 记忆健康</p>
+                <h3 className={styles.sectionTitle}>{t('settings.memorySystem')}</h3>
+                <p className={styles.sectionDesc}>{t('settings.kgDesc')}</p>
               </div>
               <div className={`${styles.contentBody} ${styles.contentBodyFlush}`}>
                 <KgTab />

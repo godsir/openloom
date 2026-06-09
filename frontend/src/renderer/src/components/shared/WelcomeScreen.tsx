@@ -1,22 +1,24 @@
 import { useStore } from '../../stores'
 import { IconPlus, IconCpu, IconTerminal, IconBrain, IconBookOpen, IconSparkles, IconMessageSquare } from '../../utils/icons'
+import { useLocale } from '../../i18n'
 import styles from './WelcomeScreen.module.css'
 import logoDev from '../../assets/loom_logo_dev.png'
 import logoRelease from '../../assets/loom_logo.png'
 
-const FEATURES = [
-  { label: '多模型支持', icon: IconCpu },
-  { label: 'MCP 工具', icon: IconTerminal },
-  { label: '知识图谱', icon: IconBrain },
-  { label: 'LSP 代码理解', icon: IconBookOpen },
-  { label: 'Skills 技能', icon: IconSparkles },
-]
-
 export default function WelcomeScreen() {
+  const { t } = useLocale()
   const createSession = useStore((s) => s.createSession)
   const switchSession = useStore((s) => s.switchSession)
   const sessions = useStore((s) => s.sessions)
   const isPackaged = window.__isPackaged__ ?? true
+
+  const FEATURES = [
+    { label: t('welcome.featureMultiModel'), icon: IconCpu },
+    { label: t('welcome.featureMcpTools'), icon: IconTerminal },
+    { label: t('welcome.featureKnowledgeGraph'), icon: IconBrain },
+    { label: t('welcome.featureLspCode'), icon: IconBookOpen },
+    { label: t('welcome.featureSkills'), icon: IconSparkles },
+  ]
 
   const handleStart = async () => {
     const id = await createSession()
@@ -40,7 +42,7 @@ export default function WelcomeScreen() {
           />
         </div>
         <h1 className={styles.title}>openLoom</h1>
-        <p className={styles.subtitle}>本地优先的私人 AI 助理</p>
+        <p className={styles.subtitle}>{t('welcome.subtitle')}</p>
 
         <div className={styles.features}>
           {FEATURES.map(({ label, icon: Icon }) => (
@@ -53,12 +55,12 @@ export default function WelcomeScreen() {
 
         <button onClick={handleStart} className={styles.startBtn}>
           <IconPlus size={14} />
-          开始新对话
+          {t('welcome.startChat')}
         </button>
 
         {recentSessions.length > 0 && (
           <div className={styles.recentSection}>
-            <div className={styles.recentLabel}>最近对话</div>
+            <div className={styles.recentLabel}>{t('welcome.recentChats')}</div>
             <div className={styles.recentList}>
               {recentSessions.map((s) => (
                 <button
@@ -67,7 +69,7 @@ export default function WelcomeScreen() {
                   className={styles.recentItem}
                 >
                   <IconMessageSquare size={12} className={styles.recentIcon} />
-                  <span className={styles.recentTitle}>{s.title || '未命名对话'}</span>
+                  <span className={styles.recentTitle}>{s.title || t('welcome.unnamedChat')}</span>
                   <span className={styles.recentCount}>{s.messageCount}</span>
                 </button>
               ))}
@@ -76,7 +78,7 @@ export default function WelcomeScreen() {
         )}
 
         <p className={styles.footer}>
-          所有数据存储在本地 SQLite 数据库中 · 完全离线可用
+          {t('welcome.footer')}
         </p>
       </div>
     </div>

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useLocale } from '../../i18n'
 import styles from './Onboarding.module.css'
 import logoDev from '../../assets/loom_logo_dev.png'
 import logoRelease from '../../assets/loom_logo.png'
@@ -9,31 +10,36 @@ interface Step {
   tags: string[]
 }
 
-const STEPS: Step[] = [
-  {
-    title: '欢迎来到 openLoom',
-    description: '本地优先的私人 AI 助理，所有数据存储在你的电脑上。',
-    tags: ['多模型支持', 'MCP 工具', '知识图谱记忆', 'LSP 代码理解', 'Skills 技能'],
-  },
-  {
-    title: '选择你的模型',
-    description: '支持云端与本地模型，在设置中配置后即可按需切换。',
-    tags: ['Anthropic', 'OpenAI', 'DeepSeek', 'LM Studio', 'Ollama'],
-  },
-  {
-    title: '开始对话',
-    description: '创建你的第一个对话，在左侧边栏管理会话和主题。',
-    tags: [],
-  },
-]
+function useSteps(): Step[] {
+  const { t } = useLocale()
+  return [
+    {
+      title: t('onboarding.welcomeTitle'),
+      description: t('onboarding.welcomeDesc'),
+      tags: [t('onboarding.multiModel'), t('onboarding.mcpTools'), t('onboarding.kgMemory'), t('onboarding.lspCode'), t('onboarding.skillsSystem')],
+    },
+    {
+      title: t('onboarding.chooseModel'),
+      description: t('onboarding.chooseModelDesc'),
+      tags: ['Anthropic', 'OpenAI', 'DeepSeek', 'LM Studio', 'Ollama'],
+    },
+    {
+      title: t('onboarding.startChat'),
+      description: t('onboarding.startChatDesc'),
+      tags: [],
+    },
+  ]
+}
 
 export default function Onboarding({
   onComplete,
 }: {
   onComplete: () => void
 }) {
+  const { t } = useLocale()
   const [step, setStep] = useState(0)
   const isPackaged = window.__isPackaged__ ?? true
+  const STEPS = useSteps()
 
   return (
     <div className={styles.backdrop}>
@@ -79,7 +85,7 @@ export default function Onboarding({
               onClick={() => setStep(step - 1)}
               className={styles.btnSecondary}
             >
-              上一步
+              {t('onboarding.prev')}
             </button>
           )}
           {step < STEPS.length - 1 ? (
@@ -87,11 +93,11 @@ export default function Onboarding({
               onClick={() => setStep(step + 1)}
               className={styles.btnPrimary}
             >
-              下一步
+              {t('onboarding.next')}
             </button>
           ) : (
             <button onClick={onComplete} className={styles.btnPrimary}>
-              开始使用
+              {t('onboarding.getStarted')}
             </button>
           )}
         </div>

@@ -1,16 +1,18 @@
 import { useRef, useEffect } from 'react'
 import { useStore } from '../../stores'
 import { IconZap, IconShield, IconEye, IconLightbulb } from '../../utils/icons'
+import { useLocale } from '../../i18n'
 import type { PermissionMode } from '../../stores/input'
 
-const OPTIONS: { id: PermissionMode; icon: typeof IconZap; label: string; desc: string }[] = [
-  { id: 'operate', icon: IconZap, label: 'Operate', desc: '自动执行操作' },
-  { id: 'ask', icon: IconShield, label: 'Ask', desc: '操作前需确认' },
-  { id: 'read_only', icon: IconEye, label: 'Read Only', desc: '仅读取不修改' },
-  { id: 'plan', icon: IconLightbulb, label: 'Plan', desc: '先分析规划，再实施' },
+const OPTIONS: { id: PermissionMode; icon: typeof IconZap; label: string; descKey: string }[] = [
+  { id: 'operate', icon: IconZap, label: 'Operate', descKey: 'input.autoExecute' },
+  { id: 'ask', icon: IconShield, label: 'Ask', descKey: 'input.confirmBefore' },
+  { id: 'read_only', icon: IconEye, label: 'Read Only', descKey: 'input.readOnly' },
+  { id: 'plan', icon: IconLightbulb, label: 'Plan', descKey: 'input.planFirst' },
 ]
 
 export default function PermissionModeButton() {
+  const { t } = useLocale()
   const mode = useStore((s) => s.permissionMode)
   const setMode = useStore((s) => s.setPermissionMode)
   const open = useStore((s) => s.permissionDrawerOpen)
@@ -39,7 +41,7 @@ export default function PermissionModeButton() {
       <button
         onClick={() => setPermissionDrawerOpen(!open)}
         className="pill"
-        title={`权限: ${current.label}`}
+        title={t('input.permissionTitle', { mode: current.label })}
       >
         <Icon size={12} /> {current.label}
       </button>
@@ -54,7 +56,7 @@ export default function PermissionModeButton() {
               <o.icon size={14} />
               <div className="drawer-item-text">
                 <span className="drawer-item-label">{o.label}</span>
-                <span className="drawer-item-desc">{o.desc}</span>
+                <span className="drawer-item-desc">{t(o.descKey)}</span>
               </div>
             </button>
           ))}

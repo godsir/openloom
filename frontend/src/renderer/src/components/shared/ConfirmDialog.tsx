@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { IconAlertCircle } from '../../utils/icons'
+import { useLocale } from '../../i18n'
 import styles from './ConfirmDialog.module.css'
 
 interface ConfirmDialogProps {
@@ -17,12 +18,16 @@ export default function ConfirmDialog({
   open,
   title,
   message,
-  confirmLabel = '确定',
-  cancelLabel = '取消',
+  confirmLabel,
+  cancelLabel,
   danger,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const { t } = useLocale()
+  const actualConfirmLabel = confirmLabel ?? t('common.confirm')
+  const actualCancelLabel = cancelLabel ?? t('common.cancel')
+
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
@@ -48,13 +53,13 @@ export default function ConfirmDialog({
           </div>
           <div className={styles.actions}>
             <button onClick={onCancel} className={`${styles.btn} ${styles.btnCancel}`}>
-              {cancelLabel}
+              {actualCancelLabel}
             </button>
             <button
               onClick={onConfirm}
               className={`${styles.btn} ${danger ? styles.btnDanger : styles.btnConfirm}`}
             >
-              {confirmLabel}
+              {actualConfirmLabel}
             </button>
           </div>
         </div>
