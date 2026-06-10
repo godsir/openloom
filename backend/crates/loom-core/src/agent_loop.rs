@@ -361,35 +361,84 @@ fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
 /// The system message (first message) is always preserved unchanged.
 fn sanitize_message_sequence(messages: &mut Vec<Message>) {
     // Pass 1: collect indices of orphaned tool messages.
-    // An index i is "orphaned" if messages[i].role == Tool and
-    // messages[i-1].role != Assistant-with-ToolCall.
-    let mut orphaned: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    // Instead of only checking the immediate predecessor (which fails when a
+    // single assistant message issues N > 1 tool calls, producing N contiguous
+    // `tool` messages), scan backwards past other `tool` messages to find the
+    // nearest non-`tool` predecessor.
+    let mut orphaned_tool: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for i in 0..messages.len() {
         if messages[i].role == loom_types::Role::Tool {
-            let preceded_by_tool_call = i > 0
-                && messages[i - 1].role == loom_types::Role::Assistant
-                && messages[i - 1]
-                    .content
-                    .iter()
-                    .any(|p| matches!(p, ContentPart::ToolCall { .. }));
-            if !preceded_by_tool_call {
-                orphaned.insert(i);
+            // Scan backwards to the nearest non-tool message.
+            let mut valid = false;
+            let mut j = i;
+            while j > 0 {
+                j -= 1;
+                if messages[j].role == loom_types::Role::Tool {
+                    // Another tool message — keep scanning past it.
+                    // If the preceding assistant issued all these tools,
+                    // the entire contiguous run is valid.
+                    continue;
+                }
+                // Found a non-tool predecessor.
+                valid = messages[j].role == loom_types::Role::Assistant
+                    && messages[j]
+                        .content
+                        .iter()
+                        .any(|p| matches!(p, ContentPart::ToolCall { .. }));
+                break;
+            }
+            if !valid {
+                orphaned_tool.insert(i);
             }
         }
     }
 
-    // Pass 2: also mark assistant messages with tool_calls whose *all* following
-    // tool-result messages are orphaned (i.e. the pairing is broken).
-    // — skip this for now; just removing orphaned tool messages is sufficient.
+    // Pass 2: mark assistant messages whose *all* following tool-result
+    // messages are orphaned.  If every tool message between this assistant
+    // and the next non-tool message is orphaned, the assistant's ToolCall
+    // parts have no matching tool_results and cause HTTP 400.
+    let mut orphaned_assistant: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for i in 0..messages.len() {
+        if messages[i].role == loom_types::Role::Assistant
+            && messages[i]
+                .content
+                .iter()
+                .any(|p| matches!(p, ContentPart::ToolCall { .. }))
+        {
+            // Collect the run of consecutive tool messages immediately
+            // following this assistant.
+            let mut tool_run: Vec<usize> = Vec::new();
+            let mut k = i + 1;
+            while k < messages.len() && messages[k].role == loom_types::Role::Tool {
+                tool_run.push(k);
+                k += 1;
+            }
+            // If the assistant has tool_calls but zero tool messages follow
+            // at all, or every following tool message is orphaned, the
+            // assistant is orphaned too.
+            if !tool_run.is_empty()
+                && tool_run.iter().all(|idx| orphaned_tool.contains(idx))
+            {
+                orphaned_assistant.insert(i);
+            }
+        }
+    }
 
     // Pass 3: retain only valid messages.
     let mut idx = 0usize;
     messages.retain(|msg| {
-        let keep = if orphaned.contains(&idx) {
+        let keep = if orphaned_tool.contains(&idx) {
             tracing::warn!(
                 role = ?msg.role,
                 idx,
                 "sanitize_message_sequence: dropping orphaned tool message"
+            );
+            false
+        } else if orphaned_assistant.contains(&idx) {
+            tracing::warn!(
+                role = ?msg.role,
+                idx,
+                "sanitize_message_sequence: dropping orphaned assistant message (tool_calls without results)"
             );
             false
         } else {
