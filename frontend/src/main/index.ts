@@ -36,17 +36,22 @@ protocol.registerSchemesAsPrivileged([
 // Single instance lock MUST be requested before the ready event.
 // Calling it inside whenReady() is too late and causes a native
 // Electron window to flash on auto-start.
-if (!app.requestSingleInstanceLock()) {
-  app.quit()
+//
+// Skip the lock in dev mode so that `npm run dev` can run alongside
+// a packaged production release without clashing.
+if (!app.isPackaged || app.requestSingleInstanceLock()) {
+  if (app.isPackaged) {
+    app.on('second-instance', () => {
+      const win = getMainWindow()
+      if (win) {
+        if (win.isMinimized()) win.restore()
+        win.show()
+        win.focus()
+      }
+    })
+  }
 } else {
-  app.on('second-instance', () => {
-    const win = getMainWindow()
-    if (win) {
-      if (win.isMinimized()) win.restore()
-      win.show()
-      win.focus()
-    }
-  })
+  app.quit()
 }
 
 app.whenReady().then(async () => {
