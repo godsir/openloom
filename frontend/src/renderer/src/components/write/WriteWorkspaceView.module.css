@@ -38,6 +38,22 @@
 }
 .toolbarBtnAccent:hover { background: var(--accent-subtle); }
 
+.fimBtnOn {
+  composes: toolbarBtnGhost;
+  color: var(--accent); font-weight: 600; font-size: 10px;
+  padding: 2px 8px; border-radius: 10px;
+  background: var(--accent-subtle); border: 1px solid var(--border-accent);
+}
+.fimBtnOn:hover { background: var(--accent-medium); }
+
+.fimBtnOff {
+  composes: toolbarBtnGhost;
+  color: var(--text-muted); font-size: 10px;
+  padding: 2px 8px; border-radius: 10px;
+  border: 1px solid transparent;
+}
+.fimBtnOff:hover { color: var(--text-secondary); border-color: var(--border); }
+
 .workspacePath {
   font-size: 11px; color: var(--text-secondary); max-width: 160px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -162,7 +178,7 @@
 
 /* ── AI 右侧面板 ── */
 .assistantPanel {
-  width: 280px; border-left: 1px solid var(--border);
+  width: 350px; border-left: 1px solid var(--border);
   background: var(--bg-surface); flex-shrink: 0;
   display: flex; flex-direction: column;
   transition: width var(--dur-normal) var(--ease-out), opacity var(--dur-normal) var(--ease-out);
@@ -193,6 +209,13 @@
 .assistantContextFile {
   color: var(--text-secondary); font-weight: 500; margin-bottom: 4px;
   display: flex; align-items: center; gap: 4px;
+}
+
+.assistantSessionTag {
+  display: inline-flex; align-items: center; gap: 3px; font-size: 10px;
+  color: var(--accent); background: var(--accent-subtle);
+  padding: 1px 6px; border-radius: 10px; margin-bottom: 4px;
+  border: 1px solid var(--border-accent); white-space: nowrap;
 }
 
 .assistantSuggestion {

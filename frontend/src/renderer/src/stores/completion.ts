@@ -13,7 +13,11 @@ export const createCompletionSlice: StateCreator<CompletionSlice> = (set) => ({
   fimEnabled: false,
   fimLoading: false,
   lastCompletion: null,
-  setFimEnabled: (enabled) => set({ fimEnabled: enabled }),
+  setFimEnabled: (enabled) => {
+    set({ fimEnabled: enabled })
+    // Persist across app restarts
+    try { window.loom?.setPreference?.('fimEnabled', enabled) } catch {}
+  },
   setFimLoading: (loading) => set({ fimLoading: loading }),
   setLastCompletion: (text) => set({ lastCompletion: text }),
 })

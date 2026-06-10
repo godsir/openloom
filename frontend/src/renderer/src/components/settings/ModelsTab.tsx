@@ -2,6 +2,7 @@ import { useLocale } from '../../i18n'
 import ModelConfigPanel from '../shared/ModelConfigPanel'
 import VisionConfigSection from '../shared/VisionConfigSection'
 import AuxiliaryConfigSection from '../shared/AuxiliaryConfigSection'
+import FimConfigSection from '../shared/FimConfigSection'
 import styles from '../shared/SettingsModal.module.css'
 
 export default function ModelsTab() {
@@ -16,6 +17,7 @@ export default function ModelsTab() {
         <ModelConfigPanel />
         <VisionConfigSection />
         <AuxiliaryConfigSection />
+        <FimConfigSection />
       </div>
     </>
   )

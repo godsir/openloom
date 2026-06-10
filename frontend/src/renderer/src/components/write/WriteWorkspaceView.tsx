@@ -1,12 +1,15 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { useStore } from '../../stores'
 import { useLocale } from '../../i18n'
-import { IconFilePlus, IconFileText, IconEdit, IconTrash, IconSend, IconFolderOpen, IconPlus, IconSparkles } from '../../utils/icons'
+import { IconFilePlus, IconFileText, IconEdit, IconTrash, IconSend, IconFolderOpen, IconPlus, IconSparkles, IconExternalLink } from '../../utils/icons'
 import { renderMarkdown } from '../../utils/markdown'
 import Select from '../shared/Select'
 import styles from './WriteWorkspaceView.module.css'
+import { CodeMirrorEditor } from './CodeMirrorEditor'
+import WriteChatPanel from './WriteChatPanel'
 import { sendMessage } from '../../services/sendMessage'
 import { loomRpc } from '../../services/jsonrpc'
+import { streamBufferManager } from '../../services/stream-buffer'
 
 interface FileEntry { name: string; is_directory: boolean }
 type PreviewMode = 'source' | 'split' | 'preview'
@@ -19,12 +22,13 @@ const FILE_EXT_OPTIONS = [
 
 export const WriteWorkspaceView: React.FC = () => {
   const appMode = useStore(s => s.appMode)
-  const setAppMode = useStore(s => s.setAppMode)
   const createSession = useStore(s => s.createSession)
-  const switchSession = useStore(s => s.switchSession)
   const sessionWorkspaces = useStore(s => s.sessionWorkspaces)
   const defaultWorkspace = useStore(s => s.defaultWorkspace)
   const writeFileSidebarOpen = useStore(s => s.writeFileSidebarOpen)
+  const setFimEnabled = useStore(s => s.setFimEnabled)
+  const fimEnabled = useStore(s => s.fimEnabled)
+  const evictSession = useStore(s => s.evictSession)
 
   const { t } = useLocale()
 
@@ -60,11 +64,19 @@ export const WriteWorkspaceView: React.FC = () => {
 
   const timerRef = useRef<ReturnType<typeof setTimeout>>()
   const toastTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  // Ref to deduplicate in-flight ensureSession calls (prevents race-condition duplicate sessions)
+  const pendingSessions = useRef<Record<string, Promise<string>>>({})
+  // Ref to avoid stale fileContent in callbacks without re-creating them on every keystroke
+  const fileContentRef = useRef(fileContent)
+  fileContentRef.current = fileContent
 
-  // 写作专用会话 + AI 面板
-  const [writeSessionId, setWriteSessionId] = useState<string | null>(
-    () => localStorage.getItem('loom:writeSessionId')
-  )
+  // 写作专用会话 — 按文件隔离，每个文件独立会话
+  const [writeFileSessions, setWriteFileSessions] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem('loom:writeFileSessions')
+      return raw ? JSON.parse(raw) : {}
+    } catch { return {} }
+  })
   const [assistantPanelOpen, setAssistantPanelOpen] = useState(true)
   const [assistantText, setAssistantText] = useState('')
   const [editorFontSize, setEditorFontSize] = useState(() => {
@@ -82,27 +94,43 @@ export const WriteWorkspaceView: React.FC = () => {
   useEffect(() => {
     (async () => {
       try { const v = await (window as any).loom?.getPreference?.('writeWorkspace', '') || ''; if (v) setWorkspaceRoot(v) } catch {}
+      // Re-evaluate when defaultWorkspace/sessionWorkspaces become available (loaded after mount)
       if (!workspaceRoot) {
         const ws = defaultWorkspace || Object.values(sessionWorkspaces)[0]
         if (ws) setWorkspaceRoot(ws)
       }
     })()
-  }, [])
+  }, [workspaceRoot, defaultWorkspace, sessionWorkspaces])
 
-  // 确保有写作会话
-  const ensureSession = useCallback(async () => {
-    if (writeSessionId) return writeSessionId
-    const sid = await createSession()
-    try { await loomRpc('session.rename', { session_id: sid, title: t('write.sessionTitle') }) } catch {}
-    setWriteSessionId(sid)
-    localStorage.setItem('loom:writeSessionId', sid)
-    return sid
-  }, [writeSessionId, createSession, t])
+  // 确保文件有对应的写作会话（按文件隔离，带竞态去重）
+  const ensureSession = useCallback(async (filePath: string) => {
+    // 已有会话，直接返回
+    if (writeFileSessions[filePath]) return writeFileSessions[filePath]
+    // 已有进行中的请求，复用
+    if (pendingSessions.current[filePath]) return pendingSessions.current[filePath]
 
-  // 进入写模式时自动创建会话
-  useEffect(() => {
-    if (!writeSessionId) ensureSession()
-  }, [])
+    // 创建并缓存 Promise
+    const promise = (async () => {
+      const sid = await createSession()
+      const sessionTitle = '[写] ' + (filePath.split('/').pop() || filePath)
+      try { await loomRpc('session.rename', { session_id: sid, title: sessionTitle }) } catch {}
+      // Use functional updater to avoid stale closure — concurrent ensureSession
+      // calls for different files won't lose each other's mappings.
+      setWriteFileSessions(prev => {
+        const updated = { ...prev, [filePath]: sid }
+        localStorage.setItem('loom:writeFileSessions', JSON.stringify(updated))
+        return updated
+      })
+      return sid
+    })()
+
+    pendingSessions.current[filePath] = promise
+    try {
+      return await promise
+    } finally {
+      delete pendingSessions.current[filePath]
+    }
+  }, [writeFileSessions, createSession])
 
   useEffect(() => {
     if (modal.kind !== 'none') setTimeout(() => modalInputRef.current?.focus(), 50)
@@ -153,8 +181,9 @@ export const WriteWorkspaceView: React.FC = () => {
     }
   }, [fileContent, dirty, activeFilePath, saveFile])
 
-  // Ctrl+滚轮缩放字体
+  // Ctrl+滚轮缩放字体 (仅 write 模式生效)
   useEffect(() => {
+    if (appMode !== 'write') return
     const h = (e: WheelEvent) => {
       if (!e.ctrlKey && !e.metaKey) return
       e.preventDefault()
@@ -167,10 +196,11 @@ export const WriteWorkspaceView: React.FC = () => {
     }
     window.addEventListener('wheel', h, { passive: false })
     return () => window.removeEventListener('wheel', h)
-  }, [])
+  }, [appMode])
 
-  // Ctrl+S
+  // Ctrl+S (仅 write 模式生效)
   useEffect(() => {
+    if (appMode !== 'write') return
     const h = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault()
@@ -179,7 +209,7 @@ export const WriteWorkspaceView: React.FC = () => {
     }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [activeFilePath, dirty, fileContent, saveFile])
+  }, [appMode, activeFilePath, dirty, fileContent, saveFile])
 
   // 弹窗操作
   const confirmModal = useCallback(async () => {
@@ -203,11 +233,18 @@ export const WriteWorkspaceView: React.FC = () => {
       } else if (modal.kind === 'delete' && modal.targetName) {
         await loomRpc('vfs.delete', { workspace_root: workspaceRoot, path: modal.targetName })
         if (activeFilePath === modal.targetName) { setActiveFilePath(null); setFileContent(''); setDirty(false) }
+        // Clean up orphaned session for the deleted file
+        const sessions = { ...writeFileSessions }
+        if (sessions[modal.targetName]) {
+          delete sessions[modal.targetName]
+          setWriteFileSessions(sessions)
+          localStorage.setItem('loom:writeFileSessions', JSON.stringify(sessions))
+        }
         loadFiles(); showToast(t('write.fileDeleted'))
       }
       setModal({ kind: 'none' })
     } catch (e: any) { showToast(t('write.operationFailed', { error: (e?.message || String(e)).slice(0, 40) })) }
-  }, [modal, modalInput, fileExt, workspaceRoot, activeFilePath, loadFiles, showToast, t])
+  }, [modal, modalInput, fileExt, workspaceRoot, activeFilePath, writeFileSessions, loadFiles, showToast, t])
 
   // 选目录
   const pickWorkspace = useCallback(async () => {
@@ -220,23 +257,69 @@ export const WriteWorkspaceView: React.FC = () => {
     } catch { /* non-critical */ }
   }, [])
 
-  // AI 助手
+  // AI 助手 — 按文件隔离会话
   const handleAssistantSend = useCallback(async (text?: string) => {
     const msg = (text || assistantText).trim()
     if (!msg) return
-    const sid = await ensureSession()
-    setAssistantText('')
+    // 需要先打开文件，才能使用 AI 助手
+    if (!activeFilePath) {
+      showToast(t('write.aiNeedFile'))
+      return
+    }
+    const sid = await ensureSession(activeFilePath)
+
+    // Only clear input on success; on failure, keep the text
+    const wasSuggestion = !!text
+    if (!wasSuggestion) setAssistantText('')
+
     try {
-      // LLM-facing prompt — keep Chinese
-      const content = activeFilePath
-        ? `[写作上下文]\n当前文件: ${activeFilePath}\n\n${fileContent}\n\n[用户指令]\n${msg}`
-        : msg
-      await sendMessage({ sessionId: sid, content })
-      // 切换到对话模式查看 AI 回复
-      setAppMode('chat')
-      switchSession(sid)
-    } catch { showToast(t('write.sendFailed')) }
-  }, [assistantText, activeFilePath, fileContent, ensureSession, showToast, setAppMode, switchSession, t])
+      // LLM-facing prompt — 包含当前文件内容作为上下文
+      const currentContent = fileContentRef.current
+      const content = `[写作上下文]\n当前文件: ${activeFilePath}\n\n${currentContent}\n\n[用户指令]\n${msg}`
+      await sendMessage({ sessionId: sid, content, permissionMode: 'operate' })
+      // Response will appear inline in WriteChatPanel — no mode switch needed
+    } catch {
+      // Restore text on failure (only for manual input, not suggestion buttons)
+      if (!wasSuggestion) setAssistantText(msg)
+      showToast(t('write.sendFailed'))
+    }
+  }, [assistantText, activeFilePath, ensureSession, fileContentRef, showToast, t])
+
+  // 清空当前文件的对话，下次发送时自动创建新会话
+  const handleNewChat = useCallback(() => {
+    if (!activeFilePath) return
+    const sid = writeFileSessions[activeFilePath]
+    if (sid) {
+      evictSession(sid) // clear in-memory messages + streaming state
+      // Also clear any in-flight stream buffer for this session
+      try { streamBufferManager.clear(sid) } catch {}
+    }
+    // Use functional updater to avoid stale closure
+    setWriteFileSessions(prev => {
+      const updated = { ...prev }
+      delete updated[activeFilePath]
+      localStorage.setItem('loom:writeFileSessions', JSON.stringify(updated))
+      return updated
+    })
+  }, [activeFilePath, writeFileSessions, evictSession])
+
+  // Clean up stale session mappings (called by WriteChatPanel when backend session was deleted)
+  const handleStaleSession = useCallback((deadSessionId: string) => {
+    setWriteFileSessions(prev => {
+      const updated = { ...prev }
+      let changed = false
+      for (const [fp, sid] of Object.entries(updated)) {
+        if (sid === deadSessionId) {
+          delete updated[fp]
+          changed = true
+        }
+      }
+      if (changed) {
+        localStorage.setItem('loom:writeFileSessions', JSON.stringify(updated))
+      }
+      return changed ? updated : prev
+    })
+  }, [])
 
   if (appMode !== 'write') return null
 
@@ -273,6 +356,15 @@ export const WriteWorkspaceView: React.FC = () => {
         )}
 
         <div className={styles.spacer} />
+
+        {activeFilePath && (
+          <button
+            className={fimEnabled ? styles.fimBtnOn : styles.fimBtnOff}
+            onClick={() => setFimEnabled(!fimEnabled)}
+            title={fimEnabled ? t('write.fimDisable') : t('write.fimEnable')}>
+            {fimEnabled ? t('write.fimOn') : t('write.fimOff')}
+          </button>
+        )}
 
         <Select value={previewMode} options={previewOptions} onChange={setPreviewMode} variant="pill" />
 
@@ -357,20 +449,24 @@ export const WriteWorkspaceView: React.FC = () => {
           </div>
         ) : previewMode === 'split' ? (
           <div className={styles.editorArea}>
-            <textarea className={styles.editor}
-              style={{ width: '50%', borderRight: '1px solid var(--border)', fontSize: editorFontSize }}
-              value={fileContent}
-              onChange={e => { setFileContent(e.target.value); setDirty(true) }}
-              placeholder={editorPlaceholder} spellCheck={false} />
+            <div style={{ width: '50%', height: '100%', borderRight: '1px solid var(--border)' }}>
+              <CodeMirrorEditor
+                value={fileContent}
+                onChange={v => { setFileContent(v); setDirty(true) }}
+                placeholder={editorPlaceholder}
+                fontSize={editorFontSize}
+              />
+            </div>
             <div className={styles.preview} dangerouslySetInnerHTML={{ __html: previewHtml }} />
           </div>
         ) : (
           <div className={styles.editorArea}>
-            <textarea className={styles.editor}
-              style={{ fontSize: editorFontSize }}
+            <CodeMirrorEditor
               value={fileContent}
-              onChange={e => { setFileContent(e.target.value); setDirty(true) }}
-              placeholder={editorPlaceholder} spellCheck={false} />
+              onChange={v => { setFileContent(v); setDirty(true) }}
+              placeholder={editorPlaceholder}
+              fontSize={editorFontSize}
+            />
           </div>
         )}
 
@@ -382,30 +478,15 @@ export const WriteWorkspaceView: React.FC = () => {
               <span>{t('write.aiWritingAssistant')}</span>
             </div>
 
-            <div className={styles.assistantPanelBody}>
-              {activeFilePath ? (
-                <div className={styles.assistantContext}>
-                  <div className={styles.assistantContextFile}>
-                    <IconFileText size={11} />{activeFilePath.split('/').pop()}
-                  </div>
-                  <span>{t('write.aiContextWithFile')}</span>
-                </div>
-              ) : (
-                <div className={styles.assistantContext}>
-                  {t('write.aiContextNoFile')}
-                </div>
-              )}
-
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: '4px 0 2px', fontWeight: 500 }}>
-                {t('write.quickCommands')}
-              </div>
-              {quickSuggestions.map(s => (
-                <button key={s.key} className={styles.assistantSuggestion}
-                  onClick={() => handleAssistantSend(s.text)}>
-                  {s.text}
-                </button>
-              ))}
-            </div>
+            {/* WriteChatPanel — inline conversation for the current file */}
+            <WriteChatPanel
+              sessionId={activeFilePath ? writeFileSessions[activeFilePath] || null : null}
+              activeFileName={activeFilePath ? activeFilePath.split('/').pop() || null : null}
+              quickSuggestions={quickSuggestions}
+              onSuggestionClick={(text: string) => handleAssistantSend(text)}
+              onNewChat={handleNewChat}
+              onStaleSession={handleStaleSession}
+            />
 
             <div className={styles.assistantPanelFooter}>
               <div className={styles.assistantInputRow}>

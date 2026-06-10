@@ -106,7 +106,7 @@ impl OpenAIClient {
             if budget == 0 {
                 body["reasoning_effort"] = serde_json::json!("none");
             } else {
-                let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };
+                let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else if budget <= 32768 { "high" } else { "max" };
                 body["reasoning_effort"] = serde_json::json!(effort);
             }
         }
@@ -394,7 +394,7 @@ impl CloudClient for OpenAIClient {
             if budget == 0 {
                 body["reasoning_effort"] = serde_json::json!("none");
             } else {
-                let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };
+                let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else if budget <= 32768 { "high" } else { "max" };
                 body["reasoning_effort"] = serde_json::json!(effort);
             }
         }
@@ -508,7 +508,7 @@ impl CloudClient for OpenAIClient {
             if budget == 0 {
                 body["reasoning_effort"] = serde_json::json!("none");
             } else {
-                let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else { "high" };
+                let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else if budget <= 32768 { "high" } else { "max" };
                 body["reasoning_effort"] = serde_json::json!(effort);
             }
         }

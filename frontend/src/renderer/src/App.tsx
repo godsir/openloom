@@ -81,6 +81,10 @@ export default function App() {
         if (validModes.includes(String(savedPermissionMode))) {
           useStore.getState().setPermissionMode(savedPermissionMode as PermissionMode)
         }
+        const savedFimEnabled = await window.loom.getPreference('fimEnabled', false)
+        useStore.getState().setFimEnabled(savedFimEnabled as boolean)
+        const savedThinkingLevel = await window.loom.getPreference('thinkingLevel', 'medium')
+        useStore.getState().setThinkingLevel(savedThinkingLevel as any)
         const savedPinned = await window.loom.getPreference<string[]>('pinnedIds', [])
         if (savedPinned.length) {
           useStore.setState({ pinnedIds: new Set(savedPinned) })

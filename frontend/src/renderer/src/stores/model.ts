@@ -47,12 +47,15 @@ export interface ModelSlice {
 export const createModelSlice: StateCreator<ModelSlice> = (set, get) => ({
   models: [],
   currentModel: '',
-  thinkingLevel: 'auto',
+  thinkingLevel: 'medium',
   usageBySession: new Map(),
   sessionCumulative: new Map(),
   setModels: (models) => set({ models }),
   setCurrentModel: (currentModel) => set({ currentModel }),
-  setThinkingLevel: (thinkingLevel) => set({ thinkingLevel }),
+  setThinkingLevel: (thinkingLevel) => {
+    window.loom.setPreference('thinkingLevel', thinkingLevel)
+    set({ thinkingLevel })
+  },
   setSessionUsage: (sessionId, usage) => {
     const next = new Map(get().usageBySession)
     next.set(sessionId, usage)

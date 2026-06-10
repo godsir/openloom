@@ -123,8 +123,8 @@ impl AnthropicClient {
         }
         if let Some(budget) = req.thinking_budget {
             if budget > 0 {
-                // Anthropic requires budget_tokens >= 1024; 0 means "disable".
-                body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget});
+                // Anthropic requires budget_tokens >= 1024
+                body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget.max(1024)});
             }
             // budget == 0 → don't set thinking at all (extended thinking off)
         }
@@ -331,8 +331,8 @@ impl CloudClient for AnthropicClient {
         }
         if let Some(budget) = req.thinking_budget {
             if budget > 0 {
-                // Anthropic requires budget_tokens >= 1024; 0 means "disable".
-                body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget});
+                // Anthropic requires budget_tokens >= 1024
+                body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget.max(1024)});
             }
             // budget == 0 → don't set thinking at all (extended thinking off)
         }
@@ -437,8 +437,8 @@ impl CloudClient for AnthropicClient {
         }
         if let Some(budget) = req.thinking_budget {
             if budget > 0 {
-                // Anthropic requires budget_tokens >= 1024; 0 means "disable".
-                body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget});
+                // Anthropic requires budget_tokens >= 1024
+                body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget.max(1024)});
             }
             // budget == 0 → don't set thinking at all (extended thinking off)
         }

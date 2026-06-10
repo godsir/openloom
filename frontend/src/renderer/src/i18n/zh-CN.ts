@@ -179,6 +179,13 @@ export const zhCN: TranslationMap = {
   'input.thinkingLow': '2K tokens',
   'input.thinkingMedium': '8K tokens',
   'input.thinkingHigh': '32K tokens',
+  'input.thinkingXHigh': '64K tokens (最大)',
+  'input.thinkingLabelOff': '关闭',
+  'input.thinkingLabelAuto': '自动',
+  'input.thinkingLabelLow': '低',
+  'input.thinkingLabelMedium': '中',
+  'input.thinkingLabelHigh': '高',
+  'input.thinkingLabelXHigh': '最大',
   'input.defaultAgent': '默认 Agent',
   'input.permissionTitle': '权限: {mode}',
   'input.thinkingTitle': '思考: {level}',
@@ -640,6 +647,8 @@ export const zhCN: TranslationMap = {
   'write.suggestionSummarize': '总结要点',
   'write.suggestionFormal': '改写为更正式的语气',
   'write.sessionTitle': '写作助手',
+  'write.perFileSession': '独立会话',
+  'write.aiNeedFile': '请先打开一个文件',
   'write.readDirFailed': '读取目录失败: {error}',
   'write.readFailed': '读取失败',
   'write.openFailed': '打开失败: {error}',
@@ -671,6 +680,14 @@ export const zhCN: TranslationMap = {
   'write.fileNamePlaceholder': '文件名，如：笔记',
   'write.newFileName': '新文件名',
   'write.sendFailed': '发送失败',
+  'write.fimEnable': '启用 AI 行内补全',
+  'write.fimDisable': '关闭 AI 行内补全',
+  'write.fimOn': 'FIM 开',
+  'write.fimOff': 'FIM 关',
+  'write.openInChat': '展开到聊天',
+  'write.newChat': '新建对话',
+  'write.sessionDeleted': '此对话已被删除。发送新消息以开始新对话。',
+  'write.loadFailed': '加载对话失败。请检查网络连接后重试。',
 
   // ── Onboarding ─────────────────────────────────────────────────
   'onboarding.welcomeTitle': '欢迎来到 openLoom',
@@ -1019,6 +1036,13 @@ export const zhCN: TranslationMap = {
   'vision.enabled': '视觉辅助已启用',
   'vision.disabled': '视觉辅助已关闭',
   'vision.modelUpdated': '视觉模型已更新',
+
+  // ── FIM ───────────────────────────────────────────────────────
+  'fim.title': 'FIM 行内补全模型',
+  'fim.hint': '为编辑器行内代码/文本补全（Fill-in-the-Middle）指定模型。推荐使用支持 FIM 的模型（如 DeepSeek-Chat）。',
+  'fim.model': 'FIM 模型',
+  'fim.selectModel': '选择 FIM 模型...',
+  'fim.modelUpdated': 'FIM 模型已更新',
 
   // ── Updates ───────────────────────────────────────────────────────
   'updates.found': '发现新版本 {version}',

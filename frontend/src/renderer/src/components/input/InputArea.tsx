@@ -13,7 +13,6 @@ import PermissionModeButton from './PermissionModeButton'
 import AttachedFiles from './AttachedFiles'
 import QuotedSelectionCard from './QuotedSelectionCard'
 import { IconImage, IconPaperclip, IconSparkles, IconX, IconCheck } from '../../utils/icons'
-import { CodeMirrorInput } from './CodeMirrorInput'
 import styles from './InputArea.module.css'
 
 interface SkillInfo {
@@ -60,7 +59,6 @@ export default function InputArea() {
   const switchSession = useStore(s => s.switchSession)
   const wsState = useStore(s => s.wsState)
   const sendShortcut = useStore(s => s.sendShortcut)
-  const fimEnabled = useStore(s => s.fimEnabled)
   const quotedSelections = useStore(s => s.quotedSelections)
   const removeQuotedSelection = useStore(s => s.removeQuotedSelection)
   const { saveDraft, restoreDraft } = useStore.getState()
@@ -426,28 +424,17 @@ export default function InputArea() {
               ))}
             </div>
           )}
-          {fimEnabled ? (
-            <CodeMirrorInput
-              value={text}
-              onChange={setText}
-              onSend={handleSend}
-              onPaste={handlePaste}
-              placeholder={placeholder}
-              disabled={!isConnected}
-            />
-          ) : (
-            <textarea
-              ref={textareaRef}
-              value={text}
-              onChange={e => setText(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder={placeholder}
-              rows={2}
-              disabled={!isConnected}
-              className={styles.textarea}
-            />
-          )}
+          <textarea
+            ref={textareaRef}
+            value={text}
+            onChange={e => setText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            placeholder={placeholder}
+            rows={2}
+            disabled={!isConnected}
+            className={styles.textarea}
+          />
           <div className={styles.toolbar}>
             <input
               ref={imageInputRef}

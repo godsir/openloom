@@ -18,13 +18,15 @@ export interface SendMessageOptions {
   skipUserMessage?: boolean
   /** Quoted selections captured via Ctrl+Shift+I inline editor. */
   quotedSelections?: QuotedSelection[]
+  /** Override the global permission mode (e.g. write mode always uses 'operate'). */
+  permissionMode?: string
 }
 
 /**
  * Send a message to the backend and manage the streaming state.
  * This is extracted from InputArea so it can be reused by resend/retry buttons.
  */
-export async function sendMessage({ sessionId, content, attachedFiles = [], skills, skipUserMessage, quotedSelections = [] }: SendMessageOptions): Promise<void> {
+export async function sendMessage({ sessionId, content, attachedFiles = [], skills, skipUserMessage, quotedSelections = [], permissionMode }: SendMessageOptions): Promise<void> {
   const sid = sessionId
   useStore.getState().ensureSession(sid)
 
@@ -112,7 +114,7 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
       thinking_level: thinkingLevel || 'off',
       skills: validSkills && validSkills.length > 0 ? validSkills : undefined,
       skip_user_message: skipUserMessage || undefined,
-      permission_mode: useStore.getState().permissionMode,
+      permission_mode: permissionMode || useStore.getState().permissionMode,
       attached_files: attachedFiles.map(f => ({
         path: f.path,
         name: f.name,

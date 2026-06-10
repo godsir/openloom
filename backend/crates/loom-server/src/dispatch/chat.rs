@@ -59,17 +59,19 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
     // Optional per-message model override
     let model_override = p.get("model").and_then(|v| v.as_str());
 
-    // Thinking level: off/auto/low/medium/high → budget
+    // Thinking level: off/auto/low/medium/high/xhigh → budget
     let thinking_level = p
         .get("thinking_level")
         .and_then(|v| v.as_str())
         .unwrap_or("off");
     let thinking_budget: Option<usize> = match thinking_level {
+        "off" => Some(0),             // explicitly disable thinking
         "low" => Some(2048),
         "medium" | "mid" => Some(8192),
         "high" => Some(32768),
+        "xhigh" | "max" => Some(65536),
         "auto" => Some(16384),
-        _ => None, // "off" or unknown
+        _ => None, // unknown → don't set (model default behavior)
     };
 
     // If model is explicitly provided and differs from active, switch it

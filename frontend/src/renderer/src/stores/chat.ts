@@ -133,5 +133,7 @@ export const createChatSlice: StateCreator<ChatSlice> = (set, get) => ({
     const next = new Map(get().messagesBySession)
     next.delete(sessionId)
     set({ messagesBySession: next })
+    // Also clear streaming state so in-flight deltas don't leak into stale buffers
+    try { (get() as any).removeStreamingSession?.(sessionId) } catch {}
   },
 })

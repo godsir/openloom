@@ -179,6 +179,13 @@ export const enUS: TranslationMap = {
   'input.thinkingLow': '2K tokens',
   'input.thinkingMedium': '8K tokens',
   'input.thinkingHigh': '32K tokens',
+  'input.thinkingXHigh': '64K tokens (max)',
+  'input.thinkingLabelOff': 'Off',
+  'input.thinkingLabelAuto': 'Auto',
+  'input.thinkingLabelLow': 'Low',
+  'input.thinkingLabelMedium': 'Medium',
+  'input.thinkingLabelHigh': 'High',
+  'input.thinkingLabelXHigh': 'Max',
   'input.defaultAgent': 'Default Agent',
   'input.permissionTitle': 'Permission: {mode}',
   'input.thinkingTitle': 'Thinking: {level}',
@@ -640,6 +647,8 @@ export const enUS: TranslationMap = {
   'write.suggestionSummarize': 'Summarize key points',
   'write.suggestionFormal': 'Rewrite in formal tone',
   'write.sessionTitle': 'Writing Assistant',
+  'write.perFileSession': 'Per-file session',
+  'write.aiNeedFile': 'Please open a file first',
   'write.readDirFailed': 'Failed to read directory: {error}',
   'write.readFailed': 'Read failed',
   'write.openFailed': 'Open failed: {error}',
@@ -671,6 +680,14 @@ export const enUS: TranslationMap = {
   'write.fileNamePlaceholder': 'File name, e.g. notes',
   'write.newFileName': 'New file name',
   'write.sendFailed': 'Send failed',
+  'write.fimEnable': 'Enable AI inline completion',
+  'write.fimDisable': 'Disable AI inline completion',
+  'write.fimOn': 'FIM On',
+  'write.fimOff': 'FIM Off',
+  'write.openInChat': 'Open in Chat',
+  'write.newChat': 'New Chat',
+  'write.sessionDeleted': 'This conversation was deleted. Send a new message to start fresh.',
+  'write.loadFailed': 'Failed to load conversation. Check your connection and try again.',
 
   // ── Onboarding ─────────────────────────────────────────────────
   'onboarding.welcomeTitle': 'Welcome to openLoom',
@@ -1019,6 +1036,13 @@ export const enUS: TranslationMap = {
   'vision.enabled': 'Vision assistant enabled',
   'vision.disabled': 'Vision assistant disabled',
   'vision.modelUpdated': 'Vision model updated',
+
+  // ── FIM ───────────────────────────────────────────────────────
+  'fim.title': 'FIM Inline Completion Model',
+  'fim.hint': 'Select the model for Fill-in-the-Middle inline completions in the editor. Models that support FIM (such as DeepSeek-Chat) are recommended.',
+  'fim.model': 'FIM Model',
+  'fim.selectModel': 'Select FIM model...',
+  'fim.modelUpdated': 'FIM model updated',
 
   // ── Updates ───────────────────────────────────────────────────────
   'updates.found': 'New version {version} available',

@@ -28,11 +28,13 @@ pub async fn handle(
         "agent.config.optimize" => Some(handle_agent_config_optimize(state, p).await),
         // Tools
         "tools.list" => Some(handle_tools_list(state).await),
-        // Config (vision / auxiliary)
+        // Config (vision / auxiliary / fim)
         "config.get_vision" => Some(handle_config_get_vision()),
         "config.set_vision" => Some(handle_config_set_vision(p)),
         "config.get_auxiliary" => Some(handle_config_get_auxiliary()),
         "config.set_auxiliary" => Some(handle_config_set_auxiliary(p)),
+        "config.get_fim" => Some(handle_config_get_fim()),
+        "config.set_fim" => Some(handle_config_set_fim(p)),
         // Sandbox
         "config.get_sandbox" => Some(handle_config_get_sandbox(state).await),
         "config.set_sandbox" => Some(handle_config_set_sandbox(state, p).await),
@@ -279,6 +281,45 @@ fn handle_config_set_auxiliary(p: &Value) -> Result<Value, JsonRpcError> {
     let _ = std::fs::create_dir_all(&home);
     let config = json!({ "summary_model": summary_model, "entity_model": entity_model });
     let config_file = home.join("auxiliary.json");
+    std::fs::write(
+        &config_file,
+        serde_json::to_string_pretty(&config).unwrap_or_default(),
+    )
+    .map_err(|e| err(ErrorCode::InternalError, &format!("Write error: {}", e)))?;
+    Ok(json!({ "ok": true }))
+}
+
+// --- config.get_fim ---
+
+fn handle_config_get_fim() -> Result<Value, JsonRpcError> {
+    let home = dirs::home_dir().unwrap_or_default().join(".loom");
+    let config_file = home.join("fim.json");
+    let config: Value = std::fs::read_to_string(&config_file)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(json!({ "model": null, "base_url": null, "api_key_env": null }));
+    Ok(config)
+}
+
+// --- config.set_fim ---
+
+fn handle_config_set_fim(p: &Value) -> Result<Value, JsonRpcError> {
+    let model = p
+        .get("model")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let base_url = p
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let api_key_env = p
+        .get("api_key_env")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let home = dirs::home_dir().unwrap_or_default().join(".loom");
+    let _ = std::fs::create_dir_all(&home);
+    let config = json!({ "model": model, "base_url": base_url, "api_key_env": api_key_env });
+    let config_file = home.join("fim.json");
     std::fs::write(
         &config_file,
         serde_json::to_string_pretty(&config).unwrap_or_default(),

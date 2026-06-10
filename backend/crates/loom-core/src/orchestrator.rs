@@ -3748,11 +3748,7 @@ impl Orchestrator {
             } else {
                 0
             },
-            thinking_budget: if agent_config.cc_dispatch {
-                Some(thinking_budget.unwrap_or(4096))
-            } else {
-                thinking_budget
-            },
+            thinking_budget,
             model_configs: self.model_configs.read().await.values().cloned().collect(),
             active_model_name: self.active_model_name.read().await.clone(),
             workspace_path: workspace_path.clone(),
@@ -4925,11 +4921,7 @@ impl Orchestrator {
             persona: None,
             summary,
             kg_context: None,
-            thinking_budget: if agent_config.cc_dispatch {
-                Some(thinking_budget.unwrap_or(4096))
-            } else {
-                thinking_budget
-            },
+            thinking_budget,
             model_configs: self.model_configs.read().await.values().cloned().collect(),
             active_model_name: self.active_model_name.read().await.clone(),
             workspace_path: workspace_path.clone(),

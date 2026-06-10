@@ -4,12 +4,13 @@ import { IconLightbulb } from '../../utils/icons'
 import { useLocale } from '../../i18n'
 import type { ThinkingLevel } from '../../stores/model'
 
-const OPTIONS: { id: ThinkingLevel; label: string; descKey: string }[] = [
-  { id: 'off', label: 'Off', descKey: 'input.thinkingOff' },
-  { id: 'auto', label: 'Auto', descKey: 'input.thinkingAuto' },
-  { id: 'low', label: 'Low', descKey: 'input.thinkingLow' },
-  { id: 'medium', label: 'Medium', descKey: 'input.thinkingMedium' },
-  { id: 'high', label: 'High', descKey: 'input.thinkingHigh' },
+const OPTIONS: { id: ThinkingLevel; labelKey: string; descKey: string }[] = [
+  { id: 'off', labelKey: 'input.thinkingLabelOff', descKey: 'input.thinkingOff' },
+  { id: 'auto', labelKey: 'input.thinkingLabelAuto', descKey: 'input.thinkingAuto' },
+  { id: 'low', labelKey: 'input.thinkingLabelLow', descKey: 'input.thinkingLow' },
+  { id: 'medium', labelKey: 'input.thinkingLabelMedium', descKey: 'input.thinkingMedium' },
+  { id: 'high', labelKey: 'input.thinkingLabelHigh', descKey: 'input.thinkingHigh' },
+  { id: 'xhigh', labelKey: 'input.thinkingLabelXHigh', descKey: 'input.thinkingXHigh' },
 ]
 
 export default function ThinkingLevelButton() {
@@ -41,9 +42,9 @@ export default function ThinkingLevelButton() {
       <button
         onClick={() => setOpen(!open)}
         className="pill-neutral"
-        title={t('input.thinkingTitle', { level: current.label })}
+        title={t('input.thinkingTitle', { level: t(current.labelKey) })}
       >
-        <IconLightbulb size={12} /> {current.label}
+        <IconLightbulb size={12} /> {t(current.labelKey)}
       </button>
       {open && (
         <div className="drawer-popover">
@@ -54,7 +55,7 @@ export default function ThinkingLevelButton() {
               className={`drawer-item ${level === o.id ? 'drawer-item-active' : ''}`}
             >
               <div className="drawer-item-text">
-                <span className="drawer-item-label">{o.label}</span>
+                <span className="drawer-item-label">{t(o.labelKey)}</span>
                 <span className="drawer-item-desc">{t(o.descKey)}</span>
               </div>
             </button>
