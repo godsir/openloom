@@ -88,17 +88,19 @@ export default function ShortcutsTab() {
   return (
     <>
       <div className={shared.contentHeader}>
-        <h3 className={shared.sectionTitle}>{t('keybindings.title')}</h3>
-        <p className={shared.sectionDesc}>{t('keybindings.description')}</p>
-      </div>
-
-      <div className={shared.contentBody}>
-        <div className={styles.resetBar}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+          <div>
+            <h3 className={shared.sectionTitle}>{t('keybindings.title')}</h3>
+            <p className={shared.sectionDesc}>{t('keybindings.description')}</p>
+          </div>
           <button className={styles.resetAllBtn} onClick={handleResetAll}>
             <IconRotateCcw size={12} />
             {t('keybindings.resetAll')}
           </button>
         </div>
+      </div>
+
+      <div className={shared.contentBody}>
 
         {Array.from(grouped.entries()).map(([category, cmds]) => (
           <div key={category}>

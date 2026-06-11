@@ -1,16 +1,12 @@
 /* ── ShortcutsTab specific styles ── */
 /* Layout (page/header/body) reuses shared SettingsModal.module.css */
 
-.resetBar {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 16px;
-}
-
 .resetAllBtn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex-shrink: 0;
+  margin-top: 2px;
   padding: 6px 14px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
