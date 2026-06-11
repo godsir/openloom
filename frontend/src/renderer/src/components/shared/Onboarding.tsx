@@ -4,12 +4,10 @@ import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
 import { useStore } from '../../stores'
 import styles from './Onboarding.module.css'
-import logoDev from '../../assets/loom_logo_dev.png'
-import logoRelease from '../../assets/loom_logo.png'
 
 // ── Types ──
 
-type ProviderId = 'anthropic' | 'openai' | 'deepseek' | 'lmstudio' | 'ollama'
+type ProviderId = 'anthropic' | 'openai' | 'deepseek' | 'google' | 'groq' | 'zhipu' | 'moonshot' | 'qwen' | 'siliconflow' | 'doubao' | 'lmstudio' | 'ollama'
 
 interface ProviderDef {
   id: ProviderId
@@ -23,6 +21,13 @@ const PROVIDERS: ProviderDef[] = [
   { id: 'anthropic', label: 'Anthropic', backend: 'Anthropic', defaultUrl: 'https://api.anthropic.com', apiFormat: 'anthropic' },
   { id: 'openai', label: 'OpenAI', backend: 'OpenAI', defaultUrl: 'https://api.openai.com/v1', apiFormat: 'openai' },
   { id: 'deepseek', label: 'DeepSeek', backend: 'DeepSeek', defaultUrl: 'https://api.deepseek.com/v1', apiFormat: 'openai' },
+  { id: 'google', label: 'Google Gemini', backend: 'Custom', defaultUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiFormat: 'openai' },
+  { id: 'groq', label: 'Groq', backend: 'Custom', defaultUrl: 'https://api.groq.com/openai/v1', apiFormat: 'openai' },
+  { id: 'zhipu', label: '智谱 GLM', backend: 'Custom', defaultUrl: 'https://open.bigmodel.cn/api/paas/v4', apiFormat: 'openai' },
+  { id: 'moonshot', label: '月之暗面 Kimi', backend: 'Custom', defaultUrl: 'https://api.moonshot.cn/v1', apiFormat: 'openai' },
+  { id: 'qwen', label: '通义千问', backend: 'Custom', defaultUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiFormat: 'openai' },
+  { id: 'siliconflow', label: '硅基流动', backend: 'Custom', defaultUrl: 'https://api.siliconflow.cn/v1', apiFormat: 'openai' },
+  { id: 'doubao', label: '豆包 ByteDance', backend: 'Custom', defaultUrl: 'https://ark.cn-beijing.volces.com/api/v3', apiFormat: 'openai' },
   { id: 'lmstudio', label: 'LM Studio', backend: 'LmStudio', defaultUrl: 'http://localhost:1234/v1', apiFormat: 'openai' },
   { id: 'ollama', label: 'Ollama', backend: 'Ollama', defaultUrl: 'http://localhost:11434/v1', apiFormat: 'openai' },
 ]
@@ -52,7 +57,6 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
   const { t, locale, setLocale } = useLocale()
   const setTheme = useStore((s) => s.setTheme)
   const theme = useStore((s) => s.theme)
-  const isPackaged = window.__isPackaged__ ?? true
 
   const [step, setStep] = useState(0)
   const [stepKey, setStepKey] = useState(0)
@@ -103,6 +107,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
         backend: selProvider.backend,
         api_key: apiKey.trim(),
         base_url: normalizeBaseUrl(selProvider.defaultUrl, selProvider.apiFormat),
+        backend_label: selProvider.backend === 'Custom' ? selProvider.label : undefined,
       })
       if (result.ok) {
         useStore.getState().addToast({ type: 'success', message: t('modelPanel.apiKeySavedMsg', { env: result.env_name }) })
@@ -160,15 +165,9 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
       <div className={styles.bgGrid} />
 
       <div className={styles.card}>
-        {/* ── Top: banner + step indicator ── */}
+        {/* ── Top: title + horizontal step indicator ── */}
         <div className={styles.top}>
-          <div className={styles.logoBox}>
-            <img
-              src={isPackaged ? logoRelease : logoDev}
-              alt="openLoom"
-              className={styles.logoImg}
-            />
-          </div>
+          <h1 className={styles.appTitle}>{t('onboarding.welcomeTitle')}</h1>
 
           <div className={styles.steps}>
             {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
@@ -193,9 +192,15 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
                 >
                   {stepLabel(i)}
                 </span>
-                {i < TOTAL_STEPS - 1 && <div className={`${styles.stepLine} ${i < step ? styles.stepLineDone : ''}`} />}
               </div>
             ))}
+          </div>
+
+          <div className={styles.stepTrack}>
+            <div
+              className={styles.stepTrackFill}
+              style={{ width: `${((step) / (TOTAL_STEPS - 1)) * 100}%` }}
+            />
           </div>
         </div>
 
@@ -337,7 +342,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
 
         {/* ── Actions ── */}
         <div className={styles.actions}>
-          {step > 0 && step < TOTAL_STEPS - 1 && (
+          {step > 0 && (
             <button onClick={goPrev} className={styles.btnSecondary}>
               {t('onboarding.prev')}
             </button>

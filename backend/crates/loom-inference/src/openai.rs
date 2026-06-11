@@ -103,12 +103,13 @@ impl OpenAIClient {
         }
         body["temperature"] = req.temperature.into();
         if let Some(budget) = req.thinking_budget {
-            if budget == 0 {
-                body["reasoning_effort"] = serde_json::json!("none");
-            } else {
+            if budget > 0 {
                 let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else if budget <= 32768 { "high" } else { "max" };
                 body["reasoning_effort"] = serde_json::json!(effort);
             }
+            // budget == 0: skip reasoning_effort entirely.
+            // DeepSeek does not accept "none"; the OpenAI-compatible way to disable
+            // reasoning is to omit the field.
         }
         if !req.stop.is_empty() {
             body["stop"] = serde_json::json!(req.stop);
@@ -391,9 +392,7 @@ impl CloudClient for OpenAIClient {
         }
         body["temperature"] = req.temperature.into();
         if let Some(budget) = req.thinking_budget {
-            if budget == 0 {
-                body["reasoning_effort"] = serde_json::json!("none");
-            } else {
+            if budget > 0 {
                 let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else if budget <= 32768 { "high" } else { "max" };
                 body["reasoning_effort"] = serde_json::json!(effort);
             }
@@ -505,9 +504,7 @@ impl CloudClient for OpenAIClient {
         }
         body["temperature"] = req.temperature.into();
         if let Some(budget) = req.thinking_budget {
-            if budget == 0 {
-                body["reasoning_effort"] = serde_json::json!("none");
-            } else {
+            if budget > 0 {
                 let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else if budget <= 32768 { "high" } else { "max" };
                 body["reasoning_effort"] = serde_json::json!(effort);
             }

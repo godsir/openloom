@@ -46,7 +46,7 @@ pub struct PrefixDigest {
 }
 
 /// Shared tiktoken BPE instance — initialised once, reused for all assemblies.
-fn bpe() -> &'static tiktoken_rs::CoreBPE {
+pub fn bpe() -> &'static tiktoken_rs::CoreBPE {
     static BPE: OnceLock<tiktoken_rs::CoreBPE> = OnceLock::new();
     BPE.get_or_init(|| {
         tiktoken_rs::cl100k_base().expect("tiktoken cl100k_base model should always load")

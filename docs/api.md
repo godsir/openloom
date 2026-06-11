@@ -1,6 +1,6 @@
 # openLoom Backend API
 
-> Auto-generated from dispatch code. Methods: 110
+> Auto-generated from dispatch code. Methods: 136
 
 ## Transport
 
@@ -48,16 +48,6 @@
 | `content` | string |  |  |
 | `session_id` | string |  |  |
 | `model` | string |  |  |
-
-```json
-// → {
-        "response": result.response,
-        "session_id": session_id,
-        "tool_calls": result.tool_calls_made,
-        "iterations": result.iterations,
-        "tokens": result.prompt_tokens + result.completion_tokens,
-    }
-```
 
 ### chat.stop
 
@@ -706,9 +696,10 @@
 | Param | 类型 | 必需 | 说明 |
 |-------|------|:---:|------|
 | `approved` | bool |  |  |
+| `remember` | bool |  |  |
 
 ```json
-// → { "ok": true, "call_id": call_id, "approved": approved }
+// → { "ok": true, "call_id": call_id, "approved": approved, "remember": remember }
 ```
 
 ---
@@ -752,6 +743,14 @@
 ### config.get_auxiliary
 
 ### config.set_auxiliary
+
+```json
+// → { "ok": true }
+```
+
+### config.get_fim
+
+### config.set_fim
 
 ```json
 // → { "ok": true }
@@ -805,6 +804,48 @@
 | `cognition_id` | number |  |  |
 
 ### cognitions.subjects
+
+### cognitions.delete
+
+---
+
+## completion
+
+### completion.fim
+
+| Param | 类型 | 必需 | 说明 |
+|-------|------|:---:|------|
+| `model` | string |  |  |
+
+---
+
+## cron
+
+### cron.list
+
+### cron.create
+
+### cron.delete
+
+### cron.pause
+
+### cron.resume
+
+### cron.history
+
+### cron.run_now
+
+---
+
+## goal
+
+### goal.set
+
+### goal.status
+
+| Param | 类型 | 必需 | 说明 |
+|-------|------|:---:|------|
+| `session_id` | string |  |  |
 
 ---
 
@@ -900,6 +941,61 @@
 |-------|------|:---:|------|
 | `query` | string |  |  |
 | `limit` | number |  |  |
+
+---
+
+## plan
+
+### plan.create
+
+### plan.get
+
+| Param | 类型 | 必需 | 说明 |
+|-------|------|:---:|------|
+| `plan_id` | string |  |  |
+
+### plan.list
+
+| Param | 类型 | 必需 | 说明 |
+|-------|------|:---:|------|
+| `workspace_root` | string |  |  |
+
+### plan.update
+
+| Param | 类型 | 必需 | 说明 |
+|-------|------|:---:|------|
+| `plan_id` | string |  |  |
+| `status` | string |  |  |
+
+### plan.delete
+
+| Param | 类型 | 必需 | 说明 |
+|-------|------|:---:|------|
+| `plan_id` | string |  |  |
+
+---
+
+## todo
+
+### todo.list
+
+### todo.update_status
+
+---
+
+## vfs
+
+### vfs.read_file
+
+### vfs.write_file
+
+### vfs.list_directory
+
+### vfs.create_directory
+
+### vfs.rename
+
+### vfs.delete
 
 ---
 

@@ -726,8 +726,12 @@ impl Orchestrator {
         let _ = registry.register(Arc::new(crate::builtin_tools::FileListTool));
         let _ = registry.register(Arc::new(crate::builtin_tools::FileReadTool));
         let _ = registry.register(Arc::new(crate::builtin_tools::FileWriteTool));
+        let _ = registry.register(Arc::new(crate::builtin_tools::FileEditTool));
         let _ = registry.register(Arc::new(crate::builtin_tools::ContentSearchTool));
         let _ = registry.register(Arc::new(crate::builtin_tools::FileDeleteTool));
+        let _ = registry.register(Arc::new(crate::builtin_tools::GlobTool));
+        let _ = registry.register(Arc::new(crate::builtin_tools::FindTool));
+        let _ = registry.register(Arc::new(crate::builtin_tools::AskUserTool));
 
         let skill_state = Arc::new(RwLock::new(loom_skills::SkillState::default()));
         let slash_router = Arc::new(RwLock::new(SlashRouter::new()));
@@ -736,6 +740,11 @@ impl Orchestrator {
         }));
         let _ = registry.register(Arc::new(crate::builtin_tools::WebSearchTool));
         let _ = registry.register(Arc::new(crate::builtin_tools::WebFetchTool));
+
+        // System-level info and diagnostics tools
+        let _ = registry.register(Arc::new(crate::builtin_tools::SystemInfoTool));
+        let _ = registry.register(Arc::new(crate::builtin_tools::TokenUsageTool));
+        let _ = registry.register(Arc::new(crate::builtin_tools::MemorySearchTool));
 
         // ScheduleReminder — AI can decide when to call, for creating/managing timed reminders
         let cron_scheduler: Arc<RwLock<Option<Arc<CronScheduler>>>> = Arc::new(RwLock::new(None));
@@ -748,7 +757,8 @@ impl Orchestrator {
         let _ = registry.register_alias("Read", "file_read");
         let _ = registry.register_alias("Write", "file_write");
         let _ = registry.register_alias("Grep", "content_search");
-        let _ = registry.register_alias("Glob", "file_list");
+        let _ = registry.register_alias("Glob", "file_glob");
+        let _ = registry.register_alias("Find", "file_find");
         let _ = registry.register_alias("Skill", "use_skill");
         let _ = registry.register_alias("Bash", "shell");
         let _ = registry.register_alias("Delete", "file_delete");
@@ -3215,7 +3225,12 @@ impl Orchestrator {
     }
 
     /// Build the full system prompt by assembling agent persona, system instructions,
-    /// user profile, selected skills, available skill list, KG context, and workspace path.
+    /// and user profile into a stable prefix. Frequently-changing content (skills,
+    /// KG context, available skills list, workspace path) is returned separately as
+    /// `dynamic_context` so it can be injected AFTER the cached prefix — preserving
+    /// KV-cache hit rates across turns.
+    ///
+    /// Returns `(stable_prompt, dynamic_context)`.
     #[allow(clippy::too_many_arguments)]
     async fn build_full_system_prompt(
         &self,
@@ -3226,43 +3241,79 @@ impl Orchestrator {
         user_message: &str,
         session_id: &str,
         workspace_path: &Option<String>,
-    ) -> String {
-        let mut system_prompt = String::new();
+    ) -> (String, Option<String>) {
+        let mut stable_prompt = String::new();
+        let mut dynamic_parts: Vec<String> = Vec::new();
+
+        // Skill injection size limits
+        const MAX_SKILL_BODY_BYTES: usize = 16 * 1024; // 16KB per skill
+        const MAX_ACTIVE_SKILLS: usize = 5; // max concurrent skills
+
+        // ═══════════════════════════════════════════════════════════════════
+        // STABLE PREFIX — changes rarely, maximises KV-cache reuse
+        // ═══════════════════════════════════════════════════════════════════
 
         // 1. Agent persona — the agent's core identity, placed first for maximum effect
         if !agent_config.persona.is_empty() {
-            system_prompt.push_str(&agent_config.persona);
+            stable_prompt.push_str(&agent_config.persona);
         }
         // 2. System instructions — base prompt or agent-specific override
         if let Some(ref override_prompt) = agent_config.system_prompt_override
             && !override_prompt.is_empty()
         {
-            if !system_prompt.is_empty() {
-                system_prompt.push_str("\n\n");
+            if !stable_prompt.is_empty() {
+                stable_prompt.push_str("\n\n");
             }
-            system_prompt.push_str(override_prompt);
+            stable_prompt.push_str(override_prompt);
         } else {
             let base = self.build_system_prompt().await;
             if !base.is_empty() {
-                if !system_prompt.is_empty() {
-                    system_prompt.push_str("\n\n");
+                if !stable_prompt.is_empty() {
+                    stable_prompt.push_str("\n\n");
                 }
-                system_prompt.push_str(&base);
+                stable_prompt.push_str(&base);
             }
         }
         // 3. User profile — learned facts about the user (context, not identity)
         if !user_persona.is_empty() {
-            system_prompt.push_str(&format!("\n\n## User Profile\n{}", user_persona));
+            stable_prompt.push_str(&format!("\n\n## User Profile\n{}", user_persona));
         }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // DYNAMIC CONTEXT — changes frequently, injected AFTER cached prefix
+        // ═══════════════════════════════════════════════════════════════════
+
         // 4a. Selected skills — inject full SKILL.md content for user-chosen skills
+        let mut injected_count = 0usize;
         if !selected_skills.is_empty() {
             let bodies = self.skill_state.read().await.bodies.clone();
-            system_prompt.push_str("\n\n## Active Skills (User Selected)\nThe following skills are activated for this conversation. Follow their instructions directly — do NOT call use_skill for these.\n");
+            let mut skills_text = String::from("## Active Skills (User Selected)\nThe following skills are activated for this conversation. Follow their instructions directly — do NOT call use_skill for these.\n");
             for name in selected_skills {
+                if injected_count >= MAX_ACTIVE_SKILLS {
+                    tracing::warn!(
+                        skill_name = %name,
+                        limit = MAX_ACTIVE_SKILLS,
+                        "selected skill exceeds MAX_ACTIVE_SKILLS, skipping injection"
+                    );
+                    continue;
+                }
                 if let Some(body) = bodies.get(name) {
-                    system_prompt.push_str(&format!("\n\n### Skill: {}\n{}", name, body));
+                    let truncated = if body.len() > MAX_SKILL_BODY_BYTES {
+                        let trunc_point = body
+                            .char_indices()
+                            .take(MAX_SKILL_BODY_BYTES)
+                            .last()
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+                        format!("{}... (truncated)", &body[..trunc_point])
+                    } else {
+                        body.clone()
+                    };
+                    skills_text.push_str(&format!("\n\n### Skill: {}\n{}", name, truncated));
+                    injected_count += 1;
                 }
             }
+            dynamic_parts.push(skills_text);
         }
         // 4a-bis. Always-active skills — auto-inject full SKILL.md content for
         // skills whose manifest declares always_active: true. These activate
@@ -3280,21 +3331,41 @@ impl Orchestrator {
             if !always_active_names.is_empty() {
                 let first_time = selected_skills.is_empty();
                 let bodies = self.skill_state.read().await.bodies.clone();
-                system_prompt.push_str(&format!(
+                let mut aa_text = format!(
                     "\n\n## Active Skills ({})\nThe following skills are activated automatically for this conversation. Follow their instructions directly — do NOT call use_skill for these.\n",
                     if first_time { "Auto-Activated" } else { "Also Auto-Activated" }
-                ));
+                );
                 for name in &always_active_names {
                     if !selected_skills.contains(name)
                         && let Some(body) = bodies.get(name)
                     {
-                        system_prompt.push_str(&format!("\n\n### Skill: {}\n{}", name, body));
+                        if injected_count >= MAX_ACTIVE_SKILLS {
+                            tracing::warn!(
+                                skill_name = %name,
+                                limit = MAX_ACTIVE_SKILLS,
+                                "always-active skill exceeds MAX_ACTIVE_SKILLS, skipping injection"
+                            );
+                            continue;
+                        }
+                        let truncated = if body.len() > MAX_SKILL_BODY_BYTES {
+                            let trunc_point = body
+                                .char_indices()
+                                .take(MAX_SKILL_BODY_BYTES)
+                                .last()
+                                .map(|(i, _)| i)
+                                .unwrap_or(0);
+                            format!("{}... (truncated)", &body[..trunc_point])
+                        } else {
+                            body.clone()
+                        };
+                        aa_text.push_str(&format!("\n\n### Skill: {}\n{}", name, truncated));
+                        injected_count += 1;
                     }
                 }
+                dynamic_parts.push(aa_text);
             }
         }
         // 4b. Available skills — name+description list for LLM autonomous use_skill calls.
-        // Matches v0.2.17 behavior: simple list injection, no relevance filtering.
         if !available_skills.is_empty() {
             let active_set: std::collections::HashSet<String> = {
                 let state = self.skill_state.read().await;
@@ -3323,13 +3394,13 @@ impl Orchestrator {
                 .collect::<Vec<_>>()
                 .join("\n");
             if !filtered.trim().is_empty() {
-                system_prompt.push_str(&format!("\n\n## Available Skills\n{}", filtered));
+                dynamic_parts.push(format!("## Available Skills\n{}", filtered));
             }
         }
 
         // Inject knowledge graph context — layer-aware (Phase 2):
-        // Layer 1: Working (current session entities) — max 5
-        // Layer 2: Semantic (global persistent entities) — max 2 additional
+        // Moved to dynamic context because entity candidates are extracted from
+        // the current user message and change EVERY turn.
         {
             let mem_guard = self.memory_store.read().await;
             if let Some(ref store) = *mem_guard {
@@ -3347,21 +3418,17 @@ impl Orchestrator {
                     .unwrap_or_default();
                 // Layer 2: Semantic — global persistent scope, semantic-layer entities
                 let kg_semantic = if !kg_working.is_empty() {
-                    // Only fetch global if working layer already has results
                     store
                         .query_kg_context_layered(&entities, 2, "global", Some("semantic"))
                         .await
                         .unwrap_or_default()
                 } else {
-                    // Fallback: no working results, get more from global
                     store
                         .query_kg_context_layered(&entities, 5, "global", Some("semantic"))
                         .await
                         .unwrap_or_default()
                 };
 
-                // Combine: working first, then semantic (deduped implicitly by
-                // query_kg_context's per-entity handling)
                 let mut kg_parts: Vec<&str> = Vec::new();
                 if !kg_working.is_empty() {
                     kg_parts.push(&kg_working);
@@ -3371,20 +3438,26 @@ impl Orchestrator {
                 }
                 let combined = kg_parts.join("\n");
                 if !combined.is_empty() {
-                    system_prompt.push_str(&format!("\n\n{}", combined));
+                    dynamic_parts.push(combined);
                 }
             }
         }
 
-        // Workspace path
+        // Workspace path — changes when user switches workspace
         if let Some(ws) = workspace_path {
-            system_prompt.push_str(&format!(
-                "\n\n## 工作空间\n当前工作目录：{}\n所有相对路径都基于此目录。创建、读取、修改文件时优先使用此目录。",
+            dynamic_parts.push(format!(
+                "## 工作空间\n当前工作目录：{}\n所有相对路径都基于此目录。创建、读取、修改文件时优先使用此目录。",
                 ws
             ));
         }
 
-        system_prompt
+        let dynamic_context = if dynamic_parts.is_empty() {
+            None
+        } else {
+            Some(dynamic_parts.join("\n\n"))
+        };
+
+        (stable_prompt, dynamic_context)
     }
 
     /// Shared session-close consolidation: promote high-confidence session
@@ -3563,6 +3636,26 @@ impl Orchestrator {
             }
         }
 
+        // Compute the union of allowed_tools from all active skills.
+        // When any skill declares an allowlist, the model only sees tools in
+        // the union.  When no skill restricts tools, this is None (pass all).
+        let skill_tool_allowlist: Option<Vec<String>> = {
+            let state = self.skill_state.read().await;
+            let mut union: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut any_has_allowlist = false;
+            for name in &effective_selected_skills {
+                if let Some(allowed) = state.allowed_tools.get(name) {
+                    if !allowed.is_empty() {
+                        any_has_allowlist = true;
+                        for tool_name in allowed {
+                            union.insert(tool_name.clone());
+                        }
+                    }
+                }
+            }
+            if any_has_allowlist { Some(union.into_iter().collect()) } else { None }
+        };
+
         // Get workspace path for this session
         let workspace_path = if let Some(ref store) = *self.memory_store.read().await {
             let session_ws = store.get_session_workspace(session_id).await.ok().flatten();
@@ -3586,7 +3679,9 @@ impl Orchestrator {
 
         // Build full system prompt via shared method (persona, instructions, profile,
         // selected skills, available skills, KG context, workspace path).
-        let mut system_prompt = self
+        // Returns (stable_prompt, dynamic_context) — dynamic content is injected
+        // AFTER the cached prefix so KV-cache hit rates stay high across turns.
+        let (stable_prompt, mut dynamic_context) = self
             .build_full_system_prompt(
                 agent_config,
                 &user_persona,
@@ -3598,27 +3693,26 @@ impl Orchestrator {
             )
             .await;
 
-        // Inject slash-command skill body (if intercepted)
+        // Inject slash-command skill body into dynamic context (not stable prefix)
         if let Some(ref body) = slash_skill_body {
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(body);
+            let mut dc = dynamic_context.unwrap_or_default();
+            dc.push_str("\n\n");
+            dc.push_str(body);
+            dynamic_context = Some(dc);
         }
 
-        // Plan mode: inject planning instructions into system prompt
+        // Plan mode: inject planning instructions into dynamic context
         if permission_mode == "plan" {
-            system_prompt.push_str("\n\n## 规划模式\n");
-            system_prompt.push_str("你正处于 **规划模式（Plan Mode）**。在此模式下：\n");
-            system_prompt.push_str("- **禁止**修改文件、执行 Shell 命令或任何破坏性操作。\n");
-            system_prompt
-                .push_str("- 你应当深入分析代码库，探索相关文件，创建一个详细的实施方案。\n");
-            system_prompt.push_str(
-                "- 方案应包含：需要修改的文件、架构决策、分步实施计划、边界情况和潜在风险。\n",
-            );
-            system_prompt.push_str("- 使用清晰的 Markdown 标题、列表和代码片段呈现方案。\n");
-            system_prompt
-                .push_str("- 用户审核方案后，会切换到 **Operate（操作）** 模式来开始实施。\n");
-            system_prompt
-                .push_str("- 你可以自由使用只读工具（Read、Grep、Glob）和搜索工具进行分析。\n");
+            let mut dc = dynamic_context.unwrap_or_default();
+            dc.push_str("\n\n## 规划模式\n");
+            dc.push_str("你正处于 **规划模式（Plan Mode）**。在此模式下：\n");
+            dc.push_str("- **禁止**修改文件、执行 Shell 命令或任何破坏性操作。\n");
+            dc.push_str("- 你应当深入分析代码库，探索相关文件，创建一个详细的实施方案。\n");
+            dc.push_str("- 方案应包含：需要修改的文件、架构决策、分步实施计划、边界情况和潜在风险。\n");
+            dc.push_str("- 使用清晰的 Markdown 标题、列表和代码片段呈现方案。\n");
+            dc.push_str("- 用户审核方案后，会切换到 **Operate（操作）** 模式来开始实施。\n");
+            dc.push_str("- 你可以自由使用只读工具（Read、Grep、Glob）和搜索工具进行分析。\n");
+            dynamic_context = Some(dc);
         }
 
         // Build default permissions based on permission_mode:
@@ -3737,7 +3831,8 @@ impl Orchestrator {
         };
 
         let loop_config = AgentLoopConfig {
-            system_prompt,
+            system_prompt: stable_prompt,
+            dynamic_context,
             summary,
             temperature: agent_config.temperature.unwrap_or(0.0),
             max_iterations: agent_config.max_iterations.unwrap_or(default_max_iters),
@@ -3766,6 +3861,7 @@ impl Orchestrator {
             // Pass selected_skills so the agent loop can bypass lazy_tools when
             // skill instructions are already injected into the system prompt.
             selected_skills: effective_selected_skills.clone(),
+            skill_tool_allowlist: skill_tool_allowlist.clone(),
             // Number of available skills — used for soft skill-first routing.
             available_skill_count: {
                 let state = self.skill_state.read().await;
@@ -3783,6 +3879,7 @@ impl Orchestrator {
                 }
             },
             lazy_tools: effective_selected_skills.is_empty(),
+            steering_queue: Some(Arc::new(RwLock::new(Vec::new()))),
             ..Default::default()
         };
         let user_msg = user_message.to_string();
@@ -4857,7 +4954,7 @@ impl Orchestrator {
         quality_injected_names.truncate(6);
 
         // ── System prompt assembly (shared method) ──
-        let mut system_prompt = self
+        let (stable_prompt, mut dynamic_context) = self
             .build_full_system_prompt(
                 &agent_config,
                 &user_persona,
@@ -4869,10 +4966,12 @@ impl Orchestrator {
             )
             .await;
 
-        // Inject slash-command skill body (if intercepted)
+        // Inject slash-command skill body (if intercepted) into dynamic context
         if let Some(ref body) = slash_skill_body {
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(body);
+            let mut dc = dynamic_context.unwrap_or_default();
+            dc.push_str("\n\n");
+            dc.push_str(body);
+            dynamic_context = Some(dc);
         }
 
         // Collect skill permissions for merged tool-call permissions.
@@ -4896,6 +4995,24 @@ impl Orchestrator {
                 }
             }
         }
+
+        // Compute the union of allowed_tools from all active skills.
+        let skill_tool_allowlist: Option<Vec<String>> = {
+            let state = self.skill_state.read().await;
+            let mut union: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut any_has_allowlist = false;
+            for name in &effective_selected_skills {
+                if let Some(allowed) = state.allowed_tools.get(name) {
+                    if !allowed.is_empty() {
+                        any_has_allowlist = true;
+                        for tool_name in allowed {
+                            union.insert(tool_name.clone());
+                        }
+                    }
+                }
+            }
+            if any_has_allowlist { Some(union.into_iter().collect()) } else { None }
+        };
         let base_permissions = SkillPermissions {
             shell: true,
             fs_write: Some(vec![]),
@@ -4916,8 +5033,9 @@ impl Orchestrator {
         let default_max_iters = *self.default_max_iterations.read().await;
 
         let config = AgentLoopConfig {
-            system_prompt,
-            // persona already baked into system_prompt via build_full_system_prompt
+            system_prompt: stable_prompt,
+            dynamic_context,
+            // persona & kg_context are now in dynamic_context for cache stability
             persona: None,
             summary,
             kg_context: None,
@@ -4947,6 +5065,7 @@ impl Orchestrator {
             // act on skill instructions immediately without a request_tools round-trip.
             lazy_tools: effective_selected_skills.is_empty(),
             selected_skills: effective_selected_skills,
+            skill_tool_allowlist,
             // Number of available skills — used for soft skill-first routing
             // when the model requests web_search.
             available_skill_count: {
@@ -4964,6 +5083,7 @@ impl Orchestrator {
                     None
                 }
             },
+            steering_queue: Some(Arc::new(RwLock::new(Vec::new()))),
             ..Default::default()
         };
 

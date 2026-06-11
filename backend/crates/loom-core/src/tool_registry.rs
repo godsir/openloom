@@ -335,6 +335,10 @@ impl AgentTool for SpawnAgentTool {
             session_approved_tools: Arc::new(std::sync::Mutex::new(HashSet::new())),
             sandbox: config.sandbox.clone(),
             compaction_config: CompactionConfig::default(),
+            dynamic_context: None,
+            steering_queue: None,
+            few_shots: Vec::new(),
+            skill_tool_allowlist: None,
         };
         drop(config);
 

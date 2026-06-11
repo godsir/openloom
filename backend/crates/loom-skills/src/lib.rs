@@ -39,8 +39,8 @@ pub struct CanonicalSkillMetadata {
     // Claude Code / OpenClaw extension fields (parsed for forward compatibility;
     // most are not yet consumed — see #[allow(dead_code)] annotations below)
     #[serde(default)]
-    #[allow(dead_code)]
-    // TODO: Planned — gate tool access per skill at runtime
+    // Per-skill tool allowlist — union of active skills' allowed_tools gates the
+    // tool definitions sent to the model at the agent-loop level.
     pub allowed_tools: Vec<String>,
     #[serde(default)]
     #[allow(dead_code)]
@@ -212,6 +212,9 @@ pub struct SkillState {
     pub bodies: std::collections::HashMap<String, String>,
     /// Skill name → parsed permission config.
     pub permissions: std::collections::HashMap<String, SkillPermissionConfig>,
+    /// Skill name → allowed tool names (from `allowed_tools` frontmatter).
+    /// Only populated for skills that declare an allowlist.
+    pub allowed_tools: std::collections::HashMap<String, Vec<String>>,
     /// Lightweight metadata for all loaded skills (for RPC list responses).
     pub summaries: Vec<SkillSummary>,
 }
@@ -269,10 +272,22 @@ impl SkillState {
             });
         }
 
+        // Allowed tools per skill (only for skills that declare an allowlist)
+        let mut allowed_tools = std::collections::HashMap::new();
+        for s in skills {
+            if !s.manifest.allowed_tools.is_empty() {
+                allowed_tools.insert(
+                    s.manifest.name.replace('\n', " ").replace('\r', ""),
+                    s.manifest.allowed_tools.clone(),
+                );
+            }
+        }
+
         Self {
             context,
             bodies,
             permissions,
+            allowed_tools,
             summaries,
         }
     }

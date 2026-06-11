@@ -29,3 +29,5 @@ scraper = "0.22"
 dirs = "6"
 base64 = { workspace = true }
 regex.workspace = true
+futures = { workspace = true, features = ["std"] }
+glob = "0.3"

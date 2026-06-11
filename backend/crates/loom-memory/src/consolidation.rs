@@ -179,26 +179,66 @@ impl<'a> MemoryConsolidator<'a> {
             )?;
 
             // 4. Prune: stale episodic nodes with very low confidence.
+            // Collect prune-candidate IDs first so we can cascade-delete children
+            // before deleting nodes (FK-safe order, matching active_forgetting pattern).
             let cutoff_prune = now - self.config.prune_after_days * 86400;
-            let pruned = self.conn.execute(
-                "DELETE FROM kg_nodes
-             WHERE layer = ?
-               AND confidence < 0.2
-               AND last_updated < ?
-               AND evidence_count <= 1",
-                rusqlite::params![Layer::Episodic.as_str(), cutoff_prune,],
-            )?;
-
-            // 4a. Cascade: clean orphaned edges, aliases, evidence after prune.
-            if pruned > 0 {
-                self.conn.execute_batch(
-                    "DELETE FROM kg_edges WHERE source_id NOT IN (SELECT id FROM kg_nodes)
-                    OR target_id NOT IN (SELECT id FROM kg_nodes);
-                 DELETE FROM kg_aliases WHERE node_id NOT IN (SELECT id FROM kg_nodes);
-                 DELETE FROM kg_evidence WHERE node_id NOT IN (SELECT id FROM kg_nodes)
-                    AND edge_id NOT IN (SELECT id FROM kg_edges);",
+            let prune_ids: Vec<i64> = {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id FROM kg_nodes
+                     WHERE layer = ?
+                       AND confidence < 0.2
+                       AND last_updated < ?
+                       AND evidence_count <= 1",
                 )?;
-            }
+                let rows = stmt.query_map(
+                    rusqlite::params![Layer::Episodic.as_str(), cutoff_prune],
+                    |r| r.get(0),
+                )?;
+                rows.filter_map(|r| r.ok()).collect()
+            };
+
+            let pruned = if prune_ids.is_empty() {
+                0
+            } else {
+                let id_list = prune_ids
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+
+                // Child-first cascade before node deletion.
+                // 4a. Evidence → edges of prune candidates
+                self.conn.execute(
+                    &format!(
+                        "DELETE FROM kg_evidence WHERE edge_id IN (SELECT id FROM kg_edges WHERE source_id IN ({}) OR target_id IN ({}))",
+                        id_list, id_list
+                    ),
+                    [],
+                )?;
+                // 4b. Evidence → nodes directly
+                self.conn.execute(
+                    &format!("DELETE FROM kg_evidence WHERE node_id IN ({})", id_list),
+                    [],
+                )?;
+                // 4c. Edges
+                self.conn.execute(
+                    &format!(
+                        "DELETE FROM kg_edges WHERE source_id IN ({}) OR target_id IN ({})",
+                        id_list, id_list
+                    ),
+                    [],
+                )?;
+                // 4d. Aliases
+                self.conn.execute(
+                    &format!("DELETE FROM kg_aliases WHERE node_id IN ({})", id_list),
+                    [],
+                )?;
+                // 4e. Nodes — children already cleaned, FK constraints satisfied
+                self.conn.execute(
+                    &format!("DELETE FROM kg_nodes WHERE id IN ({})", id_list),
+                    [],
+                )?
+            };
 
             // 5. Cap semantic layer.
             let semantic_count: i64 = self.conn.query_row(

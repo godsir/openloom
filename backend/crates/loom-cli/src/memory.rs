@@ -1781,10 +1781,10 @@ impl MemoryStore for LoomMemoryStore {
             .query_row("SELECT COUNT(*) FROM cognitions", [], |r| r.get(0))
             .unwrap_or(0);
 
-        // Stale nodes: updated more than 90 days ago
+        // Stale nodes: last_updated more than 90 days ago
         let stale_nodes: usize = conn
             .query_row(
-                "SELECT COUNT(*) FROM kg_nodes WHERE updated_at < datetime('now', '-90 days')",
+                "SELECT COUNT(*) FROM kg_nodes WHERE last_updated < datetime('now', '-90 days')",
                 [],
                 |r| r.get(0),
             )
@@ -1873,7 +1873,7 @@ impl MemoryStore for LoomMemoryStore {
         let top_entities: Vec<String> = {
             let mut stmt = conn
                 .prepare(
-                    "SELECT name FROM kg_nodes WHERE scope = 'global' ORDER BY confidence DESC, updated_at DESC LIMIT 10",
+                    "SELECT name FROM kg_nodes WHERE scope = 'global' ORDER BY confidence DESC, last_updated DESC LIMIT 10",
                 )
                 .ok();
             let mut names = Vec::new();
@@ -1891,7 +1891,7 @@ impl MemoryStore for LoomMemoryStore {
         let stale_entities: Vec<String> = {
             let mut stmt = conn
                 .prepare(
-                    "SELECT name FROM kg_nodes WHERE updated_at < datetime('now', '-' || ?1 || ' days') AND scope = 'global' ORDER BY updated_at ASC LIMIT 10",
+                    "SELECT name FROM kg_nodes WHERE last_updated < datetime('now', '-' || ?1 || ' days') AND scope = 'global' ORDER BY last_updated ASC LIMIT 10",
                 )
                 .ok();
             let mut names = Vec::new();
@@ -1982,7 +1982,7 @@ impl MemoryStore for LoomMemoryStore {
         // Last consolidation (most recent kg_nodes update to 'global' scope)
         let last_consolidation: String = conn
             .query_row(
-                "SELECT COALESCE(MAX(updated_at), 'never') FROM kg_nodes WHERE scope = 'global'",
+                "SELECT COALESCE(MAX(last_updated), 'never') FROM kg_nodes WHERE scope = 'global'",
                 [],
                 |r| r.get(0),
             )

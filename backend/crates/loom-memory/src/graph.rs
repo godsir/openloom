@@ -902,32 +902,79 @@ impl<'a> GraphStore<'a> {
     // ========================================================================
 
     /// Prune stale low-confidence entities not accessed recently.
+    /// Uses child-first cascade order to avoid FK constraint violations.
     /// Returns the number of nodes removed.
     pub fn prune_stale(&self, older_than_days: i64, max_count: usize) -> Result<usize> {
         let cutoff = Utc::now().timestamp() - older_than_days * 86400;
-        // Delete stale nodes (never accessed, old, low confidence, not Person)
-        let deleted = self.conn.execute(
-            "DELETE FROM kg_nodes WHERE id IN (
-                SELECT id FROM kg_nodes
-                WHERE access_count = 0
-                  AND last_updated < ?1
-                  AND confidence < 0.5
-                  AND entity_type != 'Person'
-                LIMIT ?2
-            )",
-            rusqlite::params![cutoff, max_count as i64],
+
+        // Collect stale node IDs first so we can cascade-delete children before nodes.
+        let stale_ids: Vec<i64> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id FROM kg_nodes
+                 WHERE access_count = 0
+                   AND last_updated < ?1
+                   AND confidence < 0.5
+                   AND entity_type != 'Person'
+                 LIMIT ?2",
+            )?;
+            let rows = stmt.query_map(
+                rusqlite::params![cutoff, max_count as i64],
+                |r| r.get(0),
+            )?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+
+        if stale_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let id_list = stale_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        // Wrap in transaction for atomicity.
+        self.conn.execute_batch("BEGIN")?;
+
+        // Child-first cascade (FK-safe order, matching active_forgetting pattern):
+        // 1. Delete evidence referencing edges connected to stale nodes
+        self.conn.execute(
+            &format!(
+                "DELETE FROM kg_evidence WHERE edge_id IN (SELECT id FROM kg_edges WHERE source_id IN ({}) OR target_id IN ({}))",
+                id_list, id_list
+            ),
+            [],
         )?;
 
-        if deleted > 0 {
-            // Cascade: clean orphaned edges, aliases, evidence
-            self.conn.execute_batch(
-                "DELETE FROM kg_edges WHERE source_id NOT IN (SELECT id FROM kg_nodes)
-                    OR target_id NOT IN (SELECT id FROM kg_nodes);
-                 DELETE FROM kg_aliases WHERE node_id NOT IN (SELECT id FROM kg_nodes);
-                 DELETE FROM kg_evidence WHERE node_id NOT IN (SELECT id FROM kg_nodes)
-                    AND edge_id NOT IN (SELECT id FROM kg_edges);",
-            )?;
-        }
+        // 2. Delete evidence referencing stale nodes directly
+        self.conn.execute(
+            &format!("DELETE FROM kg_evidence WHERE node_id IN ({})", id_list),
+            [],
+        )?;
+
+        // 3. Delete edges connected to stale nodes
+        self.conn.execute(
+            &format!(
+                "DELETE FROM kg_edges WHERE source_id IN ({}) OR target_id IN ({})",
+                id_list, id_list
+            ),
+            [],
+        )?;
+
+        // 4. Delete aliases for stale nodes
+        self.conn.execute(
+            &format!("DELETE FROM kg_aliases WHERE node_id IN ({})", id_list),
+            [],
+        )?;
+
+        // 5. Delete the stale nodes themselves
+        let deleted = self.conn.execute(
+            &format!("DELETE FROM kg_nodes WHERE id IN ({})", id_list),
+            [],
+        )?;
+
+        self.conn.execute_batch("COMMIT")?;
         Ok(deleted)
     }
 

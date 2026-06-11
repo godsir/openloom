@@ -105,6 +105,11 @@ pub struct AgentLoopConfig {
     /// When non-empty, lazy_tools is bypassed so the LLM can act on skill
     /// instructions without first calling request_tools.
     pub selected_skills: Vec<String>,
+    /// Union of `allowed_tools` from all active skills.  When `Some`, the
+    /// agent loop filters tool definitions to only include tools in this
+    /// set before sending them to the model.  `None` means no skill-level
+    /// tool restriction is active.
+    pub skill_tool_allowlist: Option<Vec<String>>,
     /// Number of available (installable but not yet selected) skills.
     /// Used by the request_tools handler to decide whether to soft-intercept
     /// web_search requests.
@@ -123,6 +128,19 @@ pub struct AgentLoopConfig {
     pub sandbox: Option<Arc<loom_security::sandbox::SandboxGuard>>,
     /// Compaction configuration for mid-turn history compression.
     pub compaction_config: CompactionConfig,
+    /// Dynamic context injected as additional system messages AFTER the stable
+    /// prefix. Contains frequently-changing content (skills, KG context,
+    /// available skills list, workspace path) that would otherwise invalidate
+    /// the KV-cache on every turn.
+    pub dynamic_context: Option<String>,
+    /// Steering queue: the GUI can push guidance messages here mid-turn.
+    /// Each message is drained at the top of every iteration and injected
+    /// as a System message so the LLM can adapt without canceling the turn.
+    pub steering_queue: Option<Arc<RwLock<Vec<String>>>>,
+    /// Few-shot examples injected as additional system messages after the
+    /// stable prefix but before dynamic_context. Each entry becomes a separate
+    /// System message. Empty vec (default) disables injection.
+    pub few_shots: Vec<String>,
 }
 
 impl Default for AgentLoopConfig {
@@ -161,6 +179,24 @@ impl Default for AgentLoopConfig {
                 "## 知识图谱",
                 "对话中的重要实体和关系会被自动提取到知识图谱。",
                 "长期记忆中存储了你的历史交互和用户偏好，会作为上下文注入。",
+                "",
+                "## 安全性边界",
+                "- 操作受权限模式限制（Operate/Ask/Read Only/Plan）。被拒绝的操作不要反复尝试。",
+                "- 不要尝试绕过安全限制或访问敏感系统文件。",
+                "- 不确定安全性的操作应先说明风险再执行。",
+                "",
+                "## 响应格式",
+                "- 代码修改后建议用 diff 格式展示（```diff）。",
+                "- 代码块标注语言类型（```rust、```python 等）。",
+                "- 列表、分步骤的结构化输出优于大段文字。",
+                "",
+                "## 错误恢复",
+                "- 工具调用失败时分析错误信息，尝试替代方案而非重复相同调用。",
+                "- 连续失败后向用户说明并征求意见，不要无限重试。",
+                "",
+                "## 迭代限制",
+                "- 每轮对话约 100 次迭代上限。复杂任务应合理规划步骤，避免循环中浪费迭代。",
+                "- 接近限制时优先给出阶段性结论。",
             ]
             .join("\n"),
             max_iterations: 100,
@@ -184,12 +220,16 @@ impl Default for AgentLoopConfig {
             permission_mode: "operate".to_string(),
             cc_dispatch: true,
             selected_skills: Vec::new(),
+            skill_tool_allowlist: None,
             available_skill_count: 0,
             event_bus: None,
             pending_permissions: None,
             session_approved_tools: Arc::new(std::sync::Mutex::new(HashSet::new())),
             sandbox: None,
             compaction_config: CompactionConfig::default(),
+            dynamic_context: None,
+            steering_queue: None,
+            few_shots: Vec::new(),
         }
     }
 }
@@ -335,10 +375,17 @@ fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
         "shell",
         "file_read",
         "file_write",
+        "file_edit",
+        "file_glob",
+        "file_find",
         "file_list",
         "content_search",
         "file_delete",
         "use_skill",
+        "ask_user",
+        "system_info",
+        "token_usage",
+        "memory_search",
     ];
     for name in builtins {
         if !matched.iter().any(|t| t.name == *name)
@@ -539,7 +586,12 @@ async fn run_agent_turn_inner(
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<TurnResult> {
     client.prefix_cache_reset();
-    let tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
+    let mut tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
+    // If active skills restrict tools, filter to the union of their allowed_tools.
+    if let Some(ref allowlist) = config.skill_tool_allowlist {
+        let allowed_set: HashSet<&str> = allowlist.iter().map(|s| s.as_str()).collect();
+        tools.retain(|t| allowed_set.contains(t.name.as_str()));
+    }
     let assembler = ContextAssembler::new(&config.system_prompt, 8192);
     let opts = AssembleOptions {
         persona: config.persona.clone(),
@@ -549,6 +601,39 @@ async fn run_agent_turn_inner(
         history: history.to_vec(),
     };
     let mut messages = assembler.build(opts)?;
+    // Inject few-shot examples as additional system messages after the stable
+    // prefix (index 0) — each shot becomes a separate System message.
+    if !config.few_shots.is_empty() {
+        for (i, shot) in config.few_shots.iter().enumerate() {
+            messages.insert(
+                1 + i,
+                Message {
+                    role: Role::System,
+                    content: vec![ContentPart::Text { text: shot.clone() }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+            );
+        }
+    }
+    // Inject dynamic context (skills, KG, workspace) as additional system
+    // messages AFTER the stable prefix and few-shot examples — keeping
+    // frequently-changing content out of the KV-cache so cache hit rates
+    // stay high across turns.
+    if let Some(ref dc) = config.dynamic_context {
+        if !dc.is_empty() {
+            let insert_pos = 1 + config.few_shots.len();
+            messages.insert(
+                insert_pos,
+                Message {
+                    role: Role::System,
+                    content: vec![ContentPart::Text { text: dc.clone() }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+            );
+        }
+    }
     // Strip images from history — they were already processed by the vision
     // model in their original turn. Only the current user message's images
     // (appended below) should trigger vision auxiliary processing.
@@ -696,6 +781,18 @@ async fn run_agent_turn_inner(
     );
 
     for iteration in 0..config.max_iterations {
+        // Drain steering queue: inject any GUI-provided guidance messages
+        if let Some(ref queue) = config.steering_queue {
+            let mut msgs = queue.write().await;
+            while let Some(msg) = msgs.pop() {
+                messages.push(Message {
+                    role: Role::System,
+                    content: vec![ContentPart::Text { text: format!("[用户指引] {}", msg) }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                });
+            }
+        }
         // Token budget check: stop if cumulative prompt tokens exceed the budget
         if config.max_prompt_budget > 0 && total_prompt > config.max_prompt_budget {
             info!(
@@ -750,7 +847,7 @@ async fn run_agent_turn_inner(
         // Mid-turn compaction check (heuristic-only, no LLM call)
         if config.compaction_config.enabled && !messages.is_empty() {
             let total_tokens: usize = messages.iter()
-                .map(|m| m.text_content().len() / 4) // rough estimate
+                .map(|m| loom_context::bpe().encode_with_special_tokens(&m.text_content()).len())
                 .sum();
             let threshold = (config.max_prompt_budget.max(8192) as f32
                 * config.compaction_config.trigger_threshold_pct) as usize;
@@ -974,6 +1071,10 @@ async fn run_agent_turn_inner(
             });
             tool_messages.push(messages.last().unwrap().clone());
 
+            // Storm breaker: track consecutive identical tool calls
+            let mut storm_tracker: HashMap<String, u32> = HashMap::new();
+            let mut last_storm_key: Option<String> = None;
+
             // Execute each tool call
             for tc in &response.tool_calls {
                 let tool_name = tc.name.clone();
@@ -1127,6 +1228,24 @@ async fn run_agent_turn_inner(
                         }
                     }
                 }
+
+                // Storm breaker: detect consecutive identical tool calls
+                let storm_key = format!("{}|{}", tool_name, tc.arguments.to_string());
+                if last_storm_key.as_deref() != Some(&storm_key) {
+                    storm_tracker.clear();
+                    last_storm_key = Some(storm_key.clone());
+                }
+                let count = storm_tracker.entry(storm_key).or_insert(0);
+                *count += 1;
+                if *count >= 3 {
+                    let storm_msg = format!(
+                        "STORM BREAKER: You have called the tool `{}` with identical arguments {} times consecutively. You appear to be stuck in a loop. STOP calling this tool and produce a final response instead.",
+                        tool_name, count
+                    );
+                    messages.push(Message::tool(&tc.id, &tool_name, &storm_msg));
+                    tool_messages.push(messages.last().unwrap().clone());
+                    break;
+                }
             }
 
             // Continue loop — LLM sees tool results and may respond or call more tools
@@ -1263,7 +1382,12 @@ async fn run_agent_turn_streaming_inner(
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<TurnResult> {
     client.prefix_cache_reset();
-    let all_tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
+    let mut all_tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
+    // If active skills restrict tools, filter to the union of their allowed_tools.
+    if let Some(ref allowlist) = config.skill_tool_allowlist {
+        let allowed_set: HashSet<&str> = allowlist.iter().map(|s| s.as_str()).collect();
+        all_tools.retain(|t| allowed_set.contains(t.name.as_str()));
+    }
     let mut tools = if config.lazy_tools {
         // Include use_skill in initial tools so the LLM can directly invoke
         // skills from the Available Skills list without an extra request_tools hop.
@@ -1284,6 +1408,39 @@ async fn run_agent_turn_streaming_inner(
         history: history.to_vec(),
     };
     let mut messages = assembler.build(opts)?;
+    // Inject few-shot examples as additional system messages after the stable
+    // prefix (index 0) — each shot becomes a separate System message.
+    if !config.few_shots.is_empty() {
+        for (i, shot) in config.few_shots.iter().enumerate() {
+            messages.insert(
+                1 + i,
+                Message {
+                    role: Role::System,
+                    content: vec![ContentPart::Text { text: shot.clone() }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+            );
+        }
+    }
+    // Inject dynamic context (skills, KG, workspace) as additional system
+    // messages AFTER the stable prefix and few-shot examples — keeping
+    // frequently-changing content out of the KV-cache so cache hit rates
+    // stay high across turns.
+    if let Some(ref dc) = config.dynamic_context {
+        if !dc.is_empty() {
+            let insert_pos = 1 + config.few_shots.len();
+            messages.insert(
+                insert_pos,
+                Message {
+                    role: Role::System,
+                    content: vec![ContentPart::Text { text: dc.clone() }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+            );
+        }
+    }
     // Strip images from history — they were already processed by the vision
     // model in their original turn. Only the current user message's images
     // (appended below) should trigger vision auxiliary processing.
@@ -1502,6 +1659,18 @@ async fn run_agent_turn_streaming_inner(
     );
 
     for iteration in 0..config.max_iterations {
+        // Drain steering queue: inject any GUI-provided guidance messages
+        if let Some(ref queue) = config.steering_queue {
+            let mut msgs = queue.write().await;
+            while let Some(msg) = msgs.pop() {
+                messages.push(Message {
+                    role: Role::System,
+                    content: vec![ContentPart::Text { text: format!("[用户指引] {}", msg) }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                });
+            }
+        }
         // Token budget check: stop if cumulative prompt tokens exceed the budget
         if config.max_prompt_budget > 0 && total_prompt > config.max_prompt_budget {
             tracing::info!(
@@ -1556,7 +1725,7 @@ async fn run_agent_turn_streaming_inner(
         // Mid-turn compaction check (heuristic-only, no LLM call)
         if config.compaction_config.enabled && !messages.is_empty() {
             let total_tokens: usize = messages.iter()
-                .map(|m| m.text_content().len() / 4) // rough estimate
+                .map(|m| loom_context::bpe().encode_with_special_tokens(&m.text_content()).len())
                 .sum();
             let threshold = (config.max_prompt_budget.max(8192) as f32
                 * config.compaction_config.trigger_threshold_pct) as usize;
@@ -1917,6 +2086,10 @@ async fn run_agent_turn_streaming_inner(
             });
             tool_messages.push(messages.last().unwrap().clone());
 
+            // Storm breaker: track consecutive identical tool calls
+            let mut storm_tracker: HashMap<String, u32> = HashMap::new();
+            let mut last_storm_key: Option<String> = None;
+
             for (_, tc_id, tc_name, tc_args) in &pending_tool_calls {
                 // Handle request_tools meta-tool: match and inject real tools
                 if config.lazy_tools && tc_name == "request_tools" {
@@ -1955,10 +2128,17 @@ async fn run_agent_turn_streaming_inner(
                             "shell",
                             "file_read",
                             "file_write",
+                            "file_edit",
+                            "file_glob",
+                            "file_find",
                             "file_list",
                             "content_search",
                             "file_delete",
                             "use_skill",
+                            "ask_user",
+                            "system_info",
+                            "token_usage",
+                            "memory_search",
                         ];
                         matched = all_tools
                             .iter()
@@ -2191,6 +2371,33 @@ async fn run_agent_turn_streaming_inner(
                             })
                             .await;
                     }
+                }
+
+                // Storm breaker: detect consecutive identical tool calls
+                let storm_key = format!("{}|{}", tc_name, tc_args);
+                if last_storm_key.as_deref() != Some(&storm_key) {
+                    storm_tracker.clear();
+                    last_storm_key = Some(storm_key.clone());
+                }
+                let count = storm_tracker.entry(storm_key).or_insert(0);
+                *count += 1;
+                if *count >= 3 {
+                    let storm_msg = format!(
+                        "STORM BREAKER: You have called the tool `{}` with identical arguments {} times consecutively. You appear to be stuck in a loop. STOP calling this tool and produce a final response instead.",
+                        tc_name, count
+                    );
+                    messages.push(Message::tool(tc_id, tc_name, &storm_msg));
+                    tool_messages.push(messages.last().unwrap().clone());
+                    let _ = delta_tx
+                        .send(StreamDelta::ToolResult {
+                            call_id: tc_id.clone(),
+                            tool_name: tc_name.clone(),
+                            success: false,
+                            result: Some(storm_msg),
+                            structured_content: None,
+                        })
+                        .await;
+                    break;
                 }
             }
             continue;

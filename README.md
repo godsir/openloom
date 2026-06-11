@@ -5,7 +5,7 @@
 ## 架构
 
 ```
-backend/crates/                   14 个 crate，Rust 2024 + Tokio
+backend/crates/                   15 个 crate，Rust 2024 + Tokio
 ├── loom-types        ← 统一类型系统（Agent / Message / Tool / MCP / KG / Session）
 ├── loom-inference    ← 推理引擎分发（Anthropic / OpenAI / DeepSeek / LM Studio / Ollama）
 ├── loom-memory       ← 记忆内核（SQLite + FTS5，三库拆分，认知图谱，人格演化）
@@ -14,6 +14,7 @@ backend/crates/                   14 个 crate，Rust 2024 + Tokio
 ├── loom-security     ← 权限检查（风险等级 + 沙箱策略）
 ├── loom-server       ← HTTP/WebSocket 服务（Axum 0.7 + JSON-RPC 2.0）
 ├── loom-cli          ← CLI 入口（serve / chat / mcp / kg / doctor）
+├── loom-cron         ← 定时任务调度（SQLite 持久化，AI 提示词驱动，cron 表达式）
 ├── loom-mcp          ← MCP 客户端（stdio + HTTP/SSE，resources/prompts 协议）
 ├── loom-lsp          ← LSP 客户端（30+ 语言，diagnostics/hover/completion/definition/references）
 ├── loom-skills       ← Skills 解析（Claude Code + OpenClaw SKILL.md 兼容）
@@ -25,6 +26,17 @@ frontend/                        Electron 38 + React 19
 ├── src/main/         ← 主进程（窗口管理、引擎生命周期、自动更新、系统托盘、桌宠）
 ├── src/preload/      ← IPC 桥接（27 个 contextBridge API）
 └── src/renderer/     ← 渲染进程（TypeScript + Tailwind CSS 4 + Vite 6 + Zustand 5）
+     ├── components/app/      ← 应用壳（顶栏、侧边栏、状态栏）
+     ├── components/chat/     ← 聊天工作区（消息流、流式渲染、工具调用卡片）
+     ├── components/input/    ← 输入区（多行输入、附件、模型选择、Agent 切换）
+     ├── components/write/    ← 写作工作区（CodeMirror 6 编辑器 + AI 助手面板）
+     ├── components/kg/       ← 知识图谱（2D 星图可视化、节点详情、维护面板）
+     ├── components/plan/     ← 计划面板（任务分解、进度追踪）
+     ├── components/todo/     ← 待办面板（任务管理、状态流转）
+     ├── components/settings/ ← 全页设置（模型、Agent、MCP、LSP、Skills、插件、定时任务、KG、主题、关于）
+     ├── components/shared/   ← 通用组件（按钮、模态框、Toggle 等）
+     ├── i18n/                ← 国际化（zh-CN / zh-TW / en-US）
+     └── services/            ← 前端服务层（JSON-RPC、WebSocket、FIM、流缓冲）
 ```
 
 ## 快速开始
@@ -211,27 +223,69 @@ loom kg stats
 - 缓存命中率、平均延迟、上下文窗口利用率
 - 前端 Token 用量仪表盘，支持日/周/月粒度历史趋势图
 
+### 写作助手
+
+- CodeMirror 6 编辑器，支持语法高亮、代码补全、多语言切换
+- 侧边 AI 助手面板，选中文本即时提问、改写、翻译、总结
+- FIM（Fill-in-the-Middle，中间填充）支持，光标位置上下文感知补全
+- VFS 虚拟文件系统，工作区文件侧边栏浏览与切换
+
+### 定时任务调度
+
+- SQLite 持久化 cron 任务，支持标准 cron 表达式
+- AI 提示词驱动执行，替代传统 Shell 命令
+- 前端 CronTab 完整 CRUD 管理面板
+- 任务执行历史追踪
+
+### 计划与待办
+
+- PlanPanel：任务分解、步骤规划、进度追踪
+- TodoPanel：待办事项管理、状态流转（待处理 / 进行中 / 已完成）
+- 与 Agent 执行流程联动，任务完成后自动通知
+
+### 国际化
+
+- 三语言支持：简体中文 (zh-CN)、繁體中文 (zh-TW)、English (en-US)
+- 前端 UI 全覆盖，运行时动态切换无需重启
+- 后端 API 错误消息多语言适配
+
+### 全页设置
+
+- 设置页改为全页面布局，左侧分类导航
+- 涵盖：模型配置、Agent 管理、MCP 服务器、LSP 服务器、Skills、插件市场、定时任务、知识图谱维护、主题、关于
+- CronTab、DevTestTab 等开发调试面板集成
+- 自定义市场源：支持添加远程 JSON 目录 URL，持久化存储
+
 ## JSON-RPC API
 
-55 个方法 + 9 个推送事件，完整定义见 [API 文档](docs/api.md)。
+136 个方法 + 9 个推送事件，完整定义见 [API 文档](docs/api.md)。
 
 | 分类 | 方法数 | 说明 |
 |------|--------|------|
 | System | 1 | health |
 | Chat | 2 | send、stop |
-| Agent | 8 | list、status、kill、config CRUD |
+| Agent | 10 | list、status、kill、config CRUD、generate、optimize |
 | Session | 9 | list、create、switch、messages、rename、delete、bind_agent 等 |
+| Model | 11 | list、switch、config CRUD、save_key、check_key、discover |
 | Workspace | 3 | get、set_session、set_default |
-| Model | 10 | list、switch、config CRUD、save_key、discover |
-| Config | 4 | get/set、vision、auxiliary |
-| MCP | 13 | list_tools、connect、disconnect、resources、prompts、health、config CRUD |
-| LSP | 10 | diagnostics、completion、hover、definition、references、symbols 等 |
-| Skills | 4 | list、get、import、delete |
+| Skills | 5 | list、get、import、delete、reload |
 | Plugins | 2 | list、reload |
 | Marketplace | 4 | list、install、uninstall、update |
-| KG | 8 | search、stats、neighbors、walk、list、edges_between、node/edge delete、prune |
-| Cognitions | 3 | list、snapshots、subjects |
-| Token | 2 | summary、history |
+| Clawhub | 3 | list、install、uninstall（技能市场） |
+| MCP | 13 | list_tools、connect、disconnect、resources、prompts、health、config CRUD |
+| LSP | 11 | diagnostics、completion、hover、definition、references、symbols 等 |
+| Tools | 2 | list、respond（工具权限响应） |
+| Stats | 3 | token_summary、token_history、reset |
+| Config | 10 | vision、auxiliary、sandbox、defaults 等 get/set |
+| Cognitions | 4 | list、snapshots、subjects、delete |
+| Completion | 1 | FIM 代码补全 |
+| Cron | 7 | 定时任务 CRUD + history |
+| Goal | 2 | 目标管理 |
+| KG | 9 | search、stats、neighbors、walk、list、edges_between、node/edge delete、prune |
+| Memory | 11 | promote、quality、health、persona、patterns、consolidate、forget 等 |
+| Plan | 5 | 计划 CRUD + execute |
+| Todo | 2 | 待办 CRUD |
+| VFS | 6 | 虚拟文件系统（list、read、write、delete、rename、mkdir） |
 
 推送事件：`chat.stream_delta`、`chat.stream_end`、`chat.token_usage`、`tool.started`、`tool.completed`、`agent.state_changed`、`agent.subagent_spawned`、`agent.subagent_completed`、`agent.subagent_errored`
 
@@ -284,9 +338,9 @@ npm run build
 | 服务 | Axum 0.7 + WebSocket + JSON-RPC 2.0 |
 | CLI | clap + tracing-subscriber |
 | 前端 | React 19 + TypeScript + Tailwind CSS 4 + Vite 6 + Zustand 5 |
-| 桌面 | Electron 38 + electron-updater + electron-store |
-| 图表 | ECharts 6 (Token 趋势) + react-force-graph-2d (KG 星图) |
-| 编辑器 | CodeMirror 6 + TipTap 3 (富文本编辑) |
+| 桌面 | Electron 38 + electron-updater |
+| 图表 | react-force-graph-2d (KG 星图) |
+| 编辑器 | CodeMirror 6 |
 | 渲染 | markdown-it + KaTeX + Mermaid + highlight.js |
 
 ## 许可证

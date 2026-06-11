@@ -22,7 +22,7 @@ function normalizeBaseUrl(url: string, apiFormat: 'openai' | 'anthropic'): strin
 }
 
 function getProviderModels(selected: ProviderEntry, models: ModelListItem[]): ModelListItem[] {
-  if (selected.isCustom) return models.filter(m => (m.backend_label || '') === selected.label)
+  if (selected.backend === 'Custom') return models.filter(m => (m.backend_label || '') === selected.label)
   return models.filter(m => m.backend === selected.backend)
 }
 
@@ -37,11 +37,18 @@ interface ProviderEntry {
 }
 
 const PRESET_PROVIDERS: ProviderEntry[] = [
-  { id: 'lmstudio', label: 'LM Studio', backend: 'LmStudio', defaultUrl: 'http://localhost:1234/v1', apiFormat: 'openai' },
-  { id: 'ollama', label: 'Ollama', backend: 'Ollama', defaultUrl: 'http://localhost:11434/v1', apiFormat: 'openai' },
   { id: 'anthropic', label: 'Anthropic', backend: 'Anthropic', defaultUrl: 'https://api.anthropic.com', apiFormat: 'anthropic' },
   { id: 'openai', label: 'OpenAI', backend: 'OpenAI', defaultUrl: 'https://api.openai.com/v1', apiFormat: 'openai' },
   { id: 'deepseek', label: 'DeepSeek', backend: 'DeepSeek', defaultUrl: 'https://api.deepseek.com/v1', apiFormat: 'openai' },
+  { id: 'google', label: 'Google Gemini', backend: 'Custom', defaultUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiFormat: 'openai' },
+  { id: 'groq', label: 'Groq', backend: 'Custom', defaultUrl: 'https://api.groq.com/openai/v1', apiFormat: 'openai' },
+  { id: 'zhipu', label: '智谱 GLM', backend: 'Custom', defaultUrl: 'https://open.bigmodel.cn/api/paas/v4', apiFormat: 'openai' },
+  { id: 'moonshot', label: '月之暗面 Kimi', backend: 'Custom', defaultUrl: 'https://api.moonshot.cn/v1', apiFormat: 'openai' },
+  { id: 'qwen', label: '通义千问', backend: 'Custom', defaultUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiFormat: 'openai' },
+  { id: 'siliconflow', label: '硅基流动', backend: 'Custom', defaultUrl: 'https://api.siliconflow.cn/v1', apiFormat: 'openai' },
+  { id: 'doubao', label: '豆包 ByteDance', backend: 'Custom', defaultUrl: 'https://ark.cn-beijing.volces.com/api/v3', apiFormat: 'openai' },
+  { id: 'lmstudio', label: 'LM Studio', backend: 'LmStudio', defaultUrl: 'http://localhost:1234/v1', apiFormat: 'openai' },
+  { id: 'ollama', label: 'Ollama', backend: 'Ollama', defaultUrl: 'http://localhost:11434/v1', apiFormat: 'openai' },
 ]
 
 const CUSTOM_PROVIDERS_KEY = 'customProviders'
@@ -196,6 +203,7 @@ export default function ModelConfigPanel() {
         api_key: apiKey.trim(),
         base_url: normalizeBaseUrl(baseUrl, apiFormat),
         api_key_env: selected.isCustom ? selected.envVar : undefined,
+        backend_label: selected.backend === 'Custom' ? selected.label : undefined,
       })
       useStore.getState().addToast({ type: 'success', message: t('modelPanel.apiKeySavedMsg', { env: result.env_name }) })
       const envVarName = result.env_name
@@ -247,13 +255,13 @@ export default function ModelConfigPanel() {
             })
           } catch { /* best-effort per model */ }
         }
-      } else if (selected.isCustom) {
-        // No models yet — update the custom provider entry's defaultUrl
+      } else if (selected.backend === 'Custom') {
+        // No models yet — update the provider entry's defaultUrl
         const next = providers.map(p =>
           p.id === selected.id ? { ...p, defaultUrl: baseUrl.trim(), apiFormat } : p
         )
         setProviders(next)
-        await saveCustomProviders(next)
+        if (selected.isCustom) await saveCustomProviders(next)
       }
       setUrlSaveStatus('ok')
       useStore.getState().addToast({ type: 'success', message: t('modelPanel.baseUrlSaved') })
@@ -289,8 +297,8 @@ export default function ModelConfigPanel() {
     const name = modelId.split('/').pop() || modelId
     const ok = await useStore.getState().showConfirm(t('modelPanel.addModelTitle'), t('modelPanel.addModelConfirm', { name }), false)
     if (!ok) return
-    const envName = selected.isCustom
-      ? selected.envVar || 'OPENLOOM_API_KEY'
+    const envName = selected.backend === 'Custom'
+      ? (selected.envVar || `${(selected.label ?? '').replace(/\s+/g, '_').toUpperCase()}_API_KEY`)
       : `${selected.backend.toUpperCase()}_API_KEY`
     try {
       await rpc('model.config.create', {
@@ -298,7 +306,7 @@ export default function ModelConfigPanel() {
         model: modelId,
         model_type: 'Router',
         backend: selected.backend,
-        backend_label: selected.isCustom ? selected.label : undefined,
+        backend_label: selected.backend === 'Custom' ? selected.label : undefined,
         base_url: normalizeBaseUrl(baseUrl, apiFormat) || null,
         api_key_env: envName,
         api_format: apiFormat,
@@ -551,7 +559,7 @@ export default function ModelConfigPanel() {
 
   const providerModels = selected
     ? models.filter(m => {
-        if (selected.isCustom) return (m.backend_label || '') === selected.label
+        if (selected.backend === 'Custom') return (m.backend_label || '') === selected.label
         return m.backend === selected.backend
       })
     : []
@@ -559,7 +567,7 @@ export default function ModelConfigPanel() {
   const configuredModelIds = new Set(providerModels.map(m => m.model))
 
   const getModelCount = (p: ProviderEntry) => {
-    if (p.isCustom) return models.filter(m => (m.backend_label || '') === p.label).length
+    if (p.backend === 'Custom') return models.filter(m => (m.backend_label || '') === p.label).length
     return models.filter(m => m.backend === p.backend).length
   }
 
@@ -574,7 +582,7 @@ export default function ModelConfigPanel() {
     : newDiscovered
 
   const envVarName = selected
-    ? (selected.isCustom ? (selected.envVar || 'OPENLOOM_API_KEY') : `${selected.backend.toUpperCase()}_API_KEY`)
+    ? (selected.backend === 'Custom' ? (selected.envVar || `${(selected.label ?? '').replace(/\s+/g, '_').toUpperCase()}_API_KEY`) : `${selected.backend.toUpperCase()}_API_KEY`)
     : ''
 
   if (initialLoading) {
