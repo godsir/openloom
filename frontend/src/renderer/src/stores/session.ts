@@ -43,6 +43,9 @@ export interface SessionSlice {
   deselectAllSessions: () => void
   loadSessions: () => Promise<void>
   setSessionWorkspace: (id: string, path: string) => void
+  closeCurrentSession: () => Promise<void>
+  selectNextSession: () => void
+  selectPrevSession: () => void
 }
 
 export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
@@ -300,6 +303,34 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
     set((state) => ({
       sessionWorkspaces: { ...state.sessionWorkspaces, [id]: path },
     }))
+  },
+
+  closeCurrentSession: async () => {
+    const { currentSessionId, sessions, deleteSession } = get()
+    if (!currentSessionId) return
+    const idx = sessions.findIndex((s) => s.path === currentSessionId)
+    if (idx < sessions.length - 1) {
+      get().switchSession(sessions[idx + 1].path)
+    } else if (idx > 0) {
+      get().switchSession(sessions[idx - 1].path)
+    }
+    await deleteSession(currentSessionId)
+  },
+
+  selectNextSession: () => {
+    const { currentSessionId, sessions, switchSession } = get()
+    if (!currentSessionId || sessions.length <= 1) return
+    const idx = sessions.findIndex((s) => s.path === currentSessionId)
+    if (idx < 0 || idx >= sessions.length - 1) return
+    switchSession(sessions[idx + 1].path)
+  },
+
+  selectPrevSession: () => {
+    const { currentSessionId, sessions, switchSession } = get()
+    if (!currentSessionId || sessions.length <= 1) return
+    const idx = sessions.findIndex((s) => s.path === currentSessionId)
+    if (idx <= 0) return
+    switchSession(sessions[idx - 1].path)
   },
 })
 
