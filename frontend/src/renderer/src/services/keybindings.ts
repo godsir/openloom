@@ -197,6 +197,13 @@ export const DEFAULT_COMMANDS: CommandDef[] = [
     defaultKeys: 'ctrl+shift+e',
   },
   {
+    id: 'ui:inline-edit',
+    labelKey: 'keybindings.uiInlineEdit',
+    descKey: 'keybindings.uiInlineEditDesc',
+    category: 'ui',
+    defaultKeys: 'ctrl+shift+i',
+  },
+  {
     id: 'ui:zoom-in',
     labelKey: 'keybindings.uiZoomIn',
     descKey: 'keybindings.uiZoomInDesc',

@@ -11,6 +11,7 @@ import PermissionDialog from './components/shared/PermissionDialog'
 import { InlineInput } from './components/input/InlineInput'
 import { bootstrapApp } from './services/bootstrap'
 import { handleModelsChanged } from './services/app-event-actions'
+import { keybindingRegistry } from './services/keybindings'
 import { useStore } from './stores'
 import { t } from './i18n'
 import type { PermissionMode } from './stores/input'
@@ -51,6 +52,7 @@ export default function App() {
         if (cancelled) { cleanup(); return }
         teardown = cleanup
         setReady(true)
+        keybindingRegistry.initialize().catch(() => {})
         const pref = await window.loom.getPreference('onboarded', false)
         if (!pref) setShowOnboarding(true)
         const savedTheme = await window.loom.getPreference('theme', 'dark')
@@ -152,41 +154,106 @@ export default function App() {
     })
   }, [])
 
-  // Global keyboard listener for inline selection editor (Ctrl+Shift+I)
+  // Global keyboard shortcuts via KeybindingRegistry
+  // Replaces old hardcoded Ctrl+B (AppShell) and Ctrl+Shift+I listeners
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.key === 'I') {
-        const sel = window.getSelection()
-        if (!sel || sel.isCollapsed || !sel.toString().trim()) return
+    // Navigation commands
+    keybindingRegistry.register('nav:new-conversation', () => {
+      useStore.getState().createSession()
+    })
+    keybindingRegistry.register('nav:close-conversation', () => {
+      useStore.getState().closeCurrentSession()
+    })
+    keybindingRegistry.register('nav:next-conversation', () => {
+      useStore.getState().selectNextSession()
+    })
+    keybindingRegistry.register('nav:prev-conversation', () => {
+      useStore.getState().selectPrevSession()
+    })
+    keybindingRegistry.register('nav:search-conversations', () => {
+      const sidebarSearch = document.querySelector<HTMLInputElement>(
+        '.sidebarSearch input, [data-sidebar-search]'
+      )
+      sidebarSearch?.focus()
+    })
+    keybindingRegistry.register('nav:focus-input', () => {
+      const chatInput = document.querySelector<HTMLTextAreaElement>(
+        'textarea[data-chat-input]'
+      )
+      chatInput?.focus()
+    })
 
-        e.preventDefault()
-        e.stopPropagation()
-
-        const range = sel.getRangeAt(0)
-        const rect = range.getBoundingClientRect()
-
-        // Find file-path context from DOM attributes
-        let filePath = ''
-        let startLine = 0
-        let endLine = 0
-        let el = range.startContainer.parentElement
-        while (el) {
-          const fp = el.getAttribute('data-file-path')
-          if (fp) {
-            filePath = fp
-            const sl = el.getAttribute('data-start-line')
-            const el2 = el.getAttribute('data-end-line')
-            if (sl) startLine = parseInt(sl, 10)
-            if (el2) endLine = parseInt(el2, 10)
-            break
-          }
-          el = el.parentElement
-        }
-
-        useStore.getState().openInlineInput(rect, filePath, startLine, endLine)
+    // UI commands
+    keybindingRegistry.register('ui:toggle-sidebar', () => {
+      const s = useStore.getState()
+      if (s.appMode === 'write') {
+        s.toggleWriteFileSidebar()
+      } else {
+        s.toggleSidebar()
       }
+    })
+    keybindingRegistry.register('ui:open-settings', () => {
+      useStore.setState({ appMode: 'settings' })
+    })
+    keybindingRegistry.register('ui:toggle-mode', () => {
+      const s = useStore.getState()
+      if (s.appMode === 'chat') {
+        useStore.setState({ appMode: 'write' })
+      } else if (s.appMode === 'write') {
+        useStore.setState({ appMode: 'chat' })
+      }
+    })
+    keybindingRegistry.register('ui:zoom-in', () => {
+      const current = parseFloat(
+        document.documentElement.style.getPropertyValue('--app-zoom') || '1'
+      )
+      const next = Math.min(current + 0.1, 2.0)
+      document.documentElement.style.setProperty('--app-zoom', next.toFixed(2))
+    })
+    keybindingRegistry.register('ui:zoom-out', () => {
+      const current = parseFloat(
+        document.documentElement.style.getPropertyValue('--app-zoom') || '1'
+      )
+      const next = Math.max(current - 0.1, 0.5)
+      document.documentElement.style.setProperty('--app-zoom', next.toFixed(2))
+    })
+    keybindingRegistry.register('ui:zoom-reset', () => {
+      document.documentElement.style.setProperty('--app-zoom', '1')
+    })
+
+    // Inline selection editor (still Ctrl+Shift+I)
+    keybindingRegistry.register('ui:inline-edit', () => {
+      const sel = window.getSelection()
+      if (!sel || sel.isCollapsed || !sel.toString().trim()) return
+
+      const range = sel.getRangeAt(0)
+      const rect = range.getBoundingClientRect()
+
+      let filePath = ''
+      let startLine = 0
+      let endLine = 0
+      let el = range.startContainer.parentElement
+      while (el) {
+        const fp = el.getAttribute('data-file-path')
+        if (fp) {
+          filePath = fp
+          const sl = el.getAttribute('data-start-line')
+          const el2 = el.getAttribute('data-end-line')
+          if (sl) startLine = parseInt(sl, 10)
+          if (el2) endLine = parseInt(el2, 10)
+          break
+        }
+        el = el.parentElement
+      }
+
+      useStore.getState().openInlineInput(rect, filePath, startLine, endLine)
+    })
+
+    // Global keydown handler (capture phase)
+    const handler = (e: KeyboardEvent) => {
+      keybindingRegistry.dispatch(e)
     }
-    window.addEventListener('keydown', handler, true) // capture phase to beat devtools
+    window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
   }, [])
 
