@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useStore } from '../../stores'
-import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconPackage, IconBug, IconChevronUp } from '../../utils/icons'
+import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconPackage, IconBug, IconChevronUp, IconCommand } from '../../utils/icons'
 import AgentConfigPanel from '../shared/AgentConfigPanel'
 import { loomRpc } from '../../services/jsonrpc'
 import { useLocale } from '../../i18n'
@@ -14,10 +14,11 @@ import SkillsTab from './SkillsTab'
 import PluginsTab from './PluginsTab'
 import AboutTab from './AboutTab'
 import DevTestTab from './DevTestTab'
+import ShortcutsTab from './ShortcutsTab'
 import TokenTab from './TokenTab'
 import KgTab from './KgTab'
 
-type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'devtest' | 'about'
+type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'about'
 
 function GlobalDefaultsSection() {
   const { t } = useLocale()
@@ -112,6 +113,7 @@ function useSettingsTabs() {
       label: t('settings.systemGroup'),
       items: [
         { id: 'software' as Tab, label: t('settings.software'), icon: <IconSettings size={14} /> },
+        { id: 'shortcuts' as Tab, label: t('keybindings.title'), icon: <IconCommand size={14} /> },
         { id: 'pet' as Tab, label: t('settings.pet'), icon: <IconPawPrint size={14} /> },
         { id: 'about' as Tab, label: t('settings.about'), icon: <IconInfo size={14} /> },
       ],
@@ -186,6 +188,8 @@ export default function SettingsPage() {
 
       <div className={styles.content} ref={contentRef}>
         {tab === 'software' && <SoftwareTab theme={theme} setTheme={setTheme} />}
+
+        {tab === 'shortcuts' && <ShortcutsTab />}
 
         {tab === 'agent' && (
           <>
