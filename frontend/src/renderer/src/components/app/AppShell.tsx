@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, type ReactNode } from 'react'
+import { useState, useRef, type ReactNode } from 'react'
 import { useStore } from '../../stores'
 import Sidebar from './Sidebar'
 import WindowControls from './WindowControls'
@@ -26,21 +26,6 @@ export default function AppShell({ children }: { children?: ReactNode }) {
   const prevModeRef = useRef<'chat' | 'write'>('chat')
   const [reconnecting, setReconnecting] = useState(false)
   const [restarting, setRestarting] = useState(false)
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
-        e.preventDefault()
-        if (appMode === 'write') {
-          toggleWriteFileSidebar()
-        } else {
-          toggleSidebar()
-        }
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [appMode, toggleSidebar, toggleWriteFileSidebar])
 
   const handleReconnect = async () => {
     setReconnecting(true)
