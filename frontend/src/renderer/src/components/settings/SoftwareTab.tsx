@@ -734,16 +734,16 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                   <span className={styles.aboutLabel}>{t('software.fontSize')}</span>
                   <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.fontSizeDesc')}</p>
                 </div>
-                <div className={styles.mcpTransportToggle}>
-                  {(Object.entries(FONT_SIZE_MAP) as [FontSizeId, { label: string; px: number }][]).map(([id]) => (
-                    <button
-                      key={id}
-                      className={`${styles.mcpTransportBtn} ${fontSize === id ? styles.mcpTransportActive : ''}`}
-                      onClick={() => setFontSize(id)}
-                    >
-                      {_t(`textSize.${id}`)}
-                    </button>
-                  ))}
+                <div style={{ width: 180 }}>
+                  <Select
+                    value={fontSize}
+                    options={(Object.entries(FONT_SIZE_MAP) as [FontSizeId, { label: string; px: number }][]).map(([id, info]) => ({
+                      value: id,
+                      label: `${_t(`textSize.${id}`)} (${info.px}px)`,
+                    }))}
+                    onChange={(v) => setFontSize(v as FontSizeId)}
+                    variant="form"
+                  />
                 </div>
               </div>
             </>
