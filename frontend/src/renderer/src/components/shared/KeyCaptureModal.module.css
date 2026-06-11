@@ -1,0 +1,115 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.modal {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px 32px;
+  min-width: 360px;
+  max-width: 420px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 6px 0;
+}
+
+.subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 20px 0;
+}
+
+.keyDisplay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 56px;
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+  transition: border-color 0.15s;
+}
+
+.keyDisplayListening {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.keyDisplayConflict {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  margin: 0 0 16px 0;
+}
+
+.conflictMessage {
+  font-size: 12px;
+  color: #ef4444;
+  text-align: center;
+  margin: 0 0 12px 0;
+  background: rgba(239, 68, 68, 0.08);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  transition: background 0.15s;
+}
+
+.btn:hover {
+  background: var(--bg-hover);
+}
+
+.btnPrimary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.btnPrimary:hover {
+  opacity: 0.9;
+}
+
+.btnDanger {
+  color: #ef4444;
+  border-color: #ef4444;
+}
+
+.btnDanger:hover {
+  background: rgba(239, 68, 68, 0.1);
+}
