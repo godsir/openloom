@@ -52,7 +52,6 @@ export default function App() {
         if (cancelled) { cleanup(); return }
         teardown = cleanup
         setReady(true)
-        keybindingRegistry.initialize().catch(() => {})
         const pref = await window.loom.getPreference('onboarded', false)
         if (!pref) setShowOnboarding(true)
         const savedTheme = await window.loom.getPreference('theme', 'dark')
@@ -157,6 +156,10 @@ export default function App() {
   // Global keyboard shortcuts via KeybindingRegistry
   // Replaces old hardcoded Ctrl+B (AppShell) and Ctrl+Shift+I listeners
   useEffect(() => {
+    // Populate default commands synchronously so dispatch works immediately.
+    // Custom overrides load asynchronously and are applied when ready.
+    keybindingRegistry.initialize()
+
     // Navigation commands
     keybindingRegistry.register('nav:new-conversation', () => {
       useStore.getState().createSession()
