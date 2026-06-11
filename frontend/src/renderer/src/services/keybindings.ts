@@ -246,19 +246,26 @@ export class KeybindingRegistry {
 
   /** Call once at startup. Loads custom bindings and merges with defaults. */
   async initialize(): Promise<void> {
+    // Populate with defaults first (synchronous) so dispatch works immediately,
+    // before the async preference load completes.
+    this.commands.clear()
+    for (const def of DEFAULT_COMMANDS) {
+      this.commands.set(def.id, { ...def, currentKeys: def.defaultKeys })
+    }
+
+    // Then load custom overrides asynchronously
     try {
       this.customBindings = await window.loom.getPreference<Record<string, string>>('keybindings', {})
     } catch {
       this.customBindings = {}
     }
 
-    this.commands.clear()
+    // Re-apply with custom bindings
     for (const def of DEFAULT_COMMANDS) {
-      const resolved: ResolvedCommand = {
-        ...def,
-        currentKeys: this.customBindings[def.id] ?? def.defaultKeys,
+      const custom = this.customBindings[def.id]
+      if (custom !== undefined && custom !== def.defaultKeys) {
+        this.commands.set(def.id, { ...def, currentKeys: custom })
       }
-      this.commands.set(def.id, resolved)
     }
   }
 
