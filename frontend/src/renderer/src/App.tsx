@@ -79,6 +79,8 @@ export default function App() {
         }
         const savedFontSize = await window.loom.getPreference('fontSize', 'default')
         useStore.getState().setFontSize(savedFontSize as any)
+        const savedZoom = await window.loom.getPreference('appZoom', 1)
+        document.documentElement.style.setProperty('--app-zoom', String(savedZoom))
         const savedSendShortcut = await window.loom.getPreference('sendShortcut', 'enter')
         useStore.getState().setSendShortcut(savedSendShortcut as any)
         const savedPermissionMode = await window.loom.getPreference('permissionMode', 'ask')
@@ -212,6 +214,7 @@ export default function App() {
       )
       const next = Math.min(current + 0.1, 2.0)
       document.documentElement.style.setProperty('--app-zoom', next.toFixed(2))
+      window.loom.setPreference('appZoom', next)
     })
     keybindingRegistry.register('ui:zoom-out', () => {
       const current = parseFloat(
@@ -219,9 +222,11 @@ export default function App() {
       )
       const next = Math.max(current - 0.1, 0.5)
       document.documentElement.style.setProperty('--app-zoom', next.toFixed(2))
+      window.loom.setPreference('appZoom', next)
     })
     keybindingRegistry.register('ui:zoom-reset', () => {
       document.documentElement.style.setProperty('--app-zoom', '1')
+      window.loom.setPreference('appZoom', 1)
     })
 
     // Inline selection editor (still Ctrl+Shift+I)
