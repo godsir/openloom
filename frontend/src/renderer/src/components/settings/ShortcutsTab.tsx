@@ -9,6 +9,7 @@ import {
 } from '../../services/keybindings'
 import { KeyCaptureModal } from '../shared/KeyCaptureModal'
 import { IconRotateCcw } from '../../utils/icons'
+import shared from '../shared/SettingsModal.module.css'
 import styles from './ShortcutsTab.module.css'
 
 export default function ShortcutsTab() {
@@ -85,13 +86,13 @@ export default function ShortcutsTab() {
   }
 
   return (
-    <div className={styles.page}>
-      <div className={styles.header}>
-        <h3 className={styles.title}>{t('keybindings.title')}</h3>
-        <p className={styles.desc}>{t('keybindings.description')}</p>
+    <>
+      <div className={shared.contentHeader}>
+        <h3 className={shared.sectionTitle}>{t('keybindings.title')}</h3>
+        <p className={shared.sectionDesc}>{t('keybindings.description')}</p>
       </div>
 
-      <div className={styles.body}>
+      <div className={shared.contentBody}>
         <div className={styles.resetBar}>
           <button className={styles.resetAllBtn} onClick={handleResetAll}>
             <IconRotateCcw size={12} />
@@ -162,6 +163,6 @@ export default function ShortcutsTab() {
           onClear={handleClear}
         />
       )}
-    </div>
+    </>
   )
 }
