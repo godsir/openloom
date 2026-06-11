@@ -7,6 +7,7 @@ import Onboarding from './components/shared/Onboarding'
 import ErrorBoundary from './components/shared/ErrorBoundary'
 import ToastContainer from './components/shared/ToastContainer'
 import ConfirmDialog from './components/shared/ConfirmDialog'
+import PermissionDialog from './components/shared/PermissionDialog'
 import { InlineInput } from './components/input/InlineInput'
 import { bootstrapApp } from './services/bootstrap'
 import { handleModelsChanged } from './services/app-event-actions'
@@ -19,11 +20,14 @@ export default function App() {
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showOnboarding, setShowOnboarding] = useState(false)
+  const storeShowOnboarding = useStore((s) => s.showOnboarding)
+  const setStoreShowOnboarding = useStore((s) => s.setShowOnboarding)
   const retryCleanupRef = useRef<(() => void) | null>(null)
   const scheduledTasksOpen = useStore((s) => s.scheduledTasksOpen)
   const setScheduledTasksOpen = useStore((s) => s.setScheduledTasksOpen)
   const theme = useStore((s) => s.theme)
   const confirm = useStore((s) => s.confirm)
+  const permissionConfirm = useStore((s) => s.permissionConfirm)
   const set = useStore.setState
 
   // Apply theme on mount and on change
@@ -231,8 +235,8 @@ export default function App() {
   }
 
   // Onboarding
-  if (showOnboarding) {
-    return <Onboarding onComplete={() => { window.loom.setPreference('onboarded', true); setShowOnboarding(false) }} />
+  if (showOnboarding || storeShowOnboarding) {
+    return <Onboarding onComplete={() => { window.loom.setPreference('onboarded', true); setShowOnboarding(false); setStoreShowOnboarding(false) }} />
   }
 
   // Main app
@@ -254,6 +258,25 @@ export default function App() {
         onCancel={() => {
           confirm.resolve?.(false)
           set({ confirm: { open: false, title: '', message: '', danger: false, resolve: null } })
+        }}
+      />
+      <PermissionDialog
+        open={permissionConfirm.open}
+        title={permissionConfirm.title}
+        message={permissionConfirm.message}
+        toolName={permissionConfirm.toolName}
+        danger={permissionConfirm.danger}
+        onApprove={() => {
+          permissionConfirm.resolve?.('approve')
+          set({ permissionConfirm: { open: false, title: '', message: '', danger: false, toolName: '', resolve: null } })
+        }}
+        onApproveAlways={() => {
+          permissionConfirm.resolve?.('approve_always')
+          set({ permissionConfirm: { open: false, title: '', message: '', danger: false, toolName: '', resolve: null } })
+        }}
+        onDeny={() => {
+          permissionConfirm.resolve?.('deny')
+          set({ permissionConfirm: { open: false, title: '', message: '', danger: false, toolName: '', resolve: null } })
         }}
       />
       <UpdateModal />

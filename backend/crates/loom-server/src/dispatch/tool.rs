@@ -23,12 +23,15 @@ async fn handle_tool_respond(state: &AppState, p: &Value) -> Result<Value, JsonR
         .and_then(|v| v.as_str())
         .ok_or_else(|| err(loom_types::ErrorCode::InvalidRequest, "call_id required"))?;
     let approved = p.get("approved").and_then(|v| v.as_bool()).unwrap_or(false);
+    let remember = p.get("remember").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    let resp = loom_types::PermissionResponse { approved, remember };
 
     let mut pending = state.orchestrator.pending_permissions().await;
     if let Some(tx) = pending.remove(call_id) {
-        let _ = tx.send(approved);
-        tracing::info!(call_id = %call_id, approved, "tool.respond: permission response sent");
-        Ok(json!({ "ok": true, "call_id": call_id, "approved": approved }))
+        let _ = tx.send(resp);
+        tracing::info!(call_id = %call_id, approved, remember, "tool.respond: permission response sent");
+        Ok(json!({ "ok": true, "call_id": call_id, "approved": approved, "remember": remember }))
     } else {
         tracing::warn!(call_id = %call_id, "tool.respond: no pending permission request for call_id");
         Err(err(

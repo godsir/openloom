@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { IconAlertCircle } from '../../utils/icons'
+import { IconAlertCircle, IconCheck } from '../../utils/icons'
 import { useLocale } from '../../i18n'
 import styles from './ConfirmDialog.module.css'
 
@@ -43,25 +43,31 @@ export default function ConfirmDialog({
     <div className={styles.overlay}>
       <div className={styles.backdrop} onClick={onCancel} />
       <div className={styles.dialog}>
+        {/* Header */}
+        <div className={`${styles.header} ${danger ? styles.headerDanger : styles.headerNormal}`}>
+          <div className={`${styles.headerIcon} ${danger ? styles.headerIconDanger : styles.headerIconNormal}`}>
+            <IconAlertCircle size={22} />
+          </div>
+          <h3 className={styles.title}>{title}</h3>
+        </div>
+
+        {/* Body */}
         <div className={styles.body}>
-          <div className={`${styles.iconCircle} ${danger ? styles.iconCircleDanger : styles.iconCircleNormal}`}>
-            <IconAlertCircle size={20} />
-          </div>
-          <div>
-            <h3 className={styles.title}>{title}</h3>
-            <p className={styles.message}>{message}</p>
-          </div>
-          <div className={styles.actions}>
-            <button onClick={onCancel} className={`${styles.btn} ${styles.btnCancel}`}>
-              {actualCancelLabel}
-            </button>
-            <button
-              onClick={onConfirm}
-              className={`${styles.btn} ${danger ? styles.btnDanger : styles.btnConfirm}`}
-            >
-              {actualConfirmLabel}
-            </button>
-          </div>
+          <p className={styles.message}>{message}</p>
+        </div>
+
+        {/* Actions */}
+        <div className={styles.actions}>
+          <button onClick={onCancel} className={styles.btnCancel}>
+            {actualCancelLabel}
+          </button>
+          <button
+            onClick={onConfirm}
+            className={`${styles.btnConfirm} ${danger ? styles.btnConfirmDanger : styles.btnConfirmNormal}`}
+          >
+            <IconCheck size={14} />
+            {actualConfirmLabel}
+          </button>
         </div>
       </div>
     </div>

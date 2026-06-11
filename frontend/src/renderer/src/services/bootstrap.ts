@@ -118,7 +118,7 @@ export async function bootstrapApp(): Promise<() => void> {
         setTimeout(() => import('./pet-sync').then(m => m.sendPetState('idle')), 3000)
         break
       case 'tool.permission_request': {
-        // Show confirmation dialog for "ask" permission mode
+        // Show permission confirmation dialog with three options
         const callId = p?.call_id as string
         const toolName = p?.tool_name as string
         const risk = p?.risk as string
@@ -138,20 +138,22 @@ export async function bootstrapApp(): Promise<() => void> {
           // Build structured message with line breaks
           const parts: string[] = []
           if (riskLabel) parts.push(riskLabel)
-          parts.push(t('permissions.toolName', { name: toolName }))
           if (detail) parts.push(t('permissions.targetPath', { path: detail }))
           parts.push(t('permissions.confirmPrompt'))
           const msg = parts.join('\n')
-          store.showConfirm(
+          store.showPermissionConfirm(
             t('permissions.toolConfirm'),
             msg,
+            toolName,
             risk === 'High',
-          ).then((approved: boolean) => {
-            loomRpc('tool.respond', { call_id: callId, approved }).catch((e) => {
+          ).then((choice) => {
+            const approved = choice !== 'deny'
+            const remember = choice === 'approve_always'
+            loomRpc('tool.respond', { call_id: callId, approved, remember }).catch((e) => {
               console.error('[perm] tool.respond failed:', e)
             })
           }).catch(() => {
-            loomRpc('tool.respond', { call_id: callId, approved: false }).catch((e) => {
+            loomRpc('tool.respond', { call_id: callId, approved: false, remember: false }).catch((e) => {
               console.error('[perm] tool.respond fallback failed:', e)
             })
           })

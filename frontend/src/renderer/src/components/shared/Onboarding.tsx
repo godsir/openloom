@@ -1,103 +1,365 @@
-import { useState } from 'react'
-import { useLocale } from '../../i18n'
+import { useState, useEffect } from 'react'
+import { useLocale, type Locale } from '../../i18n'
+import { loomRpc } from '../../services/jsonrpc'
+import { rpc } from '../../services/rpc-toast'
+import { useStore } from '../../stores'
 import styles from './Onboarding.module.css'
 import logoDev from '../../assets/loom_logo_dev.png'
 import logoRelease from '../../assets/loom_logo.png'
 
-interface Step {
-  title: string
-  description: string
-  tags: string[]
+// ── Types ──
+
+type ProviderId = 'anthropic' | 'openai' | 'deepseek' | 'lmstudio' | 'ollama'
+
+interface ProviderDef {
+  id: ProviderId
+  label: string
+  backend: string
+  defaultUrl: string
+  apiFormat: 'openai' | 'anthropic'
 }
 
-function useSteps(): Step[] {
-  const { t } = useLocale()
-  return [
-    {
-      title: t('onboarding.welcomeTitle'),
-      description: t('onboarding.welcomeDesc'),
-      tags: [t('onboarding.multiModel'), t('onboarding.mcpTools'), t('onboarding.kgMemory'), t('onboarding.lspCode'), t('onboarding.skillsSystem')],
-    },
-    {
-      title: t('onboarding.chooseModel'),
-      description: t('onboarding.chooseModelDesc'),
-      tags: ['Anthropic', 'OpenAI', 'DeepSeek', 'LM Studio', 'Ollama'],
-    },
-    {
-      title: t('onboarding.startChat'),
-      description: t('onboarding.startChatDesc'),
-      tags: [],
-    },
-  ]
+const PROVIDERS: ProviderDef[] = [
+  { id: 'anthropic', label: 'Anthropic', backend: 'Anthropic', defaultUrl: 'https://api.anthropic.com', apiFormat: 'anthropic' },
+  { id: 'openai', label: 'OpenAI', backend: 'OpenAI', defaultUrl: 'https://api.openai.com/v1', apiFormat: 'openai' },
+  { id: 'deepseek', label: 'DeepSeek', backend: 'DeepSeek', defaultUrl: 'https://api.deepseek.com/v1', apiFormat: 'openai' },
+  { id: 'lmstudio', label: 'LM Studio', backend: 'LmStudio', defaultUrl: 'http://localhost:1234/v1', apiFormat: 'openai' },
+  { id: 'ollama', label: 'Ollama', backend: 'Ollama', defaultUrl: 'http://localhost:11434/v1', apiFormat: 'openai' },
+]
+
+const LOCALE_OPTIONS: { value: Locale; label: string; native: string }[] = [
+  { value: 'zh-CN', label: '中文简体', native: '中文简体' },
+  { value: 'zh-TW', label: '中文繁體', native: '中文繁體' },
+  { value: 'en-US', label: 'English', native: 'English' },
+]
+
+// ── Helpers ──
+
+function normalizeBaseUrl(url: string, apiFormat: 'openai' | 'anthropic'): string {
+  let u = url.trim().replace(/\/+$/, '')
+  if (!u) return u
+  if (apiFormat === 'openai' && !u.endsWith('/v1')) u = u + '/v1'
+  return u
 }
 
-export default function Onboarding({
-  onComplete,
-}: {
-  onComplete: () => void
-}) {
-  const { t } = useLocale()
-  const [step, setStep] = useState(0)
+// ── Steps ──
+
+const TOTAL_STEPS = 4
+
+// ── Component ──
+
+export default function Onboarding({ onComplete }: { onComplete: () => void }) {
+  const { t, locale, setLocale } = useLocale()
+  const setTheme = useStore((s) => s.setTheme)
+  const theme = useStore((s) => s.theme)
   const isPackaged = window.__isPackaged__ ?? true
-  const STEPS = useSteps()
+
+  const [step, setStep] = useState(0)
+  const [stepKey, setStepKey] = useState(0)
+
+  // Step 0 – Language
+  const [selLocale, setSelLocale] = useState<Locale>(locale)
+
+  // Step 1 – Model
+  const [selProvider, setSelProvider] = useState<ProviderDef>(PROVIDERS[0])
+  const [apiKey, setApiKey] = useState('')
+  const [savingModel, setSavingModel] = useState(false)
+
+  // Step 2 – Workspace
+  const [workDir, setWorkDir] = useState('')
+  const [selTheme, setSelTheme] = useState(theme)
+
+  // Load current workspace on mount
+  useEffect(() => {
+    loomRpc<{ workspace: string | null }>('workspace.get')
+      .then((ws) => { if (ws.workspace) setWorkDir(ws.workspace) })
+      .catch(() => {})
+  }, [])
+
+  // ── Navigation ──
+
+  const goNext = () => {
+    setStepKey((k) => k + 1)
+    setStep((s) => Math.min(s + 1, TOTAL_STEPS - 1))
+  }
+
+  const goPrev = () => {
+    setStepKey((k) => k + 1)
+    setStep((s) => Math.max(s - 1, 0))
+  }
+
+  // ── Handlers ──
+
+  const handleSelectLocale = (l: Locale) => {
+    setSelLocale(l)
+    setLocale(l)
+  }
+
+  const handleSaveModel = async () => {
+    if (!apiKey.trim()) return
+    setSavingModel(true)
+    try {
+      const result = await loomRpc<{ ok: boolean; env_name: string }>('model.save_key', {
+        backend: selProvider.backend,
+        api_key: apiKey.trim(),
+        base_url: normalizeBaseUrl(selProvider.defaultUrl, selProvider.apiFormat),
+      })
+      if (result.ok) {
+        useStore.getState().addToast({ type: 'success', message: t('modelPanel.apiKeySavedMsg', { env: result.env_name }) })
+      }
+    } catch { /* silent – user can configure later */ }
+    setSavingModel(false)
+  }
+
+  const handlePickFolder = async () => {
+    const path = await window.loom.selectFolder()
+    if (path) {
+      setWorkDir(path)
+      await rpc('workspace.set_default', { path }, t('workspace.workspaceSet'))
+    }
+  }
+
+  const handleSetTheme = (t: string) => {
+    setSelTheme(t)
+    setTheme(t as any)
+  }
+
+  const handleFinish = async () => {
+    // Save model if key is entered
+    if (apiKey.trim()) {
+      try {
+        await loomRpc('model.save_key', {
+          backend: selProvider.backend,
+          api_key: apiKey.trim(),
+          base_url: normalizeBaseUrl(selProvider.defaultUrl, selProvider.apiFormat),
+        })
+      } catch { /* ignore */ }
+    }
+    window.loom.setPreference('onboarded', true)
+    onComplete()
+  }
+
+  // ── Render helpers ──
+
+  const stepLabel = (s: number) => {
+    const map: Record<number, string> = {
+      0: t('onboarding.stepLanguage'),
+      1: t('onboarding.stepModel'),
+      2: t('onboarding.stepWorkspace'),
+      3: t('onboarding.stepReady'),
+    }
+    return map[s] ?? ''
+  }
 
   return (
     <div className={styles.backdrop}>
+      {/* BG orbs */}
       <div className={`${styles.bgOrb} ${styles.bgOrb1}`} />
       <div className={`${styles.bgOrb} ${styles.bgOrb2}`} />
       <div className={`${styles.bgOrb} ${styles.bgOrb3}`} />
       <div className={styles.bgGrid} />
 
       <div className={styles.card}>
-        <div className={styles.logoBox}>
-          <img
-            src={isPackaged ? logoRelease : logoDev}
-            alt="openLoom"
-            className={styles.logoImg}
-          />
-        </div>
-
-        <div className={styles.dots}>
-          {STEPS.map((_, i) => (
-            <div
-              key={i}
-              className={`${styles.dot} ${i <= step ? styles.dotActive : styles.dotInactive}`}
+        {/* ── Top: banner + step indicator ── */}
+        <div className={styles.top}>
+          <div className={styles.logoBox}>
+            <img
+              src={isPackaged ? logoRelease : logoDev}
+              alt="openLoom"
+              className={styles.logoImg}
             />
-          ))}
-        </div>
+          </div>
 
-        <div key={step} className={styles.stepContent}>
-          <h2 className={styles.title}>{STEPS[step].title}</h2>
-          <p className={styles.desc}>{STEPS[step].description}</p>
-
-          <div className={styles.tags}>
-            {STEPS[step].tags.map((name) => (
-              <span key={name} className={styles.tag}>
-                {name}
-              </span>
+          <div className={styles.steps}>
+            {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
+              <div key={i} className={styles.stepRow}>
+                <div
+                  className={`${styles.stepDot} ${
+                    i < step ? styles.stepDone : i === step ? styles.stepActive : styles.stepPending
+                  }`}
+                >
+                  {i < step ? (
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  ) : (
+                    i + 1
+                  )}
+                </div>
+                <span
+                  className={`${styles.stepLabel} ${
+                    i <= step ? styles.stepLabelActive : styles.stepLabelPending
+                  }`}
+                >
+                  {stepLabel(i)}
+                </span>
+                {i < TOTAL_STEPS - 1 && <div className={`${styles.stepLine} ${i < step ? styles.stepLineDone : ''}`} />}
+              </div>
             ))}
           </div>
         </div>
 
+        {/* ── Content area ── */}
+        <div key={stepKey} className={styles.content}>
+          {/* ═══ Step 0: Language ═══ */}
+          {step === 0 && (
+            <>
+              <h2 className={styles.title}>{t('onboarding.selectLanguage')}</h2>
+              <p className={styles.desc}>{t('onboarding.languageDesc')}</p>
+              <div className={styles.localeGrid}>
+                {LOCALE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    className={`${styles.localeCard} ${selLocale === opt.value ? styles.localeCardActive : ''}`}
+                    onClick={() => handleSelectLocale(opt.value)}
+                  >
+                    <span className={styles.localeFlag}>
+                      {opt.value === 'zh-CN' ? '🇨🇳' : opt.value === 'zh-TW' ? '🇹🇼' : '🇺🇸'}
+                    </span>
+                    <span className={styles.localeName}>{opt.native}</span>
+                    <span className={styles.localeCode}>{opt.value}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* ═══ Step 1: Model ═══ */}
+          {step === 1 && (
+            <>
+              <h2 className={styles.title}>{t('onboarding.selectModel')}</h2>
+              <p className={styles.desc}>{t('onboarding.modelDesc')}</p>
+
+              <div className={styles.providerGrid}>
+                {PROVIDERS.map((p) => (
+                  <button
+                    key={p.id}
+                    className={`${styles.providerCard} ${selProvider.id === p.id ? styles.providerCardActive : ''}`}
+                    onClick={() => setSelProvider(p)}
+                  >
+                    {p.label}
+                    {p.id === 'lmstudio' || p.id === 'ollama' ? (
+                      <span className={styles.localBadge}>{t('onboarding.localBadge')}</span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+
+              <div className={styles.apiKeyRow}>
+                <input
+                  type="password"
+                  className={styles.apiKeyInput}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={t('onboarding.apiKeyPlaceholder', { provider: selProvider.label })}
+                />
+              </div>
+            </>
+          )}
+
+          {/* ═══ Step 2: Workspace ═══ */}
+          {step === 2 && (
+            <>
+              <h2 className={styles.title}>{t('onboarding.setupWorkspace')}</h2>
+              <p className={styles.desc}>{t('onboarding.workspaceDesc')}</p>
+
+              <div className={styles.workDirRow}>
+                <div className={styles.workDirInfo}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                  </svg>
+                  <span className={styles.workDirPath}>
+                    {workDir || t('onboarding.noFolderSelected')}
+                  </span>
+                </div>
+                <button className={styles.browseBtn} onClick={handlePickFolder}>
+                  {t('onboarding.browseFolder')}
+                </button>
+              </div>
+
+              <div className={styles.themeSection}>
+                <span className={styles.themeLabel}>{t('onboarding.themeLabel')}</span>
+                <div className={styles.themeGrid}>
+                  {[
+                    { id: 'dark', label: t('theme.dark'), cls: styles.themeDark },
+                    { id: 'midnight', label: t('theme.midnight'), cls: styles.themeMidnight },
+                    { id: 'light', label: t('theme.light'), cls: styles.themeLight },
+                    { id: 'warm-paper', label: t('theme.warm-paper'), cls: styles.themeWarm },
+                  ].map((th) => (
+                    <button
+                      key={th.id}
+                      className={`${styles.themeCard} ${th.cls} ${selTheme === th.id ? styles.themeCardActive : ''}`}
+                      onClick={() => handleSetTheme(th.id)}
+                    >
+                      <span className={styles.themeSwatch} />
+                      <span className={styles.themeName}>{th.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ═══ Step 3: Ready ═══ */}
+          {step === 3 && (
+            <>
+              <div className={styles.readyCheck}>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                  <polyline points="22 4 12 14.01 9 11.01" />
+                </svg>
+              </div>
+              <h2 className={styles.title}>{t('onboarding.readyTitle')}</h2>
+              <p className={styles.desc}>{t('onboarding.readyDesc')}</p>
+              <div className={styles.readySummary}>
+                <div className={styles.summaryItem}>
+                  <span className={styles.summaryKey}>{t('onboarding.stepLanguage')}</span>
+                  <span className={styles.summaryVal}>
+                    {LOCALE_OPTIONS.find((l) => l.value === selLocale)?.native}
+                  </span>
+                </div>
+                <div className={styles.summaryItem}>
+                  <span className={styles.summaryKey}>{t('onboarding.stepModel')}</span>
+                  <span className={styles.summaryVal}>
+                    {apiKey.trim() ? selProvider.label : t('onboarding.skipped')}
+                  </span>
+                </div>
+                <div className={styles.summaryItem}>
+                  <span className={styles.summaryKey}>{t('onboarding.stepWorkspace')}</span>
+                  <span className={styles.summaryVal}>
+                    {workDir ? workDir.split(/[/\\]/).pop() : t('onboarding.defaultFolder')}
+                  </span>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* ── Actions ── */}
         <div className={styles.actions}>
-          {step > 0 && (
-            <button
-              onClick={() => setStep(step - 1)}
-              className={styles.btnSecondary}
-            >
+          {step > 0 && step < TOTAL_STEPS - 1 && (
+            <button onClick={goPrev} className={styles.btnSecondary}>
               {t('onboarding.prev')}
             </button>
           )}
-          {step < STEPS.length - 1 ? (
+          {step === 1 && (
+            <button onClick={goNext} className={styles.btnSkip}>
+              {t('onboarding.skipModel')}
+            </button>
+          )}
+          {step < TOTAL_STEPS - 1 ? (
             <button
-              onClick={() => setStep(step + 1)}
+              onClick={() => {
+                if (step === 1 && apiKey.trim()) handleSaveModel()
+                goNext()
+              }}
               className={styles.btnPrimary}
             >
               {t('onboarding.next')}
             </button>
           ) : (
-            <button onClick={onComplete} className={styles.btnPrimary}>
-              {t('onboarding.getStarted')}
+            <button onClick={handleFinish} className={styles.btnPrimary}>
+              {t('onboarding.startUsing')}
             </button>
           )}
         </div>

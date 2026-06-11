@@ -192,7 +192,7 @@ pub struct Orchestrator {
     /// Set via set_key_store() after construction, before any cloud client is built.
     key_store: Arc<RwLock<HashMap<String, String>>>,
     /// Pending permission approvals for "ask" mode (call_id → oneshot sender).
-    pending_permissions: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
+    pending_permissions: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<loom_types::PermissionResponse>>>>,
     data_dir: PathBuf,
     /// Global default: max LLM iterations per turn (overridable per agent).
     default_max_iterations: Arc<RwLock<usize>>,
@@ -5344,7 +5344,7 @@ impl Orchestrator {
     /// Get a clone of the pending permissions map for "ask" mode tool approval.
     pub async fn pending_permissions(
         &self,
-    ) -> tokio::sync::RwLockWriteGuard<'_, HashMap<String, tokio::sync::oneshot::Sender<bool>>>
+    ) -> tokio::sync::RwLockWriteGuard<'_, HashMap<String, tokio::sync::oneshot::Sender<loom_types::PermissionResponse>>>
     {
         self.pending_permissions.write().await
     }

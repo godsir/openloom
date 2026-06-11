@@ -1,0 +1,242 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+}
+
+.dialog {
+  position: relative;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 24px 48px rgba(0, 0, 0, 0.45),
+    0 8px 16px rgba(0, 0, 0, 0.3);
+  width: 100%;
+  max-width: 440px;
+  max-height: 85vh;
+  margin: 0 16px;
+  overflow: hidden;
+  animation: dialogIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes dialogIn {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* ─── Header ─── */
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.headerNormal {
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.04) 0%, transparent 100%);
+}
+
+.headerDanger {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.06) 0%, transparent 100%);
+}
+
+.headerIcon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.headerIconNormal {
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent);
+  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.15);
+}
+
+.headerIconDanger {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--red, #ef4444);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.15);
+}
+
+.headerText {
+  flex: 1;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 6px;
+  line-height: 1.3;
+}
+
+.riskBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 10px;
+}
+
+.riskBadgeMedium {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.10);
+  border: 1px solid rgba(var(--accent-rgb), 0.18);
+}
+
+.riskBadgeHigh {
+  color: var(--red, #ef4444);
+  background: rgba(239, 68, 68, 0.10);
+  border: 1px solid rgba(239, 68, 68, 0.18);
+}
+
+/* ─── Body ─── */
+
+.body {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.message {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  margin: 0;
+  white-space: pre-line;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+
+.toolChip {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolChipLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─── Actions ─── */
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 20px 20px;
+}
+
+.btnApproveAlways,
+.btnApprove,
+.btnDeny {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-family: inherit;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.btnDeny {
+  background: transparent;
+  color: var(--text-muted);
+  border-color: transparent;
+}
+
+.btnDeny:hover {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.btnApprove {
+  background: rgba(var(--accent-rgb), 0.06);
+  color: var(--accent);
+  border-color: rgba(var(--accent-rgb), 0.12);
+}
+
+.btnApprove:hover {
+  background: rgba(var(--accent-rgb), 0.10);
+  border-color: rgba(var(--accent-rgb), 0.20);
+}
+
+.btnApproveAlways {
+  background: var(--accent);
+  color: #000;
+  border-color: var(--accent);
+}
+
+.btnApproveAlways:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(var(--accent-rgb), 0.25);
+}
+
+.btnLabel {
+  flex: 1;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.btnHint {
+  font-size: 10.5px;
+  opacity: 0.65;
+  font-weight: 400;
+}
+
+.btnDeny .btnHint {
+  display: none;
+}
+
+.btnDeny .btnLabel {
+  font-weight: 500;
+}

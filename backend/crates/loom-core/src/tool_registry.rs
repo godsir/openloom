@@ -3,7 +3,7 @@
 //! The `AgentTool` trait is the single dispatch point for all tool-like things
 //! the agent can call. ToolRegistry is the canonical tool index.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -332,6 +332,7 @@ impl AgentTool for SpawnAgentTool {
             permission_mode: "operate".to_string(), // sub-agents always operate
             event_bus: None,
             pending_permissions: None,
+            session_approved_tools: Arc::new(std::sync::Mutex::new(HashSet::new())),
             sandbox: config.sandbox.clone(),
             compaction_config: CompactionConfig::default(),
         };

@@ -151,9 +151,45 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
   const [skillExpand, setSkillExpand] = useState(false)
   const [isWin32, setIsWin32] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const [activeSection, setActiveSection] = useState('chat')
   const [customColors, setCustomColors] = useState({ bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' })
   const UI_FONT_OPTIONS = useUiFontOptions()
   const CODE_FONT_OPTIONS = useCodeFontOptions()
+
+  const SECTIONS = [
+    { id: 'chat', label: t('software.chatSettings') },
+    { id: 'behavior', label: t('software.behavior') },
+    { id: 'font', label: t('software.font') },
+    { id: 'appearance', label: t('software.appearance') },
+  ]
+
+  const scrollToSection = (id: string) => {
+    const el = document.getElementById(`sw-section-${id}`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setActiveSection(id)
+    }
+  }
+
+  // Scroll spy: track which section is visible
+  useEffect(() => {
+    const contentEl = document.getElementById('sw-content-body')
+    if (!contentEl) return
+    const sectionEls = SECTIONS.map(s => document.getElementById(`sw-section-${s.id}`)).filter(Boolean) as HTMLElement[]
+    if (sectionEls.length === 0) return
+
+    const onScroll = () => {
+      const top = contentEl.scrollTop + 80 // offset for sub-nav
+      for (let i = sectionEls.length - 1; i >= 0; i--) {
+        if (sectionEls[i].offsetTop <= top) {
+          setActiveSection(SECTIONS[i].id)
+          break
+        }
+      }
+    }
+    contentEl.addEventListener('scroll', onScroll, { passive: true })
+    return () => contentEl.removeEventListener('scroll', onScroll)
+  }, [SECTIONS])
 
   useEffect(() => {
     Promise.all([
@@ -297,9 +333,22 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
         <h3 className={styles.sectionTitle}>{t('settings.software')}</h3>
         <p className={styles.sectionDesc}>{t('software.description')}</p>
       </div>
-      <div className={styles.contentBody}>
+      <div className={styles.contentBody} id="sw-content-body">
+        {/* Quick-jump sub nav */}
+        <div className={styles.subNav}>
+          {SECTIONS.map(s => (
+            <button
+              key={s.id}
+              onClick={() => scrollToSection(s.id)}
+              className={`${styles.subNavItem} ${activeSection === s.id ? styles.subNavActive : ''}`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+
         {/* Chat Settings */}
-        <div className={styles.aboutSection}>
+        <div className={styles.aboutSection} id="sw-section-chat">
           <div className={styles.themeLabel}>{t('software.chatSettings')}</div>
           {!loaded ? (
             <p className={styles.toolsEmpty}>{t('common.loading')}</p>
@@ -398,7 +447,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
         <hr className={styles.sectionDivider} />
 
         {/* Behavior */}
-        <div className={styles.aboutSection}>
+        <div className={styles.aboutSection} id="sw-section-behavior">
           <div className={styles.themeLabel}>{t('software.behavior')}</div>
           {!loaded ? (
             <p className={styles.toolsEmpty}>{t('common.loading')}</p>
@@ -529,7 +578,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
         <hr className={styles.sectionDivider} />
 
         {/* Font */}
-        <div className={styles.aboutSection}>
+        <div className={styles.aboutSection} id="sw-section-font">
           <div className={styles.themeLabel}>{t('software.font')}</div>
           {!loaded ? (
             <p className={styles.toolsEmpty}>{t('common.loading')}</p>
@@ -576,7 +625,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
         <hr className={styles.sectionDivider} />
 
         {/* Appearance */}
-        <div className={styles.aboutSection}>
+        <div className={styles.aboutSection} id="sw-section-appearance">
           <div className={styles.themeLabel}>{t('software.appearance')}</div>
 
           {/* Theme */}

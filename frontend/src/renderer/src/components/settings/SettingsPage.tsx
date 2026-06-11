@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useStore } from '../../stores'
-import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconPackage } from '../../utils/icons'
+import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconPackage, IconBug, IconChevronUp } from '../../utils/icons'
 import AgentConfigPanel from '../shared/AgentConfigPanel'
 import { loomRpc } from '../../services/jsonrpc'
 import { useLocale } from '../../i18n'
@@ -13,10 +13,11 @@ import McpLspTab from './McpTab'
 import SkillsTab from './SkillsTab'
 import PluginsTab from './PluginsTab'
 import AboutTab from './AboutTab'
+import DevTestTab from './DevTestTab'
 import TokenTab from './TokenTab'
 import KgTab from './KgTab'
 
-type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'about'
+type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'devtest' | 'about'
 
 function GlobalDefaultsSection() {
   const { t } = useLocale()
@@ -124,12 +125,49 @@ export default function SettingsPage() {
   const setTheme = useStore((s) => s.setTheme)
   const wsState = useStore((s) => s.wsState)
   const [tab, setTab] = useState<Tab>('software')
+  const isDev = !(window.__isPackaged__ ?? true)
+  const [showScrollTop, setShowScrollTop] = useState(false)
+  const contentRef = useRef<HTMLDivElement>(null)
   const tabGroups = useSettingsTabs()
+
+  // Scroll-to-top: track scroll position of the visible contentBody
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    const body = el.querySelector<HTMLElement>('[class*="contentBody"]')
+    if (!body) return
+    const onScroll = () => setShowScrollTop(body.scrollTop > 200)
+    body.addEventListener('scroll', onScroll, { passive: true })
+    onScroll()
+    return () => body.removeEventListener('scroll', onScroll)
+  }, [tab])
+
+  const scrollToTop = () => {
+    const el = contentRef.current
+    const body = el?.querySelector<HTMLElement>('[class*="contentBody"]')
+    body?.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  // Inject dev test tab into the system group when in dev mode
+  const displayGroups = isDev
+    ? tabGroups.map((group) => {
+        if (group.label === t('settings.systemGroup')) {
+          return {
+            ...group,
+            items: [
+              ...group.items,
+              { id: 'devtest' as Tab, label: t('settings.devTest'), icon: <IconBug size={14} /> },
+            ],
+          }
+        }
+        return group
+      })
+    : tabGroups
 
   return (
     <div className={styles.layout}>
       <div className={styles.nav}>
-        {tabGroups.map((group, gi) => (
+        {displayGroups.map((group, gi) => (
           <div key={gi} className={styles.navGroup}>
             <div className={styles.navLabel}>{group.label}</div>
             {group.items.map((item) => (
@@ -146,7 +184,7 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      <div className={styles.content}>
+      <div className={styles.content} ref={contentRef}>
         {tab === 'software' && <SoftwareTab theme={theme} setTheme={setTheme} />}
 
         {tab === 'agent' && (
@@ -215,7 +253,15 @@ export default function SettingsPage() {
           </>
         )}
         {tab === 'token' && <TokenTab />}
+        {tab === 'devtest' && <DevTestTab />}
         {tab === 'about' && <AboutTab wsState={wsState} />}
+
+        {/* Scroll-to-top */}
+        {showScrollTop && (
+          <button onClick={scrollToTop} className={styles.scrollTopBtn} title={t('common.backToTop')}>
+            <IconChevronUp size={16} />
+          </button>
+        )}
       </div>
     </div>
   )

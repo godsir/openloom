@@ -133,3 +133,14 @@ pub struct PermissionRequest {
     pub description: String,
     pub risk_level: String,
 }
+
+/// Response from UI for a permission request.
+///
+/// Consumers: loom-core (agent loop), loom-server (dispatch)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionResponse {
+    pub approved: bool,
+    /// If true, auto-approve this tool for the rest of the session.
+    #[serde(default)]
+    pub remember: bool,
+}

@@ -1,16 +1,13 @@
 import { useStore } from '../../stores'
-import { IconPlus, IconCpu, IconTerminal, IconBrain, IconBookOpen, IconSparkles, IconMessageSquare } from '../../utils/icons'
+import { IconCpu, IconTerminal, IconBrain, IconBookOpen, IconSparkles, IconMessageSquare } from '../../utils/icons'
 import { useLocale } from '../../i18n'
 import styles from './WelcomeScreen.module.css'
-import logoDev from '../../assets/loom_logo_dev.png'
-import logoRelease from '../../assets/loom_logo.png'
+import bannerImg from '../../assets/banner.png'
 
 export default function WelcomeScreen() {
   const { t } = useLocale()
-  const createSession = useStore((s) => s.createSession)
   const switchSession = useStore((s) => s.switchSession)
   const sessions = useStore((s) => s.sessions)
-  const isPackaged = window.__isPackaged__ ?? true
 
   const FEATURES = [
     { label: t('welcome.featureMultiModel'), icon: IconCpu },
@@ -20,12 +17,7 @@ export default function WelcomeScreen() {
     { label: t('welcome.featureSkills'), icon: IconSparkles },
   ]
 
-  const handleStart = async () => {
-    const id = await createSession()
-    if (id) await switchSession(id)
-  }
-
-  // Recent non-empty sessions, newest first, max 5
+  // Recent non-empty sessions, newest first, max 3
   const recentSessions = sessions
     .filter(s => s.title || s.firstMessage)
     .sort((a, b) => (b.modified || '').localeCompare(a.modified || ''))
@@ -34,11 +26,11 @@ export default function WelcomeScreen() {
   return (
     <div className={styles.wrapper}>
       <div className={styles.inner}>
-        <div className={styles.logo}>
+        <div className={styles.banner}>
           <img
-            src={isPackaged ? logoRelease : logoDev}
+            src={bannerImg}
             alt="openLoom"
-            className={styles.logoImg}
+            className={styles.bannerImg}
           />
         </div>
         <h1 className={styles.title}>openLoom</h1>
@@ -52,11 +44,6 @@ export default function WelcomeScreen() {
             </span>
           ))}
         </div>
-
-        <button onClick={handleStart} className={styles.startBtn}>
-          <IconPlus size={14} />
-          {t('welcome.startChat')}
-        </button>
 
         {recentSessions.length > 0 && (
           <div className={styles.recentSection}>

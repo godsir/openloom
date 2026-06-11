@@ -251,10 +251,7 @@ function ExpertiseSection({ areas, t }: {
 }) {
   if (areas.length === 0) return null
 
-  function translate(area: string): string {
-    return t(`kg.persona.expertise.${area.toLowerCase()}`) ?? area
-  }
-  // Weight: larger font for items appearing earlier (which have higher count)
+  // Expertise areas are dynamic KG-extracted values, not i18n keys — display as-is
   const sizes = ['s', 'm', 'l', 'xl']
   return (
     <div className={styles.section}>
@@ -264,7 +261,7 @@ function ExpertiseSection({ areas, t }: {
           const size = sizes[Math.min(i, sizes.length - 1)]
           return (
             <span key={area} className={`${styles.tag} ${styles[`tag${size}`]}`}>
-              {translate(area)}
+              {area}
             </span>
           )
         })}

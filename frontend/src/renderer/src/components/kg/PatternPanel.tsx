@@ -42,22 +42,22 @@ function TopicsSection({ topics, t }: { topics: TopicPattern[]; t: (key: string,
 
   return (
     <div className={styles.topicList}>
-      {displayed.map((t, i) => (
+      {displayed.map((topic, i) => (
         <div key={i} className={styles.topicItem}>
           <div className={styles.topicHeader}>
-            <span className={styles.topicName}>{t.topic}</span>
-            <span className={styles.topicBadge}>{t('kg.patterns.times', { n: String(t.session_count) })}</span>
+            <span className={styles.topicName}>{topic.topic}</span>
+            <span className={styles.topicBadge}>{t('kg.patterns.times', { n: String(topic.session_count) })}</span>
           </div>
           <div className={styles.topicBar}>
             <div
               className={styles.topicBarFill}
-              style={{ width: `${(t.session_count / maxCount) * 100}%` }}
+              style={{ width: `${(topic.session_count / maxCount) * 100}%` }}
             />
           </div>
           <div className={styles.topicMeta}>
-            <span>{formatDate(t.first_seen)}</span>
+            <span>{formatDate(topic.first_seen)}</span>
             <span className={styles.topicMetaSep}>{t('kg.patterns.to')}</span>
-            <span>{formatDate(t.last_seen)}</span>
+            <span>{formatDate(topic.last_seen)}</span>
           </div>
         </div>
       ))}
@@ -81,29 +81,29 @@ function ToolsSection({ tools, t }: { tools: ToolPreference[]; t: (key: string, 
 
   return (
     <div className={styles.toolList}>
-      {tools.map((t, i) => (
+      {tools.map((tool, i) => (
         <div key={i} className={styles.toolItem}>
           <div className={styles.toolRow}>
-            <span className={styles.toolName}>{t.tool}</span>
-            <span className={styles.toolCount}>{t.usage_count}</span>
+            <span className={styles.toolName}>{tool.tool}</span>
+            <span className={styles.toolCount}>{tool.usage_count}</span>
             <span
               className={styles.toolConf}
-              style={{ color: confidenceColor(t.avg_confidence) }}
-              title={t('kg.patterns.avgConfidence', { pct: (t.avg_confidence * 100).toFixed(0) })}
+              style={{ color: confidenceColor(tool.avg_confidence) }}
+              title={t('kg.patterns.avgConfidence', { pct: (tool.avg_confidence * 100).toFixed(0) })}
             >
-              {(t.avg_confidence * 100).toFixed(0)}%
+              {(tool.avg_confidence * 100).toFixed(0)}%
             </span>
           </div>
           <div className={styles.toolBar}>
             <div
               className={styles.toolBarFill}
-              style={{ width: `${(t.usage_count / maxCount) * 100}%` }}
+              style={{ width: `${(tool.usage_count / maxCount) * 100}%` }}
             />
             <div
               className={styles.toolBarConf}
               style={{
-                left: `${t.avg_confidence * 100}%`,
-                background: confidenceColor(t.avg_confidence),
+                left: `${tool.avg_confidence * 100}%`,
+                background: confidenceColor(tool.avg_confidence),
               }}
             />
           </div>

@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* ── Tailwind animation GPU promotion (Win11 DWM compositor fix) ── */
-.animate-pulse { will-change: opacity; }
+.animate-pulse { }
 .animate-spin { will-change: transform; }
 
 /* ================================================================
@@ -136,7 +136,13 @@ body{
 @keyframes pop-in{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:scale(1)}}
 @keyframes slide-left{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:translateX(0)}}
 @keyframes breathe{0%,100%{opacity:.35}50%{opacity:.6}}
-@keyframes bounce-dot{0%,60%,100%{opacity:.2;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+@keyframes dot-wave{0%,80%,100%{background:rgba(var(--accent-rgb),.25)}40%{background:rgba(var(--accent-rgb),1)}}
+.typing-dots{display:inline-flex;gap:4px;align-items:center}
+.typing-dots span{display:inline-block;width:5px;height:5px;border-radius:50%;background:rgba(var(--accent-rgb),.25);animation:dot-wave 1.4s ease-in-out infinite}
+.typing-dots span:nth-child(2){animation-delay:.16s}
+.typing-dots span:nth-child(3){animation-delay:.32s}
+
+@keyframes pulse{0%,100%{filter:brightness(1)}50%{filter:brightness(.45)}}
 
 .animate-fade-up{animation:fade-up var(--dur-slow) var(--ease-out)}
 .animate-fade-in{animation:fade-in var(--dur-normal) var(--ease-out)}
@@ -148,15 +154,6 @@ body{
 .stagger-1{animation-delay:0ms}.stagger-2{animation-delay:50ms}.stagger-3{animation-delay:100ms}
 
 /* ================================================================
-   TYPING INDICATOR
-   ================================================================ */
-
-.typing-dots{display:inline-flex;gap:3px;align-items:center}
-.typing-dots span{width:5px;height:5px;border-radius:50%;background:var(--accent);animation:bounce-dot 1.4s var(--ease-out) infinite;will-change:transform,opacity}
-.typing-dots span:nth-child(2){animation-delay:.2s}
-.typing-dots span:nth-child(3){animation-delay:.4s}
-
-/* ================================================================
    TRANSITIONS
    ================================================================ */
 
@@ -165,8 +162,8 @@ body{
 .transition-opacity{transition:opacity var(--dur-fast) var(--ease-out)}
 .transition-colors-fast,.transition-colors{transition:background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out),border-color var(--dur-fast) var(--ease-out)}
 .transition-opacity-fast,.transition-opacity{transition:opacity var(--dur-fast) var(--ease-out)}
-.animate-pulse-soft{animation:breathe 2s var(--ease-out) infinite;will-change:opacity}
-.animate-pulse-dot{animation:breathe 1.5s var(--ease-out) infinite;will-change:opacity}
+.animate-pulse-soft{animation:breathe 2s var(--ease-out) infinite}
+.animate-pulse-dot{animation:breathe 1.5s var(--ease-out) infinite}
 
 /* ================================================================
    SHARED COMPONENT PATTERNS

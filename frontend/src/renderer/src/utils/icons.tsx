@@ -72,6 +72,7 @@ export {
   MoreHorizontal as IconMoreHorizontal,
   FilePlus as IconFilePlus,
   FolderOpen as IconFolderOpen,
+  Bug as IconBug,
 } from 'lucide-react'
 
 export function IconStarFilled({ size = 16, className = '' }: { size?: number; className?: string }) {

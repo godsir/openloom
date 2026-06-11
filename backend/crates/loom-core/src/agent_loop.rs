@@ -14,7 +14,7 @@ use loom_types::{
     CompactionConfig, CompletionRequest, CompletionResponse, ContentPart, Message, Role, StreamDelta,
     ToolDefinition,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::sync::mpsc;
@@ -114,7 +114,10 @@ pub struct AgentLoopConfig {
     /// Pending permission approvals keyed by call_id
     #[allow(clippy::type_complexity)]
     pub pending_permissions:
-        Option<Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>>,
+        Option<Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<loom_types::PermissionResponse>>>>>,
+    /// Tools that the user has chosen to auto-approve for the rest of this session.
+    /// Keyed by tool name. Only used in "ask" permission mode.
+    pub session_approved_tools: Arc<std::sync::Mutex<HashSet<String>>>,
     /// Optional sandbox guard for file/path access control.
     /// When None, no sandbox checks are performed (backward compatible).
     pub sandbox: Option<Arc<loom_security::sandbox::SandboxGuard>>,
@@ -184,6 +187,7 @@ impl Default for AgentLoopConfig {
             available_skill_count: 0,
             event_bus: None,
             pending_permissions: None,
+            session_approved_tools: Arc::new(std::sync::Mutex::new(HashSet::new())),
             sandbox: None,
             compaction_config: CompactionConfig::default(),
         }
@@ -2246,6 +2250,18 @@ async fn request_user_approval(
     risk: &loom_types::RiskLevel,
     config: &AgentLoopConfig,
 ) -> bool {
+    // Check session-level auto-approve set first
+    {
+        let approved_tools = config.session_approved_tools.lock().unwrap();
+        if approved_tools.contains(tool_name) {
+            tracing::info!(
+                tool_name = %tool_name,
+                "auto-approving tool (previously approved for this session)"
+            );
+            return true;
+        }
+    }
+
     let (bus, pending) = match (&config.event_bus, &config.pending_permissions) {
         (Some(b), Some(p)) => (b, p),
         _ => {
@@ -2280,9 +2296,22 @@ async fn request_user_approval(
 
     // Wait up to 60 seconds for user response
     match tokio::time::timeout(std::time::Duration::from_secs(60), rx).await {
-        Ok(Ok(approved)) => {
-            tracing::info!(call_id = %call_id, approved, "user responded to permission request");
-            approved
+        Ok(Ok(resp)) => {
+            tracing::info!(
+                call_id = %call_id,
+                approved = resp.approved,
+                remember = resp.remember,
+                "user responded to permission request"
+            );
+            if resp.approved && resp.remember {
+                let mut approved_tools = config.session_approved_tools.lock().unwrap();
+                approved_tools.insert(tool_name.to_string());
+                tracing::info!(
+                    tool_name = %tool_name,
+                    "added to session approved tools (remember)"
+                );
+            }
+            resp.approved
         }
         Ok(Err(_)) => {
             tracing::warn!(call_id = %call_id, "permission request sender dropped");
