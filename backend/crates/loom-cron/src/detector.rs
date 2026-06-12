@@ -78,6 +78,32 @@ pub fn build_extraction_prompt(message: &str, now: &DateTime<Utc>) -> String {
     )
 }
 
+/// Build a valid 7-field (`sec min hour dom month dow year`) cron expression for an
+/// "every N minutes" interval.
+///
+/// The `cron` crate's minutes field only accepts step values up to 59, so a naïve
+/// `0 */{mins} * * * *` is **rejected** for `mins >= 60` (e.g. "every hour" with
+/// `everyMinutes = 60`, or "every 90 minutes"). To keep the full range working we:
+///
+/// - For `mins >= 60`: emit an hours-field step expression `0 0 */{h} * * * *`,
+///   where `h = mins / 60` (rounded down, minimum 1). This represents "every N hours".
+/// - For `1 <= mins <= 59`: emit `0 */{mins} * * * *`.
+/// - For `mins == 0`: clamp up to 1 (a zero interval is meaningless / would be rejected).
+///
+/// The hours-field step value is clamped to `1..=23` (the hours field max is 23, so
+/// e.g. "every 48 hours" degrades gracefully to "every 23 hours" rather than producing
+/// an invalid expression). The emitted form is always the 7-field shape consistent with
+/// the `daily`/`at` paths so it round-trips through [`cron::Schedule::from_str`].
+fn interval_cron_expression(mins: u64) -> String {
+    if mins >= 60 {
+        let hours = (mins / 60).clamp(1, 23);
+        format!("0 0 */{hours} * * * *")
+    } else {
+        let mins = mins.clamp(1, 59);
+        format!("0 */{mins} * * * *")
+    }
+}
+
 /// Parse the LLM response into a DetectedTask.
 pub fn parse_extraction_response(json_text: &str) -> Result<DetectedTask> {
     let json = json_text
@@ -125,7 +151,7 @@ pub fn parse_extraction_response(json_text: &str) -> Result<DetectedTask> {
         }
         "interval" => {
             let mins = v["everyMinutes"].as_u64().unwrap_or(60);
-            Some(format!("0 */{} * * * *", mins))
+            Some(interval_cron_expression(mins))
         }
         _ => {
             if let Some(at) = schedule_at.as_deref() {
@@ -241,5 +267,59 @@ mod tests {
         let r = parse_extraction_response(json).unwrap();
         assert!(r.should_create);
         assert_eq!(r.body.as_deref(), Some("提交代码"));
+    }
+
+    #[test]
+    fn test_interval_cron_expression_roundtrips() {
+        use std::str::FromStr;
+
+        // "every 30 min" → minutes-field step, valid.
+        let every_30 = interval_cron_expression(30);
+        assert_eq!(every_30, "0 */30 * * * *");
+        assert!(cron::Schedule::from_str(&every_30).is_ok());
+
+        // "every hour" (everyMinutes default = 60) → hours-field step.
+        // The naïve "0 */60 * * * *" would be REJECTED by cron (minutes max 59).
+        let every_hour = interval_cron_expression(60);
+        assert_eq!(every_hour, "0 0 */1 * * * *");
+        assert!(cron::Schedule::from_str(&every_hour).is_ok());
+        // Regression guard: the old broken form must NOT be what we emit.
+        assert!(cron::Schedule::from_str("0 */60 * * * *").is_err());
+
+        // "every 2 hours" → 120 min.
+        let every_2h = interval_cron_expression(120);
+        assert_eq!(every_2h, "0 0 */2 * * * *");
+        assert!(cron::Schedule::from_str(&every_2h).is_ok());
+
+        // "every 90 minutes" → degrades to whole hours (1) but stays valid.
+        let every_90 = interval_cron_expression(90);
+        assert_eq!(every_90, "0 0 */1 * * * *");
+        assert!(cron::Schedule::from_str(&every_90).is_ok());
+
+        // Edge: 0 clamps to 1 minute (still valid, non-zero).
+        let zero = interval_cron_expression(0);
+        assert_eq!(zero, "0 */1 * * * *");
+        assert!(cron::Schedule::from_str(&zero).is_ok());
+
+        // Edge: enormous interval clamps hours to 23, stays valid.
+        let huge = interval_cron_expression(60 * 1000);
+        assert_eq!(huge, "0 0 */23 * * * *");
+        assert!(cron::Schedule::from_str(&huge).is_ok());
+    }
+
+    #[test]
+    fn test_parse_interval_roundtrips_through_cron() {
+        use std::str::FromStr;
+
+        // Default everyMinutes (60) via a real "interval" payload must produce a
+        // parseable expression (previously silently failed at add_job).
+        let json = r#"{"shouldCreate":true,"kind":"interval","aiInstruction":"检查服务器","taskName":"巡检"}"#;
+        let r = parse_extraction_response(json).unwrap();
+        assert!(r.should_create);
+        let expr = r.cron_expression.expect("interval must yield an expression");
+        assert!(
+            cron::Schedule::from_str(&expr).is_ok(),
+            "generated interval expr must parse: {expr}"
+        );
     }
 }

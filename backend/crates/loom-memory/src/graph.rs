@@ -944,48 +944,58 @@ impl<'a> GraphStore<'a> {
             .collect::<Vec<_>>()
             .join(",");
 
-        // Wrap in transaction for atomicity.
-        self.conn.execute_batch("BEGIN")?;
+        // Wrap in a transaction for atomicity. Mirrors the closure + explicit
+        // ROLLBACK-on-Err pattern used by delete_node / active_forgetting so a
+        // failure midway never leaves an open transaction behind.
+        let run_prune = || -> Result<usize> {
+            self.conn.execute_batch("BEGIN;")?;
 
-        // Child-first cascade (FK-safe order, matching active_forgetting pattern):
-        // 1. Delete evidence referencing edges connected to stale nodes
-        self.conn.execute(
-            &format!(
-                "DELETE FROM kg_evidence WHERE edge_id IN (SELECT id FROM kg_edges WHERE source_id IN ({}) OR target_id IN ({}))",
-                id_list, id_list
-            ),
-            [],
-        )?;
+            // Child-first cascade (FK-safe order, matching active_forgetting pattern):
+            // 1. Delete evidence referencing edges connected to stale nodes
+            self.conn.execute(
+                &format!(
+                    "DELETE FROM kg_evidence WHERE edge_id IN (SELECT id FROM kg_edges WHERE source_id IN ({id_list}) OR target_id IN ({id_list}))"
+                ),
+                [],
+            )?;
 
-        // 2. Delete evidence referencing stale nodes directly
-        self.conn.execute(
-            &format!("DELETE FROM kg_evidence WHERE node_id IN ({})", id_list),
-            [],
-        )?;
+            // 2. Delete evidence referencing stale nodes directly
+            self.conn.execute(
+                &format!("DELETE FROM kg_evidence WHERE node_id IN ({id_list})"),
+                [],
+            )?;
 
-        // 3. Delete edges connected to stale nodes
-        self.conn.execute(
-            &format!(
-                "DELETE FROM kg_edges WHERE source_id IN ({}) OR target_id IN ({})",
-                id_list, id_list
-            ),
-            [],
-        )?;
+            // 3. Delete edges connected to stale nodes
+            self.conn.execute(
+                &format!(
+                    "DELETE FROM kg_edges WHERE source_id IN ({id_list}) OR target_id IN ({id_list})"
+                ),
+                [],
+            )?;
 
-        // 4. Delete aliases for stale nodes
-        self.conn.execute(
-            &format!("DELETE FROM kg_aliases WHERE node_id IN ({})", id_list),
-            [],
-        )?;
+            // 4. Delete aliases for stale nodes
+            self.conn.execute(
+                &format!("DELETE FROM kg_aliases WHERE node_id IN ({id_list})"),
+                [],
+            )?;
 
-        // 5. Delete the stale nodes themselves
-        let deleted = self.conn.execute(
-            &format!("DELETE FROM kg_nodes WHERE id IN ({})", id_list),
-            [],
-        )?;
+            // 5. Delete the stale nodes themselves
+            let deleted = self.conn.execute(
+                &format!("DELETE FROM kg_nodes WHERE id IN ({id_list})"),
+                [],
+            )?;
 
-        self.conn.execute_batch("COMMIT")?;
-        Ok(deleted)
+            self.conn.execute_batch("COMMIT;")?;
+            Ok(deleted)
+        };
+
+        match run_prune() {
+            Ok(deleted) => Ok(deleted),
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK;");
+                Err(e)
+            }
+        }
     }
 
     /// List recent nodes with pagination.
@@ -1140,32 +1150,50 @@ impl<'a> GraphStore<'a> {
     /// Promote all nodes/edges with the given scope to "global", merging duplicates.
     /// Returns the number of nodes promoted.
     pub fn promote_scope_to_global(&self, scope: &str, min_confidence: f64) -> Result<usize> {
-        // First promote nodes: change scope to 'global' where no global duplicate exists
-        let promoted = self.conn.execute(
-            "UPDATE kg_nodes SET scope = 'global'
-             WHERE scope = ?1 AND confidence >= ?2
-             AND name NOT IN (SELECT name FROM kg_nodes WHERE scope = 'global')",
-            rusqlite::params![scope, min_confidence],
-        )?;
-        // Promote edges whose both endpoints are now global
-        self.conn.execute(
-            "UPDATE kg_edges SET scope = 'global'
-             WHERE scope = ?1
-               AND source_id IN (SELECT id FROM kg_nodes WHERE scope = 'global')
-               AND target_id IN (SELECT id FROM kg_nodes WHERE scope = 'global')",
-            rusqlite::params![scope],
-        )?;
-        // Delete remaining session-scoped edges (those with at least one endpoint not promoted)
-        self.conn.execute(
-            "DELETE FROM kg_edges WHERE scope = ?1",
-            rusqlite::params![scope],
-        )?;
-        // Delete remaining session-scoped nodes (duplicates or low confidence)
-        self.conn.execute(
-            "DELETE FROM kg_nodes WHERE scope = ?1",
-            rusqlite::params![scope],
-        )?;
-        Ok(promoted)
+        // Wrap the whole promotion in a transaction so a failure/crash midway
+        // cannot leave a partial promotion (some nodes/edges promoted, others
+        // deleted). Mirrors the closure + ROLLBACK-on-Err pattern used by
+        // delete_node / active_forgetting.
+        let run_promote = || -> Result<usize> {
+            self.conn.execute_batch("BEGIN;")?;
+
+            // First promote nodes: change scope to 'global' where no global duplicate exists
+            let promoted = self.conn.execute(
+                "UPDATE kg_nodes SET scope = 'global'
+                 WHERE scope = ?1 AND confidence >= ?2
+                 AND name NOT IN (SELECT name FROM kg_nodes WHERE scope = 'global')",
+                rusqlite::params![scope, min_confidence],
+            )?;
+            // Promote edges whose both endpoints are now global
+            self.conn.execute(
+                "UPDATE kg_edges SET scope = 'global'
+                 WHERE scope = ?1
+                   AND source_id IN (SELECT id FROM kg_nodes WHERE scope = 'global')
+                   AND target_id IN (SELECT id FROM kg_nodes WHERE scope = 'global')",
+                rusqlite::params![scope],
+            )?;
+            // Delete remaining session-scoped edges (those with at least one endpoint not promoted)
+            self.conn.execute(
+                "DELETE FROM kg_edges WHERE scope = ?1",
+                rusqlite::params![scope],
+            )?;
+            // Delete remaining session-scoped nodes (duplicates or low confidence)
+            self.conn.execute(
+                "DELETE FROM kg_nodes WHERE scope = ?1",
+                rusqlite::params![scope],
+            )?;
+
+            self.conn.execute_batch("COMMIT;")?;
+            Ok(promoted)
+        };
+
+        match run_promote() {
+            Ok(promoted) => Ok(promoted),
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK;");
+                Err(e)
+            }
+        }
     }
 
     /// Promote specific nodes by name to global scope (no deletion of others).

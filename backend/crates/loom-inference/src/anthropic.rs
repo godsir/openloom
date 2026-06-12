@@ -70,7 +70,7 @@ impl AnthropicClient {
                 }
             }
         }
-        Err(last_err.unwrap())
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no completion attempts were made")))
     }
 
     async fn try_complete(&self, req: &CompletionRequest) -> Result<CompletionResponse> {
@@ -368,10 +368,28 @@ impl CloudClient for AnthropicClient {
         let mut prompt_tokens: u64 = 0;
         let mut completion_tokens: u64 = 0;
         let mut cached_tokens: u64 = 0;
+        let idle_dur = std::time::Duration::from_secs(120);
 
-        while let Some(chunk_result) = stream.next().await {
-            let chunk = chunk_result?;
-            buffer.extend_from_slice(&chunk);
+        loop {
+            // Wrap each poll in an idle timeout so a stalled mid-stream
+            // connection errors out instead of hanging forever.
+            let done = match tokio::time::timeout(idle_dur, stream.next()).await {
+                Err(_) => return Err(anyhow::anyhow!("stream idle timeout")),
+                Ok(Some(chunk_result)) => {
+                    buffer.extend_from_slice(&chunk_result?);
+                    false
+                }
+                Ok(None) => {
+                    // Stream ended. Flush any residual bytes by appending a
+                    // synthetic frame boundary so the in-loop parser runs once
+                    // more on the terminal (blank-line-less) frame, then exit.
+                    if buffer.is_empty() {
+                        break;
+                    }
+                    buffer.extend_from_slice(b"\n\n");
+                    true
+                }
+            };
             // Find complete SSE frames (delimited by \n\n) without splitting UTF-8
             while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
                 let frame_bytes = buffer[..pos].to_vec();
@@ -397,12 +415,14 @@ impl CloudClient for AnthropicClient {
                     }
                 }
             }
+            if done {
+                break;
+            }
         }
         if prompt_tokens > 0 || completion_tokens > 0 {
             let _ = tx
                 .send(format!(
-                    "\x00USAGE:{}:{}:{}",
-                    prompt_tokens, completion_tokens, cached_tokens
+                    "\x00USAGE:{prompt_tokens}:{completion_tokens}:{cached_tokens}"
                 ))
                 .await;
         }
@@ -471,10 +491,25 @@ impl CloudClient for AnthropicClient {
         let mut stream = resp.bytes_stream();
         let mut buf: Vec<u8> = Vec::new();
         let mut active_tool_index: Option<usize> = None;
+        let idle_dur = std::time::Duration::from_secs(120);
 
-        while let Some(chunk_result) = stream.next().await {
-            let chunk = chunk_result?;
-            buf.extend_from_slice(&chunk);
+        loop {
+            let done = match tokio::time::timeout(idle_dur, stream.next()).await {
+                Err(_) => return Err(anyhow::anyhow!("stream idle timeout")),
+                Ok(Some(chunk_result)) => {
+                    buf.extend_from_slice(&chunk_result?);
+                    false
+                }
+                Ok(None) => {
+                    // Flush residual: append a synthetic frame boundary so the
+                    // terminal (blank-line-less) frame is parsed once more.
+                    if buf.is_empty() {
+                        break;
+                    }
+                    buf.extend_from_slice(b"\n\n");
+                    true
+                }
+            };
             while let Some(pos) = buf.windows(2).position(|w| w == b"\n\n") {
                 let frame_bytes = buf[..pos].to_vec();
                 buf.drain(..pos + 2);
@@ -570,6 +605,9 @@ impl CloudClient for AnthropicClient {
                         }
                     }
                 }
+            }
+            if done {
+                break;
             }
         }
         Ok(())

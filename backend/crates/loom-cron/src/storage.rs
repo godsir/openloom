@@ -248,9 +248,15 @@ impl CronStorage {
         Ok(())
     }
 
-    /// Record a completed run: increment counters and update last_run.
+    /// Record a finished run: always update `last_run` (last attempt timestamp)
+    /// and increment either the success counter or the error counter.
+    ///
+    /// `last_run` is updated regardless of outcome so the UI/diagnostics can show
+    /// when the job last attempted to run (previously a failed run left `last_run`
+    /// stale at the previous success, making a perpetually-failing job look as if
+    /// it had stopped firing entirely).
     pub fn record_run(&self, job_id: &str, timestamp: i64, success: bool) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
         if success {
             conn.execute(
                 "UPDATE cron_jobs SET last_run = ?1, run_count = run_count + 1 WHERE id = ?2",
@@ -258,10 +264,24 @@ impl CronStorage {
             )?;
         } else {
             conn.execute(
-                "UPDATE cron_jobs SET error_count = error_count + 1 WHERE id = ?1",
-                params![job_id],
+                "UPDATE cron_jobs SET last_run = ?1, error_count = error_count + 1 WHERE id = ?2",
+                params![timestamp, job_id],
             )?;
         }
+        Ok(())
+    }
+
+    /// Update the persisted `next_run` (next scheduled fire) for a job.
+    ///
+    /// Stored as a Unix timestamp in seconds. Pass `None` to clear it (e.g. when a
+    /// job has no further occurrences). This is best-effort scheduling metadata —
+    /// the in-memory `next_fire` is the source of truth for firing decisions.
+    pub fn update_next_run(&self, job_id: &str, next_run: Option<i64>) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?;
+        conn.execute(
+            "UPDATE cron_jobs SET next_run = ?1 WHERE id = ?2",
+            params![next_run, job_id],
+        )?;
         Ok(())
     }
 
@@ -615,6 +635,33 @@ mod tests {
         storage.record_run("j1", 1700000200, false).unwrap();
         let job = storage.get_job("j1").unwrap().unwrap();
         assert_eq!(job.error_count, 1);
+        // Fix #3: last_run must advance even on failure (last attempt timestamp).
+        assert_eq!(job.last_run, Some(1700000200));
+        // Success counter unchanged by a failed run.
+        assert_eq!(job.run_count, 1);
+    }
+
+    #[test]
+    fn test_update_next_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("cron.db");
+        let storage = CronStorage::open(&db_path).unwrap();
+
+        storage
+            .insert_job(&test_job("j1", "next run test", "0 * * * * * *"))
+            .unwrap();
+        // Initially None (set by test_job).
+        assert_eq!(storage.get_job("j1").unwrap().unwrap().next_run, None);
+
+        storage.update_next_run("j1", Some(1700000500)).unwrap();
+        assert_eq!(
+            storage.get_job("j1").unwrap().unwrap().next_run,
+            Some(1700000500)
+        );
+
+        // Clearing back to None works.
+        storage.update_next_run("j1", None).unwrap();
+        assert_eq!(storage.get_job("j1").unwrap().unwrap().next_run, None);
     }
 
     #[test]

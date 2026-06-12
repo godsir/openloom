@@ -272,9 +272,26 @@ impl InferenceEngine {
         use futures::StreamExt;
         let mut stream = resp.bytes_stream();
         let mut buf: Vec<u8> = Vec::new();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            buf.extend_from_slice(&chunk);
+        let idle_dur = std::time::Duration::from_secs(120);
+        loop {
+            // Idle timeout: a stalled mid-stream connection errors out instead
+            // of hanging forever.
+            let done = match tokio::time::timeout(idle_dur, stream.next()).await {
+                Err(_) => return Err(anyhow::anyhow!("stream idle timeout")),
+                Ok(Some(chunk)) => {
+                    buf.extend_from_slice(&chunk?);
+                    false
+                }
+                Ok(None) => {
+                    // Flush residual: append a synthetic frame boundary so a
+                    // terminal (blank-line-less) frame is parsed once more.
+                    if buf.is_empty() {
+                        break;
+                    }
+                    buf.extend_from_slice(b"\n\n");
+                    true
+                }
+            };
             while let Some((pos, skip)) = find_sse_boundary(&buf) {
                 let frame_bytes = buf[..pos].to_vec();
                 buf.drain(..pos + skip);
@@ -289,7 +306,7 @@ impl InferenceEngine {
                             if let Some(r) =
                                 d["reasoning_content"].as_str().filter(|s| !s.is_empty())
                                 && token_tx
-                                    .send(format!("\x02REASONING\x02{}", r))
+                                    .send(format!("\x02REASONING\x02{r}"))
                                     .await
                                     .is_err()
                             {
@@ -315,6 +332,9 @@ impl InferenceEngine {
                         }
                     }
                 }
+            }
+            if done {
+                break;
             }
         }
         Ok(())
@@ -466,9 +486,24 @@ impl CloudClient for InferenceEngine {
         use futures::StreamExt;
         let mut stream = resp.bytes_stream();
         let mut buf: Vec<u8> = Vec::new();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            buf.extend_from_slice(&chunk);
+        let idle_dur = std::time::Duration::from_secs(120);
+        loop {
+            let done = match tokio::time::timeout(idle_dur, stream.next()).await {
+                Err(_) => return Err(anyhow::anyhow!("stream idle timeout")),
+                Ok(Some(chunk)) => {
+                    buf.extend_from_slice(&chunk?);
+                    false
+                }
+                Ok(None) => {
+                    // Flush residual: append a synthetic frame boundary so a
+                    // terminal (blank-line-less) frame is parsed once more.
+                    if buf.is_empty() {
+                        break;
+                    }
+                    buf.extend_from_slice(b"\n\n");
+                    true
+                }
+            };
             while let Some((pos, skip)) = find_sse_boundary(&buf) {
                 let frame_bytes = buf[..pos].to_vec();
                 buf.drain(..pos + skip);
@@ -548,6 +583,9 @@ impl CloudClient for InferenceEngine {
                         }
                     }
                 }
+            }
+            if done {
+                break;
             }
         }
         Ok(())
