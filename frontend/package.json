@@ -41,32 +41,6 @@
     "react-image-crop": "^11.0.10",
     "zustand": "^5.0.0"
   },
-  "build": {
-    "appId": "com.openloom.desktop",
-    "productName": "openLoom",
-    "win": {
-      "icon": "resources/icon.ico"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    },
-    "extraResources": [
-      {
-        "from": "resources/",
-        "to": "."
-      },
-      {
-        "from": "../target/release/loom.exe",
-        "to": "engine/loom.exe"
-      }
-    ],
-    "publish": {
-      "provider": "github",
-      "owner": "godsir",
-      "repo": "openloom"
-    }
-  },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
     "@types/diff": "^7.0.2",
