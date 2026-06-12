@@ -154,7 +154,10 @@ impl ContextAssembler {
             }
             let text = msg.text_content();
             let msg_tokens = bpe.encode_with_special_tokens(&text).len();
-            if token_count + msg_tokens > max_tokens {
+            if token_count + msg_tokens > max_tokens && !included.is_empty() {
+                // Always keep at least the most recent (newest) message even if
+                // it alone exceeds the budget — otherwise the current turn loses
+                // all conversational grounding and the model answers blind.
                 break;
             }
             token_count += msg_tokens;

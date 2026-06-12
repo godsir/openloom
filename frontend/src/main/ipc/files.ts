@@ -1,5 +1,11 @@
 import { ipcMain, dialog } from 'electron'
 import { readFileSync } from 'fs'
+import { resolve, join, sep } from 'path'
+import { homedir } from 'os'
+
+// The app's private data dir holds secrets (credentials.json) and the SQLite
+// databases — never expose it through the renderer-facing read-file API.
+const LOOM_DATA_DIR = resolve(join(homedir(), '.loom'))
 
 export function registerFileIpc(): void {
   ipcMain.handle('select-folder', async () => {
@@ -20,7 +26,12 @@ export function registerFileIpc(): void {
     endLine?: number     // 1-based, inclusive
   }) => {
     try {
-      const full = readFileSync(filePath, 'utf-8')
+      if (typeof filePath !== 'string' || !filePath) return null
+      const resolved = resolve(filePath)
+      if (resolved === LOOM_DATA_DIR || resolved.startsWith(LOOM_DATA_DIR + sep)) {
+        return null
+      }
+      const full = readFileSync(resolved, 'utf-8')
       if (!options || (options.startLine == null && options.endLine == null)) {
         return full
       }

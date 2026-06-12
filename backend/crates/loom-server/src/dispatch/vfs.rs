@@ -1,7 +1,7 @@
 //! Virtual File System handlers for Write mode.
 use loom_types::{ErrorCode, JsonRpcError};
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use super::err;
 use crate::AppState;
@@ -21,42 +21,42 @@ pub async fn handle(_state: &AppState, method: &str, p: &Value) -> Option<Result
 fn resolve_path(p: &Value) -> Result<PathBuf, JsonRpcError> {
     let workspace = p.get("workspace_root").and_then(|v| v.as_str()).unwrap_or("");
     let relative = p.get("path").and_then(|v| v.as_str()).unwrap_or("");
-    let full = PathBuf::from(workspace).join(relative);
-    // Path traversal protection: canonicalize the workspace, then check
-    // that the resolved full path starts with it.  If canonicalize fails
-    // (e.g. the file doesn't exist yet for a write/create), compare the
-    // workspace after canonicalizing it and check that the full path's
-    // parent chain reaches the workspace root.
-    let ws_canonical = PathBuf::from(workspace).canonicalize().unwrap_or_else(|_| PathBuf::from(workspace));
-    if full.exists() {
-        if let Ok(canonical) = full.canonicalize() {
-            if !canonical.starts_with(&ws_canonical) {
-                return Err(err(ErrorCode::PermissionDenied, "path outside workspace"));
-            }
+    if workspace.is_empty() {
+        return Err(err(ErrorCode::InvalidRequest, "workspace_root required"));
+    }
+    // Resolve the workspace root to a canonical, existing directory. Failing
+    // closed here removes the previous "canonicalize failed → checks skipped"
+    // bypass and guarantees `ws_canonical` is symlink-resolved.
+    let ws_canonical = PathBuf::from(workspace)
+        .canonicalize()
+        .map_err(|_| err(ErrorCode::PermissionDenied, "invalid workspace_root"))?;
+    // The client-supplied relative path may only contain normal / current-dir
+    // components — no `..`, no absolute root, no drive prefix — so it can never
+    // escape the workspace.
+    if Path::new(relative)
+        .components()
+        .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
+    {
+        return Err(err(ErrorCode::PermissionDenied, "path escapes workspace"));
+    }
+    let full = ws_canonical.join(relative);
+    // Defense in depth: re-verify containment after resolving symlinks in the
+    // portion of the path that already exists (catches a symlink planted inside
+    // the workspace that points outside it).
+    let mut probe = full.as_path();
+    let existing = loop {
+        if probe.exists() {
+            break probe;
         }
-    } else if let Some(parent) = full.parent() {
-        // File doesn't exist yet (write / create) — check its parent
-        if parent.exists() {
-            if let Ok(parent_canonical) = parent.canonicalize() {
-                if !parent_canonical.starts_with(&ws_canonical) {
-                    return Err(err(ErrorCode::PermissionDenied, "path outside workspace"));
-                }
-            }
-        } else {
-            // Parent doesn't exist — walk up to nearest existing ancestor
-            let mut ancestor = parent.to_path_buf();
-            while !ancestor.exists() {
-                match ancestor.parent() {
-                    Some(p) => ancestor = p.to_path_buf(),
-                    None => break,
-                }
-            }
-            if let Ok(ancestor_canonical) = ancestor.canonicalize() {
-                if !ancestor_canonical.starts_with(&ws_canonical) {
-                    return Err(err(ErrorCode::PermissionDenied, "path outside workspace"));
-                }
-            }
+        match probe.parent() {
+            Some(parent) => probe = parent,
+            None => return Err(err(ErrorCode::PermissionDenied, "path escapes workspace")),
         }
+    };
+    if let Ok(existing_canonical) = existing.canonicalize()
+        && !existing_canonical.starts_with(&ws_canonical)
+    {
+        return Err(err(ErrorCode::PermissionDenied, "path escapes workspace"));
     }
     Ok(full)
 }
@@ -108,6 +108,13 @@ fn handle_create_directory(p: &Value) -> Result<Value, JsonRpcError> {
 fn handle_rename(p: &Value) -> Result<Value, JsonRpcError> {
     let from = resolve_path(p)?;
     let new_name = p.get("new_name").and_then(|v| v.as_str()).unwrap_or("");
+    // new_name must be a single normal path component — no separators, `..`, or
+    // absolute prefix — so a rename cannot move the file outside its directory.
+    let mut comps = Path::new(new_name).components();
+    match (comps.next(), comps.next()) {
+        (Some(Component::Normal(_)), None) => {}
+        _ => return Err(err(ErrorCode::PermissionDenied, "invalid new_name")),
+    }
     let to = from.parent().unwrap_or(&from).join(new_name);
     match std::fs::rename(&from, &to) {
         Ok(_) => Ok(serde_json::json!({ "ok": true })),

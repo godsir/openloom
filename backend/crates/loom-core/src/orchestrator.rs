@@ -829,6 +829,7 @@ impl Orchestrator {
             fs_write: Some(vec![]),
             ..Default::default()
         };
+        let sandbox_config = self.sandbox_config.clone();
         let event_bus = self.pool.event_bus().clone();
         scheduler
             .set_prompt_executor(Arc::new(CronPromptExecutor {
@@ -836,6 +837,7 @@ impl Orchestrator {
                 tool_registry,
                 workspace_path: Some(workspace_path),
                 permissions,
+                sandbox_config,
             }))
             .await;
 
@@ -3896,15 +3898,14 @@ impl Orchestrator {
                 state.summaries.len()
             },
             sandbox: {
+                // Always attach a guard so the built-in deny floor (SSH keys,
+                // credential files, .loom credential store, system auth) is
+                // enforced even when the sandbox master switch is off.
                 let sc = self.sandbox_config.read().await.clone();
-                if sc.enabled {
-                    let ws_path = workspace_path.as_ref().map(std::path::PathBuf::from);
-                    Some(Arc::new(loom_security::sandbox::SandboxGuard::new(
-                        sc, ws_path,
-                    )))
-                } else {
-                    None
-                }
+                let ws_path = workspace_path.as_ref().map(std::path::PathBuf::from);
+                Some(Arc::new(loom_security::sandbox::SandboxGuard::new(
+                    sc, ws_path,
+                )))
             },
             lazy_tools: effective_selected_skills.is_empty(),
             steering_queue: Some(Arc::new(RwLock::new(Vec::new()))),
@@ -5101,15 +5102,14 @@ impl Orchestrator {
                 state.summaries.len()
             },
             sandbox: {
+                // Always attach a guard so the built-in deny floor (SSH keys,
+                // credential files, .loom credential store, system auth) is
+                // enforced even when the sandbox master switch is off.
                 let sc = self.sandbox_config.read().await.clone();
-                if sc.enabled {
-                    let ws_path = workspace_path.as_ref().map(std::path::PathBuf::from);
-                    Some(Arc::new(loom_security::sandbox::SandboxGuard::new(
-                        sc, ws_path,
-                    )))
-                } else {
-                    None
-                }
+                let ws_path = workspace_path.as_ref().map(std::path::PathBuf::from);
+                Some(Arc::new(loom_security::sandbox::SandboxGuard::new(
+                    sc, ws_path,
+                )))
             },
             steering_queue: Some(Arc::new(RwLock::new(Vec::new()))),
             ..Default::default()
@@ -6145,6 +6145,9 @@ struct CronPromptExecutor {
     workspace_path: Option<String>,
     /// Permission configuration for tool access control.
     permissions: loom_types::SkillPermissions,
+    /// Sandbox config — used to build a guard so cron tool calls honor the same
+    /// filesystem deny floor / workspace confinement as interactive turns.
+    sandbox_config: Arc<tokio::sync::RwLock<loom_types::config::SandboxConfig>>,
 }
 
 impl PromptExecutor for CronPromptExecutor {
@@ -6158,6 +6161,7 @@ impl PromptExecutor for CronPromptExecutor {
         let tool_registry = self.tool_registry.clone();
         let workspace_path = self.workspace_path.clone();
         let permissions = self.permissions.clone();
+        let sandbox_config = self.sandbox_config.clone();
         // Per-turn timeout: give each LLM call a fair share of the total budget.
         let per_turn_timeout = std::cmp::max(30, timeout_secs / 3);
 
@@ -6193,6 +6197,17 @@ impl PromptExecutor for CronPromptExecutor {
                 loom_types::Message::system(CRON_SYSTEM_PROMPT),
                 loom_types::Message::user(&prompt),
             ];
+
+            // Build a sandbox guard from the current config so cron tool calls
+            // honor the same filesystem deny floor as interactive turns. The
+            // cron workspace is the data dir (~/.loom), so allow operating there
+            // — the credential-store carve-out still protects credentials.json.
+            let sandbox: Option<Arc<loom_security::sandbox::SandboxGuard>> = {
+                let mut sc = sandbox_config.read().await.clone();
+                sc.allow_loom_data = true;
+                let ws = workspace_path.as_ref().map(std::path::PathBuf::from);
+                Some(Arc::new(loom_security::sandbox::SandboxGuard::new(sc, ws)))
+            };
 
             // Tool-call loop — up to 10 turns so the AI can do real work.
             const MAX_TURNS: usize = 10;
@@ -6248,8 +6263,11 @@ impl PromptExecutor for CronPromptExecutor {
                     usage: None,
                 });
 
-                // Create ToolContext once per turn.
-                let tool_ctx = ToolContext::with_workspace(workspace_path.clone());
+                // Create ToolContext once per turn (with the sandbox guard).
+                let tool_ctx = ToolContext::with_workspace_and_sandbox(
+                    workspace_path.clone(),
+                    sandbox.clone(),
+                );
 
                 // Execute each tool call with permission check.
                 let registry = tool_registry.read().await;

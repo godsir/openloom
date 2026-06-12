@@ -1,5 +1,5 @@
 import { BrowserWindow, screen, ipcMain, protocol, app, Menu } from 'electron'
-import { join, extname } from 'path'
+import { join, extname, resolve, sep } from 'path'
 import { homedir } from 'os'
 import { existsSync, mkdirSync, readdirSync, readFileSync, copyFileSync } from 'fs'
 import { getStoreKey, setStoreKey } from './store'
@@ -18,9 +18,14 @@ let ipcRegistered = false
 
 export function registerPetProtocol(): void {
   protocol.handle('loom-pet', (request) => {
-    const u = new URL(request.url)
-    const filePath = join(PETS_DIR, u.hostname + u.pathname)
     try {
+      const u = new URL(request.url)
+      const petsRoot = resolve(PETS_DIR)
+      const filePath = resolve(join(PETS_DIR, decodeURIComponent(u.hostname + u.pathname)))
+      // Confine to the pets directory — reject path traversal.
+      if (filePath !== petsRoot && !filePath.startsWith(petsRoot + sep)) {
+        return new Response(null, { status: 403 })
+      }
       const data = readFileSync(filePath)
       const mime = MIME[extname(filePath).toLowerCase()] || 'image/webp'
       return new Response(data, { headers: { 'content-type': mime, 'cache-control': 'no-cache' } })

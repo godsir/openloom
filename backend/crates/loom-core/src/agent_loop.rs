@@ -521,6 +521,39 @@ pub(crate) fn build_user_message(user_message: &str, attached_images: &[ContentP
     }
 }
 
+/// Execution-time enforcement of the agent's tool policy. Mirrors
+/// `ToolRegistry::filtered_definitions` + the skill allowlist so a model cannot
+/// run a tool that was filtered out of its visible set (by emitting the call
+/// name directly, or via `request_tools`). An explicit `disallowed_tools` entry
+/// is an absolute veto; `request_tools` is exempt from the positive allowlists
+/// so lazy tool-loading always works.
+fn tool_execution_denied(
+    tool_name: &str,
+    allowed_tools: &Option<Vec<String>>,
+    disallowed_tools: &Option<Vec<String>>,
+    skill_tool_allowlist: &Option<Vec<String>>,
+) -> bool {
+    if let Some(deny) = disallowed_tools
+        && deny.iter().any(|t| t.as_str() == tool_name)
+    {
+        return true;
+    }
+    if tool_name == "request_tools" {
+        return false;
+    }
+    if let Some(allow) = allowed_tools
+        && !allow.iter().any(|t| t.as_str() == tool_name)
+    {
+        return true;
+    }
+    if let Some(allowlist) = skill_tool_allowlist
+        && !allowlist.iter().any(|t| t.as_str() == tool_name)
+    {
+        return true;
+    }
+    false
+}
+
 /// Execute one agent turn: user message → LLM → tools → response.
 pub async fn run_agent_turn(
     client: &dyn CloudClient,
@@ -1082,6 +1115,19 @@ async fn run_agent_turn_inner(
                 // Permission check using configured defaults (or merged skill permissions)
                 let perms = config.default_permissions.clone();
                 let (mut allowed, risk) = check_permission(&tool_name, &perms);
+
+                // Enforce the agent's allow/deny tool policy at execution time,
+                // not just in the visible tool set the model was shown.
+                if allowed
+                    && tool_execution_denied(
+                        &tool_name,
+                        allowed_tools,
+                        disallowed_tools,
+                        &config.skill_tool_allowlist,
+                    )
+                {
+                    allowed = false;
+                }
 
                 // "ask" mode: for medium/high risk tools, request user approval
                 if allowed && config.permission_mode == "ask" && risk != loom_types::RiskLevel::Low
@@ -1798,13 +1844,18 @@ async fn run_agent_turn_streaming_inner(
         let mut pending_tool_calls: Vec<(usize, String, String, String)> = Vec::new();
         let mut this_text = String::new();
         let mut this_thinking = String::new();
+        // Declared OUTSIDE the retry loop below: the transient-error handler
+        // retries via an unlabeled `continue` on that loop, so declaring the
+        // counter inside it would reset it to 0 every retry and defeat the
+        // `< 3` cap (unbounded retry). Here it persists across retries of this
+        // LLM call, matching the non-streaming path.
+        let mut transient_retries: u32 = 0;
 
         // Inner retry loop: some upstreams (Gemini image-gen) reject tools when
         // returning image responses with errors like "Only google search tool
         // ... is supported for image response". Detect and retry without tools.
         // Also retries transient errors (rate limiting, 5xx, network) with backoff.
         loop {
-            let mut transient_retries: u32 = 0;
             let effective_tools = if strip_tools_for_images || force_no_tools {
                 Vec::new()
             } else {
@@ -2160,6 +2211,19 @@ async fn run_agent_turn_streaming_inner(
                 // Permission check using configured defaults (or merged skill permissions)
                 let perms = config.default_permissions.clone();
                 let (mut allowed, risk) = check_permission(tc_name, &perms);
+
+                // Enforce the agent's allow/deny tool policy at execution time,
+                // not just in the visible tool set the model was shown.
+                if allowed
+                    && tool_execution_denied(
+                        tc_name,
+                        allowed_tools,
+                        disallowed_tools,
+                        &config.skill_tool_allowlist,
+                    )
+                {
+                    allowed = false;
+                }
 
                 // "ask" mode: for medium/high risk tools, request user approval
                 if allowed && config.permission_mode == "ask" && risk != loom_types::RiskLevel::Low

@@ -110,6 +110,7 @@ pub fn list_with_status(plugins_dir: &Path, skills_dir: &Path) -> Vec<MarketPlug
 /// Clones `git_url` into `<target_dir>/<entry_id>` with `--depth 1`.
 /// Returns the path where the entry was installed.
 pub async fn install(entry_id: &str, git_url: &str, target_dir: &Path) -> Result<PathBuf> {
+    validate_entry_id(entry_id)?;
     let target = target_dir.join(entry_id);
 
     if target.exists() {
@@ -164,6 +165,7 @@ pub async fn install(entry_id: &str, git_url: &str, target_dir: &Path) -> Result
 
 /// Uninstall a marketplace entry by removing its directory.
 pub fn uninstall(entry_id: &str, target_dir: &Path) -> Result<()> {
+    validate_entry_id(entry_id)?;
     let target = target_dir.join(entry_id);
 
     if !target.exists() {
@@ -220,6 +222,7 @@ pub fn entry_kind(entry_id: &str) -> Option<String> {
 /// Shallow-cloned repos (`--depth 1`) need `git fetch --depth 1` + `git reset`
 /// because shallow repos cannot `git pull` directly.
 pub async fn update(entry_id: &str, target_dir: &Path) -> Result<()> {
+    validate_entry_id(entry_id)?;
     let target = target_dir.join(entry_id);
 
     if !target.exists() {
@@ -316,6 +319,7 @@ pub async fn update_from_catalog(
     plugins_dir: &Path,
     skills_dir: &Path,
 ) -> Result<()> {
+    validate_entry_id(entry_id)?;
     let plugin_path = plugins_dir.join(entry_id);
     let skill_path = skills_dir.join(entry_id);
     let target_dir = if plugin_path.exists() {
@@ -337,6 +341,9 @@ pub async fn update_from_catalog(
 ///
 /// Returns `(installed, version, path)`.
 fn check_installed(entry_id: &str, target_dir: &Path) -> (bool, Option<String>, Option<String>) {
+    if validate_entry_id(entry_id).is_err() {
+        return (false, None, None);
+    }
     let dir = target_dir.join(entry_id);
     if !dir.exists() || !dir.is_dir() {
         return (false, None, None);
@@ -377,6 +384,24 @@ fn try_read_version(entry_dir: &Path) -> Option<String> {
     }
 
     None
+}
+
+/// Validate that a marketplace entry id is a safe single path segment so it can
+/// never escape `target_dir` — rejects traversal (`..`), path separators,
+/// absolute/drive-prefixed paths, leading dots, and any non-`[A-Za-z0-9._-]` char.
+fn validate_entry_id(entry_id: &str) -> Result<()> {
+    let ok = !entry_id.is_empty()
+        && entry_id.len() <= 128
+        && !entry_id.starts_with('.')
+        && !entry_id.contains("..")
+        && entry_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if ok {
+        Ok(())
+    } else {
+        Err(anyhow!("invalid entry id: '{}'", entry_id))
+    }
 }
 
 /// Simple semver comparison — returns true if `newer` > `older`.

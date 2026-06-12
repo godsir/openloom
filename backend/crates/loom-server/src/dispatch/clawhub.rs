@@ -432,11 +432,24 @@ async fn handle_clawhub_install(state: &AppState, p: &Value) -> Result<Value, Js
             .by_index(i)
             .map_err(|e| err(ErrorCode::InternalError, &format!("zip entry: {}", e)))?;
         let name = file.name().to_string();
-        // Skip directories
+        // Skip directory entries
         if name.ends_with('/') {
             continue;
         }
-        let dest_path = target_dir.join(&name);
+        // Reject zip-slip: only accept entry names built from normal / current-dir
+        // components (no `..`, no absolute root, no drive prefix).
+        let rel = std::path::Path::new(&name);
+        if rel
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_) | std::path::Component::CurDir))
+        {
+            continue;
+        }
+        let dest_path = target_dir.join(rel);
+        // Defense in depth: the resolved path must stay under target_dir.
+        if !dest_path.starts_with(&target_dir) {
+            continue;
+        }
         if let Some(parent) = dest_path.parent() {
             std::fs::create_dir_all(parent).ok();
         }

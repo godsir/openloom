@@ -79,10 +79,11 @@ impl SandboxGuard {
     ///
     /// Returns `Ok(())` when allowed, `Err(reason)` when denied.
     /// When the sandbox master switch is off (`config.enabled == false`),
-    /// this always returns `Ok`.
+    /// only the always-on built-in deny floor (SSH keys, credential files,
+    /// system auth, the `.loom` credential store) is enforced.
     pub fn check_read(&self, path: &Path) -> Result<(), String> {
         if !self.config.enabled {
-            return Ok(());
+            return self.check_builtin_only(path, "read");
         }
         self.check_access(path, "read")
     }
@@ -90,7 +91,7 @@ impl SandboxGuard {
     /// Check whether writing `path` is permitted.
     pub fn check_write(&self, path: &Path) -> Result<(), String> {
         if !self.config.enabled {
-            return Ok(());
+            return self.check_builtin_only(path, "write");
         }
         self.check_access(path, "write")
     }
@@ -101,7 +102,7 @@ impl SandboxGuard {
     /// directory is denied, execution is not allowed there.
     pub fn check_exec(&self, cwd: &Path) -> Result<(), String> {
         if !self.config.enabled {
-            return Ok(());
+            return self.check_builtin_only(cwd, "exec");
         }
         self.check_access(cwd, "exec")
     }
@@ -189,6 +190,22 @@ impl SandboxGuard {
     }
 
     // ── Internal helpers ────────────────────────────────────────────────
+
+    /// Always-on security floor used when the sandbox master switch is off:
+    /// canonicalize and apply only the hard-coded built-in deny patterns. No
+    /// allow/deny lists or workspace boundary are applied.
+    fn check_builtin_only(&self, path: &Path, operation: &str) -> Result<(), String> {
+        let canonical = self.canonicalize_safe(path);
+        if let Some(reason) = check_builtin_deny(&canonical, self.config.allow_loom_data) {
+            return Err(format!(
+                "{} denied for '{}': {}",
+                operation,
+                canonical.display(),
+                reason
+            ));
+        }
+        Ok(())
+    }
 
     /// Core access check, shared by `check_read`, `check_write`, `check_exec`.
     fn check_access(&self, path: &Path, operation: &str) -> Result<(), String> {
@@ -321,6 +338,14 @@ fn check_builtin_deny(path: &Path, allow_loom_data: bool) -> Option<&'static str
         return Some("Windows system configuration is protected");
     }
 
+    // --- .loom credential store — always protected, even when allow_loom_data
+    //     lets agents read other data under ~/.loom/. ---
+    if has_component_named(path, ".loom")
+        && path.file_name().and_then(|n| n.to_str()) == Some("credentials.json")
+    {
+        return Some("credential store (credentials.json) is protected");
+    }
+
     // --- .loom config directory (prevent sandbox config tampering) ---
     // When allow_loom_data is true the user has opted in to letting agents
     // access skills, memory, and MCP config stored under ~/.loom/.
@@ -444,13 +469,16 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn disabled_sandbox_allows_everything() {
+    fn disabled_sandbox_enforces_builtin_floor() {
         let mut cfg = SandboxConfig::default();
         cfg.enabled = false;
         let guard = SandboxGuard::new(cfg, None);
-        assert!(guard.check_read(Path::new("/etc/passwd")).is_ok());
-        assert!(guard.check_write(Path::new("/etc/passwd")).is_ok());
-        assert!(guard.check_exec(Path::new("/root")).is_ok());
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/test"));
+        // The built-in deny floor is enforced even with the sandbox off.
+        assert!(guard.check_read(&home.join(".ssh").join("id_rsa")).is_err());
+        assert!(guard.check_write(&home.join("secret.pem")).is_err());
+        // Non-sensitive paths remain allowed (no workspace confinement when off).
+        assert!(guard.check_read(&home.join("notes.txt")).is_ok());
     }
 
     // ------------------------------------------------------------------

@@ -1,15 +1,35 @@
 import { ipcMain, shell } from 'electron'
+import { resolve } from 'path'
+
+// Only these URL schemes may be handed to the OS to open externally. Blocks
+// file:, smb:, and custom protocol-handler schemes that a malicious link
+// (LLM output / remote marketplace entry) could otherwise trigger.
+const SAFE_EXTERNAL_SCHEMES = new Set(['http:', 'https:', 'mailto:'])
+
+function isSafeExternalUrl(url: unknown): url is string {
+  if (typeof url !== 'string') return false
+  try {
+    return SAFE_EXTERNAL_SCHEMES.has(new URL(url).protocol)
+  } catch {
+    return false
+  }
+}
 
 export function registerShellIpc(): void {
   ipcMain.handle('open-external', async (_, url: string) => {
+    if (!isSafeExternalUrl(url)) {
+      throw new Error('blocked: unsafe url scheme')
+    }
     await shell.openExternal(url)
   })
 
   ipcMain.handle('open-folder', async (_, filePath: string) => {
-    shell.showItemInFolder(filePath)
+    if (typeof filePath !== 'string' || !filePath) throw new Error('invalid path')
+    shell.showItemInFolder(resolve(filePath))
   })
 
   ipcMain.handle('open-file', async (_, filePath: string) => {
-    await shell.openPath(filePath)
+    if (typeof filePath !== 'string' || !filePath) throw new Error('invalid path')
+    await shell.openPath(resolve(filePath))
   })
 }

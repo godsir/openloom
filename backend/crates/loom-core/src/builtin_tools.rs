@@ -484,7 +484,7 @@ impl AgentTool for FileReadTool {
                 }
                 result.push_str(&lines.join("\n"));
                 if result.len() > 65536 {
-                    result = format!("{}...\n[truncated at 64KB]", &result[..65536]);
+                    result = format!("{}...\n[truncated at 64KB]", truncate_utf8(&result, 65536));
                 }
                 Ok(ToolResult {
                     content: result,
