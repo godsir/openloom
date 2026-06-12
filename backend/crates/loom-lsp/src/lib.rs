@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
@@ -20,6 +21,10 @@ const LSP_TIMEOUT_SECS: u64 = 30;
 // ============================================================================
 // LSP Connection — single language server process
 // ============================================================================
+
+/// Push-diagnostics store: maps a document URI to its latest list of
+/// `textDocument/publishDiagnostics` `diagnostics` arrays.
+type DiagnosticsStore = Arc<StdMutex<HashMap<String, Vec<Value>>>>;
 
 struct LspConnection {
     #[allow(dead_code)]
@@ -35,33 +40,20 @@ impl LspConnection {
         }
     }
 
-    async fn send_request(
-        &self,
-        writer: &mut BufWriter<tokio::process::ChildStdin>,
+    /// Read one Content-Length framed message body from `reader`.
+    /// Returns the raw bytes of the JSON body.
+    async fn read_frame(
         reader: &mut BufReader<tokio::process::ChildStdout>,
-        method: &str,
-        params: &Value,
-    ) -> Result<Value> {
-        let id = self
-            .next_id
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let body = serde_json::to_string(&serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        }))?;
-
-        let frame = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
-        writer.write_all(frame.as_bytes()).await?;
-        writer.flush().await?;
-
-        // Read Content-Length header
+    ) -> Result<Vec<u8>> {
+        // Read headers up to the blank separator line.
         let mut header = String::new();
         loop {
             let mut line = String::new();
-            reader.read_line(&mut line).await?;
-            if line == "\r\n" || line == "\n" || line.is_empty() {
+            let n = reader.read_line(&mut line).await?;
+            if n == 0 {
+                return Err(anyhow!("LSP: server closed stream while reading headers"));
+            }
+            if line == "\r\n" || line == "\n" {
                 break;
             }
             header.push_str(&line);
@@ -79,16 +71,20 @@ impl LspConnection {
 
         if content_len > MAX_BODY_SIZE {
             return Err(anyhow!(
-                "LSP: response body too large ({} bytes, max {})",
-                content_len,
-                MAX_BODY_SIZE
+                "LSP: response body too large ({content_len} bytes, max {MAX_BODY_SIZE})"
             ));
         }
 
         let mut body_bytes = vec![0u8; content_len];
         tokio::io::AsyncReadExt::read_exact(reader, &mut body_bytes).await?;
-        let resp: Value = serde_json::from_slice(&body_bytes).with_context(|| {
+        Ok(body_bytes)
+    }
+
+    /// Parse a framed body into JSON, with a safe UTF-8 truncated preview on error.
+    fn parse_frame(body_bytes: &[u8]) -> Result<Value> {
+        serde_json::from_slice(body_bytes).with_context(|| {
             // Safe UTF-8 truncation at char boundary
+            let content_len = body_bytes.len();
             let byte_limit = 200.min(content_len);
             let mut end = byte_limit;
             while end > 0 && end < content_len {
@@ -98,16 +94,100 @@ impl LspConnection {
                 end -= 1;
             }
             let preview = String::from_utf8_lossy(&body_bytes[..end]);
-            format!("LSP parse error: {}", preview)
-        })?;
+            format!("LSP parse error: {preview}")
+        })
+    }
 
-        if let Some(err) = resp.get("error") {
-            return Err(anyhow!(
-                "LSP error: {}",
-                err["message"].as_str().unwrap_or("unknown")
-            ));
+    async fn send_request(
+        &self,
+        writer: &mut BufWriter<tokio::process::ChildStdin>,
+        reader: &mut BufReader<tokio::process::ChildStdout>,
+        diagnostics: &DiagnosticsStore,
+        method: &str,
+        params: &Value,
+    ) -> Result<Value> {
+        let id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let body = serde_json::to_string(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        }))?;
+
+        let frame = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
+        writer.write_all(frame.as_bytes()).await?;
+        writer.flush().await?;
+
+        // Loop reading framed messages until our matching response arrives.
+        // Server-initiated traffic (notifications, server->client requests) is
+        // handled inline so the JSON-RPC stream never desyncs.
+        loop {
+            let body_bytes = Self::read_frame(reader).await?;
+            let msg = Self::parse_frame(&body_bytes)?;
+
+            let msg_method = msg.get("method").and_then(Value::as_str);
+            let msg_id = msg.get("id");
+
+            // Case 1: a response (has `id`, no `method`).
+            if msg_method.is_none() {
+                let is_ours = match msg_id {
+                    Some(Value::Number(n)) => n.as_u64() == Some(id),
+                    Some(Value::String(s)) => s.parse::<u64>().ok() == Some(id),
+                    _ => false,
+                };
+                if is_ours {
+                    if let Some(err) = msg.get("error") {
+                        let m = err
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown");
+                        return Err(anyhow!("LSP error: {m}"));
+                    }
+                    return Ok(msg.get("result").cloned().unwrap_or(Value::Null));
+                }
+                // A response to some other (e.g. earlier timed-out) request; skip.
+                tracing::trace!(target: "lsp", ?msg_id, "LSP: ignoring stray response");
+                continue;
+            }
+
+            // From here on, `method` is present.
+            let method_name = msg_method.unwrap_or("");
+
+            // Case 2: a server->client request (has `id` AND `method`).
+            if let Some(req_id) = msg_id {
+                tracing::trace!(target: "lsp", method = method_name, "LSP: answering server request with null");
+                let reply = serde_json::to_string(&serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": Value::Null,
+                }))?;
+                let reply_frame = format!("Content-Length: {}\r\n\r\n{}", reply.len(), reply);
+                writer.write_all(reply_frame.as_bytes()).await?;
+                writer.flush().await?;
+                continue;
+            }
+
+            // Case 3: a notification (has `method`, no `id`).
+            if method_name == "textDocument/publishDiagnostics" {
+                if let Some(params) = msg.get("params")
+                    && let Some(uri) = params.get("uri").and_then(Value::as_str)
+                {
+                    let diags = params
+                        .get("diagnostics")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    if let Ok(mut store) = diagnostics.lock() {
+                        store.insert(uri.to_string(), diags);
+                    }
+                }
+            } else {
+                tracing::trace!(target: "lsp", method = method_name, "LSP: ignoring notification");
+            }
+            // Keep looping until our response arrives.
         }
-        Ok(resp["result"].clone())
     }
 
     async fn send_notification(
@@ -138,6 +218,8 @@ struct ServerEntry {
     stdout: tokio::sync::Mutex<BufReader<tokio::process::ChildStdout>>,
     language_id: String,
     doc_version: AtomicU64,
+    /// Latest push diagnostics (`textDocument/publishDiagnostics`) keyed by URI.
+    diagnostics: DiagnosticsStore,
 }
 
 impl ServerEntry {
@@ -146,15 +228,13 @@ impl ServerEntry {
             let mut stdin = self.stdin.lock().await;
             let mut stdout = self.stdout.lock().await;
             self.conn
-                .send_request(&mut stdin, &mut stdout, method, params)
+                .send_request(&mut stdin, &mut stdout, &self.diagnostics, method, params)
                 .await
         })
         .await
         .map_err(|_| {
             anyhow!(
-                "LSP request '{}' timed out after {}s",
-                method,
-                LSP_TIMEOUT_SECS
+                "LSP request '{method}' timed out after {LSP_TIMEOUT_SECS}s"
             )
         })?
     }
@@ -251,7 +331,7 @@ impl LspClient {
             .and_then(|e| e.to_str())
             .unwrap_or("");
         let (lang_id, command, args) = language_config(ext)
-            .ok_or_else(|| anyhow!("No language server configured for .{} files", ext))?;
+            .ok_or_else(|| anyhow!("No language server configured for .{ext} files"))?;
 
         let lang_key = lang_id.to_string();
 
@@ -284,10 +364,7 @@ impl LspClient {
         cmd.kill_on_drop(true);
 
         let mut process = cmd.spawn().with_context(|| {
-            format!(
-                "Failed to spawn '{}'. Install it to use .{} LSP features.",
-                command, ext
-            )
+            format!("Failed to spawn '{command}'. Install it to use .{ext} LSP features.")
         })?;
 
         // Drain stderr to prevent deadlock
@@ -330,6 +407,7 @@ impl LspClient {
             stdout: tokio::sync::Mutex::new(stdout),
             language_id: lang_id.to_string(),
             doc_version: AtomicU64::new(1),
+            diagnostics: Arc::new(StdMutex::new(HashMap::new())),
         });
 
         let _result = entry
@@ -416,25 +494,45 @@ impl LspClient {
 
     pub async fn diagnostics(&self, file_path: &str) -> Result<Value> {
         let content = std::fs::read_to_string(file_path)
-            .with_context(|| format!("Cannot read file: {}", file_path))?;
+            .with_context(|| format!("Cannot read file: {file_path}"))?;
         let entry = self.ensure_open(file_path, &content).await?;
         let uri = file_uri(file_path);
 
-        let result = entry
+        // Nudge servers that support the pull model. This also drives the
+        // request loop, which drains any pending `publishDiagnostics`
+        // notifications into the store along the way. If the pull request
+        // returns results directly, prefer those; otherwise fall back to the
+        // authoritative stored push diagnostics. Servers that don't support
+        // the pull method (e.g. rust-analyzer) error here — that's expected,
+        // so we ignore the error and rely on the push store.
+        let pulled = entry
             .request(
                 "textDocument/diagnostic",
                 &serde_json::json!({
                     "textDocument": { "uri": uri }
                 }),
             )
-            .await?;
+            .await
+            .ok()
+            .and_then(|result| result.get("items").cloned());
 
-        Ok(result.get("items").cloned().unwrap_or(Value::Array(vec![])))
+        if let Some(Value::Array(items)) = pulled
+            && !items.is_empty()
+        {
+            return Ok(Value::Array(items));
+        }
+
+        // Authoritative source: stored push diagnostics for this URI.
+        let stored = match entry.diagnostics.lock() {
+            Ok(store) => store.get(&uri).cloned(),
+            Err(_) => None,
+        };
+        Ok(Value::Array(stored.unwrap_or_default()))
     }
 
     pub async fn completion(&self, file_path: &str, line: u32, character: u32) -> Result<Value> {
         let content = std::fs::read_to_string(file_path)
-            .with_context(|| format!("Cannot read file: {}", file_path))?;
+            .with_context(|| format!("Cannot read file: {file_path}"))?;
         let entry = self.ensure_open(file_path, &content).await?;
         let uri = file_uri(file_path);
 
@@ -451,7 +549,7 @@ impl LspClient {
 
     pub async fn hover(&self, file_path: &str, line: u32, character: u32) -> Result<Value> {
         let content = std::fs::read_to_string(file_path)
-            .with_context(|| format!("Cannot read file: {}", file_path))?;
+            .with_context(|| format!("Cannot read file: {file_path}"))?;
         let entry = self.ensure_open(file_path, &content).await?;
         let uri = file_uri(file_path);
 
@@ -468,7 +566,7 @@ impl LspClient {
 
     pub async fn definition(&self, file_path: &str, line: u32, character: u32) -> Result<Value> {
         let content = std::fs::read_to_string(file_path)
-            .with_context(|| format!("Cannot read file: {}", file_path))?;
+            .with_context(|| format!("Cannot read file: {file_path}"))?;
         let entry = self.ensure_open(file_path, &content).await?;
         let uri = file_uri(file_path);
 
@@ -491,7 +589,7 @@ impl LspClient {
         include_declaration: bool,
     ) -> Result<Value> {
         let content = std::fs::read_to_string(file_path)
-            .with_context(|| format!("Cannot read file: {}", file_path))?;
+            .with_context(|| format!("Cannot read file: {file_path}"))?;
         let entry = self.ensure_open(file_path, &content).await?;
         let uri = file_uri(file_path);
 
@@ -509,7 +607,7 @@ impl LspClient {
 
     pub async fn document_symbols(&self, file_path: &str) -> Result<Value> {
         let content = std::fs::read_to_string(file_path)
-            .with_context(|| format!("Cannot read file: {}", file_path))?;
+            .with_context(|| format!("Cannot read file: {file_path}"))?;
         let entry = self.ensure_open(file_path, &content).await?;
         let uri = file_uri(file_path);
 
@@ -606,7 +704,7 @@ impl LspClient {
 
         let mut process = cmd
             .spawn()
-            .with_context(|| format!("Failed to spawn '{}'", command))?;
+            .with_context(|| format!("Failed to spawn '{command}'"))?;
 
         if let Some(stderr) = process.stderr.take() {
             tokio::spawn(async move {
@@ -642,6 +740,7 @@ impl LspClient {
             stdout: tokio::sync::Mutex::new(stdout),
             language_id: language.to_string(),
             doc_version: AtomicU64::new(1),
+            diagnostics: Arc::new(StdMutex::new(HashMap::new())),
         });
 
         let _result = entry
@@ -690,14 +789,14 @@ fn file_uri(file_path: &str) -> String {
             _ => {
                 let mut buf = [0u8; 4];
                 let s = c.encode_utf8(&mut buf);
-                s.bytes().map(|b| format!("%{:02X}", b)).collect::<String>()
+                s.bytes().map(|b| format!("%{b:02X}")).collect::<String>()
             }
         })
         .collect();
 
     if encoded.starts_with('/') {
-        format!("file://{}", encoded)
+        format!("file://{encoded}")
     } else {
-        format!("file:///{}", encoded)
+        format!("file:///{encoded}")
     }
 }

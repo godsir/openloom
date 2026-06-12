@@ -579,6 +579,36 @@ pub async fn run_agent_turn(
     .await
 }
 
+/// Execute one agent turn driven by a caller-supplied cancellation token.
+///
+/// Unlike [`run_agent_turn`], which mints a throwaway token internally, this
+/// threads a real `CancellationToken` into the turn so the orchestrator (or a
+/// parent agent pool) can interrupt it via `kill`/`shutdown`/`stop_session`.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_agent_turn_with_cancel(
+    client: &dyn CloudClient,
+    registry: &ToolRegistry,
+    history: &[Message],
+    user_message: &str,
+    config: &AgentLoopConfig,
+    allowed_tools: &Option<Vec<String>>,
+    disallowed_tools: &Option<Vec<String>>,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Result<TurnResult> {
+    run_agent_turn_inner(
+        client,
+        registry,
+        history,
+        user_message,
+        &[],
+        config,
+        allowed_tools,
+        disallowed_tools,
+        cancel,
+    )
+    .await
+}
+
 /// Execute one agent turn with attached images.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_agent_turn_with_images(

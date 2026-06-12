@@ -60,6 +60,26 @@ fn default_tool_timeout() -> u64 {
     60
 }
 
+/// Resolve the effective per-call tool timeout: use the configured value,
+/// falling back to the default when unset/zero.
+fn resolve_tool_timeout(configured: u64) -> u64 {
+    if configured == 0 {
+        default_tool_timeout()
+    } else {
+        configured
+    }
+}
+
+/// Resolve the effective startup/handshake timeout: use the configured value,
+/// falling back to the default when unset/zero.
+fn resolve_startup_timeout(configured: u64) -> u64 {
+    if configured == 0 {
+        default_startup_timeout()
+    } else {
+        configured
+    }
+}
+
 // ============================================================================
 // Stdio connection
 // ============================================================================
@@ -70,6 +90,8 @@ struct McpConnection {
     stdout: BufReader<tokio::process::ChildStdout>,
     tools: Vec<McpTool>,
     next_id: u64,
+    /// Resolved per-tool-call timeout (seconds) for this server.
+    tool_timeout_secs: u64,
 }
 
 /// On Windows, .sh files are not natively executable. If the command is a
@@ -161,10 +183,28 @@ impl McpConnection {
             stdout: stdout_reader,
             tools: Vec::new(),
             next_id: 1,
+            tool_timeout_secs: resolve_tool_timeout(config.tool_timeout_secs),
         };
 
+        // Bound the whole init handshake (initialize + initialized + tools/list)
+        // by the configured startup timeout so a hung server can't block forever.
+        let startup = resolve_startup_timeout(config.startup_timeout_secs);
+        tokio::time::timeout(Duration::from_secs(startup), conn.run_handshake(&config))
+            .await
+            .map_err(|_| {
+                anyhow!(
+                    "MCP server '{}' handshake timed out after {startup}s",
+                    config.name
+                )
+            })??;
+
+        Ok(conn)
+    }
+
+    /// Perform the JSON-RPC init handshake on an already-spawned connection.
+    async fn run_handshake(&mut self, config: &McpServerConfig) -> Result<()> {
         // init
-        let result = conn
+        let result = self
             .send_request(
                 "initialize",
                 &serde_json::json!({
@@ -176,17 +216,17 @@ impl McpConnection {
         tracing::info!(server=%config.name, version=%result["protocolVersion"], "MCP init");
 
         // initialized notification
-        conn.send_notification("notifications/initialized", &serde_json::json!({}))
+        self.send_notification("notifications/initialized", &serde_json::json!({}))
             .await?;
 
         // tools/list
-        let tools_resp = conn
+        let tools_resp = self
             .send_request("tools/list", &serde_json::json!({}))
             .await?;
-        conn.tools = parse_tool_list(&tools_resp, &config);
-        tracing::info!(server=%config.name, count=conn.tools.len(), "MCP tools");
+        self.tools = parse_tool_list(&tools_resp, config);
+        tracing::info!(server=%config.name, count=self.tools.len(), "MCP tools");
 
-        Ok(conn)
+        Ok(())
     }
 
     async fn send_request(&mut self, method: &str, params: &Value) -> Result<Value> {
@@ -199,17 +239,67 @@ impl McpConnection {
         self.stdin.write_all(body.as_bytes()).await?;
         self.stdin.flush().await?;
 
+        // Read responses line by line. MCP servers may interleave
+        // server-initiated notifications (no top-level `id`, e.g.
+        // notifications/message, notifications/progress) and, rarely,
+        // server->client requests (`id` + `method`) over stdout. Skip
+        // anything that is not the response to our request `id`.
         let mut line = String::new();
-        self.stdout.read_line(&mut line).await?;
-        let resp: Value = serde_json::from_str(&line)
-            .with_context(|| format!("MCP parse error: {}", truncate(&line, 200)))?;
-        if let Some(err) = resp.get("error") {
-            return Err(anyhow!(
-                "MCP error: {}",
-                err["message"].as_str().unwrap_or("unknown")
-            ));
+        loop {
+            line.clear();
+            let n = self.stdout.read_line(&mut line).await?;
+            if n == 0 {
+                return Err(anyhow!(
+                    "MCP stdout closed before response to '{method}' (id={id})"
+                ));
+            }
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let msg: Value = serde_json::from_str(trimmed)
+                .with_context(|| format!("MCP parse error: {}", truncate(trimmed, 200)))?;
+
+            // A response to our request carries a matching `id` and no
+            // `method`. A message with an `id` AND a `method` is a
+            // server->client request: log and skip it.
+            let msg_id = msg.get("id");
+            let is_request = msg.get("method").is_some();
+            match msg_id {
+                Some(mid) if !is_request && json_id_eq(mid, id) => {
+                    if let Some(err) = msg.get("error") {
+                        return Err(anyhow!(
+                            "MCP error: {}",
+                            err["message"].as_str().unwrap_or("unknown")
+                        ));
+                    }
+                    return Ok(msg.get("result").cloned().unwrap_or(Value::Null));
+                }
+                Some(_) if is_request => {
+                    tracing::debug!(
+                        target: "mcp_stdio",
+                        method = msg["method"].as_str().unwrap_or(""),
+                        "skipping server->client request"
+                    );
+                }
+                Some(other) => {
+                    tracing::debug!(
+                        target: "mcp_stdio",
+                        got = %other,
+                        want = id,
+                        "skipping response with non-matching id"
+                    );
+                }
+                None => {
+                    // Notification (no `id`): logging, progress, list_changed, etc.
+                    tracing::trace!(
+                        target: "mcp_stdio",
+                        method = msg["method"].as_str().unwrap_or(""),
+                        "skipping notification"
+                    );
+                }
+            }
         }
-        Ok(resp["result"].clone())
     }
 
     async fn send_notification(&mut self, method: &str, params: &Value) -> Result<()> {
@@ -226,7 +316,7 @@ impl McpConnection {
 fn parse_tool_list(result: &Value, config: &McpServerConfig) -> Vec<McpTool> {
     let tools = result["tools"]
         .as_array()
-        .map(|a| a.as_slice())
+        .map(Vec::as_slice)
         .unwrap_or(&[]);
     tools
         .iter()
@@ -270,6 +360,8 @@ enum ServerConn {
         headers: reqwest::header::HeaderMap,
         client: reqwest::Client,
         next_id: AtomicU64,
+        /// Resolved per-tool-call timeout (seconds) for this server.
+        tool_timeout_secs: u64,
     },
 }
 
@@ -278,6 +370,16 @@ impl ServerConn {
         match self {
             ServerConn::Stdio { conn, .. } => &conn.tools,
             ServerConn::Http { tools, .. } => tools,
+        }
+    }
+
+    /// The resolved per-tool-call timeout (seconds) for this server.
+    fn tool_timeout_secs(&self) -> u64 {
+        match self {
+            ServerConn::Stdio { conn, .. } => conn.tool_timeout_secs,
+            ServerConn::Http {
+                tool_timeout_secs, ..
+            } => *tool_timeout_secs,
         }
     }
 }
@@ -312,9 +414,9 @@ impl McpClient {
             for (k, v) in &config.headers {
                 headers.insert(
                     reqwest::header::HeaderName::from_bytes(k.as_bytes())
-                        .map_err(|e| anyhow!("bad header '{}': {}", k, e))?,
+                        .map_err(|e| anyhow!("bad header '{k}': {e}"))?,
                     reqwest::header::HeaderValue::from_str(v)
-                        .map_err(|e| anyhow!("bad value '{}': {}", k, e))?,
+                        .map_err(|e| anyhow!("bad value '{k}': {e}"))?,
                 );
             }
             // MCP HTTP spec requires Accept: application/json, text/event-stream
@@ -327,7 +429,15 @@ impl McpClient {
                 .connect_timeout(Duration::from_secs(10))
                 .build()?;
 
-            let r = mcp_http_post(&client, &url, &headers, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"openLoom","version":"0.2.0"}}})).await?;
+            // Bound the HTTP handshake by the configured startup timeout. (The
+            // reqwest client also has its own request timeout above.)
+            let startup = resolve_startup_timeout(config.startup_timeout_secs);
+            let r = tokio::time::timeout(
+                Duration::from_secs(startup),
+                mcp_http_post(&client, &url, &headers, &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"openLoom","version":"0.2.0"}}})),
+            )
+            .await
+            .map_err(|_| anyhow!("MCP server '{name}' handshake timed out after {startup}s"))??;
             if r.get("error").is_some() {
                 anyhow::bail!(
                     "MCP init: {}",
@@ -337,13 +447,17 @@ impl McpClient {
 
             mcp_http_notify(&client, &url, &headers, &serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}})).await?;
 
-            let t = mcp_http_post(
-                &client,
-                &url,
-                &headers,
-                &serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+            let t = tokio::time::timeout(
+                Duration::from_secs(startup),
+                mcp_http_post(
+                    &client,
+                    &url,
+                    &headers,
+                    &serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+                ),
             )
-            .await?;
+            .await
+            .map_err(|_| anyhow!("MCP server '{name}' tools/list timed out after {startup}s"))??;
             let tools = parse_tool_list(&t["result"], &config);
             tracing::info!(server=%name, url=%url, count=tools.len(), "MCP HTTP connected");
             ServerConn::Http {
@@ -352,6 +466,7 @@ impl McpClient {
                 headers,
                 client,
                 next_id: AtomicU64::new(3),
+                tool_timeout_secs: resolve_tool_timeout(config.tool_timeout_secs),
             }
         } else {
             let connection = McpConnection::handshake(config).await?;
@@ -381,24 +496,26 @@ impl McpClient {
     }
 
     pub async fn call_tool(&self, server: &str, tool: &str, args: Value) -> Result<Value> {
-        let timeout = Duration::from_secs(default_tool_timeout());
+        // Resolve the per-server tool timeout under a brief read lock so the
+        // lock is released before we take the write lock in call_tool_inner.
+        let timeout_secs = {
+            let servers = self.servers.read().await;
+            servers
+                .get(server)
+                .map(ServerConn::tool_timeout_secs)
+                .unwrap_or_else(default_tool_timeout)
+        };
+        let timeout = Duration::from_secs(timeout_secs);
         tokio::time::timeout(timeout, self.call_tool_inner(server, tool, args))
             .await
-            .map_err(|_| {
-                anyhow!(
-                    "MCP tool '{}::{}' timed out after {}s",
-                    server,
-                    tool,
-                    default_tool_timeout()
-                )
-            })?
+            .map_err(|_| anyhow!("MCP tool '{server}::{tool}' timed out after {timeout_secs}s"))?
     }
 
     async fn call_tool_inner(&self, server: &str, tool: &str, args: Value) -> Result<Value> {
         let mut servers = self.servers.write().await;
         let entry = servers
             .get_mut(server)
-            .ok_or_else(|| anyhow!("MCP server '{}' not found", server))?;
+            .ok_or_else(|| anyhow!("MCP server '{server}' not found"))?;
         match entry {
             ServerConn::Stdio { conn } => {
                 conn.send_request(
@@ -433,7 +550,7 @@ impl McpClient {
             .read()
             .await
             .get(name)
-            .ok_or_else(|| anyhow!("not found: {}", name))?
+            .ok_or_else(|| anyhow!("not found: {name}"))?
             .tools()
             .to_vec())
     }
@@ -448,7 +565,7 @@ impl McpClient {
         let mut servers = self.servers.write().await;
         let entry = servers
             .get_mut(server)
-            .ok_or_else(|| anyhow!("MCP server '{}' not found", server))?;
+            .ok_or_else(|| anyhow!("MCP server '{server}' not found"))?;
         match entry {
             ServerConn::Stdio { conn } => {
                 let result = conn
@@ -508,8 +625,8 @@ impl McpClient {
         let mut servers = self.servers.write().await;
         let entry = servers
             .get_mut(server)
-            .ok_or_else(|| anyhow!("MCP server '{}' not found", server))?;
-        let timeout = default_tool_timeout();
+            .ok_or_else(|| anyhow!("MCP server '{server}' not found"))?;
+        let timeout = entry.tool_timeout_secs();
         match entry {
             ServerConn::Stdio { conn } => {
                 let result = tokio::time::timeout(
@@ -517,7 +634,7 @@ impl McpClient {
                     conn.send_request("resources/read", &serde_json::json!({"uri": uri})),
                 )
                 .await
-                .map_err(|_| anyhow!("MCP read_resource timeout after {}s", timeout))??;
+                .map_err(|_| anyhow!("MCP read_resource timeout after {timeout}s"))??;
                 Ok(parse_resource_contents(&result, uri))
             }
             ServerConn::Http {
@@ -531,7 +648,7 @@ impl McpClient {
                 let r = tokio::time::timeout(
                     Duration::from_secs(timeout),
                     mcp_http_post(client, url, headers, &serde_json::json!({"jsonrpc":"2.0","id":id,"method":"resources/read","params":{"uri":uri}})),
-                ).await.map_err(|_| anyhow!("MCP read_resource timeout after {}s", timeout))??;
+                ).await.map_err(|_| anyhow!("MCP read_resource timeout after {timeout}s"))??;
                 let result = r.get("result").ok_or_else(|| anyhow!("MCP: no result"))?;
                 Ok(parse_resource_contents(result, uri))
             }
@@ -543,7 +660,7 @@ impl McpClient {
         let mut servers = self.servers.write().await;
         let entry = servers
             .get_mut(server)
-            .ok_or_else(|| anyhow!("MCP server '{}' not found", server))?;
+            .ok_or_else(|| anyhow!("MCP server '{server}' not found"))?;
         match entry {
             ServerConn::Stdio { conn } => {
                 let result = conn
@@ -571,7 +688,7 @@ impl McpClient {
         let mut servers = self.servers.write().await;
         let entry = servers
             .get_mut(server)
-            .ok_or_else(|| anyhow!("MCP server '{}' not found", server))?;
+            .ok_or_else(|| anyhow!("MCP server '{server}' not found"))?;
         match entry {
             ServerConn::Stdio { conn } => {
                 let result = conn
@@ -604,7 +721,7 @@ impl McpClient {
         let mut servers = self.servers.write().await;
         let entry = servers
             .get_mut(server)
-            .ok_or_else(|| anyhow!("MCP server '{}' not found", server))?;
+            .ok_or_else(|| anyhow!("MCP server '{server}' not found"))?;
         let params = if let Some(args) = arguments {
             serde_json::json!({"name": name, "arguments": args})
         } else {
@@ -708,30 +825,9 @@ async fn mcp_http_post(
     }
 
     if content_type.contains("text/event-stream") {
-        let mut result = Value::Null;
-        let normalized = text.replace("\r\n", "\n");
-        for event in normalized.split("\n\n") {
-            let mut event_type = "";
-            let mut data = "";
-            for line in event.lines() {
-                if let Some(t) = line.strip_prefix("event: ") {
-                    event_type = t.trim();
-                }
-                if let Some(d) = line.strip_prefix("data: ") {
-                    data = d.trim();
-                }
-            }
-            if (event_type == "message" || event_type.is_empty())
-                && !data.is_empty()
-                && let Ok(parsed) = serde_json::from_str::<Value>(data)
-            {
-                result = parsed;
-            }
-        }
-        if result.is_null() {
-            anyhow::bail!("SSE contained no data: {}", truncate(&text, 200));
-        }
-        Ok(result)
+        // Match the response to our request id; falls back to the first event
+        // that looks like a JSON-RPC response (notifications carry no id).
+        parse_sse_response(&text, body.get("id"))
     } else {
         serde_json::from_str(&text)
             .map_err(|e| anyhow!("MCP parse: {} — body: {}", e, truncate(&text, 300)))
@@ -759,6 +855,68 @@ fn truncate(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {
         Some((i, _)) => &s[..i],
         None => s,
+    }
+}
+
+/// Parse a `text/event-stream` MCP response body.
+///
+/// Splits the body into SSE events (separated by a blank line). Within each
+/// event, all `data:` lines are concatenated with `\n` (a single SSE event's
+/// payload may span multiple `data:` lines); `:`-comment/keepalive lines and
+/// non-`data` fields (`event:`, `id:`, `retry:`) are ignored. Returns the
+/// first event whose parsed JSON `id` matches `want_id`; otherwise the first
+/// event that looks like a JSON-RPC response (has `result`/`error`).
+fn parse_sse_response(text: &str, want_id: Option<&Value>) -> Result<Value> {
+    let mut fallback = Value::Null;
+    let normalized = text.replace("\r\n", "\n");
+    for event in normalized.split("\n\n") {
+        let mut data_parts: Vec<&str> = Vec::new();
+        for line in event.lines() {
+            if line.starts_with(':') {
+                continue; // comment / keepalive
+            }
+            // Accept "data:" with or without a leading space (per SSE spec a
+            // single optional space after the colon is stripped).
+            if let Some(rest) = line.strip_prefix("data:") {
+                data_parts.push(rest.strip_prefix(' ').unwrap_or(rest));
+            }
+        }
+        if data_parts.is_empty() {
+            continue;
+        }
+        let data = data_parts.join("\n");
+        let parsed: Value = match serde_json::from_str(&data) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        // Return the first event whose JSON matches our request id.
+        if let Some(want) = want_id
+            && parsed.get("id").map(|got| got == want).unwrap_or(false)
+        {
+            return Ok(parsed);
+        }
+        // Otherwise remember the first event that at least looks like a
+        // JSON-RPC response (has result or error) as a fallback.
+        if fallback.is_null()
+            && (parsed.get("result").is_some() || parsed.get("error").is_some())
+        {
+            fallback = parsed;
+        }
+    }
+    if fallback.is_null() {
+        anyhow::bail!("SSE contained no matching data: {}", truncate(text, 200));
+    }
+    Ok(fallback)
+}
+
+/// Compare a JSON-RPC response `id` (as received) against the numeric id we
+/// sent. Spec-conformant servers echo the number, but some echo it as a
+/// string; accept either form.
+fn json_id_eq(received: &Value, sent: u64) -> bool {
+    match received {
+        Value::Number(n) => n.as_u64() == Some(sent),
+        Value::String(s) => s.parse::<u64>().map(|v| v == sent).unwrap_or(false),
+        _ => false,
     }
 }
 
@@ -867,6 +1025,7 @@ fn parse_content_block(value: &Value) -> loom_types::McpContentBlock {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     #[test]
@@ -887,5 +1046,59 @@ mod tests {
         };
         let json = serde_json::to_string(&config).unwrap();
         let _: McpServerConfig = serde_json::from_str(&json).unwrap();
+    }
+
+    #[test]
+    fn test_json_id_eq() {
+        assert!(json_id_eq(&serde_json::json!(7), 7));
+        assert!(!json_id_eq(&serde_json::json!(8), 7));
+        // Some servers echo the id as a string.
+        assert!(json_id_eq(&serde_json::json!("7"), 7));
+        assert!(!json_id_eq(&serde_json::json!("x"), 7));
+        // Null / wrong-type ids never match.
+        assert!(!json_id_eq(&Value::Null, 7));
+    }
+
+    #[test]
+    fn test_resolve_timeouts_fall_back_on_zero() {
+        assert_eq!(resolve_tool_timeout(0), default_tool_timeout());
+        assert_eq!(resolve_tool_timeout(120), 120);
+        assert_eq!(resolve_startup_timeout(0), default_startup_timeout());
+        assert_eq!(resolve_startup_timeout(15), 15);
+    }
+
+    #[test]
+    fn test_sse_matches_by_id_and_skips_notification() {
+        // Notification (no id) precedes the real response; we must skip it and
+        // return the event whose id matches the request id (2).
+        let body = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{}}\n\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"ok\":true}}\n\n";
+        let got = parse_sse_response(body, Some(&serde_json::json!(2))).unwrap();
+        assert_eq!(got["id"], serde_json::json!(2));
+        assert_eq!(got["result"]["ok"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn test_sse_concatenates_multiline_data() {
+        // A single event whose JSON payload is split across two data: lines
+        // (each at column 0, joined with '\n').
+        let body = "data: {\"jsonrpc\":\"2.0\",\"id\":5,\ndata: \"result\":{\"v\":1}}\n\n";
+        let got = parse_sse_response(body, Some(&serde_json::json!(5))).unwrap();
+        assert_eq!(got["id"], serde_json::json!(5));
+        assert_eq!(got["result"]["v"], serde_json::json!(1));
+    }
+
+    #[test]
+    fn test_sse_ignores_comments_and_falls_back_without_id() {
+        // Keepalive comment lines are ignored; with no matching id we fall back
+        // to the first event that has a result/error.
+        let body = ": keepalive\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":9,\"result\":{}}\n\n";
+        let got = parse_sse_response(body, None).unwrap();
+        assert_eq!(got["id"], serde_json::json!(9));
+    }
+
+    #[test]
+    fn test_sse_no_data_errors() {
+        let body = ": only a comment\n\nevent: ping\n\n";
+        assert!(parse_sse_response(body, Some(&serde_json::json!(1))).is_err());
     }
 }

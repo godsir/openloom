@@ -167,7 +167,7 @@ use loom_context::compact_history;
 
 /// The central orchestrator for openLoom v2.
 pub struct Orchestrator {
-    pool: AgentPool,
+    pool: Arc<AgentPool>,
     tool_registry: Arc<RwLock<ToolRegistry>>,
     mcp_client: Arc<McpClient>,
     lsp_client: Arc<LspClient>,
@@ -770,6 +770,7 @@ impl Orchestrator {
         let hook_registry = Arc::new(RwLock::new(HookRegistry::new()));
         let mut pool = AgentPool::new(max_depth, default_max_iterations, default_timeout_secs);
         pool.set_hook_registry(Some(hook_registry.clone()));
+        let pool = Arc::new(pool);
 
         Self {
             pool,
@@ -908,12 +909,15 @@ impl Orchestrator {
 
     /// Must be called after construction to wire spawn_agent (needs self references).
     pub async fn init_spawn_agent(self: &Arc<Self>, max_depth: usize, default_timeout_secs: u64) {
-        let mut spawn_pool = AgentPool::new(max_depth, 20, default_timeout_secs);
-        spawn_pool.set_hook_registry(Some(self.hook_registry.clone()));
+        // Reuse the orchestrator's own pool so spawned sub-agents are tracked by
+        // the same lifecycle machinery as top-level agents. This makes them
+        // visible to `list_agents()` and cancellable via `kill_agent()`,
+        // `stop_session()`, and `shutdown()` (all of which walk `self.pool`).
+        // The pool already has the hook registry wired at construction.
         let ctx = Arc::new(SpawnContext {
             cloud_client: self.cloud_client.clone(),
             tool_registry: self.tool_registry.clone(),
-            agent_pool: Arc::new(spawn_pool),
+            agent_pool: self.pool.clone(),
             loop_config: self.loop_config.clone(),
             event_bus: self.pool.event_bus().clone(),
         });

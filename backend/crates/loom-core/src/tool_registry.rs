@@ -361,6 +361,21 @@ impl AgentTool for SpawnAgentTool {
             )
             .await;
 
+        // Obtain the child agent's real cancellation token from the pool it was
+        // spawned into. Driving the turn with THIS token (instead of the
+        // throwaway one minted inside `run_agent_turn`) lets `kill_agent`,
+        // `stop_session`, and graceful `shutdown` actually interrupt the
+        // sub-agent — they cancel exactly this token via `AgentPool::kill`.
+        let cancel = match self.context.agent_pool.cancel_token(&child_id).await {
+            Ok(token) => token,
+            Err(e) => {
+                // Should not happen (we just spawned it), but degrade safely
+                // rather than panic: fall back to a fresh, uncancellable token.
+                tracing::warn!(error = %e, "sub-agent cancel token unavailable; turn will be uncancellable");
+                tokio_util::sync::CancellationToken::new()
+            }
+        };
+
         // Run the agent loop — clone Arc to release RwLock before long-running turn
         let client: std::sync::Arc<dyn loom_inference::engine::CloudClient> = {
             let guard = self.context.cloud_client.read().await;
@@ -377,7 +392,7 @@ impl AgentTool for SpawnAgentTool {
         };
         let registry = self.context.tool_registry.read().await;
 
-        let result = crate::agent_loop::run_agent_turn(
+        let result = crate::agent_loop::run_agent_turn_with_cancel(
             client.as_ref(),
             &registry,
             &[],
@@ -385,6 +400,7 @@ impl AgentTool for SpawnAgentTool {
             &sub_config,
             &None,
             &None,
+            &cancel,
         )
         .await;
 
