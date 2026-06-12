@@ -260,6 +260,14 @@ impl<'a> GraphStore<'a> {
     // Read — Entity Search
     // ========================================================================
 
+    /// Quote a term as an FTS5 phrase so arbitrary user/entity text (e.g.
+    /// `c++`, `c#`, `.net`, or text containing `"`) is matched literally and
+    /// can never be parsed as FTS5 operator syntax — an unquoted special char
+    /// raises `fts5: syntax error` that would otherwise abort the whole query.
+    fn fts5_quote(term: &str) -> String {
+        format!("\"{}\"", term.replace('"', "\"\""))
+    }
+
     /// Full-text search for entities by name or description.
     /// Automatically adds prefix matching (*) to bare ASCII terms.
     /// CJK terms are passed through as-is (FTS5 unicode61 tokenizes per-character).
@@ -280,11 +288,13 @@ impl<'a> GraphStore<'a> {
             query
                 .split_whitespace()
                 .map(|t| {
-                    // Only add prefix wildcard to ASCII terms; CJK chars don't benefit
+                    // Quote each term as a phrase so special chars (c++, c#, .net)
+                    // can't break FTS5 parsing; add prefix wildcard to ASCII terms.
+                    let quoted = Self::fts5_quote(t);
                     if t.chars().any(|c| c.is_ascii_alphabetic()) && t.is_ascii() {
-                        format!("{}*", t)
+                        format!("{}*", quoted)
                     } else {
-                        t.to_string()
+                        quoted
                     }
                 })
                 .collect::<Vec<_>>()
@@ -584,7 +594,7 @@ impl<'a> GraphStore<'a> {
                 layer_placeholders, scope_ph,
             );
             let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
-                vec![Box::new((*name).to_string())];
+                vec![Box::new(Self::fts5_quote(name))];
             for l in &eligible_layers {
                 params.push(Box::new((*l).to_string()));
             }
