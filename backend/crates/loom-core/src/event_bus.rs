@@ -94,6 +94,31 @@ pub enum AgentEvent {
     GoalSet { session_id: String, description: String },
     /// A todo item status changed.
     TodoStatusChanged { session_id: String, todo_id: String, status: String },
+    /// A cron job was triggered (started executing).
+    CronJobTriggered {
+        job_id: String,
+        job_name: String,
+        run_id: String,
+    },
+    /// A cron job completed successfully.
+    CronJobCompleted {
+        job_id: String,
+        job_name: String,
+        run_id: String,
+        response: String,
+    },
+    /// A cron job failed.
+    CronJobFailed {
+        job_id: String,
+        job_name: String,
+        run_id: String,
+        error: String,
+    },
+    /// A cron job was created, updated, or deleted.
+    CronJobChanged {
+        job_id: String,
+        action: String,
+    },
 }
 
 /// A lightweight event bus using tokio broadcast.

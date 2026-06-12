@@ -34,8 +34,9 @@ pub fn pre_scan(message: &str) -> bool {
         Regex::new(
             r"(?ix)
             提醒|定时|闹钟|通知|叫我|叫醒|稍后|之后|到点|分钟后|小时后|秒后|天后|明天|后天|今晚|
-            明早|明晚|下周|每天|每天早上|每天晚上|每月|
+            明早|明晚|下周|每天|每天早上|每天晚上|每月|每隔|每\d+|每隔\d+|
             remind|reminder|alarm|timer|schedule|scheduled|tomorrow|tonight|
+            every\s+\d+\s*(?:sec|min|hour|day|week)s?|
             later\s+at|at\s+\d{1,2}(:\d{2})?|in\s+\d+\s+(?:second|minute|hour|day|week)s?
             "
         ).expect("task detector regex should compile")
@@ -130,12 +131,11 @@ pub fn parse_extraction_response(json_text: &str) -> Result<DetectedTask> {
             if let Some(at) = schedule_at.as_deref() {
                 if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(at) {
                     Some(format!(
-                        "0 {} {} {} {} {} ? {}",
+                        "0 {} {} {} {} * {}",
                         dt.format("%M"),
                         dt.format("%H"),
                         dt.format("%d"),
                         dt.format("%m"),
-                        dt.format("%Y"),
                         dt.format("%Y")
                     ))
                 } else {

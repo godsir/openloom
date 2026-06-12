@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import AppShell from './components/app/AppShell'
 import ScheduledTasksModal from './components/shared/ScheduledTasksModal'
+import CronDetectedDialog from './components/shared/CronDetectedDialog'
 import UpdateModal from './components/shared/UpdateModal'
 
 import Onboarding from './components/shared/Onboarding'
@@ -29,6 +30,7 @@ export default function App() {
   const theme = useStore((s) => s.theme)
   const confirm = useStore((s) => s.confirm)
   const permissionConfirm = useStore((s) => s.permissionConfirm)
+  const cronDetected = useStore((s) => s.cronDetected)
   const set = useStore.setState
 
   // Apply theme on mount and on change
@@ -352,6 +354,24 @@ export default function App() {
         onDeny={() => {
           permissionConfirm.resolve?.('deny')
           set({ permissionConfirm: { open: false, title: '', message: '', danger: false, toolName: '', resolve: null } })
+        }}
+      />
+      <CronDetectedDialog
+        open={cronDetected.open}
+        name={cronDetected.name}
+        prompt={cronDetected.prompt}
+        cronExpression={cronDetected.cronExpression}
+        kind={cronDetected.kind}
+        confirmation={cronDetected.confirmation}
+        onCreate={() => {
+          const resolve = cronDetected.resolve
+          set({ cronDetected: { open: false, name: '', prompt: '', cronExpression: '', kind: '', confirmation: '', resolve: null } })
+          resolve?.(true)
+        }}
+        onCancel={() => {
+          const resolve = cronDetected.resolve
+          set({ cronDetected: { open: false, name: '', prompt: '', cronExpression: '', kind: '', confirmation: '', resolve: null } })
+          resolve?.(false)
         }}
       />
       <UpdateModal />

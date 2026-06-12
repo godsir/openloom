@@ -31,6 +31,10 @@
   overflow-y: auto;
 }
 
+.textareaWrap {
+  position: relative;
+}
+
 .textarea::placeholder {
   color: var(--text-muted);
   font-style: italic;

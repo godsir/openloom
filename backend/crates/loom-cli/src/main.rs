@@ -22,6 +22,97 @@ fn data_dir() -> std::path::PathBuf {
         .join(".loom")
 }
 
+/// Resolve the `resources/builtin/` directory path.
+fn find_builtin_dir() -> Option<std::path::PathBuf> {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        candidates.push(dir.join("resources").join("builtin"));
+        candidates.push(dir.join("..").join("resources").join("builtin"));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("resources").join("builtin"));
+        candidates.push(cwd.join("..").join("resources").join("builtin"));
+    }
+    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        let p = std::path::PathBuf::from(&manifest);
+        candidates.push(p.join("..").join("..").join("resources").join("builtin"));
+    }
+
+    for c in &candidates {
+        if c.exists() {
+            return Some(c.clone());
+        }
+    }
+    None
+}
+
+fn copy_dir_entries(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with('.') || name_str == "node_modules" {
+            continue;
+        }
+        let sp = entry.path();
+        let dp = dst.join(&*name);
+        if sp.is_dir() {
+            copy_dir_entries(&sp, &dp)?;
+        } else {
+            std::fs::copy(&sp, &dp)?;
+        }
+    }
+    Ok(())
+}
+
+fn sync_builtin_resources(loom_dir: &std::path::Path) {
+    let builtin = match find_builtin_dir() {
+        Some(d) => d,
+        None => {
+            eprintln!("[server] builtin resources not found — skipping sync");
+            return;
+        }
+    };
+
+    let ps = builtin.join("plugins");
+    let ss = builtin.join("skills");
+    let pd = loom_dir.join("plugins");
+    let sd = loom_dir.join("skills");
+    let mut pc = 0usize;
+    let mut sc = 0usize;
+
+    if ps.exists() {
+        for e in std::fs::read_dir(&ps).into_iter().flatten().flatten() {
+            let sp = e.path();
+            if !sp.is_dir() { continue; }
+            let n = sp.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if n.is_empty() { continue; }
+            let dp = pd.join(n);
+            if dp.exists() { continue; }
+            if copy_dir_entries(&sp, &dp).is_ok() { pc += 1; }
+        }
+    }
+    if ss.exists() {
+        for e in std::fs::read_dir(&ss).into_iter().flatten().flatten() {
+            let sp = e.path();
+            if !sp.is_dir() { continue; }
+            let n = sp.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if n.is_empty() || !sp.join("SKILL.md").exists() { continue; }
+            let dp = sd.join(n);
+            if dp.exists() { continue; }
+            if copy_dir_entries(&sp, &dp).is_ok() { sc += 1; }
+        }
+    }
+
+    if pc > 0 || sc > 0 {
+        println!("[server] builtin sync: {} plugins, {} skills", pc, sc);
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "loom", version, about = "openLoom v2 — personal AI kernel")]
 struct Cli {
@@ -222,6 +313,9 @@ async fn main() -> anyhow::Result<()> {
             orchestrator.autostart_mcp_servers().await;
             // === Skills ===
             {
+                // Sync builtin resources before discovery so they're always available.
+                sync_builtin_resources(&loom_dir);
+
                 let mut skill_loader = loom_skills::SkillLoader::new();
                 skill_loader.add_standard_paths(&loom_dir);
                 match skill_loader.discover() {
@@ -674,6 +768,7 @@ async fn run_chat_demo(
     }
 
     // === Skills ===
+    sync_builtin_resources(&loom_dir);
     let mut skill_loader = loom_skills::SkillLoader::new();
     if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
         let home = std::path::PathBuf::from(&home);

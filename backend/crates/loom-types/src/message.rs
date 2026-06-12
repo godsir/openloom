@@ -77,6 +77,15 @@ pub struct Message {
 }
 
 impl Message {
+    pub fn system(text: impl Into<String>) -> Self {
+        Self {
+            role: Role::System,
+            content: vec![ContentPart::Text { text: text.into() }],
+            timestamp: Utc::now(),
+            usage: None,
+        }
+    }
+
     pub fn user(text: impl Into<String>) -> Self {
         Self {
             role: Role::User,

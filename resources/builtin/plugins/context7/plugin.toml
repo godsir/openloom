@@ -1,0 +1,9 @@
+name = "context7"
+version = "1.0.0"
+description = "Context7 — fetch up-to-date documentation and library references at query time. Resolves 'latest docs' by pulling real documentation snippets into context."
+
+[[mcp_servers]]
+name = "context7"
+transport = "stdio"
+command = "npx"
+args = ["-y", "@anthropic/context7-mcp"]

@@ -209,7 +209,7 @@ export default function Sidebar() {
                 <span className={styles.cronItemMuted}>{t('sidebar.noCronTasks')}</span>
               </div>
             ) : (
-              cronJobs.slice(0, 5).map(job => (
+              cronJobs.map(job => (
                 <div
                   key={job.id}
                   className={`${styles.cronItem} ${activeCronEditId === job.id ? styles.cronItemActive : ''}`}

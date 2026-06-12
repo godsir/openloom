@@ -162,6 +162,10 @@ impl CronStorage {
         if let Err(e) = migrate_v1_to_v2(&conn) {
             tracing::warn!(error = %e, "cron db migration v1→v2 had issues; continuing");
         }
+        // Startup integrity check
+        if let Err(e) = conn.execute_batch("PRAGMA integrity_check") {
+            tracing::error!(error = %e, "cron db integrity check failed");
+        }
         tracing::info!(path = %db_path.display(), "cron storage opened");
         Ok(Self {
             conn: Mutex::new(conn),
@@ -172,7 +176,7 @@ impl CronStorage {
 
     /// Insert a new cron job.
     pub fn insert_job(&self, job: &CronJob) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
         conn.execute(
             "INSERT INTO cron_jobs (id, name, cron_expression, prompt, enabled, session_mode,
              timeout_secs, created_at, last_run, next_run, run_count, error_count)
@@ -197,7 +201,7 @@ impl CronStorage {
 
     /// Load all cron jobs from the database.
     pub fn load_all_jobs(&self) -> Result<Vec<CronJob>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
         let mut stmt = conn.prepare(
             "SELECT id, name, cron_expression, prompt, enabled, session_mode,
                     timeout_secs, created_at, last_run, next_run, run_count, error_count
@@ -233,7 +237,7 @@ impl CronStorage {
 
     /// Update a job's enabled flag.
     pub fn set_enabled(&self, job_id: &str, enabled: bool) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
         let rows = conn.execute(
             "UPDATE cron_jobs SET enabled = ?1 WHERE id = ?2",
             params![enabled as i32, job_id],
@@ -246,7 +250,7 @@ impl CronStorage {
 
     /// Record a completed run: increment counters and update last_run.
     pub fn record_run(&self, job_id: &str, timestamp: i64, success: bool) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
         if success {
             conn.execute(
                 "UPDATE cron_jobs SET last_run = ?1, run_count = run_count + 1 WHERE id = ?2",
@@ -261,9 +265,38 @@ impl CronStorage {
         Ok(())
     }
 
+    /// Update an existing cron job's fields.
+    pub fn update_job(
+        &self,
+        job_id: &str,
+        name: &str,
+        cron_expression: &str,
+        prompt: &str,
+        session_mode: &SessionMode,
+        timeout_secs: u64,
+    ) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
+        let rows = conn.execute(
+            "UPDATE cron_jobs SET name = ?1, cron_expression = ?2, prompt = ?3,
+             session_mode = ?4, timeout_secs = ?5 WHERE id = ?6",
+            params![
+                name,
+                cron_expression,
+                prompt,
+                session_mode.to_string(),
+                timeout_secs,
+                job_id,
+            ],
+        )?;
+        if rows == 0 {
+            anyhow::bail!("cron job not found: {}", job_id);
+        }
+        Ok(())
+    }
+
     /// Delete a cron job by id.
     pub fn delete_job(&self, job_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
         let rows = conn.execute("DELETE FROM cron_jobs WHERE id = ?1", params![job_id])?;
         if rows == 0 {
             anyhow::bail!("cron job not found: {}", job_id);
@@ -273,7 +306,7 @@ impl CronStorage {
 
     /// Get a single job by id.
     pub fn get_job(&self, job_id: &str) -> Result<Option<CronJob>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
         let mut stmt = conn.prepare(
             "SELECT id, name, cron_expression, prompt, enabled, session_mode,
                     timeout_secs, created_at, last_run, next_run, run_count, error_count
@@ -307,7 +340,7 @@ impl CronStorage {
 
     /// Insert a new run history record.
     pub fn insert_history(&self, h: &CronRunHistory) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
         conn.execute(
             "INSERT INTO cron_run_history (id, job_id, started_at, finished_at, status, response, error_message)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -333,7 +366,7 @@ impl CronStorage {
         response: Option<&str>,
         error_message: Option<&str>,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
         conn.execute(
             "UPDATE cron_run_history SET finished_at = ?1, status = ?2, response = ?3, error_message = ?4
              WHERE id = ?5",
@@ -350,7 +383,7 @@ impl CronStorage {
 
     /// Load run history for a job, most recent first.
     pub fn load_history(&self, job_id: &str, limit: usize) -> Result<Vec<CronRunHistory>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
         let mut stmt = conn.prepare(
             "SELECT id, job_id, started_at, finished_at, status, response, error_message
              FROM cron_run_history
@@ -374,9 +407,25 @@ impl CronStorage {
             .map_err(Into::into)
     }
 
+    /// Mark any history records with status='running' as failed — they were
+    /// interrupted by a previous process crash.
+    pub fn recover_interrupted_jobs(&self) -> Result<usize> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
+        let count = conn.execute(
+            "UPDATE cron_run_history SET status = 'failed',
+             error_message = 'Interrupted by process restart'
+             WHERE status = 'running'",
+            [],
+        )?;
+        if count > 0 {
+            tracing::warn!(count, "recovered interrupted cron job(s) from previous crash");
+        }
+        Ok(count)
+    }
+
     /// Delete history records older than the given timestamp.
     pub fn prune_history(&self, before_timestamp: i64) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
         let count = conn.execute(
             "DELETE FROM cron_run_history WHERE started_at < ?1",
             params![before_timestamp],
@@ -485,6 +534,45 @@ mod tests {
         storage.set_enabled("j1", true).unwrap();
         let job = storage.get_job("j1").unwrap().unwrap();
         assert!(job.enabled);
+    }
+
+    #[test]
+    fn test_update_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("cron.db");
+        let storage = CronStorage::open(&db_path).unwrap();
+
+        storage
+            .insert_job(&test_job("j1", "original", "0 * * * * * *"))
+            .unwrap();
+
+        storage
+            .update_job(
+                "j1",
+                "updated",
+                "0 0 9 * * * *",
+                "新的 AI 指令",
+                &SessionMode::Current,
+                600,
+            )
+            .unwrap();
+
+        let job = storage.get_job("j1").unwrap().unwrap();
+        assert_eq!(job.name, "updated");
+        assert_eq!(job.cron_expression, "0 0 9 * * * *");
+        assert_eq!(job.prompt, "新的 AI 指令");
+        assert_eq!(job.session_mode, SessionMode::Current);
+        assert_eq!(job.timeout_secs, 600);
+    }
+
+    #[test]
+    fn test_update_job_nonexistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("cron.db");
+        let storage = CronStorage::open(&db_path).unwrap();
+        assert!(storage
+            .update_job("nonexistent", "x", "0 * * * * * *", "x", &SessionMode::Isolated, 300)
+            .is_err());
     }
 
     #[test]

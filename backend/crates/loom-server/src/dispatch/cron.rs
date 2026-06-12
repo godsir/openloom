@@ -1,7 +1,7 @@
 //! JSON-RPC dispatch for `cron.*` methods.
 //!
-//! Methods: cron.list, cron.create, cron.delete, cron.pause, cron.resume,
-//!          cron.history, cron.run_now, cron.detect
+//! Methods: cron.list, cron.create, cron.update, cron.delete, cron.pause,
+//!          cron.resume, cron.history, cron.run_now, cron.detect
 //!
 //! v2: Jobs store an AI prompt (natural language instruction) instead of a
 //!     shell command. When a job fires, the prompt is sent to the AI for
@@ -28,11 +28,18 @@ pub async fn handle(
         return Some(handle_detect(state, params).await);
     }
 
-    let cron = state.orchestrator.cron_scheduler().await?;
+    let cron = match state.orchestrator.cron_scheduler().await {
+        Some(c) => c,
+        None => return Some(Err(err(
+            ErrorCode::InternalError,
+            "Cron scheduler is not initialized. This may happen if the cron database failed to open. Check the server logs for details.",
+        ))),
+    };
 
     match method {
         "cron.list" => Some(handle_list(&cron).await),
         "cron.create" => Some(handle_create(&cron, params).await),
+        "cron.update" => Some(handle_update(&cron, params).await),
         "cron.delete" => Some(handle_delete(&cron, params).await),
         "cron.pause" => Some(handle_pause(&cron, params).await),
         "cron.resume" => Some(handle_resume(&cron, params).await),
@@ -53,46 +60,47 @@ async fn handle_detect(state: &AppState, p: &Value) -> Result<Value, JsonRpcErro
     let now = chrono::Utc::now();
     let prompt = detector::build_extraction_prompt(message, &now);
 
-    let result = state
-        .orchestrator
-        .with_cloud_client(|client| {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(async {
-                let req = loom_types::CompletionRequest {
-                    messages: vec![loom_types::Message::user(&prompt)],
-                    ..Default::default()
-                };
-                match client.complete(req).await {
-                    Ok(resp) => {
-                        let text = resp.text.trim().to_string();
-                        match detector::parse_extraction_response(&text) {
-                            Ok(detected) => {
-                                if detected.should_create {
-                                    Ok(json!({
-                                        "should_create": true,
-                                        "name": detected.name,
-                                        "prompt": detected.body,
-                                        "cron_expression": detected.cron_expression,
-                                        "kind": detected.kind,
-                                        "confirmation": detected.confirmation,
-                                    }))
-                                } else {
-                                    Ok(json!({ "should_create": false }))
-                                }
-                            }
-                            Err(e) => Err(anyhow::anyhow!("parse error: {}", e)),
-                        }
-                    }
-                    Err(e) => Err(anyhow::anyhow!("LLM error: {}", e)),
-                }
-            })
-        })
-        .await;
+    // Use get_cloud_client for proper async — no block_on.
+    let client = state.orchestrator.get_cloud_client().await;
+    let client = match client {
+        Some(c) => c,
+        None => {
+            tracing::warn!("cron.detect: no cloud client configured");
+            return Ok(json!({ "should_create": false }));
+        }
+    };
 
-    match result {
-        Ok(v) => Ok(v),
+    let req = loom_types::CompletionRequest {
+        messages: vec![loom_types::Message::user(&prompt)],
+        ..Default::default()
+    };
+
+    match client.complete(req).await {
+        Ok(resp) => {
+            let text = resp.text.trim().to_string();
+            match detector::parse_extraction_response(&text) {
+                Ok(detected) => {
+                    if detected.should_create {
+                        Ok(json!({
+                            "should_create": true,
+                            "name": detected.name,
+                            "prompt": detected.body,
+                            "cron_expression": detected.cron_expression,
+                            "kind": detected.kind,
+                            "confirmation": detected.confirmation,
+                        }))
+                    } else {
+                        Ok(json!({ "should_create": false }))
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "cron.detect: parse error");
+                    Ok(json!({ "should_create": false }))
+                }
+            }
+        }
         Err(e) => {
-            tracing::warn!(error = %e, "cron.detect skipped");
+            tracing::warn!(error = %e, "cron.detect: LLM error");
             Ok(json!({ "should_create": false }))
         }
     }
@@ -142,6 +150,45 @@ async fn handle_create(
         .await
     {
         Ok(id) => Ok(json!({ "id": id })),
+        Err(e) => Err(err(ErrorCode::InternalError, &e.to_string())),
+    }
+}
+
+async fn handle_update(
+    cron: &Arc<loom_cron::CronScheduler>,
+    params: &Value,
+) -> Result<Value, JsonRpcError> {
+    let job_id = get_str(params, "id")?;
+    let name = get_str(params, "name")?;
+    let cron_expr = get_str(params, "cron_expression")?;
+    let prompt = params
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .or_else(|| params.get("command").and_then(|v| v.as_str()))
+        .unwrap_or("");
+    if prompt.is_empty() {
+        return Err(err(
+            ErrorCode::InvalidRequest,
+            "missing or invalid 'prompt' (AI instruction for the cron job)",
+        ));
+    }
+    let session_mode = get_str(params, "session_mode")
+        .map(|s| match s {
+            "current" => SessionMode::Current,
+            _ => SessionMode::Isolated,
+        })
+        .unwrap_or(SessionMode::Isolated);
+    let timeout_secs = params
+        .get("timeout_secs")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(300)
+        .clamp(1, 3600);
+
+    match cron
+        .update_job(job_id, name, cron_expr, prompt, session_mode, timeout_secs)
+        .await
+    {
+        Ok(()) => Ok(json!({ "updated": true })),
         Err(e) => Err(err(ErrorCode::InternalError, &e.to_string())),
     }
 }

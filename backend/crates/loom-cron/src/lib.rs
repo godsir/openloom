@@ -33,6 +33,17 @@ use uuid::Uuid;
 use job::{CronJob, CronRunHistory, RunStatus, SessionMode};
 use storage::CronStorage;
 
+// ── Event Publisher ─────────────────────────────────────────────────────────────
+
+/// Publishes cron lifecycle events to external observers (e.g. WebSocket UI).
+/// The host (Orchestrator) provides an implementation wired to the EventBus.
+pub trait CronEventPublisher: Send + Sync {
+    fn job_triggered(&self, job_id: &str, job_name: &str, run_id: &str);
+    fn job_completed(&self, job_id: &str, job_name: &str, run_id: &str, response: &str);
+    fn job_failed(&self, job_id: &str, job_name: &str, run_id: &str, error: &str);
+    fn job_changed(&self, job_id: &str, action: &str);
+}
+
 // ── Prompt Executor ────────────────────────────────────────────────────────────
 
 /// Executes an AI prompt and returns the response text.
@@ -71,6 +82,10 @@ pub struct CronScheduler {
     running: Arc<RwLock<HashSet<String>>>,
     /// AI prompt executor — set by the host after construction.
     prompt_executor: RwLock<Option<Arc<dyn PromptExecutor>>>,
+    /// Optional event publisher for notifying UI of job lifecycle changes.
+    event_publisher: RwLock<Option<Arc<dyn CronEventPublisher>>>,
+    /// Semaphore to limit concurrent job executions (default 3).
+    concurrency_limit: Arc<tokio::sync::Semaphore>,
 }
 
 impl CronScheduler {
@@ -95,12 +110,20 @@ impl CronScheduler {
             tracing::info!(count = active.len(), "restored cron jobs from database");
         }
 
+        // Recover interrupted jobs — mark any still-"running" history records
+        // as failed so they don't appear as permanent zombies after a crash.
+        if let Err(e) = storage.recover_interrupted_jobs() {
+            tracing::warn!(error = %e, "failed to recover interrupted cron jobs");
+        }
+
         Ok(Self {
             active: RwLock::new(active),
             storage,
             db_path,
             running: Arc::new(RwLock::new(HashSet::new())),
             prompt_executor: RwLock::new(None),
+            event_publisher: RwLock::new(None),
+            concurrency_limit: Arc::new(tokio::sync::Semaphore::new(3)),
         })
     }
 
@@ -109,6 +132,11 @@ impl CronScheduler {
     /// a failure.
     pub async fn set_prompt_executor(&self, executor: Arc<dyn PromptExecutor>) {
         *self.prompt_executor.write().await = Some(executor);
+    }
+
+    /// Set the event publisher for notifying UI of job lifecycle changes.
+    pub async fn set_event_publisher(&self, publisher: Arc<dyn CronEventPublisher>) {
+        *self.event_publisher.write().await = Some(publisher);
     }
 
     /// Start the scheduler loop. Runs until the returned JoinHandle is aborted.
@@ -134,6 +162,13 @@ impl CronScheduler {
         &self.storage
     }
 
+    /// Helper: publish a CronJobChanged event if a publisher is configured.
+    async fn notify_changed(&self, job_id: &str, action: &str) {
+        if let Some(pub_) = self.event_publisher.read().await.as_ref() {
+            pub_.job_changed(job_id, action);
+        }
+    }
+
     // ── Job management ────────────────────────────────────────────────────
 
     /// Add a new cron job with an AI prompt.
@@ -151,6 +186,9 @@ impl CronScheduler {
         // Validate timeout bounds.
         if timeout_secs == 0 {
             return Err(anyhow::anyhow!("timeout_secs must be at least 1 second"));
+        }
+        if timeout_secs > 3600 {
+            tracing::warn!(%timeout_secs, "clamping cron job timeout to 3600s");
         }
         let timeout_secs = timeout_secs.min(3600); // Cap at 1 hour.
 
@@ -185,14 +223,64 @@ impl CronScheduler {
             .await
             .insert(id.clone(), ActiveJob { schedule, job });
 
+        self.notify_changed(&id, "created").await;
         tracing::info!(id = %id, name = %name, cron = %cron_expression, "cron job added");
         Ok(id)
+    }
+
+    /// Update an existing cron job. Re-registers in-memory if the job is enabled.
+    pub async fn update_job(
+        &self,
+        job_id: &str,
+        name: &str,
+        cron_expression: &str,
+        prompt: &str,
+        session_mode: SessionMode,
+        timeout_secs: u64,
+    ) -> Result<()> {
+        // Validate timeout bounds.
+        if timeout_secs == 0 {
+            return Err(anyhow::anyhow!("timeout_secs must be at least 1 second"));
+        }
+        let timeout_secs = timeout_secs.min(3600);
+
+        // Validate the cron expression.
+        let schedule = cron::Schedule::from_str(cron_expression)
+            .with_context(|| format!("invalid cron expression: {}", cron_expression))?;
+
+        // Persist update.
+        self.storage.update_job(
+            job_id,
+            name,
+            cron_expression,
+            prompt,
+            &session_mode,
+            timeout_secs,
+        )?;
+
+        // Re-register or remove from active set based on the updated job's enabled state.
+        let mut active = self.active.write().await;
+        if let Some(job) = self.storage.get_job(job_id)? {
+            if job.enabled {
+                active.insert(
+                    job_id.to_string(),
+                    ActiveJob { schedule, job },
+                );
+            } else {
+                active.remove(job_id);
+            }
+        }
+
+        self.notify_changed(job_id, "updated").await;
+        tracing::info!(id = %job_id, name = %name, cron = %cron_expression, "cron job updated");
+        Ok(())
     }
 
     /// Remove a cron job.
     pub async fn remove_job(&self, job_id: &str) -> Result<()> {
         self.active.write().await.remove(job_id);
         self.storage.delete_job(job_id)?;
+        self.notify_changed(job_id, "deleted").await;
         tracing::info!(id = %job_id, "cron job removed");
         Ok(())
     }
@@ -201,6 +289,7 @@ impl CronScheduler {
     pub async fn pause_job(&self, job_id: &str) -> Result<()> {
         self.storage.set_enabled(job_id, false)?;
         self.active.write().await.remove(job_id);
+        self.notify_changed(job_id, "paused").await;
         tracing::info!(id = %job_id, "cron job paused");
         Ok(())
     }
@@ -216,6 +305,7 @@ impl CronScheduler {
                 .await
                 .insert(job_id.to_string(), ActiveJob { schedule, job });
         }
+        self.notify_changed(job_id, "resumed").await;
         tracing::info!(id = %job_id, "cron job resumed");
         Ok(())
     }
@@ -261,7 +351,8 @@ impl CronScheduler {
 
         let run_id = Uuid::new_v4().to_string();
         let executor = self.prompt_executor.read().await.clone();
-        Self::execute_job(&self.storage, &job, &run_id, executor.as_deref()).await;
+        let publisher = self.event_publisher.read().await.clone();
+        Self::execute_job(&self.storage, &job, &run_id, executor.as_deref(), publisher.as_deref()).await;
 
         // Remove from running set.
         self.running.write().await.remove(job_id);
@@ -302,9 +393,12 @@ impl CronScheduler {
             let running = self.running.clone();
             let jid = job_id.clone();
             let executor = self.prompt_executor.read().await.clone();
+            let publisher = self.event_publisher.read().await.clone();
+            let permit = self.concurrency_limit.clone().acquire_owned().await.expect("semaphore closed");
 
             tokio::spawn(async move {
-                Self::execute_job(&storage, &job, &run_id, executor.as_deref()).await;
+                let _permit = permit; // hold until job completes
+                Self::execute_job(&storage, &job, &run_id, executor.as_deref(), publisher.as_deref()).await;
                 // Remove from running set after completion.
                 running.write().await.remove(&jid);
             });
@@ -317,8 +411,14 @@ impl CronScheduler {
         job: &CronJob,
         run_id: &str,
         executor: Option<&dyn PromptExecutor>,
+        publisher: Option<&dyn CronEventPublisher>,
     ) {
         let now = chrono::Utc::now().timestamp();
+
+        // Notify observers that the job started.
+        if let Some(pub_) = publisher {
+            pub_.job_triggered(&job.id, &job.name, run_id);
+        }
 
         // Record start.
         if let Err(e) = storage.insert_history(&CronRunHistory {
@@ -357,6 +457,14 @@ impl CronScheduler {
             Err(e) => (RunStatus::Failed, None, Some(e.to_string())),
         };
 
+        // Notify observers of completion or failure.
+        if let Some(pub_) = publisher {
+            match &result {
+                Ok(text) => pub_.job_completed(&job.id, &job.name, run_id, text),
+                Err(e) => pub_.job_failed(&job.id, &job.name, run_id, &e.to_string()),
+            }
+        }
+
         if let Err(e) = storage.update_history(
             run_id,
             finished_at,
@@ -368,6 +476,24 @@ impl CronScheduler {
         }
         if let Err(e) = storage.record_run(&job.id, finished_at, status == RunStatus::Completed) {
             tracing::warn!(run_id = %run_id, job_id = %job.id, error = %e, "failed to record run");
+        }
+
+        // Auto-disable one-shot tasks after successful execution.
+        // One-shot cron expressions have a specific year (e.g. "0 30 14 9 6 2026 *")
+        // vs recurring ones which have "*" in the year field.
+        if status == RunStatus::Completed {
+            let is_one_shot = job.cron_expression
+                .split_whitespace()
+                .nth(6) // year field (7-field format: sec min hour dom month dow year)
+                .map(|y| y.chars().all(|c| c.is_ascii_digit()))
+                .unwrap_or(false);
+            if is_one_shot {
+                if let Err(e) = storage.set_enabled(&job.id, false) {
+                    tracing::warn!(job_id = %job.id, error = %e, "failed to auto-disable one-shot job");
+                } else {
+                    tracing::info!(job_id = %job.id, name = %job.name, "auto-disabled one-shot cron job after completion");
+                }
+            }
         }
 
         tracing::info!(
@@ -488,6 +614,43 @@ mod tests {
         scheduler.resume_job(&id).await.unwrap();
         let job = scheduler.get_job(&id).unwrap().unwrap();
         assert!(job.enabled);
+    }
+
+    #[tokio::test]
+    async fn test_update_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("cron.db");
+        let scheduler = CronScheduler::new(db_path).await.unwrap();
+
+        let id = scheduler
+            .add_job(
+                "original",
+                "0 * * * * * *",
+                "原始指令",
+                SessionMode::Isolated,
+                300,
+            )
+            .await
+            .unwrap();
+
+        scheduler
+            .update_job(
+                &id,
+                "updated",
+                "0 0 12 * * * *",
+                "更新后的指令",
+                SessionMode::Current,
+                600,
+            )
+            .await
+            .unwrap();
+
+        let jobs = scheduler.list_jobs().unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].name, "updated");
+        assert_eq!(jobs[0].cron_expression, "0 0 12 * * * *");
+        assert_eq!(jobs[0].prompt, "更新后的指令");
+        assert_eq!(jobs[0].session_mode, SessionMode::Current);
     }
 
     #[tokio::test]

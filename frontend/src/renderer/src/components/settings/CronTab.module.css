@@ -1,18 +1,19 @@
 /* ── Card ─────────────────────────────────────────────────────── */
+.cardList { display: flex; flex-direction: column; gap: 10px; }
 
 .card {
   border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  padding: 12px;
-  margin-bottom: 8px;
+  border-radius: 12px;
+  padding: 14px 16px;
   background: var(--bg-card);
+  transition: border-color 0.15s;
 }
 
 .cardTop {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
 }
 
 .cardInfo {
@@ -28,377 +29,265 @@
 }
 
 .cardName {
+  font-size: 14px;
   font-weight: 600;
-  font-size: 13px;
-}
-
-.cardCron {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  margin-bottom: 2px;
-}
-
-.cardCronRaw {
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-  font-size: 10px;
-}
-
-.cardCmd {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-secondary);
+  margin: 0;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.cardActions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-.cardMeta {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-top: 8px;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-/* ── Badges ───────────────────────────────────────────────────── */
-
+/* Badge */
 .badge {
   display: inline-flex;
   align-items: center;
-  padding: 1px 6px;
-  border-radius: var(--r-sm);
+  padding: 1px 8px;
+  border-radius: 99px;
   font-size: 10px;
-  font-weight: 500;
+  font-weight: 600;
+  flex-shrink: 0;
 }
-
 .badgeEnabled { background: var(--green); color: #fff; }
 .badgeDisabled { background: var(--text-muted); color: #fff; }
-.badgeRunning { background: #3b82f6; color: #fff; }
+.badgeRunning { background: var(--badge-blue, #3b82f6); color: #fff; animation: pulse 1.5s ease-in-out infinite; }
 .badgeSuccess { background: var(--green); color: #fff; }
 .badgeFailed { background: var(--red); color: #fff; }
 .badgeTimeout { background: var(--amber); color: #fff; }
 
-/* ── Form ─────────────────────────────────────────────────────── */
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.6 } }
 
-.formRow {
-  margin-bottom: 16px;
-}
-
-.formLabel {
-  display: block;
+.cardSchedule {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
-  font-weight: 500;
-  margin-bottom: 6px;
-  color: var(--text);
+  color: var(--text-secondary);
 }
 
-.formInput {
-  width: 100%;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--bg);
-  color: var(--text);
-  font-size: 12px;
-  outline: none;
-}
+.inlineIcon { flex-shrink: 0; color: var(--text-muted); }
 
-.formInput:focus {
-  border-color: var(--border-accent);
-}
-
-.formTextarea {
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--bg);
-  color: var(--text);
-  font-size: 12px;
-  resize: vertical;
-  outline: none;
+.cardCronRaw {
   font-family: var(--font-mono);
-}
-
-.formTextarea:focus {
-  border-color: var(--border-accent);
-}
-
-.formHint {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
-
-.formActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 20px;
-}
-
-/* ── Presets ──────────────────────────────────────────────────── */
-
-.presetRow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 8px;
-}
-
-.presetTag {
-  padding: 3px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  font-size: 11px;
-  cursor: pointer;
-  background: var(--bg);
-  color: var(--text-secondary);
-  font-family: inherit;
-  transition: all 0.12s;
-}
-
-.presetTag:hover {
-  border-color: var(--border-accent);
-  color: var(--text);
-}
-
-.presetTagActive {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-subtle);
-}
-
-/* ── Mode toggle ──────────────────────────────────────────────── */
-
-.modeRow {
-  display: flex;
-  gap: 6px;
-}
-
-.modeBtn {
-  padding: 5px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  cursor: pointer;
-  background: var(--bg);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-family: inherit;
-  transition: all 0.12s;
-}
-
-.modeBtn:hover {
-  border-color: var(--border-accent);
-}
-
-.modeBtnActive {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-subtle);
-}
-
-/* ── Buttons ──────────────────────────────────────────────────── */
-
-.btnAdd {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 12px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--accent);
-  background: var(--accent-subtle);
-  border: 1px solid rgba(var(--accent-rgb), 0.2);
-  border-radius: var(--r-md);
-  cursor: pointer;
-  font-family: inherit;
-}
-
-.btnAdd:hover { background: var(--accent-medium); }
-
-.btnCancel {
-  height: 28px;
-  padding: 0 12px;
-  font-size: 11px;
-  color: var(--text-muted);
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  cursor: pointer;
-  font-family: inherit;
-}
-
-.btnCancel:hover { color: var(--text); }
-
-.btnSave {
-  height: 28px;
-  padding: 0 14px;
-  font-size: 11px;
-  font-weight: 500;
-  color: #fff;
-  background: var(--accent);
-  border: none;
-  border-radius: var(--r-md);
-  cursor: pointer;
-  font-family: inherit;
-}
-
-.btnSave:hover { opacity: 0.85; }
-.btnSave:disabled { opacity: 0.5; cursor: not-allowed; }
-
-.btnBack {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  background: none;
-  border: none;
-  color: var(--accent);
-  cursor: pointer;
-  font-size: 12px;
-  padding: 0;
-  margin-bottom: 12px;
-  font-family: inherit;
-}
-
-.btnBack:hover { opacity: 0.8; }
-
-.iconBtn {
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-radius: var(--r-sm);
-}
-
-.iconBtn:hover {
-  background: var(--bg-active);
-  color: var(--text);
-}
-
-/* ── Misc ─────────────────────────────────────────────────────── */
-
-.countBadge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 20px;
-  height: 18px;
-  padding: 0 5px;
   font-size: 10px;
-  font-weight: 600;
-  color: var(--accent);
-  background: rgba(var(--accent-rgb), 0.12);
-  border-radius: 9px;
-  margin-left: 6px;
+  color: var(--text-muted);
+  background: var(--bg);
+  padding: 1px 6px;
+  border-radius: 4px;
 }
 
-.headerRight {
+.cardMeta2 {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 14px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
 }
+.cardMeta2 span { display: inline-flex; align-items: center; gap: 4px; }
 
-.inlineIcon {
+.nextRun { color: var(--accent); font-weight: 500; }
+.errorCount { color: var(--red); }
+
+/* Actions */
+.cardActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   flex-shrink: 0;
 }
 
-.backIcon {
-  transform: rotate(90deg);
+.iconBtn {
+  width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: transparent; color: var(--text-muted);
+  cursor: pointer; border-radius: 8px;
 }
+.iconBtn:hover { background: var(--bg-active); color: var(--text); }
 
-.errorText {
-  font-size: 11px;
-  color: var(--red);
-  margin-bottom: 12px;
+/* Toggle switch */
+.toggle {
+  display: inline-flex; align-items: center; cursor: pointer;
+  margin-left: 2px;
 }
-
-.errorCount {
-  color: var(--red);
+.toggleTrack {
+  position: relative; width: 34px; height: 20px;
+  border-radius: 99px; transition: background 0.2s;
 }
-
-.empty {
-  padding: 40px 20px;
-  color: var(--text-muted);
-  text-align: center;
+.toggleOn { background: var(--accent); }
+.toggleOff { background: var(--text-muted); }
+.toggleThumb {
+  position: absolute; top: 2px; left: 2px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; transition: transform 0.2s;
 }
+.toggleOn .toggleThumb { transform: translateX(14px); }
 
-.emptyIcon {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 12px;
-  opacity: 0.5;
-}
-
-/* ── History table ────────────────────────────────────────────── */
-
-.histHeader {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
-}
-
-.histRow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-}
-
-.histRow:last-child { border-bottom: none; }
-
-.histTime {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  min-width: 120px;
-}
-
-.histStatus {
-  min-width: 60px;
-}
-
-.histStdout {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-secondary);
+/* Result box */
+.resultBox {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
+}
+.resultHeader {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px; cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.resultHeader:hover { background: var(--bg-active); }
+.resultLabel {
+  font-size: 11px; font-weight: 600; color: var(--text-muted);
+}
+.resultToggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 500; color: var(--text-muted);
+  background: none; border: none; cursor: pointer; font-family: inherit;
+}
+.resultToggle:hover { color: var(--text); }
+
+.resultContent { padding: 8px 10px; }
+.resultCollapsed { display: none; }
+.resultExpanded { display: block; max-height: 220px; overflow-y: auto; }
+
+.resultText {
+  font-family: var(--font-mono); font-size: 11px;
+  color: var(--text-secondary); white-space: pre-wrap; word-break: break-word; line-height: 1.5;
+}
+.resultCopyBtn {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-top: 6px; padding: 3px 10px; font-size: 10px;
+  color: var(--text-muted); background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 6px;
+  cursor: pointer; font-family: inherit;
+}
+.resultCopyBtn:hover { color: var(--text); border-color: var(--border-accent); }
+
+/* ── Filter row ────────────────────────────────────────────────── */
+.filterRow {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 12px;
+}
+.filterPills { display: flex; gap: 4px; flex-wrap: wrap; }
+.filterPill {
+  padding: 4px 12px; font-size: 11px; font-weight: 500;
+  border: 1px solid var(--border); border-radius: 99px;
+  background: var(--bg-card); color: var(--text-secondary);
+  cursor: pointer; font-family: inherit; transition: all 0.12s;
+}
+.filterPill:hover { border-color: var(--border-accent); color: var(--text); }
+.filterPillActive { border-color: var(--accent); color: var(--accent); background: var(--accent-subtle); }
+
+.searchRow {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--bg);
+  min-width: 160px;
+}
+.searchIcon { color: var(--text-muted); flex-shrink: 0; }
+.searchInput {
+  flex: 1; border: none; background: transparent; color: var(--text);
+  font-size: 11px; outline: none; font-family: inherit;
+}
+.searchInput::placeholder { color: var(--text-muted); }
+
+/* ── Dialog (Modal) ────────────────────────────────────────────── */
+.dialogOverlay {
+  position: fixed; inset: 0; z-index: 120;
+  display: flex; align-items: center; justify-content: center;
+}
+.dialogBackdrop {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.55); backdrop-filter: blur(6px);
+}
+.dialog {
+  position: relative; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 24px 48px rgba(0,0,0,0.45);
+  width: 100%; max-width: 480px; max-height: 85vh;
+  margin: 0 16px; overflow: hidden;
+  animation: dialogIn 0.2s cubic-bezier(0.16,1,0.3,1);
+}
+@keyframes dialogIn {
+  from { opacity: 0; transform: scale(0.94) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.dialogHeader {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px 12px; border-bottom: 1px solid var(--border);
+}
+.dialogTitle { font-size: 14px; font-weight: 600; color: var(--text); margin: 0; }
+.dialogClose {
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  border: none; background: transparent; color: var(--text-muted); cursor: pointer; border-radius: 6px;
+}
+.dialogClose:hover { background: var(--bg-active); color: var(--text); }
+.dialogBody { padding: 16px 20px; max-height: calc(85vh - 120px); overflow-y: auto; }
+.dialogFooter {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 12px 20px 16px; border-top: 1px solid var(--border);
 }
 
-.histExit {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-muted);
-  min-width: 40px;
-  text-align: right;
+/* ── Form (used inside dialog + legacy inline) ────────────────── */
+.formRow { margin-bottom: 14px; }
+.formLabel { display: block; font-size: 11px; font-weight: 600; margin-bottom: 5px; color: var(--text); text-transform: uppercase; letter-spacing: 0.03em; }
+.formInput {
+  width: 100%; height: 34px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-card); color: var(--text); font-size: 12px; outline: none; font-family: inherit;
 }
+.formInput:focus { border-color: var(--border-accent); }
+.formTextarea {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--bg-card); color: var(--text);
+  font-size: 12px; resize: vertical; outline: none; font-family: var(--font-mono);
+}
+.formTextarea:focus { border-color: var(--border-accent); }
+.formHint { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
+
+.formInputSm { width: 100px; }
+
+.presetRow { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.presetTag {
+  padding: 4px 10px; border: 1px solid var(--border); border-radius: 99px;
+  font-size: 11px; cursor: pointer; background: var(--bg-card); color: var(--text-secondary);
+  font-family: inherit; transition: all 0.12s;
+}
+.presetTag:hover { border-color: var(--border-accent); color: var(--text); }
+.presetTagActive { border-color: var(--accent); color: var(--accent); background: var(--accent-subtle); }
+
+/* ── Buttons ──────────────────────────────────────────────────── */
+.btnAdd {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 14px; font-size: 12px; font-weight: 600;
+  color: var(--accent); background: var(--accent-subtle);
+  border: 1px solid rgba(var(--accent-rgb), 0.2); border-radius: 10px;
+  cursor: pointer; font-family: inherit; transition: all 0.12s;
+}
+.btnAdd:hover { background: var(--accent-medium); }
+.btnCancel {
+  height: 32px; padding: 0 16px; font-size: 12px;
+  color: var(--text-secondary); background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-family: inherit;
+}
+.btnCancel:hover { color: var(--text); border-color: var(--border-accent); }
+.btnSave {
+  height: 32px; padding: 0 18px; font-size: 12px; font-weight: 600;
+  color: #fff; background: var(--accent); border: none; border-radius: 8px;
+  cursor: pointer; font-family: inherit; transition: all 0.12s;
+}
+.btnSave:hover { opacity: 0.88; }
+.btnSave:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Misc ─────────────────────────────────────────────────────── */
+.headerRight { display: flex; align-items: center; gap: 8px; }
+.countBadge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 18px; padding: 0 5px; font-size: 10px; font-weight: 600;
+  color: var(--accent); background: rgba(var(--accent-rgb), 0.12);
+  border-radius: 9px; margin-left: 6px;
+}
+.errorText { font-size: 11px; color: var(--red); margin-bottom: 12px; }
+.empty { padding: 48px 20px; color: var(--text-muted); text-align: center; }
+.emptyIcon { display: flex; justify-content: center; margin-bottom: 12px; opacity: 0.4; }

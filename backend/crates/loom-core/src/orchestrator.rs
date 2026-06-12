@@ -819,10 +819,31 @@ impl Orchestrator {
         let db_path = self.data_dir.join("cron.db");
         let scheduler = Arc::new(CronScheduler::new(db_path).await?);
 
-        // Wire up the AI prompt executor — cron jobs send their prompts to the LLM.
+        // Wire up the AI prompt executor with full tool access, permissions,
+        // system prompt, and event publishing — cron jobs execute like real agent turns.
         let cloud_client = self.cloud_client.clone();
+        let tool_registry = self.tool_registry.clone();
+        let workspace_path = self.data_dir.to_string_lossy().to_string();
+        let permissions = loom_types::SkillPermissions {
+            shell: true,
+            fs_write: Some(vec![]),
+            ..Default::default()
+        };
+        let event_bus = self.pool.event_bus().clone();
         scheduler
-            .set_prompt_executor(Arc::new(CronPromptExecutor { cloud_client }))
+            .set_prompt_executor(Arc::new(CronPromptExecutor {
+                cloud_client,
+                tool_registry,
+                workspace_path: Some(workspace_path),
+                permissions,
+            }))
+            .await;
+
+        // Wire event publisher for real-time UI updates via WebSocket.
+        scheduler
+            .set_event_publisher(Arc::new(LoomCronEventPublisher {
+                bus: event_bus,
+            }))
             .await;
 
         let handle = scheduler.start();
@@ -1011,7 +1032,14 @@ impl Orchestrator {
             .or_else(|| std::env::var(auto_env).ok().filter(|v| !v.is_empty()))
     }
 
-    /// Get a reference to the cloud client for direct access.
+    /// Get a reference to the cloud client for direct async access.
+    /// Returns None if no cloud client is configured.
+    pub async fn get_cloud_client(&self) -> Option<Arc<dyn CloudClient>> {
+        self.cloud_client.read().await.clone()
+    }
+
+    /// Get a reference to the cloud client for synchronous callback access.
+    /// Prefer `get_cloud_client` for async use to avoid `block_on`.
     pub async fn with_cloud_client<F, R>(&self, f: F) -> Result<R>
     where
         F: FnOnce(&dyn CloudClient) -> Result<R>,
@@ -5492,6 +5520,71 @@ impl Orchestrator {
         }
         Ok(killed)
     }
+
+    /// Force summarization of a session's conversation history.
+    /// Uses the auxiliary "summary" model if configured, falls back to the main model.
+    /// Returns the summary text, or None if no memory store or client is available.
+    pub async fn force_summarize_session(&self, session_id: &str) -> Option<String> {
+        let history = self.session_history(session_id).await;
+        if history.is_empty() {
+            return None;
+        }
+
+        let (existing_summary, total_msgs) = {
+            let mem = self.memory_store.read().await;
+            if let Some(ref store) = *mem {
+                let existing = store.get_summary(session_id).await.unwrap_or(None);
+                let total = store.get_message_count(session_id).await.unwrap_or(history.len());
+                (existing, total)
+            } else {
+                (None, history.len())
+            }
+        };
+
+        // Always summarize when explicitly requested — skip the threshold check
+        tracing::info!(session_id, msg_count = total_msgs, "force summarization requested");
+        let prompt = loom_memory::SummaryEngine::build_prompt(&history, existing_summary.as_deref());
+        let request = loom_memory::SummaryEngine::build_request(&prompt);
+
+        let summary_client = if let Some(aux) = self.build_auxiliary_client("summary").await {
+            Some(aux)
+        } else {
+            self.cloud_client.read().await.clone()
+        };
+
+        if let Some(sc) = summary_client {
+            let saved_hash = sc.prefix_hash_snapshot();
+            match sc.complete(request).await {
+                Ok(resp) if !resp.text.is_empty() => {
+                    sc.prefix_hash_restore(saved_hash);
+                    let mem = self.memory_store.read().await;
+                    if let Some(ref store) = *mem {
+                        let _ = store.save_summary(session_id, &resp.text).await;
+                        if resp.prompt_tokens > 0 || resp.completion_tokens > 0 {
+                            let _ = store
+                                .record_token_usage(
+                                    session_id,
+                                    &format!("{} (summary)", sc.model_name()),
+                                    resp.prompt_tokens,
+                                    resp.completion_tokens,
+                                    0, 0, 0, 0,
+                                )
+                                .await;
+                        }
+                    }
+                    tracing::info!(chars = resp.text.len(), "force summarization complete");
+                    Some(resp.text)
+                }
+                _ => {
+                    sc.prefix_hash_restore(saved_hash);
+                    existing_summary
+                }
+            }
+        } else {
+            existing_summary
+        }
+    }
+
     /// Graceful shutdown: cancel all inflight agents, drain with 10s timeout,
     /// close SQLite memory store, then drop MCP connections.
     pub async fn shutdown(&self) {
@@ -5972,18 +6065,86 @@ async fn llm_extract_entities(
 }
 
 // ============================================================================
+// CronEventPublisher — bridges cron lifecycle events to the EventBus
+// ============================================================================
+
+use loom_cron::CronEventPublisher;
+
+/// Publishes cron job lifecycle events to the EventBus so the frontend
+/// can update in real-time via WebSocket notifications.
+struct LoomCronEventPublisher {
+    bus: EventBus,
+}
+
+impl CronEventPublisher for LoomCronEventPublisher {
+    fn job_triggered(&self, job_id: &str, job_name: &str, run_id: &str) {
+        let _ = self.bus.publish(AgentEvent::CronJobTriggered {
+            job_id: job_id.to_string(),
+            job_name: job_name.to_string(),
+            run_id: run_id.to_string(),
+        });
+    }
+    fn job_completed(&self, job_id: &str, job_name: &str, run_id: &str, response: &str) {
+        let _ = self.bus.publish(AgentEvent::CronJobCompleted {
+            job_id: job_id.to_string(),
+            job_name: job_name.to_string(),
+            run_id: run_id.to_string(),
+            response: response.to_string(),
+        });
+    }
+    fn job_failed(&self, job_id: &str, job_name: &str, run_id: &str, error: &str) {
+        let _ = self.bus.publish(AgentEvent::CronJobFailed {
+            job_id: job_id.to_string(),
+            job_name: job_name.to_string(),
+            run_id: run_id.to_string(),
+            error: error.to_string(),
+        });
+    }
+    fn job_changed(&self, job_id: &str, action: &str) {
+        let _ = self.bus.publish(AgentEvent::CronJobChanged {
+            job_id: job_id.to_string(),
+            action: action.to_string(),
+        });
+    }
+}
+
+// ============================================================================
 // CronPromptExecutor — bridges the cron scheduler to the AI backend
 // ============================================================================
 
 use loom_cron::PromptExecutor;
+use crate::tool_context::ToolContext;
+
+/// System prompt for cron job execution.
+/// Gives the AI context about its role, available tools, and execution expectations.
+const CRON_SYSTEM_PROMPT: &str = concat!(
+    "You are openLoom executing a scheduled task. You have full access to the system ",
+    "through tools — use them to complete the task thoroughly.\n\n",
+    "## Guidelines\n",
+    "- Execute the task completely: check all relevant sources, run necessary commands, ",
+    "  read/write files as needed.\n",
+    "- Report results concisely when done — summarize what you did and what you found.\n",
+    "- If something fails, explain the error and try an alternative approach.\n",
+    "- Respect the user's intent: this is a scheduled task they set up, not a conversation.\n",
+    "- Work efficiently: use parallel tool calls when operations are independent.\n",
+);
 
 /// Executes cron job prompts by sending them to the configured cloud LLM.
 ///
 /// Each cron job stores a natural language AI instruction (prompt). When
-/// the job fires, this executor sends the prompt to the LLM and returns
-/// the response. The AI can call tools during execution.
+/// the job fires, this executor sends the prompt to the LLM with full tool
+/// access and runs a multi-turn tool-call loop so the AI can actually
+/// perform work (search the web, read/write files, etc.).
+///
+/// v3: Includes system prompt and permission checks.
+/// The AI sees tool definitions and a proper system prompt — just like
+/// a normal agent turn — so it can execute complex multi-step tasks.
 struct CronPromptExecutor {
     cloud_client: Arc<tokio::sync::RwLock<Option<Arc<dyn CloudClient>>>>,
+    tool_registry: Arc<tokio::sync::RwLock<ToolRegistry>>,
+    workspace_path: Option<String>,
+    /// Permission configuration for tool access control.
+    permissions: loom_types::SkillPermissions,
 }
 
 impl PromptExecutor for CronPromptExecutor {
@@ -5994,6 +6155,11 @@ impl PromptExecutor for CronPromptExecutor {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + '_>> {
         let client_opt = self.cloud_client.clone();
         let prompt = prompt.to_string();
+        let tool_registry = self.tool_registry.clone();
+        let workspace_path = self.workspace_path.clone();
+        let permissions = self.permissions.clone();
+        // Per-turn timeout: give each LLM call a fair share of the total budget.
+        let per_turn_timeout = std::cmp::max(30, timeout_secs / 3);
 
         Box::pin(async move {
             let client = {
@@ -6003,24 +6169,128 @@ impl PromptExecutor for CronPromptExecutor {
                     .ok_or_else(|| anyhow::anyhow!("No cloud client configured — set up a model first"))?
             };
 
-            let req = loom_types::CompletionRequest {
-                messages: vec![loom_types::Message::user(&prompt)],
-                ..Default::default()
+            // Build tool definitions from the registry, filtered by permissions.
+            let tool_defs: Vec<loom_types::ToolDefinition> = {
+                let registry = tool_registry.read().await;
+                let all = registry.all_definitions();
+                all.into_iter()
+                    .filter(|td| {
+                        let (allowed, _) = loom_security::check_permission(&td.name, &permissions);
+                        if !allowed {
+                            tracing::debug!(tool = %td.name, "cron: tool denied by permissions");
+                        }
+                        allowed
+                    })
+                    .collect()
             };
 
-            match tokio::time::timeout(
-                tokio::time::Duration::from_secs(timeout_secs),
-                client.complete(req),
-            )
-            .await
-            {
-                Ok(Ok(resp)) => Ok(resp.text.trim().to_string()),
-                Ok(Err(e)) => Err(anyhow::anyhow!("AI request failed: {}", e)),
-                Err(_) => Err(anyhow::anyhow!(
-                    "AI request timed out after {}s",
-                    timeout_secs
-                )),
+            if tool_defs.is_empty() {
+                tracing::warn!("cron: no tools available — check permission config");
             }
+
+            // Messages: system prompt + user instruction.
+            let mut messages: Vec<loom_types::Message> = vec![
+                loom_types::Message::system(CRON_SYSTEM_PROMPT),
+                loom_types::Message::user(&prompt),
+            ];
+
+            // Tool-call loop — up to 10 turns so the AI can do real work.
+            const MAX_TURNS: usize = 10;
+            let mut last_text = String::new();
+
+            for _turn in 0..MAX_TURNS {
+                let req = loom_types::CompletionRequest {
+                    messages: messages.clone(),
+                    tools: tool_defs.clone(),
+                    ..Default::default()
+                };
+
+                let resp = match tokio::time::timeout(
+                    tokio::time::Duration::from_secs(per_turn_timeout),
+                    client.complete(req),
+                )
+                .await
+                {
+                    Ok(Ok(r)) => r,
+                    Ok(Err(e)) => return Err(anyhow::anyhow!("AI request failed: {}", e)),
+                    Err(_) => {
+                        return Err(anyhow::anyhow!(
+                            "AI request timed out after {}s",
+                            per_turn_timeout
+                        ))
+                    }
+                };
+
+                // If no tool calls, this is the final response.
+                if resp.tool_calls.is_empty() {
+                    last_text = resp.text.trim().to_string();
+                    break;
+                }
+
+                // Append assistant message with tool calls.
+                let mut parts: Vec<ContentPart> = Vec::new();
+                if !resp.text.is_empty() {
+                    parts.push(ContentPart::Text {
+                        text: resp.text.clone(),
+                    });
+                }
+                for tc in &resp.tool_calls {
+                    parts.push(ContentPart::ToolCall {
+                        id: tc.id.clone(),
+                        name: tc.name.clone(),
+                        arguments: tc.arguments.clone(),
+                    });
+                }
+                messages.push(loom_types::Message {
+                    role: Role::Assistant,
+                    content: parts,
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                });
+
+                // Create ToolContext once per turn.
+                let tool_ctx = ToolContext::with_workspace(workspace_path.clone());
+
+                // Execute each tool call with permission check.
+                let registry = tool_registry.read().await;
+                for tc in &resp.tool_calls {
+                    // Permission check
+                    let (allowed, _risk) = loom_security::check_permission(&tc.name, &permissions);
+                    let tool_result = if !allowed {
+                        format!("Permission denied: tool '{}' is not allowed for cron jobs. Check your permission configuration.", tc.name)
+                    } else {
+                        match registry.find(&tc.name) {
+                            Some(tool) => {
+                                let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+                                match tool.execute(tc.arguments.clone(), tx, &tool_ctx).await {
+                                    Ok(r) => {
+                                        if r.is_error {
+                                            format!("Tool error: {}", r.content)
+                                        } else {
+                                            r.content
+                                        }
+                                    }
+                                    Err(e) => format!("Tool execution error: {}", e),
+                                }
+                            }
+                            None => format!("Unknown tool: {}", tc.name),
+                        }
+                    };
+                    messages.push(loom_types::Message::tool(
+                        &tc.id,
+                        &tc.name,
+                        &tool_result,
+                    ));
+                    last_text = tool_result;
+                }
+            }
+
+            // Ensure we have a non-empty result.
+            if last_text.is_empty() {
+                last_text = "Task completed (no output).".to_string();
+            }
+
+            Ok(last_text)
         })
     }
 }

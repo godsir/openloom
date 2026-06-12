@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { useStore } from '../../stores'
 import type { SendShortcut } from '../../stores/input'
 import { loomRpc } from '../../services/jsonrpc'
@@ -12,6 +12,7 @@ import ThinkingLevelButton from './ThinkingLevelButton'
 import PermissionModeButton from './PermissionModeButton'
 import AttachedFiles from './AttachedFiles'
 import QuotedSelectionCard from './QuotedSelectionCard'
+import SlashCommandMenu, { getSlashQuery, makeBuiltinCommands } from './SlashCommandMenu'
 import { IconImage, IconPaperclip, IconSparkles, IconX, IconCheck } from '../../utils/icons'
 import styles from './InputArea.module.css'
 
@@ -47,6 +48,8 @@ export default function InputArea() {
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [availableSkills, setAvailableSkills] = useState<SkillInfo[]>([])
   const [showSkillPopover, setShowSkillPopover] = useState(false)
+  const [showSlashMenu, setShowSlashMenu] = useState(false)
+  const [slashQuery, setSlashQuery] = useState('')
   const sendingRef = useRef(false)
   const pasteCounterRef = useRef(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -107,6 +110,82 @@ export default function InputArea() {
     )
   }, [])
 
+  // ── Slash command menu ─────────────────────────────────────────────────
+
+  // must precede builtinCommands
+  const ensureSession = useCallback(async (): Promise<string> => {
+    if (sessionId) return sessionId
+    const id = await createSession()
+    if (id) await switchSession(id)
+    return id
+  }, [sessionId, createSession, switchSession])
+
+  const compactSession = useCallback(async () => {
+    const sid = sessionId || (await ensureSession())
+    if (!sid) return
+    try {
+      const result = await loomRpc<{ ok: boolean; summary?: string; chars?: number }>('chat.compact', { session_id: sid })
+      if (result.ok && result.summary) {
+        // Immediate chat area feedback + backend persistence
+        useStore.getState().appendMessage(sid, {
+          id: crypto.randomUUID(),
+          role: 'system',
+          blocks: [{ type: 'text', html: `🗜️ ${t('slash.compactDone', { chars: String(result.chars || 0) })}`, source: result.summary }],
+          timestamp: new Date().toISOString(),
+        })
+        useStore.getState().clearSessionUsage(sid)
+      } else {
+        useStore.getState().addToast({ type: 'warning', message: t('slash.compactFailed') })
+      }
+    } catch {
+      useStore.getState().addToast({ type: 'warning', message: t('slash.compactFailed') })
+    }
+  }, [sessionId, ensureSession, t])
+
+  const builtinCommands = useMemo(() => makeBuiltinCommands({
+    createSession,
+    compactSession,
+    t,
+  }), [createSession, compactSession, t])
+
+  const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value
+    setText(value)
+    const cursorPos = e.target.selectionStart ?? value.length
+    const query = getSlashQuery(value, cursorPos)
+    if (query !== null) {
+      setSlashQuery(query)
+      setShowSlashMenu(true)
+    } else {
+      setShowSlashMenu(false)
+      setSlashQuery('')
+    }
+  }, [])
+
+  const closeSlashMenu = useCallback(() => {
+    setShowSlashMenu(false)
+    setSlashQuery('')
+  }, [])
+
+  const handleSlashSelect = useCallback(
+    (cmd: SlashCommand) => {
+      // Remove the "/query" prefix from the textarea
+      const cursorPos = textareaRef.current?.selectionStart ?? text.length
+      const before = text.slice(0, cursorPos)
+      const slashIdx = before.lastIndexOf('/')
+      if (slashIdx !== -1) {
+        const after = text.slice(cursorPos)
+        setText(before.slice(0, slashIdx) + after)
+      }
+      closeSlashMenu()
+      if (cmd.execute) {
+        cmd.execute()
+        textareaRef.current?.focus()
+      }
+    },
+    [text, closeSlashMenu],
+  )
+
   useEffect(() => {
     if (sessionId) {
       const d = restoreDraft(sessionId)
@@ -124,13 +203,6 @@ export default function InputArea() {
       return () => clearTimeout(t)
     }
   }, [text, attachedFiles, sessionId])
-
-  const ensureSession = useCallback(async (): Promise<string> => {
-    if (sessionId) return sessionId
-    const id = await createSession()
-    if (id) await switchSession(id)
-    return id
-  }, [sessionId, createSession, switchSession])
 
   const handlePaste = useCallback((e: React.ClipboardEvent | ClipboardEvent) => {
     const items = e.clipboardData?.items
@@ -305,6 +377,12 @@ export default function InputArea() {
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (showSlashMenu && e.key === 'Escape') {
+      e.preventDefault()
+      closeSlashMenu()
+      return
+    }
+
     if (e.key !== 'Enter') return
 
     const ctrlOrMeta = e.ctrlKey || e.metaKey
@@ -424,10 +502,11 @@ export default function InputArea() {
               ))}
             </div>
           )}
+          <div className={styles.textareaWrap}>
           <textarea
             ref={textareaRef}
             value={text}
-            onChange={e => setText(e.target.value)}
+            onChange={handleTextChange}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder={placeholder}
@@ -435,6 +514,15 @@ export default function InputArea() {
             disabled={!isConnected}
             className={styles.textarea}
           />
+          {showSlashMenu && (
+            <SlashCommandMenu
+              query={slashQuery}
+              commands={builtinCommands}
+              onSelect={handleSlashSelect}
+              onClose={closeSlashMenu}
+            />
+          )}
+          </div>
           <div className={styles.toolbar}>
             <input
               ref={imageInputRef}

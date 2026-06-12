@@ -7,7 +7,7 @@ export interface ContentBlock {
 
 export interface Message {
   id: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'system'
   blocks: ContentBlock[]
   timestamp: string
   usage?: { prompt: number; completion: number; model?: string; contextWindow?: number; cached?: number; cacheRead?: number; cacheWrite?: number }

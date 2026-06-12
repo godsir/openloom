@@ -1,0 +1,9 @@
+name = "playwright"
+version = "1.0.0"
+description = "Playwright browser automation — navigate web pages, take screenshots, fill forms, click buttons, and test web applications. Uses headless Chromium."
+
+[[mcp_servers]]
+name = "playwright"
+transport = "stdio"
+command = "npx"
+args = ["-y", "@playwright/mcp@latest"]

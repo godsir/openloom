@@ -31,6 +31,11 @@ pub fn check_permission(tool_name: &str, permissions: &SkillPermissions) -> (boo
         return (allowed, RiskLevel::Medium);
     }
 
+    // Scheduled task management — medium risk (creates persistent background jobs)
+    if ["schedule_reminder", "create_scheduled_task"].contains(&tool_name) {
+        return (true, RiskLevel::Medium);
+    }
+
     // Unknown / meta tools (request_tools, use_skill, web_search, etc.)
     (true, RiskLevel::Low)
 }

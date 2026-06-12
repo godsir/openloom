@@ -15,6 +15,7 @@ pub async fn handle(
     match method {
         "chat.send" => Some(handle_chat_send(state, p).await),
         "chat.stop" => Some(handle_chat_stop(state, p).await),
+        "chat.compact" => Some(handle_chat_compact(state, p).await),
         _ => None,
     }
 }
@@ -175,6 +176,32 @@ async fn handle_chat_stop(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
         .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
     Ok(json!({ "ok": true, "killed": killed }))
+}
+
+async fn handle_chat_compact(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let session_id = p
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    match state.orchestrator.force_summarize_session(session_id).await {
+        Some(summary) => {
+            // Save a visible record in the session so the user can see it happened
+            let note = format!(
+                "🗜️ Context compacted — {} chars. This summary replaces earlier conversation details.",
+                summary.len()
+            );
+            state.sessions.add_message(session_id, "assistant", &note).await;
+            Ok(json!({
+                "ok": true,
+                "summary": summary,
+                "chars": summary.len(),
+            }))
+        }
+        None => Ok(json!({
+            "ok": false,
+            "message": "No memory store or model configured — summarization skipped",
+        })),
+    }
 }
 
 // ---------------------------------------------------------------------------
