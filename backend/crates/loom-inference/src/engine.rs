@@ -419,6 +419,88 @@ pub(crate) fn find_sse_boundary(buf: &[u8]) -> Option<(usize, usize)> {
         })
 }
 
+/// Classified error returned from a single non-streaming completion attempt so
+/// the retry layer can tell retryable failures (429/5xx, transport) from
+/// permanent ones (400/401/403/404/413/422, parse errors).
+///
+/// `status` carries the HTTP status code when the failure was an HTTP error
+/// response; `retry_after` carries the parsed `Retry-After` header (in seconds)
+/// when present. `transient` only governs status-less failures: it is `true`
+/// for connect/timeout/transport errors (worth retrying) and `false` for
+/// deterministic local failures such as JSON parse errors (not worth retrying).
+pub(crate) struct RetryableError {
+    pub status: Option<u16>,
+    pub retry_after: Option<std::time::Duration>,
+    pub transient: bool,
+    pub source: anyhow::Error,
+}
+
+impl RetryableError {
+    /// Build an error from a non-success HTTP response: classify by status code
+    /// and capture any `Retry-After` header.
+    pub fn from_status(status: u16, retry_after: Option<std::time::Duration>, source: anyhow::Error) -> Self {
+        Self {
+            status: Some(status),
+            retry_after,
+            transient: false,
+            source,
+        }
+    }
+
+    /// Build an error from a transport/connect/timeout failure (no HTTP status
+    /// was ever received). Always retryable.
+    pub fn transport(source: anyhow::Error) -> Self {
+        Self {
+            status: None,
+            retry_after: None,
+            transient: true,
+            source,
+        }
+    }
+
+    /// Whether this failure should be retried.
+    ///
+    /// Retry on 429 and gateway/server errors (500/502/503/504) and on
+    /// status-less transport errors. Do NOT retry permanent client errors
+    /// (400/401/403/404/413/422, etc.) or deterministic local failures.
+    pub fn is_retryable(&self) -> bool {
+        match self.status {
+            Some(code) => matches!(code, 429 | 500 | 502 | 503 | 504),
+            None => self.transient,
+        }
+    }
+}
+
+impl From<RetryableError> for anyhow::Error {
+    fn from(e: RetryableError) -> Self {
+        e.source
+    }
+}
+
+/// Any plain `anyhow::Error` propagated via `?` inside a completion attempt
+/// (lock poisoning, body read after a 2xx, JSON parse) is a deterministic local
+/// failure: classify it as non-retryable with no HTTP status.
+impl From<anyhow::Error> for RetryableError {
+    fn from(source: anyhow::Error) -> Self {
+        Self {
+            status: None,
+            retry_after: None,
+            transient: false,
+            source,
+        }
+    }
+}
+
+/// Parse the `Retry-After` response header. Anthropic/OpenAI send it as an
+/// integer number of seconds on 429 (and sometimes 503) responses.
+pub(crate) fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<std::time::Duration> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(std::time::Duration::from_secs)
+}
+
 // ── CloudClient impl ────────────────────────────────────────────────
 
 #[async_trait]
@@ -879,5 +961,63 @@ mod tests {
         let engine = InferenceEngine::dummy();
         assert_eq!(engine.model_name(), "dummy");
         assert_eq!(engine.provider(), ModelBackend::LmStudio);
+    }
+
+    #[test]
+    fn test_retryable_error_status_classification() {
+        // Retryable: 429 + gateway/server 5xx.
+        for code in [429u16, 500, 502, 503, 504] {
+            let e = RetryableError::from_status(code, None, anyhow::anyhow!("boom"));
+            assert!(e.is_retryable(), "status {code} should be retryable");
+        }
+        // Permanent client errors must NOT retry.
+        for code in [400u16, 401, 403, 404, 413, 422] {
+            let e = RetryableError::from_status(code, None, anyhow::anyhow!("boom"));
+            assert!(!e.is_retryable(), "status {code} should not be retryable");
+        }
+    }
+
+    #[test]
+    fn test_retryable_error_transport_is_retryable() {
+        let e = RetryableError::transport(anyhow::anyhow!("connection reset"));
+        assert!(e.is_retryable());
+        assert!(e.status.is_none());
+    }
+
+    #[test]
+    fn test_anyhow_into_retryable_is_not_retryable() {
+        // A plain anyhow error (parse failure, lock poisoning) propagated via `?`
+        // is a deterministic local failure and must not be retried.
+        let e: RetryableError = anyhow::anyhow!("parse error").into();
+        assert!(!e.is_retryable());
+        assert!(e.status.is_none());
+    }
+
+    #[test]
+    fn test_parse_retry_after_seconds() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            reqwest::header::HeaderValue::from_static("30"),
+        );
+        assert_eq!(
+            parse_retry_after(&headers),
+            Some(std::time::Duration::from_secs(30))
+        );
+    }
+
+    #[test]
+    fn test_parse_retry_after_missing_or_nonnumeric() {
+        let empty = reqwest::header::HeaderMap::new();
+        assert_eq!(parse_retry_after(&empty), None);
+
+        // HTTP-date form is not integer seconds; we intentionally ignore it
+        // (Anthropic/OpenAI send integer seconds) and fall back to backoff.
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            reqwest::header::HeaderValue::from_static("Wed, 21 Oct 2025 07:28:00 GMT"),
+        );
+        assert_eq!(parse_retry_after(&headers), None);
     }
 }

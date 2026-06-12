@@ -12,6 +12,7 @@ use reqwest::Client as HttpClient;
 use crate::cache::{CacheStatus, PrefixCache};
 use crate::engine::CloudClient;
 use crate::engine::find_sse_boundary;
+use crate::engine::{RetryableError, parse_retry_after};
 
 pub struct OpenAIClient {
     api_key: String,
@@ -46,24 +47,37 @@ impl OpenAIClient {
     ) -> Result<CompletionResponse> {
         let mut last_err = None;
         for attempt in 0..=retries {
-            if attempt > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(
-                    2u64.pow(attempt as u32) * 500,
-                ))
-                .await;
-            }
             match self.try_complete(req).await {
                 Ok(resp) => return Ok(resp),
                 Err(e) => {
-                    tracing::warn!(attempt, error = %e, "API call failed");
+                    tracing::warn!(
+                        attempt,
+                        status = ?e.status,
+                        retryable = e.is_retryable(),
+                        error = %e.source,
+                        "API call failed"
+                    );
+                    if !e.is_retryable() || attempt == retries {
+                        // Permanent failure (e.g. 401/400) or attempts exhausted:
+                        // surface immediately instead of burning more retries.
+                        return Err(e.into());
+                    }
+                    // Honor Retry-After (seconds) when the server provided one
+                    // (typically on 429); otherwise fall back to exponential backoff.
+                    let delay = e.retry_after.unwrap_or_else(|| {
+                        std::time::Duration::from_millis(2u64.pow((attempt + 1) as u32) * 500)
+                    });
                     last_err = Some(e);
+                    tokio::time::sleep(delay).await;
                 }
             }
         }
-        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no completion attempts were made")))
+        Err(last_err
+            .map(anyhow::Error::from)
+            .unwrap_or_else(|| anyhow::anyhow!("no completion attempts were made")))
     }
 
-    async fn try_complete(&self, req: &CompletionRequest) -> Result<CompletionResponse> {
+    async fn try_complete(&self, req: &CompletionRequest) -> Result<CompletionResponse, RetryableError> {
         let digest = self.pending_digest.lock().unwrap().clone();
         let (cache_status, _, reasons) = self.prefix_cache.check_digest(&digest);
         match cache_status {
@@ -134,34 +148,37 @@ impl OpenAIClient {
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&body)
             .send()
-            .await?;
+            .await
+            .map_err(|e| RetryableError::transport(anyhow::Error::new(e)))?;
         if !resp.status().is_success() {
+            let status = resp.status();
+            let retry_after = parse_retry_after(resp.headers());
             // Log just the tools and last 2 messages for debugging
             let tools_json = serde_json::to_string_pretty(&req.tools).unwrap_or_default();
             let last_msgs: Vec<_> = messages.iter().rev().take(2).collect();
             let msgs_json = serde_json::to_string_pretty(&last_msgs).unwrap_or_default();
             tracing::error!(
-                status = %resp.status(),
+                status = %status,
                 body_len = serde_json::to_string(&body).unwrap_or_default().len(),
                 tool_count = req.tools.len(),
                 "API 400 — tools:\n{}\nlast_msgs:\n{}",
                 tools_json,
                 msgs_json
             );
-            anyhow::bail!(
-                "API error {}: {}",
-                resp.status(),
-                resp.text().await.unwrap_or_default()
-            );
+            let text = resp.text().await.unwrap_or_default();
+            return Err(RetryableError::from_status(
+                status.as_u16(),
+                retry_after,
+                anyhow::anyhow!("API error {status}: {text}"),
+            ));
         }
 
-        let body_text = resp.text().await?;
+        let body_text = resp
+            .text()
+            .await
+            .map_err(|e| RetryableError::transport(anyhow::Error::new(e)))?;
         let json: serde_json::Value = serde_json::from_str(&body_text).map_err(|e| {
-            anyhow::anyhow!(
-                "API parse error: {}, body: {}",
-                e,
-                truncate(&body_text, 500)
-            )
+            anyhow::anyhow!("API parse error: {e}, body: {}", truncate(&body_text, 500))
         })?;
         let choice = &json["choices"][0]["message"];
 

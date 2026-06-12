@@ -741,10 +741,32 @@ impl Orchestrator {
         let _ = registry.register(Arc::new(crate::builtin_tools::WebSearchTool));
         let _ = registry.register(Arc::new(crate::builtin_tools::WebFetchTool));
 
-        // System-level info and diagnostics tools
-        let _ = registry.register(Arc::new(crate::builtin_tools::SystemInfoTool));
-        let _ = registry.register(Arc::new(crate::builtin_tools::TokenUsageTool));
-        let _ = registry.register(Arc::new(crate::builtin_tools::MemorySearchTool));
+        // System-level info and diagnostics tools.
+        // These hold clones of the orchestrator's shared state so they report
+        // and query live data (active model, sandbox, memory store) at call time.
+        // Constructed here (ahead of `Self { .. }`) so the same Arcs can be both
+        // injected into the tools and stored on the struct — mirroring the
+        // `cron_scheduler` pattern below.
+        let memory_store: Arc<RwLock<Option<Box<dyn crate::MemoryStore>>>> =
+            Arc::new(RwLock::new(None));
+        let model_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::ModelConfig>>> =
+            Arc::new(RwLock::new(std::collections::HashMap::new()));
+        let active_model_name: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
+        let sandbox_config: Arc<RwLock<loom_types::config::SandboxConfig>> =
+            Arc::new(RwLock::new(loom_types::config::SandboxConfig::default()));
+
+        let _ = registry.register(Arc::new(crate::builtin_tools::SystemInfoTool {
+            active_model_name: active_model_name.clone(),
+            model_configs: model_configs.clone(),
+            sandbox_config: sandbox_config.clone(),
+            data_dir: data_dir.clone(),
+        }));
+        let _ = registry.register(Arc::new(crate::builtin_tools::TokenUsageTool {
+            memory_store: memory_store.clone(),
+        }));
+        let _ = registry.register(Arc::new(crate::builtin_tools::MemorySearchTool {
+            memory_store: memory_store.clone(),
+        }));
 
         // ScheduleReminder — AI can decide when to call, for creating/managing timed reminders
         let cron_scheduler: Arc<RwLock<Option<Arc<CronScheduler>>>> = Arc::new(RwLock::new(None));
@@ -783,13 +805,13 @@ impl Orchestrator {
             skill_state,
             slash_router,
             persona_context: Arc::new(RwLock::new(String::new())),
-            memory_store: Arc::new(RwLock::new(None)),
+            memory_store,
             agent_configs: Arc::new(RwLock::new(std::collections::HashMap::from([(
                 "default".to_string(),
                 loom_types::AgentConfig::default(),
             )]))),
-            model_configs: Arc::new(RwLock::new(std::collections::HashMap::new())),
-            active_model_name: Arc::new(RwLock::new(None)),
+            model_configs,
+            active_model_name,
             model_switch_lock: tokio::sync::Mutex::new(()),
             hook_registry,
             key_store: Arc::new(RwLock::new(HashMap::new())),
@@ -797,7 +819,7 @@ impl Orchestrator {
             data_dir,
             default_max_iterations: Arc::new(RwLock::new(30)),
             default_max_prompt_budget: Arc::new(RwLock::new(0)),
-            sandbox_config: Arc::new(RwLock::new(loom_types::config::SandboxConfig::default())),
+            sandbox_config,
             extraction_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
             consolidation_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
             extraction_count: Arc::new(AtomicU64::new(0)),

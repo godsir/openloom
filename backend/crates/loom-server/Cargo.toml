@@ -29,3 +29,9 @@ zip = "2"
 urlencoding = "2"
 dirs = "6"
 base64 = { workspace = true }
+# Root declares keyring with default-features = false and NO backend, so a
+# platform backend feature must be enabled here or it links nothing usable.
+# windows-native (Windows Credential Manager), apple-native (macOS Keychain),
+# sync-secret-service (Linux Secret Service via dbus). Each is gated behind a
+# target-specific optional dep, so only the relevant backend activates per OS.
+keyring = { workspace = true, features = ["windows-native", "apple-native", "sync-secret-service"] }

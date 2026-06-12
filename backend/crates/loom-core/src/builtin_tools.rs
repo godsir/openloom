@@ -1212,7 +1212,16 @@ fn find_walk(dir: &Path, pat: &str, depth: usize, max_depth: usize, max_results:
 // SystemInfo — report session configuration
 // ============================================================================
 
-pub struct SystemInfoTool;
+/// Reports the agent's real runtime configuration: active model + provider,
+/// sandbox/permission state, workspace, data directory, and OS. Holds clones of
+/// the orchestrator's shared config so the values reflect the live session.
+pub struct SystemInfoTool {
+    pub active_model_name: std::sync::Arc<tokio::sync::RwLock<Option<String>>>,
+    pub model_configs:
+        std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, loom_types::ModelConfig>>>,
+    pub sandbox_config: std::sync::Arc<tokio::sync::RwLock<loom_types::config::SandboxConfig>>,
+    pub data_dir: std::path::PathBuf,
+}
 
 #[async_trait]
 impl AgentTool for SystemInfoTool {
@@ -1237,25 +1246,81 @@ impl AgentTool for SystemInfoTool {
 
     async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, context: &ToolContext) -> Result<ToolResult> {
         let query = arguments["query"].as_str().unwrap_or("all");
+
+        // Resolve the active model line from live config.
+        let model_line = {
+            let active = self.active_model_name.read().await.clone();
+            match active {
+                Some(name) => {
+                    let configs = self.model_configs.read().await;
+                    match configs.get(&name) {
+                        Some(cfg) => {
+                            let provider = cfg.backend.name();
+                            let underlying = cfg.model.as_deref().unwrap_or(name.as_str());
+                            format!(
+                                "Model: {name} (provider: {provider}, model id: {underlying}, context window: {} tokens)",
+                                cfg.context_size
+                            )
+                        }
+                        None => format!("Model: {name} (provider: unknown — no matching config)"),
+                    }
+                }
+                None => "Model: none active (configure a model first)".to_string(),
+            }
+        };
+
+        // Resolve the permission/sandbox line from live sandbox config.
+        let perm_line = {
+            let sb = self.sandbox_config.read().await;
+            if sb.enabled {
+                let scope = if sb.workspace_only { "workspace-only" } else { "open" };
+                format!(
+                    "Permissions: sandbox ENABLED ({scope}); {} extra allowed path(s), {} denied path(s); .loom data access {}",
+                    sb.allowed_paths.len(),
+                    sb.denied_paths.len(),
+                    if sb.allow_loom_data { "permitted" } else { "blocked" }
+                )
+            } else {
+                "Permissions: sandbox DISABLED (filesystem and shell access unrestricted)".to_string()
+            }
+        };
+
+        let workspace_line = match context.workspace_path {
+            Some(ref ws) => format!("Workspace: {ws}"),
+            None => "Workspace: not set".to_string(),
+        };
+        let data_dir_line = format!("Data dir: {}", self.data_dir.display());
+        let os_line = format!("OS: {} ({})", std::env::consts::OS, std::env::consts::ARCH);
+
         let mut info = String::new();
         match query {
             "all" => {
-                if let Some(ref ws) = context.workspace_path { info.push_str(&format!("Workspace: {}\n", ws)); }
-                else { info.push_str("Workspace: not set\n"); }
-                info.push_str("Model: (check configuration)\n");
-                info.push_str("Permissions: (check sandbox/security config)\n");
+                info.push_str(&workspace_line);
+                info.push('\n');
+                info.push_str(&data_dir_line);
+                info.push('\n');
+                info.push_str(&os_line);
+                info.push('\n');
+                info.push_str(&model_line);
+                info.push('\n');
+                info.push_str(&perm_line);
+                info.push('\n');
                 info.push_str("Skills: use 'use_skill' tool to list available skills\n");
-                info.push_str("MCP: (check mcp_list)\n");
+                info.push_str("MCP: use 'mcp_list' tool to list connected MCP servers\n");
             }
             "workspace" => {
-                if let Some(ref ws) = context.workspace_path { info.push_str(&format!("Workspace: {}\n", ws)); }
-                else { info.push_str("Workspace: not set\n"); }
+                info.push_str(&workspace_line);
+                info.push('\n');
+                info.push_str(&data_dir_line);
+                info.push('\n');
+                info.push_str(&os_line);
+                info.push('\n');
             }
-            "model" => { info.push_str("Model: (check configuration)\n"); }
-            "permissions" => { info.push_str("Permissions: (check sandbox/security config)\n"); }
+            "model" => { info.push_str(&model_line); info.push('\n'); }
+            "permissions" => { info.push_str(&perm_line); info.push('\n'); }
             "skills" => { info.push_str("Skills: use 'use_skill' tool to list available skills\n"); }
-            "mcp" => { info.push_str("MCP: (check mcp_list)\n"); }
-            _ => { info = format!("Unknown query '{}'. Valid: model, permissions, workspace, skills, mcp, all", query); }
+            "mcp" => { info.push_str("MCP: use 'mcp_list' tool to list connected MCP servers\n"); }
+            _ => { info = format!("Unknown query '{query}'. Valid: model, permissions, workspace, skills, mcp, all"); }
         }
         Ok(ToolResult { content: info, is_error: false, structured_content: None })
     }
@@ -1266,7 +1331,13 @@ impl AgentTool for SystemInfoTool {
 // TokenUsage — check token budget
 // ============================================================================
 
-pub struct TokenUsageTool;
+/// Reports real token-usage statistics. Holds a clone of the orchestrator's
+/// memory store, which owns the `token_usage` table, and aggregates totals via
+/// `get_token_summary`. When no store is wired, it honestly reports that usage
+/// tracking is unavailable in this build.
+pub struct TokenUsageTool {
+    pub memory_store: std::sync::Arc<tokio::sync::RwLock<Option<Box<dyn crate::MemoryStore>>>>,
+}
 
 #[async_trait]
 impl AgentTool for TokenUsageTool {
@@ -1284,7 +1355,61 @@ impl AgentTool for TokenUsageTool {
     fn supports_parallel(&self) -> bool { true }
 
     async fn execute(&self, _arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, _context: &ToolContext) -> Result<ToolResult> {
-        Ok(ToolResult { content: "Token tracking is internal. Monitor your context window size and iteration count. If your responses get truncated or you approach the max_iterations limit, summarize progress and ask the user to continue.".into(), is_error: false, structured_content: None })
+        let guard = self.memory_store.read().await;
+        let Some(store) = guard.as_ref() else {
+            return Ok(ToolResult {
+                content: "Token usage tracking is not available in this build (no stats store configured). Monitor your context window and iteration count manually.".into(),
+                is_error: false,
+                structured_content: None,
+            });
+        };
+
+        // Aggregate over an all-time window. created_at is an ISO datetime string,
+        // so these bounds capture every recorded turn.
+        let summary = match store.get_token_summary("0000-01-01", "9999-12-31").await {
+            Ok(s) => s,
+            Err(e) => {
+                return Ok(ToolResult {
+                    content: format!("Failed to read token usage: {e}"),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        };
+
+        let prompt = summary["total_prompt_tokens"].as_i64().unwrap_or(0);
+        let completion = summary["total_completion_tokens"].as_i64().unwrap_or(0);
+        let cached = summary["total_cached_tokens"].as_i64().unwrap_or(0);
+        let requests = summary["total_requests"].as_i64().unwrap_or(0);
+        let cache_hit = summary["cache_hit_rate"].as_f64().unwrap_or(0.0);
+        let avg_latency = summary["avg_latency_ms"].as_f64().unwrap_or(0.0);
+        let total = prompt + completion;
+
+        if requests == 0 {
+            return Ok(ToolResult {
+                content: "No token usage recorded yet for this installation.".into(),
+                is_error: false,
+                structured_content: Some(summary.clone()),
+            });
+        }
+
+        let mut out = format!(
+            "Token usage (all-time):\n- Total: {total} tokens ({prompt} prompt + {completion} completion)\n- Cached: {cached} tokens (cache hit rate {cache_hit:.1}%)\n- Requests: {requests} (avg latency {avg_latency:.0} ms)\n"
+        );
+        if let Some(by_model) = summary["by_model"].as_array()
+            && !by_model.is_empty()
+        {
+            out.push_str("By model:\n");
+            for m in by_model {
+                let name = m["model"].as_str().unwrap_or("(unknown)");
+                let p = m["prompt"].as_i64().unwrap_or(0);
+                let c = m["completion"].as_i64().unwrap_or(0);
+                let r = m["requests"].as_i64().unwrap_or(0);
+                out.push_str(&format!("- {name}: {} tokens over {r} requests\n", p + c));
+            }
+        }
+
+        Ok(ToolResult { content: out, is_error: false, structured_content: Some(summary) })
     }
     fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
 }
@@ -1293,7 +1418,13 @@ impl AgentTool for TokenUsageTool {
 // MemorySearch — query knowledge graph
 // ============================================================================
 
-pub struct MemorySearchTool;
+/// Searches the agent's knowledge graph. Holds a clone of the orchestrator's
+/// memory store so the tool can run a real entity/KG search at execution time.
+/// When no store is wired (e.g. memory disabled), the tool reports that memory
+/// is unavailable rather than a fake "pending" message.
+pub struct MemorySearchTool {
+    pub memory_store: std::sync::Arc<tokio::sync::RwLock<Option<Box<dyn crate::MemoryStore>>>>,
+}
 
 #[async_trait]
 impl AgentTool for MemorySearchTool {
@@ -1320,7 +1451,69 @@ impl AgentTool for MemorySearchTool {
     async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, _context: &ToolContext) -> Result<ToolResult> {
         let query = arguments["query"].as_str().unwrap_or("");
         if query.is_empty() { return Ok(ToolResult { content: "No query provided.".into(), is_error: true, structured_content: None }); }
-        Ok(ToolResult { content: format!("Knowledge graph search for '{}': KG integration is pending. The system automatically injects relevant context into each turn. For now, rely on the auto-injected context and conversation history for recall.", query), is_error: false, structured_content: None })
+        let max_results = arguments["max_results"].as_u64().unwrap_or(5).clamp(1, 50) as usize;
+
+        let guard = self.memory_store.read().await;
+        let Some(store) = guard.as_ref() else {
+            return Ok(ToolResult {
+                content: "Memory not available: no knowledge graph store is configured for this session.".into(),
+                is_error: false,
+                structured_content: None,
+            });
+        };
+
+        // Cross-session knowledge search over the KG: (name, entity_type, description, confidence).
+        let hits = match store.search_knowledge(query, max_results).await {
+            Ok(h) => h,
+            Err(e) => {
+                return Ok(ToolResult {
+                    content: format!("Knowledge graph search failed: {e}"),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        };
+
+        if hits.is_empty() {
+            return Ok(ToolResult {
+                content: format!("No knowledge-graph entries found for '{query}'."),
+                is_error: false,
+                structured_content: None,
+            });
+        }
+
+        // Enrich with relationship context for the matched entities (best-effort).
+        let names: Vec<&str> = hits.iter().map(|(name, _, _, _)| name.as_str()).collect();
+        let kg_context = store
+            .query_kg_context(&names, max_results, "global")
+            .await
+            .unwrap_or_default();
+
+        let mut out = format!("Knowledge graph results for '{query}':\n");
+        for (name, entity_type, description, confidence) in &hits {
+            let desc = if description.is_empty() { "(no description)" } else { description.as_str() };
+            out.push_str(&format!(
+                "- {name} [{entity_type}] (confidence {confidence:.2}): {desc}\n"
+            ));
+        }
+        if !kg_context.trim().is_empty() {
+            out.push_str("\nRelated context:\n");
+            out.push_str(kg_context.trim());
+            out.push('\n');
+        }
+
+        let structured = serde_json::json!({
+            "query": query,
+            "entities": hits.iter().map(|(name, entity_type, description, confidence)| serde_json::json!({
+                "name": name,
+                "type": entity_type,
+                "description": description,
+                "confidence": confidence,
+            })).collect::<Vec<_>>(),
+            "context": kg_context,
+        });
+
+        Ok(ToolResult { content: out, is_error: false, structured_content: Some(structured) })
     }
     fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
 }

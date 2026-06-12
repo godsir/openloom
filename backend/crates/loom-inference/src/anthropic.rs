@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 
 use crate::cache::{CacheStatus, PrefixCache};
 use crate::engine::CloudClient;
+use crate::engine::{RetryableError, parse_retry_after};
 
 pub struct AnthropicClient {
     api_key: String,
@@ -58,22 +59,37 @@ impl AnthropicClient {
     ) -> Result<CompletionResponse> {
         let mut last_err = None;
         for attempt in 0..=retries {
-            if attempt > 0 {
-                let delay = 2u64.pow(attempt as u32) * 500;
-                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-            }
             match self.try_complete(req).await {
                 Ok(resp) => return Ok(resp),
                 Err(e) => {
-                    tracing::warn!(attempt, error = %e, "Anthropic API call failed");
+                    tracing::warn!(
+                        attempt,
+                        status = ?e.status,
+                        retryable = e.is_retryable(),
+                        error = %e.source,
+                        "Anthropic API call failed"
+                    );
+                    if !e.is_retryable() || attempt == retries {
+                        // Permanent failure (e.g. 401/400) or attempts exhausted:
+                        // surface immediately instead of burning more retries.
+                        return Err(e.into());
+                    }
+                    // Honor Retry-After (seconds) when the server provided one
+                    // (typically on 429); otherwise fall back to exponential backoff.
+                    let delay = e.retry_after.unwrap_or_else(|| {
+                        std::time::Duration::from_millis(2u64.pow((attempt + 1) as u32) * 500)
+                    });
                     last_err = Some(e);
+                    tokio::time::sleep(delay).await;
                 }
             }
         }
-        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no completion attempts were made")))
+        Err(last_err
+            .map(anyhow::Error::from)
+            .unwrap_or_else(|| anyhow::anyhow!("no completion attempts were made")))
     }
 
-    async fn try_complete(&self, req: &CompletionRequest) -> Result<CompletionResponse> {
+    async fn try_complete(&self, req: &CompletionRequest) -> Result<CompletionResponse, RetryableError> {
         let eff = req.effective_messages();
         let digest = self.pending_digest.lock().unwrap().clone();
         let (cache_status, _, reasons) = self.prefix_cache.check_digest(&digest);
@@ -137,19 +153,27 @@ impl AnthropicClient {
             .header("anthropic-version", "2023-06-01")
             .json(&body)
             .send()
-            .await?;
+            .await
+            .map_err(|e| RetryableError::transport(anyhow::Error::new(e)))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
+            let retry_after = parse_retry_after(resp.headers());
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("Anthropic API error {} {}: {}", status, url, text);
+            return Err(RetryableError::from_status(
+                status.as_u16(),
+                retry_after,
+                anyhow::anyhow!("Anthropic API error {status} {url}: {text}"),
+            ));
         }
 
-        let body_text = resp.text().await?;
+        let body_text = resp
+            .text()
+            .await
+            .map_err(|e| RetryableError::transport(anyhow::Error::new(e)))?;
         let json: serde_json::Value = serde_json::from_str(&body_text).map_err(|e| {
             anyhow::anyhow!(
-                "Anthropic response parse error: {}, body: {}",
-                e,
+                "Anthropic response parse error: {e}, body: {}",
                 truncate(&body_text, 500)
             )
         })?;
