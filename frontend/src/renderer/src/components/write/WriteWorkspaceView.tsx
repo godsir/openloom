@@ -3,6 +3,7 @@ import { useStore } from '../../stores'
 import { useLocale } from '../../i18n'
 import { IconFilePlus, IconFileText, IconEdit, IconTrash, IconSend, IconFolderOpen, IconPlus, IconSparkles, IconExternalLink } from '../../utils/icons'
 import { renderMarkdown } from '../../utils/markdown'
+import { sanitizeHtml } from '../../utils/markdown-sanitizer'
 import Select from '../shared/Select'
 import styles from './WriteWorkspaceView.module.css'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
@@ -323,7 +324,7 @@ export const WriteWorkspaceView: React.FC = () => {
 
   if (appMode !== 'write') return null
 
-  const previewHtml = previewMode !== 'source' && fileContent ? renderMarkdown(fileContent) : ''
+  const previewHtml = previewMode !== 'source' && fileContent ? sanitizeHtml(renderMarkdown(fileContent)) : ''
   const editorPlaceholder = activeFilePath ? t('write.startWriting') : t('write.selectOrNewFile')
 
   return (

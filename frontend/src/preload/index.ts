@@ -18,21 +18,21 @@ export interface LoomApi {
   checkForUpdates: () => Promise<void>
   downloadUpdate: () => Promise<void>
   installUpdate: () => void
-  onUpdateAvailable: (cb: (info: unknown) => void) => void
-  onUpdateNotAvailable: (cb: () => void) => void
-  onUpdateDownloadProgress: (cb: (progress: { percent: number; bytesPerSecond: number; transferred: number; total: number }) => void) => void
-  onUpdateDownloaded: (cb: () => void) => void
-  onUpdateError: (cb: (msg: string) => void) => void
+  onUpdateAvailable: (cb: (info: unknown) => void) => () => void
+  onUpdateNotAvailable: (cb: () => void) => () => void
+  onUpdateDownloadProgress: (cb: (progress: { percent: number; bytesPerSecond: number; transferred: number; total: number }) => void) => () => void
+  onUpdateDownloaded: (cb: () => void) => () => void
+  onUpdateError: (cb: (msg: string) => void) => () => void
   getLoomDir: () => Promise<string>
   togglePet: (on: boolean) => Promise<boolean>
   resizePet: (spriteSize: number) => void
   listPets: () => Promise<PetMeta[]>
   restartEngine: () => Promise<number>
-  onEngineStateChanged: (cb: (payload: { state: string; port: number | null }) => void) => void
+  onEngineStateChanged: (cb: (payload: { state: string; port: number | null }) => void) => () => void
   /** Model config files changed on disk — renderer should refresh via model.list. */
-  onModelConfigChanged: (cb: () => void) => void
+  onModelConfigChanged: (cb: () => void) => () => void
   /** Navigate to a route (triggered from tray menu). */
-  onNavigate: (cb: (route: string) => void) => void
+  onNavigate: (cb: (route: string) => void) => () => void
   /** Workspace file write methods */
   readWorkspaceImage: (filePath: string, workspaceRoot: string) => Promise<{ok: boolean; dataUrl?: string; mimeType?: string; message?: string}>
   copyWriteDocumentAsRichText: (filePath: string, workspaceRoot: string, content: string) => Promise<{ok: boolean; message?: string}>
@@ -76,21 +76,51 @@ contextBridge.exposeInMainWorld('loom', {
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
-  onUpdateAvailable: (cb: (info: unknown) => void) => ipcRenderer.on('update-available', (_e, info) => cb(info)),
-  onUpdateNotAvailable: (cb: () => void) => ipcRenderer.on('update-not-available', () => cb()),
-  onUpdateDownloadProgress: (cb) => ipcRenderer.on('update-download-progress', (_e, progress) => cb(progress)),
-  onUpdateDownloaded: (cb: () => void) => ipcRenderer.on('update-downloaded', () => cb()),
-  onUpdateError: (cb: (msg: string) => void) => ipcRenderer.on('update-error', (_e, msg: string) => cb(msg)),
+  onUpdateAvailable: (cb: (info: unknown) => void) => {
+    const fn = (_e: unknown, info: unknown): void => cb(info)
+    ipcRenderer.on('update-available', fn)
+    return () => { ipcRenderer.removeListener('update-available', fn) }
+  },
+  onUpdateNotAvailable: (cb: () => void) => {
+    const fn = (): void => cb()
+    ipcRenderer.on('update-not-available', fn)
+    return () => { ipcRenderer.removeListener('update-not-available', fn) }
+  },
+  onUpdateDownloadProgress: (cb: (progress: { percent: number; bytesPerSecond: number; transferred: number; total: number }) => void) => {
+    const fn = (_e: unknown, progress: { percent: number; bytesPerSecond: number; transferred: number; total: number }): void => cb(progress)
+    ipcRenderer.on('update-download-progress', fn)
+    return () => { ipcRenderer.removeListener('update-download-progress', fn) }
+  },
+  onUpdateDownloaded: (cb: () => void) => {
+    const fn = (): void => cb()
+    ipcRenderer.on('update-downloaded', fn)
+    return () => { ipcRenderer.removeListener('update-downloaded', fn) }
+  },
+  onUpdateError: (cb: (msg: string) => void) => {
+    const fn = (_e: unknown, msg: string): void => cb(msg)
+    ipcRenderer.on('update-error', fn)
+    return () => { ipcRenderer.removeListener('update-error', fn) }
+  },
   getLoomDir: () => ipcRenderer.invoke('get-loom-dir'),
   togglePet: (on: boolean) => ipcRenderer.invoke('pet:toggle', on),
   resizePet: (spriteSize: number) => ipcRenderer.send('pet:resize', spriteSize),
   listPets: () => ipcRenderer.invoke('pets:list'),
   restartEngine: () => ipcRenderer.invoke('engine:restart'),
-  onEngineStateChanged: (cb) => ipcRenderer.on('engine:state-changed', (_e, payload) => cb(payload)),
-  onModelConfigChanged: (cb: () => void) => ipcRenderer.on('model-config-changed', () => cb()),
+  onEngineStateChanged: (cb: (payload: { state: string; port: number | null }) => void) => {
+    const fn = (_e: unknown, payload: { state: string; port: number | null }): void => cb(payload)
+    ipcRenderer.on('engine:state-changed', fn)
+    return () => { ipcRenderer.removeListener('engine:state-changed', fn) }
+  },
+  onModelConfigChanged: (cb: () => void) => {
+    const fn = (): void => cb()
+    ipcRenderer.on('model-config-changed', fn)
+    return () => { ipcRenderer.removeListener('model-config-changed', fn) }
+  },
   /** Navigate to a route (triggered from tray menu). */
   onNavigate: (cb: (route: string) => void) => {
-    ipcRenderer.on('navigate', (_e, route: string) => cb(route))
+    const fn = (_e: unknown, route: string): void => cb(route)
+    ipcRenderer.on('navigate', fn)
+    return () => { ipcRenderer.removeListener('navigate', fn) }
   },
   readWorkspaceImage: (filePath: string, workspaceRoot: string) => ipcRenderer.invoke('write:read-image', { filePath, workspaceRoot }),
   copyWriteDocumentAsRichText: (filePath: string, workspaceRoot: string, content: string) => ipcRenderer.invoke('write:copy-rich-text', { filePath, workspaceRoot, content }),

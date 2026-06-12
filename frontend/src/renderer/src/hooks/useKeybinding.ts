@@ -11,9 +11,12 @@ export function useKeybinding(
   handler: (e: KeyboardEvent) => void,
   deps: unknown[] = [],
 ): void {
-  const keySet = new Set(Array.isArray(keys) ? keys : [keys])
+  // Stable string identity for `keys` so the effect doesn't re-subscribe every
+  // render (a fresh array/Set reference would otherwise change deps each time).
+  const keyId = Array.isArray(keys) ? keys.join('|') : keys
 
   useEffect(() => {
+    const keySet = new Set(Array.isArray(keys) ? keys : [keys])
     const onKeyDown = (e: KeyboardEvent) => {
       const parts: string[] = []
       if (e.ctrlKey || e.metaKey) parts.push('ctrl')
@@ -32,5 +35,6 @@ export function useKeybinding(
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [keySet, ...deps])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keyId, ...deps])
 }

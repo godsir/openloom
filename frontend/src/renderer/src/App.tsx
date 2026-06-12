@@ -122,39 +122,42 @@ export default function App() {
 
   // Global update IPC listeners (registered once on mount)
   useEffect(() => {
-    window.loom.onUpdateAvailable((info: any) => {
+    const disposers: Array<() => void> = []
+    disposers.push(window.loom.onUpdateAvailable((info: any) => {
       useStore.getState().onAutoUpdateAvailable(info?.version ?? null, info?.releaseNotes ?? null)
-    })
-    window.loom.onUpdateNotAvailable(() => {
+    }))
+    disposers.push(window.loom.onUpdateNotAvailable(() => {
       useStore.getState().onAutoUpdateNotAvailable()
-    })
-    window.loom.onUpdateDownloadProgress((p) => {
+    }))
+    disposers.push(window.loom.onUpdateDownloadProgress((p) => {
       useStore.getState().onAutoDownloadProgress(p)
-    })
-    window.loom.onUpdateDownloaded(() => {
+    }))
+    disposers.push(window.loom.onUpdateDownloaded(() => {
       useStore.getState().onAutoUpdateDownloaded()
-    })
-    window.loom.onUpdateError((msg: string) => {
+    }))
+    disposers.push(window.loom.onUpdateError((msg: string) => {
       useStore.getState().onAutoUpdateError(msg)
-    })
+    }))
 
     // Listen for engine state changes from main process
-    window.loom.onEngineStateChanged((payload) => {
+    disposers.push(window.loom.onEngineStateChanged((payload) => {
       useStore.getState().setEngineState(payload.state as 'running' | 'stopped' | 'starting')
       if (payload.state === 'running' && payload.port != null) {
         useStore.getState().setPort(payload.port)
       }
-    })
+    }))
     // Hot-reload model config when config directory files change on disk
-    window.loom.onModelConfigChanged(() => {
+    disposers.push(window.loom.onModelConfigChanged(() => {
       handleModelsChanged()
-    })
+    }))
     // Navigate from tray menu
-    window.loom.onNavigate((route: string) => {
+    disposers.push(window.loom.onNavigate((route: string) => {
       if (route === '/settings') {
         useStore.getState().setAppMode('settings')
       }
-    })
+    }))
+
+    return () => { for (const dispose of disposers) dispose() }
   }, [])
 
   // Global keyboard shortcuts via KeybindingRegistry
