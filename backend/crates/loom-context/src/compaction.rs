@@ -215,15 +215,18 @@ fn apply_heuristic_compaction(
 
 /// Check if text contains signal markers that prevent truncation.
 fn has_signal_markers(text: &str) -> bool {
+    // Only genuine error/diagnostic markers count as "signal" worth preserving
+    // verbatim. The previous `'/' && '.'` / `:\\` path heuristics matched almost
+    // any output containing a path, URL or version string ("v1.0"), so nearly
+    // all tool output was treated as signal and truncation became a no-op.
     let lower = text.to_lowercase();
     lower.contains("error:")
         || lower.contains("error]")
         || lower.contains("failed")
         || lower.contains("panic")
-        || text.contains("Error:")
-        // File path signals — preserve results mentioning files
-        || text.contains('/') && text.contains('.')
-        || text.contains(":\\")
+        || lower.contains("exception")
+        || lower.contains("traceback")
+        || lower.contains("warning:")
 }
 
 /// Replace base64 data URIs with a compact placeholder.
