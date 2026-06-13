@@ -35,6 +35,18 @@ impl MemoryDb {
             "../../../../migrations/memory/V3__memory_quality_log.sql"
         ))?;
 
+        // Runtime index (NOT a migration): evaluate_memory_quality() filters
+        // memory_quality_log by `created_at >= datetime(?,'unixepoch')` over a
+        // lookback window. created_at is TEXT in canonical `datetime('now')`
+        // format (YYYY-MM-DD HH:MM:SS, UTC), and datetime(?,'unixepoch') yields
+        // the identical format, so the string comparison is chronologically
+        // correct. This index lets that range scan use the index instead of a
+        // full table scan. IF NOT EXISTS keeps it idempotent across opens.
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_memory_quality_created
+             ON memory_quality_log(created_at);",
+        )?;
+
         // V4: Layered memory architecture (L0-L3).
         // Idempotent: ALTER TABLE ADD COLUMN errors on repeat runs, so check first.
         // Checks BOTH kg_nodes and cognitions individually — V4 adds layer to both tables.
@@ -146,13 +158,57 @@ impl MemoryDb {
         // --- kg_nodes_fts sync triggers ---
         // V1 creates a standalone FTS5 table (no content= option). We need a
         // content-sync table so triggers that reference old.id/new.id work correctly.
-        // Always rebuild on open — the cost is a single INSERT-SELECT which is
-        // negligible compared to the migration overhead.
+        //
+        // Rebuilding the FTS index (DROP + CREATE + INSERT…SELECT) reindexes the
+        // entire corpus, which is wasteful on every open. Gate it on an actual
+        // need: rebuild only when the table is missing, has the wrong schema
+        // (e.g. a stale standalone V1 table without content='kg_nodes'), or has
+        // drifted out of sync (row count != kg_nodes). Otherwise the persisted
+        // index plus the IF NOT EXISTS triggers below keep it correct.
+        // Inspect the existing kg_nodes_fts definition. V1 creates a *standalone*
+        // FTS5 table (no content= option); the content-sync triggers below use
+        // external-content syntax (INSERT … VALUES('delete', …)), which only
+        // works against a table declared with content='kg_nodes'. The `_config`
+        // shadow table exists for BOTH kinds, so it cannot distinguish them —
+        // instead read the stored DDL and require the external-content option.
+        let fts_sql: Option<String> = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='kg_nodes_fts'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+        let fts_schema_ok: bool = fts_sql
+            .as_deref()
+            .is_some_and(|sql| sql.contains("content=") && sql.contains("kg_nodes"));
+
+        // Row-count drift check (only meaningful when the schema is usable).
+        let fts_in_sync: bool = if fts_schema_ok {
+            let node_count: i64 =
+                conn.query_row("SELECT COUNT(*) FROM kg_nodes", [], |row| row.get(0))?;
+            // A bare COUNT(*) on an external-content FTS5 table can error if the
+            // index is corrupt; fall back to "needs rebuild" on any failure.
+            let fts_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM kg_nodes_fts", [], |row| row.get(0))
+                .unwrap_or(-1);
+            fts_count == node_count
+        } else {
+            false
+        };
+
+        if !fts_in_sync {
+            conn.execute_batch(
+                "DROP TABLE IF EXISTS kg_nodes_fts;
+                 CREATE VIRTUAL TABLE kg_nodes_fts USING fts5(name, description, content='kg_nodes', content_rowid='id');
+                 INSERT INTO kg_nodes_fts(rowid, name, description) SELECT id, name, description FROM kg_nodes;",
+            )?;
+        }
+
+        // Sync triggers persist across opens (IF NOT EXISTS), so creating them
+        // unconditionally is cheap and guarantees they exist even when the table
+        // rebuild above was skipped.
         conn.execute_batch(
-            "DROP TABLE IF EXISTS kg_nodes_fts;
-             CREATE VIRTUAL TABLE kg_nodes_fts USING fts5(name, description, content='kg_nodes', content_rowid='id');
-             INSERT INTO kg_nodes_fts(rowid, name, description) SELECT id, name, description FROM kg_nodes;
-             CREATE TRIGGER IF NOT EXISTS kg_nodes_fts_ai AFTER INSERT ON kg_nodes BEGIN
+            "CREATE TRIGGER IF NOT EXISTS kg_nodes_fts_ai AFTER INSERT ON kg_nodes BEGIN
                  INSERT INTO kg_nodes_fts(rowid, name, description)
                  VALUES (new.id, new.name, new.description);
              END;

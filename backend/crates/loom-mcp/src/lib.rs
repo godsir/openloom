@@ -512,6 +512,50 @@ impl McpClient {
     }
 
     async fn call_tool_inner(&self, server: &str, tool: &str, args: Value) -> Result<Value> {
+        // HTTP transport: snapshot the cheap-to-clone request pieces (client is
+        // Arc-backed, url/headers are owned) and reserve a request id under a
+        // BRIEF read lock, then release it and perform the network call with no
+        // lock held — so a slow HTTP tool never blocks other servers.
+        //
+        // Stdio transport shares one pair of stdin/stdout pipes per server, so
+        // requests genuinely must be serialized: that path keeps the write lock
+        // for the duration of the call (handled below).
+        let http_req = {
+            let servers = self.servers.read().await;
+            let entry = servers
+                .get(server)
+                .ok_or_else(|| anyhow!("MCP server '{server}' not found"))?;
+            match entry {
+                ServerConn::Http {
+                    url,
+                    headers,
+                    client,
+                    next_id,
+                    ..
+                } => {
+                    let id = next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    Some((client.clone(), url.clone(), headers.clone(), id))
+                }
+                // Stdio is handled under the write lock below.
+                ServerConn::Stdio { .. } => None,
+            }
+        };
+
+        if let Some((client, url, headers, id)) = http_req {
+            let r = mcp_http_post(
+                &client,
+                &url,
+                &headers,
+                &serde_json::json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":tool,"arguments":args}}),
+            )
+            .await?;
+            return match r.get("error") {
+                Some(e) => Err(anyhow!("MCP: {}", e["message"].as_str().unwrap_or("?"))),
+                None => Ok(r["result"].clone()),
+            };
+        }
+
+        // Stdio transport: serialize on the shared pipes via the write lock.
         let mut servers = self.servers.write().await;
         let entry = servers
             .get_mut(server)
@@ -524,6 +568,10 @@ impl McpClient {
                 )
                 .await
             }
+            // HTTP is normally handled above without holding the lock. We only
+            // reach here if the server entry changed transport between the two
+            // lock acquisitions (a rare reconnect race). Handle it correctly
+            // rather than panicking; the lock is held only for this one call.
             ServerConn::Http {
                 url,
                 headers,

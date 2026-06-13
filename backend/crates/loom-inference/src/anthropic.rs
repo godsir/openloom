@@ -14,6 +14,23 @@ use crate::cache::{CacheStatus, PrefixCache};
 use crate::engine::CloudClient;
 use crate::engine::{RetryableError, parse_retry_after};
 
+/// Conservative fallback for `max_tokens` when the request leaves it unset
+/// (`req.max_tokens == 0`).
+///
+/// The previous hardcoded default (128000) exceeds the output cap of many
+/// Claude models, producing a hard 400 that then burns retries. 16384 fits
+/// comfortably within every current Claude model's `max_tokens` ceiling while
+/// still allowing long completions. Callers that know the model's true cap
+/// (via `ModelConfig::effective_max_output()`) should pass it in `max_tokens`;
+/// `AnthropicClient` does not carry the full `ModelConfig`, so it cannot derive
+/// the exact cap itself.
+const DEFAULT_MAX_TOKENS: u64 = 16384;
+
+/// Extra `max_tokens` headroom reserved for the visible response when extended
+/// thinking is enabled and the caller's `max_tokens` would not exceed the
+/// thinking budget (Anthropic requires `max_tokens > budget_tokens`).
+const DEFAULT_RESPONSE_HEADROOM: u64 = 4096;
+
 pub struct AnthropicClient {
     api_key: String,
     model: String,
@@ -50,6 +67,42 @@ impl AnthropicClient {
 
     fn messages_url(&self) -> String {
         format!("{}/v1/messages", self.base_url)
+    }
+
+    /// Resolve the request body's `max_tokens` and (optional) `thinking` block.
+    ///
+    /// `req.max_tokens == 0` means "unset"; we fall back to a conservative
+    /// [`DEFAULT_MAX_TOKENS`] rather than a large hardcoded value that exceeds
+    /// many models' output caps (which the API rejects with a 400). The
+    /// `AnthropicClient` does not hold the full `ModelConfig`, so it cannot read
+    /// `ModelConfig::effective_max_output()`; callers that know the model's cap
+    /// should pass it via `req.max_tokens`.
+    ///
+    /// When extended thinking is enabled, Anthropic requires
+    /// `budget_tokens >= 1024` and `max_tokens > budget_tokens` (the thinking
+    /// budget is drawn from the `max_tokens` allotment). We floor the budget at
+    /// 1024 and then raise `max_tokens` above it if necessary, so the request is
+    /// never self-contradictory.
+    fn resolve_tokens(&self, req: &CompletionRequest) -> (u64, Option<serde_json::Value>) {
+        let mut max_tokens: u64 = if req.max_tokens > 0 {
+            req.max_tokens as u64
+        } else {
+            DEFAULT_MAX_TOKENS
+        };
+        let thinking = match req.thinking_budget {
+            Some(budget) if budget > 0 => {
+                // Anthropic requires budget_tokens >= 1024.
+                let budget = (budget as u64).max(1024);
+                // max_tokens must leave room beyond the thinking budget.
+                if max_tokens <= budget {
+                    max_tokens = budget + DEFAULT_RESPONSE_HEADROOM;
+                }
+                Some(serde_json::json!({"type": "enabled", "budget_tokens": budget}))
+            }
+            // budget == 0 or None → extended thinking off.
+            _ => None,
+        };
+        (max_tokens, thinking)
     }
 
     async fn complete_with_retry(
@@ -106,11 +159,7 @@ impl AnthropicClient {
             }
         }
         let (system_prompt, messages) = self.lower_messages(&eff, &digest, cache_status);
-        let max_tokens = if req.max_tokens > 0 {
-            req.max_tokens
-        } else {
-            128000
-        };
+        let (max_tokens, thinking) = self.resolve_tokens(req);
         let mut body = serde_json::json!({"model": self.model, "max_tokens": max_tokens, "temperature": req.temperature, "messages": messages});
         if !req.stop.is_empty() {
             body["stop_sequences"] = serde_json::json!(req.stop);
@@ -137,12 +186,8 @@ impl AnthropicClient {
                 }
             }
         }
-        if let Some(budget) = req.thinking_budget {
-            if budget > 0 {
-                // Anthropic requires budget_tokens >= 1024
-                body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget.max(1024)});
-            }
-            // budget == 0 → don't set thinking at all (extended thinking off)
+        if let Some(thinking) = thinking {
+            body["thinking"] = thinking;
         }
 
         let url = self.messages_url();
@@ -184,6 +229,18 @@ impl AnthropicClient {
         let cached_tokens = json["usage"]["cache_read_input_tokens"]
             .as_u64()
             .unwrap_or(0) as usize;
+
+        // Surface truncation: Anthropic sets stop_reason="max_tokens" when the
+        // response hit the token ceiling (vs "end_turn"/"tool_use"). There is
+        // no response field for it, so warn — a truncated reply otherwise looks
+        // complete to callers.
+        if matches!(json["stop_reason"].as_str(), Some("max_tokens")) {
+            tracing::warn!(
+                model = %self.model,
+                completion_tokens,
+                "completion truncated: stop_reason=max_tokens"
+            );
+        }
 
         Ok(CompletionResponse {
             text,
@@ -344,21 +401,13 @@ impl CloudClient for AnthropicClient {
             CacheStatus::ColdStart => tracing::info!("KV cache cold start (stream)"),
         }
         let (system_prompt, messages) = self.lower_messages(&eff, &digest, cache_status);
-        let max_tokens = if req.max_tokens > 0 {
-            req.max_tokens
-        } else {
-            128000
-        };
+        let (max_tokens, thinking) = self.resolve_tokens(&req);
         let mut body = serde_json::json!({"model": self.model, "max_tokens": max_tokens, "temperature": req.temperature, "messages": messages, "stream": true});
         if let Some(sys) = system_prompt {
             body["system"] = sys.clone();
         }
-        if let Some(budget) = req.thinking_budget {
-            if budget > 0 {
-                // Anthropic requires budget_tokens >= 1024
-                body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget.max(1024)});
-            }
-            // budget == 0 → don't set thinking at all (extended thinking off)
+        if let Some(thinking) = thinking {
+            body["thinking"] = thinking;
         }
         if !req.tools.is_empty() {
             let tools: Vec<serde_json::Value> = req.tools.iter().map(|t| {
@@ -470,21 +519,13 @@ impl CloudClient for AnthropicClient {
             CacheStatus::ColdStart => tracing::info!("KV cache cold start (stream)"),
         }
         let (system_prompt, messages) = self.lower_messages(&eff, &digest, cache_status);
-        let max_tokens = if req.max_tokens > 0 {
-            req.max_tokens
-        } else {
-            128000
-        };
+        let (max_tokens, thinking) = self.resolve_tokens(&req);
         let mut body = serde_json::json!({"model": self.model, "max_tokens": max_tokens, "temperature": req.temperature, "messages": messages, "stream": true});
         if let Some(sys) = system_prompt {
             body["system"] = sys.clone();
         }
-        if let Some(budget) = req.thinking_budget {
-            if budget > 0 {
-                // Anthropic requires budget_tokens >= 1024
-                body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget.max(1024)});
-            }
-            // budget == 0 → don't set thinking at all (extended thinking off)
+        if let Some(thinking) = thinking {
+            body["thinking"] = thinking;
         }
         if !req.tools.is_empty() {
             let tools: Vec<serde_json::Value> = req.tools.iter().map(|t| {

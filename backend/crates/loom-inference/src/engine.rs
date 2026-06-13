@@ -178,6 +178,16 @@ impl InferenceEngine {
         let choice = &json["choices"][0]["message"];
         let raw_text = choice["content"].as_str().unwrap_or("").to_string();
 
+        // Surface truncation: finish_reason="length" means the local model hit
+        // the token ceiling. CompletionResponse has no field for it, so warn.
+        if matches!(json["choices"][0]["finish_reason"].as_str(), Some("length")) {
+            tracing::warn!(
+                model = %self.model,
+                completion_tokens = json["usage"]["completion_tokens"].as_u64().unwrap_or(0),
+                "completion truncated: finish_reason=length (hit max_tokens)"
+            );
+        }
+
         let tool_calls: Vec<ToolCall> = choice["tool_calls"]
             .as_array()
             .map(|arr| {

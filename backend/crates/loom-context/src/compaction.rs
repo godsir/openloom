@@ -377,12 +377,14 @@ fn extract_tool_call_args(msg: &Message) -> Option<String> {
 // - Return the summary text for injection into a System message
 
 /// Count estimated tokens in a message slice using tiktoken.
+///
+/// Delegates to [`crate::message_tokens`] per message so the estimate counts the
+/// full serialized content — tool-call arguments, tool results, and thinking
+/// blocks — not just concatenated `Text` parts. This keeps compaction's
+/// accounting consistent with `ContextAssembler::truncate_history` and prevents
+/// undercounting tool-heavy history.
 fn count_tokens(messages: &[Message], bpe: &CoreBPE) -> usize {
-    messages
-        .iter()
-        .map(|m| m.text_content())
-        .map(|t| bpe.encode_with_special_tokens(&t).len())
-        .sum()
+    messages.iter().map(|m| crate::message_tokens(m, bpe)).sum()
 }
 
 #[cfg(test)]

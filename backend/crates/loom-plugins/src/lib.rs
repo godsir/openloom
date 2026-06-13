@@ -10,6 +10,16 @@ pub mod hooks;
 use anyhow::Result;
 use serde::Deserialize;
 
+/// Returns `true` if `path` is itself a symbolic link.
+///
+/// Uses `symlink_metadata` (lstat semantics) so the link is inspected rather
+/// than its target. Used to keep plugin discovery from following symlinks out
+/// of the scan root. On any I/O error we conservatively treat the entry as a
+/// symlink (skip it) rather than risk traversing it.
+fn is_symlink(path: &std::path::Path) -> bool {
+    std::fs::symlink_metadata(path).map_or(true, |m| m.file_type().is_symlink())
+}
+
 /// Parsed plugin manifest. Supports both our plugin.toml format and
 /// Claude Code / OpenClaw manifest.json formats.
 #[derive(Debug, Default)]
@@ -148,16 +158,36 @@ impl PluginManager {
             }
         }
 
-        // Deduplicate: keep only the first occurrence of each (name, source) pair.
-        // Multiple marketplace subdirs can each contain the same plugin name —
-        // we prefer the shallowest (first discovered) copy.
-        let mut seen: std::collections::HashSet<(String, String)> =
+        // Deduplicate on the plugin's canonical filesystem path so the SAME
+        // directory discovered via two search roots collapses to one entry,
+        // while two DISTINCT plugins that merely share a name are both kept
+        // (the previous (name, source) key silently dropped the second one —
+        // including when name defaulted to the dir name). Falls back to the
+        // raw path if canonicalization fails. A true name collision (two
+        // different paths, same name) is surfaced via a warning instead of a
+        // silent drop. Entries are already in deterministic order from sorting
+        // in `scan_dir_depth`, so the retained copy is stable.
+        let mut seen_paths: std::collections::HashSet<std::path::PathBuf> =
             std::collections::HashSet::new();
+        let mut seen_names: std::collections::HashMap<String, std::path::PathBuf> =
+            std::collections::HashMap::new();
         self.plugins.retain(|p| {
-            // Normalise source: strip "-auto" suffix for dedup purposes so that
-            // a SKILL.md-only plugin doesn't duplicate a manifest plugin with the same name.
-            let src = p.source.trim_end_matches("-auto").to_string();
-            seen.insert((p.manifest.name.clone(), src))
+            let canon = std::fs::canonicalize(&p.path).unwrap_or_else(|_| p.path.clone());
+            if !seen_paths.insert(canon.clone()) {
+                // Exact same plugin directory reached via multiple roots — drop the dup.
+                return false;
+            }
+            if let Some(existing) = seen_names.get(&p.manifest.name) {
+                tracing::warn!(
+                    name = %p.manifest.name,
+                    kept = %existing.display(),
+                    duplicate = %p.path.display(),
+                    "two distinct plugins share a name; keeping both (discovery order is deterministic)"
+                );
+            } else {
+                seen_names.insert(p.manifest.name.clone(), p.path.clone());
+            }
+            true
         });
 
         Ok(self.plugins.len())
@@ -175,12 +205,30 @@ impl PluginManager {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
-        for entry in entries.flatten() {
-            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+        // `read_dir` order is filesystem-dependent (nondeterministic). Sort the
+        // child directory paths so discovery — and therefore which copy of a
+        // same-named plugin wins dedup below — is stable across runs/platforms.
+        let mut child_dirs: Vec<std::path::PathBuf> = entries
+            .flatten()
+            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+            .map(|e| e.path())
+            .collect();
+        child_dirs.sort();
+        for plugin_dir in child_dirs {
+            // SECURITY: never follow symlinked directories. `read_dir` +
+            // `file_type().is_dir()` reports the symlink *target* type, so a
+            // symlink inside a plugin root pointing at `/`, `~`, etc. would let
+            // the scanner descend outside the plugin tree and load arbitrary
+            // manifests / SKILL.md (with MCP servers & hook commands). Use
+            // `symlink_metadata` (lstat — does not follow) to detect and skip
+            // the link itself. The depth cap bounds work but not escape.
+            if is_symlink(&plugin_dir) {
                 continue;
             }
-            let plugin_dir = entry.path();
-            let dir_name = entry.file_name().to_string_lossy().to_string();
+            let dir_name = plugin_dir
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
 
             // Skip meta dirs
             let name = dir_name.to_lowercase();
@@ -372,6 +420,8 @@ impl PluginManager {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 if entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                    // SECURITY: don't traverse symlinked subdirs (see scan_dir_depth).
+                    && !is_symlink(&entry.path())
                     && entry.path().join("SKILL.md").exists()
                 {
                     return true;

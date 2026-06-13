@@ -182,6 +182,19 @@ impl OpenAIClient {
         })?;
         let choice = &json["choices"][0]["message"];
 
+        // Surface truncation: when the model stops because it hit the token
+        // ceiling, `finish_reason` is "length" (vs "stop"/"tool_calls"). The
+        // response carries no field for this, so at least warn — otherwise a
+        // silently truncated completion looks like a complete one.
+        let finish_reason = json["choices"][0]["finish_reason"].as_str();
+        if matches!(finish_reason, Some("length")) {
+            tracing::warn!(
+                model = %self.model,
+                completion_tokens = json["usage"]["completion_tokens"].as_u64().unwrap_or(0),
+                "completion truncated: finish_reason=length (hit max_tokens)"
+            );
+        }
+
         // content can be a string or an array of parts (GPT-4o multimodal output)
         let (raw_text, images) = if choice["content"].is_array() {
             let parts = choice["content"].as_array().unwrap();
@@ -729,6 +742,35 @@ fn truncate(s: &str, n: usize) -> &str {
 }
 
 pub fn create_cloud_client(config: &ModelConfig, api_key: &str) -> Result<Box<dyn CloudClient>> {
+    // Custom gateways must declare an explicit base_url — there is no sensible
+    // default. Falling through to https://api.openai.com (the old behaviour)
+    // silently sent Custom traffic to OpenAI. Validate before defaulting below.
+    if matches!(config.backend, ModelBackend::Custom) {
+        let configured = config
+            .base_url
+            .as_deref()
+            .map(|u| u.trim())
+            .unwrap_or("");
+        if configured.is_empty() {
+            anyhow::bail!(
+                "base_url is required for the Custom backend (no default endpoint); set it to your gateway URL"
+            );
+        }
+        // A remote Custom gateway almost always needs an API key; only a
+        // localhost gateway may legitimately run keyless. Error early with a
+        // clear message instead of sending an unauthenticated remote request.
+        let is_localhost = configured.contains("localhost")
+            || configured.contains("127.0.0.1")
+            || configured.contains("[::1]")
+            || configured.contains("0.0.0.0");
+        if api_key.is_empty() && !is_localhost {
+            anyhow::bail!(
+                "API key not set for Custom backend at {configured} (env: {:?}); \
+                 a remote gateway requires a key — use a localhost base_url to run keyless",
+                config.api_key_env
+            );
+        }
+    }
     if api_key.is_empty()
         && matches!(
             config.backend,
@@ -762,6 +804,8 @@ pub fn create_cloud_client(config: &ModelConfig, api_key: &str) -> Result<Box<dy
             ModelBackend::DeepSeek => "https://api.deepseek.com/v1".into(),
             ModelBackend::LmStudio => "http://localhost:1234/v1".into(),
             ModelBackend::Ollama => "http://localhost:11434/v1".into(),
+            // Custom is guarded above (base_url required), so this arm only
+            // covers plain OpenAI.
             _ => "https://api.openai.com".into(),
         });
     match config.backend {
@@ -872,6 +916,22 @@ pub fn parse_inline_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
     //   {"tool": "file_write", "arguments": {"path": "/foo"}}
     //   {"name": "file_write", "arguments": {"path": "/foo"}}
     //   {"tool": "request_tools", "arguments": {"tools": ["file_system"]}}
+    //
+    // To avoid mangling prose, an embedded `{...}` is only treated as a tool
+    // call when it carries the *structural* signature of one: a name key
+    // (`tool`/`name`/`function.name`) AND a sibling `arguments`/`parameters`
+    // object. A bare `{"name": "..."}` with no args is accepted only when it is
+    // the *entire* trimmed message (a model whose sole output is the call) —
+    // never when it appears mid-sentence, so e.g. a model explaining
+    // `{"name": "foo"}` to the user keeps its text intact.
+    let whole_msg_is_single_object = {
+        let t = cleaned.trim();
+        t.starts_with('{')
+            && t.ends_with('}')
+            && serde_json::from_str::<serde_json::Value>(t)
+                .map(|v| v.is_object())
+                .unwrap_or(false)
+    };
     let mut search_from = 0;
     while let Some(brace_start) = cleaned[search_from..].find('{') {
         let abs_start = search_from + brace_start;
@@ -919,16 +979,26 @@ pub fn parse_inline_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
                 .as_str()
                 .or_else(|| val["name"].as_str())
                 .or_else(|| val["function"]["name"].as_str());
+            // A real inline tool call carries arguments alongside the name.
+            // `parameters` is also accepted (some local models emit it).
+            let args_sibling = val
+                .get("arguments")
+                .or_else(|| val.get("parameters"))
+                .or_else(|| val["function"].get("arguments"))
+                .or_else(|| val["function"].get("parameters"));
+            let has_args = args_sibling.is_some_and(|a| a.is_object() || a.is_array());
+            // Only extract when it is structurally a tool call (name + args
+            // sibling) OR the whole message is just this one JSON object.
+            // This prevents deleting prose that happens to contain a `{...}`
+            // with a `name`/`tool` key (e.g. JSON the model is explaining).
+            let looks_like_call = has_args || whole_msg_is_single_object;
             if let Some(name) = name
+                && looks_like_call
                 && !name.is_empty()
                 && name.len() < 64
                 && name.chars().all(|c| c.is_alphanumeric() || c == '_')
             {
-                let arguments = val
-                    .get("arguments")
-                    .or_else(|| val["function"].get("arguments"))
-                    .cloned()
-                    .unwrap_or(serde_json::json!({}));
+                let arguments = args_sibling.cloned().unwrap_or(serde_json::json!({}));
                 tool_calls.push(ToolCall {
                     id: format!("inline-{}", tool_calls.len()),
                     name: name.to_string(),
@@ -1170,4 +1240,112 @@ fn regex_find(text: &str, _pattern: &str) -> Option<(usize, usize)> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn custom_config(base_url: Option<&str>) -> ModelConfig {
+        ModelConfig {
+            model: Some("my-model".into()),
+            backend: ModelBackend::Custom,
+            base_url: base_url.map(str::to_string),
+            ..ModelConfig::default()
+        }
+    }
+
+    // ── Fix #1: inline tool-call parser must not mangle prose ──
+
+    #[test]
+    fn inline_real_tool_call_with_args_is_extracted() {
+        let (cleaned, calls) =
+            parse_inline_tool_calls(r#"{"tool": "shell", "arguments": {"command": "ls"}}"#);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(calls[0].arguments["command"], "ls");
+        assert!(cleaned.is_empty());
+    }
+
+    #[test]
+    fn inline_call_embedded_in_text_with_args_is_extracted() {
+        // A call with the structural signature (name + args) is still pulled
+        // out even mid-text.
+        let (_cleaned, calls) = parse_inline_tool_calls(
+            r#"Sure, running it: {"name": "shell", "arguments": {"command": "ls"}} done."#,
+        );
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
+    }
+
+    #[test]
+    fn prose_explaining_json_is_not_mangled() {
+        // The model is explaining a JSON shape to the user. There is no
+        // `arguments` sibling and it is not the whole message, so it must NOT
+        // be extracted or deleted.
+        let input = r#"To set your name, send {"name": "Alice"} in the body."#;
+        let (cleaned, calls) = parse_inline_tool_calls(input);
+        assert!(calls.is_empty(), "prose JSON should not become a tool call");
+        assert_eq!(cleaned, input, "prose text must be preserved verbatim");
+    }
+
+    #[test]
+    fn bare_name_object_as_whole_message_still_works() {
+        // A model whose entire output is a single {"name": ...} object (no
+        // args) is still treated as a tool call.
+        let (cleaned, calls) = parse_inline_tool_calls(r#"{"name": "list_files"}"#);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "list_files");
+        assert!(cleaned.is_empty());
+    }
+
+    #[test]
+    fn prose_mentioning_name_key_midsentence_is_preserved() {
+        // Single short {"tool": "x"} object embedded in a sentence — no args,
+        // not the whole message → preserved.
+        let input = r#"Use {"tool": "x"} as a placeholder, then fill it in."#;
+        let (cleaned, calls) = parse_inline_tool_calls(input);
+        assert!(calls.is_empty());
+        assert_eq!(cleaned, input);
+    }
+
+    // ── Fix #2: Custom backend guards ──
+
+    #[test]
+    fn custom_backend_requires_base_url() {
+        let err = create_cloud_client(&custom_config(None), "sk-key")
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("base_url is required"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn custom_backend_remote_requires_key() {
+        let err =
+            create_cloud_client(&custom_config(Some("https://gateway.example.com/v1")), "")
+                .map(|_| ())
+                .unwrap_err();
+        assert!(
+            err.to_string().contains("API key not set"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn custom_backend_localhost_allows_empty_key() {
+        let ok = create_cloud_client(&custom_config(Some("http://localhost:8000/v1")), "")
+            .map(|_| ());
+        assert!(ok.is_ok(), "localhost Custom should allow keyless: {ok:?}");
+    }
+
+    #[test]
+    fn custom_backend_remote_with_key_ok() {
+        let ok =
+            create_cloud_client(&custom_config(Some("https://gateway.example.com/v1")), "sk-key")
+                .map(|_| ());
+        assert!(ok.is_ok(), "remote Custom with key should build: {ok:?}");
+    }
 }

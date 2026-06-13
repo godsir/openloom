@@ -300,10 +300,15 @@ impl<'a> MemoryConsolidator<'a> {
     // Phase 1 — Duplicate kg_node consolidation
     // ========================================================================
 
-    /// Find `kg_nodes` that share the same `name` but have different `id`
-    /// values, merge them into the highest-confidence survivor, reroute edges,
-    /// migrate aliases, clean orphan evidence entries, and delete the
+    /// Find `kg_nodes` that share the same `(name, scope)` but have different
+    /// `id` values, merge them into the highest-confidence survivor, reroute
+    /// edges, migrate aliases, clean orphan evidence entries, and delete the
     /// duplicates.
+    ///
+    /// Grouping is by `(name, scope)` — NOT `name` alone — to match
+    /// `GraphStore::upsert_node`'s identity (which upserts on `name AND scope`).
+    /// This prevents merging entities across scope boundaries (e.g. collapsing a
+    /// session-scoped node into a global one and leaking session data globally).
     ///
     /// Survivor selection: highest confidence → highest evidence_count →
     /// lowest id (deterministic tiebreaker).  Evidence counts are summed into
@@ -315,17 +320,23 @@ impl<'a> MemoryConsolidator<'a> {
         let mut edge_rerouted = 0usize;
         let mut errors: Vec<String> = Vec::new();
 
-        // Discover duplicate groups: same name, multiple ids
+        // Discover duplicate groups: same (name, scope), multiple ids.
+        // Grouping by scope as well as name keeps consolidation within a single
+        // scope, aligning with upsert_node's (name, scope) uniqueness.
         let groups = {
             let mut stmt = self.conn.prepare(
-                "SELECT name, GROUP_CONCAT(id) AS ids
+                "SELECT name, scope, GROUP_CONCAT(id) AS ids
                  FROM kg_nodes
-                 GROUP BY name
+                 GROUP BY name, scope
                  HAVING COUNT(*) > 1",
             )?;
-            let rows: Vec<(String, String)> = stmt
+            let rows: Vec<(String, String, String)> = stmt
                 .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
                 })?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
 
@@ -337,7 +348,7 @@ impl<'a> MemoryConsolidator<'a> {
 
         self.conn.execute_batch("BEGIN")?;
 
-        for (_name, ids_str) in &groups {
+        for (_name, _scope, ids_str) in &groups {
             let ids: Vec<i64> = ids_str
                 .split(',')
                 .filter_map(|s| s.trim().parse::<i64>().ok())
@@ -813,16 +824,17 @@ mod tests {
                 None,
             )
             .unwrap();
-        let id2 = store
-            .upsert_node(
-                "Rust",
-                "Technology",
-                "A systems language",
-                0.9,
-                "session_b",
-                None,
-            )
-            .unwrap();
+        // Same name AND scope as id1, but a different entity row. upsert_node
+        // dedups on (name, scope), so use a raw INSERT to force a true duplicate
+        // that consolidate_duplicates (which groups by (name, scope)) will merge.
+        conn.execute(
+            "INSERT INTO kg_nodes (name, entity_type, description, confidence,
+                                   evidence_count, first_seen, last_updated, scope)
+             VALUES ('Rust', 'Technology', 'A systems language', 0.9, 1, 0, 0, 'session_a')",
+            [],
+        )
+        .unwrap();
+        let id2 = conn.last_insert_rowid();
         assert_ne!(id1, id2);
 
         // Sanity: two rows
@@ -896,10 +908,43 @@ mod tests {
     }
 
     #[test]
+    fn test_consolidate_duplicates_does_not_merge_across_scopes() {
+        // Same name but different scopes must NOT be merged — upsert_node treats
+        // (name, scope) as the identity, so consolidation must respect scope
+        // boundaries (otherwise a session-scoped entity could leak into global).
+        let conn = setup_db();
+        let store = GraphStore::new(&conn);
+        store
+            .upsert_node("Shared", "Concept", "session view", 0.6, "session_a", None)
+            .unwrap();
+        store
+            .upsert_node("Shared", "Concept", "global view", 0.9, "global", None)
+            .unwrap();
+
+        let consolidator = MemoryConsolidator::new(&conn);
+        let report = consolidator.consolidate_duplicates().unwrap();
+
+        // Different scopes → no merge.
+        assert_eq!(report.merged_nodes, 0, "must not merge across scopes");
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+
+        // Both rows survive, each in its own scope.
+        let cnt: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM kg_nodes WHERE name = 'Shared'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cnt, 2, "both scoped rows must remain");
+    }
+
+    #[test]
     fn test_consolidate_aliases_migrated() {
         let conn = setup_db();
 
-        // Create two nodes with same name
+        // Create two nodes with same name AND same scope (consolidate_duplicates
+        // groups by (name, scope) — duplicates must share a scope to merge).
         conn.execute(
             "INSERT INTO kg_nodes (name, entity_type, description, confidence,
                                    evidence_count, first_seen, last_updated, scope)
@@ -911,7 +956,7 @@ mod tests {
         conn.execute(
             "INSERT INTO kg_nodes (name, entity_type, description, confidence,
                                    evidence_count, first_seen, last_updated, scope)
-             VALUES ('Dup', 'Concept', '', 0.9, 5, 0, 0, 'session_b')",
+             VALUES ('Dup', 'Concept', '', 0.9, 5, 0, 0, 'session_a')",
             [],
         )
         .unwrap();
@@ -1230,13 +1275,23 @@ mod tests {
         ensure_snapshot_table(&conn);
         let store = GraphStore::new(&conn);
 
-        // --- Duplicate node ---
-        store
-            .upsert_node("DupNode", "Concept", "desc1", 0.5, "session_a", None)
-            .unwrap();
-        store
-            .upsert_node("DupNode", "Concept", "desc2", 0.8, "session_b", None)
-            .unwrap();
+        // --- Duplicate node (same name AND scope so it merges) ---
+        // Raw INSERTs (not upsert_node, which would dedup on (name, scope) and
+        // update the existing row instead of creating a second one).
+        conn.execute(
+            "INSERT INTO kg_nodes (name, entity_type, description, confidence,
+                                   evidence_count, first_seen, last_updated, scope)
+             VALUES ('DupNode', 'Concept', 'desc1', 0.5, 1, 0, 0, 'session_a')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO kg_nodes (name, entity_type, description, confidence,
+                                   evidence_count, first_seen, last_updated, scope)
+             VALUES ('DupNode', 'Concept', 'desc2', 0.8, 1, 0, 0, 'session_a')",
+            [],
+        )
+        .unwrap();
 
         // --- Duplicate cognition ---
         conn.execute(

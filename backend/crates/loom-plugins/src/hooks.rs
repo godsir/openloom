@@ -269,6 +269,22 @@ impl HookConfig {
 /// Both variables are replaced with the provided plugin root directory path.
 /// This allows portable paths in hook command strings and prompt templates.
 ///
+/// # Security
+///
+/// Hook command strings come from an *installed* plugin's `hooks.json` and are
+/// **trusted-by-install**: the user opted into running this plugin's code, and
+/// the hook model intentionally executes shell commands. The marketplace
+/// validates entry/dir names upstream, but the plugin root path is still
+/// interpolated into a string later handed to `sh -c` / `cmd /C`.
+///
+/// As bounded hardening, the substituted path is POSIX-shell single-quoted so a
+/// directory name containing spaces or shell metacharacters cannot alter the
+/// command's structure (e.g. a `foo; rm -rf ~` segment stays a literal path
+/// component). Single-quoting concatenates correctly with following path
+/// segments under `sh` (`'<root>'/scripts/x.sh`). This is not a full sandbox —
+/// arbitrary command execution by a trusted plugin is inherent to hooks — it
+/// only prevents the *path* value from being misinterpreted by the shell.
+///
 /// # Example
 /// ```
 /// # use loom_plugins::hooks::expand_plugin_root;
@@ -276,14 +292,34 @@ impl HookConfig {
 ///     "bash ${CLAUDE_PLUGIN_ROOT}/scripts/check.sh",
 ///     "/home/user/.claude/plugins/my-plugin",
 /// );
-/// assert_eq!(result, "bash /home/user/.claude/plugins/my-plugin/scripts/check.sh");
+/// assert_eq!(result, "bash '/home/user/.claude/plugins/my-plugin'/scripts/check.sh");
 /// ```
 ///
 /// Also supports the loom-native `${LOOM_PLUGIN_ROOT}` alias.
 pub fn expand_plugin_root(s: &str, plugin_dir: &str) -> String {
-    s.replace("${CLAUDE_PLUGIN_ROOT}", plugin_dir)
-        .replace("${PLUGIN_ROOT}", plugin_dir)
-        .replace("${LOOM_PLUGIN_ROOT}", plugin_dir)
+    let quoted = shell_single_quote(plugin_dir);
+    s.replace("${CLAUDE_PLUGIN_ROOT}", &quoted)
+        .replace("${PLUGIN_ROOT}", &quoted)
+        .replace("${LOOM_PLUGIN_ROOT}", &quoted)
+}
+
+/// POSIX-shell single-quote a value so it is treated as a single literal token.
+///
+/// Wraps the value in `'...'` and rewrites each embedded `'` as `'\''` (close
+/// quote, escaped quote, reopen quote) — the standard way to embed a literal
+/// single quote inside a single-quoted shell word.
+fn shell_single_quote(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('\'');
+    for ch in value.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 // ============================================================================
@@ -335,19 +371,42 @@ mod tests {
             "bash ${CLAUDE_PLUGIN_ROOT}/scripts/test.sh arg1",
             "/home/plugins/my-plugin",
         );
-        assert_eq!(result, "bash /home/plugins/my-plugin/scripts/test.sh arg1");
+        // The substituted path is single-quoted; it concatenates with the
+        // following path segment under POSIX sh.
+        assert_eq!(
+            result,
+            "bash '/home/plugins/my-plugin'/scripts/test.sh arg1"
+        );
     }
 
     #[test]
     fn test_expand_plugin_root_both_vars() {
         let result = expand_plugin_root("${CLAUDE_PLUGIN_ROOT}/a && ${PLUGIN_ROOT}/b", "/p");
-        assert_eq!(result, "/p/a && /p/b");
+        assert_eq!(result, "'/p'/a && '/p'/b");
     }
 
     #[test]
     fn test_expand_plugin_root_no_var() {
         let result = expand_plugin_root("echo hello", "/p");
         assert_eq!(result, "echo hello");
+    }
+
+    #[test]
+    fn test_expand_plugin_root_quotes_metacharacters() {
+        // A plugin root containing shell metacharacters must stay a literal
+        // path component and not break out of the command.
+        let result = expand_plugin_root(
+            "bash ${PLUGIN_ROOT}/run.sh",
+            "/tmp/evil; rm -rf ~",
+        );
+        assert_eq!(result, "bash '/tmp/evil; rm -rf ~'/run.sh");
+    }
+
+    #[test]
+    fn test_expand_plugin_root_escapes_embedded_quote() {
+        // An embedded single quote is escaped via the '\'' idiom.
+        let result = expand_plugin_root("${PLUGIN_ROOT}/x", "/a'b");
+        assert_eq!(result, "'/a'\\''b'/x");
     }
 
     #[test]

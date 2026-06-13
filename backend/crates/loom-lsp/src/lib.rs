@@ -6,6 +6,7 @@
 use anyhow::{Context, Result, anyhow};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -17,6 +18,10 @@ use tokio::sync::RwLock;
 
 const MAX_BODY_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 const LSP_TIMEOUT_SECS: u64 = 30;
+/// Maximum number of documents kept open across all language servers. When the
+/// cap is exceeded the least-recently-used document is closed (`didClose`) so
+/// the corresponding server can release it. It is re-opened on next use.
+const MAX_OPEN_FILES: usize = 128;
 
 // ============================================================================
 // LSP Connection — single language server process
@@ -310,16 +315,79 @@ fn language_config(ext: &str) -> Option<(&'static str, &'static str, Vec<&'stati
 
 type ServerMap = HashMap<String, Arc<ServerEntry>>;
 
+/// Per-document state tracked while a file is open in a language server.
+struct OpenDoc {
+    /// Last content sent to the server (used to decide didOpen vs didChange).
+    content: String,
+    /// Language key (server map key) this document was opened against, so an
+    /// eviction can route `textDocument/didClose` to the right server.
+    lang_key: String,
+}
+
+/// Bounded LRU set of open documents shared across all language servers.
+///
+/// Keeps at most `MAX_OPEN_FILES` documents. Recency is tracked in `order`
+/// (front = least-recently-used, back = most-recently-used). Eviction is
+/// reported back to the caller, which performs the async `didClose` outside
+/// of any lock.
+#[derive(Default)]
+struct OpenFiles {
+    docs: HashMap<String, OpenDoc>,
+    order: VecDeque<String>,
+}
+
+impl OpenFiles {
+    /// Move `uri` to the most-recently-used position.
+    fn touch(&mut self, uri: &str) {
+        if let Some(pos) = self.order.iter().position(|u| u == uri) {
+            self.order.remove(pos);
+        }
+        self.order.push_back(uri.to_string());
+    }
+
+    /// Return the last content sent for `uri`, marking it most-recently-used.
+    fn get(&mut self, uri: &str) -> Option<String> {
+        let content = self.docs.get(uri).map(|d| d.content.clone())?;
+        self.touch(uri);
+        Some(content)
+    }
+
+    /// Record that `uri` was opened/updated against `lang_key` with `content`.
+    /// If this pushes the set past the cap, the least-recently-used document
+    /// (other than `uri`) is removed and returned as `(uri, lang_key)` so the
+    /// caller can send `textDocument/didClose` to its server.
+    fn insert(&mut self, uri: String, content: String, lang_key: String) -> Option<(String, String)> {
+        self.docs.insert(uri.clone(), OpenDoc { content, lang_key });
+        self.touch(&uri);
+
+        if self.docs.len() <= MAX_OPEN_FILES {
+            return None;
+        }
+        // Evict the least-recently-used entry from the front of the queue.
+        let victim_uri = self.order.pop_front()?;
+        let victim = self.docs.remove(&victim_uri)?;
+        Some((victim_uri, victim.lang_key))
+    }
+
+    /// Forget every document opened against `lang_key` (e.g. when its server is
+    /// shut down), so they are re-opened against a fresh server on next use.
+    fn purge_lang(&mut self, lang_key: &str) {
+        let docs = &mut self.docs;
+        docs.retain(|_, d| d.lang_key != lang_key);
+        self.order.retain(|u| docs.contains_key(u));
+    }
+}
+
 pub struct LspClient {
     servers: Arc<RwLock<ServerMap>>,
-    open_files: Arc<RwLock<HashMap<String, String>>>,
+    open_files: Arc<RwLock<OpenFiles>>,
 }
 
 impl LspClient {
     pub fn new() -> Self {
         Self {
             servers: Arc::new(RwLock::new(HashMap::new())),
-            open_files: Arc::new(RwLock::new(HashMap::new())),
+            open_files: Arc::new(RwLock::new(OpenFiles::default())),
         }
     }
 
@@ -444,7 +512,8 @@ impl LspClient {
         let entry = self.ensure_server(file_path).await?;
         let uri = file_uri(file_path);
 
-        let old_content = self.open_files.read().await.get(&uri).cloned();
+        // Brief lock: read prior content (also refreshes recency on a hit).
+        let old_content = self.open_files.write().await.get(&uri);
         let needs_open = old_content.is_none();
         let needs_change = old_content.as_deref() != Some(content);
 
@@ -481,13 +550,42 @@ impl LspClient {
         }
 
         if needs_open || needs_change {
-            self.open_files
-                .write()
-                .await
-                .insert(uri, content.to_string());
+            // Brief lock: record the new content and learn whether the LRU cap
+            // forced an eviction. The actual `didClose` happens below, outside
+            // the lock, so we never await while holding it.
+            let evicted = self.open_files.write().await.insert(
+                uri,
+                content.to_string(),
+                entry.language_id.clone(),
+            );
+
+            if let Some((evicted_uri, evicted_lang)) = evicted {
+                self.close_document(&evicted_uri, &evicted_lang).await;
+            }
         }
 
         Ok(entry)
+    }
+
+    /// Send `textDocument/didClose` for `uri` to the server identified by
+    /// `lang_key`, so an evicted document is released server-side. Best-effort:
+    /// failures (e.g. the server already gone) are logged and ignored, since the
+    /// document is re-opened on next use anyway.
+    async fn close_document(&self, uri: &str, lang_key: &str) {
+        let entry = self.servers.read().await.get(lang_key).cloned();
+        if let Some(entry) = entry {
+            let res = entry
+                .notify(
+                    "textDocument/didClose",
+                    &serde_json::json!({
+                        "textDocument": { "uri": uri }
+                    }),
+                )
+                .await;
+            if let Err(e) = res {
+                tracing::debug!(target: "lsp", %uri, lang = %lang_key, error = %e, "LSP: didClose on eviction failed");
+            }
+        }
     }
 
     // === Public API ===
@@ -638,6 +736,9 @@ impl LspClient {
             let _ = entry.request("shutdown", &serde_json::json!({})).await;
             let _ = entry.notify("exit", &serde_json::json!({})).await;
             drop(entry);
+            // Forget this server's open documents so they are re-opened against
+            // a fresh server instance on next use.
+            self.open_files.write().await.purge_lang(language);
             tracing::info!(%language, "LSP shutdown");
         }
         Ok(())
@@ -798,5 +899,79 @@ fn file_uri(file_path: &str) -> String {
         format!("file://{encoded}")
     } else {
         format!("file:///{encoded}")
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_files_evicts_least_recently_used() {
+        let mut of = OpenFiles::default();
+        // Fill exactly to the cap; no eviction yet.
+        for i in 0..MAX_OPEN_FILES {
+            let uri = format!("file:///f{i}");
+            assert!(of.insert(uri, "x".into(), "rust".into()).is_none());
+        }
+        assert_eq!(of.docs.len(), MAX_OPEN_FILES);
+
+        // One more insert pushes past the cap and evicts the front (f0, the LRU).
+        let evicted = of
+            .insert("file:///new".into(), "x".into(), "rust".into())
+            .expect("over-cap insert must evict");
+        assert_eq!(evicted.0, "file:///f0");
+        assert_eq!(evicted.1, "rust");
+        assert_eq!(of.docs.len(), MAX_OPEN_FILES);
+        assert!(!of.docs.contains_key("file:///f0"));
+        assert!(of.docs.contains_key("file:///new"));
+    }
+
+    #[test]
+    fn open_files_get_refreshes_recency() {
+        let mut of = OpenFiles::default();
+        for i in 0..MAX_OPEN_FILES {
+            of.insert(format!("file:///f{i}"), "x".into(), "rust".into());
+        }
+        // Touch f0 so it is no longer the LRU; f1 becomes the new front.
+        assert_eq!(of.get("file:///f0").as_deref(), Some("x"));
+
+        let evicted = of
+            .insert("file:///new".into(), "x".into(), "rust".into())
+            .expect("over-cap insert must evict");
+        assert_eq!(evicted.0, "file:///f1");
+        assert!(of.docs.contains_key("file:///f0"));
+    }
+
+    #[test]
+    fn open_files_insert_same_uri_updates_without_eviction() {
+        let mut of = OpenFiles::default();
+        for i in 0..MAX_OPEN_FILES {
+            of.insert(format!("file:///f{i}"), "x".into(), "rust".into());
+        }
+        // Re-inserting an existing uri updates content and recency but stays at
+        // the cap, so it must not evict anything.
+        let evicted = of.insert("file:///f5".into(), "y".into(), "rust".into());
+        assert!(evicted.is_none());
+        assert_eq!(of.docs.len(), MAX_OPEN_FILES);
+        assert_eq!(of.get("file:///f5").as_deref(), Some("y"));
+    }
+
+    #[test]
+    fn open_files_purge_lang_drops_only_matching_server() {
+        let mut of = OpenFiles::default();
+        of.insert("file:///a.rs".into(), "x".into(), "rust".into());
+        of.insert("file:///b.py".into(), "x".into(), "python".into());
+        of.insert("file:///c.rs".into(), "x".into(), "rust".into());
+
+        of.purge_lang("rust");
+
+        assert!(!of.docs.contains_key("file:///a.rs"));
+        assert!(!of.docs.contains_key("file:///c.rs"));
+        assert!(of.docs.contains_key("file:///b.py"));
+        // The recency queue is kept consistent with the docs map.
+        assert_eq!(of.order.len(), of.docs.len());
+        assert!(of.order.iter().all(|u| of.docs.contains_key(u)));
     }
 }

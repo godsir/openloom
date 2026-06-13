@@ -45,6 +45,13 @@ pub fn compute_health_score(report: &MemoryQualityReport) -> f64 {
 
 pub const DEFAULT_EMBEDDING_DIM: usize = 768;
 
+/// Maximum number of embedded nodes loaded into memory for the brute-force
+/// cosine scan in `GraphStore::search_similar`. When more embedded nodes than
+/// this exist, candidates are first ordered by recency/corroboration so the cap
+/// truncates deterministically (see `search_similar` docs). Raising this trades
+/// recall for per-query memory/CPU; a real fix is ANN/sqlite-vec indexing.
+pub const SEARCH_SIMILAR_CANDIDATE_CAP: usize = 5000;
+
 /// A row from a graph query.
 #[derive(Debug, Clone)]
 pub struct GraphRow {
@@ -1411,8 +1418,12 @@ impl<'a> GraphStore<'a> {
             let mut evaluated: i64 = 0;
 
             // Query only the lookback window.
-            // Use datetime(?1, 'unixepoch') to convert the epoch-seconds parameter
-            // to ISO-8601 text — avoids strftime() per-row and allows index use.
+            // created_at is canonical `datetime('now')` text (YYYY-MM-DD
+            // HH:MM:SS, UTC) — set via the column DEFAULT on insert (see
+            // insert_quality_log / V3 migration). datetime(?1,'unixepoch')
+            // produces the identical format, so this string comparison is
+            // chronologically correct, and the idx_memory_quality_created index
+            // (created in MemoryDb::open) lets the range scan use the index.
             let rows: Vec<(String, Option<String>)> = if lookback_days > 0 {
                 let mut stmt = self.conn.prepare(
                     "SELECT injected_entities, referenced_entities
@@ -1684,6 +1695,14 @@ impl<'a> GraphStore<'a> {
     ///
     /// Falls back to FTS5 text search when no nodes have embeddings or when
     /// `fallback_query` is provided and the vector search yields no results.
+    ///
+    /// # Candidate cap
+    /// This performs a brute-force cosine scan in Rust, so the candidate set is
+    /// capped at [`SEARCH_SIMILAR_CANDIDATE_CAP`] embedded nodes. The candidates
+    /// are ordered `last_accessed DESC, evidence_count DESC, id ASC` *before* the
+    /// cap, so when more than the cap exist the truncation is deterministic and
+    /// keeps the most recently-used / best-corroborated rows rather than an
+    /// arbitrary subset. (Full ANN / sqlite-vec indexing is out of scope here.)
     pub fn search_similar(
         &self,
         embedding: &[f32],
@@ -1698,11 +1717,17 @@ impl<'a> GraphStore<'a> {
             ""
         };
 
+        // Deterministic, relevance-biased ordering before the candidate cap so
+        // that, once more than the cap of embedded nodes exist, the retained
+        // subset is stable across calls and favours recently-accessed /
+        // well-corroborated entities instead of an arbitrary BLOB order.
+        // `last_accessed` is nullable; NULLs sort last under SQLite's default
+        // ASC NULLs-first → with DESC they sort first, so coalesce to 0.
         let sql = format!(
             "SELECT n.id, n.name, n.entity_type, n.description, n.confidence, n.scope, n.embedding
-             FROM kg_nodes n WHERE n.embedding IS NOT NULL {}
-             LIMIT 5000",
-            scope_clause
+             FROM kg_nodes n WHERE n.embedding IS NOT NULL {scope_clause}
+             ORDER BY COALESCE(n.last_accessed, 0) DESC, n.evidence_count DESC, n.id ASC
+             LIMIT {SEARCH_SIMILAR_CANDIDATE_CAP}"
         );
 
         let mut stmt = self.conn.prepare(&sql)?;

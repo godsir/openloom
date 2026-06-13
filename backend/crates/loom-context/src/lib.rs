@@ -49,8 +49,49 @@ pub struct PrefixDigest {
 pub fn bpe() -> &'static tiktoken_rs::CoreBPE {
     static BPE: OnceLock<tiktoken_rs::CoreBPE> = OnceLock::new();
     BPE.get_or_init(|| {
-        tiktoken_rs::cl100k_base().expect("tiktoken cl100k_base model should always load")
+        // `cl100k_base()` only fails if the embedded model data is corrupt, which
+        // cannot happen at runtime — but avoid `.expect()` per workspace lints.
+        match tiktoken_rs::cl100k_base() {
+            Ok(b) => b,
+            Err(e) => unreachable!("tiktoken cl100k_base model should always load: {e}"),
+        }
     })
+}
+
+/// Fixed per-message token overhead approximating the role/delimiter framing
+/// that chat APIs add around every message (e.g. `<|im_start|>role ... <|im_end|>`).
+const PER_MESSAGE_TOKEN_OVERHEAD: usize = 4;
+
+/// Estimate the token cost of a single message, counting **all** content parts —
+/// not just `Text`. Tool-call arguments, tool results, and thinking blocks all
+/// consume real budget on the wire, so they must be included or the estimate
+/// under-counts tool-heavy history (causing the assembled prompt to exceed the
+/// intended budget and compaction to undercount).
+///
+/// Uses the shared cl100k_base tokenizer plus a small fixed per-message overhead.
+pub fn message_tokens(msg: &Message, bpe: &tiktoken_rs::CoreBPE) -> usize {
+    use loom_types::ContentPart;
+    let mut tokens = PER_MESSAGE_TOKEN_OVERHEAD;
+    for part in &msg.content {
+        let text: std::borrow::Cow<'_, str> = match part {
+            ContentPart::Text { text } | ContentPart::Thinking { text } => {
+                std::borrow::Cow::Borrowed(text.as_str())
+            }
+            ContentPart::ToolResult { name, result, .. } => {
+                std::borrow::Cow::Owned(format!("{name}{result}"))
+            }
+            ContentPart::ToolCall {
+                name, arguments, ..
+            } => std::borrow::Cow::Owned(format!("{name}{arguments}")),
+            // Inline image bytes are elided during compaction and are not text;
+            // count only the (small) reference framing via the per-message overhead.
+            ContentPart::Image { media_type, .. } | ContentPart::ImageRef { media_type, .. } => {
+                std::borrow::Cow::Borrowed(media_type.as_str())
+            }
+        };
+        tokens += bpe.encode_with_special_tokens(&text).len();
+    }
+    tokens
 }
 
 /// Options for context assembly.
@@ -152,8 +193,10 @@ impl ContextAssembler {
             if msg.role == loom_types::Role::Tool {
                 continue;
             }
-            let text = msg.text_content();
-            let msg_tokens = bpe.encode_with_special_tokens(&text).len();
+            // Count the full serialized content (text + tool args/results +
+            // thinking) plus per-message overhead, so the budget reflects what
+            // is actually sent on the wire — not just concatenated Text parts.
+            let msg_tokens = message_tokens(msg, bpe);
             if token_count + msg_tokens > max_tokens && !included.is_empty() {
                 // Always keep at least the most recent (newest) message even if
                 // it alone exceeds the budget — otherwise the current turn loses
