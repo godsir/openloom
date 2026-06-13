@@ -278,18 +278,21 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
       }
     }
     set({ sessionAgentBindings: bindings } as any)
-    // Load workspace bindings for all sessions
+    // Load workspace bindings for all sessions in parallel (was serial — an
+    // N+1 await that ran one round-trip per session and made reconnects slow).
     const workspaces: Record<string, string> = {}
-    for (const s of mapped) {
-      try {
-        const result = await loomRpc<{ workspace: string | null }>('workspace.get', { session_id: s.path })
-        if (result.workspace) {
-          workspaces[s.path] = result.workspace
+    await Promise.all(
+      mapped.map(async (s) => {
+        try {
+          const result = await loomRpc<{ workspace: string | null }>('workspace.get', { session_id: s.path })
+          if (result.workspace) {
+            workspaces[s.path] = result.workspace
+          }
+        } catch {
+          // Ignore errors for individual sessions
         }
-      } catch {
-        // Ignore errors for individual sessions
-      }
-    }
+      }),
+    )
     // Also load the default workspace (no session_id)
     let defaultWorkspace: string | null = null
     try {

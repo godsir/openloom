@@ -169,7 +169,7 @@ export async function bootstrapApp(): Promise<() => void> {
   })
 
   // onWsReconnect fires on initial connect AND on every reconnect
-  onWsReconnect(async () => {
+  const unsubReconnect = onWsReconnect(async () => {
     await useStore.getState().loadSessions()
     // Load plugins into cache on startup / reconnect
     useStore.getState().loadPlugins().catch(() => {})
@@ -183,6 +183,9 @@ export async function bootstrapApp(): Promise<() => void> {
   await connectWebSocket(port)
   useStore.getState().setEngineState('running')
 
-  return unsub
+  return () => {
+    unsub()
+    unsubReconnect()
+  }
 }
 

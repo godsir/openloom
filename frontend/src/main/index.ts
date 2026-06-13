@@ -11,7 +11,9 @@ import { startConfigWatcher } from './config-watcher'
 // Windows tuning.
 if (process.platform === 'win32') {
   // Required for native Windows toast notifications (Notification API).
-  app.setAppUserModelId('com.openloom.desktop')
+  // Must match the electron-builder appId so toast grouping and update
+  // identity stay consistent with the installed app.
+  app.setAppUserModelId('com.openloom.app')
 
   // Keep timers running so streaming flushes stay smooth when the window
   // is in the background or partially occluded.

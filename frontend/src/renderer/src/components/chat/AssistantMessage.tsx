@@ -48,44 +48,83 @@ const AssistantMessage = memo(function AssistantMessage({
       </div>
 
       <div className={styles.content}>
-        {message.blocks.map((block, i) => {
-          switch (block.type) {
-            case 'vision_processing':
-              return <VisionProcessingBlock key={i} block={block} />
-            case 'thinking':
-              return <ThinkingBlock key={i} block={block} />
-            case 'skill':
-              return <SkillBlock key={i} block={block} />
-            case 'shell':
-              return <ShellBlock key={i} block={block} />
-            case 'tool_group':
-              return <ToolGroupBlock key={i} block={block} />
-            case 'text':
-              return <TextBlock key={i} block={block} />
-            case 'image': {
-              const src = (block.thumbnail as string) || (block.path as string)
-              return (
-                <div key={i} className={styles.imageBlock}>
-                  <img
-                    src={src}
-                    alt={(block.name as string) || 'image'}
-                    className={styles.imageBlockImg}
-                    onClick={() => {
-                      console.log('[lightbox] assistant img click, src len=', src?.length)
-                      if (src) openLightbox(src)
-                    }}
-                  />
-                </div>
-              )
+        {(() => {
+          // Derive a stable key per block so stateful blocks (Skill/Shell/
+          // Thinking — each holds local expanded/scroll state) are NOT remounted
+          // when block order/count shifts during streaming. Streaming shell/skill
+          // blocks carry a tool `id`; otherwise fall back to a type-derived key.
+          // A per-type occurrence counter disambiguates blocks that share an
+          // identity (e.g. multiple text blocks in hydrated history) so React
+          // keys stay unique.
+          const seen = new Map<string, number>()
+          const keyFor = (block: typeof message.blocks[number], i: number): string => {
+            let base: string
+            switch (block.type) {
+              case 'shell':
+                base = `shell:${(block.id as string) ?? i}`
+                break
+              case 'skill':
+                base = `skill:${(block.id as string) ?? i}`
+                break
+              case 'thinking':
+                base = 'thinking'
+                break
+              case 'text':
+                base = 'text'
+                break
+              case 'vision_processing':
+                base = `vision:${i}`
+                break
+              case 'image':
+                base = `image:${i}`
+                break
+              default:
+                base = `${block.type}:${i}`
             }
-            case 'file':
-              return <FileBlock key={i} block={block} />
-            case 'subagent':
-              return <SubagentCard key={i} block={block} />
-            default:
-              return null
+            const n = seen.get(base) ?? 0
+            seen.set(base, n + 1)
+            return n === 0 ? base : `${base}#${n}`
           }
-        })}
+          return message.blocks.map((block, i) => {
+            const key = keyFor(block, i)
+            switch (block.type) {
+              case 'vision_processing':
+                return <VisionProcessingBlock key={key} block={block} />
+              case 'thinking':
+                return <ThinkingBlock key={key} block={block} />
+              case 'skill':
+                return <SkillBlock key={key} block={block} />
+              case 'shell':
+                return <ShellBlock key={key} block={block} />
+              case 'tool_group':
+                return <ToolGroupBlock key={key} block={block} />
+              case 'text':
+                return <TextBlock key={key} block={block} />
+              case 'image': {
+                const src = (block.thumbnail as string) || (block.path as string)
+                return (
+                  <div key={key} className={styles.imageBlock}>
+                    <img
+                      src={src}
+                      alt={(block.name as string) || 'image'}
+                      className={styles.imageBlockImg}
+                      onClick={() => {
+                        console.log('[lightbox] assistant img click, src len=', src?.length)
+                        if (src) openLightbox(src)
+                      }}
+                    />
+                  </div>
+                )
+              }
+              case 'file':
+                return <FileBlock key={key} block={block} />
+              case 'subagent':
+                return <SubagentCard key={key} block={block} />
+              default:
+                return null
+            }
+          })
+        })()}
         {message.blocks.length === 0 && isStreamingActive && (
           <div className={styles.thinkingHint}>
             <span>{t('chat.thinking')}</span>

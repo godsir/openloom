@@ -1,14 +1,18 @@
-// Mermaid diagram renderer — lazy loads mermaid, deduplicates sources.
+// Mermaid diagram renderer — lazy loads mermaid, deduplicates per container.
 let mermaidPromise: Promise<unknown> | null = null
-const renderedSources = new Set<string>()
+// Track the last-rendered source per container element. Keyed by the element
+// (WeakMap) so entries are GC'd when the container is unmounted — a global
+// Set grew unbounded and also blocked re-render of the same source after a
+// remount (new element, same source → was incorrectly skipped).
+const lastRenderedByContainer = new WeakMap<HTMLElement, string>()
 
 export async function renderMermaidDiagram(
   container: HTMLElement,
   source: string,
 ): Promise<void> {
-  // Deduplicate
-  if (renderedSources.has(source)) return
-  renderedSources.add(source)
+  // Deduplicate per container: skip only if this element already shows this source.
+  if (lastRenderedByContainer.get(container) === source) return
+  lastRenderedByContainer.set(container, source)
 
   if (!mermaidPromise) {
     mermaidPromise = import('mermaid').then((m) => {
@@ -30,6 +34,8 @@ export async function renderMermaidDiagram(
     container.appendChild(diagram)
     await mermaid.run({ nodes: [diagram] })
   } catch {
+    // Allow a future attempt to retry rendering this source on this container.
+    lastRenderedByContainer.delete(container)
     container.textContent = ''
     const errEl = document.createElement('pre')
     errEl.className = 'text-red-400 text-xs'

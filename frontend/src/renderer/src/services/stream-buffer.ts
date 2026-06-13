@@ -267,6 +267,13 @@ class StreamBufferManager {
   }
 
   handleStreamEnd(sessionId: string): void {
+    // Guard re-entry: stream_end can fire from up to 3 sources for the same
+    // session (WS chat.stream_end, the chat.send finally, and a safety timer).
+    // The first call deletes the buffer below; subsequent callers must no-op,
+    // otherwise ensureBuffer recreates a fresh buffer and we re-fire
+    // removeStreamingSession + maybeAutoTitle (duplicate session.auto_title RPC
+    // and loadSessions).
+    if (!this.buffers.has(sessionId)) return
     const buf = this.ensureBuffer(sessionId)
     if (buf.rafId) { cancelAnimationFrame(buf.rafId); buf.rafId = null }
     buf.inThinking = false
@@ -416,6 +423,7 @@ class StreamBufferManager {
     for (const sc of buf.shellCalls) {
       blocks.push({
         type: 'shell',
+        id: sc.id,
         toolName: sc.name,
         status: sc.status,
         args: sc.args || {},
@@ -429,6 +437,7 @@ class StreamBufferManager {
       console.log('[stream-buffer] Creating skill block:', sc.name, sc.status)
       blocks.push({
         type: 'skill',
+        id: sc.id,
         name: sc.name,
         status: sc.status,
         result: sc.result,

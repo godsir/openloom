@@ -7,7 +7,7 @@ let retryDelay = 1000
 let retryCount = 0
 const MAX_RETRY_DELAY = 30000
 const MAX_RETRIES = 20
-let onReconnect: ReconnectCallback | null = null
+const onReconnectCallbacks: Array<ReconnectCallback> = []
 const onOpenCallbacks: Array<() => void> = []
 
 export function onWsConnected(cb: () => void): void {
@@ -75,7 +75,7 @@ export function connectWebSocket(port: number): Promise<void> {
       setReconnectAttemptFn?.(0)
       // Flush queued RPC sends first
       for (const cb of onOpenCallbacks) cb()
-      onReconnect?.()
+      for (const cb of [...onReconnectCallbacks]) cb()
       resolveAllPending()
     }
 
@@ -103,8 +103,15 @@ export function connectWebSocket(port: number): Promise<void> {
   })
 }
 
-export function onWsReconnect(cb: ReconnectCallback): void {
-  onReconnect = cb
+// Register a reconnect callback. Fired on initial connect AND on every
+// reconnect. Returns an unsubscribe so callers (e.g. bootstrap) that may
+// re-register on retry don't leave stale subscribers accumulating.
+export function onWsReconnect(cb: ReconnectCallback): () => void {
+  onReconnectCallbacks.push(cb)
+  return () => {
+    const idx = onReconnectCallbacks.indexOf(cb)
+    if (idx >= 0) onReconnectCallbacks.splice(idx, 1)
+  }
 }
 
 export function getWs(): WebSocket | null {
