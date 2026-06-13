@@ -449,21 +449,47 @@ fn try_read_version(entry_dir: &Path) -> Option<String> {
     None
 }
 
+/// Simple semver comparison — returns true if `newer` > `older`.
+///
+/// Compares only the dotted numeric *core* of each version. Any pre-release or
+/// build metadata (everything from the first `-` or `+`) is stripped before
+/// comparison, so `1.0.0` correctly ranks NEWER than `1.0.0-rc2`. When the
+/// numeric cores are equal, a version *with* a pre-release suffix is treated as
+/// older than one without (per semver ordering: `1.0.0-rc2` < `1.0.0`).
+///
+/// NOTE: behaviorally identical to `loom_marketplace`'s private `version_newer`
+/// (the two copies are intentionally kept in sync — see loom-marketplace/src/lib.rs).
 fn version_newer(newer: &str, older: &str) -> bool {
-    let parse = |v: &str| -> Vec<u32> {
-        v.split(|c: char| !c.is_ascii_digit())
+    /// Split a version into its dotted numeric core and whether a pre-release
+    /// (`-…`) or build (`+…`) suffix was present.
+    fn parse(v: &str) -> (Vec<u32>, bool) {
+        let core = v.trim();
+        // Take everything before the first `-` (pre-release) or `+` (build).
+        let suffix_start = core.find(['-', '+']);
+        let (numeric, has_suffix) = match suffix_start {
+            Some(idx) => (&core[..idx], true),
+            None => (core, false),
+        };
+        let parts = numeric
+            .split('.')
             .filter_map(|s| s.parse::<u32>().ok())
-            .collect()
-    };
-    let a = parse(newer);
-    let b = parse(older);
+            .collect();
+        (parts, has_suffix)
+    }
+
+    let (a, a_pre) = parse(newer);
+    let (b, b_pre) = parse(older);
     for i in 0..a.len().max(b.len()) {
         let av = a.get(i).copied().unwrap_or(0);
         let bv = b.get(i).copied().unwrap_or(0);
-        if av > bv { return true; }
-        if av < bv { return false; }
+        match av.cmp(&bv) {
+            std::cmp::Ordering::Greater => return true,
+            std::cmp::Ordering::Less => return false,
+            std::cmp::Ordering::Equal => continue,
+        }
     }
-    false
+    // Numeric cores are equal: a release (no pre-release) outranks a pre-release.
+    b_pre && !a_pre
 }
 
 // --- marketplace.install ---

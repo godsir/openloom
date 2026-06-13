@@ -9,6 +9,7 @@ pub mod types;
 pub mod wechat;
 
 pub use manager::BridgeManager;
+pub use store::{BridgeStore, NullOffsetStore, OffsetStore};
 pub use telegram::TelegramAdapter;
 pub use types::*;
 pub use wechat::WechatAdapter;

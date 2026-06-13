@@ -52,6 +52,14 @@ impl AppState {
     }
 }
 
+/// Maximum accepted request body size (32 MiB).
+///
+/// `chat.send` can inline base64 image attachments and file content, so the cap
+/// is generous enough for those while still bounding unbounded payloads. Applied
+/// to every route via `DefaultBodyLimit`. (A base64 image of N bytes inflates to
+/// ~1.37·N, so 32 MiB comfortably covers multi-MB screenshots.)
+const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
+
 /// Build the Axum router with all routes.
 pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
@@ -62,6 +70,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/sessions/:session_id/images/:file_id",
             get(routes::serve_session_image),
         )
+        // Bound the size of incoming request bodies (e.g. inlined base64 images
+        // in `chat.send`). Note: the WS upgrade handshake carries no body, and
+        // post-upgrade WebSocket frames are not subject to this HTTP body limit.
+        .layer(axum::extract::DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state)
 }
 

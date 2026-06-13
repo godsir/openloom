@@ -39,7 +39,7 @@ impl BridgeManager {
         if let Some(adapter) = adapters.get_mut(&platform) {
             adapter.connect().await
         } else {
-            Err(anyhow::anyhow!("no adapter registered for {}", platform))
+            Err(anyhow::anyhow!("no adapter registered for {platform}"))
         }
     }
 
@@ -61,7 +61,7 @@ impl BridgeManager {
         let adapters = self.adapters.lock().await;
         adapters
             .get(&platform)
-            .ok_or_else(|| anyhow::anyhow!("no adapter for {}", platform))?
+            .ok_or_else(|| anyhow::anyhow!("no adapter for {platform}"))?
             .send(chat_id, content)
             .await
     }

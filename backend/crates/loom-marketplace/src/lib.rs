@@ -111,6 +111,7 @@ pub fn list_with_status(plugins_dir: &Path, skills_dir: &Path) -> Vec<MarketPlug
 /// Returns the path where the entry was installed.
 pub async fn install(entry_id: &str, git_url: &str, target_dir: &Path) -> Result<PathBuf> {
     validate_entry_id(entry_id)?;
+    validate_git_url(git_url)?;
     let target = target_dir.join(entry_id);
 
     if target.exists() {
@@ -136,6 +137,9 @@ pub async fn install(entry_id: &str, git_url: &str, target_dir: &Path) -> Result
             "clone",
             "--depth",
             "1",
+            // `--` terminates option parsing so `git_url`/`target` can never be
+            // interpreted as flags even if validation is somehow bypassed.
+            "--",
             git_url,
             target.to_string_lossy().as_ref(),
         ])
@@ -247,8 +251,18 @@ pub async fn update(entry_id: &str, target_dir: &Path) -> Result<()> {
     let success = match &pull_status {
         Ok(s) if s.success() => true,
         _ => {
-            // Fallback: fetch + reset for shallow repos
+            // Fallback for shallow (`--depth 1`) repos, which cannot `git pull`.
+            //
+            // `git reset --hard origin/HEAD` is unreliable here: a shallow clone
+            // usually leaves `refs/remotes/origin/HEAD` unset, so the reset
+            // target does not exist. Instead we detect the remote's default
+            // branch, fetch exactly that branch shallowly, and reset to the
+            // freshly-written `FETCH_HEAD` (which any successful fetch sets).
             tracing::info!(entry_id = %entry_id, "pull failed, trying fetch+reset for shallow repo");
+
+            let branch = detect_default_branch(&target).await;
+            tracing::info!(entry_id = %entry_id, branch = %branch, "resolved default branch for fetch");
+
             let fetch = tokio::process::Command::new("git")
                 .args([
                     "-C",
@@ -257,6 +271,7 @@ pub async fn update(entry_id: &str, target_dir: &Path) -> Result<()> {
                     "--depth",
                     "1",
                     "origin",
+                    &branch,
                 ])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::piped())
@@ -271,7 +286,7 @@ pub async fn update(entry_id: &str, target_dir: &Path) -> Result<()> {
                             target.to_string_lossy().as_ref(),
                             "reset",
                             "--hard",
-                            "origin/HEAD",
+                            "FETCH_HEAD",
                         ])
                         .stdout(std::process::Stdio::null())
                         .stderr(std::process::Stdio::piped())
@@ -404,15 +419,162 @@ fn validate_entry_id(entry_id: &str) -> Result<()> {
     }
 }
 
-/// Simple semver comparison — returns true if `newer` > `older`.
-fn version_newer(newer: &str, older: &str) -> bool {
-    let parse = |v: &str| -> Vec<u32> {
-        v.split(|c: char| !c.is_ascii_digit())
-            .filter_map(|s| s.parse::<u32>().ok())
-            .collect()
+/// Validate a git clone URL before passing it to `git clone`.
+///
+/// Defends against argument injection and unsafe transports:
+/// - rejects URLs beginning with `-` (would be parsed by git as a flag),
+/// - rejects embedded ASCII control characters / whitespace,
+/// - allows only an explicit transport allowlist (`https://`, `http://`,
+///   `ssh://`, or scp-like `git@host:path`); everything else — `file://`,
+///   `ext::`, `git://`, bare paths, `-c…` — is refused.
+///
+/// Note: callers MUST still pass a `--` terminator before the URL so a value
+/// that slips past this check can never be interpreted as an option.
+fn validate_git_url(git_url: &str) -> Result<()> {
+    let url = git_url.trim();
+
+    if url.is_empty() {
+        return Err(anyhow!("git URL must not be empty"));
+    }
+    if url.starts_with('-') {
+        return Err(anyhow!("git URL must not start with '-': '{git_url}'"));
+    }
+    if url.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(anyhow!(
+            "git URL must not contain whitespace or control characters: '{git_url}'"
+        ));
+    }
+
+    // Allow only vetted transports. Default posture is https-only, but we also
+    // permit http/ssh and the scp-like `user@host:path` form used by GitHub.
+    let allowed_scheme = url.starts_with("https://")
+        || url.starts_with("http://")
+        || url.starts_with("ssh://")
+        || is_scp_like(url);
+
+    if !allowed_scheme {
+        return Err(anyhow!(
+            "unsupported git URL scheme (only https/http/ssh/git@host:path allowed): '{git_url}'"
+        ));
+    }
+
+    Ok(())
+}
+
+/// Detect the scp-like git syntax `user@host:path` (e.g. `git@github.com:org/repo.git`)
+/// while excluding URLs that carry an explicit `scheme://` (those are handled by
+/// the scheme allowlist) and bare Windows drive paths like `C:\repo`.
+fn is_scp_like(url: &str) -> bool {
+    // Must contain a ':' that is not part of a "://" scheme separator.
+    let Some(colon) = url.find(':') else {
+        return false;
     };
-    let a = parse(newer);
-    let b = parse(older);
+    if url[colon..].starts_with("://") {
+        return false;
+    }
+    let user_host = &url[..colon];
+    // Require an '@' before the colon (user@host) and a non-empty host.
+    match user_host.split_once('@') {
+        Some((user, host)) => !user.is_empty() && !host.is_empty(),
+        None => false,
+    }
+}
+
+/// Detect the remote's default branch name for a cloned repo at `repo`.
+///
+/// Resolution order (each step is best-effort and bounded):
+/// 1. Local `refs/remotes/origin/HEAD` symbolic ref (set by full clones).
+/// 2. Remote `git ls-remote --symref origin HEAD` (works for shallow clones,
+///    requires network — but the caller is about to fetch anyway).
+/// 3. Fallback to `main`.
+///
+/// The returned name is the short branch (e.g. `main`, `master`, `develop`)
+/// with any `refs/heads/` or `origin/` prefix stripped.
+async fn detect_default_branch(repo: &Path) -> String {
+    const FALLBACK: &str = "main";
+
+    // 1. Local symbolic ref: `origin/main` → `main`.
+    let local = tokio::process::Command::new("git")
+        .args([
+            "-C",
+            repo.to_string_lossy().as_ref(),
+            "symbolic-ref",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .await;
+    if let Ok(out) = local
+        && out.status.success()
+        && let Ok(text) = String::from_utf8(out.stdout)
+    {
+        let branch = text.trim().trim_start_matches("origin/").trim();
+        if !branch.is_empty() {
+            return branch.to_string();
+        }
+    }
+
+    // 2. Ask the remote. Output line looks like:
+    //    `ref: refs/heads/main\tHEAD`
+    let remote = tokio::process::Command::new("git")
+        .args([
+            "-C",
+            repo.to_string_lossy().as_ref(),
+            "ls-remote",
+            "--symref",
+            "origin",
+            "HEAD",
+        ])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .await;
+    if let Ok(out) = remote
+        && out.status.success()
+        && let Ok(text) = String::from_utf8(out.stdout)
+    {
+        for line in text.lines() {
+            if let Some(rest) = line.strip_prefix("ref:")
+                && let Some(ref_name) = rest.split_whitespace().next()
+                && let Some(branch) = ref_name.strip_prefix("refs/heads/")
+                && !branch.is_empty()
+            {
+                return branch.to_string();
+            }
+        }
+    }
+
+    // 3. Give up gracefully.
+    FALLBACK.to_string()
+}
+
+/// Simple semver comparison — returns true if `newer` > `older`.
+///
+/// Compares only the dotted numeric *core* of each version. Any pre-release or
+/// build metadata (everything from the first `-` or `+`) is stripped before
+/// comparison, so `1.0.0` correctly ranks NEWER than `1.0.0-rc2`. When the
+/// numeric cores are equal, a version *with* a pre-release suffix is treated as
+/// older than one without (per semver ordering: `1.0.0-rc2` < `1.0.0`).
+fn version_newer(newer: &str, older: &str) -> bool {
+    /// Split a version into its dotted numeric core and whether a pre-release
+    /// (`-…`) or build (`+…`) suffix was present.
+    fn parse(v: &str) -> (Vec<u32>, bool) {
+        let core = v.trim();
+        // Take everything before the first `-` (pre-release) or `+` (build).
+        let suffix_start = core.find(['-', '+']);
+        let (numeric, has_suffix) = match suffix_start {
+            Some(idx) => (&core[..idx], true),
+            None => (core, false),
+        };
+        let parts = numeric
+            .split('.')
+            .filter_map(|s| s.parse::<u32>().ok())
+            .collect();
+        (parts, has_suffix)
+    }
+
+    let (a, a_pre) = parse(newer);
+    let (b, b_pre) = parse(older);
     for i in 0..a.len().max(b.len()) {
         let av = a.get(i).copied().unwrap_or(0);
         let bv = b.get(i).copied().unwrap_or(0);
@@ -422,7 +584,8 @@ fn version_newer(newer: &str, older: &str) -> bool {
             std::cmp::Ordering::Equal => continue,
         }
     }
-    false
+    // Numeric cores are equal: a release (no pre-release) outranks a pre-release.
+    b_pre && !a_pre
 }
 
 // ============================================================================
@@ -465,5 +628,78 @@ mod tests {
             assert!(!r.installed, "entry should not be installed in temp dir");
             assert!(r.installed_version.is_none());
         }
+    }
+
+    #[test]
+    fn test_version_newer_basic() {
+        assert!(version_newer("1.0.1", "1.0.0"));
+        assert!(version_newer("1.1.0", "1.0.9"));
+        assert!(version_newer("2.0.0", "1.9.9"));
+        assert!(!version_newer("1.0.0", "1.0.0"));
+        assert!(!version_newer("1.0.0", "1.0.1"));
+        // Differing component counts: 1.0 == 1.0.0.
+        assert!(!version_newer("1.0", "1.0.0"));
+        assert!(version_newer("1.0.1", "1.0"));
+    }
+
+    #[test]
+    fn test_version_newer_prerelease() {
+        // A release must outrank its own pre-release / build metadata.
+        assert!(
+            version_newer("1.0.0", "1.0.0-rc2"),
+            "1.0.0 must be newer than 1.0.0-rc2"
+        );
+        assert!(version_newer("1.0.0", "1.0.0-alpha"));
+        assert!(version_newer("1.0.0", "1.0.0-rc.1"));
+        assert!(version_newer("1.0.0", "1.0.0+build.5"));
+
+        // The pre-release must NOT be considered newer than the release.
+        assert!(
+            !version_newer("1.0.0-rc2", "1.0.0"),
+            "1.0.0-rc2 must NOT be newer than 1.0.0 (regression: used to parse as [1,0,0,2])"
+        );
+        assert!(!version_newer("1.0.0-alpha", "1.0.0"));
+
+        // Two identical pre-releases are equal (neither newer).
+        assert!(!version_newer("1.0.0-rc2", "1.0.0-rc2"));
+
+        // Numeric core dominates regardless of suffix.
+        assert!(version_newer("1.0.1-rc1", "1.0.0"));
+        assert!(!version_newer("1.0.0-rc1", "1.0.1"));
+    }
+
+    #[test]
+    fn test_validate_git_url_accepts_https() {
+        assert!(validate_git_url("https://github.com/org/repo").is_ok());
+        assert!(validate_git_url("https://github.com/org/repo.git").is_ok());
+        assert!(validate_git_url("http://example.com/repo.git").is_ok());
+        assert!(validate_git_url("ssh://git@github.com/org/repo.git").is_ok());
+        // scp-like form used by GitHub.
+        assert!(validate_git_url("git@github.com:org/repo.git").is_ok());
+        // Surrounding whitespace is trimmed, not rejected.
+        assert!(validate_git_url("  https://github.com/org/repo  ").is_ok());
+    }
+
+    #[test]
+    fn test_validate_git_url_rejects_flags_and_bad_schemes() {
+        // Argument-injection: leading dash would be parsed as a git flag.
+        assert!(validate_git_url("-c").is_err());
+        assert!(validate_git_url("--upload-pack=touch /tmp/pwned").is_err());
+        assert!(validate_git_url("-oProxyCommand=evil").is_err());
+
+        // Unsafe / unsupported transports.
+        assert!(validate_git_url("file:///etc/passwd").is_err());
+        assert!(validate_git_url("ext::sh -c touch%20/tmp/x").is_err());
+        assert!(validate_git_url("git://example.com/repo.git").is_err());
+
+        // Bare paths and drive letters are not valid remotes here.
+        assert!(validate_git_url("/local/path/repo").is_err());
+        assert!(validate_git_url("C:\\repo").is_err());
+
+        // Empty / whitespace / control chars.
+        assert!(validate_git_url("").is_err());
+        assert!(validate_git_url("   ").is_err());
+        assert!(validate_git_url("https://github.com/org/re\npo").is_err());
+        assert!(validate_git_url("https://github.com/org repo").is_err());
     }
 }

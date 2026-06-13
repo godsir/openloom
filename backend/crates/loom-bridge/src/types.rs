@@ -50,6 +50,33 @@ pub enum MessageContent {
     },
 }
 
+/// Maximum byte length of inbound text/caption/content accepted from an
+/// external (untrusted) sender before it is truncated at ingest. Caps memory
+/// use and limits prompt-injection surface from arbitrary remote users.
+pub const MAX_INBOUND_CONTENT_LEN: usize = 16 * 1024;
+
+/// Marker appended to inbound content that was truncated because it exceeded
+/// [`MAX_INBOUND_CONTENT_LEN`]. Downstream consumers can detect truncation.
+pub const TRUNCATION_MARKER: &str = "…[truncated]";
+
+/// Truncate untrusted inbound text to [`MAX_INBOUND_CONTENT_LEN`] bytes,
+/// appending [`TRUNCATION_MARKER`] when truncation occurs. Truncation happens
+/// on a UTF-8 char boundary so the result is always valid UTF-8.
+pub fn cap_inbound_text(text: &str) -> String {
+    if text.len() <= MAX_INBOUND_CONTENT_LEN {
+        return text.to_string();
+    }
+    // Find the largest char boundary <= the cap so we never split a code point.
+    let mut end = MAX_INBOUND_CONTENT_LEN;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut out = String::with_capacity(end + TRUNCATION_MARKER.len());
+    out.push_str(&text[..end]);
+    out.push_str(TRUNCATION_MARKER);
+    out
+}
+
 impl MessageContent {
     pub fn media_type(&self) -> &'static str {
         match self {
@@ -78,6 +105,16 @@ pub struct BridgeMessage {
     pub external_message_id: String,
     #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,
+    /// Provenance flag: `true` when the content originates from an arbitrary
+    /// external/remote sender and must be treated as untrusted (e.g. subject to
+    /// prompt-injection). Inbound platform messages set this; defaults to
+    /// `true` on deserialization so unknown-origin messages fail safe.
+    #[serde(default = "default_untrusted")]
+    pub untrusted: bool,
+}
+
+fn default_untrusted() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
