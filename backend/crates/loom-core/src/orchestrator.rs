@@ -73,6 +73,62 @@ pub fn adapt_behavior(persona_text: &str) -> String {
     format!("## Behavior Adaptation\n{}\n", hints.iter().map(|h| format!("- {}", h)).collect::<Vec<_>>().join("\n"))
 }
 
+/// Load Loom.md with priority order:
+/// 1. `$WORKSPACE/Loom.md` — completely overrides hardcoded defaults
+/// 2. `~/.loom/Loom.md` — auto-created with default system prompt on first startup
+/// 3. Returns `None` — caller falls back to the hardcoded system prompt
+///    (only if auto-creation fails; e.g. permission denied)
+pub fn load_loom_md(workspace_path: Option<&std::path::Path>, loom_dir: &std::path::Path) -> Option<String> {
+    // Priority 1: workspace-level Loom.md
+    if let Some(ws) = workspace_path {
+        let workspace_loom = ws.join("Loom.md");
+        if workspace_loom.exists() {
+            if let Ok(content) = std::fs::read_to_string(&workspace_loom) {
+                let trimmed = content.trim().to_string();
+                if !trimmed.is_empty() {
+                    tracing::info!(path = %workspace_loom.display(), "loaded workspace-level Loom.md");
+                    return Some(trimmed);
+                }
+            }
+        }
+    }
+
+    // Priority 2: global ~/.loom/Loom.md — auto-create on first startup
+    let global_loom = loom_dir.join("Loom.md");
+    if global_loom.exists() {
+        if let Ok(content) = std::fs::read_to_string(&global_loom) {
+            let trimmed = content.trim().to_string();
+            if !trimmed.is_empty() {
+                tracing::info!(path = %global_loom.display(), "loaded global Loom.md");
+                return Some(trimmed);
+            }
+        }
+    }
+
+    // Auto-create global Loom.md with the default system prompt on first startup
+    if let Some(parent) = global_loom.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::write(&global_loom, crate::agent_loop::DEFAULT_SYSTEM_PROMPT) {
+        Ok(()) => {
+            tracing::info!(
+                path = %global_loom.display(),
+                "auto-created global Loom.md with default system prompt"
+            );
+            return Some(crate::agent_loop::DEFAULT_SYSTEM_PROMPT.to_string());
+        }
+        Err(e) => {
+            tracing::warn!(
+                path = %global_loom.display(),
+                error = %e,
+                "failed to auto-create global Loom.md"
+            );
+        }
+    }
+
+    None
+}
+
 /// Tracks pipeline events and gates stage transitions.
 pub struct PipelineScheduler {
     extraction_count: u64,
@@ -794,6 +850,10 @@ impl Orchestrator {
         pool.set_hook_registry(Some(hook_registry.clone()));
         let pool = Arc::new(pool);
 
+        // Eagerly create global ~/.loom/Loom.md on first startup
+        // (so users can see and edit it before their first conversation)
+        let _ = load_loom_md(None, &data_dir);
+
         Self {
             pool,
             tool_registry: Arc::new(RwLock::new(registry)),
@@ -836,10 +896,10 @@ impl Orchestrator {
     }
 
     /// Initialise the cron scheduler. Must be called after construction (async).
-    /// The scheduler is backed by `<data_dir>/cron.db`. Starts the background loop.
+    /// The scheduler is backed by `<data_dir>/data/cron.db`. Starts the background loop.
     /// Also wires up the AI prompt executor so cron jobs can execute AI instructions.
     pub async fn init_cron_scheduler(&self) -> anyhow::Result<()> {
-        let db_path = self.data_dir.join("cron.db");
+        let db_path = self.data_dir.join("data").join("cron.db");
         let scheduler = Arc::new(CronScheduler::new(db_path).await?);
 
         // Wire up the AI prompt executor with full tool access, permissions,
@@ -3322,7 +3382,13 @@ impl Orchestrator {
             }
             stable_prompt.push_str(override_prompt);
         } else {
-            let base = self.build_system_prompt().await;
+            // Try Loom.md first (workspace-level > global > hardcoded fallback)
+            let ws_path = workspace_path.as_ref().map(|s| std::path::Path::new(s.as_str()));
+            let base = if let Some(loom_md) = load_loom_md(ws_path, &self.data_dir) {
+                loom_md
+            } else {
+                self.build_system_prompt().await
+            };
             if !base.is_empty() {
                 if !stable_prompt.is_empty() {
                     stable_prompt.push_str("\n\n");
