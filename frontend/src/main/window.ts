@@ -13,8 +13,8 @@ function getIconPath(): string {
 
 export function createMainWindow(port: number): BrowserWindow {
   const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize
-  const width = Math.min(1200, Math.floor(screenWidth * 0.75))
-  const height = Math.min(800, Math.floor(screenHeight * 0.85))
+  const width = Math.min(1440, Math.floor(screenWidth * 0.82))
+  const height = Math.min(900, Math.floor(screenHeight * 0.88))
 
   mainWindow = new BrowserWindow({
     width,
