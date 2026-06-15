@@ -144,6 +144,20 @@ export const zhTW: TranslationMap = {
   'chat.newSession': '新增對話',
   'chat.clearInput': '清空輸入',
   'chat.processing': '處理中',
+  'chat.continue': '繼續執行',
+  'chat.continuing': '繼續中...',
+
+  // ── Plan & Todo ──────────────────────────────────────────────────
+  'todo.panelTitle': '待辦',
+  'todo.empty': '暫無待辦事項',
+  'todo.emptyHint': '在對話中使用 /plan 建立計劃，AI 會自動生成任務列表',
+  'todo.pending': '待處理',
+  'todo.inProgress': '進行中',
+  'todo.completed': '已完成',
+  'todo.clearAll': '清空全部',
+  'todo.markPending': '標記為待處理',
+  'todo.markInProgress': '標記為進行中',
+  'todo.markCompleted': '標記為已完成',
 
   // ── Slash Commands ────────────────────────────────────────────────
   'slash.builtinCommands': '內置命令',

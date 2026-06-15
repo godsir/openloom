@@ -25,6 +25,7 @@ pub async fn handle(state: &AppState, method: &str, p: &Value) -> Option<Result<
         "plan.delete" => Some(handle_plan_delete(state, p).await),
         "todo.list" => Some(handle_todo_list(state, p).await),
         "todo.update_status" => Some(handle_todo_update_status(state, p).await),
+        "todo.clear" => Some(handle_todo_clear(state, p).await),
         "goal.set" => Some(handle_goal_set(state, p).await),
         "goal.status" => Some(handle_goal_status(state, p).await),
         _ => None,
@@ -73,17 +74,58 @@ async fn handle_plan_create(_state: &AppState, p: &Value) -> Result<Value, loom_
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?)
 }
 
-async fn handle_plan_get(_state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
+fn plan_md_path(workspace_root: &str, id: &str) -> PathBuf {
+    plans_dir(workspace_root).join(format!("{}.md", id))
+}
+
+/// Extract `- [ ]` / `- [x]` checkboxes from plan markdown and sync to the todo store.
+async fn sync_checkboxes_to_todos(state: &AppState, content: &str, thread_id: &str, plan_id: &str) {
+    let mut todos: Vec<loom_memory::TodoItem> = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.len() < 5 { continue; }
+        let prefix = &trimmed[..3];
+        if prefix != "- [" && prefix != "* [" { continue; }
+        let after = &trimmed[3..];
+        if !after.starts_with("] ") { continue; }
+        let checked = &trimmed[1..4] != "- [ "; // "- [x]" or "- [X]"
+        let text = trimmed[5..].trim();
+        if text.is_empty() { continue; }
+        let status = if checked { "completed" } else { "pending" };
+        todos.push(loom_memory::TodoItem {
+            id: uuid::Uuid::now_v7().to_string(),
+            session_id: thread_id.to_string(),
+            content: text.to_string(),
+            status: status.to_string(),
+            plan_id: Some(plan_id.to_string()),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+    if !todos.is_empty() {
+        let _ = state.orchestrator.replace_todos(thread_id, &todos).await;
+    }
+}
+
+async fn handle_plan_get(state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
     let plan_id = p.get("plan_id").and_then(|v| v.as_str()).unwrap_or("");
 
-    // Check in-memory cache first
     let plans = PLANS.read().await;
-    if let Some(plan) = plans.get(plan_id) {
-        return Ok(serde_json::to_value(&plan)
-            .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?);
+    let plan = plans.get(plan_id)
+        .ok_or_else(|| err(ErrorCode::InternalError, &format!("plan {} not found", plan_id)))?;
+
+    // Read plan markdown content from filesystem
+    let md_path = plan_md_path(&plan.workspace_root, plan_id);
+    let content = std::fs::read_to_string(&md_path).unwrap_or_default();
+
+    // Sync checkboxes → todo list (same logic as plan.update)
+    if !content.is_empty() {
+        if let Some(ref thread_id) = plan.thread_id {
+            sync_checkboxes_to_todos(state, &content, thread_id, plan_id).await;
+        }
     }
 
-    Err(err(ErrorCode::InternalError, &format!("plan {} not found", plan_id)))
+    Ok(serde_json::json!({ "plan": plan, "content": content }))
 }
 
 async fn handle_plan_list(_state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
@@ -122,7 +164,7 @@ async fn handle_plan_list(_state: &AppState, p: &Value) -> Result<Value, loom_ty
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?)
 }
 
-async fn handle_plan_update(_state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
+async fn handle_plan_update(state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
     let plan_id = p.get("plan_id").and_then(|v| v.as_str()).unwrap_or("");
     let mut plans = PLANS.write().await;
     let plan = plans.get_mut(plan_id)
@@ -139,6 +181,17 @@ async fn handle_plan_update(_state: &AppState, p: &Value) -> Result<Value, loom_
         std::fs::write(meta_for_plan(&plan.workspace_root, &plan_id), meta_json).ok();
     }
 
+    // Persist plan content + sync checkboxes → todos
+    if let Some(content) = p.get("content").and_then(|v| v.as_str()) {
+        let plan_path = plans_dir(&plan.workspace_root).join(format!("{}.md", plan_id));
+        std::fs::write(&plan_path, content).ok();
+
+        // Sync plan checkboxes to the todo list
+        if let Some(ref thread_id) = plan.thread_id {
+            sync_checkboxes_to_todos(state, content, thread_id, plan_id).await;
+        }
+    }
+
     Ok(serde_json::to_value(&plan)
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?)
 }
@@ -153,21 +206,31 @@ async fn handle_plan_delete(_state: &AppState, p: &Value) -> Result<Value, loom_
     Ok(Value::Bool(true))
 }
 
-async fn handle_todo_list(_state: &AppState, _p: &Value) -> Result<Value, loom_types::JsonRpcError> {
-    let todos = TODOS.read().await;
-    let list: Vec<&TodoItem> = todos.values().collect();
-    Ok(serde_json::to_value(&list)
+async fn handle_todo_list(state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
+    let session_id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+    let todos = state.orchestrator.list_todos(session_id).await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    Ok(serde_json::to_value(&todos)
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?)
 }
 
-async fn handle_todo_update_status(_state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
+async fn handle_todo_update_status(state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
     let req: UpdateTodoStatusRequest = serde_json::from_value(p.clone())
         .map_err(|e| err(ErrorCode::InvalidRequest, &e.to_string()))?;
-    let mut todos = TODOS.write().await;
-    if let Some(todo) = todos.get_mut(&req.todo_id) {
-        todo.status = req.status;
-        todo.updated_at = chrono::Utc::now().to_rfc3339();
-    }
+    let status_str = match req.status {
+        loom_types::plan::TodoStatus::Pending => "pending",
+        loom_types::plan::TodoStatus::InProgress => "in_progress",
+        loom_types::plan::TodoStatus::Completed => "completed",
+    };
+    state.orchestrator.update_todo_status(&req.session_id, &req.todo_id, status_str).await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    Ok(Value::Bool(true))
+}
+
+async fn handle_todo_clear(state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
+    let session_id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+    state.orchestrator.clear_todos(session_id).await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
     Ok(Value::Bool(true))
 }
 
@@ -196,8 +259,6 @@ async fn handle_goal_status(_state: &AppState, p: &Value) -> Result<Value, loom_
 
 // In-memory storage for active sessions
 static PLANS: std::sync::LazyLock<Arc<RwLock<HashMap<String, PlanArtifact>>>> =
-    std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
-static TODOS: std::sync::LazyLock<Arc<RwLock<HashMap<String, TodoItem>>>> =
     std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
 static GOALS: std::sync::LazyLock<Arc<RwLock<HashMap<String, ThreadGoal>>>> =
     std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));

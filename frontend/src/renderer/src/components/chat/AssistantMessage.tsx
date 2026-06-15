@@ -11,6 +11,7 @@ import FileBlock from './FileBlock'
 import SubagentCard from './SubagentCard'
 import VisionProcessingBlock from './VisionProcessingBlock'
 import MessageFooterActions from './MessageFooterActions'
+import ContinueButton from './ContinueButton'
 import TypingIndicator from '../shared/TypingIndicator'
 import styles from './AssistantMessage.module.css'
 
@@ -38,8 +39,10 @@ const AssistantMessage = memo(function AssistantMessage({
 
   const displayName = (agent?.name && agent.name !== 'default') ? agent.name : 'Loom'
 
+  const isTruncated = message.stop_reason === 'budget_exhausted' || message.stop_reason === 'max_iterations'
+
   return (
-    <div className={styles.message} data-message-id={message.id}>
+    <div className={`${styles.message} ${isTruncated ? styles.truncated : ''}`} data-message-id={message.id}>
       <div className={styles.header}>
         <div className={styles.avatar}>
           {avatarContent}
@@ -144,12 +147,16 @@ const AssistantMessage = memo(function AssistantMessage({
         {message.blocks.length > 0 && (
           <MessageFooterActions messageId={message.id} role="assistant" timestamp={message.timestamp} usage={message.usage} blocks={message.blocks} />
         )}
+        {!isStreamingActive && isTruncated && (
+          <ContinueButton sessionId={sessionId ?? ''} disabled={isStreamingActive} />
+        )}
       </div>
     </div>
   )
 }, (prev, next) => {
   return prev.message.id === next.message.id &&
     prev.message.blocks === next.message.blocks &&
+    prev.message.stop_reason === next.message.stop_reason &&
     prev.sessionId === next.sessionId &&
     prev.isStreaming === next.isStreaming &&
     prev.isStreamingActive === next.isStreamingActive

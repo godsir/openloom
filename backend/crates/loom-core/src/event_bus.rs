@@ -94,6 +94,8 @@ pub enum AgentEvent {
     GoalSet { session_id: String, description: String },
     /// A todo item status changed.
     TodoStatusChanged { session_id: String, todo_id: String, status: String },
+    /// The entire todo list was replaced (todo_write called by AI).
+    TodosReplaced { session_id: String, todos: serde_json::Value },
     /// A cron job was triggered (started executing).
     CronJobTriggered {
         job_id: String,

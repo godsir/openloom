@@ -11,6 +11,8 @@ export interface Message {
   blocks: ContentBlock[]
   timestamp: string
   usage?: { prompt: number; completion: number; model?: string; contextWindow?: number; cached?: number; cacheRead?: number; cacheWrite?: number }
+  /** Backend stop_reason — 'budget_exhausted' | 'max_iterations' | 'user_cancelled' | null for normal completion. */
+  stop_reason?: string | null
 }
 
 const MAX_CACHED_SESSIONS = 8
@@ -25,6 +27,7 @@ export interface ChatSlice {
   hydrateMessages: (sessionId: string, messages: Message[]) => void
   deleteMessage: (sessionId: string, messageId: string) => void
   setMessageUsage: (sessionId: string, messageId: string, usage: { prompt: number; completion: number; model?: string; contextWindow?: number; cached?: number; cacheRead?: number; cacheWrite?: number }) => void
+  setMessageStopReason: (sessionId: string, messageId: string, stopReason: string | null) => void
   evictSession: (sessionId: string) => void
 }
 
@@ -125,6 +128,16 @@ export const createChatSlice: StateCreator<ChatSlice> = (set, get) => ({
     const idx = msgs.findIndex((m) => m.id === messageId)
     if (idx === -1) return
     msgs[idx] = { ...msgs[idx], usage }
+    next.set(sessionId, msgs)
+    set({ messagesBySession: next })
+  },
+
+  setMessageStopReason: (sessionId, messageId, stopReason) => {
+    const next = new Map(get().messagesBySession)
+    const msgs = [...(next.get(sessionId) || [])]
+    const idx = msgs.findIndex((m) => m.id === messageId)
+    if (idx === -1) return
+    msgs[idx] = { ...msgs[idx], stop_reason: stopReason }
     next.set(sessionId, msgs)
     set({ messagesBySession: next })
   },

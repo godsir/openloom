@@ -14,6 +14,7 @@ pub mod pattern;
 pub mod persona;
 pub mod pipeline;
 pub mod session_db;
+pub mod todo_store;
 pub mod store;
 pub mod summary;
 
@@ -44,3 +45,4 @@ pub use store::{
     McpServerRow, ModelConfigStore, NewEvent,
 };
 pub use summary::SummaryEngine;
+pub use todo_store::{TodoItem, TodoStore};

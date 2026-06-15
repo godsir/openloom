@@ -12,6 +12,20 @@
 //! 5. Every pub type has a doc comment listing its consumers
 //! 6. #[deprecated] over deletion for one version cycle
 
+/// Why an agent turn stopped. Consumers: loom-core (agent_loop, orchestrator), loom-server (dispatch).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopReason {
+    /// Turn completed normally (final text response, no tool calls remaining).
+    Completed,
+    /// Cumulative prompt tokens exceeded max_prompt_budget.
+    BudgetExhausted,
+    /// Reached max_iterations without resolving.
+    MaxIterations,
+    /// User clicked Stop / cancelled the turn.
+    UserCancelled,
+}
+
 pub mod config;
 pub mod event;
 pub mod id;

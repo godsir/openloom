@@ -151,6 +151,7 @@ fn agent_event_method(event: &AgentEvent) -> &'static str {
         AgentEvent::PlanUpdated { .. } => "plan.updated",
         AgentEvent::GoalSet { .. } => "goal.set",
         AgentEvent::TodoStatusChanged { .. } => "todo.status_changed",
+        AgentEvent::TodosReplaced { .. } => "todo.list_replaced",
         AgentEvent::CronJobTriggered { .. } => "cron.job_triggered",
         AgentEvent::CronJobCompleted { .. } => "cron.job_completed",
         AgentEvent::CronJobFailed { .. } => "cron.job_failed",
@@ -244,6 +245,9 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
         }
         AgentEvent::TodoStatusChanged { session_id, todo_id, status } => {
             json!({ "session_id": session_id, "todo_id": todo_id, "status": status })
+        }
+        AgentEvent::TodosReplaced { session_id, todos } => {
+            json!({ "session_id": session_id, "todos": todos })
         }
         AgentEvent::CronJobTriggered { job_id, job_name, run_id } => {
             json!({ "job_id": job_id, "job_name": job_name, "run_id": run_id })

@@ -13,6 +13,7 @@ pub mod hooks;
 pub mod orchestrator;
 pub mod plan_prompts;
 pub mod slash_router;
+pub mod todo_context;
 pub mod tool_context;
 pub mod tool_registry;
 pub mod vision;

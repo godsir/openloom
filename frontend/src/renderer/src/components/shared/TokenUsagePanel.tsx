@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useCallback, useState, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { BarChart3, TrendingUp, Zap, Database, AlertCircle } from 'lucide-react'
 import { onWsConnected } from '../../services/websocket'
 import { useStore } from '../../stores'
@@ -301,8 +302,8 @@ function TrendChart({ history }: TrendChartProps) {
           })}
         </svg>
       </div>
-      {/* Tooltip */}
-      {tooltip.visible && (
+      {/* Tooltip — rendered to document.body via portal to avoid clipping from ancestor overflow/transform */}
+      {tooltip.visible && createPortal(
         <div
           className={styles.tooltip}
           style={{ left: tooltip.x + 12, top: tooltip.y - 10 }}
@@ -319,7 +320,8 @@ function TrendChart({ history }: TrendChartProps) {
           <div className={styles.tooltipRow}>
             {t('tokens.total')}: {formatNumber(tooltip.prompt + tooltip.completion)}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

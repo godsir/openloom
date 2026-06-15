@@ -7,6 +7,7 @@
 use anyhow::Result;
 use loom_context::{AssembleOptions, ContextAssembler, compact_history};
 use loom_inference::engine::CloudClient;
+use loom_memory::TodoStore;
 use loom_plugins::hooks::HookEvent;
 use loom_security::check_permission;
 use loom_types::SkillPermissions;
@@ -14,6 +15,7 @@ use loom_types::{
     CompactionConfig, CompletionRequest, CompletionResponse, ContentPart, Message, Role, StreamDelta,
     ToolDefinition,
 };
+use loom_types::StopReason;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -49,6 +51,8 @@ pub struct TurnResult {
     pub tool_messages: Vec<Message>,
     /// Token usage from auxiliary models (vision, etc.) for separate cost tracking.
     pub vision_usage: Option<crate::vision::VisionUsage>,
+    /// Why the turn stopped — used by frontend to show/hide Continue button.
+    pub stop_reason: StopReason,
 }
 
 /// Configuration for the agent loop.
@@ -126,6 +130,8 @@ pub struct AgentLoopConfig {
     /// Optional sandbox guard for file/path access control.
     /// When None, no sandbox checks are performed (backward compatible).
     pub sandbox: Option<Arc<loom_security::sandbox::SandboxGuard>>,
+    /// Optional todo store for session-scoped todo list management.
+    pub todo_store: Option<Arc<TodoStore>>,
     /// Compaction configuration for mid-turn history compression.
     pub compaction_config: CompactionConfig,
     /// Dynamic context injected as additional system messages AFTER the stable
@@ -133,6 +139,12 @@ pub struct AgentLoopConfig {
     /// available skills list, workspace path) that would otherwise invalidate
     /// the KV-cache on every turn.
     pub dynamic_context: Option<String>,
+    /// Formatted todo list to inject into system prompt each turn. None = empty list (skip injection).
+    pub todo_context: Option<String>,
+    /// Continuation note injected when the previous turn was cancelled by the user.
+    /// Tells the LLM the user's latest message is a correction/follow-up and it should
+    /// continue from where it left off rather than starting fresh.
+    pub continuation_note: Option<String>,
     /// Steering queue: the GUI can push guidance messages here mid-turn.
     /// Each message is drained at the top of every iteration and injected
     /// as a System message so the LLM can adapt without canceling the turn.
@@ -230,8 +242,11 @@ impl Default for AgentLoopConfig {
             pending_permissions: None,
             session_approved_tools: Arc::new(std::sync::Mutex::new(HashSet::new())),
             sandbox: None,
+            todo_store: None,
             compaction_config: CompactionConfig::default(),
             dynamic_context: None,
+            todo_context: None,
+            continuation_note: None,
             steering_queue: None,
             few_shots: Vec::new(),
         }
@@ -390,6 +405,8 @@ fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
         "system_info",
         "token_usage",
         "memory_search",
+        "todo_write",
+        "todo_list",
     ];
     for name in builtins {
         if !matched.iter().any(|t| t.name == *name)
@@ -542,7 +559,10 @@ fn tool_execution_denied(
     {
         return true;
     }
-    if tool_name == "request_tools" {
+    if tool_name == "request_tools"
+        || tool_name == "todo_write"
+        || tool_name == "todo_list"
+    {
         return false;
     }
     if let Some(allow) = allowed_tools
@@ -701,6 +721,37 @@ async fn run_agent_turn_inner(
             );
         }
     }
+    // Inject todo context (after dynamic_context, before user/assistant history)
+    if let Some(ref tc) = config.todo_context {
+        if !tc.is_empty() {
+            let insert_pos = 1 + config.few_shots.len() + config.dynamic_context.as_ref().map_or(0, |dc| if dc.is_empty() { 0 } else { 1 });
+            messages.insert(
+                insert_pos,
+                Message {
+                    role: Role::System,
+                    content: vec![ContentPart::Text { text: tc.clone() }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+            );
+        }
+    }
+    // Inject continuation note — tells LLM the user cancelled and is now giving follow-up
+    if let Some(ref note) = config.continuation_note {
+        if !note.is_empty() {
+            let insert_pos = 1 + config.few_shots.len() + config.dynamic_context.as_ref().map_or(0, |dc| if dc.is_empty() { 0 } else { 1 })
+                + config.todo_context.as_ref().map_or(0, |tc| if tc.is_empty() { 0 } else { 1 });
+            messages.insert(
+                insert_pos,
+                Message {
+                    role: Role::System,
+                    content: vec![ContentPart::Text { text: note.clone() }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+            );
+        }
+    }
     // Strip images from history — they were already processed by the vision
     // model in their original turn. Only the current user message's images
     // (appended below) should trigger vision auxiliary processing.
@@ -829,7 +880,14 @@ async fn run_agent_turn_inner(
     let total_cache_write = 0usize;
 
     // Create tool context with workspace path for file operations
-    let tool_context = ToolContext::with_workspace(config.workspace_path.clone());
+    let tool_context = ToolContext {
+        workspace_path: config.workspace_path.clone(),
+        sandbox: None,
+        recently_read: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        session_id: Some(config.session_id.clone()),
+        todo_store: config.todo_store.clone(),
+        event_bus: config.event_bus.clone(),
+    };
 
     // ── Prefix digest: compute SHA256 fingerprint of stable prefix ──
     let digest = assembler.compute_prefix_digest(&AssembleOptions {
@@ -909,6 +967,7 @@ async fn run_agent_turn_inner(
                 }],
                 tool_messages,
                 vision_usage: None,
+                stop_reason: StopReason::BudgetExhausted,
             });
         }
         // Mid-turn compaction check (heuristic-only, no LLM call)
@@ -970,6 +1029,7 @@ async fn run_agent_turn_inner(
                 }],
                 tool_messages,
                 vision_usage: None,
+                stop_reason: StopReason::UserCancelled,
             });
         }
 
@@ -1171,6 +1231,8 @@ async fn run_agent_turn_inner(
                             .await;
                 }
 
+
+
                 if !allowed {
                     // Fire PermissionRequest hook
                     if let Some(ref hook_reg) = config.hook_registry {
@@ -1369,6 +1431,7 @@ async fn run_agent_turn_inner(
             kv_cache_hit: client.last_cache_hit(),
             tool_messages,
             vision_usage: vision_usage.clone(),
+            stop_reason: StopReason::Completed,
         });
     }
 
@@ -1388,6 +1451,7 @@ async fn run_agent_turn_inner(
         kv_cache_hit: client.last_cache_hit(),
         tool_messages,
         vision_usage: vision_usage.clone(),
+        stop_reason: StopReason::MaxIterations,
     })
 }
 
@@ -1515,6 +1579,37 @@ async fn run_agent_turn_streaming_inner(
                 Message {
                     role: Role::System,
                     content: vec![ContentPart::Text { text: dc.clone() }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+            );
+        }
+    }
+    // Inject continuation note — tells LLM the user cancelled and is now giving follow-up
+    if let Some(ref note) = config.continuation_note {
+        if !note.is_empty() {
+            let insert_pos = 1 + config.few_shots.len() + config.dynamic_context.as_ref().map_or(0, |dc| if dc.is_empty() { 0 } else { 1 })
+                + config.todo_context.as_ref().map_or(0, |tc| if tc.is_empty() { 0 } else { 1 });
+            messages.insert(
+                insert_pos,
+                Message {
+                    role: Role::System,
+                    content: vec![ContentPart::Text { text: note.clone() }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+            );
+        }
+    }
+    // Inject todo context (after dynamic_context, before user/assistant history)
+    if let Some(ref tc) = config.todo_context {
+        if !tc.is_empty() {
+            let insert_pos = 1 + config.few_shots.len() + config.dynamic_context.as_ref().map_or(0, |dc| if dc.is_empty() { 0 } else { 1 });
+            messages.insert(
+                insert_pos,
+                Message {
+                    role: Role::System,
+                    content: vec![ContentPart::Text { text: tc.clone() }],
                     timestamp: chrono::Utc::now(),
                     usage: None,
                 },
@@ -1720,7 +1815,14 @@ async fn run_agent_turn_streaming_inner(
     let mut completed_iterations = 0usize;
 
     // Create tool context with workspace path for file operations
-    let tool_context = ToolContext::with_workspace(config.workspace_path.clone());
+    let tool_context = ToolContext {
+        workspace_path: config.workspace_path.clone(),
+        sandbox: None,
+        recently_read: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        session_id: Some(config.session_id.clone()),
+        todo_store: config.todo_store.clone(),
+        event_bus: config.event_bus.clone(),
+    };
 
     // ── Prefix digest (streaming): compute SHA256 fingerprint of stable prefix ──
     let digest = assembler.compute_prefix_digest(&AssembleOptions {
@@ -1800,6 +1902,7 @@ async fn run_agent_turn_streaming_inner(
                 }],
                 tool_messages,
                 vision_usage: None,
+                stop_reason: StopReason::BudgetExhausted,
             });
         }
         // Mid-turn compaction check (heuristic-only, no LLM call)
@@ -1863,6 +1966,7 @@ async fn run_agent_turn_streaming_inner(
                 }],
                 tool_messages,
                 vision_usage: None,
+                stop_reason: StopReason::UserCancelled,
             });
         }
 
@@ -1963,6 +2067,7 @@ async fn run_agent_turn_streaming_inner(
                             content_parts: vec![ContentPart::Text { text: "[已中断]".into() }],
                             tool_messages,
                             vision_usage: None,
+                            stop_reason: StopReason::UserCancelled,
                         });
                     }
                     delta = stream_rx.recv() => {
@@ -2224,6 +2329,8 @@ async fn run_agent_turn_streaming_inner(
                             "system_info",
                             "token_usage",
                             "memory_search",
+                            "todo_write",
+                            "todo_list",
                         ];
                         matched = all_tools
                             .iter()
@@ -2266,6 +2373,8 @@ async fn run_agent_turn_streaming_inner(
                         serde_json::from_str(tc_args).unwrap_or(serde_json::json!({}));
                     allowed = request_user_approval(tc_id, tc_name, &args, &risk, config).await;
                 }
+
+
 
                 if !allowed {
                     // Fire PermissionRequest hook
@@ -2335,7 +2444,7 @@ async fn run_agent_turn_streaming_inner(
                                 "tool arguments JSON truncated (token limit)"
                             );
                             let err_content = format!(
-                                "Output truncated by token limit — {} bytes received but JSON is incomplete. Split large content across multiple file_write calls instead of one giant file.",
+                                "Output truncated by token limit（{} bytes，JSON 不完整）。请把大内容拆成多次 write 调用，每次不超过 8KB。",
                                 tc_args.len()
                             );
                             messages.push(Message::tool(tc_id, tc_name, &err_content));
@@ -2530,6 +2639,7 @@ async fn run_agent_turn_streaming_inner(
         thinking: captured_thinking,
         content_parts,
         tool_calls_made,
+        stop_reason: if completed_iterations > 0 { StopReason::Completed } else { StopReason::MaxIterations },
         iterations: if completed_iterations > 0 {
             completed_iterations
         } else {

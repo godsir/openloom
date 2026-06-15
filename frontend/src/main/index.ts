@@ -59,9 +59,14 @@ if (!app.isPackaged || app.requestSingleInstanceLock()) {
 app.whenReady().then(async () => {
   registerPetProtocol()
 
-  // Auto-start on boot
-  const autoStart = getStoreKey('autoStart', false)
-  app.setLoginItemSettings({ openAtLogin: autoStart })
+  // Auto-start on boot — only apply in packaged/production builds.
+  // In dev mode, force-disable to prevent polluting the user's OS startup items.
+  if (app.isPackaged) {
+    const autoStart = getStoreKey('autoStart', false)
+    app.setLoginItemSettings({ openAtLogin: autoStart })
+  } else {
+    app.setLoginItemSettings({ openAtLogin: false })
+  }
 
   registerIpcHandlers()
 

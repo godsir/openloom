@@ -52,6 +52,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       lineHeight: '1.8',
       minHeight: '100%',
     },
+    '.cm-gutters': {
+      background: 'var(--bg-surface)',
+      color: 'var(--text-muted)',
+      borderRight: '1px solid var(--border)',
+    },
     '.cm-activeLine': {
       background: 'var(--bg-active, rgba(255,255,255,0.04))',
     },

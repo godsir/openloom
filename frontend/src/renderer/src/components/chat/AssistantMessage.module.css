@@ -94,3 +94,9 @@
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+/* Truncated message indicator — amber left border signals budget/iteration exhaustion */
+.message.truncated .content {
+  border-left: 3px solid var(--amber);
+  padding-left: 35px;
+}

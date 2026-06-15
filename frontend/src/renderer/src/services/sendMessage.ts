@@ -182,7 +182,7 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
       }
     }
 
-    await loomRpc('chat.send', {
+    const chatResult: any = await loomRpc('chat.send', {
       session_id: sid,
       content,
       model: currentModel || undefined,
@@ -205,6 +205,22 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
         end_line: q.endLine || 0,
       })),
     })
+
+    // Store stop_reason on assistant msg so ContinueButton can render on truncation
+    if (chatResult && chatResult.stop_reason) {
+      useStore.getState().setMessageStopReason(sid, aiMsgId, chatResult.stop_reason)
+    }
+
+    // Store stop_reason on the assistant message so ContinueButton can render.
+    // chat.send now returns stop_reason alongside the response text.
+    try {
+      const result: any = await loomRpc('session.last_stop_reason', { session_id: sid })
+      if (result && result.stop_reason) {
+        useStore.getState().setMessageStopReason(sid, aiMsgId, result.stop_reason)
+      }
+    } catch {
+      // last_stop_reason is best-effort; ignore failures
+    }
   }
   catch (e: any) {
     useStore.getState().setInlineError(sid, e.message || t('sessions.sendFailed'))
@@ -220,6 +236,58 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
     useStore.getState().setSessions(
       useStore.getState().sessions.map(s =>
         s.path === sid ? { ...s, modified: now } : s
+      )
+    )
+  }
+}
+
+/**
+ * Send "继续" as a continuation — invisible user message (not shown in chat UI).
+ * Used by the ContinueButton after agent_loop truncation (budget_exhausted / max_iterations).
+ */
+export async function sendContinuation(sessionId: string): Promise<void> {
+  const store = useStore.getState()
+
+  store.addStreamingSession(sessionId)
+
+  const aiMsgId = crypto.randomUUID()
+  store.appendMessage(sessionId, {
+    id: aiMsgId, role: 'assistant',
+    blocks: [],
+    timestamp: new Date().toISOString(),
+  })
+  streamBufferManager.startStream(sessionId, aiMsgId)
+
+  const safetyTimer = setTimeout(() => {
+    const buf = streamBufferManager.snapshot(sessionId)
+    if (buf && buf.messageId === aiMsgId) {
+      streamBufferManager.handleStreamEnd(sessionId)
+    }
+  }, 300_000)
+
+  try {
+    const chatResult: any = await loomRpc('chat.send', {
+      session_id: sessionId,
+      content: '继续',
+      skip_user_message: true,   // Don't persist "继续" in session history — invisible action
+    })
+
+    // Store stop_reason in case the continuation also truncates
+    if (chatResult && chatResult.stop_reason) {
+      store.setMessageStopReason(sessionId, aiMsgId, chatResult.stop_reason)
+    }
+  } catch (e: any) {
+    store.setInlineError(sessionId, e.message || t('sessions.sendFailed'))
+  } finally {
+    clearTimeout(safetyTimer)
+    const buf = streamBufferManager.snapshot(sessionId)
+    if (buf && buf.messageId === aiMsgId) {
+      streamBufferManager.handleStreamEnd(sessionId)
+    }
+    const now = new Date().toISOString()
+    store.setSessions(
+      store.sessions.map(s =>
+        s.path === sessionId ? { ...s, modified: now } : s
       )
     )
   }

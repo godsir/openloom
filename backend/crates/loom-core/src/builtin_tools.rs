@@ -7,6 +7,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use loom_memory::TodoItem;
 use loom_types::{ToolDefinition, ToolProgress};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -1854,6 +1855,301 @@ impl AgentTool for ScheduleReminder {
                 structured_content: None,
             }),
         }
+    }
+
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
+}
+
+// ============================================================================
+// TodoWrite — replace the current todo list for this session
+// ============================================================================
+
+pub struct TodoWriteTool;
+
+#[async_trait]
+impl AgentTool for TodoWriteTool {
+    fn tool_name(&self) -> &str {
+        "todo_write"
+    }
+
+    fn supports_parallel(&self) -> bool {
+        true
+    }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "todo_write".into(),
+            description: "IMPORTANT — whenever the user asks you to create a todo list, track tasks, or you would otherwise output a task list as text, call this tool instead of writing text. The frontend renders it as a structured panel the user can interact with.\nReplace the current todo list. At most one item in_progress at a time. Pass an empty array to clear all todos.\n当用户要求你列出待办事项、追踪任务，或者你打算以文字形式输出任务清单时，必须调用此工具而非输出文字。前端会以结构化面板渲染，用户可以直接点击操作。替换当前待办列表，同一时间最多一个项目处于 in_progress 状态。传入空数组可清除所有待办。".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "todos": {
+                        "type": "array",
+                        "description": "Complete todo list that will replace the current list",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": { "type": "string", "description": "Optional UUID for the todo item. Auto-generated if missing." },
+                                "content": { "type": "string", "description": "Todo item description" },
+                                "status": { "type": "string", "enum": ["pending", "in_progress", "completed"], "description": "Status of this todo item" },
+                                "plan_id": { "type": "string", "description": "Optional plan identifier for grouping related todos" }
+                            },
+                            "required": ["content", "status"]
+                        }
+                    }
+                },
+                "required": ["todos"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: tokio::sync::mpsc::UnboundedSender<ToolProgress>,
+        context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let todos_arr = arguments["todos"].as_array().cloned().unwrap_or_default();
+
+        // At most 50 items
+        if todos_arr.len() > 50 {
+            return Ok(ToolResult {
+                content: "Too many todos — max 50 items allowed.".into(),
+                is_error: true,
+                structured_content: None,
+            });
+        }
+
+        // Validate and convert
+        let mut in_progress_count = 0u32;
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut items: Vec<TodoItem> = Vec::new();
+
+        for (i, item) in todos_arr.iter().enumerate() {
+            let content = item["content"].as_str().unwrap_or("").to_string();
+            let status = item["status"].as_str().unwrap_or("pending").to_string();
+            let plan_id = item["plan_id"].as_str().map(|s| s.to_string());
+
+            // Validate content non-empty
+            if content.trim().is_empty() {
+                return Ok(ToolResult {
+                    content: format!("Todo item #{} has empty content.", i + 1),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+
+            // Validate status
+            match status.as_str() {
+                "pending" | "in_progress" | "completed" => {}
+                s => {
+                    return Ok(ToolResult {
+                        content: format!(
+                            "Invalid status '{}' for todo item #{} — must be pending, in_progress, or completed.",
+                            s,
+                            i + 1
+                        ),
+                        is_error: true,
+                        structured_content: None,
+                    });
+                }
+            }
+
+            // Count in_progress
+            if status == "in_progress" {
+                in_progress_count += 1;
+                if in_progress_count > 1 {
+                    return Ok(ToolResult {
+                        content: "At most one todo item can be in_progress at a time.".into(),
+                        is_error: true,
+                        structured_content: None,
+                    });
+                }
+            }
+
+            // Generate UUID if missing
+            let id = item["id"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+
+            items.push(TodoItem {
+                id,
+                session_id: String::new(), // filled by store using context.session_id
+                content,
+                status,
+                plan_id,
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            });
+        }
+
+        // Resolve session_id from context — required for scoped storage
+        let session_id = match &context.session_id {
+            Some(sid) => sid.clone(),
+            None => {
+                return Ok(ToolResult {
+                    content: "No session_id in tool context — todo store unavailable.".into(),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        };
+
+        // Write to store
+        let store = match &context.todo_store {
+            Some(s) => s,
+            None => {
+                return Ok(ToolResult {
+                    content: "Todo store not configured in this build.".into(),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        };
+
+        // Set session_id on each item before writing
+        for item in &mut items {
+            item.session_id = session_id.clone();
+        }
+
+        store.replace_todos(&session_id, &items)?;
+
+        // Publish real-time event for frontend panel update
+        if let Some(ref bus) = context.event_bus {
+            let todos_json = serde_json::to_value(&items).unwrap_or_default();
+            bus.publish(crate::event_bus::AgentEvent::TodosReplaced {
+                session_id: session_id.clone(),
+                todos: todos_json,
+            });
+        }
+
+        Ok(ToolResult {
+            content: format!("Todo list updated — {} items.", items.len()),
+            is_error: false,
+            structured_content: Some(serde_json::json!({
+                "success": true,
+                "count": items.len(),
+            })),
+        })
+    }
+
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
+}
+
+// ============================================================================
+// TodoList — read the current todo list for this session
+// ============================================================================
+
+pub struct TodoListTool;
+
+#[async_trait]
+impl AgentTool for TodoListTool {
+    fn tool_name(&self) -> &str {
+        "todo_list"
+    }
+
+    fn supports_parallel(&self) -> bool {
+        true
+    }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "todo_list".into(),
+            description: "Read the current todo list for this session.\n读取当前会话的待办列表。".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+            tags: vec![],
+        }
+    }
+
+    async fn execute(
+        &self,
+        _arguments: serde_json::Value,
+        _progress: tokio::sync::mpsc::UnboundedSender<ToolProgress>,
+        context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let session_id = match &context.session_id {
+            Some(sid) => sid.clone(),
+            None => {
+                return Ok(ToolResult {
+                    content: "No session_id in tool context — todo store unavailable.".into(),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        };
+
+        let store = match &context.todo_store {
+            Some(s) => s,
+            None => {
+                return Ok(ToolResult {
+                    content: "Todo store not configured in this build.".into(),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        };
+
+        let todos = store.list_todos(&session_id)?;
+
+        if todos.is_empty() {
+            return Ok(ToolResult {
+                content: "Todo list is empty.".into(),
+                is_error: false,
+                structured_content: Some(serde_json::json!([])),
+            });
+        }
+
+        let items: Vec<serde_json::Value> = todos
+            .iter()
+            .map(|t| {
+                let mut obj = serde_json::json!({
+                    "id": t.id,
+                    "content": t.content,
+                    "status": t.status,
+                    "created_at": t.created_at,
+                    "updated_at": t.updated_at,
+                });
+                if let Some(ref pid) = t.plan_id {
+                    obj["plan_id"] = serde_json::Value::String(pid.clone());
+                }
+                obj
+            })
+            .collect();
+
+        let content = items
+            .iter()
+            .map(|t| {
+                let status_icon = match t["status"].as_str().unwrap_or("") {
+                    "completed" => "[x]",
+                    "in_progress" => "[~]",
+                    _ => "[ ]",
+                };
+                format!(
+                    "{} {} {}",
+                    status_icon,
+                    t["id"].as_str().unwrap_or(""),
+                    t["content"].as_str().unwrap_or("")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        Ok(ToolResult {
+            content: format!("Todo list ({} items):\n\n{}", items.len(), content),
+            is_error: false,
+            structured_content: Some(serde_json::json!(items)),
+        })
     }
 
     fn provenance(&self) -> ToolProvenance {

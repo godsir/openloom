@@ -1,65 +1,57 @@
-import React from 'react'
+import { useEffect } from 'react'
+import { Circle, PlayCircle, CheckCircle2 } from 'lucide-react'
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
+import styles from './TodoPanel.module.css'
 
 export const TodoPanel: React.FC = () => {
+  const { t } = useLocale()
   const todos = useStore(s => s.todos)
-  const goal = useStore(s => s.goal)
   const todoPanelOpen = useStore(s => s.todoPanelOpen)
+  const currentTodoSessionId = useStore(s => s.currentTodoSessionId)
+  const currentSessionId = useStore(s => s.currentSessionId)
   const toggleTodoStatus = useStore(s => s.toggleTodoStatus)
   const toggleTodoPanel = useStore(s => s.toggleTodoPanel)
+  const loadTodos = useStore(s => s.loadTodos)
 
-  const pending = todos.filter(t => t.status === 'pending').length
-  const inProgress = todos.filter(t => t.status === 'in_progress').length
-  const completed = todos.filter(t => t.status === 'completed').length
+  useEffect(() => {
+    if (currentSessionId && currentSessionId !== currentTodoSessionId) {
+      loadTodos(currentSessionId)
+    }
+  }, [currentSessionId])
+
+  const count = todos.filter(t => t.status !== 'completed').length
 
   if (!todoPanelOpen) return null
 
   return (
-    <div style={{
-      width: 340, borderLeft: '1px solid var(--border)',
-      display: 'flex', flexDirection: 'column', height: '100%',
-      backgroundColor: 'var(--bg-card)'
-    }}>
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontWeight: 600, fontSize: 14 }}>Todo</span>
-        <button onClick={toggleTodoPanel} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18 }}>x</button>
+    <div className={styles.panel}>
+      <div className={styles.header}>
+        <span>{t('todo.panelTitle')}{todos.length > 0 ? ` · ${count} 项` : ''}</span>
+        <button onClick={toggleTodoPanel} className={styles.closeBtn}>×</button>
       </div>
-
-      {goal && (
-        <div style={{ padding: '8px 16px', fontSize: 13, borderBottom: '1px solid var(--border)', backgroundColor: 'var(--surface-subtle)' }}>
-          <span style={{ fontWeight: 500 }}>Goal:</span> {goal.description}
-          <span style={{ marginLeft: 8, padding: '1px 6px', borderRadius: 3, fontSize: 10, backgroundColor: 'var(--accent-soft)', color: 'var(--accent)' }}>{goal.status}</span>
-        </div>
-      )}
-
-      <div style={{ padding: '8px 16px', fontSize: 12, color: 'var(--text-muted)', display: 'flex', gap: 12 }}>
-        <span>{pending} pending</span>
-        <span>{inProgress} in progress</span>
-        <span>{completed} done</span>
-      </div>
-
-      <div style={{ flex: 1, overflow: 'auto', padding: '8px 16px' }}>
-        {todos.map(todo => (
-          <div key={todo.id} onClick={() => toggleTodoStatus(todo.id)} style={{
-            display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 0',
-            cursor: 'pointer', fontSize: 13, color: 'var(--text)',
-            opacity: todo.status === 'completed' ? 0.5 : 1
-          }}>
-            <span style={{ marginTop: 1 }}>
-              {todo.status === 'completed' ? '☑' : todo.status === 'in_progress' ? '◐' : '☐'}
-            </span>
-            <span style={{
-              textDecoration: todo.status === 'completed' ? 'line-through' : 'none',
-              flex: 1
-            }}>
-              {todo.content}
-            </span>
-          </div>
-        ))}
-        {todos.length === 0 && (
-          <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 24, fontSize: 13 }}>
-            No todos yet. Create a plan with <code>/plan</code> to generate tasks.
-          </div>
+      <div className={styles.list}>
+        {todos.length === 0 ? (
+          <div className={styles.empty}>{t('todo.empty')}</div>
+        ) : (
+          todos.map(todo => {
+            const isCompleted = todo.status === 'completed'
+            const isInProgress = todo.status === 'in_progress'
+            return (
+              <div
+                key={todo.id}
+                className={`${styles.item} ${isCompleted ? styles.completed : ''} ${isInProgress ? styles.inProgress : ''}`}
+                onClick={() => toggleTodoStatus(todo.id)}
+              >
+                <span className={styles.statusIcon}>
+                  {isCompleted ? <CheckCircle2 size={15} /> :
+                   isInProgress ? <PlayCircle size={15} /> :
+                   <Circle size={15} />}
+                </span>
+                <span className={styles.contentText}>{todo.content}</span>
+              </div>
+            )
+          })
         )}
       </div>
     </div>

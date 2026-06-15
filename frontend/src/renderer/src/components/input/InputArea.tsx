@@ -13,7 +13,8 @@ import PermissionModeButton from './PermissionModeButton'
 import AttachedFiles from './AttachedFiles'
 import QuotedSelectionCard from './QuotedSelectionCard'
 import SlashCommandMenu, { getSlashQuery, makeBuiltinCommands } from './SlashCommandMenu'
-import { IconImage, IconPaperclip, IconSparkles, IconX, IconCheck } from '../../utils/icons'
+import { IconImage, IconPaperclip, IconSparkles, IconX, IconCheck, IconListTodo } from '../../utils/icons'
+import { TodoPanel } from '../todo/TodoPanel'
 import styles from './InputArea.module.css'
 
 interface SkillInfo {
@@ -64,6 +65,8 @@ export default function InputArea() {
   const sendShortcut = useStore(s => s.sendShortcut)
   const quotedSelections = useStore(s => s.quotedSelections)
   const removeQuotedSelection = useStore(s => s.removeQuotedSelection)
+  const todoPanelOpen = useStore(s => s.todoPanelOpen)
+  const toggleTodoPanel = useStore(s => s.toggleTodoPanel)
   const { saveDraft, restoreDraft } = useStore.getState()
   const sessionWorkspace = sessionId ? sessionWorkspaces[sessionId] : undefined
 
@@ -461,6 +464,7 @@ export default function InputArea() {
       onDrop={handleDrop}
     >
       <div className={styles.container}>
+        <TodoPanel />
         <div className={styles.composer}>
           {selectedSkills.length > 0 && (
             <div className={styles.skillBar}>
@@ -591,6 +595,14 @@ export default function InputArea() {
                 </div>
               )}
             </div>
+            <div className={styles.toolbarDivider} />
+            <button
+              onClick={toggleTodoPanel}
+              className={`${styles.fileActionBtn} ${todoPanelOpen ? styles.todoBtnActive : ''}`}
+              title={t('todo.panelTitle')}
+            >
+              <IconListTodo size={18} />
+            </button>
             <div className={styles.toolbarDivider} />
             <PermissionModeButton />
             <ThinkingLevelButton />

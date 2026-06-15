@@ -16,6 +16,7 @@ pub async fn handle(
         "chat.send" => Some(handle_chat_send(state, p).await),
         "chat.stop" => Some(handle_chat_stop(state, p).await),
         "chat.compact" => Some(handle_chat_compact(state, p).await),
+        "session.last_stop_reason" => Some(handle_last_stop_reason(state, p).await),
         _ => None,
     }
 }
@@ -162,6 +163,7 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
         "tool_calls": result.tool_calls_made,
         "iterations": result.iterations,
         "tokens": result.prompt_tokens + result.completion_tokens,
+        "stop_reason": result.stop_reason,
     }))
 }
 
@@ -202,6 +204,12 @@ async fn handle_chat_compact(state: &AppState, p: &Value) -> Result<Value, JsonR
             "message": "No memory store or model configured — summarization skipped",
         })),
     }
+}
+
+async fn handle_last_stop_reason(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let session_id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+    let reason = state.orchestrator.get_last_stop_reason(session_id).await;
+    Ok(json!({ "session_id": session_id, "stop_reason": reason }))
 }
 
 // ---------------------------------------------------------------------------

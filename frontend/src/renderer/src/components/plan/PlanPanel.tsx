@@ -43,7 +43,7 @@ export const PlanPanel: React.FC = () => {
   return (
     <div style={{
       width: 340, borderLeft: '1px solid var(--border)',
-      display: 'flex', flexDirection: 'column', height: '100%',
+      display: 'flex', flexDirection: 'column', flex: 1,
       backgroundColor: 'var(--bg-card)'
     }}>
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

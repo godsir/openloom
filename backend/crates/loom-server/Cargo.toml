@@ -12,6 +12,7 @@ loom-skills = { path = "../loom-skills" }
 loom-plugins = { path = "../loom-plugins" }
 loom-marketplace = { path = "../loom-marketplace" }
 loom-cron = { path = "../loom-cron" }
+loom-memory = { path = "../loom-memory" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "signal"] }
 tokio-util = { workspace = true }
 anyhow = "1"

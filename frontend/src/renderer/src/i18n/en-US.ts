@@ -144,6 +144,20 @@ export const enUS: TranslationMap = {
   'chat.newSession': 'New Session',
   'chat.clearInput': 'Clear Input',
   'chat.processing': 'Processing',
+  'chat.continue': 'Continue',
+  'chat.continuing': 'Continuing...',
+
+  // ── Plan & Todo ──────────────────────────────────────────────────
+  'todo.panelTitle': 'Todo',
+  'todo.empty': 'No todos yet',
+  'todo.emptyHint': 'Create a plan with /plan in chat and AI will generate tasks automatically',
+  'todo.pending': 'Pending',
+  'todo.inProgress': 'In Progress',
+  'todo.completed': 'Completed',
+  'todo.clearAll': 'Clear All',
+  'todo.markPending': 'Mark as Pending',
+  'todo.markInProgress': 'Mark as In Progress',
+  'todo.markCompleted': 'Mark as Completed',
 
   // ── Slash Commands ────────────────────────────────────────────────
   'slash.builtinCommands': 'Built-in Commands',

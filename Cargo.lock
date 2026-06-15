@@ -1711,6 +1711,7 @@ dependencies = [
  "loom-cron",
  "loom-marketplace",
  "loom-mcp",
+ "loom-memory",
  "loom-plugins",
  "loom-skills",
  "loom-types",

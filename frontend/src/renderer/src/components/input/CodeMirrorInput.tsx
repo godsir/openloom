@@ -74,6 +74,11 @@ export const CodeMirrorInput: React.FC<CodeMirrorInputProps> = ({ value, onChang
         '&': { maxHeight: '200px', overflow: 'auto' },
         '.cm-content': { fontFamily: 'var(--font-mono)', fontSize: '14px', padding: '8px 12px' },
         '.cm-line': { lineHeight: '1.6' },
+        '.cm-gutters': {
+          background: 'var(--bg-surface)',
+          color: 'var(--text-muted)',
+          borderRight: '1px solid var(--border)',
+        },
       }),
       // Compartments for dynamic reconfiguration
       editableCompartment.current.of(EditorView.editable.of(!disabled)),

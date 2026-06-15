@@ -55,6 +55,7 @@ export {
   Network as IconNetwork,
   BarChart3 as IconBarChart,
   MessageSquare as IconMessageSquare,
+  ListTodo as IconListTodo,
   PawPrint as IconPawPrint,
   Info as IconInfo,
   Puzzle as IconPuzzle,

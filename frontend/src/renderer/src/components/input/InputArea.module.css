@@ -5,6 +5,7 @@
 .container {
   max-width: 860px;
   margin: 0 auto;
+  position: relative;
 }
 
 .composer {
@@ -62,6 +63,12 @@
   background: var(--border);
   flex-shrink: 0;
   margin: 0 2px;
+}
+
+.todoBtnActive {
+  color: var(--accent) !important;
+  background: var(--accent-subtle) !important;
+  border-color: var(--accent) !important;
 }
 
 .attachmentsArea {

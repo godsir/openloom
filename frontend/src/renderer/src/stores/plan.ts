@@ -55,6 +55,8 @@ export const createPlanSlice: StateCreator<PlanSlice> = (set, get) => ({
     try {
       const loomRpc = (await import('../services/jsonrpc')).loomRpc
       await loomRpc('plan.update', { plan_id: planId, content })
+      // Reload todos so the panel reflects checkbox changes from the plan markdown.
+      ;(get() as any).loadTodos?.((get() as any).currentSessionId).catch(() => {})
     } catch { /* silent fail */ }
   },
 

@@ -165,6 +165,15 @@ export async function bootstrapApp(): Promise<() => void> {
           useStore.getState().setAgents(r.configs || [])
         ).catch(() => {})
         break
+      case 'todo.list_replaced':
+        useStore.getState().handleTodoReplaced((p?.todos as any[]) || [])
+        break
+      case 'plan.created':
+      case 'plan.updated':
+        // Plan content changed — reload todos so the panel reflects
+        // checkbox changes synced by the backend.
+        useStore.getState().loadTodos(sessionId).catch(() => {})
+        break
     }
   })
 

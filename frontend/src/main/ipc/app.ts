@@ -46,8 +46,8 @@ export function registerAppIpc(): void {
 
   ipcMain.handle('set-preference', (_, key: string, value: unknown) => {
     setStoreKey(key, value)
-    // Apply auto-start immediately
-    if (key === 'autoStart') {
+    // Apply auto-start immediately (only in packaged/production builds)
+    if (key === 'autoStart' && app.isPackaged) {
       app.setLoginItemSettings({ openAtLogin: !!value })
     }
   })

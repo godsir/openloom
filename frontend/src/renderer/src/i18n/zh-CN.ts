@@ -144,6 +144,20 @@ export const zhCN: TranslationMap = {
   'chat.newSession': '新建会话',
   'chat.clearInput': '清空输入',
   'chat.processing': '处理中',
+  'chat.continue': '继续执行',
+  'chat.continuing': '继续中...',
+
+  // ── Plan & Todo ──────────────────────────────────────────────────
+  'todo.panelTitle': '待办',
+  'todo.empty': '暂无待办事项',
+  'todo.emptyHint': '在对话中使用 /plan 创建计划，AI 会自动生成任务列表',
+  'todo.pending': '待处理',
+  'todo.inProgress': '进行中',
+  'todo.completed': '已完成',
+  'todo.clearAll': '清空全部',
+  'todo.markPending': '标记为待处理',
+  'todo.markInProgress': '标记为进行中',
+  'todo.markCompleted': '标记为已完成',
 
   // ── Slash Commands ────────────────────────────────────────────────
   'slash.builtinCommands': '内置命令',
