@@ -777,6 +777,11 @@ export const enUS: TranslationMap = {
   'write.newFolder': 'New Folder',
   'write.folderNamePlaceholder': 'Folder name',
   'write.folderCreated': 'Folder created',
+  'write.export': 'Export',
+  'write.exportMARKDOWN': 'Export Markdown',
+  'write.exportHTML': 'Export HTML',
+  'write.exportPDF': 'Export PDF',
+  'write.exportDOCX': 'Export DOCX',
 
   // ── Onboarding ─────────────────────────────────────────────────
   'onboarding.welcomeTitle': 'Welcome to openLoom',

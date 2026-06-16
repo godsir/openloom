@@ -10,11 +10,6 @@ const FILE_EXT_OPTIONS = [
   { value: '.txt', label: '.txt' },
 ]
 
-function refreshFileTree() {
-  const fn = (window as any).__writeRefreshFileTree
-  if (fn) fn()
-}
-
 export const WriteFileDialogs: React.FC = () => {
   const modalState = useWriteStore(s => s.modalState)
   const modalTarget = useWriteStore(s => s.modalTarget)
@@ -24,6 +19,7 @@ export const WriteFileDialogs: React.FC = () => {
   const showToast = useWriteStore(s => s.showToast)
   const setActiveFile = useWriteStore(s => s.setActiveFile)
   const clearActiveFile = useWriteStore(s => s.clearActiveFile)
+  const triggerRefresh = useWriteStore(s => s.triggerRefresh)
 
   const { t } = useLocale()
 
@@ -55,7 +51,7 @@ export const WriteFileDialogs: React.FC = () => {
     try {
       await loomRpc('vfs.create_directory', { workspace_root: workspaceRoot, path: raw })
       showToast('success', t('write.folderCreated', '文件夹已创建'))
-      refreshFileTree()
+      triggerRefresh()
       close()
     } catch (e: any) {
       showToast('error', e?.message || String(e))
@@ -74,7 +70,7 @@ export const WriteFileDialogs: React.FC = () => {
       await loomRpc('vfs.write_file', { workspace_root: workspaceRoot, path: name, content })
       setActiveFile(name, 'text')
       showToast('success', t('write.fileCreated'))
-      refreshFileTree()
+      triggerRefresh()
       close()
     } catch (e: any) {
       showToast('error', e?.message || String(e))
@@ -94,7 +90,7 @@ export const WriteFileDialogs: React.FC = () => {
         setActiveFile(dir + newName, 'text')
       }
       showToast('success', t('write.fileRenamed'))
-      refreshFileTree()
+      triggerRefresh()
       close()
     } catch (e: any) {
       showToast('error', e?.message || String(e))
@@ -109,7 +105,7 @@ export const WriteFileDialogs: React.FC = () => {
         clearActiveFile()
       }
       showToast('success', t('write.fileDeleted'))
-      refreshFileTree()
+      triggerRefresh()
       close()
     } catch (e: any) {
       showToast('error', e?.message || String(e))

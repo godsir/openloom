@@ -44,12 +44,6 @@ export const WriteWorkspaceView: React.FC = () => {
     try { const p = await (window as any).loom?.selectFolder?.(); if (p) setWorkspaceRoot(p) } catch {}
   }, [setWorkspaceRoot])
 
-  // Expose for WriteDocumentPane (which may be deeply nested)
-  useEffect(() => {
-    (window as any).__writeSelectWorkspace = handleSelectWorkspace
-    return () => { delete (window as any).__writeSelectWorkspace }
-  }, [handleSelectWorkspace])
-
   const handleNewFile = useCallback(() => setModalState('newFile'), [setModalState])
 
   const handleSave = useCallback(async () => {

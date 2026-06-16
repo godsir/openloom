@@ -777,6 +777,11 @@ export const zhTW: TranslationMap = {
   'write.newFolder': '新增資料夾',
   'write.folderNamePlaceholder': '資料夾名稱',
   'write.folderCreated': '資料夾已建立',
+  'write.export': '匯出',
+  'write.exportMARKDOWN': '匯出 Markdown',
+  'write.exportHTML': '匯出 HTML',
+  'write.exportPDF': '匯出 PDF',
+  'write.exportDOCX': '匯出 DOCX',
 
   // ── Onboarding ─────────────────────────────────────────────────
   'onboarding.welcomeTitle': '欢迎来到 openLoom',

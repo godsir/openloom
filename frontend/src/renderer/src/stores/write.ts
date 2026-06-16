@@ -151,6 +151,8 @@ interface WriteFilesSlice {
   setFileSize: (size: number) => void;
   setFileTruncated: (truncated: boolean) => void;
   clearActiveFile: () => void;
+  refreshTrigger: number;
+  triggerRefresh: () => void;
 }
 
 const createWriteFilesSlice = (set: any, _get: any): WriteFilesSlice => ({
@@ -164,6 +166,7 @@ const createWriteFilesSlice = (set: any, _get: any): WriteFilesSlice => ({
   fileError: null,
   fileSize: 0,
   fileTruncated: false,
+  refreshTrigger: 0,
 
   setEntriesByDir: (dir, entries) =>
     set((s: any) => ({ entriesByDir: { ...s.entriesByDir, [dir]: entries } })),
@@ -189,6 +192,7 @@ const createWriteFilesSlice = (set: any, _get: any): WriteFilesSlice => ({
       fileSize: 0,
       fileTruncated: false,
     }),
+  triggerRefresh: () => set((s: any) => ({ refreshTrigger: s.refreshTrigger + 1 })),
 });
 
 // ============================================================

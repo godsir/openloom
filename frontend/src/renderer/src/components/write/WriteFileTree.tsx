@@ -49,6 +49,7 @@ export const WriteFileTree: React.FC<WriteFileTreeProps> = ({ onNewFile }) => {
   const expandedDirs = useWriteStore(s => s.expandedDirs)
   const activeFilePath = useWriteStore(s => s.activeFilePath)
   const fileLoading = useWriteStore(s => s.fileLoading)
+  const refreshTrigger = useWriteStore(s => s.refreshTrigger)
 
   // actions
   const setEntriesByDir = useWriteStore(s => s.setEntriesByDir)
@@ -99,18 +100,12 @@ export const WriteFileTree: React.FC<WriteFileTreeProps> = ({ onNewFile }) => {
     if (workspaceRoot) {
       loadDir('.')
     }
-  }, [workspaceRoot])
+  }, [workspaceRoot, refreshTrigger])
 
   // Expose refresh for external use (called after create/rename/delete)
   const refreshRoot = useCallback(() => {
     if (workspaceRoot) loadDir('.')
   }, [workspaceRoot, loadDir])
-
-  // Store refresh function globally for WriteFileDialogs to call
-  useEffect(() => {
-    (window as any).__writeRefreshFileTree = refreshRoot
-    return () => { delete (window as any).__writeRefreshFileTree }
-  }, [refreshRoot])
 
   // ---- handleFileClick ----
 
