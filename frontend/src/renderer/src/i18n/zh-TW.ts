@@ -774,6 +774,9 @@ export const zhTW: TranslationMap = {
   'write.expandSidebar': '展開側邊欄',
   'write.previewRich': '所見即所得',
   'write.previewLive': '即時',
+  'write.newFolder': '新增資料夾',
+  'write.folderNamePlaceholder': '資料夾名稱',
+  'write.folderCreated': '資料夾已建立',
 
   // ── Onboarding ─────────────────────────────────────────────────
   'onboarding.welcomeTitle': '欢迎来到 openLoom',

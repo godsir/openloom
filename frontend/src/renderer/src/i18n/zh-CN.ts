@@ -774,6 +774,9 @@ export const zhCN: TranslationMap = {
   'write.expandSidebar': '展开侧边栏',
   'write.previewRich': '所见即所得',
   'write.previewLive': '实时',
+  'write.newFolder': '新建文件夹',
+  'write.folderNamePlaceholder': '文件夹名',
+  'write.folderCreated': '文件夹已创建',
 
   // ── Onboarding ─────────────────────────────────────────────────
   'onboarding.welcomeTitle': '欢迎来到 openLoom',

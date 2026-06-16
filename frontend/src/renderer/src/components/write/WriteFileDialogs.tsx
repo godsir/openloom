@@ -48,6 +48,20 @@ export const WriteFileDialogs: React.FC = () => {
 
   const close = () => setModalState('none')
 
+  const handleCreateFolder = async () => {
+    if (!workspaceRoot) return
+    const raw = inputValue.trim()
+    if (!raw) return
+    try {
+      await loomRpc('vfs.create_directory', { workspace_root: workspaceRoot, path: raw })
+      showToast('success', t('write.folderCreated', '文件夹已创建'))
+      refreshFileTree()
+      close()
+    } catch (e: any) {
+      showToast('error', e?.message || String(e))
+    }
+  }
+
   const handleCreate = async () => {
     if (!workspaceRoot) return
     const raw = inputValue.trim()
@@ -105,6 +119,7 @@ export const WriteFileDialogs: React.FC = () => {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       if (modalState === 'newFile') handleCreate()
+      else if (modalState === 'newFolder') handleCreateFolder()
       else if (modalState === 'rename') handleRename()
     }
     if (e.key === 'Escape') close()
@@ -117,9 +132,11 @@ export const WriteFileDialogs: React.FC = () => {
         <div className={styles.modalTitle}>
           {modalState === 'newFile'
             ? t('write.newFile')
-            : modalState === 'rename'
-              ? t('common.rename')
-              : t('write.confirmDeleteTitle')}
+            : modalState === 'newFolder'
+              ? t('write.newFolder', '新建文件夹')
+              : modalState === 'rename'
+                ? t('common.rename')
+                : t('write.confirmDeleteTitle')}
         </div>
 
         {modalState === 'delete' ? (
@@ -156,6 +173,15 @@ export const WriteFileDialogs: React.FC = () => {
                   variant="pill"
                 />
               </div>
+            ) : modalState === 'newFolder' ? (
+              <input
+                ref={inputRef}
+                className={styles.modalInput}
+                value={inputValue}
+                onChange={e => setInputValue(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { handleCreateFolder() }; if (e.key === 'Escape') close() }}
+                placeholder={t('write.folderNamePlaceholder', '文件夹名')}
+              />
             ) : (
               <input
                 ref={inputRef}
@@ -172,7 +198,7 @@ export const WriteFileDialogs: React.FC = () => {
               </button>
               <button
                 className={styles.modalBtnConfirm}
-                onClick={modalState === 'newFile' ? handleCreate : handleRename}
+                onClick={modalState === 'newFile' ? handleCreate : modalState === 'newFolder' ? handleCreateFolder : handleRename}
               >
                 {modalState === 'newFile' ? t('common.create') : t('common.rename')}
               </button>

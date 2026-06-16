@@ -31,6 +31,18 @@ interface WriteFileTreeProps {
 export const WriteFileTree: React.FC<WriteFileTreeProps> = ({ onNewFile }) => {
   const { t } = useLocale();
 
+  // Context menu state
+  const setModalState = useWriteStore(s => s.setModalState)
+  const [ctxMenu, setCtxMenu] = React.useState<{ x: number; y: number; entry: WorkspaceEntry } | null>(null)
+
+  // Close context menu on any click
+  useEffect(() => {
+    if (!ctxMenu) return
+    const close = () => setCtxMenu(null)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
+  }, [ctxMenu])
+
   // read state
   const workspaceRoot = useWriteStore(s => s.workspaceRoot)
   const entriesByDir = useWriteStore(s => s.entriesByDir)
@@ -186,6 +198,10 @@ export const WriteFileTree: React.FC<WriteFileTreeProps> = ({ onNewFile }) => {
           className={`${styles.entry} ${isActive ? styles.entryActive : ''}`}
           style={{ paddingLeft: 8 + depth * 16 }}
           onClick={() => handleFileClick(entry)}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            setCtxMenu({ x: e.clientX, y: e.clientY, entry })
+          }}
           role="treeitem"
           aria-expanded={isDir ? isExpanded : undefined}
           aria-selected={isActive}
@@ -240,10 +256,72 @@ export const WriteFileTree: React.FC<WriteFileTreeProps> = ({ onNewFile }) => {
   }
 
   return (
-    <div className={styles.tree} role="tree">
-      {rootEntries.map(entry => renderEntry(entry, 0))}
-    </div>
+    <>
+      <div className={styles.tree} role="tree" onContextMenu={(e) => {
+        e.preventDefault()
+        setCtxMenu({ x: e.clientX, y: e.clientY, entry: { name: '.', path: '.', kind: 'directory' } })
+      }}>
+        {rootEntries.map(entry => renderEntry(entry, 0))}
+      </div>
+
+      {/* Context menu */}
+      {ctxMenu && (
+        <div
+          style={{
+            position: 'fixed', zIndex: 5000, left: ctxMenu.x, top: ctxMenu.y,
+            background: 'var(--bg-surface)', border: '1px solid var(--border)',
+            borderRadius: 8, padding: 4, minWidth: 150,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <ContextMenuItem onClick={() => { onNewFile(); setCtxMenu(null) }}>
+            + {t('write.newFile')}
+          </ContextMenuItem>
+          {ctxMenu.entry.kind === 'directory' && (
+            <ContextMenuItem onClick={() => {
+              setModalState('newFolder')
+              setCtxMenu(null)
+            }}>
+              + {t('write.newFolder', '新建文件夹')}
+            </ContextMenuItem>
+          )}
+          {ctxMenu.entry.kind !== 'directory' && (
+            <>
+              <ContextMenuItem onClick={() => {
+                setModalState('rename', ctxMenu.entry)
+                setCtxMenu(null)
+              }}>
+                {t('common.rename', '重命名')}
+              </ContextMenuItem>
+              <ContextMenuItem onClick={() => {
+                setModalState('delete', ctxMenu.entry)
+                setCtxMenu(null)
+              }}>
+                {t('common.delete', '删除')}
+              </ContextMenuItem>
+            </>
+          )}
+        </div>
+      )}
+    </>
   )
 }
 
 export default WriteFileTree
+
+// ── Context menu helper ──
+
+const ContextMenuItem: React.FC<{ children: React.ReactNode; onClick: () => void }> = ({ children, onClick }) => (
+  <div
+    onClick={onClick}
+    style={{
+      padding: '6px 12px', fontSize: 12, cursor: 'pointer', borderRadius: 4,
+      color: 'var(--text)', whiteSpace: 'nowrap',
+    }}
+    onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
+    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+  >
+    {children}
+  </div>
+)

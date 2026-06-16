@@ -1,5 +1,5 @@
 // PDF Viewer — renders PDF files using pdfjs-dist
-// Supports page navigation, zoom, and text selection
+// Worker is loaded via Vite ?url import for correct bundling in Electron
 
 import React, { useState, useEffect, useRef } from 'react';
 
@@ -25,7 +25,6 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, worksp
         setLoading(true);
         setError(null);
 
-        // Load binary data via Electron IPC
         const result = await (window as any).loom.readWorkspaceBinary(filePath, workspaceRoot);
         if (cancelled) return;
 
@@ -35,12 +34,12 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, worksp
           return;
         }
 
-        const pdfjsLib = await import('pdfjs-dist');
-        // Use bundled worker
-        pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-          'pdfjs-dist/build/pdf.worker.min.mjs',
-          import.meta.url
-        ).toString();
+        // Lazy-load pdfjs + its worker via Vite ?url import
+        const [pdfjsLib, { default: workerUrl }] = await Promise.all([
+          import('pdfjs-dist'),
+          import('pdfjs-dist/build/pdf.worker.min.mjs?url'),
+        ]);
+        pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
         const binary = atob(result.data);
         const pdfData = new Uint8Array(binary.length);
@@ -72,8 +71,8 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, worksp
         const page = await pdfDocRef.current.getPage(currentPage);
         const viewport = page.getViewport({ scale });
         const canvas = canvasRef.current!;
-        canvas.width = viewport.width;
         canvas.height = viewport.height;
+        canvas.width = viewport.width;
         const ctx = canvas.getContext('2d')!;
         await page.render({ canvasContext: ctx, viewport }).promise;
       } catch {}
@@ -83,7 +82,7 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, worksp
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: 13 }}>
         Loading PDF...
       </div>
     );
@@ -91,37 +90,36 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, worksp
 
   if (error) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-error)', gap: '8px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-error)', gap: 8, fontSize: 13 }}>
         <span>PDF Error</span>
-        <span style={{ fontSize: '12px' }}>{error}</span>
+        <span style={{ fontSize: 12, opacity: 0.7 }}>{error}</span>
       </div>
     );
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px',
-        padding: '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0,
-      }}>
-        <button
-          onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-          disabled={currentPage <= 1}
-          style={{ padding: '2px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'transparent', color: 'var(--text)', cursor: 'pointer', fontSize: '12px' }}
-        >← Prev</button>
-        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{currentPage} / {numPages}</span>
-        <button
-          onClick={() => setCurrentPage((p) => Math.min(numPages, p + 1))}
-          disabled={currentPage >= numPages}
-          style={{ padding: '2px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'transparent', color: 'var(--text)', cursor: 'pointer', fontSize: '12px' }}
-        >Next →</button>
-        <span style={{ width: '1px', height: '16px', background: 'var(--border)' }} />
-        <button onClick={() => setScale((s) => Math.max(0.5, s - 0.25))} style={{ padding: '2px 6px', border: '1px solid var(--border)', borderRadius: '4px', background: 'transparent', color: 'var(--text)', cursor: 'pointer' }}>−</button>
-        <span style={{ fontSize: '11px', color: 'var(--text-muted)', minWidth: '40px', textAlign: 'center' }}>{Math.round(scale * 100)}%</span>
-        <button onClick={() => setScale((s) => Math.min(2.0, s + 0.25))} style={{ padding: '2px 6px', border: '1px solid var(--border)', borderRadius: '4px', background: 'transparent', color: 'var(--text)', cursor: 'pointer' }}>+</button>
+      {/* Toolbar */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage <= 1}
+          style={{ padding: '2px 8px', border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', color: 'var(--text)', cursor: 'pointer', fontSize: 12, opacity: currentPage <= 1 ? 0.4 : 1 }}>
+          ← Prev
+        </button>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)', minWidth: 60, textAlign: 'center' }}>{currentPage} / {numPages}</span>
+        <button onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))} disabled={currentPage >= numPages}
+          style={{ padding: '2px 8px', border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', color: 'var(--text)', cursor: 'pointer', fontSize: 12, opacity: currentPage >= numPages ? 0.4 : 1 }}>
+          Next →
+        </button>
+        <span style={{ width: 1, height: 16, background: 'var(--border)' }} />
+        <button onClick={() => setScale(s => Math.max(0.5, s - 0.25))}
+          style={{ padding: '2px 6px', border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', color: 'var(--text)', cursor: 'pointer' }}>−</button>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 40, textAlign: 'center' }}>{Math.round(scale * 100)}%</span>
+        <button onClick={() => setScale(s => Math.min(2.0, s + 0.25))}
+          style={{ padding: '2px 6px', border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', color: 'var(--text)', cursor: 'pointer' }}>+</button>
       </div>
-      <div style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', padding: '16px', background: 'var(--bg)' }}>
-        <canvas ref={canvasRef} style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }} />
+      {/* Canvas */}
+      <div style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', padding: 16, background: 'var(--bg)' }}>
+        <canvas ref={canvasRef} style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.2)' }} />
       </div>
     </div>
   );

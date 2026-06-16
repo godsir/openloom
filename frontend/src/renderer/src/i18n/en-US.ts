@@ -774,6 +774,9 @@ export const enUS: TranslationMap = {
   'write.expandSidebar': 'Expand Sidebar',
   'write.previewRich': 'WYSIWYG',
   'write.previewLive': 'Live',
+  'write.newFolder': 'New Folder',
+  'write.folderNamePlaceholder': 'Folder name',
+  'write.folderCreated': 'Folder created',
 
   // ── Onboarding ─────────────────────────────────────────────────
   'onboarding.welcomeTitle': 'Welcome to openLoom',
