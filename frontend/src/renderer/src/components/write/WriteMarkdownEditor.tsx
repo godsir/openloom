@@ -100,6 +100,25 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
         const newValue = update.state.doc.toString()
         onChange(newValue)
       }
+      // Track selection for InlineAgent
+      if (update.selectionSet) {
+        const sel = update.state.selection.main
+        const text = update.state.sliceDoc(sel.from, sel.to)
+        if (text && sel.from !== sel.to) {
+          const line = update.state.doc.lineAt(sel.from)
+          useWriteStore.getState().setSelection({
+            text,
+            from: sel.from,
+            to: sel.to,
+            lineFrom: line.number - 1,
+            lineTo: update.state.doc.lineAt(sel.to).number - 1,
+            blockType: null,
+            containsImage: false,
+          })
+        } else {
+          useWriteStore.getState().setSelection(null)
+        }
+      }
     })
 
     const fimExtension = fimEnabled
