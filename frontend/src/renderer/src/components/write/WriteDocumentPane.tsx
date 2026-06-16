@@ -78,6 +78,9 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
   const fileContent = useWriteStore(s => s.fileContent)
   const fileLoading = useWriteStore(s => s.fileLoading)
   const fileError = useWriteStore(s => s.fileError)
+
+  // Detect HTML files for raw rendering (bypass markdown-it)
+  const isHtmlFile = activeFilePath ? /\.html?$/i.test(activeFilePath) : false
   const fileSize = useWriteStore(s => s.fileSize)
   const previewMode = useWriteStore(s => s.previewMode)
   const fontSize = useWriteStore(s => s.fontSize)
@@ -127,11 +130,11 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
   }
 
   if (effectiveMode === 'preview') {
-    return <WriteMarkdownPreview content={fileContent} />
+    return <WriteMarkdownPreview content={fileContent} rawHtml={isHtmlFile} />
   }
 
   if (effectiveMode === 'split') {
-    return <SplitView left={<WriteMarkdownEditor value={fileContent} onChange={handleChange} />} right={<WriteMarkdownPreview content={fileContent} />} />
+    return <SplitView left={<WriteMarkdownEditor value={fileContent} onChange={handleChange} />} right={<WriteMarkdownPreview content={fileContent} rawHtml={isHtmlFile} />} />
   }
 
   return <WriteMarkdownEditor value={fileContent} onChange={handleChange} />
