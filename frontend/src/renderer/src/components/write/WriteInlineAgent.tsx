@@ -46,7 +46,6 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
   const fileThreads = useWriteStore((s) => s.fileThreads);
 
   const [aiInput, setAiInput] = useState('');
-  const toolbarRef = useRef<HTMLDivElement>(null);
 
   const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
