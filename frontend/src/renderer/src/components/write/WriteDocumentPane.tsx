@@ -4,6 +4,7 @@ import { WriteMarkdownEditor } from './WriteMarkdownEditor'
 import WriteMarkdownPreview from './WriteMarkdownPreview'
 import WriteImagePreview from './WriteImagePreview'
 import WriteWorkspaceStart from './WriteWorkspaceStart'
+import { WriteRichEditor } from '../../write/tiptap/WriteRichEditor'
 
 // ============================================================
 // 常量
@@ -43,6 +44,7 @@ export const WriteDocumentPane: React.FC = () => {
 
   // ── 视图设置 ──
   const previewMode = useWriteStore(s => s.previewMode)
+  const fontSize = useWriteStore(s => s.fontSize)
 
   // ── 操作 ──
   const setFileContent = useWriteStore(s => s.setFileContent)
@@ -100,6 +102,17 @@ export const WriteDocumentPane: React.FC = () => {
 
   // ── 路由: 文本文件 ──
   const effectiveMode = resolvePreviewMode(previewMode, fileSize)
+
+  // Rich mode — TipTap WYSIWYG editor
+  if (effectiveMode === 'rich') {
+    return (
+      <WriteRichEditor
+        value={fileContent}
+        onChange={handleChange}
+        fontSize={fontSize}
+      />
+    );
+  }
 
   // 纯预览模式 — 全屏 Markdown 渲染
   if (effectiveMode === 'preview') {
