@@ -14,6 +14,8 @@ pub async fn handle(_state: &AppState, method: &str, p: &Value) -> Option<Result
         "vfs.create_directory" => Some(handle_create_directory(p)),
         "vfs.rename" => Some(handle_rename(p)),
         "vfs.delete" => Some(handle_delete(p)),
+        "vfs.watch_file" => Some(handle_watch_file(p)),
+        "vfs.unwatch_file" => Some(handle_unwatch_file(p)),
         _ => None,
     }
 }
@@ -133,4 +135,15 @@ fn handle_delete(p: &Value) -> Result<Value, JsonRpcError> {
         Ok(_) => Ok(serde_json::json!({ "ok": true })),
         Err(e) => Err(err(ErrorCode::InternalError, &format!("delete failed: {}", e))),
     }
+}
+
+fn handle_watch_file(p: &Value) -> Result<Value, JsonRpcError> {
+    let _path = resolve_path(p)?;
+    // File watching is handled by the Electron main process via fs.watch.
+    // This backend stub validates the path and returns ok.
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+fn handle_unwatch_file(_p: &Value) -> Result<Value, JsonRpcError> {
+    Ok(serde_json::json!({ "ok": true }))
 }

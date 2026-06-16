@@ -5,11 +5,11 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use axum::{Json, Router, extract::State, routing::get};
 use loom_core::Orchestrator;
-use tokio::sync::RwLock;
+use tokio::sync;
 use tokio_util::sync::CancellationToken;
 
 mod credential;
@@ -32,7 +32,9 @@ pub struct AppState {
     /// In-memory API key store. Keys are stored as (env_name → api_key_value).
     /// This replaces the unsafe std::env::set_var approach. Keys are persisted
     /// to <data_dir>/credentials.json on every save.
-    pub key_store: Arc<RwLock<HashMap<String, String>>>,
+    pub key_store: Arc<sync::RwLock<HashMap<String, String>>>,
+    /// Write-mode workspace RAG index (BM25 keyword retrieval).
+    pub write_index: Arc<RwLock<Option<dispatch::write_rag::WorkspaceIndex>>>,
 }
 
 impl AppState {
@@ -40,7 +42,7 @@ impl AppState {
         orchestrator: Arc<Orchestrator>,
         data_dir: PathBuf,
         shutdown_token: CancellationToken,
-        key_store: Arc<RwLock<HashMap<String, String>>>,
+        key_store: Arc<sync::RwLock<HashMap<String, String>>>,
     ) -> Self {
         Self {
             orchestrator,
@@ -48,6 +50,7 @@ impl AppState {
             data_dir,
             shutdown_token,
             key_store,
+            write_index: Arc::new(RwLock::new(None)),
         }
     }
 }
@@ -99,7 +102,7 @@ pub async fn serve(
 
     // Load persisted API keys and share them between AppState and the orchestrator.
     let loaded_keys = credential::load_credentials(data_dir).await;
-    let key_store = Arc::new(RwLock::new(loaded_keys));
+    let key_store = Arc::new(sync::RwLock::new(loaded_keys));
     orchestrator.set_key_store(key_store.clone()).await;
 
     let state = Arc::new(AppState::new(

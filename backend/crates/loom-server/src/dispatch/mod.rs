@@ -21,6 +21,7 @@ mod skills;
 mod system;
 mod tool;
 mod vfs;
+pub mod write_rag;
 
 // Re-export SessionStore for crate::dispatch::SessionStore access (used by lib.rs).
 pub use session::SessionStore;
@@ -90,6 +91,9 @@ pub async fn dispatch_method(
         return result;
     }
     if let Some(result) = tool::handle(state, method, &p).await {
+        return result;
+    }
+    if let Some(result) = write_rag::handle(state, method, &p).await {
         return result;
     }
     if let Some(result) = vfs::handle(state, method, &p).await {
