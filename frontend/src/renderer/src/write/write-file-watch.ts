@@ -59,14 +59,3 @@ export function stopWatchingFile(): void {
     pollTimer = null;
   }
 }
-
-async function readImageAsDataUrl(filePath: string, workspaceRoot: string): Promise<string> {
-  try {
-    const result: { ok: boolean; dataUrl?: string } = await loomRpc('vfs.read_image', {
-      path: filePath,
-      workspace_root: workspaceRoot,
-    });
-    if (result.ok && result.dataUrl) return result.dataUrl;
-  } catch {}
-  return '';
-}
