@@ -65,8 +65,24 @@ fn resolve_path(p: &Value) -> Result<PathBuf, JsonRpcError> {
 
 fn handle_read_file(p: &Value) -> Result<Value, JsonRpcError> {
     let path = resolve_path(p)?;
+    let max_size: usize = p.get("max_size").and_then(|v| v.as_u64()).unwrap_or(5_000_000) as usize;
     match std::fs::read_to_string(&path) {
-        Ok(content) => Ok(serde_json::json!({ "ok": true, "path": path.to_string_lossy(), "content": content })),
+        Ok(content) => {
+            let byte_len = content.len();
+            let truncated = byte_len > max_size;
+            let display = if truncated {
+                content.chars().take(max_size).collect::<String>()
+            } else {
+                content
+            };
+            Ok(serde_json::json!({
+                "ok": true,
+                "path": path.to_string_lossy(),
+                "content": display,
+                "size": byte_len,
+                "truncated": truncated,
+            }))
+        }
         Err(e) => Err(err(ErrorCode::InternalError, &format!("read failed: {}", e))),
     }
 }
@@ -85,13 +101,29 @@ fn handle_write_file(p: &Value) -> Result<Value, JsonRpcError> {
 
 fn handle_list_directory(p: &Value) -> Result<Value, JsonRpcError> {
     let path = resolve_path(p)?;
+    let base = p.get("path").and_then(|v| v.as_str()).unwrap_or(".");
     match std::fs::read_dir(&path) {
         Ok(entries) => {
             let list: Vec<Value> = entries.filter_map(|e| {
                 let e = e.ok()?;
                 let name = e.file_name().to_string_lossy().to_string();
                 let is_dir = e.file_type().ok()?.is_dir();
-                Some(serde_json::json!({ "name": name, "is_directory": is_dir }))
+                let ext = if !is_dir {
+                    Path::new(&name).extension().map(|s| s.to_string_lossy().to_string())
+                } else {
+                    None
+                };
+                let entry_path = if base == "." {
+                    name.clone()
+                } else {
+                    format!("{}/{}", base, name)
+                };
+                Some(serde_json::json!({
+                    "name": name,
+                    "kind": if is_dir { "directory" } else { "file" },
+                    "extension": ext,
+                    "path": entry_path,
+                }))
             }).collect();
             Ok(serde_json::json!({ "ok": true, "entries": list }))
         }
