@@ -782,6 +782,8 @@ export const enUS: TranslationMap = {
   'write.exportHTML': 'Export HTML',
   'write.exportPDF': 'Export PDF',
   'write.exportDOCX': 'Export DOCX',
+  'write.settingsDefaultPreviewDesc': 'Select the default preview mode. WYSIWYG is suitable for writing, while Live is suitable for code.',
+  'write.settingsAutoSaveIntervalDesc': 'After enabling auto-save, the AI writing assistant will periodically save your progress to prevent data loss. It is recommended to set it to 900 ms (9 seconds) or longer to balance performance and data security.',
 
   // ── Onboarding ─────────────────────────────────────────────────
   'onboarding.welcomeTitle': 'Welcome to openLoom',

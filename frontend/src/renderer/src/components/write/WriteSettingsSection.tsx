@@ -1,6 +1,7 @@
 import { useWriteStore } from '../../stores/write';
 import { useLocale } from '../../i18n';
 import styles from './WriteSettingsSection.module.css';
+import sharedStyles from '../shared/SettingsModal.module.css';
 import type { WritePreviewMode } from '../../stores/write';
 
 const PREVIEW_MODES: { value: WritePreviewMode; labelKey: string; label: string }[] = [
@@ -24,60 +25,84 @@ export const WriteSettingsSection: React.FC = () => {
 
   return (
     <div className={styles.root}>
-      {/* ---- 工作区 ---- */}
-      <div className={styles.section}>
-        <h3 className={styles.sectionTitle}>{t('write.settingsWorkspace', '工作区')}</h3>
-        <div className={styles.sectionCard}>
-          <div className={styles.fieldRow}>
-            <label className={styles.label}>{t('write.settingsDefaultWorkspace', '默认工作区')}</label>
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ flex: 1, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {store.workspaceRoot || t('write.noWorkspace', '未设置')}
-              </span>
-              <button className={styles.actionBtn} onClick={handlePickWorkspace}>
-                {t('write.selectDirectory', '选择...')}
-              </button>
-            </div>
+      {/* ── 工作区设置 ── */}
+      <div className={sharedStyles.aboutSection}>
+        <div className={sharedStyles.themeLabel}>{t('write.settingsWorkspace', '工作区')}</div>
+
+        <div className={styles.fieldRow}>
+          <div className={styles.fieldInfo}>
+            <p className={styles.fieldLabel}>{t('write.settingsDefaultWorkspace', '默认工作区')}</p>
+            <p className={styles.fieldDesc}>
+              {store.workspaceRoot || t('write.noWorkspace', '未设置')}
+            </p>
           </div>
-          <div className={styles.fieldRow}>
-            <label className={styles.label}>{t('write.settingsDefaultPreview', '默认预览模式')}</label>
-            <div className={styles.modeToggle}>
+          <div className={styles.fieldAction}>
+            <button className={sharedStyles.mcpAddBtn} onClick={handlePickWorkspace}>
+              {t('write.selectDirectory', '选择...')}
+            </button>
+          </div>
+        </div>
+
+        <div className={styles.fieldRow}>
+          <div className={styles.fieldInfo}>
+            <p className={styles.fieldLabel}>{t('write.settingsDefaultPreview', '默认预览模式')}</p>
+            <p className={styles.fieldDesc}>{t('write.settingsDefaultPreviewDesc', '新建文档时的默认编辑模式')}</p>
+          </div>
+          <div className={styles.fieldAction}>
+            <div className={sharedStyles.mcpTransportToggle}>
               {PREVIEW_MODES.map((m) => (
                 <button key={m.value}
-                  className={store.previewMode === m.value ? styles.toggleBtnActive : styles.toggleBtn}
+                  className={`${sharedStyles.mcpTransportBtn} ${store.previewMode === m.value ? sharedStyles.mcpTransportActive : ''}`}
                   onClick={() => store.setPreviewMode(m.value)}>
                   {t(m.labelKey, m.label)}
                 </button>
               ))}
             </div>
           </div>
-          <div className={styles.fieldRow}>
-            <label className={styles.label}>{t('write.settingsAutoSaveInterval', '自动保存间隔')}</label>
+        </div>
+
+        <div className={styles.fieldRow}>
+          <div className={styles.fieldInfo}>
+            <p className={styles.fieldLabel}>{t('write.settingsAutoSaveInterval', '自动保存间隔')}</p>
+            <p className={styles.fieldDesc}>{t('write.settingsAutoSaveIntervalDesc', '文档自动保存的时间间隔')}</p>
+          </div>
+          <div className={styles.fieldAction}>
             <input type="number" className={styles.numInput}
               value={store.autoSaveIntervalMs} min={300} max={5000} step={100}
               onChange={(e) => useWriteStore.setState({ autoSaveIntervalMs: Number(e.target.value) || 900 })} />
+            <span className={styles.unitLabel}>ms</span>
           </div>
         </div>
       </div>
 
-      {/* ---- AI 补全 ---- */}
-      <div className={styles.section}>
-        <h3 className={styles.sectionTitle}>{t('write.settingsAICompletion', 'AI 补全')}</h3>
-        <div className={styles.sectionCard}>
-          <div className={styles.fieldRow}>
-            <label className={styles.label}>{t('write.settingsInlineCompletion', '内联补全')}</label>
+      <hr className={sharedStyles.sectionDivider} />
+
+      {/* ── AI 补全设置 ── */}
+      <div className={sharedStyles.aboutSection}>
+        <div className={sharedStyles.themeLabel}>{t('write.settingsAICompletion', 'AI 补全')}</div>
+
+        <div className={styles.fieldRow}>
+          <div className={styles.fieldInfo}>
+            <p className={styles.fieldLabel}>{t('write.settingsInlineCompletion', '内联补全')}</p>
+            <p className={styles.fieldDesc}>{t('write.settingsInlineCompletionDesc', '启用 Ghost 文本补全')}</p>
+          </div>
+          <div className={styles.fieldAction}>
             <label className={styles.checkboxLabel}>
               <input type="checkbox" checked={store.inlineCompletionEnabled}
                 onChange={(e) => store.setInlineCompletionEnabled(e.target.checked)} />
-              <span>{t('write.settingsInlineCompletionDesc', '启用 Ghost 文本补全')}</span>
             </label>
           </div>
-          <div className={styles.fieldRow}>
-            <label className={styles.label}>{t('write.settingsRetrieval', '工作区检索')}</label>
+        </div>
+
+        <div className={styles.fieldRow}>
+          <div className={styles.fieldInfo}>
+            <p className={styles.fieldLabel}>{t('write.settingsRetrieval', '工作区检索')}</p>
+            <p className={styles.fieldDesc}>{t('write.settingsRetrievalDesc', '启用 BM25 关键词检索增强')}</p>
+          </div>
+          <div className={styles.fieldAction}>
             <label className={styles.checkboxLabel}>
               <input type="checkbox" checked={store.retrievalEnabled}
                 onChange={(e) => store.setRetrievalEnabled(e.target.checked)} />
-              <span>{t('write.settingsRetrievalDesc', '启用 BM25 关键词检索增强')}</span>
             </label>
           </div>
         </div>

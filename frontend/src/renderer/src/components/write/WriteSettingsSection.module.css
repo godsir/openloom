@@ -1,152 +1,101 @@
-/* WriteSettingsSection.module.css — matches project SettingsModal patterns */
+/* WriteSettingsSection.module.css — minimal overrides, reuses SettingsModal patterns */
 
 .root {
-  max-width: 520px;
+  /* Remove max-width constraint to match other settings pages */
 }
 
-.section {
-  margin-bottom: 20px;
-}
-
-.sectionTitle {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-muted);
-  margin: 0 0 10px;
-}
-
-.sectionCard {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  border-radius: var(--r-md);
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid var(--border);
-  overflow: hidden;
-}
-
+/* Field row for settings items — matches aboutRow pattern */
 .fieldRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 6px 10px;
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
   gap: 16px;
-  border-bottom: 1px solid var(--border);
 }
 
-.fieldRow:last-child {
-  border-bottom: none;
+.fieldRow:hover {
+  background: rgba(255, 255, 255, 0.03);
 }
 
-.label {
+/* Field info area (left side) */
+.fieldInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.fieldLabel {
   font-size: 12px;
-  color: var(--text-secondary);
-  min-width: 100px;
+  font-weight: 500;
+  color: var(--text);
+  margin: 0;
+}
+
+.fieldDesc {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 2px 0 0 0;
+}
+
+/* Field action area (right side) */
+.fieldAction {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-shrink: 0;
 }
 
-.select {
+/* Workspace path display */
+.workspacePath {
   flex: 1;
-  height: 30px;
-  padding: 0 10px;
-  font-size: 12px;
-  color: var(--text);
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  outline: none;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.select:focus {
-  border-color: var(--border-accent);
-}
-
+/* Number input — matches mcpFormInput */
 .numInput {
-  width: 100px;
-  height: 30px;
-  padding: 0 10px;
+  width: 80px;
+  height: 28px;
+  padding: 0 8px;
   font-size: 12px;
   color: var(--text);
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   outline: none;
+  transition: border-color 0.15s ease;
 }
 
 .numInput:focus {
   border-color: var(--border-accent);
 }
 
-.actionBtn {
-  height: 28px;
-  padding: 0 12px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--accent);
-  background: var(--accent-subtle);
-  border: 1px solid rgba(var(--accent-rgb), 0.20);
-  border-radius: var(--r-md);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  flex-shrink: 0;
-}
-
-.actionBtn:hover {
-  background: var(--accent-medium);
-}
-
-.modeToggle {
-  display: flex;
-  gap: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  overflow: hidden;
-}
-
-.toggleBtn {
-  height: 28px;
-  padding: 0 10px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  background: none;
-  border: none;
-  border-right: 1px solid var(--border);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.toggleBtn:last-child {
-  border-right: none;
-}
-
-.toggleBtn:hover {
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.toggleBtnActive {
-  height: 28px;
-  padding: 0 10px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--accent);
-  background: rgba(var(--accent-rgb), 0.10);
-  border: none;
-  border-right: 1px solid var(--border);
-  cursor: pointer;
-}
-
-.toggleBtnActive:last-child {
-  border-right: none;
-}
-
+/* Checkbox label */
 .checkboxLabel {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 12px;
   color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.checkboxLabel input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Unit label for number inputs */
+.unitLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
 }

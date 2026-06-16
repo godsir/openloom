@@ -782,6 +782,8 @@ export const zhCN: TranslationMap = {
   'write.exportHTML': '导出 HTML',
   'write.exportPDF': '导出 PDF',
   'write.exportDOCX': '导出 DOCX',
+  'write.settingsDefaultPreviewDesc': '选择默认的预览模式，所见即所得适合写作，实时适合代码',
+  'write.settingsAutoSaveIntervalDesc': '启用自动保存后，AI 写作助手会定期保存你的工作进度，防止数据丢失。建议设置为 900 ms（9 秒）或更长时间，以平衡性能和数据安全。',
 
   // ── Onboarding ─────────────────────────────────────────────────
   'onboarding.welcomeTitle': '欢迎来到 openLoom',
