@@ -1,15 +1,8 @@
 import React, { useEffect, useCallback } from 'react'
 import { useWriteStore, type WorkspaceEntry, type WriteFileKind } from '../../stores/write'
 import { loomRpc } from '../../services/jsonrpc'
-import {
-  IconChevronRight,
-  IconChevronDown,
-  IconFileText,
-  IconFile,
-  IconImage,
-  IconFolder,
-  IconLoader,
-} from '../../utils/icons'
+import { useLocale } from '../../i18n'
+import { IconChevronRight, IconChevronDown, IconFileText, IconFile, IconImage, IconFolder, IconLoader } from '../../utils/icons'
 import styles from './WriteFileTree.module.css'
 
 // ---- constants ----
@@ -27,7 +20,7 @@ function getFileKind(ext: string): WriteFileKind {
   if (TEXT_EXTS.has(ext)) return 'text'
   if (IMAGE_EXTS.has(ext)) return 'image'
   if (ext === 'pdf') return 'pdf'
-  return 'text' // unreachable for filtered entries; safe fallback
+  return 'text'
 }
 
 function extOf(entry: WorkspaceEntry): string {
@@ -38,7 +31,13 @@ function extOf(entry: WorkspaceEntry): string {
 
 // ---- component ----
 
-export const WriteFileTree: React.FC = () => {
+interface WriteFileTreeProps {
+  onNewFile: () => void;
+}
+
+export const WriteFileTree: React.FC<WriteFileTreeProps> = ({ onNewFile }) => {
+  const { t } = useLocale();
+
   // read state
   const workspaceRoot = useWriteStore(s => s.workspaceRoot)
   const entriesByDir = useWriteStore(s => s.entriesByDir)
@@ -72,17 +71,13 @@ export const WriteFileTree: React.FC = () => {
           return
         }
         const filtered = result.entries
-          .filter(e => {
-            // skip dotfiles
+          .filter((e: WorkspaceEntry) => {
             if (e.name.startsWith('.')) return false
-            // always allow directories
             if (e.kind === 'directory') return true
-            // filter files by extension
             const ext = extOf(e)
             return SUPPORTED_EXTS.has(ext)
           })
-          .sort((a, b) => {
-            // directories before files
+          .sort((a: WorkspaceEntry, b: WorkspaceEntry) => {
             if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1
             return a.name.localeCompare(b.name)
           })
@@ -99,14 +94,24 @@ export const WriteFileTree: React.FC = () => {
     if (workspaceRoot) {
       loadDir('.')
     }
+  }, [workspaceRoot])
+
+  // Expose refresh for external use (called after create/rename/delete)
+  const refreshRoot = useCallback(() => {
+    if (workspaceRoot) loadDir('.')
   }, [workspaceRoot, loadDir])
+
+  // Store refresh function globally for WriteFileDialogs to call
+  useEffect(() => {
+    (window as any).__writeRefreshFileTree = refreshRoot
+    return () => { delete (window as any).__writeRefreshFileTree }
+  }, [refreshRoot])
 
   // ---- handleFileClick ----
 
   const handleFileClick = useCallback(
     async (entry: WorkspaceEntry) => {
       if (entry.kind === 'directory') {
-        // load children on first expand
         if (!expandedDirs[entry.path] && !entriesByDir[entry.path]) {
           await loadDir(entry.path)
         }
@@ -129,7 +134,7 @@ export const WriteFileTree: React.FC = () => {
             truncated?: boolean
           }>('vfs.read_file', {
             path: entry.path,
-            workspace_root: workspaceRoot,
+            workspace_root: workspaceRoot!,
           })
           if (result.ok) {
             setFileContent(result.content)
@@ -145,7 +150,6 @@ export const WriteFileTree: React.FC = () => {
           setFileLoading(false)
         }
       } else {
-        // image / pdf — no content to fetch; just activate
         setActiveFile(entry.path, kind)
       }
     },
@@ -200,14 +204,12 @@ export const WriteFileTree: React.FC = () => {
             }
           }}
         >
-          {/* chevron for directories */}
           <span className={styles.chevron}>
             {isDir ? (
               isExpanded ? <IconChevronDown size={10} /> : <IconChevronRight size={10} />
             ) : null}
           </span>
 
-          {/* icon */}
           <span className={styles.entryIcon}>
             {isLoadingThisFile ? (
               <IconLoader size={14} className={styles.spin} />
@@ -216,13 +218,11 @@ export const WriteFileTree: React.FC = () => {
             )}
           </span>
 
-          {/* name */}
           <span className={styles.entryName} title={entry.name}>
             {entry.name}
           </span>
         </div>
 
-        {/* children */}
         {isDir && isExpanded &&
           children.map(child => renderEntry(child, depth + 1))}
       </div>
@@ -233,22 +233,15 @@ export const WriteFileTree: React.FC = () => {
 
   const rootEntries = entriesByDir['.'] ?? []
 
-  // empty: no workspace
-  if (!workspaceRoot) {
-    return (
-      <div className={styles.empty}>
-        <IconFolder size={32} className={styles.emptyIcon} />
-        <span className={styles.emptyText}>No workspace</span>
-      </div>
-    )
-  }
-
   // empty: workspace has no supported files
   if (rootEntries.length === 0) {
     return (
       <div className={styles.empty}>
         <IconFileText size={32} className={styles.emptyIcon} />
-        <span className={styles.emptyText}>No files</span>
+        <span className={styles.emptyText}>{t('write.noFiles', 'No files yet')}</span>
+        <button className={styles.newFileBtn} onClick={onNewFile} title={t('write.newFile', 'New File')}>
+          + {t('write.newFile', 'New File')}
+        </button>
       </div>
     )
   }

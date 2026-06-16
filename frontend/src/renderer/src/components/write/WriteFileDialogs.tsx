@@ -10,6 +10,11 @@ const FILE_EXT_OPTIONS = [
   { value: '.txt', label: '.txt' },
 ]
 
+function refreshFileTree() {
+  const fn = (window as any).__writeRefreshFileTree
+  if (fn) fn()
+}
+
 export const WriteFileDialogs: React.FC = () => {
   const modalState = useWriteStore(s => s.modalState)
   const modalTarget = useWriteStore(s => s.modalTarget)
@@ -26,12 +31,18 @@ export const WriteFileDialogs: React.FC = () => {
   const [selectedExt, setSelectedExt] = useState('.md')
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Focus input when modal opens (skip delete — it has no text input)
   useEffect(() => {
     if (modalState !== 'none' && modalState !== 'delete') {
       setTimeout(() => inputRef.current?.focus(), 50)
     }
-  }, [modalState])
+    // Reset form on open
+    if (modalState === 'newFile') {
+      setInputValue('')
+      setSelectedExt('.md')
+    } else if (modalState === 'rename' && modalTarget) {
+      setInputValue(modalTarget.name)
+    }
+  }, [modalState, modalTarget])
 
   if (modalState === 'none') return null
 
@@ -49,6 +60,7 @@ export const WriteFileDialogs: React.FC = () => {
       await loomRpc('vfs.write_file', { workspace_root: workspaceRoot, path: name, content })
       setActiveFile(name, 'text')
       showToast('success', t('write.fileCreated'))
+      refreshFileTree()
       close()
     } catch (e: any) {
       showToast('error', e?.message || String(e))
@@ -60,11 +72,15 @@ export const WriteFileDialogs: React.FC = () => {
     const newName = inputValue.trim()
     if (!newName || newName === modalTarget.name) return
     try {
-      await loomRpc('vfs.rename', { workspace_root: workspaceRoot, path: modalTarget.name, new_name: newName })
-      if (activeFilePath === modalTarget.name) {
-        setActiveFile(newName, 'text')
+      // vfs.rename uses new_name param, source path is in modalTarget.path
+      await loomRpc('vfs.rename', { workspace_root: workspaceRoot, path: modalTarget.path, new_name: newName })
+      // Update active file path if the renamed file was active
+      if (activeFilePath === modalTarget.path) {
+        const dir = modalTarget.path.includes('/') ? modalTarget.path.substring(0, modalTarget.path.lastIndexOf('/') + 1) : ''
+        setActiveFile(dir + newName, 'text')
       }
       showToast('success', t('write.fileRenamed'))
+      refreshFileTree()
       close()
     } catch (e: any) {
       showToast('error', e?.message || String(e))
@@ -74,11 +90,12 @@ export const WriteFileDialogs: React.FC = () => {
   const handleDelete = async () => {
     if (!workspaceRoot || !modalTarget) return
     try {
-      await loomRpc('vfs.delete', { workspace_root: workspaceRoot, path: modalTarget.name })
-      if (activeFilePath === modalTarget.name) {
+      await loomRpc('vfs.delete', { workspace_root: workspaceRoot, path: modalTarget.path })
+      if (activeFilePath === modalTarget.path) {
         clearActiveFile()
       }
       showToast('success', t('write.fileDeleted'))
+      refreshFileTree()
       close()
     } catch (e: any) {
       showToast('error', e?.message || String(e))

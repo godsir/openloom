@@ -1,14 +1,15 @@
 import { useWriteStore } from '../../stores/write';
 import { WriteFileTree } from './WriteFileTree';
 import { useLocale } from '../../i18n';
-import { FolderOpen, ChevronLeft } from 'lucide-react';
+import { IconFolder } from '../../utils/icons';
 import styles from './WriteSidebar.module.css';
 
 interface WriteSidebarProps {
   onSelectWorkspace: () => void;
+  onNewFile: () => void;
 }
 
-export function WriteSidebar({ onSelectWorkspace }: WriteSidebarProps) {
+export function WriteSidebar({ onSelectWorkspace, onNewFile }: WriteSidebarProps) {
   const { t } = useLocale();
   const workspaceRoot = useWriteStore((s) => s.workspaceRoot);
   const fileSidebarOpen = useWriteStore((s) => s.fileSidebarOpen);
@@ -21,31 +22,30 @@ export function WriteSidebar({ onSelectWorkspace }: WriteSidebarProps) {
   return (
     <aside className={styles.sidebar}>
       <div className={styles.header}>
-        <button
-          className={styles.iconBtn}
-          onClick={onSelectWorkspace}
-          title={t('write.switchWorkspace', 'Switch Workspace')}
-          aria-label={t('write.switchWorkspace', 'Switch Workspace')}
-        >
-          <FolderOpen size={16} />
+        <button className={styles.iconBtn} onClick={onSelectWorkspace}
+          title={t('write.clickSwitchDir', 'Switch Workspace')}>
+          <IconFolder size={14} />
         </button>
 
-        <span className={styles.title}>
-          {t('write.fileExplorer', 'Files')}
-        </span>
+        <span className={styles.title}>{t('write.fileList', '文件列表')}</span>
 
-        <button
-          className={styles.iconBtn}
-          onClick={toggleFileSidebar}
-          title={t('write.collapseSidebar', 'Collapse Sidebar')}
-          aria-label={t('write.collapseSidebar', 'Collapse Sidebar')}
-        >
-          <ChevronLeft size={16} />
+        <button className={styles.iconBtn} onClick={onNewFile}
+          title={t('write.newFile', 'New File')}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </button>
+
+        <button className={styles.iconBtn} onClick={toggleFileSidebar}
+          title={t('write.collapseSidebar', 'Collapse Sidebar')}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
         </button>
       </div>
 
       <div className={styles.treeWrapper}>
-        <WriteFileTree />
+        <WriteFileTree onNewFile={onNewFile} />
       </div>
     </aside>
   );

@@ -1,5 +1,5 @@
 /* ── Root ── */
-.root { display: flex; flex-direction: column; height: 100%; background: var(--bg); }
+.root { display: flex; flex-direction: row; height: 100%; background: var(--bg); }
 
 /* ── 工具栏 ── */
 .toolbar {

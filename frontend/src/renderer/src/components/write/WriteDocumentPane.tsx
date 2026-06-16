@@ -6,135 +6,107 @@ import { WriteImagePreview } from './WriteImagePreview'
 import { WriteWorkspaceStart } from './WriteWorkspaceStart'
 import { WriteRichEditor } from '../../write/tiptap/WriteRichEditor'
 
-// ============================================================
-// 常量
-// ============================================================
+const LARGE_FILE_THRESHOLD = 300 * 1024
 
-const LARGE_FILE_THRESHOLD = 300 * 1024 // 300 KB — 大文件强制切回源码模式
+interface WriteDocumentPaneProps {
+  onSelectWorkspace: () => void;
+}
 
-// ============================================================
-// 辅助函数
-// ============================================================
-
-/**
- * 解析实际使用的预览模式：
- * - 大文件 (>300K) 强制降级到 source 模式，避免卡顿
- * - 非文本类型 (image/pdf) 忽略预览模式，由调用方在上层分流
- */
-function resolvePreviewMode(
-  previewMode: WritePreviewMode,
-  fileSize: number,
-): WritePreviewMode {
+function resolvePreviewMode(previewMode: WritePreviewMode, fileSize: number): WritePreviewMode {
   if (fileSize > LARGE_FILE_THRESHOLD) return 'source'
   return previewMode
 }
 
-// ============================================================
-// WriteDocumentPane
-// ============================================================
-
-export const WriteDocumentPane: React.FC = () => {
-  // ── 文件状态 ──
+export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWorkspace }) => {
   const activeFilePath = useWriteStore(s => s.activeFilePath)
   const activeFileKind = useWriteStore(s => s.activeFileKind)
   const fileContent = useWriteStore(s => s.fileContent)
   const fileLoading = useWriteStore(s => s.fileLoading)
   const fileError = useWriteStore(s => s.fileError)
   const fileSize = useWriteStore(s => s.fileSize)
-
-  // ── 视图设置 ──
   const previewMode = useWriteStore(s => s.previewMode)
   const fontSize = useWriteStore(s => s.fontSize)
-
-  // ── 操作 ──
   const setFileContent = useWriteStore(s => s.setFileContent)
   const setSaveStatus = useWriteStore(s => s.setSaveStatus)
 
-  // ── 内容变更回调 ──
-  const handleChange = useCallback(
-    (value: string) => {
-      setFileContent(value)
-      setSaveStatus('dirty')
-    },
-    [setFileContent, setSaveStatus],
-  )
+  const handleChange = useCallback((value: string) => {
+    setFileContent(value)
+    setSaveStatus('dirty')
+  }, [setFileContent, setSaveStatus])
 
-  // ── 路由: 无活动文件 → 起始页 ──
+  // No active file → landing page
   if (!activeFilePath) {
-    return <WriteWorkspaceStart />
+    return <WriteWorkspaceStart onSelectWorkspace={onSelectWorkspace} />
   }
 
-  // ── 路由: 加载中 ──
+  // Loading
   if (fileLoading) {
     return (
-      <div className="write-doc-pane write-doc-pane--loading">
-        <div className="write-doc-pane__spinner" />
-        <span className="write-doc-pane__loading-text">Loading...</span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', gap: 8 }}>
+        <div style={{ width: 16, height: 16, border: '2px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        <span style={{ fontSize: 13 }}>Loading...</span>
       </div>
     )
   }
 
-  // ── 路由: 读取错误 ──
+  // Error
   if (fileError) {
     return (
-      <div className="write-doc-pane write-doc-pane--error">
-        <div className="write-doc-pane__error-icon">!</div>
-        <span className="write-doc-pane__error-text">{fileError}</span>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-error)', gap: 8 }}>
+        <span style={{ fontSize: 24 }}>!</span>
+        <span style={{ fontSize: 13 }}>{fileError}</span>
       </div>
     )
   }
 
-  // ── 路由: 图片文件 (Phase 4 占位) ──
+  // Image file
   if (activeFileKind === 'image') {
-    return <WriteImagePreview filePath={activeFilePath} />
+    return <WriteImagePreview />
   }
 
-  // ── 路由: PDF 文件 (Phase 4 占位) ──
+  // PDF file
   if (activeFileKind === 'pdf') {
-    return (
-      <div className="write-doc-pane write-doc-pane--pdf">
-        <div className="write-doc-pane__pdf-icon">PDF</div>
-        <span className="write-doc-pane__pdf-name">{activeFilePath.split('/').pop()}</span>
-        <span className="write-doc-pane__pdf-hint">PDF preview coming in Phase 4</span>
-      </div>
-    )
+    return <WritePdfViewerStub filePath={activeFilePath} />
   }
 
-  // ── 路由: 文本文件 ──
+  // Text file — resolve effective mode
   const effectiveMode = resolvePreviewMode(previewMode, fileSize)
 
-  // Rich mode — TipTap WYSIWYG editor
+  // Rich mode
   if (effectiveMode === 'rich') {
-    return (
-      <WriteRichEditor
-        value={fileContent}
-        onChange={handleChange}
-        fontSize={fontSize}
-      />
-    );
+    return <WriteRichEditor value={fileContent} onChange={handleChange} fontSize={fontSize} />
   }
 
-  // 纯预览模式 — 全屏 Markdown 渲染
+  // Preview only
   if (effectiveMode === 'preview') {
     return <WriteMarkdownPreview content={fileContent} />
   }
 
-  // 分屏模式 — 编辑器(左) + 预览(右)
+  // Split mode
   if (effectiveMode === 'split') {
     return (
-      <div className="write-doc-pane write-doc-pane--split">
-        <div className="write-doc-pane__editor">
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        <div style={{ flex: 1, borderRight: '1px solid var(--border)' }}>
           <WriteMarkdownEditor value={fileContent} onChange={handleChange} />
         </div>
-        <div className="write-doc-pane__preview">
+        <div style={{ flex: 1 }}>
           <WriteMarkdownPreview content={fileContent} />
         </div>
       </div>
     )
   }
 
-  // source / live / rich — 仅编辑器
+  // Source / Live
   return <WriteMarkdownEditor value={fileContent} onChange={handleChange} />
 }
+
+// PDF stub (inline to avoid missing component issues)
+const WritePdfViewerStub: React.FC<{ filePath: string }> = ({ filePath }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', gap: 8 }}>
+    <span style={{ fontSize: 32, opacity: 0.3 }}>PDF</span>
+    <span style={{ fontSize: 13 }}>{filePath.split('/').pop()}</span>
+    <span style={{ fontSize: 11, opacity: 0.6 }}>PDF viewer coming soon</span>
+  </div>
+);
 
 export default WriteDocumentPane

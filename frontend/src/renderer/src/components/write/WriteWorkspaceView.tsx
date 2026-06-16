@@ -44,6 +44,12 @@ export const WriteWorkspaceView: React.FC = () => {
     try { const p = await (window as any).loom?.selectFolder?.(); if (p) setWorkspaceRoot(p) } catch {}
   }, [setWorkspaceRoot])
 
+  // Expose for WriteDocumentPane (which may be deeply nested)
+  useEffect(() => {
+    (window as any).__writeSelectWorkspace = handleSelectWorkspace
+    return () => { delete (window as any).__writeSelectWorkspace }
+  }, [handleSelectWorkspace])
+
   const handleNewFile = useCallback(() => setModalState('newFile'), [setModalState])
 
   const handleSave = useCallback(async () => {
@@ -87,7 +93,7 @@ export const WriteWorkspaceView: React.FC = () => {
 
   // ── Effects ──
 
-  // Autosave: debounced on dirty + content change
+  // Autosave debounce
   useEffect(() => {
     if (saveStatus !== 'dirty' || !activeFilePath || !workspaceRoot) return
     const timer = setTimeout(async () => {
@@ -131,13 +137,15 @@ export const WriteWorkspaceView: React.FC = () => {
 
   return (
     <div className={styles.root}>
-      <WriteSidebar onSelectWorkspace={handleSelectWorkspace} />
+      <WriteSidebar onSelectWorkspace={handleSelectWorkspace} onNewFile={handleNewFile} />
       <div className={styles.body}>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <WriteToolbar onNewFile={handleNewFile} onSave={handleSave} onToggleAssistant={toggleAssistant} />
-          <WriteDocumentPane />
+          {workspaceRoot && (
+            <WriteToolbar onNewFile={handleNewFile} onSave={handleSave} onToggleAssistant={toggleAssistant} />
+          )}
+          <WriteDocumentPane onSelectWorkspace={handleSelectWorkspace} />
         </div>
-        {assistantOpen && activeFilePath && (
+        {workspaceRoot && assistantOpen && activeFilePath && (
           <WriteAssistantPanel
             quickSuggestions={suggestions} onSend={handleAssistantSend}
             onNewChat={handleNewChat} onStaleSession={handleStaleSession}
