@@ -5,6 +5,7 @@ import { useLocale } from '../../i18n'
 import { loomRpc } from '../../services/jsonrpc'
 import { sendMessage } from '../../services/sendMessage'
 import { streamBufferManager } from '../../services/stream-buffer'
+import { startWatchingFile, stopWatchingFile } from '../../write/write-file-watch'
 import { WriteSidebar } from './WriteSidebar'
 import WriteToolbar from './WriteToolbar'
 import { WriteDocumentPane } from './WriteDocumentPane'
@@ -23,6 +24,7 @@ export const WriteWorkspaceView: React.FC = () => {
     activeFilePath, fileContent, saveStatus, setSaveStatus,
     assistantOpen, toggleAssistant, setModalState, showToast, clearToast, toastMessage,
     fileThreads, setFileThread, removeFileThread,
+    setFileContent, setFileSize, setFileTruncated,
   } = useWriteStore()
 
   // ── Non-state refs ──
@@ -124,6 +126,24 @@ export const WriteWorkspaceView: React.FC = () => {
     if (!toastMessage) return
     const t = setTimeout(() => clearToast(), 2800); return () => clearTimeout(t)
   }, [toastMessage, clearToast])
+
+  // External file change watcher — reloads content when another program edits the active file
+  useEffect(() => {
+    if (!workspaceRoot || !activeFilePath) { stopWatchingFile(); return }
+    startWatchingFile({
+      filePath: activeFilePath,
+      workspaceRoot,
+      fileKind: 'text',
+      onContentChanged: (content, size, truncated) => {
+        setFileContent(content)
+        setFileSize(size)
+        setFileTruncated(truncated)
+      },
+      onImageChanged: () => {},
+      onError: () => {},
+    })
+    return () => { stopWatchingFile() }
+  }, [workspaceRoot, activeFilePath, setFileContent, setFileSize, setFileTruncated])
 
   // ── Render ──
 

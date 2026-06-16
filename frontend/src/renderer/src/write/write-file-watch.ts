@@ -12,45 +12,31 @@ interface FileWatchOptions {
   onError: (error: string) => void;
 }
 
-let activeWatcherDispose: (() => void) | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Start watching a file for external changes using polling.
- * Falls back to interval-based polling if native watch is unavailable.
+ * Compares file content to detect external modifications.
  */
 export function startWatchingFile(options: FileWatchOptions): void {
   stopWatchingFile();
 
-  let lastModified = 0;
+  let lastContent = '';
 
   const poll = async () => {
     try {
-      const result: { ok: boolean; size?: number; modified?: number } = await loomRpc(
-        'vfs.read_file',
-        { path: options.filePath, workspace_root: options.workspaceRoot }
-      );
+      const result: { ok: boolean; content: string; size: number; truncated: boolean } =
+        await loomRpc('vfs.read_file', {
+          path: options.filePath,
+          workspace_root: options.workspaceRoot,
+        });
 
       if (!result.ok) return;
 
-      const mtime = result.modified ?? 0;
-      if (mtime > lastModified) {
-        lastModified = mtime;
-
-        if (options.fileKind === 'image') {
-          // Reload image as data URL
-          const dataUrl = await readImageAsDataUrl(options.filePath, options.workspaceRoot);
-          options.onImageChanged(dataUrl);
-        } else {
-          const readResult: { ok: boolean; content: string; size: number; truncated: boolean } =
-            await loomRpc('vfs.read_file', {
-              path: options.filePath,
-              workspace_root: options.workspaceRoot,
-            });
-          if (readResult.ok) {
-            options.onContentChanged(readResult.content, readResult.size, readResult.truncated);
-          }
-        }
+      // Compare content to detect external changes
+      if (result.content !== lastContent) {
+        lastContent = result.content;
+        options.onContentChanged(result.content, result.size, result.truncated);
       }
     } catch {
       // Silently ignore poll errors
@@ -62,10 +48,6 @@ export function startWatchingFile(options: FileWatchOptions): void {
 }
 
 export function stopWatchingFile(): void {
-  if (activeWatcherDispose) {
-    activeWatcherDispose();
-    activeWatcherDispose = null;
-  }
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
