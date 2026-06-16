@@ -79,6 +79,7 @@ app.whenReady().then(async () => {
   }
 
   const win = createMainWindow(port)
+
   createTray(win)
   try {
     initPet() // Desktop pet

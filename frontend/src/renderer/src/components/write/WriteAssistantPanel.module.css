@@ -1,0 +1,68 @@
+/* ── AI Assistant Panel ── */
+.panel {
+  width: 350px;
+  border-left: 1px solid var(--border);
+  background: var(--bg-surface);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.footer {
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.inputRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 7px 10px;
+  font-size: 12px;
+  background: var(--bg-card);
+  color: var(--text);
+  outline: none;
+  font-family: inherit;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.input:focus { border-color: var(--accent); }
+.input::placeholder { color: var(--text-muted); opacity: 0.6; }
+.input:disabled { opacity: 0.4; }
+
+.sendBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--bg);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.sendBtn:hover { background: var(--accent-hover); }
+.sendBtn:disabled { opacity: 0.3; cursor: default; }

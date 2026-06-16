@@ -1,0 +1,131 @@
+/* ── Toolbar Root ── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+  flex-shrink: 0;
+  min-height: 38px;
+  -webkit-app-region: no-drag;
+  user-select: none;
+}
+
+/* ── Sections ── */
+.left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.center {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  justify-content: center;
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+/* ── Buttons ── */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.btn:hover {
+  background: var(--bg-active);
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btnIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  padding: 0;
+}
+
+.btnAccent {
+  composes: btn;
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+.btnAccent:hover {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.btnGhost {
+  composes: btn;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+}
+.btnGhost:hover {
+  color: var(--text);
+  background: var(--bg-active);
+}
+
+/* ── Save Status ── */
+.saveStatus {
+  font-size: 10px;
+  white-space: nowrap;
+  min-width: 48px;
+  text-align: center;
+}
+
+.saveStatusSaved {
+  composes: saveStatus;
+  color: var(--text-muted);
+}
+
+.saveStatusDirty {
+  composes: saveStatus;
+  color: var(--accent);
+}
+
+.saveStatusSaving {
+  composes: saveStatus;
+  color: var(--text-muted);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.saveStatusError {
+  composes: saveStatus;
+  color: var(--red);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}

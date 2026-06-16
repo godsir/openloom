@@ -1,0 +1,46 @@
+/* ── Segmented Control for Preview Mode ── */
+.segmentedControl {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.segmentBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.segmentBtn:last-child {
+  border-right: none;
+}
+
+.segmentBtn:hover {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.segmentBtnActive {
+  composes: segmentBtn;
+  background: var(--bg-active);
+  color: var(--accent);
+}
+
+.segmentBtnActive:hover {
+  color: var(--accent);
+}
