@@ -78,7 +78,6 @@ code{background:#f4f4f4;padding:2px 4px;border-radius:2px;}</style></head><body>
   ipcMain.handle('write:read-image', async (_event, { filePath, workspaceRoot }: { filePath: string; workspaceRoot: string }) => {
     try {
       const fullPath = path.resolve(workspaceRoot, filePath)
-      // Path traversal protection
       if (!fullPath.startsWith(path.resolve(workspaceRoot))) {
         return { ok: false, message: 'path outside workspace' }
       }
@@ -91,6 +90,21 @@ code{background:#f4f4f4;padding:2px 4px;border-radius:2px;}</style></head><body>
       const data = fs.readFileSync(fullPath)
       const base64 = data.toString('base64')
       return { ok: true, dataUrl: `data:${mimeType};base64,${base64}`, mimeType }
+    } catch (e: any) {
+      return { ok: false, message: e.message }
+    }
+  })
+
+  // Read workspace binary file as base64 (for PDF etc.)
+  ipcMain.handle('write:read-binary', async (_event, { filePath, workspaceRoot }: { filePath: string; workspaceRoot: string }) => {
+    try {
+      const fullPath = path.resolve(workspaceRoot, filePath)
+      if (!fullPath.startsWith(path.resolve(workspaceRoot))) {
+        return { ok: false, message: 'path outside workspace' }
+      }
+      const data = fs.readFileSync(fullPath)
+      const base64 = data.toString('base64')
+      return { ok: true, data: base64, size: data.length }
     } catch (e: any) {
       return { ok: false, message: e.message }
     }

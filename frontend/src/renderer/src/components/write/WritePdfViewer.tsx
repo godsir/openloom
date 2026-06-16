@@ -1,15 +1,14 @@
 // PDF Viewer — renders PDF files using pdfjs-dist
 // Supports page navigation, zoom, and text selection
-// Lazy-loads pdfjs-dist to avoid bloating initial bundle
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 interface WritePdfViewerProps {
   filePath: string;
-  dataBase64?: string;
+  workspaceRoot: string;
 }
 
-export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, dataBase64 }) => {
+export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, workspaceRoot }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [numPages, setNumPages] = useState(0);
@@ -24,20 +23,25 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, dataBa
     const loadPdf = async () => {
       try {
         setLoading(true);
-        // Dynamic import to avoid bundling pdfjs-dist at startup
+        setError(null);
+
+        // Load binary data via Electron IPC
+        const result = await (window as any).loom.readWorkspaceBinary(filePath, workspaceRoot);
+        if (cancelled) return;
+
+        if (!result || !result.ok || !result.data) {
+          setError(result?.message || 'Failed to read PDF file');
+          setLoading(false);
+          return;
+        }
+
         const pdfjsLib = await import('pdfjs-dist');
         pdfjsLib.GlobalWorkerOptions.workerSrc = '';
 
-        let pdfData: Uint8Array;
-        if (dataBase64) {
-          const binary = atob(dataBase64);
-          pdfData = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) {
-            pdfData[i] = binary.charCodeAt(i);
-          }
-        } else {
-          setError('No PDF data available');
-          return;
+        const binary = atob(result.data);
+        const pdfData = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          pdfData[i] = binary.charCodeAt(i);
         }
 
         const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
@@ -55,26 +59,21 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, dataBa
 
     loadPdf();
     return () => { cancelled = true; };
-  }, [dataBase64]);
+  }, [filePath, workspaceRoot]);
 
-  // Render page
   useEffect(() => {
     if (!pdfDocRef.current || !canvasRef.current) return;
-
     const renderPage = async () => {
       try {
         const page = await pdfDocRef.current.getPage(currentPage);
         const viewport = page.getViewport({ scale });
         const canvas = canvasRef.current!;
-        const ctx = canvas.getContext('2d')!;
-
         canvas.width = viewport.width;
         canvas.height = viewport.height;
-
+        const ctx = canvas.getContext('2d')!;
         await page.render({ canvasContext: ctx, viewport }).promise;
       } catch {}
     };
-
     renderPage();
   }, [currentPage, scale]);
 
@@ -97,7 +96,6 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, dataBa
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Toolbar */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px',
         padding: '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0,
@@ -106,25 +104,18 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, dataBa
           onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
           disabled={currentPage <= 1}
           style={{ padding: '2px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'transparent', color: 'var(--text)', cursor: 'pointer', fontSize: '12px' }}
-        >
-          ← Prev
-        </button>
-        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-          {currentPage} / {numPages}
-        </span>
+        >← Prev</button>
+        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{currentPage} / {numPages}</span>
         <button
           onClick={() => setCurrentPage((p) => Math.min(numPages, p + 1))}
           disabled={currentPage >= numPages}
           style={{ padding: '2px 8px', border: '1px solid var(--border)', borderRadius: '4px', background: 'transparent', color: 'var(--text)', cursor: 'pointer', fontSize: '12px' }}
-        >
-          Next →
-        </button>
+        >Next →</button>
         <span style={{ width: '1px', height: '16px', background: 'var(--border)' }} />
         <button onClick={() => setScale((s) => Math.max(0.5, s - 0.25))} style={{ padding: '2px 6px', border: '1px solid var(--border)', borderRadius: '4px', background: 'transparent', color: 'var(--text)', cursor: 'pointer' }}>−</button>
         <span style={{ fontSize: '11px', color: 'var(--text-muted)', minWidth: '40px', textAlign: 'center' }}>{Math.round(scale * 100)}%</span>
         <button onClick={() => setScale((s) => Math.min(2.0, s + 0.25))} style={{ padding: '2px 6px', border: '1px solid var(--border)', borderRadius: '4px', background: 'transparent', color: 'var(--text)', cursor: 'pointer' }}>+</button>
       </div>
-      {/* Canvas area */}
       <div style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', padding: '16px', background: 'var(--bg)' }}>
         <canvas ref={canvasRef} style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }} />
       </div>

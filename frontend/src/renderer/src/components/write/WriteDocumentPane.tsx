@@ -5,6 +5,7 @@ import { WriteMarkdownPreview } from './WriteMarkdownPreview'
 import { WriteImagePreview } from './WriteImagePreview'
 import { WriteWorkspaceStart } from './WriteWorkspaceStart'
 import { WriteRichEditor } from '../../write/tiptap/WriteRichEditor'
+import { WritePdfViewer } from './WritePdfViewer'
 
 const LARGE_FILE_THRESHOLD = 300 * 1024
 
@@ -26,6 +27,7 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
   const fileSize = useWriteStore(s => s.fileSize)
   const previewMode = useWriteStore(s => s.previewMode)
   const fontSize = useWriteStore(s => s.fontSize)
+  const workspaceRoot = useWriteStore(s => s.workspaceRoot)
   const setFileContent = useWriteStore(s => s.setFileContent)
   const setSaveStatus = useWriteStore(s => s.setSaveStatus)
 
@@ -66,7 +68,7 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
 
   // PDF file
   if (activeFileKind === 'pdf') {
-    return <WritePdfViewerStub filePath={activeFilePath} />
+    return <WritePdfViewer filePath={activeFilePath} workspaceRoot={workspaceRoot || ''} />
   }
 
   // Text file — resolve effective mode
@@ -99,14 +101,5 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
   // Source / Live
   return <WriteMarkdownEditor value={fileContent} onChange={handleChange} />
 }
-
-// PDF stub (inline to avoid missing component issues)
-const WritePdfViewerStub: React.FC<{ filePath: string }> = ({ filePath }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', gap: 8 }}>
-    <span style={{ fontSize: 32, opacity: 0.3 }}>PDF</span>
-    <span style={{ fontSize: 13 }}>{filePath.split('/').pop()}</span>
-    <span style={{ fontSize: 11, opacity: 0.6 }}>PDF viewer coming soon</span>
-  </div>
-);
 
 export default WriteDocumentPane

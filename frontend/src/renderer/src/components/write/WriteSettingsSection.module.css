@@ -1,101 +1,134 @@
-/* WriteSettingsSection.module.css — 写作设置面板 */
+/* WriteSettingsSection.module.css — matches project SettingsModal patterns */
+
+.root {
+  max-width: 520px;
+}
 
 .section {
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .sectionTitle {
-  font-size: 13px;
+  font-size: 10px;
   font-weight: 600;
-  margin-bottom: 10px;
-  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin: 0 0 10px;
 }
 
-.fieldGroup {
+.sectionCard {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  overflow: hidden;
 }
 
-.field {
+.fieldRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  padding: 10px 14px;
+  gap: 16px;
+  border-bottom: 1px solid var(--border);
 }
 
-.fieldLabel {
-  font-size: 13px;
-  color: var(--text);
-  min-width: 110px;
+.fieldRow:last-child {
+  border-bottom: none;
 }
 
-.fieldValue {
-  flex: 1;
+.label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 100px;
+  flex-shrink: 0;
 }
 
 .select {
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
+  flex: 1;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
   color: var(--text);
-  font-size: 13px;
-  width: 100%;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  outline: none;
 }
 
-.input {
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
-  font-size: 13px;
-  width: 100%;
+.select:focus {
+  border-color: var(--border-accent);
 }
 
-.range {
-  width: 100%;
+.numInput {
+  width: 100px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  outline: none;
+}
+
+.numInput:focus {
+  border-color: var(--border-accent);
+}
+
+.modeToggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.toggleBtn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.toggleBtn:last-child {
+  border-right: none;
+}
+
+.toggleBtn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.toggleBtnActive {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.10);
+  border: none;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.toggleBtnActive:last-child {
+  border-right: none;
 }
 
 .checkboxLabel {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
-  color: var(--text);
-}
-
-.modeRow {
-  display: flex;
-  gap: 2px;
-}
-
-.modeBtn {
-  padding: 4px 10px;
   font-size: 12px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-radius: 0;
-}
-
-.modeBtn:first-child { border-radius: 4px 0 0 4px; }
-.modeBtn:last-child { border-radius: 0 4px 4px 0; }
-
-.modeBtnActive {
-  composes: modeBtn;
-  background: var(--bg-active);
-  color: var(--text-accent);
-  border-radius: 4px;
-}
-
-.pageTitle {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 20px;
+  color: var(--text-secondary);
 }

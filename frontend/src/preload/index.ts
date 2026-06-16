@@ -35,6 +35,7 @@ export interface LoomApi {
   onNavigate: (cb: (route: string) => void) => () => void
   /** Workspace file write methods */
   readWorkspaceImage: (filePath: string, workspaceRoot: string) => Promise<{ok: boolean; dataUrl?: string; mimeType?: string; message?: string}>
+  readWorkspaceBinary: (filePath: string, workspaceRoot: string) => Promise<{ok: boolean; data?: string; size?: number; message?: string}>
   copyWriteDocumentAsRichText: (filePath: string, workspaceRoot: string, content: string) => Promise<{ok: boolean; message?: string}>
   watchFile: (filePath: string, workspaceRoot: string) => Promise<{ok: boolean}>
   unwatchFile: (filePath: string, workspaceRoot: string) => Promise<{ok: boolean}>
@@ -123,6 +124,7 @@ contextBridge.exposeInMainWorld('loom', {
     return () => { ipcRenderer.removeListener('navigate', fn) }
   },
   readWorkspaceImage: (filePath: string, workspaceRoot: string) => ipcRenderer.invoke('write:read-image', { filePath, workspaceRoot }),
+  readWorkspaceBinary: (filePath: string, workspaceRoot: string) => ipcRenderer.invoke('write:read-binary', { filePath, workspaceRoot }),
   copyWriteDocumentAsRichText: (filePath: string, workspaceRoot: string, content: string) => ipcRenderer.invoke('write:copy-rich-text', { filePath, workspaceRoot, content }),
   watchFile: (filePath: string, workspaceRoot: string) => ipcRenderer.invoke('write:watch-file', { filePath, workspaceRoot }),
   unwatchFile: (filePath: string, workspaceRoot: string) => ipcRenderer.invoke('write:unwatch-file', { filePath, workspaceRoot }),

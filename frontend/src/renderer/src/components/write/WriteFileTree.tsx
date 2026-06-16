@@ -7,19 +7,12 @@ import styles from './WriteFileTree.module.css'
 
 // ---- constants ----
 
-const SUPPORTED_EXTS = new Set([
-  'md', 'txt', 'markdown',
-  'pdf',
-  'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg',
-])
-
-const TEXT_EXTS = new Set(['md', 'txt', 'markdown'])
-const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'])
+// Show ALL files in the workspace. Only dotfiles are filtered.
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'])
 
 function getFileKind(ext: string): WriteFileKind {
-  if (TEXT_EXTS.has(ext)) return 'text'
-  if (IMAGE_EXTS.has(ext)) return 'image'
   if (ext === 'pdf') return 'pdf'
+  if (IMAGE_EXTS.has(ext)) return 'image'
   return 'text'
 }
 
@@ -74,8 +67,8 @@ export const WriteFileTree: React.FC<WriteFileTreeProps> = ({ onNewFile }) => {
           .filter((e: WorkspaceEntry) => {
             if (e.name.startsWith('.')) return false
             if (e.kind === 'directory') return true
-            const ext = extOf(e)
-            return SUPPORTED_EXTS.has(ext)
+            // Show ALL files — no extension filtering
+            return true
           })
           .sort((a: WorkspaceEntry, b: WorkspaceEntry) => {
             if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1
