@@ -1,6 +1,6 @@
 import { useWriteStore } from '../../stores/write';
 import { WriteFileTree } from './WriteFileTree';
-import { useTranslation } from 'react-i18next';
+import { useLocale } from '../../i18n';
 import { FolderOpen, ChevronLeft } from 'lucide-react';
 import styles from './WriteSidebar.module.css';
 
@@ -9,7 +9,7 @@ interface WriteSidebarProps {
 }
 
 export function WriteSidebar({ onSelectWorkspace }: WriteSidebarProps) {
-  const { t } = useTranslation();
+  const { t } = useLocale();
   const workspaceRoot = useWriteStore((s) => s.workspaceRoot);
   const fileSidebarOpen = useWriteStore((s) => s.fileSidebarOpen);
   const toggleFileSidebar = useWriteStore((s) => s.toggleFileSidebar);

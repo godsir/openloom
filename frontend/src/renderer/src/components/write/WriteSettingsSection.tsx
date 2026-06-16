@@ -3,7 +3,7 @@
 
 import React, { useState } from 'react';
 import { useWriteStore, WritePreviewMode } from '../../stores/write';
-import { useTranslation } from 'react-i18next';
+import { useLocale } from '../../i18n';
 
 const FONT_OPTIONS = [
   { value: 'system', label: '系统默认' },
@@ -22,7 +22,7 @@ const PREVIEW_MODES: { value: WritePreviewMode; label: string }[] = [
 ];
 
 export const WriteSettingsSection: React.FC = () => {
-  const { t } = useTranslation();
+  const { t } = useLocale();
   const store = useWriteStore();
 
   return (
