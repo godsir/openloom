@@ -110,7 +110,7 @@ const createWriteSettingsSlice = (set: any, _get: any): WriteSettingsSlice => ({
   autoSaveIntervalMs: 900,
 
   setWorkspaceRoot: (root) => {
-    set({ workspaceRoot: root });
+    set({ workspaceRoot: root, entriesByDir: {}, expandedDirs: {}, activeFilePath: null, fileContent: '' });
     if (root) { try { localStorage.setItem('loom:writeWorkspace', root); } catch {} }
   },
   setPreviewMode: (mode) => {

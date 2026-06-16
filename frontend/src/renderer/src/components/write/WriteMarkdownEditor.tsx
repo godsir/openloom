@@ -9,6 +9,7 @@ import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
 import { autocompletion } from '@codemirror/autocomplete'
 import { closeBrackets } from '@codemirror/autocomplete'
 import { useWriteStore } from '../../stores/write'
+import { useStore } from '../../stores'
 import { buildFimCompletionSource } from '../../services/fimSource'
 
 const fimCompletionSource = buildFimCompletionSource()
@@ -27,7 +28,7 @@ interface WriteMarkdownEditorProps {
  * Uses Compartments for dynamic extension reconfiguration without editor rebuild.
  *
  * 与 CodeMirrorEditor 的区别：
- * - FIM 开关从 useWriteStore.inlineCompletionEnabled 读取（而非主 store 的 fimEnabled）
+ * - FIM 开关同时检查 write store 和主 store 的 fimEnabled
  * - 预留给 Live 装饰模式的扩展点
  */
 export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
@@ -43,8 +44,10 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
   const fimCompartment = useRef(new Compartment())
   const themeCompartment = useRef(new Compartment())
 
-  // 从 write store 读取 FIM 开关
+  // FIM 开关 — 同时检查 write store 和主 store (主 store 的 fimEnabled 是全局开关)
   const inlineCompletionEnabled = useWriteStore(s => s.inlineCompletionEnabled)
+  const mainStoreFimEnabled = useStore(s => s.fimEnabled)
+  const fimEnabled = inlineCompletionEnabled && mainStoreFimEnabled
 
   // Build the static theme once
   const baseTheme = EditorView.theme({
@@ -93,7 +96,7 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
       }
     })
 
-    const fimExtension = inlineCompletionEnabled
+    const fimExtension = fimEnabled
       ? autocompletion({
           override: [fimCompletionSource],
           defaultKeymap: true,
@@ -154,7 +157,7 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
     if (!view) return
     view.dispatch({
       effects: fimCompartment.current.reconfigure(
-        inlineCompletionEnabled
+        fimEnabled
           ? autocompletion({
               override: [fimCompletionSource],
               defaultKeymap: true,

@@ -137,7 +137,22 @@ export const WriteWorkspaceView: React.FC = () => {
 
   return (
     <div className={styles.root}>
-      <WriteSidebar onSelectWorkspace={handleSelectWorkspace} onNewFile={handleNewFile} />
+      {workspaceRoot && (
+        <WriteSidebar onSelectWorkspace={handleSelectWorkspace} onNewFile={handleNewFile} />
+      )}
+      {/* Collapsed sidebar toggle strip — visible only when sidebar is hidden but workspace exists */}
+      {workspaceRoot && !useWriteStore.getState().fileSidebarOpen && (
+        <div
+          onClick={() => useWriteStore.getState().toggleFileSidebar()}
+          style={{
+            width: 4, cursor: 'pointer', background: 'var(--border)',
+            transition: 'background 0.15s',
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--accent)')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--border)')}
+          title={t('write.expandSidebar', 'Expand Sidebar')}
+        />
+      )}
       <div className={styles.body}>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {workspaceRoot && (

@@ -1,46 +1,39 @@
 import React from 'react'
 import { useWriteStore } from '../../stores/write'
 import { useLocale } from '../../i18n'
-import { IconFolderOpen, IconFile } from '../../utils/icons'
-import styles from './WriteWorkspaceView.module.css'
+import { IconFolder, IconFile } from '../../utils/icons'
 
 interface WriteWorkspaceStartProps {
-  onSelectWorkspace?: () => void
+  onSelectWorkspace: () => void;
 }
 
 /**
- * 写作模块的着陆页 — 当没有打开任何文件时显示。
- *
- * 两种状态：
- * 1. 未选择工作目录：显示文件夹图标 + 提示文字 + "选择目录"按钮
- * 2. 已选择工作目录但未打开文件：显示文件图标 + 提示文字
+ * Landing page shown when no file is open.
+ * Two states: no workspace (prompts to pick one) / workspace selected but no file open.
  */
 export const WriteWorkspaceStart: React.FC<WriteWorkspaceStartProps> = ({ onSelectWorkspace }) => {
   const workspaceRoot = useWriteStore(s => s.workspaceRoot)
-  const activeFilePath = useWriteStore(s => s.activeFilePath)
   const { t } = useLocale()
 
-  // 已有打开的文件时不渲染着陆页
-  if (activeFilePath) return null
-
-  // 状态 1：未选择工作目录
   if (!workspaceRoot) {
     return (
-      <div className={styles.emptyState}>
-        <IconFolderOpen size={48} className={styles.emptyIcon} />
-        <span>{t('write.selectDirStart')}</span>
-        <button className={styles.workspacePromptBtn} onClick={onSelectWorkspace}>
-          <IconFolderOpen size={16} />{t('write.selectDirectory')}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '12px', color: 'var(--text-muted)' }}>
+        <IconFolder size={48} style={{ opacity: 0.15 }} />
+        <span style={{ fontSize: '14px' }}>{t('write.selectDirStart')}</span>
+        <button
+          onClick={(e) => { e.stopPropagation(); onSelectWorkspace() }}
+          style={{ padding: '8px 20px', border: '1px solid var(--border-accent)', borderRadius: '8px', background: 'var(--accent-subtle)', color: 'var(--accent)', cursor: 'pointer', fontSize: '13px', fontWeight: 500 }}
+        >
+          {t('write.selectDirectory')}
         </button>
       </div>
     )
   }
 
-  // 状态 2：已选择工作目录，但未打开文件
   return (
-    <div className={styles.emptyState}>
-      <IconFile size={40} className={styles.emptyIcon} />
-      <span>{t('write.selectOrNewFilePrompt')}</span>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '8px', color: 'var(--text-muted)' }}>
+      <IconFile size={40} style={{ opacity: 0.15 }} />
+      <span style={{ fontSize: '14px' }}>{t('write.selectOrNewFilePrompt')}</span>
     </div>
   )
 }

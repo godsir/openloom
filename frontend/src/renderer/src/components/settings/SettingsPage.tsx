@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useStore } from '../../stores'
-import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconPackage, IconBug, IconChevronUp, IconCommand } from '../../utils/icons'
+import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconPackage, IconBug, IconChevronUp, IconCommand, IconEdit } from '../../utils/icons'
 import AgentConfigPanel from '../shared/AgentConfigPanel'
 import { loomRpc } from '../../services/jsonrpc'
 import { useLocale } from '../../i18n'
@@ -17,8 +17,9 @@ import DevTestTab from './DevTestTab'
 import ShortcutsTab from './ShortcutsTab'
 import TokenTab from './TokenTab'
 import KgTab from './KgTab'
+import { WriteSettingsSection } from '../write/WriteSettingsSection'
 
-type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'about'
+type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'write' | 'about'
 
 function GlobalDefaultsSection() {
   const { t } = useLocale()
@@ -107,6 +108,7 @@ function useSettingsTabs() {
         { id: 'mcp' as Tab, label: t('settings.mcpLsp'), icon: <IconTerminal size={14} /> },
         { id: 'plugins' as Tab, label: t('settings.plugins'), icon: <IconPackage size={14} /> },
         { id: 'skills' as Tab, label: t('settings.skills'), icon: <IconSparkles size={14} /> },
+        { id: 'write' as Tab, label: t('write.settings', '写作设置'), icon: <IconEdit size={14} /> },
       ],
     },
     {
@@ -232,6 +234,17 @@ export default function SettingsPage() {
 
         {tab === 'skills' && <SkillsTab />}
         {tab === 'plugins' && <PluginsTab />}
+        {tab === 'write' && (
+          <>
+            <div className={styles.contentHeader}>
+              <h3 className={styles.sectionTitle}>{t('write.settings', '写作设置')}</h3>
+              <p className={styles.sectionDesc}>{t('write.settingsDesc', '配置编辑器、AI 补全和工作区选项')}</p>
+            </div>
+            <div className={styles.contentBody}>
+              <WriteSettingsSection />
+            </div>
+          </>
+        )}
 
         {tab === 'pet' && (
           <>
