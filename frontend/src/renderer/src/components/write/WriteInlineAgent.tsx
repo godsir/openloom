@@ -48,18 +48,26 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
   const [aiInput, setAiInput] = useState('');
   const toolbarRef = useRef<HTMLDivElement>(null);
 
+  const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+
   const activePreset = resolveAgentPreset(agentPresetId);
 
-  // Position toolbar above/below selection
+  // Position toolbar at DOM selection
   useLayoutEffect(() => {
-    if (!toolbarRef.current || !selection) return;
-    const rect = toolbarRef.current.getBoundingClientRect();
-    const viewportH = window.innerHeight;
-    // Simple positioning: if it would overflow bottom, place above
-    // This is handled via CSS transform. Actual positioning depends on the editor integration.
+    if (!selection) { setToolbarPos(null); return; }
+    const domSel = window.getSelection();
+    if (!domSel || domSel.isCollapsed || domSel.rangeCount === 0) { setToolbarPos(null); return; }
+    const range = domSel.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) { setToolbarPos(null); return; }
+    // Position above selection, centered
+    const x = Math.max(8, rect.left + rect.width / 2 - 150); // center toolbar (300px wide)
+    const y = rect.top - 10; // above selection
+    setToolbarPos({ x, y });
   }, [selection]);
 
-  if (!selection) return null;
+  if (!selection || !toolbarPos) return null;
 
   const handleBlockType = (type: WriteBlockType) => {
     const lines = selection.text.split('\n');
@@ -183,7 +191,7 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
   };
 
   return (
-    <div ref={toolbarRef} style={styles.toolbar}>
+    <div ref={toolbarRef} style={{ ...styles.toolbar, left: toolbarPos.x, top: toolbarPos.y }}>
       {/* Row 1: Block types */}
       <div style={styles.row}>
         {BLOCK_TYPES.map((bt) => {
