@@ -1,0 +1,101 @@
+/* WriteSettingsSection.module.css — 写作设置面板 */
+
+.section {
+  margin-bottom: 24px;
+}
+
+.sectionTitle {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.fieldLabel {
+  font-size: 13px;
+  color: var(--text);
+  min-width: 110px;
+}
+
+.fieldValue {
+  flex: 1;
+}
+
+.select {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  width: 100%;
+}
+
+.input {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  width: 100%;
+}
+
+.range {
+  width: 100%;
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.modeRow {
+  display: flex;
+  gap: 2px;
+}
+
+.modeBtn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 0;
+}
+
+.modeBtn:first-child { border-radius: 4px 0 0 4px; }
+.modeBtn:last-child { border-radius: 0 4px 4px 0; }
+
+.modeBtnActive {
+  composes: modeBtn;
+  background: var(--bg-active);
+  color: var(--text-accent);
+  border-radius: 4px;
+}
+
+.pageTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 20px;
+}

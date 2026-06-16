@@ -140,10 +140,10 @@ export const WriteWorkspaceView: React.FC = () => {
       {workspaceRoot && (
         <WriteSidebar onSelectWorkspace={handleSelectWorkspace} onNewFile={handleNewFile} />
       )}
-      {/* Collapsed sidebar toggle strip — visible only when sidebar is hidden but workspace exists */}
-      {workspaceRoot && !useWriteStore.getState().fileSidebarOpen && (
+      {/* Collapsed sidebar toggle strip — reads from main UI store, same as titlebar button */}
+      {workspaceRoot && !useStore.getState().writeFileSidebarOpen && (
         <div
-          onClick={() => useWriteStore.getState().toggleFileSidebar()}
+          onClick={() => useStore.getState().toggleWriteFileSidebar()}
           style={{
             width: 4, cursor: 'pointer', background: 'var(--border)',
             transition: 'background 0.15s',

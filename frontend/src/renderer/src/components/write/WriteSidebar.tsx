@@ -1,4 +1,4 @@
-import { useWriteStore } from '../../stores/write';
+import { useStore } from '../../stores'
 import { WriteFileTree } from './WriteFileTree';
 import { useLocale } from '../../i18n';
 import { IconFolder } from '../../utils/icons';
@@ -11,13 +11,11 @@ interface WriteSidebarProps {
 
 export function WriteSidebar({ onSelectWorkspace, onNewFile }: WriteSidebarProps) {
   const { t } = useLocale();
-  const workspaceRoot = useWriteStore((s) => s.workspaceRoot);
-  const fileSidebarOpen = useWriteStore((s) => s.fileSidebarOpen);
-  const toggleFileSidebar = useWriteStore((s) => s.toggleFileSidebar);
+  const workspaceRoot = useStore(s => s.appMode) === 'write' ? true : false;
+  const writeFileSidebarOpen = useStore(s => s.writeFileSidebarOpen);
+  const toggleWriteFileSidebar = useStore(s => s.toggleWriteFileSidebar);
 
-  if (!fileSidebarOpen || !workspaceRoot) {
-    return null;
-  }
+  if (!writeFileSidebarOpen) return null;
 
   return (
     <aside className={styles.sidebar}>
@@ -36,7 +34,7 @@ export function WriteSidebar({ onSelectWorkspace, onNewFile }: WriteSidebarProps
           </svg>
         </button>
 
-        <button className={styles.iconBtn} onClick={toggleFileSidebar}
+        <button className={styles.iconBtn} onClick={toggleWriteFileSidebar}
           title={t('write.collapseSidebar', 'Collapse Sidebar')}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="15 18 9 12 15 6"/>
