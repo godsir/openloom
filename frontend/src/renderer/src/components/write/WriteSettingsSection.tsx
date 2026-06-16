@@ -3,18 +3,6 @@ import { useLocale } from '../../i18n';
 import styles from './WriteSettingsSection.module.css';
 import type { WritePreviewMode } from '../../stores/write';
 
-const FONT_OPTIONS = [
-  { value: 'system', label: '系统默认 / System Default' },
-  { value: 'Microsoft YaHei', label: '微软雅黑' },
-  { value: 'SimSun', label: '宋体' },
-  { value: 'KaiTi', label: '楷体' },
-  { value: 'SimHei', label: '黑体' },
-  { value: 'Source Han Sans', label: '思源黑体' },
-  { value: 'PingFang SC', label: '苹方' },
-  { value: 'JetBrains Mono', label: 'JetBrains Mono' },
-  { value: 'Fira Code', label: 'Fira Code' },
-];
-
 const PREVIEW_MODES: { value: WritePreviewMode; labelKey: string; label: string }[] = [
   { value: 'rich', labelKey: 'write.previewRich', label: '所见即所得' },
   { value: 'source', labelKey: 'write.previewEdit', label: '源码' },
@@ -27,27 +15,29 @@ export const WriteSettingsSection: React.FC = () => {
   const { t } = useLocale();
   const store = useWriteStore();
 
+  const handlePickWorkspace = async () => {
+    try {
+      const p = await (window as any).loom?.selectFolder?.();
+      if (p) store.setWorkspaceRoot(p);
+    } catch {}
+  };
+
   return (
     <div className={styles.root}>
-      {/* ---- Typography ---- */}
+      {/* ---- 工作区 ---- */}
       <div className={styles.section}>
-        <h3 className={styles.sectionTitle}>{t('write.settingsTypography', '排版设置')}</h3>
+        <h3 className={styles.sectionTitle}>{t('write.settingsWorkspace', '工作区')}</h3>
         <div className={styles.sectionCard}>
           <div className={styles.fieldRow}>
-            <label className={styles.label}>{t('write.settingsDefaultFont', '默认字体')}</label>
-            <select className={styles.select} value={store.fontFamily} onChange={(e) => store.setFontFamily(e.target.value)}>
-              {FONT_OPTIONS.map((f) => (<option key={f.value} value={f.value}>{f.label}</option>))}
-            </select>
-          </div>
-          <div className={styles.fieldRow}>
-            <label className={styles.label}>{t('write.settingsFontSize', '字号') + ': ' + store.fontSize + 'px'}</label>
-            <input type="range" style={{ flex: 1 }} min={12} max={28} value={store.fontSize}
-              onChange={(e) => store.setFontSize(Number(e.target.value))} />
-          </div>
-          <div className={styles.fieldRow}>
-            <label className={styles.label}>{t('write.settingsLineHeight', '行高') + ': ' + store.lineHeight.toFixed(1)}</label>
-            <input type="range" style={{ flex: 1 }} min={1.2} max={2.5} step={0.1} value={store.lineHeight}
-              onChange={(e) => store.setLineHeight(Number(e.target.value))} />
+            <label className={styles.label}>{t('write.settingsDefaultWorkspace', '默认工作区')}</label>
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ flex: 1, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {store.workspaceRoot || t('write.noWorkspace', '未设置')}
+              </span>
+              <button className={styles.actionBtn} onClick={handlePickWorkspace}>
+                {t('write.selectDirectory', '选择...')}
+              </button>
+            </div>
           </div>
           <div className={styles.fieldRow}>
             <label className={styles.label}>{t('write.settingsDefaultPreview', '默认预览模式')}</label>
@@ -61,12 +51,18 @@ export const WriteSettingsSection: React.FC = () => {
               ))}
             </div>
           </div>
+          <div className={styles.fieldRow}>
+            <label className={styles.label}>{t('write.settingsAutoSaveInterval', '自动保存间隔')}</label>
+            <input type="number" className={styles.numInput}
+              value={store.autoSaveIntervalMs} min={300} max={5000} step={100}
+              onChange={(e) => useWriteStore.setState({ autoSaveIntervalMs: Number(e.target.value) || 900 })} />
+          </div>
         </div>
       </div>
 
-      {/* ---- AI Completion ---- */}
+      {/* ---- AI 补全 ---- */}
       <div className={styles.section}>
-        <h3 className={styles.sectionTitle}>{t('write.settingsAICompletion', 'AI 补全设置')}</h3>
+        <h3 className={styles.sectionTitle}>{t('write.settingsAICompletion', 'AI 补全')}</h3>
         <div className={styles.sectionCard}>
           <div className={styles.fieldRow}>
             <label className={styles.label}>{t('write.settingsInlineCompletion', '内联补全')}</label>
@@ -77,37 +73,12 @@ export const WriteSettingsSection: React.FC = () => {
             </label>
           </div>
           <div className={styles.fieldRow}>
-            <label className={styles.label}>{t('write.settingsCompletionDebounceShort', '补全延迟')}</label>
-            <input type="number" className={styles.numInput}
-              value={store.shortDebounceMs} min={150} max={5000} step={50}
-              onChange={(e) => useWriteStore.setState({ shortDebounceMs: Number(e.target.value) || 300 })} />
-          </div>
-          <div className={styles.fieldRow}>
-            <label className={styles.label}>{t('write.settingsCompletionDebounceLong', '长补全延迟')}</label>
-            <input type="number" className={styles.numInput}
-              value={store.longDebounceMs} min={1000} max={15000} step={100}
-              onChange={(e) => useWriteStore.setState({ longDebounceMs: Number(e.target.value) || 1500 })} />
-          </div>
-        </div>
-      </div>
-
-      {/* ---- Workspace ---- */}
-      <div className={styles.section}>
-        <h3 className={styles.sectionTitle}>{t('write.settingsWorkspace', '工作区')}</h3>
-        <div className={styles.sectionCard}>
-          <div className={styles.fieldRow}>
             <label className={styles.label}>{t('write.settingsRetrieval', '工作区检索')}</label>
             <label className={styles.checkboxLabel}>
               <input type="checkbox" checked={store.retrievalEnabled}
                 onChange={(e) => store.setRetrievalEnabled(e.target.checked)} />
               <span>{t('write.settingsRetrievalDesc', '启用 BM25 关键词检索增强')}</span>
             </label>
-          </div>
-          <div className={styles.fieldRow}>
-            <label className={styles.label}>{t('write.settingsAutoSaveInterval', '自动保存间隔')}</label>
-            <input type="number" className={styles.numInput}
-              value={store.autoSaveIntervalMs} min={300} max={5000} step={100}
-              onChange={(e) => useWriteStore.setState({ autoSaveIntervalMs: Number(e.target.value) || 900 })} />
           </div>
         </div>
       </div>

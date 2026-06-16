@@ -5,7 +5,7 @@ import katex from 'katex'
 import { t } from '../i18n'
 
 const md = new MarkdownIt({
-  html: false,
+  html: true,
   breaks: true,
   linkify: true,
   typographer: true,

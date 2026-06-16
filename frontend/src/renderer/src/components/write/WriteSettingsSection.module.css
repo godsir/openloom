@@ -79,6 +79,24 @@
   border-color: var(--border-accent);
 }
 
+.actionBtn {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border: 1px solid rgba(var(--accent-rgb), 0.20);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.actionBtn:hover {
+  background: var(--accent-medium);
+}
+
 .modeToggle {
   display: flex;
   gap: 0;

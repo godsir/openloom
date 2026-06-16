@@ -36,7 +36,11 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, worksp
         }
 
         const pdfjsLib = await import('pdfjs-dist');
-        pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+        // Use bundled worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+          'pdfjs-dist/build/pdf.worker.min.mjs',
+          import.meta.url
+        ).toString();
 
         const binary = atob(result.data);
         const pdfData = new Uint8Array(binary.length);

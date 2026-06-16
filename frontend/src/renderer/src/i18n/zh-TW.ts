@@ -769,6 +769,11 @@ export const zhTW: TranslationMap = {
   'write.settingsRetrievalDesc': '啟用 BM25 關鍵詞檢索增強寫作上下文',
   'write.settingsAutoSaveInterval': '自動儲存間隔 (ms)',
   'write.settingsAdvanced': '進階',
+  'write.settingsDefaultWorkspace': '預設工作區',
+  'write.noWorkspace': '未設定',
+  'write.expandSidebar': '展開側邊欄',
+  'write.previewRich': '所見即所得',
+  'write.previewLive': '即時',
 
   // ── Onboarding ─────────────────────────────────────────────────
   'onboarding.welcomeTitle': '欢迎来到 openLoom',

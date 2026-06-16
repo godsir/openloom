@@ -769,6 +769,11 @@ export const enUS: TranslationMap = {
   'write.settingsRetrievalDesc': 'Enable BM25 keyword retrieval for writing context',
   'write.settingsAutoSaveInterval': 'Auto-save Interval (ms)',
   'write.settingsAdvanced': 'Advanced',
+  'write.settingsDefaultWorkspace': 'Default Workspace',
+  'write.noWorkspace': 'Not set',
+  'write.expandSidebar': 'Expand Sidebar',
+  'write.previewRich': 'WYSIWYG',
+  'write.previewLive': 'Live',
 
   // ── Onboarding ─────────────────────────────────────────────────
   'onboarding.welcomeTitle': 'Welcome to openLoom',

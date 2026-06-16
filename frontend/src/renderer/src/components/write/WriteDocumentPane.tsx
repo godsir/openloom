@@ -84,22 +84,67 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
     return <WriteMarkdownPreview content={fileContent} />
   }
 
-  // Split mode
+  // Split mode — draggable divider
   if (effectiveMode === 'split') {
-    return (
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <div style={{ flex: 1, borderRight: '1px solid var(--border)' }}>
-          <WriteMarkdownEditor value={fileContent} onChange={handleChange} />
-        </div>
-        <div style={{ flex: 1 }}>
-          <WriteMarkdownPreview content={fileContent} />
-        </div>
-      </div>
-    )
+    return <SplitView left={<WriteMarkdownEditor value={fileContent} onChange={handleChange} />} right={<WriteMarkdownPreview content={fileContent} />} />
   }
 
   // Source / Live
   return <WriteMarkdownEditor value={fileContent} onChange={handleChange} />
+}
+
+// ── SplitView with draggable divider ──
+
+import { useState, useCallback, useRef, useEffect } from 'react'
+
+const SplitView: React.FC<{ left: React.ReactNode; right: React.ReactNode }> = ({ left, right }) => {
+  const [ratio, setRatio] = useState(50)
+  const dragging = useRef(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    dragging.current = true
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [])
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!dragging.current || !containerRef.current) return
+      const rect = containerRef.current.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const pct = Math.max(20, Math.min(80, (x / rect.width) * 100))
+      setRatio(pct)
+    }
+    const onMouseUp = () => {
+      dragging.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
+
+  return (
+    <div ref={containerRef} style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div style={{ width: `${ratio}%`, overflow: 'hidden' }}>{left}</div>
+      <div
+        onMouseDown={onMouseDown}
+        style={{
+          width: 6, cursor: 'col-resize', flexShrink: 0,
+          background: 'var(--border)', transition: 'background 0.15s',
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--accent)')}
+        onMouseLeave={(e) => { if (!dragging.current) e.currentTarget.style.background = 'var(--border)' }}
+      />
+      <div style={{ flex: 1, overflow: 'hidden' }}>{right}</div>
+    </div>
+  )
 }
 
 export default WriteDocumentPane

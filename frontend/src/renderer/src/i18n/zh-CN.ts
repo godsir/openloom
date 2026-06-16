@@ -769,6 +769,11 @@ export const zhCN: TranslationMap = {
   'write.settingsRetrievalDesc': '启用 BM25 关键词检索增强写作上下文',
   'write.settingsAutoSaveInterval': '自动保存间隔 (ms)',
   'write.settingsAdvanced': '高级',
+  'write.settingsDefaultWorkspace': '默认工作区',
+  'write.noWorkspace': '未设置',
+  'write.expandSidebar': '展开侧边栏',
+  'write.previewRich': '所见即所得',
+  'write.previewLive': '实时',
 
   // ── Onboarding ─────────────────────────────────────────────────
   'onboarding.welcomeTitle': '欢迎来到 openLoom',
