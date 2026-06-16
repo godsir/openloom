@@ -21,7 +21,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 export function startWatchingFile(options: FileWatchOptions): void {
   stopWatchingFile();
 
-  let lastContent = '';
+  let lastContent: string | null = null;
 
   const poll = async () => {
     try {
@@ -32,6 +32,12 @@ export function startWatchingFile(options: FileWatchOptions): void {
         });
 
       if (!result.ok) return;
+
+      // First poll: just set baseline without notifying
+      if (lastContent === null) {
+        lastContent = result.content;
+        return;
+      }
 
       // Compare content to detect external changes
       if (result.content !== lastContent) {

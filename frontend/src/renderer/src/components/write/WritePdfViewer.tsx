@@ -1,5 +1,5 @@
-// PDF Viewer — renders PDF files using pdfjs-dist
-// Worker is loaded via Vite ?url import for correct bundling in Electron
+// PDF Viewer — renders PDF files using pdfjs-dist in Electron
+// Worker loaded via Blob URL (Vite ?url doesn't work for Workers in Electron)
 
 import React, { useState, useEffect, useRef } from 'react';
 
@@ -19,6 +19,7 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, worksp
 
   useEffect(() => {
     let cancelled = false;
+    let blobUrl: string | null = null;
 
     const loadPdf = async () => {
       try {
@@ -34,12 +35,15 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, worksp
           return;
         }
 
-        // Lazy-load pdfjs + its worker via Vite ?url import
-        const [pdfjsLib, { default: workerUrl }] = await Promise.all([
+        const [pdfjsLib, workerModule] = await Promise.all([
           import('pdfjs-dist'),
-          import('pdfjs-dist/build/pdf.worker.min.mjs?url'),
+          import('pdfjs-dist/build/pdf.worker.min.mjs?raw'),
         ]);
-        pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+
+        // Build worker blob URL (Electron can't load Workers from Vite ?url strings)
+        const workerBlob = new Blob([workerModule.default], { type: 'application/javascript' });
+        blobUrl = URL.createObjectURL(workerBlob);
+        pdfjsLib.GlobalWorkerOptions.workerSrc = blobUrl;
 
         const binary = atob(result.data);
         const pdfData = new Uint8Array(binary.length);
@@ -61,11 +65,15 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, worksp
     };
 
     loadPdf();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
   }, [filePath, workspaceRoot]);
 
   useEffect(() => {
     if (!pdfDocRef.current || !canvasRef.current) return;
+    let cancelled = false;
     const renderPage = async () => {
       try {
         const page = await pdfDocRef.current.getPage(currentPage);
@@ -78,6 +86,7 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, worksp
       } catch {}
     };
     renderPage();
+    return () => { cancelled = true; };
   }, [currentPage, scale]);
 
   if (loading) {
@@ -99,7 +108,6 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, worksp
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Toolbar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
         <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage <= 1}
           style={{ padding: '2px 8px', border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', color: 'var(--text)', cursor: 'pointer', fontSize: 12, opacity: currentPage <= 1 ? 0.4 : 1 }}>
@@ -117,7 +125,6 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, worksp
         <button onClick={() => setScale(s => Math.min(2.0, s + 0.25))}
           style={{ padding: '2px 6px', border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', color: 'var(--text)', cursor: 'pointer' }}>+</button>
       </div>
-      {/* Canvas */}
       <div style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', padding: 16, background: 'var(--bg)' }}>
         <canvas ref={canvasRef} style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.2)' }} />
       </div>

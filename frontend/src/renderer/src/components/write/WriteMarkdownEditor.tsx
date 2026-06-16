@@ -106,7 +106,8 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
         const text = update.state.sliceDoc(sel.from, sel.to)
         if (text && sel.from !== sel.to) {
           const line = update.state.doc.lineAt(sel.from)
-          useWriteStore.getState().setSelection({
+          const ws = useWriteStore.getState()
+          ws.setSelection({
             text,
             from: sel.from,
             to: sel.to,
@@ -115,8 +116,15 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
             blockType: null,
             containsImage: false,
           })
+          // Position via CodeMirror coords (not DOM selection — CM6 doesn't use contentEditable)
+          const fromCoords = update.view.coordsAtPos(sel.from)
+          if (fromCoords) {
+            ws.setInlineAgentPosition({ x: fromCoords.left, y: fromCoords.top - 8, placement: 'above' })
+            ws.setInlineAgentVisible(true)
+          }
         } else {
           useWriteStore.getState().setSelection(null)
+          useWriteStore.getState().setInlineAgentVisible(false)
         }
       }
     })

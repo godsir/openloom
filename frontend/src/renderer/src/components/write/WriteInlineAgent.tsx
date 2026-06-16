@@ -1,7 +1,7 @@
 // Floating selection toolbar — appears when text is selected in the editor
 // Provides: block type switching, inline formatting, AI edit input, quick actions
 
-import React, { useState, useRef, useLayoutEffect, useCallback } from 'react';
+import React, { useState, useRef } from 'react';
 import { useWriteStore, WriteBlockType } from '../../stores/write';
 import { detectBlockType, applyBlockType } from '../../write/block-type';
 import { toggleInlineFormat, hasInlineFormat, InlineFormatKind } from '../../write/inline-format';
@@ -46,25 +46,17 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
   const fileThreads = useWriteStore((s) => s.fileThreads);
 
   const [aiInput, setAiInput] = useState('');
-
-  const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
 
   const activePreset = resolveAgentPreset(agentPresetId);
 
-  // Position toolbar at DOM selection
-  useLayoutEffect(() => {
-    if (!selection) { setToolbarPos(null); return; }
-    const domSel = window.getSelection();
-    if (!domSel || domSel.isCollapsed || domSel.rangeCount === 0) { setToolbarPos(null); return; }
-    const range = domSel.getRangeAt(0);
-    const rect = range.getBoundingClientRect();
-    if (!rect || rect.width === 0 || rect.height === 0) { setToolbarPos(null); return; }
-    // Position above selection, centered
-    const x = Math.max(8, rect.left + rect.width / 2 - 150); // center toolbar (300px wide)
-    const y = rect.top - 10; // above selection
-    setToolbarPos({ x, y });
-  }, [selection]);
+  // Read position from store (set by CM6 updateListener via coordsAtPos)
+  const pos = useWriteStore((s) => s.inlineAgentPosition);
+
+  const toolbarPos = useWriteStore((s) => s.inlineAgentVisible) ? {
+    x: Math.max(8, pos.x - 150), // center toolbar (~300px wide)
+    y: pos.y - 10, // above
+  } : null;
 
   if (!selection || !toolbarPos) return null;
 
