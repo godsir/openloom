@@ -1,5 +1,7 @@
 import React, { useState, useCallback } from 'react'
 import { useWriteStore } from '../../stores/write'
+import { composeWritePrompt } from '../../write/quoted-selection'
+import { resolveAgentPreset } from '../../write/agent-presets'
 import { useLocale } from '../../i18n'
 import { IconSparkles, IconSend } from '../../utils/icons'
 import WriteChatPanel from './WriteChatPanel'
@@ -30,14 +32,25 @@ export const WriteAssistantPanel: React.FC<WriteAssistantPanelProps> = ({
   const handleSend = useCallback(async (text?: string) => {
     const msg = (text || assistantText).trim()
     if (!msg) return
+    const persona = resolveAgentPreset(useWriteStore.getState().agentPresetId)
+    const quotedSelections = useWriteStore.getState().quotedSelections
+    const fullPrompt = composeWritePrompt(
+      msg,
+      activeFileName || '',
+      '', // fileContent will be added by the parent
+      quotedSelections.length > 0 ? quotedSelections : undefined,
+      undefined, // retrieval context (Phase 3 RAG)
+      persona?.persona,
+    )
     try {
-      await onSend(msg)
+      await onSend(fullPrompt)
       if (!text) setAssistantText('') // only clear for manual input, not suggestions
     } catch {
       // onSend threw — keep text for manual input
       if (!text) setAssistantText(msg)
     }
-  }, [assistantText, onSend])
+    useWriteStore.getState().clearQuotedSelections()
+  }, [assistantText, onSend, activeFileName])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
