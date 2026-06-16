@@ -17,6 +17,8 @@ import styles from './WriteWorkspaceView.module.css'
 export const WriteWorkspaceView: React.FC = () => {
   const { t } = useLocale()
   const appMode = useStore(s => s.appMode)
+  const writeFileSidebarOpen = useStore(s => s.writeFileSidebarOpen)
+  const toggleWriteFileSidebar = useStore(s => s.toggleWriteFileSidebar)
   const createSession = useStore(s => s.createSession)
   const evictSession = useStore(s => s.evictSession)
 
@@ -156,9 +158,9 @@ export const WriteWorkspaceView: React.FC = () => {
         <WriteSidebar onSelectWorkspace={handleSelectWorkspace} onNewFile={handleNewFile} />
       )}
       {/* Collapsed sidebar toggle strip — reads from main UI store, same as titlebar button */}
-      {workspaceRoot && !useStore.getState().writeFileSidebarOpen && (
+      {workspaceRoot && !writeFileSidebarOpen && (
         <div
-          onClick={() => useStore.getState().toggleWriteFileSidebar()}
+          onClick={toggleWriteFileSidebar}
           style={{
             width: 4, cursor: 'pointer', background: 'var(--border)',
             transition: 'background 0.15s',
