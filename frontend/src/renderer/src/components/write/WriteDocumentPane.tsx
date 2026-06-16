@@ -134,10 +134,10 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
   }
 
   if (effectiveMode === 'split') {
-    return <SplitView left={<WriteMarkdownEditor value={fileContent} onChange={handleChange} />} right={<WriteMarkdownPreview content={fileContent} rawHtml={isHtmlFile} />} />
+    return <SplitView left={<WriteMarkdownEditor value={fileContent} onChange={handleChange} previewMode={effectiveMode} />} right={<WriteMarkdownPreview content={fileContent} rawHtml={isHtmlFile} />} />
   }
 
-  return <WriteMarkdownEditor value={fileContent} onChange={handleChange} />
+  return <WriteMarkdownEditor value={fileContent} onChange={handleChange} previewMode={effectiveMode} />
 }
 
 export default WriteDocumentPane

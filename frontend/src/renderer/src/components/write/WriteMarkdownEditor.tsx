@@ -11,6 +11,8 @@ import { closeBrackets } from '@codemirror/autocomplete'
 import { useWriteStore } from '../../stores/write'
 import { useStore } from '../../stores'
 import { buildFimCompletionSource } from '../../services/fimSource'
+import { createLivePreviewPlugin } from '../../write/markdown-live-preview'
+import type { WritePreviewMode } from '../../stores/write'
 
 const fimCompletionSource = buildFimCompletionSource()
 
@@ -19,6 +21,8 @@ interface WriteMarkdownEditorProps {
   onChange: (value: string) => void
   placeholder?: string
   fontSize?: number
+  /** When 'live', enables markdown syntax hiding via CM6 decorations */
+  previewMode?: WritePreviewMode
 }
 
 /**
@@ -36,6 +40,7 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
   onChange,
   placeholder = '',
   fontSize = 14,
+  previewMode,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -43,6 +48,7 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
   // Compartments for dynamic reconfiguration — preserves undo history, cursor, scroll
   const fimCompartment = useRef(new Compartment())
   const themeCompartment = useRef(new Compartment())
+  const liveCompartment = useRef(new Compartment())
 
   // FIM 开关 — 同时检查 write store 和主 store (主 store 的 fimEnabled 是全局开关)
   const inlineCompletionEnabled = useWriteStore(s => s.inlineCompletionEnabled)
@@ -131,6 +137,7 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
       // Compartments for dynamic reconfiguration
       themeCompartment.current.of(dynamicTheme),
       fimCompartment.current.of(fimExtension),
+      liveCompartment.current.of(previewMode === 'live' ? createLivePreviewPlugin() : []),
     ]
 
     const state = EditorState.create({
@@ -167,6 +174,17 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
       ),
     })
   }, [inlineCompletionEnabled])
+
+  // Toggle Live preview decorations
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({
+      effects: liveCompartment.current.reconfigure(
+        previewMode === 'live' ? createLivePreviewPlugin() : []
+      ),
+    })
+  }, [previewMode])
 
   // Update font size dynamically (preserves undo history, cursor, scroll)
   useEffect(() => {
