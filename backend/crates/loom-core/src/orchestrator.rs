@@ -391,7 +391,7 @@ pub trait MemoryStore: Send + Sync {
     }
     // Conversation summary (P0 memory optimization)
     async fn get_summary(&self, session_id: &str) -> Result<Option<String>>;
-    async fn save_summary(&self, session_id: &str, summary: &str, at_count: usize) -> Result<()>;
+    async fn save_summary(&self, session_id: &str, summary: &str, at_count: usize, model_name: &str) -> Result<()>;
     async fn get_summary_at_count(&self, session_id: &str) -> Result<usize>;
     async fn get_message_count(&self, session_id: &str) -> Result<usize>;
     // Memory maintenance (P2)
@@ -4039,7 +4039,7 @@ impl Orchestrator {
                         sc.prefix_hash_restore(saved_hash);
                         let mem = self.memory_store.read().await;
                         if let Some(ref store) = *mem {
-                            let _ = store.save_summary(session_id, &resp.text, recent_boundary).await;
+                            let _ = store.save_summary(session_id, &resp.text, recent_boundary, sc.model_name()).await;
                             if resp.prompt_tokens > 0 || resp.completion_tokens > 0 {
                                 let _ = store
                                     .record_token_usage(
@@ -5146,7 +5146,7 @@ impl Orchestrator {
                     }
                     // Phase 3: save summary with cursor advanced to recent boundary
                     if let Some(ref store) = *self.memory_store.read().await {
-                        let _ = store.save_summary(session_id, &new_summary, recent_boundary).await;
+                        let _ = store.save_summary(session_id, &new_summary, recent_boundary, &summary_model).await;
                     }
                     tracing::info!(chars = new_summary.len(), at_count = recent_boundary, "conversation summarized");
                     (Some(new_summary), recent_boundary)
@@ -5700,7 +5700,7 @@ impl Orchestrator {
                     sc.prefix_hash_restore(saved_hash);
                     let mem = self.memory_store.read().await;
                     if let Some(ref store) = *mem {
-                        let _ = store.save_summary(session_id, &resp.text, history.len()).await;
+                        let _ = store.save_summary(session_id, &resp.text, history.len(), sc.model_name()).await;
                         if resp.prompt_tokens > 0 || resp.completion_tokens > 0 {
                             let _ = store
                                 .record_token_usage(
