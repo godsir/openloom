@@ -44,6 +44,19 @@ Update the summary above to incorporate the new messages. Keep the same format: 
         history_len >= threshold && history_len.saturating_sub(last_summary_at_len) >= min_new
     }
 
+    /// Token-based trigger: summarize when current window occupancy reaches
+    /// `threshold_pct` of `context_window`. Returns false when context_window is 0 (unknown).
+    pub fn should_summarize_by_tokens(
+        current_tokens: usize,
+        context_window: usize,
+        threshold_pct: f32,
+    ) -> bool {
+        if context_window == 0 {
+            return false;
+        }
+        (current_tokens as f32) >= (context_window as f32 * threshold_pct)
+    }
+
     /// Build the prompt string for summarization (initial or incremental).
     pub fn build_prompt(history: &[Message], existing_summary: Option<&str>) -> String {
         let history_text = history
@@ -142,5 +155,12 @@ mod tests {
         assert_eq!(req.max_tokens, 512);
         assert_eq!(req.temperature, 0.0);
         assert_eq!(req.messages.len(), 1);
+    }
+
+    #[test]
+    fn test_should_summarize_by_tokens() {
+        assert!(SummaryEngine::should_summarize_by_tokens(81_000, 100_000, 0.8));
+        assert!(!SummaryEngine::should_summarize_by_tokens(79_000, 100_000, 0.8));
+        assert!(!SummaryEngine::should_summarize_by_tokens(81_000, 0, 0.8));
     }
 }
