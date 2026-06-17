@@ -181,47 +181,9 @@ impl ContextAssembler {
     }
 
     /// Keep the most recent messages that fit within `max_tokens`, scanning
-    /// from newest to oldest. Uses tiktoken for precise token counting.
-    ///
-    /// `Tool`-role messages (standalone tool-result rows) are excluded
-    /// entirely — their content is already reflected in the assistant's
-    /// text reply, and sending them causes orphaned-tool-message 400 errors.
-    #[allow(dead_code)] // legacy; build() now uses truncate_history_with_summary
-    fn truncate_history(&self, history: &[Message], max_tokens: usize) -> Vec<Message> {
-        let bpe = bpe();
-        let mut token_count = 0usize;
-        let mut included: Vec<usize> = Vec::new();
-        for (i, msg) in history.iter().enumerate().rev() {
-            // Skip standalone tool-result messages — they are not needed for
-            // continuation context and produce invalid sequences when paired
-            // assistant+tool_call messages are absent or truncated away.
-            if msg.role == loom_types::Role::Tool {
-                continue;
-            }
-            // Count the full serialized content (text + tool args/results +
-            // thinking) plus per-message overhead, so the budget reflects what
-            // is actually sent on the wire — not just concatenated Text parts.
-            let msg_tokens = message_tokens(msg, bpe);
-            if token_count + msg_tokens > max_tokens && !included.is_empty() {
-                // Always keep at least the most recent (newest) message even if
-                // it alone exceeds the budget — otherwise the current turn loses
-                // all conversational grounding and the model answers blind.
-                break;
-            }
-            token_count += msg_tokens;
-            included.push(i);
-        }
-        included.reverse();
-        included
-            .into_iter()
-            .map(|i| history[i].clone())
-            .filter(|msg| !msg.content.is_empty())
-            .collect()
-    }
-
-    /// Like truncate_history, but drops messages before `summary_at_count`
-    /// (they are covered by the LLM summary and must not be re-sent).
-    /// Scans newest→oldest within the [summary_at_count, len) range only.
+    /// newest→oldest within the [summary_at_count, len) range. Messages before
+    /// `summary_at_count` are dropped (covered by the LLM summary, not re-sent).
+    /// `Tool`-role messages are excluded (orphaned-tool-message 400 errors).
     fn truncate_history_with_summary(
         &self,
         history: &[Message],
@@ -427,7 +389,7 @@ mod tests {
             },
             Message::tool("c1", "shell", "file1.txt"),
         ];
-        let truncated = assembler.truncate_history(&history, 8192);
+        let truncated = assembler.truncate_history_with_summary(&history, 8192, 0);
         let has_tool_part = truncated.iter().any(|m| {
             m.content
                 .iter()

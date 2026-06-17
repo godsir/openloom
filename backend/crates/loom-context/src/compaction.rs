@@ -409,7 +409,7 @@ fn extract_tool_call_args(msg: &Message) -> Option<String> {
 /// Delegates to [`crate::message_tokens`] per message so the estimate counts the
 /// full serialized content — tool-call arguments, tool results, and thinking
 /// blocks — not just concatenated `Text` parts. This keeps compaction's
-/// accounting consistent with `ContextAssembler::truncate_history` and prevents
+/// accounting consistent with `ContextAssembler::truncate_history_with_summary` and prevents
 /// undercounting tool-heavy history.
 fn count_tokens(messages: &[Message], bpe: &CoreBPE) -> usize {
     messages.iter().map(|m| crate::message_tokens(m, bpe)).sum()
