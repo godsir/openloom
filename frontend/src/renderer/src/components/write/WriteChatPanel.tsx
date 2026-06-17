@@ -83,6 +83,7 @@ export default function WriteChatPanel({
         if (cancelled) return
 
         const allMsgs = result.messages || []
+        if (allMsgs.length === 0) return
 
         // Merge tool_result content into the preceding assistant message
         for (let i = 0; i < allMsgs.length; i++) {
