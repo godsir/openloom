@@ -11,7 +11,6 @@ import WriteToolbar from './WriteToolbar'
 import { WriteDocumentPane } from './WriteDocumentPane'
 import { WriteAssistantPanel } from './WriteAssistantPanel'
 import { WriteFileDialogs } from './WriteFileDialogs'
-import { WriteInlineAgent } from './WriteInlineAgent'
 import styles from './WriteWorkspaceView.module.css'
 
 export const WriteWorkspaceView: React.FC = () => {
@@ -175,23 +174,15 @@ export const WriteWorkspaceView: React.FC = () => {
           {workspaceRoot && (
             <WriteToolbar onNewFile={handleNewFile} onSave={handleSave} onToggleAssistant={toggleAssistant} />
           )}
-          <WriteDocumentPane onSelectWorkspace={handleSelectWorkspace} />
+          <WriteDocumentPane onSelectWorkspace={handleSelectWorkspace} onSendToAssistant={handleAssistantSend} />
         </div>
-        {workspaceRoot && assistantOpen && activeFilePath && (
+        {workspaceRoot && assistantOpen && (
           <WriteAssistantPanel
             quickSuggestions={suggestions} onSend={handleAssistantSend}
             onNewChat={handleNewChat} onStaleSession={handleStaleSession}
           />
         )}
       </div>
-      <WriteInlineAgent
-        editorValue={fileContent}
-        onApplyEdit={(newContent) => {
-          useWriteStore.getState().setFileContent(newContent)
-          useWriteStore.getState().setSaveStatus('dirty')
-        }}
-        onSendToAssistant={handleAssistantSend}
-      />
       <WriteFileDialogs />
       {toastMessage && <div className={styles.toast}>{toastMessage.text}</div>}
     </div>
