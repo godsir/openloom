@@ -683,7 +683,10 @@ async fn run_agent_turn_inner(
         let allowed_set: HashSet<&str> = allowlist.iter().map(|s| s.as_str()).collect();
         tools.retain(|t| allowed_set.contains(t.name.as_str()));
     }
-    let assembler = ContextAssembler::new(&config.system_prompt, 8192);
+    let keep_recent_pct = 0.25_f32;
+    let cw = config.context_window.unwrap_or(8192);
+    let history_budget = (cw as f32 * keep_recent_pct) as usize;
+    let assembler = ContextAssembler::new(&config.system_prompt, history_budget);
     let opts = AssembleOptions {
         persona: config.persona.clone(),
         summary: config.summary.clone(),
@@ -1544,7 +1547,10 @@ async fn run_agent_turn_streaming_inner(
     } else {
         all_tools.clone()
     };
-    let assembler = ContextAssembler::new(&config.system_prompt, 8192);
+    let keep_recent_pct = 0.25_f32;
+    let cw = config.context_window.unwrap_or(8192);
+    let history_budget = (cw as f32 * keep_recent_pct) as usize;
+    let assembler = ContextAssembler::new(&config.system_prompt, history_budget);
     let opts = AssembleOptions {
         persona: config.persona.clone(),
         summary: config.summary.clone(),

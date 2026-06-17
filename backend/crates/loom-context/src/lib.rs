@@ -168,8 +168,10 @@ impl ContextAssembler {
             usage: None,
         });
 
-        // ── Dynamic suffix: recent history (capped at half the budget) ──
-        let recent_limit = (self.max_history_tokens / 2).max(1024);
+        // ── Dynamic suffix: recent history (capped at the recent-history budget) ──
+        // max_history_tokens is now the recent-history token budget set by the caller
+        // (context_window × keep_recent_pct). No more hardcoded /2.
+        let recent_limit = self.max_history_tokens.max(1024);
         let recent = self.truncate_history(&opts.history, recent_limit);
         messages.extend(recent);
 
@@ -399,5 +401,15 @@ mod tests {
             has_tool_part,
             "truncate_history must keep tool call/result parts for LLM context"
         );
+    }
+
+    #[test]
+    fn test_dynamic_history_budget_scales_with_window() {
+        // 近期预算 = context_window × keep_recent_pct，不再是固定 4096
+        let cw: usize = 1_000_000;
+        let keep_recent_pct: f32 = 0.25;
+        let recent_limit = ((cw as f32 * keep_recent_pct) as usize).max(1024);
+        assert!(recent_limit > 4096, "1M 窗口的近期预算应远大于硬编码 4096");
+        assert_eq!(recent_limit, 250_000);
     }
 }
