@@ -693,6 +693,7 @@ async fn run_agent_turn_inner(
         kg_context: config.kg_context.clone(),
         tool_catalog: None,
         history: history.to_vec(),
+        summary_at_count: 0, // TODO(T12): 传 config.summary_at_count
     };
     let mut messages = assembler.build(opts)?;
     // Inject few-shot examples as additional system messages after the stable
@@ -903,6 +904,7 @@ async fn run_agent_turn_inner(
         kg_context: config.kg_context.clone(),
         tool_catalog: None,
         history: vec![],
+        summary_at_count: 0,
     });
     client.set_prefix_digest(Some(digest.clone()));
     tracing::info!(
@@ -1557,6 +1559,7 @@ async fn run_agent_turn_streaming_inner(
         kg_context: config.kg_context.clone(),
         tool_catalog: None,
         history: history.to_vec(),
+        summary_at_count: 0, // TODO(T12): 传 config.summary_at_count
     };
     let mut messages = assembler.build(opts)?;
     // Inject few-shot examples as additional system messages after the stable
@@ -1838,6 +1841,7 @@ async fn run_agent_turn_streaming_inner(
         kg_context: config.kg_context.clone(),
         tool_catalog: None,
         history: vec![],
+        summary_at_count: 0,
     });
     client.set_prefix_digest(Some(digest.clone()));
     tracing::info!(

@@ -107,6 +107,8 @@ pub struct AssembleOptions {
     pub tool_catalog: Option<String>,
     /// Full conversation history (will be truncated to recent messages).
     pub history: Vec<Message>,
+    /// Number of messages already covered by the LLM summary; those are dropped.
+    pub summary_at_count: usize,
 }
 
 /// Assembles the full context window for an agent turn.
@@ -172,7 +174,7 @@ impl ContextAssembler {
         // max_history_tokens is now the recent-history token budget set by the caller
         // (context_window × keep_recent_pct). No more hardcoded /2.
         let recent_limit = self.max_history_tokens.max(1024);
-        let recent = self.truncate_history(&opts.history, recent_limit);
+        let recent = self.truncate_history_with_summary(&opts.history, recent_limit, opts.summary_at_count);
         messages.extend(recent);
 
         Ok(messages)
@@ -184,6 +186,7 @@ impl ContextAssembler {
     /// `Tool`-role messages (standalone tool-result rows) are excluded
     /// entirely — their content is already reflected in the assistant's
     /// text reply, and sending them causes orphaned-tool-message 400 errors.
+    #[allow(dead_code)] // legacy; build() now uses truncate_history_with_summary
     fn truncate_history(&self, history: &[Message], max_tokens: usize) -> Vec<Message> {
         let bpe = bpe();
         let mut token_count = 0usize;
@@ -203,6 +206,39 @@ impl ContextAssembler {
                 // Always keep at least the most recent (newest) message even if
                 // it alone exceeds the budget — otherwise the current turn loses
                 // all conversational grounding and the model answers blind.
+                break;
+            }
+            token_count += msg_tokens;
+            included.push(i);
+        }
+        included.reverse();
+        included
+            .into_iter()
+            .map(|i| history[i].clone())
+            .filter(|msg| !msg.content.is_empty())
+            .collect()
+    }
+
+    /// Like truncate_history, but drops messages before `summary_at_count`
+    /// (they are covered by the LLM summary and must not be re-sent).
+    /// Scans newest→oldest within the [summary_at_count, len) range only.
+    fn truncate_history_with_summary(
+        &self,
+        history: &[Message],
+        max_tokens: usize,
+        summary_at_count: usize,
+    ) -> Vec<Message> {
+        let bpe = bpe();
+        let mut token_count = 0usize;
+        let mut included: Vec<usize> = Vec::new();
+        let start = summary_at_count.min(history.len());
+        for i in (start..history.len()).rev() {
+            let msg = &history[i];
+            if msg.role == loom_types::Role::Tool {
+                continue;
+            }
+            let msg_tokens = message_tokens(msg, bpe);
+            if token_count + msg_tokens > max_tokens && !included.is_empty() {
                 break;
             }
             token_count += msg_tokens;
@@ -411,5 +447,19 @@ mod tests {
         let recent_limit = ((cw as f32 * keep_recent_pct) as usize).max(1024);
         assert!(recent_limit > 4096, "1M 窗口的近期预算应远大于硬编码 4096");
         assert_eq!(recent_limit, 250_000);
+    }
+
+    #[test]
+    fn test_truncate_history_drops_summarized_prefix() {
+        use loom_types::ContentPart;
+        let assembler = ContextAssembler::new("sys", 8192);
+        let history: Vec<Message> = (0..10).map(|i| Message::user(format!("m{}", i))).collect();
+        let truncated = assembler.truncate_history_with_summary(&history, 8192, 5);
+        let texts: Vec<String> = truncated.iter().filter_map(|m| {
+            if let ContentPart::Text { text } = &m.content[0] { Some(text.clone()) } else { None }
+        }).collect();
+        assert!(!texts.iter().any(|t| t.contains("m0")), "已总结的 m0 应被丢弃");
+        assert!(!texts.iter().any(|t| t.contains("m4")), "已总结的 m4 应被丢弃");
+        assert!(texts.iter().any(|t| t.contains("m9")), "近期 m9 应保留");
     }
 }
