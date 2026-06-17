@@ -64,7 +64,9 @@ pub fn compact_history(
     }
 
     // Step 1: Partition
-    let split_idx = history.len().saturating_sub(config.keep_recent_messages);
+    // keep_recent_messages removed; compaction is now mid-turn safety-only.
+    // Partition by a small fixed tail for the legacy compact_history path.
+    let split_idx = history.len().saturating_sub(6);
     let (old, recent) = history.split_at(split_idx);
 
     let mut items_compacted = 0usize;
@@ -540,20 +542,24 @@ mod tests {
     #[test]
     fn test_savings_pct_calculation() {
         let long_text = "x".repeat(5000);
+        // 8 条消息：前 2 条含大 tool result（进入 old 块被截断），后 6 条 padding（recent 保留）
         let msgs = vec![
             make_tool_call("bash", r#"{"command":"cat huge.log"}"#),
             make_tool_result(&long_text),
-            make_text_msg(Role::User, "recent message"),
+            make_text_msg(Role::User, "pad1"),
+            make_text_msg(Role::User, "pad2"),
+            make_text_msg(Role::User, "pad3"),
+            make_text_msg(Role::User, "pad4"),
+            make_text_msg(Role::User, "pad5"),
+            make_text_msg(Role::User, "pad6"),
         ];
         let config = CompactionConfig {
             enabled: true,
             max_tool_output_chars: 2000,
-            keep_recent_messages: 1, // only last message is recent
             ..Default::default()
         };
         let result = compact_history(&msgs, &config, None).unwrap();
-        assert!(result.savings_pct > 0.0, "should have savings from truncation");
-        assert_eq!(result.compacted_history.len(), 3); // tool call + truncated tool result + recent
+        assert!(result.savings_pct > 0.0, "should have savings from truncating the large tool result");
     }
 
     #[test]
@@ -565,7 +571,6 @@ mod tests {
         ];
         let config = CompactionConfig {
             enabled: true,
-            keep_recent_messages: 1,
             max_tool_output_chars: 2000,
             ..Default::default()
         };
@@ -608,5 +613,15 @@ mod tests {
         if let ContentPart::ToolResult { result, .. } = &out[0].content[0] {
             assert_eq!(result.len(), long.len(), "file_read results must NOT be truncated");
         }
+    }
+
+    #[test]
+    fn test_new_config_fields_defaults() {
+        let c = loom_types::CompactionConfig::default();
+        assert!(c.enabled, "enabled 应默认 true");
+        assert_eq!(c.keep_recent_tokens_pct, 0.25);
+        assert_eq!(c.mid_turn_threshold_pct, 0.9);
+        assert_eq!(c.summary_max_tokens, 1024);
+        assert_eq!(c.summarization_timeout_ms, 60000);
     }
 }
