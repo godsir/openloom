@@ -323,6 +323,7 @@ impl AgentTool for SpawnAgentTool {
             active_model_name: None,
             workspace_path: config.workspace_path.clone(),
             max_prompt_budget: 0, // sub-agents: no budget limit
+            context_window: None,
             default_permissions: config.default_permissions.clone(),
             hook_registry: None,
             session_id: String::new(),

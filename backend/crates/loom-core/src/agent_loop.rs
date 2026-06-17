@@ -84,6 +84,9 @@ pub struct AgentLoopConfig {
     /// Cumulative prompt token budget — stops the loop when exceeded (0 = disabled).
     /// Default 0 (disabled); set to e.g. 96000 for ~80% of a 120K context window.
     pub max_prompt_budget: usize,
+    /// Current model context window in tokens. None = unknown (fallback to max_prompt_budget/8192).
+    /// Used by mid-turn safety truncation (90% ceiling) and BudgetExhausted (current-window) checks.
+    pub context_window: Option<usize>,
     /// Default tool-call permissions applied to every turn.
     /// Set to `SkillPermissions::default()` for zero trust (deny shell, deny file writes);
     /// set shell=true / fs_write=Some(vec![]) to restore the old open-everything behaviour.
@@ -227,6 +230,7 @@ impl Default for AgentLoopConfig {
             active_model_name: None,
             workspace_path: None,
             max_prompt_budget: 0,
+            context_window: None,
             default_permissions: SkillPermissions::default(),
             hook_registry: None,
             session_id: String::new(),
@@ -918,8 +922,13 @@ async fn run_agent_turn_inner(
                 });
             }
         }
-        // Token budget check: stop if cumulative prompt tokens exceed the budget
-        if config.max_prompt_budget > 0 && total_prompt > config.max_prompt_budget {
+        // Token budget check: stop if CURRENT window tokens exceed the budget
+        // (was cumulative total_prompt, which falsely tripped after N iterations).
+        let current_window_tokens: usize = if config.max_prompt_budget > 0 {
+            let bpe = loom_context::bpe();
+            messages.iter().map(|m| loom_context::message_tokens(m, bpe)).sum()
+        } else { 0 };
+        if config.max_prompt_budget > 0 && current_window_tokens > config.max_prompt_budget {
             info!(
                 iteration,
                 total_prompt,
@@ -1854,8 +1863,13 @@ async fn run_agent_turn_streaming_inner(
                 });
             }
         }
-        // Token budget check: stop if cumulative prompt tokens exceed the budget
-        if config.max_prompt_budget > 0 && total_prompt > config.max_prompt_budget {
+        // Token budget check: stop if CURRENT window tokens exceed the budget
+        // (was cumulative total_prompt, which falsely tripped after N iterations).
+        let current_window_tokens: usize = if config.max_prompt_budget > 0 {
+            let bpe = loom_context::bpe();
+            messages.iter().map(|m| loom_context::message_tokens(m, bpe)).sum()
+        } else { 0 };
+        if config.max_prompt_budget > 0 && current_window_tokens > config.max_prompt_budget {
             tracing::info!(
                 iteration,
                 total_prompt,
