@@ -346,7 +346,7 @@ function escapeHtml(s: string): string {
  * Rust's Role enum may serialize as a lowercase string ("user", "assistant", "system", "tool")
  * or as a tagged enum object like {"User": {}}.
  */
-function parseRole(role: any): 'user' | 'assistant' {
+export function parseRole(role: any): 'user' | 'assistant' {
   if (typeof role === 'string') {
     const lower = role.toLowerCase()
     if (lower === 'assistant' || lower === 'system') return 'assistant'
@@ -372,7 +372,7 @@ function parseRole(role: any): 'user' | 'assistant' {
  *
  * Or possibly flat objects like { "type": "text", "text": "hello" }.
  */
-function parseContentParts(content: any, sessionId: string, port: number): any[] {
+export function parseContentParts(content: any, sessionId: string, port: number): any[] {
   // If content is a plain string (legacy format), treat as single text block
   if (typeof content === 'string') {
     return [{ type: 'text', html: sanitizeHtml(renderMarkdown(content)), source: content }]

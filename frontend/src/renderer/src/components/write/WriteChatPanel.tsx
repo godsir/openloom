@@ -1,5 +1,6 @@
 import { useRef, useEffect, useCallback, useState } from 'react'
 import { useStore } from '../../stores'
+import { parseContentParts, parseRole } from '../../stores/session'
 import { useLocale } from '../../i18n'
 import { loomRpc } from '../../services/jsonrpc'
 import AssistantMessage from '../chat/AssistantMessage'
@@ -106,17 +107,19 @@ export default function WriteChatPanel({
           }
         }
 
-        // Filter out tool messages and normalize
+        // Filter out tool messages and normalize — reuse the same parser as
+        // switchSession (session.ts) so tagged-enum ContentParts ({text:{text}},
+        // {tool_call:{...}}, tool_result pairing, image_ref, markdown) are
+        // handled identically. The WriteChatPanel-local simple map could not
+        // parse the tagged-enum format, producing empty blocks (root cause of
+        // the "inline shows nothing until openInChat" bug).
         const rawMsgs = allMsgs
           .filter((m: any) => typeof m.role === 'string' && m.role.toLowerCase() !== 'tool')
-          .map((m: any) => ({
-            id: m.id || crypto.randomUUID(),
-            role: typeof m.role === 'string' ? m.role.toLowerCase() : m.role,
+          .map((m: any, i: number) => ({
+            id: `hist-${sessionId}-${i}`,
+            role: parseRole(m.role),
+            blocks: parseContentParts(m.content, sessionId, useStore.getState().port),
             timestamp: m.timestamp || new Date().toISOString(),
-            blocks: Array.isArray(m.content) ? m.content.map((p: any) => {
-              if (typeof p === 'string') return { type: 'text', text: p }
-              return p
-            }) : (typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : []),
             usage: m.usage ? {
               prompt: m.usage.prompt_tokens || 0,
               completion: m.usage.completion_tokens || 0,
