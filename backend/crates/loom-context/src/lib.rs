@@ -209,11 +209,7 @@ impl ContextAssembler {
         included.reverse();
         included
             .into_iter()
-            .map(|i| {
-                let mut msg = history[i].clone();
-                msg.compact_for_llm();
-                msg
-            })
+            .map(|i| history[i].clone())
             .filter(|msg| !msg.content.is_empty())
             .collect()
     }
@@ -371,5 +367,37 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(d1.combined_hash, d2.combined_hash);
+    }
+
+    #[test]
+    fn test_truncate_history_preserves_tool_parts() {
+        use loom_types::{ContentPart, Role};
+        let assembler = ContextAssembler::new("sys", 8192);
+        let history = vec![
+            Message {
+                role: Role::Assistant,
+                content: vec![
+                    ContentPart::Text { text: "let me check".into() },
+                    ContentPart::ToolCall {
+                        id: "c1".into(),
+                        name: "shell".into(),
+                        arguments: serde_json::json!({"command":"ls"}),
+                    },
+                ],
+                timestamp: chrono::Utc::now(),
+                usage: None,
+            },
+            Message::tool("c1", "shell", "file1.txt"),
+        ];
+        let truncated = assembler.truncate_history(&history, 8192);
+        let has_tool_part = truncated.iter().any(|m| {
+            m.content
+                .iter()
+                .any(|p| matches!(p, ContentPart::ToolCall { .. } | ContentPart::ToolResult { .. }))
+        });
+        assert!(
+            has_tool_part,
+            "truncate_history must keep tool call/result parts for LLM context"
+        );
     }
 }
