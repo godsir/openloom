@@ -129,6 +129,32 @@ pub fn compact_history(
     })
 }
 
+/// Mid-turn safety truncation: no LLM, only trims oversized tool results.
+/// `file_read` results are exempt (never truncate user source code).
+/// Used inside the agent loop iteration to prevent single-turn blowups.
+pub fn mid_turn_safety_truncate(messages: &[Message], max_tool_output_chars: usize) -> Vec<Message> {
+    let keep_head = 500;
+    let keep_tail = 200;
+    messages.iter().map(|msg| {
+        let mut new_msg = msg.clone();
+        let is_file_read = new_msg.content.iter().any(|p| matches!(p, ContentPart::ToolResult { name, .. } if name == "file_read"));
+        if is_file_read {
+            return new_msg;
+        }
+        for part in &mut new_msg.content {
+            if let ContentPart::ToolResult { result, .. } = part {
+                if result.len() > max_tool_output_chars && !has_signal_markers(result) {
+                    let head: String = result.chars().take(keep_head).collect();
+                    let tail: String = result.chars().rev().take(keep_tail).collect::<Vec<_>>().into_iter().rev().collect();
+                    let truncated = result.len().saturating_sub(keep_head + keep_tail);
+                    *result = format!("{}...\n[truncated {} chars]\n...{}", head, truncated, tail);
+                }
+            }
+        }
+        new_msg
+    }).collect()
+}
+
 /// Apply heuristic compaction to a single message.
 fn apply_heuristic_compaction(
     msg: &Message,
@@ -547,6 +573,40 @@ mod tests {
         // Recent message must be the last message in compacted history
         if let ContentPart::Text { text } = &result.compacted_history.last().unwrap().content[0] {
             assert!(text.contains("recent message preserved"));
+        }
+    }
+
+    #[test]
+    fn test_mid_turn_safety_truncate_long_tool_result() {
+        use loom_types::ContentPart;
+        let long = "x".repeat(5000);
+        let msgs = vec![Message::tool("c1", "shell", &long)];
+        let out = mid_turn_safety_truncate(&msgs, 2000);
+        if let ContentPart::ToolResult { result, .. } = &out[0].content[0] {
+            assert!(result.len() < long.len(), "long tool result must be truncated");
+            assert!(result.contains("[truncated"));
+        } else {
+            panic!("expected ToolResult");
+        }
+    }
+
+    #[test]
+    fn test_mid_turn_safety_truncate_preserves_file_read() {
+        use loom_types::{ContentPart, Role};
+        let long = "x".repeat(5000);
+        let msgs = vec![Message {
+            role: Role::Tool,
+            content: vec![ContentPart::ToolResult {
+                tool_call_id: "c1".into(),
+                name: "file_read".into(),
+                result: long.clone(),
+            }],
+            timestamp: chrono::Utc::now(),
+            usage: None,
+        }];
+        let out = mid_turn_safety_truncate(&msgs, 2000);
+        if let ContentPart::ToolResult { result, .. } = &out[0].content[0] {
+            assert_eq!(result.len(), long.len(), "file_read results must NOT be truncated");
         }
     }
 }

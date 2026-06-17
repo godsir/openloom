@@ -5,7 +5,7 @@
 //! until the LLM produces a final text response or max iterations is hit.
 
 use anyhow::Result;
-use loom_context::{AssembleOptions, ContextAssembler, compact_history};
+use loom_context::{AssembleOptions, ContextAssembler};
 use loom_inference::engine::CloudClient;
 use loom_memory::TodoStore;
 use loom_plugins::hooks::HookEvent;
@@ -979,32 +979,23 @@ async fn run_agent_turn_inner(
                 stop_reason: StopReason::BudgetExhausted,
             });
         }
-        // Mid-turn compaction check (heuristic-only, no LLM call)
+        // Mid-turn safety truncation (no LLM) — prevents single-turn blowups.
+        // Replaces the old compact_history call (which had an unimplemented LLM placeholder).
         if config.compaction_config.enabled && !messages.is_empty() {
             let bpe = loom_context::bpe();
             let total_tokens: usize = messages.iter()
                 .map(|m| loom_context::message_tokens(m, bpe))
                 .sum();
-            let threshold = (config.max_prompt_budget.max(8192) as f32
-                * config.compaction_config.trigger_threshold_pct) as usize;
-
-            if config.max_prompt_budget > 0 && total_tokens > threshold {
-                match compact_history(&messages, &config.compaction_config, None) {
-                    Ok(result) if result.items_compacted > 0 => {
-                        tracing::info!(
-                            iteration,
-                            tokens_before = result.tokens_before,
-                            tokens_after = result.tokens_after,
-                            "mid-turn compaction — saved {} tokens",
-                            result.tokens_before.saturating_sub(result.tokens_after),
-                        );
-                        messages = result.compacted_history;
-                    }
-                    Err(e) => {
-                        tracing::warn!(iteration, error = %e, "mid-turn compaction failed");
-                    }
-                    _ => {}
-                }
+            let cw = config.context_window.unwrap_or(config.max_prompt_budget.max(8192));
+            let ceiling = (cw as f32 * 0.9) as usize;
+            if total_tokens > ceiling {
+                let before = total_tokens;
+                messages = loom_context::mid_turn_safety_truncate(
+                    &messages,
+                    config.compaction_config.max_tool_output_chars,
+                );
+                let after: usize = messages.iter().map(|m| loom_context::message_tokens(m, bpe)).sum();
+                tracing::info!(iteration, before, after, "mid-turn safety truncation applied");
             }
         }
         // Check for user interruption before each iteration
@@ -1920,32 +1911,22 @@ async fn run_agent_turn_streaming_inner(
                 stop_reason: StopReason::BudgetExhausted,
             });
         }
-        // Mid-turn compaction check (heuristic-only, no LLM call)
+        // Mid-turn safety truncation (no LLM) — prevents single-turn blowups (streaming).
         if config.compaction_config.enabled && !messages.is_empty() {
             let bpe = loom_context::bpe();
             let total_tokens: usize = messages.iter()
                 .map(|m| loom_context::message_tokens(m, bpe))
                 .sum();
-            let threshold = (config.max_prompt_budget.max(8192) as f32
-                * config.compaction_config.trigger_threshold_pct) as usize;
-
-            if config.max_prompt_budget > 0 && total_tokens > threshold {
-                match compact_history(&messages, &config.compaction_config, None) {
-                    Ok(result) if result.items_compacted > 0 => {
-                        tracing::info!(
-                            iteration,
-                            tokens_before = result.tokens_before,
-                            tokens_after = result.tokens_after,
-                            "mid-turn compaction (streaming) — saved {} tokens",
-                            result.tokens_before.saturating_sub(result.tokens_after),
-                        );
-                        messages = result.compacted_history;
-                    }
-                    Err(e) => {
-                        tracing::warn!(iteration, error = %e, "mid-turn compaction (streaming) failed");
-                    }
-                    _ => {}
-                }
+            let cw = config.context_window.unwrap_or(config.max_prompt_budget.max(8192));
+            let ceiling = (cw as f32 * 0.9) as usize;
+            if total_tokens > ceiling {
+                let before = total_tokens;
+                messages = loom_context::mid_turn_safety_truncate(
+                    &messages,
+                    config.compaction_config.max_tool_output_chars,
+                );
+                let after: usize = messages.iter().map(|m| loom_context::message_tokens(m, bpe)).sum();
+                tracing::info!(iteration, before, after, "mid-turn safety truncation applied (streaming)");
             }
         }
         // Check for user interruption before each iteration

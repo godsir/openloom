@@ -4086,7 +4086,10 @@ impl Orchestrator {
             workspace_path: workspace_path.clone(),
             default_permissions,
             max_prompt_budget,
-            context_window: None, // TODO(T12): 传 Some(active_context_window) 使 mid-turn/历史预算按真实窗口生效
+            context_window: {
+                let name = self.active_model_name.read().await.clone().unwrap_or_default();
+                self.model_configs.read().await.get(&name).map(|c| c.context_size).filter(|s| *s > 0)
+            },
             hook_registry: Some(self.hook_registry.clone()),
             session_id: session_id.to_string(),
             agent_id: agent_id.to_string(),
@@ -5296,7 +5299,10 @@ impl Orchestrator {
             workspace_path: workspace_path.clone(),
             default_permissions,
             max_prompt_budget,
-            context_window: None, // TODO(T12): 传 Some(active_context_window) 使 mid-turn/历史预算按真实窗口生效
+            context_window: {
+                let name = self.active_model_name.read().await.clone().unwrap_or_default();
+                self.model_configs.read().await.get(&name).map(|c| c.context_size).filter(|s| *s > 0)
+            },
             hook_registry: Some(self.hook_registry.clone()),
             session_id: session_id.to_string(),
             agent_id: agent_id.to_string(),

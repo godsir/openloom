@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 
 pub mod compaction;
-pub use compaction::{CompactionResult, CompactionStrategy, compact_history};
+pub use compaction::{CompactionResult, CompactionStrategy, compact_history, mid_turn_safety_truncate};
 
 /// Deterministic SHA256 fingerprint of the stable prompt prefix.
 ///
