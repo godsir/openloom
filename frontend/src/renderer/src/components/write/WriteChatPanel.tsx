@@ -58,31 +58,31 @@ export default function WriteChatPanel({
   const autoScrollRef = useRef(true)
   const [showScrollBtn, setShowScrollBtn] = useState(false)
 
-  // Hydrate messages from backend when switching to a session that isn't cached yet.
-  // Uses getState() inside the async callback to avoid stale closures.
+  // Hydrate messages from backend — mirrors switchSession() in session.ts.
+  // Only skips when streaming is active AND we already have cached messages.
+  // Otherwise always loads from backend, even if ensureSession() created an
+  // empty entry in messagesBySession.
   useEffect(() => {
     if (!sessionId) return
 
+    // Don't interfere with an active streaming session that already has data
+    const store = useStore.getState()
+    const isStreamingNow = store.streamingSessionIds.has(sessionId)
+    const hasCached = store.messagesBySession.has(sessionId)
+    if (isStreamingNow && hasCached) return
+
     let cancelled = false
     ;(async () => {
-      // Re-check with latest state — the store may have been populated between
-      // effect scheduling and async execution (e.g. by a concurrent sendMessage).
-      const latest = useStore.getState()
-      if (latest.messagesBySession.has(sessionId)) return
-      if (latest.streamingSessionIds.has(sessionId)) return
-
       try {
+        // Activate the session on the backend (best-effort, like switchSession does)
+        try { await loomRpc('session.switch', { session_id: sessionId }) } catch {}
+
+        if (cancelled) return
+
         const result = await loomRpc<{ messages: any[] }>('session.messages', { session_id: sessionId })
         if (cancelled) return
 
         const allMsgs = result.messages || []
-
-        // If backend returned nothing, don't overwrite — messages may have arrived
-        // in the store during the RPC (e.g. a sendMessage just completed).
-        if (allMsgs.length === 0) return
-
-        // Re-check one more time — don't overwrite in-progress data
-        if (useStore.getState().messagesBySession.has(sessionId)) return
 
         // Merge tool_result content into the preceding assistant message
         for (let i = 0; i < allMsgs.length; i++) {
@@ -144,19 +144,15 @@ export default function WriteChatPanel({
         }
       } catch (err: any) {
         if (cancelled) return
-        // Distinguish "session deleted on backend" (stale localStorage mapping)
-        // from transient errors (network, server down, etc.)
         const msg = err?.message ?? String(err)
         const isNotFound =
           msg.includes('not found') ||
           msg.includes('does not exist') ||
           msg.includes('no such session') ||
-          (err?.code != null && err.code === -32000) // JSON-RPC server error
+          (err?.code != null && err.code === -32000)
         if (isNotFound) {
-          // Clean the stale localStorage mapping so next send creates a fresh session
           onStaleSession?.(sessionId)
         }
-        // Always surface the error — don't leave user with eternal empty state
         useStore.getState().setInlineError(
           sessionId,
           isNotFound
