@@ -324,6 +324,7 @@ impl AgentTool for SpawnAgentTool {
             workspace_path: config.workspace_path.clone(),
             max_prompt_budget: 0, // sub-agents: no budget limit
             context_window: None,
+            summary_at_count: 0,
             default_permissions: config.default_permissions.clone(),
             hook_registry: None,
             session_id: String::new(),

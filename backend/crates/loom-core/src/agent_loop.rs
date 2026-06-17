@@ -87,6 +87,8 @@ pub struct AgentLoopConfig {
     /// Current model context window in tokens. None = unknown (fallback to max_prompt_budget/8192).
     /// Used by mid-turn safety truncation (90% ceiling) and BudgetExhausted (current-window) checks.
     pub context_window: Option<usize>,
+    /// Number of messages already summarized; passed to AssembleOptions for layered assembly.
+    pub summary_at_count: usize,
     /// Default tool-call permissions applied to every turn.
     /// Set to `SkillPermissions::default()` for zero trust (deny shell, deny file writes);
     /// set shell=true / fs_write=Some(vec![]) to restore the old open-everything behaviour.
@@ -231,6 +233,7 @@ impl Default for AgentLoopConfig {
             workspace_path: None,
             max_prompt_budget: 0,
             context_window: None,
+            summary_at_count: 0,
             default_permissions: SkillPermissions::default(),
             hook_registry: None,
             session_id: String::new(),
@@ -693,7 +696,7 @@ async fn run_agent_turn_inner(
         kg_context: config.kg_context.clone(),
         tool_catalog: None,
         history: history.to_vec(),
-        summary_at_count: 0, // TODO(T12): 传 config.summary_at_count
+        summary_at_count: config.summary_at_count,
     };
     let mut messages = assembler.build(opts)?;
     // Inject few-shot examples as additional system messages after the stable
@@ -1559,7 +1562,7 @@ async fn run_agent_turn_streaming_inner(
         kg_context: config.kg_context.clone(),
         tool_catalog: None,
         history: history.to_vec(),
-        summary_at_count: 0, // TODO(T12): 传 config.summary_at_count
+        summary_at_count: config.summary_at_count,
     };
     let mut messages = assembler.build(opts)?;
     // Inject few-shot examples as additional system messages after the stable

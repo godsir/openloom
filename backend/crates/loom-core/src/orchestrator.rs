@@ -3983,30 +3983,48 @@ impl Orchestrator {
             "[orchestrator] step: history ready"
         );
 
-        // ── Summary check ──
-        let (existing_summary, should_summarize) = {
+        // ── Summary check (token-based 80% threshold) ──
+        let (existing_summary, summary_at_count, context_window) = {
             let mem = self.memory_store.read().await;
             if let Some(ref store) = *mem {
                 let existing = store.get_summary(session_id).await.unwrap_or(None);
-                let last_at = store.get_summary_at_count(session_id).await.unwrap_or(0);
-                let total_msgs = store
-                    .get_message_count(session_id)
+                let at = store.get_summary_at_count(session_id).await.unwrap_or(0);
+                let name = self.active_model_name.read().await.clone().unwrap_or_default();
+                let cw = self
+                    .model_configs
+                    .read()
                     .await
-                    .unwrap_or(history.len());
-                let should =
-                    loom_memory::SummaryEngine::should_summarize(total_msgs, last_at, 12, 6);
-                (existing, should)
+                    .get(&name)
+                    .map(|c| c.context_size)
+                    .unwrap_or(0);
+                (existing, at, cw)
             } else {
-                (None, false)
+                (None, 0, 0)
             }
         }; // lock released
 
-        let summary = if should_summarize {
-            tracing::info!(session_id, "summarization triggered");
-            let prompt =
-                loom_memory::SummaryEngine::build_prompt(&history, existing_summary.as_deref());
-            let request = loom_memory::SummaryEngine::build_request(&prompt);
-            // Use auxiliary client if available, fall back to main
+        let bpe = loom_context::bpe();
+        let history_tokens: usize = history.iter().map(|m| loom_context::message_tokens(m, bpe)).sum();
+        let should = loom_memory::SummaryEngine::should_summarize_by_tokens(
+            history_tokens,
+            context_window,
+            self.compaction_config.trigger_threshold_pct,
+        );
+
+        let (summary, new_at_count) = if should {
+            tracing::info!(session_id, history_tokens, context_window, "summarization triggered (80% token threshold)");
+            let total_msgs = history.len();
+            let recent_count = ((context_window as f32 * self.compaction_config.keep_recent_tokens_pct) as usize)
+                .min(total_msgs);
+            let recent_boundary = total_msgs.saturating_sub(recent_count);
+            let prompt = loom_memory::SummaryEngine::build_prompt_segmented(
+                &history,
+                summary_at_count,
+                recent_boundary,
+                existing_summary.as_deref(),
+            );
+            let mut request = loom_memory::SummaryEngine::build_request(&prompt);
+            request.max_tokens = self.compaction_config.summary_max_tokens;
             let summary_client: Option<Arc<dyn CloudClient>> =
                 if let Some(aux) = self.build_auxiliary_client("summary").await {
                     Some(aux)
@@ -4015,12 +4033,13 @@ impl Orchestrator {
                 };
             if let Some(sc) = summary_client {
                 let saved_hash = sc.prefix_hash_snapshot();
-                match sc.complete(request).await {
-                    Ok(resp) if !resp.text.is_empty() => {
+                let timeout = std::time::Duration::from_millis(self.compaction_config.summarization_timeout_ms);
+                match tokio::time::timeout(timeout, sc.complete(request)).await {
+                    Ok(Ok(resp)) if !resp.text.is_empty() => {
                         sc.prefix_hash_restore(saved_hash);
                         let mem = self.memory_store.read().await;
                         if let Some(ref store) = *mem {
-                            let _ = store.save_summary(session_id, &resp.text, history.len()).await;
+                            let _ = store.save_summary(session_id, &resp.text, recent_boundary).await;
                             if resp.prompt_tokens > 0 || resp.completion_tokens > 0 {
                                 let _ = store
                                     .record_token_usage(
@@ -4036,19 +4055,20 @@ impl Orchestrator {
                                     .await;
                             }
                         }
-                        tracing::info!(chars = resp.text.len(), "conversation summarized");
-                        Some(resp.text)
+                        tracing::info!(chars = resp.text.len(), at_count = recent_boundary, "conversation summarized");
+                        (Some(resp.text), recent_boundary)
                     }
                     _ => {
                         sc.prefix_hash_restore(saved_hash);
-                        existing_summary
+                        tracing::warn!("LLM 总结失败, 回退到 existing summary + mid-turn 兜底");
+                        (existing_summary, summary_at_count)
                     }
                 }
             } else {
-                existing_summary
+                (existing_summary, summary_at_count)
             }
         } else {
-            existing_summary
+            (existing_summary, summary_at_count)
         };
 
         let loop_config = AgentLoopConfig {
@@ -4090,6 +4110,7 @@ impl Orchestrator {
                 let name = self.active_model_name.read().await.clone().unwrap_or_default();
                 self.model_configs.read().await.get(&name).map(|c| c.context_size).filter(|s| *s > 0)
             },
+            summary_at_count: new_at_count,
             hook_registry: Some(self.hook_registry.clone()),
             session_id: session_id.to_string(),
             agent_id: agent_id.to_string(),
@@ -4503,8 +4524,8 @@ impl Orchestrator {
         let disallowed = agent_config.disallowed_tools.clone();
         let cancel = self.pool.cancel_token(&agent_id).await?;
 
-        // ── Session compaction (if enabled) ──
-        if self.compaction_config.enabled {
+        // ── Session compaction: disabled (T12) — handled by SummaryEngine + mid-turn truncation ──
+        if false {
             if !history.is_empty() {
                 let total_tokens: usize = history.iter()
                     .map(|m| m.text_content().len() / 4) // rough estimate
@@ -5089,26 +5110,34 @@ impl Orchestrator {
             None
         };
 
-        // ── Summary check (P0 memory optimization) ──
-        // Phase 1: read existing summary (lock held briefly)
-        // KG context is handled by build_full_system_prompt below.
-        let (existing_summary, should_summarize) = {
+        // ── Summary check (token-based 80% threshold) ──
+        // Phase 1: read existing summary + context window (lock held briefly)
+        let (existing_summary, summary_at_count, context_window) = {
             let mem = self.memory_store.read().await;
             if let Some(ref store) = *mem {
                 let existing = store.get_summary(session_id).await.unwrap_or(None);
-                let last_at = store.get_summary_at_count(session_id).await.unwrap_or(0);
-                // Use DB message_count (not truncated history.len()) for accurate summary trigger
-                let total_msgs = store
-                    .get_message_count(session_id)
+                let at = store.get_summary_at_count(session_id).await.unwrap_or(0);
+                let name = self.active_model_name.read().await.clone().unwrap_or_default();
+                let cw = self
+                    .model_configs
+                    .read()
                     .await
-                    .unwrap_or(history.len());
-                let do_summarize =
-                    loom_memory::SummaryEngine::should_summarize(total_msgs, last_at, 12, 6);
-                (existing, do_summarize)
+                    .get(&name)
+                    .map(|c| c.context_size)
+                    .unwrap_or(0);
+                (existing, at, cw)
             } else {
-                (None, false)
+                (None, 0, 0)
             }
         }; // lock dropped here
+
+        let bpe = loom_context::bpe();
+        let history_tokens: usize = history.iter().map(|m| loom_context::message_tokens(m, bpe)).sum();
+        let should_summarize = loom_memory::SummaryEngine::should_summarize_by_tokens(
+            history_tokens,
+            context_window,
+            self.compaction_config.trigger_threshold_pct,
+        );
 
         // Fire PreCompact hook before summarization
         if should_summarize {
@@ -5131,10 +5160,19 @@ impl Orchestrator {
         }
 
         // Phase 2: call LLM for summary if needed (no lock held)
-        let summary = if should_summarize {
-            let prompt =
-                loom_memory::SummaryEngine::build_prompt(&history, existing_summary.as_deref());
-            let request = loom_memory::SummaryEngine::build_request(&prompt);
+        let (summary, new_at_count) = if should_summarize {
+            let total_msgs = history.len();
+            let recent_count = ((context_window as f32 * self.compaction_config.keep_recent_tokens_pct) as usize)
+                .min(total_msgs);
+            let recent_boundary = total_msgs.saturating_sub(recent_count);
+            let prompt = loom_memory::SummaryEngine::build_prompt_segmented(
+                &history,
+                summary_at_count,
+                recent_boundary,
+                existing_summary.as_deref(),
+            );
+            let mut request = loom_memory::SummaryEngine::build_request(&prompt);
+            request.max_tokens = self.compaction_config.summary_max_tokens;
 
             // Try auxiliary client first, fall back to main client
             let (summary_client, summary_model) =
@@ -5147,10 +5185,11 @@ impl Orchestrator {
                 };
 
             let saved_hash = summary_client.prefix_hash_snapshot();
-            let result = summary_client.complete(request).await;
+            let timeout = std::time::Duration::from_millis(self.compaction_config.summarization_timeout_ms);
+            let result = tokio::time::timeout(timeout, summary_client.complete(request)).await;
             summary_client.prefix_hash_restore(saved_hash);
             match result {
-                Ok(resp) if !resp.text.is_empty() => {
+                Ok(Ok(resp)) if !resp.text.is_empty() => {
                     let new_summary = resp.text;
                     // Record summary token usage
                     let sum_prompt = resp.prompt_tokens;
@@ -5172,17 +5211,20 @@ impl Orchestrator {
                     {
                         tracing::warn!(error = %e, model = %summary_model, "failed to record summary token usage");
                     }
-                    // Phase 3: save summary (re-acquire lock briefly)
+                    // Phase 3: save summary with cursor advanced to recent boundary
                     if let Some(ref store) = *self.memory_store.read().await {
-                        let _ = store.save_summary(session_id, &new_summary, history.len()).await;
+                        let _ = store.save_summary(session_id, &new_summary, recent_boundary).await;
                     }
-                    tracing::info!(chars = new_summary.len(), "conversation summarized");
-                    Some(new_summary)
+                    tracing::info!(chars = new_summary.len(), at_count = recent_boundary, "conversation summarized");
+                    (Some(new_summary), recent_boundary)
                 }
-                _ => existing_summary,
+                _ => {
+                    tracing::warn!("LLM 总结失败, 回退到 existing summary + mid-turn 兜底");
+                    (existing_summary, summary_at_count)
+                }
             }
         } else {
-            existing_summary
+            (existing_summary, summary_at_count)
         };
 
         // ── Memory quality tracking: capture injected entities and start time ──
@@ -5303,6 +5345,7 @@ impl Orchestrator {
                 let name = self.active_model_name.read().await.clone().unwrap_or_default();
                 self.model_configs.read().await.get(&name).map(|c| c.context_size).filter(|s| *s > 0)
             },
+            summary_at_count: new_at_count,
             hook_registry: Some(self.hook_registry.clone()),
             session_id: session_id.to_string(),
             agent_id: agent_id.to_string(),
@@ -5347,8 +5390,8 @@ impl Orchestrator {
             ..Default::default()
         };
 
-        // ── Session compaction (if enabled) ──
-        if self.compaction_config.enabled {
+        // ── Session compaction: disabled (T12) — handled by SummaryEngine + mid-turn truncation ──
+        if false {
             if !history.is_empty() {
                 let total_tokens: usize = history.iter()
                     .map(|m| m.text_content().len() / 4) // rough estimate
