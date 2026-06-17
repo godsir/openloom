@@ -972,8 +972,9 @@ async fn run_agent_turn_inner(
         }
         // Mid-turn compaction check (heuristic-only, no LLM call)
         if config.compaction_config.enabled && !messages.is_empty() {
+            let bpe = loom_context::bpe();
             let total_tokens: usize = messages.iter()
-                .map(|m| loom_context::bpe().encode_with_special_tokens(&m.text_content()).len())
+                .map(|m| loom_context::message_tokens(m, bpe))
                 .sum();
             let threshold = (config.max_prompt_budget.max(8192) as f32
                 * config.compaction_config.trigger_threshold_pct) as usize;
@@ -1907,8 +1908,9 @@ async fn run_agent_turn_streaming_inner(
         }
         // Mid-turn compaction check (heuristic-only, no LLM call)
         if config.compaction_config.enabled && !messages.is_empty() {
+            let bpe = loom_context::bpe();
             let total_tokens: usize = messages.iter()
-                .map(|m| loom_context::bpe().encode_with_special_tokens(&m.text_content()).len())
+                .map(|m| loom_context::message_tokens(m, bpe))
                 .sum();
             let threshold = (config.max_prompt_budget.max(8192) as f32
                 * config.compaction_config.trigger_threshold_pct) as usize;
@@ -2768,4 +2770,42 @@ fn is_transient_error(msg: &str) -> bool {
         || lower.contains("eof")
         || lower.contains("try again")
         || lower.contains("temporarily unavailable")
+}
+
+#[cfg(test)]
+mod tests {
+    /// Regression: mid-turn compaction 的触发判断必须用 `message_tokens`(含工具
+    /// 调用/结果),而非 `text_content()`(只算 Text)。否则 tool-heavy 历史会被
+    /// 严重漏算,导致该压缩时不压缩。
+    #[test]
+    fn test_mid_turn_token_count_includes_tool_parts() {
+        use loom_types::{ContentPart, Message, Role};
+        let bpe = loom_context::bpe();
+        let msgs = vec![
+            Message {
+                role: Role::Assistant,
+                content: vec![ContentPart::ToolCall {
+                    id: "c1".into(),
+                    name: "shell".into(),
+                    arguments: serde_json::json!({"command":"ls -la /very/long/path"}),
+                }],
+                timestamp: chrono::Utc::now(),
+                usage: None,
+            },
+            Message::tool("c1", "shell", "total 128\ndrwxr-xr-x 2 root root 4096 ..."),
+        ];
+        let via_message_tokens: usize = msgs
+            .iter()
+            .map(|m| loom_context::message_tokens(m, bpe))
+            .sum();
+        let via_text_content: usize = msgs
+            .iter()
+            .map(|m| bpe.encode_with_special_tokens(&m.text_content()).len())
+            .sum();
+        assert!(
+            via_message_tokens > via_text_content,
+            "message_tokens must count tool parts that text_content misses"
+        );
+        assert!(via_message_tokens > 0);
+    }
 }
