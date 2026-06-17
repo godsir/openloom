@@ -8,6 +8,14 @@ import { toggleInlineFormat, hasInlineFormat, InlineFormatKind } from '../../wri
 import { DEFAULT_QUICK_ACTIONS } from '../../write/quick-actions';
 import { resolveAgentPreset } from '../../write/agent-presets';
 import { createQuotedSelection } from '../../write/quoted-selection';
+import {
+  IconHeading1, IconHeading2, IconHeading3,
+  IconPilcrow, IconQuote, IconList, IconListOrdered, IconCode2,
+  IconBold, IconItalic, IconStrikethrough,
+  IconMessageSquare,
+  IconSparkles, IconWorkflow, IconPenLine, IconScanSearch, IconClipboardCheck,
+} from '../../utils/icons';
+import styles from './WriteInlineAgent.module.css';
 
 interface WriteInlineAgentProps {
   editorValue: string;
@@ -15,23 +23,46 @@ interface WriteInlineAgentProps {
   onSendToAssistant: (text: string) => void;
 }
 
-const BLOCK_TYPES: { type: WriteBlockType; label: string }[] = [
-  { type: 'paragraph', label: '¶' },
-  { type: 'heading1', label: 'H1' },
-  { type: 'heading2', label: 'H2' },
-  { type: 'heading3', label: 'H3' },
-  { type: 'quote', label: '"' },
-  { type: 'bullet', label: '•' },
-  { type: 'ordered', label: '1.' },
-  { type: 'code', label: '<>' },
+interface BlockTypeDef {
+  type: WriteBlockType;
+  label: string;
+  Icon: React.ComponentType<{ size?: number }>;
+}
+
+const BLOCK_TYPES: BlockTypeDef[] = [
+  { type: 'paragraph',  label: '正文', Icon: IconPilcrow },
+  { type: 'heading1',   label: '标题1', Icon: IconHeading1 },
+  { type: 'heading2',   label: '标题2', Icon: IconHeading2 },
+  { type: 'heading3',   label: '标题3', Icon: IconHeading3 },
+  { type: 'quote',      label: '引用', Icon: IconQuote },
+  { type: 'bullet',     label: '无序列表', Icon: IconList },
+  { type: 'ordered',    label: '有序列表', Icon: IconListOrdered },
+  { type: 'code',       label: '代码块', Icon: IconCode2 },
 ];
 
-const INLINE_FORMATS: { kind: InlineFormatKind; label: string; icon: string }[] = [
-  { kind: 'bold', label: 'B', icon: 'B' },
-  { kind: 'italic', label: 'I', icon: 'I' },
-  { kind: 'strikethrough', label: 'S', icon: 'S' },
-  { kind: 'code', label: '`', icon: '`' },
+interface InlineFormatDef {
+  kind: InlineFormatKind;
+  label: string;
+  Icon: React.ComponentType<{ size?: number }>;
+}
+
+const INLINE_FORMATS: InlineFormatDef[] = [
+  { kind: 'bold',          label: '加粗',   Icon: IconBold },
+  { kind: 'italic',        label: '斜体',   Icon: IconItalic },
+  { kind: 'strikethrough', label: '删除线', Icon: IconStrikethrough },
+  { kind: 'code',          label: '行内代码', Icon: IconCode2 },
 ];
+
+const QUICK_ACTIONS = DEFAULT_QUICK_ACTIONS.slice(0, 5);
+
+const PERSONA_IDS = ['plot-coordinator', 'line-editor', 'foreshadowing', 'continuity'] as const;
+
+const PERSONA_ICON: Record<string, React.ComponentType<{ size?: number }>> = {
+  'plot-coordinator': IconWorkflow,
+  'line-editor': IconPenLine,
+  foreshadowing: IconScanSearch,
+  continuity: IconClipboardCheck,
+};
 
 export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
   editorValue,
@@ -43,24 +74,14 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
   const addQuotedSelection = useWriteStore((s) => s.addQuotedSelection);
   const agentPresetId = useWriteStore((s) => s.agentPresetId);
   const setAgentPresetId = useWriteStore((s) => s.setAgentPresetId);
-  const fileThreads = useWriteStore((s) => s.fileThreads);
 
   const [aiInput, setAiInput] = useState('');
-  const toolbarRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const activePreset = resolveAgentPreset(agentPresetId);
-
-  // Read position from store (set by CM6 updateListener via coordsAtPos)
-  const pos = useWriteStore((s) => s.inlineAgentPosition);
-
-  const toolbarPos = useWriteStore((s) => s.inlineAgentVisible) ? {
-    x: Math.max(8, pos.x - 150), // center toolbar (~300px wide)
-    y: pos.y - 10, // above
-  } : null;
-
-  if (!selection || !toolbarPos) return null;
+  const hasSelection = selection !== null;
 
   const handleBlockType = (type: WriteBlockType) => {
+    if (!selection) return;
     const lines = selection.text.split('\n');
     const newLines = applyBlockType(lines, type);
     const newText = newLines.join('\n');
@@ -71,6 +92,7 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
   };
 
   const handleInlineFormat = (kind: InlineFormatKind) => {
+    if (!selection) return;
     const formatted = toggleInlineFormat(selection.text, kind);
     if (formatted === null) return;
     const before = editorValue.slice(0, selection.from);
@@ -82,16 +104,17 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
   const handleQuickAction = (actionId: string) => {
     const action = DEFAULT_QUICK_ACTIONS.find((a) => a.id === actionId);
     if (!action) return;
+    const context = selection ? `\n\n${selection.text}` : '';
     if (action.mode === 'chat') {
-      onSendToAssistant(`${action.prompt}\n\n${selection.text}`);
+      onSendToAssistant(`${action.prompt}${context}`);
     } else {
-      // Inline mode: send to AI edit
-      onSendToAssistant(`${action.prompt}\n\n"${selection.text}"`);
+      onSendToAssistant(`${action.prompt}\n\n"${context.trim()}"`);
     }
     setSelection(null);
   };
 
   const handleQuoteToAssistant = () => {
+    if (!selection) return;
     const qs = createQuotedSelection(selection, '');
     addQuotedSelection(qs);
     setSelection(null);
@@ -99,168 +122,84 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
 
   const handleAiEditSubmit = () => {
     if (!aiInput.trim()) return;
-    onSendToAssistant(`${aiInput}\n\n"${selection.text}"`);
+    const context = selection ? `\n\n"${selection.text}"` : '';
+    onSendToAssistant(`${aiInput}${context}`);
     setAiInput('');
     setSelection(null);
   };
 
-  const styles: Record<string, React.CSSProperties> = {
-    toolbar: {
-      position: 'fixed',
-      zIndex: 1000,
-      background: 'var(--bg-surface)',
-      border: '1px solid var(--border)',
-      borderRadius: '8px',
-      padding: '6px',
-      boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '4px',
-      minWidth: '300px',
-    },
-    row: {
-      display: 'flex',
-      gap: '2px',
-      alignItems: 'center',
-      flexWrap: 'wrap',
-    },
-    btn: {
-      padding: '3px 7px',
-      fontSize: '11px',
-      border: '1px solid var(--border)',
-      borderRadius: '3px',
-      background: 'transparent',
-      color: 'var(--text)',
-      cursor: 'pointer',
-      whiteSpace: 'nowrap',
-    },
-    btnActive: {
-      padding: '3px 7px',
-      fontSize: '11px',
-      border: '1px solid var(--border)',
-      borderRadius: '3px',
-      background: 'var(--bg-active)',
-      color: 'var(--text-accent)',
-      cursor: 'pointer',
-      fontWeight: 600,
-      whiteSpace: 'nowrap',
-    },
-    input: {
-      flex: 1,
-      padding: '4px 8px',
-      fontSize: '12px',
-      border: '1px solid var(--border)',
-      borderRadius: '3px',
-      background: 'var(--bg)',
-      color: 'var(--text)',
-      minWidth: '120px',
-    },
-    divider: {
-      width: '1px',
-      height: '16px',
-      background: 'var(--border)',
-      margin: '0 4px',
-    },
-    presetBtn: {
-      padding: '2px 8px',
-      fontSize: '10px',
-      border: '1px solid var(--border)',
-      borderRadius: '10px',
-      background: 'transparent',
-      color: 'var(--text-muted)',
-      cursor: 'pointer',
-    },
-    presetBtnActive: {
-      padding: '2px 8px',
-      fontSize: '10px',
-      border: '1px solid var(--text-accent)',
-      borderRadius: '10px',
-      background: 'var(--bg-active)',
-      color: 'var(--text-accent)',
-      cursor: 'pointer',
-    },
-  };
-
   return (
-    <div ref={toolbarRef} style={{ ...styles.toolbar, left: toolbarPos.x, top: toolbarPos.y }}>
-      {/* Row 1: Block types */}
-      <div style={styles.row}>
-        {BLOCK_TYPES.map((bt) => {
-          const currentType = detectBlockType(selection.text.split('\n')[0]);
-          const active = currentType === bt.type;
-          return (
-            <button
-              key={bt.type}
-              style={active ? styles.btnActive : styles.btn}
-              onClick={() => handleBlockType(bt.type)}
-              title={bt.type}
-            >
-              {bt.label}
-            </button>
-          );
-        })}
-        <span style={styles.divider} />
-        {/* Inline formats */}
-        {INLINE_FORMATS.map((f) => {
-          const active = hasInlineFormat(selection.text, f.kind);
-          return (
-            <button
-              key={f.kind}
-              style={active ? styles.btnActive : styles.btn}
-              onClick={() => handleInlineFormat(f.kind)}
-              title={f.kind}
-            >
-              {f.icon}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Row 2: Quick actions */}
-      <div style={styles.row}>
-        {DEFAULT_QUICK_ACTIONS.slice(0, 5).map((qa) => (
-          <button
-            key={qa.id}
-            style={styles.btn}
-            onClick={() => handleQuickAction(qa.id)}
-          >
-            {qa.label}
-          </button>
-        ))}
-        <button style={styles.btn} onClick={handleQuoteToAssistant}>
-          💬 引用
-        </button>
-      </div>
-
-      {/* Row 3: Agent persona switcher */}
-      <div style={styles.row}>
-        <button
-          style={!agentPresetId ? styles.presetBtnActive : styles.presetBtn}
-          onClick={() => setAgentPresetId(null)}
-        >
-          默认
-        </button>
-        {['plot-coordinator', 'line-editor', 'foreshadowing', 'continuity'].map(
-          (id) => {
-            const preset = resolveAgentPreset(id);
+    <div className={styles.toolbar}>
+      {/* ── Row 1: Block types | Inline formats | Quick actions ── */}
+      <div className={styles.row}>
+        <div className={styles.section}>
+          {BLOCK_TYPES.map((bt) => {
+            const currentType = selection ? detectBlockType(selection.text.split('\n')[0]) : null;
+            const active = currentType === bt.type;
+            const BtnIcon = bt.Icon;
             return (
               <button
-                key={id}
-                style={agentPresetId === id ? styles.presetBtnActive : styles.presetBtn}
-                onClick={() => setAgentPresetId(id)}
-                title={preset?.persona}
+                key={bt.type}
+                className={active ? styles.iconBtnActive : styles.iconBtn}
+                onClick={() => handleBlockType(bt.type)}
+                title={bt.label}
+                disabled={!hasSelection}
               >
-                {preset?.emoji} {preset?.name}
+                <BtnIcon size={14} />
               </button>
             );
-          },
-        )}
+          })}
+        </div>
+
+        <span className={styles.divider} />
+
+        <div className={styles.section}>
+          {INLINE_FORMATS.map((f) => {
+            const active = hasSelection && hasInlineFormat(selection!.text, f.kind);
+            const FmtIcon = f.Icon;
+            return (
+              <button
+                key={f.kind}
+                className={active ? styles.iconBtnActive : styles.iconBtn}
+                onClick={() => handleInlineFormat(f.kind)}
+                title={f.label}
+                disabled={!hasSelection}
+              >
+                <FmtIcon size={14} />
+              </button>
+            );
+          })}
+        </div>
+
+        <span className={styles.divider} />
+
+        <div className={styles.section}>
+          {QUICK_ACTIONS.map((qa) => (
+            <button
+              key={qa.id}
+              className={styles.quickBtn}
+              onClick={() => handleQuickAction(qa.id)}
+            >
+              {qa.label}
+            </button>
+          ))}
+          <button
+            className={styles.btn}
+            onClick={handleQuoteToAssistant}
+            disabled={!hasSelection}
+            title="引用选中内容到助手"
+          >
+            <IconMessageSquare size={12} />
+            <span>引用</span>
+          </button>
+        </div>
       </div>
 
-      {/* Row 4: AI edit input */}
-      <div style={styles.row}>
+      {/* ── Row 2: AI input | Persona switcher ── */}
+      <div className={styles.row}>
         <input
-          style={styles.input}
+          ref={inputRef}
+          className={styles.input}
           value={aiInput}
           onChange={(e) => setAiInput(e.target.value)}
           onKeyDown={(e) => {
@@ -277,8 +216,35 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
               }
             }
           }}
-          placeholder="AI 编辑指令... (Enter 发送, Ctrl+Enter 到助手)"
+          placeholder="AI 指令... (Enter 发送)"
         />
+
+        <span className={styles.divider} />
+
+        <div className={styles.section}>
+          <button
+            className={!agentPresetId ? styles.presetBtnActive : styles.presetBtn}
+            onClick={() => setAgentPresetId(null)}
+          >
+            <IconSparkles size={13} />
+            <span>默认</span>
+          </button>
+          {PERSONA_IDS.map((id) => {
+            const preset = resolveAgentPreset(id);
+            const PIcon = PERSONA_ICON[id];
+            return (
+              <button
+                key={id}
+                className={agentPresetId === id ? styles.presetBtnActive : styles.presetBtn}
+                onClick={() => setAgentPresetId(id)}
+                title={preset?.persona}
+              >
+                <PIcon size={13} />
+                <span>{preset?.name}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

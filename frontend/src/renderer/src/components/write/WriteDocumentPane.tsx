@@ -6,11 +6,13 @@ import { WriteImagePreview } from './WriteImagePreview'
 import { WriteWorkspaceStart } from './WriteWorkspaceStart'
 import { WriteRichEditor } from '../../write/tiptap/WriteRichEditor'
 import { WritePdfViewer } from './WritePdfViewer'
+import { WriteInlineAgent } from './WriteInlineAgent'
 
 const LARGE_FILE_THRESHOLD = 300 * 1024
 
 interface WriteDocumentPaneProps {
   onSelectWorkspace: () => void;
+  onSendToAssistant: (text: string) => void;
 }
 
 // ── SplitView with draggable divider ──
@@ -60,7 +62,7 @@ const SplitView: React.FC<{ left: React.ReactNode; right: React.ReactNode }> = (
         onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--accent)')}
         onMouseLeave={(e) => { if (!dragging.current) e.currentTarget.style.background = 'var(--border)' }}
       />
-      <div style={{ flex: 1, overflow: 'hidden' }}>{right}</div>
+      <div style={{ flex: 1, overflow: 'auto' }}>{right}</div>
     </div>
   )
 }
@@ -72,7 +74,7 @@ function resolvePreviewMode(previewMode: WritePreviewMode, fileSize: number): Wr
   return previewMode
 }
 
-export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWorkspace }) => {
+export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWorkspace, onSendToAssistant }) => {
   const activeFilePath = useWriteStore(s => s.activeFilePath)
   const activeFileKind = useWriteStore(s => s.activeFileKind)
   const fileContent = useWriteStore(s => s.fileContent)
@@ -90,6 +92,11 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
 
   const handleChange = useCallback((value: string) => {
     setFileContent(value)
+    setSaveStatus('dirty')
+  }, [setFileContent, setSaveStatus])
+
+  const handleApplyEdit = useCallback((newContent: string) => {
+    setFileContent(newContent)
     setSaveStatus('dirty')
   }, [setFileContent, setSaveStatus])
 
@@ -126,7 +133,12 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
   const effectiveMode = resolvePreviewMode(previewMode, fileSize)
 
   if (effectiveMode === 'rich') {
-    return <WriteRichEditor value={fileContent} onChange={handleChange} fontSize={fontSize} />
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <WriteInlineAgent editorValue={fileContent} onApplyEdit={handleApplyEdit} onSendToAssistant={onSendToAssistant} />
+        <WriteRichEditor value={fileContent} onChange={handleChange} fontSize={fontSize} />
+      </div>
+    )
   }
 
   if (effectiveMode === 'preview') {
@@ -134,10 +146,25 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
   }
 
   if (effectiveMode === 'split') {
-    return <SplitView left={<WriteMarkdownEditor value={fileContent} onChange={handleChange} previewMode={effectiveMode} />} right={<WriteMarkdownPreview content={fileContent} rawHtml={isHtmlFile} />} />
+    return <SplitView
+      left={
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <WriteInlineAgent editorValue={fileContent} onApplyEdit={handleApplyEdit} onSendToAssistant={onSendToAssistant} />
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <WriteMarkdownEditor value={fileContent} onChange={handleChange} fontSize={fontSize} previewMode={effectiveMode} />
+          </div>
+        </div>
+      }
+      right={<WriteMarkdownPreview content={fileContent} rawHtml={isHtmlFile} />}
+    />
   }
 
-  return <WriteMarkdownEditor value={fileContent} onChange={handleChange} previewMode={effectiveMode} />
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <WriteInlineAgent editorValue={fileContent} onApplyEdit={handleApplyEdit} onSendToAssistant={onSendToAssistant} />
+      <WriteMarkdownEditor value={fileContent} onChange={handleChange} fontSize={fontSize} previewMode={effectiveMode} />
+    </div>
+  )
 }
 
 export default WriteDocumentPane

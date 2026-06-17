@@ -1,7 +1,7 @@
 // frontend/src/renderer/src/components/write/WriteMarkdownEditor.tsx
 // 基于 CodeMirrorEditor 重构，适配 useWriteStore（替代主 store 的 fimEnabled）
 import React, { useRef, useEffect } from 'react'
-import { EditorView, keymap, lineNumbers, highlightActiveLine, placeholder as cmPlaceholder } from '@codemirror/view'
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, placeholder as cmPlaceholder } from '@codemirror/view'
 import { EditorState, Compartment } from '@codemirror/state'
 import { markdown } from '@codemirror/lang-markdown'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
@@ -72,6 +72,7 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
       background: 'var(--bg-surface)',
       color: 'var(--text-muted)',
       borderRight: '1px solid var(--border)',
+      lineHeight: '1.8',
     },
     '.cm-activeLine': {
       background: 'var(--bg-active, rgba(255,255,255,0.04))',
@@ -82,12 +83,15 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
   })
 
   // Build the dynamic theme from fontSize
+  // 使用绝对 px lineHeight 确保 .cm-gutters 与 .cm-content 行高一致，防止行号错位
   const dynamicTheme = EditorView.theme({
     '.cm-content': {
       fontSize: `${fontSize}px`,
+      lineHeight: `${Math.round(fontSize * 1.8)}px`,
     },
     '.cm-gutters': {
       fontSize: `${Math.max(10, fontSize - 2)}px`,
+      lineHeight: `${Math.round(fontSize * 1.8)}px`,
     },
   })
 
@@ -100,14 +104,13 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
         const newValue = update.state.doc.toString()
         onChange(newValue)
       }
-      // Track selection for InlineAgent
+      // Track selection for InlineAgent toolbar
       if (update.selectionSet) {
         const sel = update.state.selection.main
         const text = update.state.sliceDoc(sel.from, sel.to)
         if (text && sel.from !== sel.to) {
           const line = update.state.doc.lineAt(sel.from)
-          const ws = useWriteStore.getState()
-          ws.setSelection({
+          useWriteStore.getState().setSelection({
             text,
             from: sel.from,
             to: sel.to,
@@ -116,15 +119,8 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
             blockType: null,
             containsImage: false,
           })
-          // Position via CodeMirror coords (not DOM selection — CM6 doesn't use contentEditable)
-          const fromCoords = update.view.coordsAtPos(sel.from)
-          if (fromCoords) {
-            ws.setInlineAgentPosition({ x: fromCoords.left, y: fromCoords.top - 8, placement: 'above' })
-            ws.setInlineAgentVisible(true)
-          }
         } else {
           useWriteStore.getState().setSelection(null)
-          useWriteStore.getState().setInlineAgentVisible(false)
         }
       }
     })
@@ -140,6 +136,8 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
     const extensions: any[] = [
       lineNumbers(),
       highlightActiveLine(),
+      highlightActiveLineGutter(),
+      EditorView.lineWrapping,
       history(),
       markdown(),
       syntaxHighlighting(defaultHighlightStyle),
@@ -217,12 +215,15 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
+    // 使用绝对 px lineHeight 确保 .cm-gutters 与 .cm-content 行高一致，防止行号错位
     const newTheme = EditorView.theme({
       '.cm-content': {
         fontSize: `${fontSize}px`,
+        lineHeight: `${Math.round(fontSize * 1.8)}px`,
       },
       '.cm-gutters': {
         fontSize: `${Math.max(10, fontSize - 2)}px`,
+        lineHeight: `${Math.round(fontSize * 1.8)}px`,
       },
     })
     view.dispatch({

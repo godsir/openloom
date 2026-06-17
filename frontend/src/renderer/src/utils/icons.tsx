@@ -73,7 +73,26 @@ export {
   MoreHorizontal as IconMoreHorizontal,
   FilePlus as IconFilePlus,
   FolderOpen as IconFolderOpen,
+  Folder as IconFolderClosed,
   Bug as IconBug,
+  // Write mode inline agent toolbar icons
+  Bold as IconBold,
+  Italic as IconItalic,
+  Strikethrough as IconStrikethrough,
+  Code2 as IconCode2,
+  Quote as IconQuote,
+  List as IconList,
+  ListOrdered as IconListOrdered,
+  Heading1 as IconHeading1,
+  Heading2 as IconHeading2,
+  Heading3 as IconHeading3,
+  Type as IconType,
+  Pilcrow as IconPilcrow,
+  // Write mode persona icons
+  Workflow as IconWorkflow,
+  PenLine as IconPenLine,
+  ScanSearch as IconScanSearch,
+  ClipboardCheck as IconClipboardCheck,
 } from 'lucide-react'
 
 export function IconStarFilled({ size = 16, className = '' }: { size?: number; className?: string }) {

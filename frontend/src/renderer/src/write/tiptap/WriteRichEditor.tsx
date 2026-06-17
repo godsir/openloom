@@ -34,6 +34,31 @@ export const WriteRichEditor: React.FC<WriteRichEditorProps> = ({
       const md = tipTapJsonToMarkdown(ed.getJSON());
       onChange(md);
     },
+    onSelectionUpdate: ({ editor: ed }) => {
+      const { from, to, empty } = ed.state.selection;
+      if (empty) {
+        useWriteStore.getState().setSelection(null);
+        return;
+      }
+      const text = ed.state.doc.textBetween(from, to);
+      if (!text) {
+        useWriteStore.getState().setSelection(null);
+        return;
+      }
+      // Compute 0-based line numbers from text offsets
+      const docText = ed.state.doc.textBetween(0, ed.state.doc.content.size);
+      const lineFrom = docText.slice(0, from).split('\n').length - 1;
+      const lineTo = docText.slice(0, to).split('\n').length - 1;
+      useWriteStore.getState().setSelection({
+        text,
+        from,
+        to,
+        lineFrom,
+        lineTo,
+        blockType: null,
+        containsImage: false,
+      });
+    },
     editorProps: {
       attributes: {
         style: `font-size: ${fontSize}px; line-height: ${lineHeight}; outline: none;`,

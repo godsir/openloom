@@ -1,0 +1,148 @@
+/* ── Static inline agent toolbar（两行布局） ── */
+
+.toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  flex-shrink: 0;
+}
+
+/* ── 每行独立横向排布 ── */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-height: 30px;
+  overflow-x: auto;
+}
+
+.section {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* ── Buttons ── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 7px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s ease;
+  height: 26px;
+  font-family: inherit;
+}
+.btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-accent);
+}
+.btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ── Icon-only buttons ── */
+
+.iconBtn {
+  composes: btn;
+  padding: 3px 5px;
+  min-width: 26px;
+  color: var(--text-secondary);
+}
+.iconBtn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.iconBtnActive {
+  composes: iconBtn;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-color: var(--border-accent);
+}
+
+/* ── Divider ── */
+
+.divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+
+/* ── AI input（flex:1 自动占满剩余空间） ── */
+
+.input {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.12s ease;
+  height: 26px;
+  box-sizing: border-box;
+  min-width: 120px;
+}
+.input:focus {
+  border-color: var(--accent);
+}
+.input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+/* ── Persona preset buttons ── */
+
+.presetBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  font-size: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s ease;
+  height: 24px;
+  font-family: inherit;
+}
+.presetBtn:hover {
+  color: var(--text);
+  border-color: var(--border-accent);
+}
+
+.presetBtnActive {
+  composes: presetBtn;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-color: var(--border-accent);
+  font-weight: 600;
+}
+
+/* ── Quick action buttons ── */
+
+.quickBtn {
+  composes: btn;
+  font-size: 11px;
+  padding: 3px 8px;
+}

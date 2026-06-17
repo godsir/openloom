@@ -2,7 +2,7 @@ import React, { useEffect, useCallback } from 'react'
 import { useWriteStore, type WorkspaceEntry, type WriteFileKind } from '../../stores/write'
 import { loomRpc } from '../../services/jsonrpc'
 import { useLocale } from '../../i18n'
-import { IconChevronRight, IconChevronDown, IconFileText, IconFile, IconImage, IconFolder, IconLoader } from '../../utils/icons'
+import { IconChevronRight, IconChevronDown, IconFileText, IconFile, IconImage, IconFolderClosed, IconFolderOpen, IconLoader } from '../../utils/icons'
 import styles from './WriteFileTree.module.css'
 
 // ---- constants ----
@@ -170,9 +170,9 @@ export const WriteFileTree: React.FC<WriteFileTreeProps> = ({ onNewFile }) => {
 
   // ---- render helpers ----
 
-  const entryIcon = (entry: WorkspaceEntry) => {
+  const entryIcon = (entry: WorkspaceEntry, isExpanded: boolean) => {
     if (entry.kind === 'directory') {
-      return <IconFolder size={14} />
+      return isExpanded ? <IconFolderOpen size={14} /> : <IconFolderClosed size={14} />
     }
     const ext = extOf(entry)
     if (IMAGE_EXTS.has(ext)) return <IconImage size={14} />
@@ -214,15 +214,15 @@ export const WriteFileTree: React.FC<WriteFileTreeProps> = ({ onNewFile }) => {
             ) : null}
           </span>
 
-          <span className={styles.entryIcon}>
+          <span className={`${styles.entryIcon} ${isDir ? styles.dir : ''}`}>
             {isLoadingThisFile ? (
               <IconLoader size={14} className={styles.spin} />
             ) : (
-              entryIcon(entry)
+              entryIcon(entry, isExpanded)
             )}
           </span>
 
-          <span className={styles.entryName} title={entry.name}>
+          <span className={`${styles.entryName} ${isDir ? styles.dir : ''}`} title={entry.name}>
             {entry.name}
           </span>
         </div>

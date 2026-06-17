@@ -27,7 +27,7 @@ export const WriteMarkdownPreview: React.FC<WriteMarkdownPreviewProps> = ({ cont
   return (
     <div
       className="markdown-preview"
-      style={style}
+      style={{ height: '100%', overflowY: 'auto', overflowX: 'hidden', overflowWrap: 'break-word', wordBreak: 'break-word', padding: '24px 28px', ...style }}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   )
