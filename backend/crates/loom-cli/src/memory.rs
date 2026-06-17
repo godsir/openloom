@@ -1269,20 +1269,11 @@ impl MemoryStore for LoomMemoryStore {
         }
     }
 
-    async fn save_summary(&self, session_id: &str, summary: &str) -> Result<()> {
+    async fn save_summary(&self, session_id: &str, summary: &str, at_count: usize) -> Result<()> {
         let store = self.session_db.lock().expect("lock poisoned");
-        // Also record the current message count so we know when to re-summarize
-        let count: i64 = store
-            .conn()
-            .query_row(
-                "SELECT message_count FROM sessions WHERE id = ?1",
-                rusqlite::params![session_id],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
         store.conn().execute(
             "UPDATE sessions SET summary = ?1, summary_at_count = ?2 WHERE id = ?3",
-            rusqlite::params![summary, count, session_id],
+            rusqlite::params![summary, at_count as i64, session_id],
         )?;
         Ok(())
     }
