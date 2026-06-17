@@ -222,7 +222,6 @@ use crate::hooks::{HookContext, HookRegistry};
 use crate::slash_router::SlashRouter;
 use crate::tool_registry::{AgentTool, SpawnAgentTool, SpawnContext, ToolRegistry};
 use loom_cron::CronScheduler;
-use loom_context::compact_history;
 
 /// The central orchestrator for openLoom v2.
 pub struct Orchestrator {
@@ -281,6 +280,7 @@ pub struct Orchestrator {
     /// Uses tokio::sync::broadcast (type-erased after creation) — the same
     /// infrastructure as AgentEvent, but a separate typed sender for
     /// compaction, heartbeat, token-usage, and other infrastructure events.
+    #[allow(dead_code)] // CompactionPerformed emitter removed in T12; field retained for future events
     engine_events: tokio::sync::broadcast::Sender<EngineEvent>,
     /// Last stop_reason per session — for frontend reconnect queries.
     last_stop_reasons: RwLock<HashMap<String, StopReason>>,
@@ -3976,7 +3976,7 @@ impl Orchestrator {
             }
             tracing::info!(session_id, "[orchestrator] step: history loaded");
         }
-        let mut history = self.session_history(session_id).await;
+        let history = self.session_history(session_id).await;
         tracing::info!(
             session_id,
             hist_len = history.len(),
@@ -4524,73 +4524,6 @@ impl Orchestrator {
         let disallowed = agent_config.disallowed_tools.clone();
         let cancel = self.pool.cancel_token(&agent_id).await?;
 
-        // ── Session compaction: disabled (T12) — handled by SummaryEngine + mid-turn truncation ──
-        if false {
-            if !history.is_empty() {
-                let total_tokens: usize = history.iter()
-                    .map(|m| m.text_content().len() / 4) // rough estimate
-                    .sum();
-                let budget = loop_config.max_prompt_budget.max(8192);
-                let threshold = (budget as f32 * self.compaction_config.trigger_threshold_pct) as usize;
-
-                if total_tokens > threshold {
-                    let start = std::time::Instant::now();
-                    match compact_history(&history, &self.compaction_config, None) {
-                        Ok(result) if result.items_compacted > 0 => {
-                            tracing::info!(
-                                tokens_before = result.tokens_before,
-                                tokens_after = result.tokens_after,
-                                savings_pct = %result.savings_pct,
-                                items_compacted = result.items_compacted,
-                                strategies = ?result.strategies_used,
-                                "session compaction completed"
-                            );
-                            // Only use compacted history for this LLM call — do NOT
-                            // persist it back into session_histories (the original
-                            // uncompacted history stays canonical).
-                            history = result.compacted_history;
-
-                            // Force next prefix check to miss — compacted history has different shape
-                            client.prefix_cache_reset(); // reset stats
-                            // Also clear the stored prefix digest
-                            if client.prefix_digest_snapshot().is_some() {
-                                client.prefix_digest_restore(None);
-                            }
-
-                            tracing::info!(
-                                session_id,
-                                duration_ms = start.elapsed().as_millis(),
-                                tool_outputs_truncated = result.tool_outputs_truncated,
-                                base64_elided = result.base64_payloads_elided,
-                                loops_collapsed = result.repetitive_loops_collapsed,
-                                llm_summarization_used = result.llm_summarization_performed,
-                                "compaction details"
-                            );
-
-                            // Emit compaction event via engine_events broadcast
-                            let _ = self.engine_events.send(EngineEvent::CompactionPerformed {
-                                session_id: session_id.to_string(),
-                                tokens_before: result.tokens_before,
-                                tokens_after: result.tokens_after,
-                                savings_pct: result.savings_pct,
-                                items_compacted: result.items_compacted,
-                                strategies: result.strategies_used.iter().map(|s| format!("{:?}", s)).collect(),
-                                tool_outputs_truncated: result.tool_outputs_truncated,
-                                base64_elided: result.base64_payloads_elided,
-                                loops_collapsed: result.repetitive_loops_collapsed,
-                                llm_summarization_used: result.llm_summarization_performed,
-                                duration_ms: start.elapsed().as_millis() as u64,
-                            });
-                        }
-                        Ok(_) => {} // No compaction needed
-                        Err(e) => {
-                            tracing::warn!(error = %e, "session compaction failed, continuing");
-                        }
-                    }
-                }
-            }
-        }
-
         // Always run the full agent path — the intent classifier was an
         // over-optimization that caused workspace/skills/persona/KG to be
         // silently dropped in direct-reply mode.
@@ -5096,7 +5029,7 @@ impl Orchestrator {
         {
             tracing::warn!(session_id = %session_id, error = %e, "Failed to load conversation history from DB");
         }
-        let mut history = self.session_history(session_id).await;
+        let history = self.session_history(session_id).await;
 
         // Get workspace path for this session
         let workspace_path = if let Some(ref store) = *self.memory_store.read().await {
@@ -5389,73 +5322,6 @@ impl Orchestrator {
             todo_store: Some(self.todo_store.clone()),
             ..Default::default()
         };
-
-        // ── Session compaction: disabled (T12) — handled by SummaryEngine + mid-turn truncation ──
-        if false {
-            if !history.is_empty() {
-                let total_tokens: usize = history.iter()
-                    .map(|m| m.text_content().len() / 4) // rough estimate
-                    .sum();
-                let budget = config.max_prompt_budget.max(8192);
-                let threshold = (budget as f32 * self.compaction_config.trigger_threshold_pct) as usize;
-
-                if total_tokens > threshold {
-                    let start = std::time::Instant::now();
-                    match compact_history(&history, &self.compaction_config, None) {
-                        Ok(result) if result.items_compacted > 0 => {
-                            tracing::info!(
-                                tokens_before = result.tokens_before,
-                                tokens_after = result.tokens_after,
-                                savings_pct = %result.savings_pct,
-                                items_compacted = result.items_compacted,
-                                strategies = ?result.strategies_used,
-                                "session compaction completed (streaming)"
-                            );
-                            // Only use compacted history for this LLM call — do NOT
-                            // persist it back into session_histories (the original
-                            // uncompacted history stays canonical).
-                            history = result.compacted_history;
-
-                            // Force next prefix check to miss — compacted history has different shape
-                            client.prefix_cache_reset(); // reset stats
-                            // Also clear the stored prefix digest
-                            if client.prefix_digest_snapshot().is_some() {
-                                client.prefix_digest_restore(None);
-                            }
-
-                            tracing::info!(
-                                session_id,
-                                duration_ms = start.elapsed().as_millis(),
-                                tool_outputs_truncated = result.tool_outputs_truncated,
-                                base64_elided = result.base64_payloads_elided,
-                                loops_collapsed = result.repetitive_loops_collapsed,
-                                llm_summarization_used = result.llm_summarization_performed,
-                                "compaction details (streaming)"
-                            );
-
-                            // Emit compaction event via engine_events broadcast
-                            let _ = self.engine_events.send(EngineEvent::CompactionPerformed {
-                                session_id: session_id.to_string(),
-                                tokens_before: result.tokens_before,
-                                tokens_after: result.tokens_after,
-                                savings_pct: result.savings_pct,
-                                items_compacted: result.items_compacted,
-                                strategies: result.strategies_used.iter().map(|s| format!("{:?}", s)).collect(),
-                                tool_outputs_truncated: result.tool_outputs_truncated,
-                                base64_elided: result.base64_payloads_elided,
-                                loops_collapsed: result.repetitive_loops_collapsed,
-                                llm_summarization_used: result.llm_summarization_performed,
-                                duration_ms: start.elapsed().as_millis() as u64,
-                            });
-                        }
-                        Ok(_) => {} // No compaction needed
-                        Err(e) => {
-                            tracing::warn!(error = %e, "session compaction failed (streaming), continuing");
-                        }
-                    }
-                }
-            }
-        }
 
         let result = run_agent_turn_streaming_with_images(
             client.as_ref(),
