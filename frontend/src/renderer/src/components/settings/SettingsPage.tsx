@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useStore } from '../../stores'
-import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconPackage, IconBug, IconChevronUp, IconCommand, IconEdit } from '../../utils/icons'
+import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconPackage, IconBug, IconChevronUp, IconCommand, IconEdit, IconFileText } from '../../utils/icons'
 import AgentConfigPanel from '../shared/AgentConfigPanel'
+import LoomMdSection from '../shared/LoomMdSection'
 import { loomRpc } from '../../services/jsonrpc'
 import { useLocale } from '../../i18n'
 import WorkspaceTab from '../shared/WorkspaceTab'
@@ -19,7 +20,7 @@ import TokenTab from './TokenTab'
 import KgTab from './KgTab'
 import { WriteSettingsSection } from '../write/WriteSettingsSection'
 
-type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'write' | 'about'
+type Tab = 'software' | 'agent' | 'loom' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'write' | 'about'
 
 function GlobalDefaultsSection() {
   const { t } = useLocale()
@@ -96,6 +97,7 @@ function useSettingsTabs() {
       label: t('settings.assistantGroup'),
       items: [
         { id: 'agent' as Tab, label: t('settings.agent'), icon: <IconBot size={14} /> },
+        { id: 'loom' as Tab, label: t('settings.loomMd'), icon: <IconFileText size={14} /> },
         { id: 'models' as Tab, label: t('settings.models'), icon: <IconBox size={14} /> },
         { id: 'kg' as Tab, label: t('settings.memorySystem'), icon: <IconBrain size={14} /> },
         { id: 'token' as Tab, label: t('settings.tokenUsage'), icon: <IconBarChart size={14} /> },
@@ -202,6 +204,18 @@ export default function SettingsPage() {
             <div className={styles.contentBody}>
               <GlobalDefaultsSection />
               <AgentConfigPanel />
+            </div>
+          </>
+        )}
+
+        {tab === 'loom' && (
+          <>
+            <div className={styles.contentHeader}>
+              <h3 className={styles.sectionTitle}>{t('settings.loomMd')}</h3>
+              <p className={styles.sectionDesc}>{t('settings.loomMdDesc')}</p>
+            </div>
+            <div className={styles.contentBody}>
+              <LoomMdSection />
             </div>
           </>
         )}

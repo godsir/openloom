@@ -3,6 +3,8 @@ import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
 import { useLocale } from '../../i18n'
+import LoomMdSection from './LoomMdSection'
+import { IconFileText } from '../../utils/icons'
 import settingsStyles from './SettingsModal.module.css'
 import styles from './WorkspaceTab.module.css'
 
@@ -23,6 +25,7 @@ export default function WorkspaceTab() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sessions = useStore(s => s.sessions)
   const sessionWorkspaces = useStore(s => s.sessionWorkspaces)
+  const [editingLoomMd, setEditingLoomMd] = useState<string | null>(null) // workspace path being edited, or null
 
   useEffect(() => {
     Promise.all([
@@ -75,7 +78,7 @@ export default function WorkspaceTab() {
     .filter(([, path]) => path && path !== defaultPath)
     .map(([sid, path]) => {
       const session = sessions.find(s => s.path === sid)
-      return { sid, path, title: session?.title || null }
+      return { sid, path, title: session?.title || null, key: path as string }
     })
 
   if (loading) {
@@ -84,7 +87,7 @@ export default function WorkspaceTab() {
 
   return (
     <div className={settingsStyles.aboutSection}>
-      {/* Default workspace */}
+      {/* ── Default workspace ── */}
       <div className={settingsStyles.themeLabel}>{t('workspace.defaultWorkspace')}</div>
 
       <div className={settingsStyles.aboutRow}>
@@ -106,32 +109,66 @@ export default function WorkspaceTab() {
             {t('workspace.selectFolder')}
           </button>
           {defaultPath && (
-            <button onClick={handleClear} className={settingsStyles.mcpTransportBtn}>
-              {t('common.clear')}
-            </button>
+            <>
+              <button
+                onClick={() => setEditingLoomMd(editingLoomMd === defaultPath ? null : defaultPath)}
+                className={settingsStyles.mcpTransportBtn}
+                title={t('settings.loomMd')}
+                style={editingLoomMd === defaultPath ? { background: 'var(--accent)', color: '#fff', borderColor: 'var(--accent)' } : {}}
+              >
+                <IconFileText size={14} />
+              </button>
+              <button onClick={handleClear} className={settingsStyles.mcpTransportBtn}>
+                {t('common.clear')}
+              </button>
+            </>
           )}
         </div>
       </div>
 
+      {/* Default workspace Loom.md expand */}
+      {editingLoomMd === defaultPath && defaultPath && (
+        <div style={{ marginTop: 12 }}>
+          <LoomMdSection workspaceRoot={defaultPath} />
+        </div>
+      )}
+
       <hr className={settingsStyles.sectionDivider} />
 
-      {/* Session workspace */}
+      {/* ── Session workspaces ── */}
       <div className={settingsStyles.themeLabel}>{t('workspace.sessionWorkspace')}</div>
 
       {sessionsWithWorkspace.length === 0 ? (
         <p className={settingsStyles.toolsEmpty}>{t('workspace.noOverridesDesc')}</p>
       ) : (
-        sessionsWithWorkspace.map(({ sid, path, title }) => (
-          <div key={sid} className={settingsStyles.aboutRow}>
-            <div>
-              <span className={settingsStyles.aboutLabel}>{title || sid.slice(0, 8)}</span>
-              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 320 }}>
-                {path}
-              </p>
+        sessionsWithWorkspace.map(({ sid, path, title, key }) => (
+          <div key={sid}>
+            <div className={settingsStyles.aboutRow}>
+              <div>
+                <span className={settingsStyles.aboutLabel}>{title || sid.slice(0, 8)}</span>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 320 }}>
+                  {path}
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={() => setEditingLoomMd(editingLoomMd === key ? null : key)}
+                  className={settingsStyles.mcpTransportBtn}
+                  title={t('settings.loomMd')}
+                  style={editingLoomMd === key ? { background: 'var(--accent)', color: '#fff', borderColor: 'var(--accent)' } : {}}
+                >
+                  <IconFileText size={14} />
+                </button>
+                <button onClick={() => handleResetSession(sid)} className={settingsStyles.mcpTransportBtn}>
+                  {t('workspace.resetToDefault')}
+                </button>
+              </div>
             </div>
-            <button onClick={() => handleResetSession(sid)} className={settingsStyles.mcpTransportBtn}>
-              {t('workspace.resetToDefault')}
-            </button>
+            {editingLoomMd === key && (
+              <div style={{ marginTop: 12 }}>
+                <LoomMdSection workspaceRoot={path} />
+              </div>
+            )}
           </div>
         ))
       )}
@@ -242,7 +279,6 @@ export default function WorkspaceTab() {
           </div>
         </>
       )}
-
     </div>
   )
 }

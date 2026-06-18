@@ -2,7 +2,7 @@
 
 use loom_types::{AgentConfig, ErrorCode, JsonRpcError, SandboxConfig};
 use serde_json::{Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::err;
 use crate::AppState;
@@ -42,7 +42,7 @@ pub async fn handle(
         "config.get_defaults" => Some(handle_config_get_defaults(state).await),
         "config.set_defaults" => Some(handle_config_set_defaults(state, p).await),
         // Loom.md — 全局 Agent 纪律文件（读取/编辑）
-        "loom_md.read" => Some(handle_loom_md_read()),
+        "loom_md.read" => Some(handle_loom_md_read(p)),
         "loom_md.save" => Some(handle_loom_md_save(p)),
         // Marketplace
         "marketplace.list" => Some(handle_marketplace_list(state, p).await),
@@ -648,26 +648,44 @@ async fn handle_config_set_defaults(state: &AppState, p: &Value) -> Result<Value
 
 // --- loom_md.read ---
 //
-// 读取全局 ~/.loom/Loom.md 原文（含空内容），供设置面板编辑器展示。
-// 文件不存在时返回空串——首次保存时会自动创建。
+// 读取 Loom.md 原文（含空内容），供设置面板编辑器展示。
+// - 无 workspace_root → 读取全局 ~/.loom/Loom.md，文件不存在时返回空串
+// - 有 workspace_root → 读取 $workspace_root/Loom.md，文件不存在时自动创建空文件
 
-fn handle_loom_md_read() -> Result<Value, JsonRpcError> {
-    let home = dirs::home_dir().unwrap_or_default().join(".loom");
-    let loom_file = home.join("Loom.md");
-    let content = std::fs::read_to_string(&loom_file).unwrap_or_default();
-    Ok(json!({ "content": content, "path": loom_file.display().to_string() }))
+fn handle_loom_md_read(p: &Value) -> Result<Value, JsonRpcError> {
+    let workspace = p.get("workspace_root").and_then(|v| v.as_str());
+    if let Some(ws) = workspace {
+        let loom_file = PathBuf::from(ws).join("Loom.md");
+        let content = std::fs::read_to_string(&loom_file).unwrap_or_default();
+        Ok(json!({ "content": content, "path": loom_file.display().to_string() }))
+    } else {
+        let home = dirs::home_dir().unwrap_or_default().join(".loom");
+        let loom_file = home.join("Loom.md");
+        let content = std::fs::read_to_string(&loom_file).unwrap_or_default();
+        Ok(json!({ "content": content, "path": loom_file.display().to_string() }))
+    }
 }
 
 // --- loom_md.save ---
 //
-// 写入全局 ~/.loom/Loom.md。空内容也允许（视为用户主动禁用 Loom.md 纪律，
-// load_loom_md 会跳过空文件并走硬编码兜底，不会再回填默认内容）。
+// 写入 Loom.md。
+// - 无 workspace_root → 写入全局 ~/.loom/Loom.md
+// - 有 workspace_root → 写入 $workspace_root/Loom.md
 
 fn handle_loom_md_save(p: &Value) -> Result<Value, JsonRpcError> {
     let content = p.get("content").and_then(|v| v.as_str()).unwrap_or("");
-    let home = dirs::home_dir().unwrap_or_default().join(".loom");
-    let _ = std::fs::create_dir_all(&home);
-    let loom_file = home.join("Loom.md");
+    let workspace = p.get("workspace_root").and_then(|v| v.as_str());
+    let loom_file = if let Some(ws) = workspace {
+        let f = PathBuf::from(ws).join("Loom.md");
+        if let Some(parent) = f.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        f
+    } else {
+        let home = dirs::home_dir().unwrap_or_default().join(".loom");
+        let _ = std::fs::create_dir_all(&home);
+        home.join("Loom.md")
+    };
     std::fs::write(&loom_file, content)
         .map_err(|e| err(ErrorCode::InternalError, &format!("Write error: {}", e)))?;
     Ok(json!({ "ok": true, "path": loom_file.display().to_string() }))

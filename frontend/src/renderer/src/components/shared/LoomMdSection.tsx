@@ -4,10 +4,11 @@ import { rpc } from '../../services/rpc-toast'
 import { useLocale } from '../../i18n'
 import styles from './SettingsModal.module.css'
 
-// Loom.md 全局纪律文件编辑器。
-// 直接读写 ~/.loom/Loom.md，保存后对后续所有 agent 会话立即生效
-// （build_full_system_prompt 每个 turn 重新读取，无需重启）。
-export default function LoomMdSection() {
+// Loom.md 编辑器 — 统一通过 loom_md.read/save 读写。
+// - workspaceRoot 为空 → 全局 ~/.loom/Loom.md
+// - workspaceRoot 有值 → $workspace_root/Loom.md（不存在时后端自动创建空文件）
+
+export default function LoomMdSection({ workspaceRoot }: { workspaceRoot?: string }) {
   const { t } = useLocale()
   const [content, setContent] = useState('')
   const [path, setPath] = useState('')
@@ -15,15 +16,24 @@ export default function LoomMdSection() {
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
 
+  const isWorkspace = !!workspaceRoot
+
   useEffect(() => {
-    loomRpc<{ content: string; path: string }>('loom_md.read')
+    let cancelled = false
+    const params: Record<string, unknown> = {}
+    if (isWorkspace) {
+      params.workspace_root = workspaceRoot
+    }
+    loomRpc<{ content: string; path: string }>('loom_md.read', params)
       .then((r) => {
+        if (cancelled) return
         setContent(r.content ?? '')
         setPath(r.path ?? '')
         setLoaded(true)
       })
-      .catch(() => setLoaded(true))
-  }, [])
+      .catch(() => { if (!cancelled) setLoaded(true) })
+    return () => { cancelled = true }
+  }, [workspaceRoot, isWorkspace])
 
   const handleChange = (v: string) => {
     setContent(v)
@@ -33,25 +43,33 @@ export default function LoomMdSection() {
   const save = useCallback(async () => {
     setSaving(true)
     try {
-      await rpc('loom_md.save', { content }, t('settings.loomMdSaved'))
+      const params: Record<string, unknown> = { content }
+      if (isWorkspace) {
+        params.workspace_root = workspaceRoot
+      }
+      await rpc('loom_md.save', params, t('settings.loomMdSaved'))
       setDirty(false)
     } catch {
       /* toast already shown by rpc helper */
     } finally {
       setSaving(false)
     }
-  }, [content, t])
+  }, [content, t, isWorkspace, workspaceRoot])
 
   if (!loaded) return null
 
+  const title = isWorkspace ? t('settings.loomMdWorkspaceTitle') : t('settings.loomMdTitle')
+  const hint = isWorkspace ? t('settings.loomMdWorkspaceHint') : t('settings.loomMdHint')
+  const placeholder = t('settings.loomMdPlaceholder')
+
   return (
     <div className={styles.globalDefaultsCard}>
-      <h4 className={styles.globalDefaultsTitle}>{t('settings.loomMdTitle')}</h4>
-      <p className={styles.globalDefaultsDesc}>{t('settings.loomMdHint')}</p>
+      <h4 className={styles.globalDefaultsTitle}>{title}</h4>
+      <p className={styles.globalDefaultsDesc}>{hint}</p>
       <textarea
         value={content}
         onChange={(e) => handleChange(e.target.value)}
-        placeholder={t('settings.loomMdPlaceholder')}
+        placeholder={placeholder}
         spellCheck={false}
         className={styles.loomMdTextarea}
       />
