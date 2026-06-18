@@ -3,8 +3,8 @@ import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { useLocale } from '../../i18n'
 import styles from '../shared/SettingsModal.module.css'
-import logoDev from '../../assets/loom_logo_dev.png'
-import logoRelease from '../../assets/loom_logo.png'
+import logoDev from '@asset/icon_dev.png'
+import logoRelease from '@asset/icon.png'
 
 interface SystemHealth {
   status: string

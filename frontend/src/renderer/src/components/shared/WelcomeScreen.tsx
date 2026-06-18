@@ -2,7 +2,7 @@ import { useStore } from '../../stores'
 import { IconCpu, IconTerminal, IconBrain, IconBookOpen, IconSparkles, IconMessageSquare } from '../../utils/icons'
 import { useLocale } from '../../i18n'
 import styles from './WelcomeScreen.module.css'
-import bannerImg from '../../assets/banner.png'
+import bannerImg from '@asset/banner.png'
 
 export default function WelcomeScreen() {
   const { t } = useLocale()

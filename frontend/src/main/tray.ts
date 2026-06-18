@@ -11,7 +11,7 @@ function getIconPath(): string {
   if (app.isPackaged) {
     return join(process.resourcesPath, 'icon.png')
   }
-  return join(__dirname, '../../src/asset/loom_logo_dev.png')
+  return join(__dirname, '../../src/asset/icon_dev.png')
 }
 
 function buildMenu(): Menu {

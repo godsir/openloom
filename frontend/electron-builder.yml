@@ -5,13 +5,16 @@ directories:
   output: dist
   buildResources: resources
 extraResources:
-  - from: resources/
+  - from: src/asset/
     to: .
+    filter:
+      - icon.ico
+      - icon.png
   - from: ../target/release/loom.exe
     to: engine/loom.exe
 win:
   target: nsis
-  icon: resources/icon.ico
+  icon: src/asset/icon.ico
   artifactName: ${productName}.Setup.${version}.${ext}
 nsis:
   oneClick: false

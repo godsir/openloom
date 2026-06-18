@@ -75,7 +75,10 @@ export function registerAppIpc(): void {
     const win = BrowserWindow.fromWebContents(event.sender)
     try {
       if (Notification.isSupported()) {
-        const n = new Notification({ title, body, icon: path.join(__dirname, '../../src/asset/loom_logo_dev.ico') })
+        const iconPath = app.isPackaged
+          ? path.join(process.resourcesPath, 'icon.ico')
+          : path.join(__dirname, '../../src/asset/icon_dev.ico')
+        const n = new Notification({ title, body, icon: iconPath })
         n.on('click', () => {
           if (win) {
             if (win.isMinimized()) win.restore()

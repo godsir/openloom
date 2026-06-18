@@ -7,7 +7,7 @@ function getIconPath(): string {
   if (app.isPackaged) {
     return join(process.resourcesPath, 'icon.ico')
   }
-  return join(__dirname, '../../src/asset/loom_logo_dev.ico')
+  return join(__dirname, '../../src/asset/icon_dev.ico')
 }
 
 export function createMainWindow(port: number): BrowserWindow {
