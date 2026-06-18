@@ -495,8 +495,8 @@ fn sanitize_message_sequence(messages: &mut Vec<Message>) {
             // If the assistant has tool_calls but zero tool messages follow
             // at all, or every following tool message is orphaned, the
             // assistant is orphaned too.
-            if !tool_run.is_empty()
-                && tool_run.iter().all(|idx| orphaned_tool.contains(idx))
+            if tool_run.is_empty()
+                || tool_run.iter().all(|idx| orphaned_tool.contains(idx))
             {
                 orphaned_assistant.insert(i);
             }
