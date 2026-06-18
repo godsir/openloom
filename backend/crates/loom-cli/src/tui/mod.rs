@@ -1,22 +1,28 @@
 //! TUI chat entry point.
 //!
-//! Architecture:
-//! 1. Main thread runs a single event loop: keyboard → stream → redraw
-//! 2. When user sends a message, stream deltas go into a shared buffer
-//!    (Arc<Mutex<Vec>>) via a bridge task so they never race with rendering.
-//! 3. The main loop drains the buffer each tick, applies events to AppState,
-//!    and redraws ratatui.
+//! Single event-loop architecture:
+//!   1. Poll keyboard (crossterm, 50ms timeout)
+//!   2. If streaming, drain the shared buffer
+//!   3. Apply events → AppState
+//!   4. Redraw (ratatui)
+//!
+//! Ctrl+C is detected through TWO paths:
+//!   a. crossterm KeyEvent (primary — works on all platforms in raw mode)
+//!   b. ctrlc crate signal handler (fallback — POSIX, or Windows outside raw mode)
+//!
+//! On Windows raw mode: Ctrl+C → keyboard input record with UnicodeChar=3 (ETX).
+//! We match both `\u{3}` (Windows) and `'c'+CONTROL` (POSIX).
 
 pub mod app;
 pub mod stream;
 pub mod ui;
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -28,10 +34,8 @@ use tokio::sync::mpsc;
 use app::{AppState, ChatLine, ToolStatus};
 use stream::{convert, AppEvent};
 
-/// Shared event buffer: bridge task pushes, main loop drains.
 type EventBuffer = Arc<Mutex<Vec<AppEvent>>>;
 
-/// Apply a single AppEvent to the TUI state.
 fn apply_event(ev: AppEvent, state: &mut AppState, thinking_buf: &mut String) {
     match ev {
         AppEvent::TextChunk(t) => {
@@ -43,9 +47,7 @@ fn apply_event(ev: AppEvent, state: &mut AppState, thinking_buf: &mut String) {
             }
             state.append_text(&t);
         }
-        AppEvent::ReasoningChunk(r) => {
-            thinking_buf.push_str(&r);
-        }
+        AppEvent::ReasoningChunk(r) => thinking_buf.push_str(&r),
         AppEvent::ToolBegin { index, name, .. } => {
             state.upsert_tool(index, &name, ToolStatus::Running);
         }
@@ -64,20 +66,38 @@ fn apply_event(ev: AppEvent, state: &mut AppState, thinking_buf: &mut String) {
                 };
             }
         }
-        AppEvent::Usage(ts) => {
-            state.tokens = ts;
-        }
+        AppEvent::Usage(ts) => state.tokens = ts,
         _ => {}
     }
 }
 
-/// Run the TUI chat loop.
+/// Detect Ctrl+C across platforms.
+///
+/// Windows (raw mode): `KeyCode::Char('\u{3}')` (ETX control character).
+/// POSIX (raw mode):  `KeyCode::Char('c')` or `Char('C')` + `KeyModifiers::CONTROL`.
+fn is_ctrl_c(key: &crossterm::event::KeyEvent) -> bool {
+    if key.kind != KeyEventKind::Press {
+        return false;
+    }
+    // Always accept \u{3} (the raw control-C character, common on Windows).
+    if matches!(key.code, KeyCode::Char('\u{3}')) {
+        return true;
+    }
+    // Also accept c/C with CONTROL modifier (POSIX, some terminals on Windows).
+    if key.modifiers.contains(KeyModifiers::CONTROL)
+        && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
+    {
+        return true;
+    }
+    false
+}
+
 pub async fn run_tui(
     orchestrator: Arc<Orchestrator>,
     model_name: String,
     session_id: String,
 ) -> anyhow::Result<()> {
-    // --- Terminal setup ---
+    // ── Terminal setup ──
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -87,217 +107,230 @@ pub async fn run_tui(
     let mut state = AppState::default();
     state.model_name = model_name;
 
-    // Ctrl+C handler ─ set flag; TUI loop checks and decides cancel vs quit.
-    let cancel_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut thinking_buf = String::new();
+
+    // ── Ctrl+C signal flag (ctrlc crate — works on POSIX, may work on Windows) ──
+    let cancel_flag = Arc::new(AtomicBool::new(false));
     {
-        let cf = cancel_flag.clone();
+        let f = cancel_flag.clone();
         ctrlc::set_handler(move || {
-            cf.store(true, Ordering::SeqCst);
+            f.store(true, Ordering::SeqCst);
         })
         .ok();
     }
 
-    let mut thinking_buf = String::new();
+    // ── Streaming state (set when a turn is in progress) ──
+    // These are Option because a turn is started/ended per-message.
+    let mut orch_handle: Option<tokio::task::JoinHandle<()>> = None;
+    let mut bridge_handle: Option<tokio::task::JoinHandle<()>> = None;
+    let mut stream_buffer: Option<EventBuffer> = None;
 
-    // --- Single event loop (no nested loops) ---
-    loop {
-        // ── Ctrl+C handling ──
+    // ── Single event loop (NO inner pump — everything goes through here) ──
+    'outer: loop {
+        // ── 1. Check ctrlc signal flag ──
         if cancel_flag.swap(false, Ordering::SeqCst) {
             if state.streaming {
-                // First press during streaming → cancel
+                // Cancel the streaming turn
+                if let Some(h) = orch_handle.take() {
+                    h.abort();
+                }
+                if let Some(h) = bridge_handle.take() {
+                    h.abort();
+                }
+                stream_buffer = None;
                 state.streaming = false;
                 state.push_line(ChatLine {
                     role: "thinking",
                     text: "[cancelled]".into(),
                 });
+                if !thinking_buf.is_empty() {
+                    thinking_buf.clear();
+                }
             } else {
-                // Second press (idle) → quit
-                break;
+                break 'outer;
             }
         }
 
+        // ── 2. Drain stream buffer (if streaming) ──
+        if let Some(ref buf) = stream_buffer {
+            let events: Vec<AppEvent> = {
+                let mut g = buf.lock().unwrap();
+                std::mem::take(&mut *g)
+            };
+            for ev in events {
+                apply_event(ev, &mut state, &mut thinking_buf);
+            }
+
+            // Check if bridge finished (stream ended normally)
+            if let Some(ref h) = bridge_handle
+                && h.is_finished()
+            {
+                // Drain any leftover events
+                let rest: Vec<AppEvent> = {
+                    let mut g = buf.lock().unwrap();
+                    std::mem::take(&mut *g)
+                };
+                for ev in rest {
+                    apply_event(ev, &mut state, &mut thinking_buf);
+                }
+                if !thinking_buf.is_empty() {
+                    state.push_line(ChatLine {
+                        role: "thinking",
+                        text: std::mem::take(&mut thinking_buf),
+                    });
+                }
+                state.end_turn();
+                stream_buffer = None;
+                orch_handle = None;
+                bridge_handle = None;
+            }
+        }
+
+        // ── 3. Draw ──
         terminal.draw(|f| ui::render(f, &state))?;
 
-        // ── Wait for keyboard event with a short timeout ──
-        // During idle this blocks comfortably; during streaming the timeout
-        // is short so we can pump deltas from the background buffer.
+        // ── 4. Poll keyboard ──
+        // Short timeout during streaming so the buffer drain loop is responsive.
         let poll_dur = if state.streaming {
             Duration::from_millis(30)
         } else {
             Duration::from_millis(200)
         };
 
-        if event::poll(poll_dur)? {
-            let ev = event::read()?;
-            if let Event::Key(key) = ev
-                && key.kind == KeyEventKind::Press
-            {
-                match key.code {
-                    KeyCode::Enter => {
-                        let line = state.input.trim().to_string();
-                        if line.is_empty() {
-                            continue;
-                        }
-                        state.input.clear();
-                        state.input_cursor = 0;
-
-                        // ── Slash commands ──
-                        if line == "/exit" || line == "/quit" {
-                            break;
-                        }
-                        if line == "/tools" {
-                            let r = orchestrator.tool_registry().await;
-                            let body = r.list_names().join("\n");
-                            state.overlay = Some(app::OverlayContent {
-                                title: "Available Tools".into(),
-                                body,
-                            });
-                            continue;
-                        }
-                        if line == "/skills" {
-                            let summaries = orchestrator.get_skill_summaries().await;
-                            let body = if summaries.is_empty() {
-                                "none loaded".into()
-                            } else {
-                                summaries
-                                    .iter()
-                                    .map(|s| format!("- {}: {}", s.name, s.description))
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
-                            };
-                            state.overlay = Some(app::OverlayContent {
-                                title: "Available Skills".into(),
-                                body,
-                            });
-                            continue;
-                        }
-
-                        // ── Start a new turn ──
-                        state.start_turn();
-                        state.push_line(ChatLine {
-                            role: "user",
-                            text: line.clone(),
-                        });
-                        thinking_buf.clear();
-
-                        // Shared buffer: bridge task pushes events, main loop drains.
-                        let buffer: EventBuffer = Arc::new(Mutex::new(Vec::new()));
-
-                        // Spawn orchestrator streaming in background.
-                        let (tx, mut tokio_rx) = mpsc::channel::<StreamDelta>(256);
-                        let orch = orchestrator.clone();
-                        let sess = session_id.clone();
-                        let orch_handle = tokio::spawn(async move {
-                            let _ = orch
-                                .process_message_streaming(
-                                    &line, tx, &sess, None, vec![], vec![], "operate",
-                                )
-                                .await;
-                        });
-
-                        // Bridge: tokio mpsc → shared buffer (runs concurrently on runtime).
-                        let buf = buffer.clone();
-                        let bridge = tokio::spawn(async move {
-                            while let Some(delta) = tokio_rx.recv().await {
-                                buf.lock().unwrap().push(convert(delta));
-                            }
-                        });
-
-                        // ── Inner pump: drain buffer + redraw until stream ends ──
-                        loop {
-                            // Check cancel
-                            if cancel_flag.swap(false, Ordering::SeqCst) {
-                                orch_handle.abort();
-                                bridge.abort();
-                                state.streaming = false;
-                                state.push_line(ChatLine {
-                                    role: "thinking",
-                                    text: "[cancelled]".into(),
-                                });
-                                break;
-                            }
-
-                            // Drain buffered events
-                            let new_events: Vec<AppEvent> = {
-                                let mut guard = buffer.lock().unwrap();
-                                std::mem::take(&mut *guard)
-                            };
-                            for ev in new_events {
-                                apply_event(ev, &mut state, &mut thinking_buf);
-                            }
-
-                            terminal.draw(|f| ui::render(f, &state))?;
-
-                            // Bridge finished → stream ended
-                            if bridge.is_finished() {
-                                // Drain any final events
-                                let final_events: Vec<AppEvent> = {
-                                    let mut guard = buffer.lock().unwrap();
-                                    std::mem::take(&mut *guard)
-                                };
-                                for ev in final_events {
-                                    apply_event(ev, &mut state, &mut thinking_buf);
-                                }
-                                // Flush remaining thinking
-                                if !thinking_buf.is_empty() {
-                                    state.push_line(ChatLine {
-                                        role: "thinking",
-                                        text: std::mem::take(&mut thinking_buf),
-                                    });
-                                }
-                                state.end_turn();
-                                break;
-                            }
-
-                            // Yield to runtime so bridge/orch tasks can progress.
-                            tokio::time::sleep(Duration::from_millis(10)).await;
-                        }
-                    }
-
-                    KeyCode::Char(c) => {
-                        if state.overlay.is_some() {
-                            state.overlay = None;
-                        }
-                        state.input.push(c);
-                        state.input_cursor += 1;
-                    }
-
-                    KeyCode::Backspace => {
-                        if state.input_cursor > 0 {
-                            state.input.remove(state.input_cursor - 1);
-                            state.input_cursor -= 1;
-                        }
-                    }
-
-                    KeyCode::Esc => {
-                        state.overlay = None;
-                    }
-
-                    KeyCode::PageUp => {
-                        state.scroll_offset = state.scroll_offset.saturating_add(1);
-                    }
-
-                    KeyCode::PageDown => {
-                        state.scroll_offset = state.scroll_offset.saturating_sub(1);
-                    }
-
-                    _ => {}
-                }
-            }
+        if !event::poll(poll_dur)? {
+            continue;
         }
 
-        // If we're streaming but there's no active pump, something went wrong.
-        // Reset to idle (safety net).
-        if state.streaming && thinking_buf.is_empty() {
-            // streaming = true is set by start_turn; reset by end_turn / cancel.
-            // This guards against edge cases where streaming gets stuck.
+        let ev = event::read()?;
+        if let Event::Key(key) = ev {
+            // ── Ctrl+C via keyboard event ──
+            if is_ctrl_c(&key) {
+                if state.streaming {
+                    if let Some(h) = orch_handle.take() {
+                        h.abort();
+                    }
+                    if let Some(h) = bridge_handle.take() {
+                        h.abort();
+                    }
+                    stream_buffer = None;
+                    state.streaming = false;
+                    state.push_line(ChatLine {
+                        role: "thinking",
+                        text: "[cancelled]".into(),
+                    });
+                } else {
+                    break 'outer;
+                }
+                continue;
+            }
+
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+
+            match key.code {
+                KeyCode::Enter => {
+                    let line = state.input.trim().to_string();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    state.input.clear();
+
+                    // ── Slash commands ──
+                    if line == "/exit" || line == "/quit" {
+                        break 'outer;
+                    }
+                    if line == "/tools" {
+                        let r = orchestrator.tool_registry().await;
+                        state.overlay = Some(app::OverlayContent {
+                            title: "Available Tools".into(),
+                            body: r.list_names().join("\n"),
+                        });
+                        continue;
+                    }
+                    if line == "/skills" {
+                        let summaries = orchestrator.get_skill_summaries().await;
+                        let body = if summaries.is_empty() {
+                            "none loaded".into()
+                        } else {
+                            summaries
+                                .iter()
+                                .map(|s| format!("- {}: {}", s.name, s.description))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        };
+                        state.overlay = Some(app::OverlayContent {
+                            title: "Available Skills".into(),
+                            body,
+                        });
+                        continue;
+                    }
+
+                    // ── Start streaming turn ──
+                    state.start_turn();
+                    state.push_line(ChatLine {
+                        role: "user",
+                        text: line.clone(),
+                    });
+                    thinking_buf.clear();
+
+                    let buffer: EventBuffer = Arc::new(Mutex::new(Vec::new()));
+                    let (tx, tokio_rx) = mpsc::channel::<StreamDelta>(256);
+
+                    let orch = orchestrator.clone();
+                    let sess = session_id.clone();
+                    let oh = tokio::spawn(async move {
+                        let _ = orch
+                            .process_message_streaming(
+                                &line, tx, &sess, None, vec![], vec![], "operate",
+                            )
+                            .await;
+                    });
+
+                    let buf = buffer.clone();
+                    let bh = tokio::spawn(async move {
+                        let mut rx = tokio_rx;
+                        while let Some(delta) = rx.recv().await {
+                            buf.lock().unwrap().push(convert(delta));
+                        }
+                    });
+
+                    orch_handle = Some(oh);
+                    bridge_handle = Some(bh);
+                    stream_buffer = Some(buffer);
+                }
+
+                KeyCode::Char(c) => {
+                    if state.overlay.is_some() {
+                        state.overlay = None;
+                    }
+                    state.input.push(c);
+                }
+
+                KeyCode::Backspace => {
+                    state.input.pop();
+                }
+
+                KeyCode::Esc => {
+                    state.overlay = None;
+                }
+
+                KeyCode::PageUp => {
+                    state.scroll_offset = state.scroll_offset.saturating_add(1);
+                }
+
+                KeyCode::PageDown => {
+                    state.scroll_offset = state.scroll_offset.saturating_sub(1);
+                }
+
+                _ => {}
+            }
         }
     }
 
-    // --- Cleanup ---
+    // ── Cleanup ──
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
-
     Ok(())
 }

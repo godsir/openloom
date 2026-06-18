@@ -32,8 +32,6 @@ pub struct AppState {
     pub tools: Vec<ToolEntry>,
     /// Input buffer (what the user is typing).
     pub input: String,
-    /// Cursor position in input.
-    pub input_cursor: usize,
     /// Chat scroll offset (0 = newest at bottom).
     pub scroll_offset: u16,
     /// Token counters for status bar.
@@ -70,7 +68,6 @@ impl Default for AppState {
             chat_lines: Vec::new(),
             tools: Vec::new(),
             input: String::new(),
-            input_cursor: 0,
             scroll_offset: 0,
             tokens: TokenStats::default(),
             streaming: false,

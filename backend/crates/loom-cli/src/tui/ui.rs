@@ -63,28 +63,115 @@ fn render_chat(f: &mut Frame, area: Rect, state: &AppState) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 
-    let lines: Vec<Line> = state
-        .chat_lines
-        .iter()
-        .map(|cl| {
-            let role_span = match cl.role {
-                "user" => Span::styled("> ", Style::default().fg(Color::Cyan)),
-                "assistant" => Span::raw(""),
-                "thinking" => Span::styled("  [think] ", Style::default().fg(Color::Yellow)),
-                "tool" => Span::styled("  [tool] ", Style::default().fg(Color::Magenta)),
-                _ => Span::raw(""),
-            };
-            let text_span = Span::raw(&cl.text);
-            Line::from(vec![role_span, text_span])
-        })
-        .collect();
+    if state.chat_lines.is_empty() {
+        render_welcome(f, block.inner(area));
+        f.render_widget(block, area);
+    } else {
+        let lines: Vec<Line> = state
+            .chat_lines
+            .iter()
+            .map(|cl| {
+                let role_span = match cl.role {
+                    "user" => Span::styled("> ", Style::default().fg(Color::Cyan)),
+                    "assistant" => Span::raw(""),
+                    "thinking" => {
+                        Span::styled("  [think] ", Style::default().fg(Color::Yellow))
+                    }
+                    "tool" => Span::styled("  [tool] ", Style::default().fg(Color::Magenta)),
+                    _ => Span::raw(""),
+                };
+                let text_span = Span::raw(&cl.text);
+                Line::from(vec![role_span, text_span])
+            })
+            .collect();
 
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .wrap(Wrap { trim: false })
-        .scroll((state.scroll_offset, 0));
+        let paragraph = Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false })
+            .scroll((state.scroll_offset, 0));
 
-    f.render_widget(paragraph, area);
+        f.render_widget(paragraph, area);
+    }
+}
+
+fn render_welcome(f: &mut Frame, area: Rect) {
+    let version = env!("CARGO_PKG_VERSION");
+
+    let lines: Vec<Line> = vec![
+        Line::raw(""),
+        Line::from(Span::styled(
+            "  ╔══════════════════════════════════════╗",
+            Style::default().fg(Color::Rgb(106, 106, 247)),
+        )),
+        Line::from(vec![
+            Span::styled(
+                "  ║      ",
+                Style::default().fg(Color::Rgb(106, 106, 247)),
+            ),
+            Span::styled(
+                "openLoom",
+                Style::default()
+                    .fg(Color::Rgb(106, 106, 247))
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
+            Span::styled(
+                " — local-first AI assistant",
+                Style::default().fg(Color::Gray),
+            ),
+            Span::styled(
+                "      ║",
+                Style::default().fg(Color::Rgb(106, 106, 247)),
+            ),
+        ]),
+        Line::from(Span::styled(
+            format!(
+                "  ║              v{:<22}║",
+                version
+            ),
+            Style::default().fg(Color::Rgb(106, 106, 247)),
+        )),
+        Line::from(Span::styled(
+            "  ╚══════════════════════════════════════╝",
+            Style::default().fg(Color::Rgb(106, 106, 247)),
+        )),
+        Line::raw(""),
+        Line::from(Span::styled(
+            "  Commands:",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        )),
+        Line::from(vec![
+            Span::styled("    /tools ", Style::default().fg(Color::Cyan)),
+            Span::raw("  — list available tools"),
+        ]),
+        Line::from(vec![
+            Span::styled("    /skills", Style::default().fg(Color::Cyan)),
+            Span::raw("  — list loaded skills"),
+        ]),
+        Line::from(vec![
+            Span::styled("    /exit  ", Style::default().fg(Color::Cyan)),
+            Span::raw("  — quit"),
+        ]),
+        Line::raw(""),
+        Line::from(Span::styled(
+            "  Type a message and press Enter to start.",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    // Center vertically
+    let total_height = lines.len() as u16;
+    let vpad = area.height.saturating_sub(total_height) / 2;
+    let centered_area = Rect::new(
+        area.x,
+        area.y + vpad,
+        area.width,
+        total_height,
+    );
+
+    let paragraph = Paragraph::new(lines);
+    f.render_widget(paragraph, centered_area);
 }
 
 fn render_tool_panel(f: &mut Frame, area: Rect, state: &AppState) {

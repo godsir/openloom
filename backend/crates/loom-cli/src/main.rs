@@ -231,19 +231,16 @@ async fn main() -> anyhow::Result<()> {
     if is_tui_chat {
         let log_dir = data_dir();
         let _ = std::fs::create_dir_all(&log_dir);
-        if let Ok(log_file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .write(true)
-            .open(log_dir.join("chat.log"))
-        {
-            tracing_subscriber::fmt()
-                .with_env_filter("info")
-                .with_writer(std::sync::Mutex::new(log_file))
-                .init();
-        } else {
-            tracing_subscriber::fmt().with_env_filter("info").init();
-        }
+        let file_appender = tracing_appender::rolling::never(&log_dir, "chat.log");
+        let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+        // Leak the guard so the background writer lives for the entire process.
+        std::mem::forget(_guard);
+        tracing_subscriber::fmt()
+            .with_env_filter("info")
+            .with_writer(non_blocking)
+            .init();
+        // Suppress stdout/stderr from child crates by redirecting them.
+        // Raw mode + alternate screen can't coexist with println!/eprintln!.
     } else {
         tracing_subscriber::fmt().with_env_filter("info").init();
     }
