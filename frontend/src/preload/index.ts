@@ -44,6 +44,9 @@ export interface LoomApi {
   unwatchFile: (filePath: string, workspaceRoot: string) => Promise<{ok: boolean}>
   /** Show a native OS notification (Windows toast / macOS notification center) */
   showNotification: (title: string, body: string) => Promise<void>
+  /** Custom context menu events */
+  onContextMenu: (cb: (params: ContextMenuParams) => void) => () => void
+  executeContextMenuAction: (action: 'cut' | 'copy' | 'paste' | 'selectAll') => void
 }
 
 interface PetMeta {
@@ -58,6 +61,17 @@ interface PetMeta {
   framesPerRow?: number
   rowFrames?: Record<string, number>
   states?: Record<string, number>
+}
+
+interface ContextMenuParams {
+  isEditable: boolean
+  canCut: boolean
+  canCopy: boolean
+  canPaste: boolean
+  canSelectAll: boolean
+  hasSelection: boolean
+  x: number
+  y: number
 }
 
 contextBridge.exposeInMainWorld('loom', {
@@ -135,4 +149,12 @@ contextBridge.exposeInMainWorld('loom', {
   watchFile: (filePath: string, workspaceRoot: string) => ipcRenderer.invoke('write:watch-file', { filePath, workspaceRoot }),
   unwatchFile: (filePath: string, workspaceRoot: string) => ipcRenderer.invoke('write:unwatch-file', { filePath, workspaceRoot }),
   showNotification: (title: string, body: string) => ipcRenderer.invoke('show-notification', title, body),
+  onContextMenu: (cb: (params: ContextMenuParams) => void) => {
+    const fn = (_e: unknown, params: ContextMenuParams): void => cb(params)
+    ipcRenderer.on('context-menu', fn)
+    return () => { ipcRenderer.removeListener('context-menu', fn) }
+  },
+  executeContextMenuAction: (action: 'cut' | 'copy' | 'paste' | 'selectAll') => {
+    ipcRenderer.send('context-menu-action', action)
+  },
 } satisfies LoomApi)

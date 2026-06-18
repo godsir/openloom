@@ -9,6 +9,12 @@ export const zhTW: TranslationMap = {
   'common.close': '關閉',
   'common.back': '返回',
   'common.backToTop': '回到顶部',
+
+  // ── Context Menu ─────────────────────────────────────────────────
+  'menu.cut': '剪下',
+  'menu.copy': '複製',
+  'menu.paste': '貼上',
+  'menu.selectAll': '全選',
   'common.refresh': '刷新',
   'common.loading': '載入中...',
   'common.empty': '暫無資料',

@@ -11,6 +11,7 @@ import WriteToolbar from './WriteToolbar'
 import { WriteDocumentPane } from './WriteDocumentPane'
 import { WriteAssistantPanel } from './WriteAssistantPanel'
 import { WriteFileDialogs } from './WriteFileDialogs'
+import ImageLightbox from '../shared/ImageLightbox'
 import styles from './WriteWorkspaceView.module.css'
 
 export const WriteWorkspaceView: React.FC = () => {
@@ -20,6 +21,8 @@ export const WriteWorkspaceView: React.FC = () => {
   const toggleWriteFileSidebar = useStore(s => s.toggleWriteFileSidebar)
   const createSession = useStore(s => s.createSession)
   const evictSession = useStore(s => s.evictSession)
+  const lightboxSrc = useStore(s => s.lightbox.lightboxSrc)
+  const closeLightbox = useStore(s => s.closeLightbox)
 
   const {
     workspaceRoot, setWorkspaceRoot, autoSaveIntervalMs, fontSize, setFontSize,
@@ -185,6 +188,7 @@ export const WriteWorkspaceView: React.FC = () => {
       </div>
       <WriteFileDialogs />
       {toastMessage && <div className={styles.toast}>{toastMessage.text}</div>}
+      <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
     </div>
   )
 }

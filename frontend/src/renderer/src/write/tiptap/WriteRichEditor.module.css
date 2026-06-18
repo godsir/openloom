@@ -1,0 +1,154 @@
+/* Tiptap rich editor content styling — makes headings, bold, italic,
+   lists, blockquotes, and code blocks visually distinct. */
+
+/* ── Root editor area ── */
+.editor {
+  flex: 1;
+  overflow: auto;
+  padding: 24px 32px;
+  font-family: var(--font);
+  color: var(--text);
+  line-height: 1.8;
+}
+
+/* ── Headings ── */
+.editor :global(h1) {
+  font-size: 1.8em;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 1.2em 0 0.4em;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.2em;
+}
+
+.editor :global(h2) {
+  font-size: 1.5em;
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 1em 0 0.3em;
+  color: var(--text);
+}
+
+.editor :global(h3) {
+  font-size: 1.2em;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 0.8em 0 0.2em;
+  color: var(--text);
+}
+
+/* ── Paragraph ── */
+.editor :global(p) {
+  margin: 0 0 0.5em;
+}
+
+/* ── Bold / Italic / Strike ── */
+.editor :global(strong) {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.editor :global(em) {
+  font-style: italic;
+}
+
+.editor :global(s) {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+/* ── Inline code ── */
+.editor :global(code) {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  padding: 0.15em 0.35em;
+  border-radius: var(--r-sm);
+  background: var(--bg-active);
+  color: var(--accent);
+}
+
+/* ── Code block ── */
+.editor :global(pre) {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  line-height: 1.55;
+  padding: 14px 18px;
+  border-radius: var(--r-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  margin: 0.6em 0 0.8em;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.editor :global(pre code) {
+  background: none;
+  padding: 0;
+  color: var(--text);
+  font-size: inherit;
+}
+
+/* ── Blockquote ── */
+.editor :global(blockquote) {
+  margin: 0.6em 0 0.8em;
+  padding: 6px 16px;
+  border-left: 3px solid var(--accent);
+  color: var(--text-secondary);
+  background: var(--accent-subtle);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+}
+
+/* ── Horizontal rule ── */
+.editor :global(hr) {
+  margin: 1.2em 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Lists ── */
+.editor :global(ul),
+.editor :global(ol) {
+  padding-left: 1.5em;
+  margin: 0.3em 0 0.6em;
+}
+
+.editor :global(li) {
+  margin: 0.15em 0;
+}
+
+.editor :global(li p) {
+  margin: 0;
+}
+
+/* ── Image ── */
+.editor :global(img.write-editor-image) {
+  max-width: 100%;
+  border-radius: var(--r-md);
+  margin: 0.5em 0;
+  cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.editor :global(img.write-editor-image:hover) {
+  opacity: 0.85;
+}
+
+/* ── Placeholder ── */
+.editor :global(.ProseMirror p.is-editor-empty:first-child::before) {
+  content: attr(data-placeholder);
+  float: inline-start;
+  color: var(--text-muted);
+  pointer-events: none;
+  height: 0;
+}
+
+/* ── Drop cursor ── */
+.editor :global(.ProseMirror-dropcursor) {
+  border-left: 2px solid var(--accent);
+}
+
+/* ── Selection ── */
+.editor :global(.ProseMirror ::selection) {
+  background: var(--accent-medium);
+}

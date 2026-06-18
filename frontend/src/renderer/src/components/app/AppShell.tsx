@@ -9,6 +9,7 @@ import { PlanPanel } from '../plan/PlanPanel'
 import { IconPanelLeftClose, IconPanelLeft, IconAlertCircle, IconWifiOff, IconRefresh, IconRotateCcw, IconSettings, IconEdit, IconMessageSquare, IconArrowLeft } from '../../utils/icons'
 import { connectWebSocket } from '../../services/websocket'
 import { useLocale } from '../../i18n'
+import TextEditingContextMenu from '../shared/TextEditingContextMenu'
 import styles from './AppShell.module.css'
 
 export default function AppShell({ children }: { children?: ReactNode }) {
@@ -192,6 +193,8 @@ export default function AppShell({ children }: { children?: ReactNode }) {
           )}
         </main>
       </div>
+
+      <TextEditingContextMenu />
     </div>
   )
 }

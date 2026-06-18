@@ -3,9 +3,18 @@ import { useWriteStore } from '../../stores/write'
 import { composeWritePrompt } from '../../write/quoted-selection'
 import { resolveAgentPreset } from '../../write/agent-presets'
 import { useLocale } from '../../i18n'
-import { IconSparkles, IconSend } from '../../utils/icons'
+import { IconSparkles, IconSend, IconWorkflow, IconPenLine, IconScanSearch, IconClipboardCheck } from '../../utils/icons'
 import WriteChatPanel from './WriteChatPanel'
 import styles from './WriteAssistantPanel.module.css'
+
+const PERSONA_IDS = ['plot-coordinator', 'line-editor', 'foreshadowing', 'continuity'] as const
+
+const PERSONA_ICON: Record<string, React.ComponentType<{ size?: number }>> = {
+  'plot-coordinator': IconWorkflow,
+  'line-editor': IconPenLine,
+  foreshadowing: IconScanSearch,
+  continuity: IconClipboardCheck,
+}
 
 interface WriteAssistantPanelProps {
   quickSuggestions: { key: string; text: string }[]
@@ -23,6 +32,8 @@ export const WriteAssistantPanel: React.FC<WriteAssistantPanelProps> = ({
   const { t } = useLocale()
   const activeFilePath = useWriteStore(s => s.activeFilePath)
   const fileThreads = useWriteStore(s => s.fileThreads)
+  const agentPresetId = useWriteStore(s => s.agentPresetId)
+  const setAgentPresetId = useWriteStore(s => s.setAgentPresetId)
 
   const [assistantText, setAssistantText] = useState('')
 
@@ -64,6 +75,33 @@ export const WriteAssistantPanel: React.FC<WriteAssistantPanelProps> = ({
       <div className={styles.header}>
         <IconSparkles size={13} />
         <span>{t('write.aiWritingAssistant')}</span>
+      </div>
+
+      {/* Persona switcher */}
+      <div className={styles.personaRow}>
+        <button
+          className={!agentPresetId ? styles.personaBtnActive : styles.personaBtn}
+          onClick={() => setAgentPresetId(null)}
+          title="默认风格"
+        >
+          <IconSparkles size={12} />
+          <span>默认</span>
+        </button>
+        {PERSONA_IDS.map((id) => {
+          const preset = resolveAgentPreset(id)
+          const PIcon = PERSONA_ICON[id]
+          return (
+            <button
+              key={id}
+              className={agentPresetId === id ? styles.personaBtnActive : styles.personaBtn}
+              onClick={() => setAgentPresetId(id)}
+              title={preset?.persona}
+            >
+              <PIcon size={12} />
+              <span>{preset?.name}</span>
+            </button>
+          )
+        })}
       </div>
 
       <WriteChatPanel

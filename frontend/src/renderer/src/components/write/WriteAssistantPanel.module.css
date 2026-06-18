@@ -66,3 +66,46 @@
 }
 .sendBtn:hover { background: var(--accent-hover); }
 .sendBtn:disabled { opacity: 0.3; cursor: default; }
+
+/* ── Persona switcher ── */
+.personaRow {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.personaBtn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: var(--font);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+
+.personaBtn:hover {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.personaBtnActive {
+  composes: personaBtn;
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.personaBtnActive:hover {
+  background: var(--accent-medium);
+}

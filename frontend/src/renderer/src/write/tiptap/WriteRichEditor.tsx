@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -7,6 +7,8 @@ import Dropcursor from '@tiptap/extension-dropcursor';
 import { markdownToTipTapJson, tipTapJsonToMarkdown } from './markdown-projection';
 import { handleImagePaste, handleImageDrop } from './paste-image';
 import { useWriteStore } from '../../stores/write';
+import { useStore } from '../../stores';
+import styles from './WriteRichEditor.module.css';
 
 interface WriteRichEditorProps {
   value: string;
@@ -21,6 +23,14 @@ export const WriteRichEditor: React.FC<WriteRichEditorProps> = ({
 }) => {
   const workspaceRoot = useWriteStore((s) => s.workspaceRoot);
   const lineHeight = useWriteStore((s) => s.lineHeight);
+  const openLightbox = useStore((s) => s.openLightbox);
+
+  // Guard against self-triggered content resets: when the editor fires
+  // onUpdate we push markdown to the store; the store re-renders this
+  // component with the same markdown; without a guard, the useEffect
+  // would compare tipTapJsonToMarkdown(getJSON()) !== value and reset
+  // the full document on every keystroke, destroying cursor position.
+  const skipSyncRef = useRef(false);
 
   const editor = useEditor({
     extensions: [
@@ -31,6 +41,7 @@ export const WriteRichEditor: React.FC<WriteRichEditorProps> = ({
     ],
     content: value ? markdownToTipTapJson(value) : { type: 'doc', content: [{ type: 'paragraph' }] },
     onUpdate: ({ editor: ed }) => {
+      skipSyncRef.current = true;
       const md = tipTapJsonToMarkdown(ed.getJSON());
       onChange(md);
     },
@@ -83,9 +94,16 @@ export const WriteRichEditor: React.FC<WriteRichEditorProps> = ({
     },
   });
 
-  // Sync external value changes (e.g., file open, mode switch)
+  // Sync external value changes (e.g., file open, AI apply-edit, mode switch).
+  // Skip when the change originated from this editor's own onUpdate so we
+  // don't destroy the cursor / selection on every keystroke.
   useEffect(() => {
-    if (editor && value !== undefined) {
+    if (!editor) return;
+    if (skipSyncRef.current) {
+      skipSyncRef.current = false;
+      return;
+    }
+    if (value !== undefined) {
       const currentMd = tipTapJsonToMarkdown(editor.getJSON());
       if (currentMd !== value) {
         editor.commands.setContent(markdownToTipTapJson(value));
@@ -104,11 +122,16 @@ export const WriteRichEditor: React.FC<WriteRichEditorProps> = ({
 
   if (!editor) return null;
 
+  // Click handler: open ImageLightbox when clicking an image in the editor
+  const handleContainerClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement
+    if (target.tagName === 'IMG' && target instanceof HTMLImageElement) {
+      openLightbox(target.src)
+    }
+  }, [openLightbox])
+
   return (
-    <div
-      className="write-rich-editor"
-      style={{ flex: 1, overflow: 'auto', padding: '16px 24px' }}
-    >
+    <div className={styles.editor} onClick={handleContainerClick}>
       <EditorContent editor={editor} />
     </div>
   );

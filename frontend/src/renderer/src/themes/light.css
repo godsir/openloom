@@ -1,4 +1,4 @@
-/* Light theme — clean, neutral gray surfaces with teal accent */
+/* Light theme — clean, neutral gray surfaces with blue accent */
 [data-theme="light"] {
   /* Surface */
   --bg:         #FFFFFF;
@@ -18,23 +18,23 @@
   /* Borders */
   --border:         rgba(15,23,42,0.08);
   --border-default: rgba(15,23,42,0.12);
-  --border-accent:  rgba(13,148,136,0.25);
+  --border-accent:  rgba(106,106,247,0.25);
   --border-light:   rgba(15,23,42,0.04);
 
-  /* Accent — Teal */
-  --accent:         #0D9488;
-  --accent-hover:   #0F766E;
-  --accent-rgb:     13,148,136;
-  --accent-subtle:  rgba(13,148,136,0.08);
-  --accent-medium:  rgba(13,148,136,0.14);
-  --accent-glow:    rgba(13,148,136,0.15);
-  --accent-light:   rgba(13,148,136,0.10);
-  --accent-strong:  rgba(13,148,136,0.18);
+  /* Accent — Blue */
+  --accent:         #6A6AF7;
+  --accent-hover:   #4F4FD4;
+  --accent-rgb:     106,106,247;
+  --accent-subtle:  rgba(106,106,247,0.08);
+  --accent-medium:  rgba(106,106,247,0.14);
+  --accent-glow:    rgba(106,106,247,0.15);
+  --accent-light:   rgba(106,106,247,0.10);
+  --accent-strong:  rgba(106,106,247,0.18);
 
   /* Semantic */
-  --green:        #10B981;
-  --green-rgb:    16,185,129;
-  --green-light:  rgba(16,185,129,0.10);
+  --green:        #6A6AF7;
+  --green-rgb:    106,106,247;
+  --green-light:  rgba(106,106,247,0.10);
   --amber:        #F59E0B;
   --amber-rgb:    245,158,11;
   --amber-light:  rgba(245,158,11,0.10);
@@ -42,7 +42,7 @@
   --red-light:    rgba(239,68,68,0.10);
 
   /* Toast — solid bg + white text */
-  --toast-success-bg: #059669;
+  --toast-success-bg: #4F4FD4;
   --toast-success-text: #FFFFFF;
   --toast-warning-bg: #D97706;
   --toast-warning-text: #FFFFFF;
@@ -55,7 +55,7 @@
   --shadow:          0 1px 3px rgba(0,0,0,0.06);
   --shadow-md:       0 4px 16px rgba(0,0,0,0.08);
   --shadow-lg:       0 8px 32px rgba(0,0,0,0.10);
-  --shadow-glow:     0 0 20px rgba(13,148,136,0.10);
-  --shadow-composer: 0 0 30px rgba(13,148,136,0.06), 0 4px 16px rgba(0,0,0,0.08);
+  --shadow-glow:     0 0 20px rgba(106,106,247,0.10);
+  --shadow-composer: 0 0 30px rgba(106,106,247,0.06), 0 4px 16px rgba(0,0,0,0.08);
   --shadow-glass:    0 8px 32px rgba(0,0,0,0.10);
 }

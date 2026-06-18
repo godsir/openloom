@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react'
+import React, { useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import { useWriteStore, type WorkspaceEntry, type WriteFileKind } from '../../stores/write'
 import { loomRpc } from '../../services/jsonrpc'
 import { useLocale } from '../../i18n'
@@ -34,6 +34,23 @@ export const WriteFileTree: React.FC<WriteFileTreeProps> = ({ onNewFile }) => {
   // Context menu state
   const setModalState = useWriteStore(s => s.setModalState)
   const [ctxMenu, setCtxMenu] = React.useState<{ x: number; y: number; entry: WorkspaceEntry } | null>(null)
+  const ctxMenuRef = useRef<HTMLDivElement>(null)
+  const [ctxMenuPos, setCtxMenuPos] = React.useState({ left: 0, top: 0 })
+
+  // Clamp context menu position to viewport
+  useLayoutEffect(() => {
+    if (!ctxMenu) return
+    const el = ctxMenuRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    let left = ctxMenu.x
+    let top = ctxMenu.y
+    if (left + r.width > vw) left = Math.max(0, ctxMenu.x - r.width)
+    if (top + r.height > vh) top = Math.max(0, ctxMenu.y - r.height)
+    setCtxMenuPos({ left, top })
+  }, [ctxMenu])
 
   // Close context menu on any click
   useEffect(() => {
@@ -262,8 +279,9 @@ export const WriteFileTree: React.FC<WriteFileTreeProps> = ({ onNewFile }) => {
       {/* Context menu */}
       {ctxMenu && (
         <div
+          ref={ctxMenuRef}
           style={{
-            position: 'fixed', zIndex: 5000, left: ctxMenu.x, top: ctxMenu.y,
+            position: 'fixed', zIndex: 5000, left: ctxMenuPos.left, top: ctxMenuPos.top,
             background: 'var(--bg-surface)', border: '1px solid var(--border)',
             borderRadius: 8, padding: 4, minWidth: 150,
             boxShadow: '0 8px 24px rgba(0,0,0,0.3)',

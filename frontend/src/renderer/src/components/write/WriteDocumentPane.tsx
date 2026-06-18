@@ -141,6 +141,15 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
     )
   }
 
+  if (effectiveMode === 'live') {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <WriteInlineAgent editorValue={fileContent} onApplyEdit={handleApplyEdit} onSendToAssistant={onSendToAssistant} />
+        <WriteMarkdownEditor value={fileContent} onChange={handleChange} fontSize={fontSize} previewMode="live" />
+      </div>
+    )
+  }
+
   if (effectiveMode === 'preview') {
     return <WriteMarkdownPreview content={fileContent} rawHtml={isHtmlFile} />
   }

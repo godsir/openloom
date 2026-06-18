@@ -1,6 +1,5 @@
-import { BrowserWindow, screen, app, shell, Menu } from 'electron'
+import { BrowserWindow, screen, app, shell, ipcMain } from 'electron'
 import { join } from 'path'
-import { t } from './i18n'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -57,27 +56,31 @@ export function createMainWindow(port: number): BrowserWindow {
     }
   })
 
-  // Native context menu for text-editing fields — labels follow the app's locale.
-  // `role` handles the action; `accelerator` is set explicitly because Electron
-  // popup menus do not auto-render the shortcut from role alone.
+  // Forward context-menu events to the renderer so it can display a
+  // theme-aware custom HTML menu instead of the OS-native popup.
   mainWindow.webContents.on('context-menu', (_event, params) => {
-    const template: Electron.MenuItemConstructorOptions[] = []
+    _event.preventDefault()
+    mainWindow?.webContents.send('context-menu', {
+      isEditable: params.isEditable,
+      canCut: params.editFlags.canCut,
+      canCopy: params.editFlags.canCopy,
+      canPaste: params.editFlags.canPaste,
+      canSelectAll: params.editFlags.canSelectAll,
+      hasSelection: !!(params.selectionText && params.selectionText.trim().length > 0),
+      x: params.x,
+      y: params.y,
+    })
+  })
 
-    if (params.isEditable) {
-      template.push(
-        { label: t('menu.cut'),       role: 'cut',       accelerator: 'CmdOrCtrl+X', enabled: params.editFlags.canCut },
-        { label: t('menu.copy'),      role: 'copy',      accelerator: 'CmdOrCtrl+C', enabled: params.editFlags.canCopy },
-        { label: t('menu.paste'),     role: 'paste',     accelerator: 'CmdOrCtrl+V', enabled: params.editFlags.canPaste },
-        { type: 'separator' },
-        { label: t('menu.selectAll'), role: 'selectAll', accelerator: 'CmdOrCtrl+A', enabled: params.editFlags.canSelectAll },
-      )
-    } else if (params.selectionText && params.selectionText.trim().length > 0) {
-      template.push({ label: t('menu.copy'), role: 'copy', accelerator: 'CmdOrCtrl+C' })
-    }
-
-    if (template.length > 0) {
-      const menu = Menu.buildFromTemplate(template)
-      menu.popup({ window: mainWindow! })
+  // Execute cut/copy/paste/selectAll on behalf of the custom context menu.
+  ipcMain.on('context-menu-action', (_event, action: string) => {
+    const wc = mainWindow?.webContents
+    if (!wc) return
+    switch (action) {
+      case 'cut': wc.cut(); break
+      case 'copy': wc.copy(); break
+      case 'paste': wc.paste(); break
+      case 'selectAll': wc.selectAll(); break
     }
   })
 

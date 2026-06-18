@@ -1,6 +1,6 @@
 ﻿[package]
 name = "loom-memory"
-version = "0.3.21"
+version = "0.3.22"
 edition = "2024"
 description = "Memory kernel for openLoom v2 �?event store, cognition pipeline, knowledge graph, persona"
 

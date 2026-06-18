@@ -9,6 +9,12 @@ export const enUS: TranslationMap = {
   'common.close': 'Close',
   'common.back': 'Back',
   'common.backToTop': 'Back to top',
+
+  // ── Context Menu ─────────────────────────────────────────────────
+  'menu.cut': 'Cut',
+  'menu.copy': 'Copy',
+  'menu.paste': 'Paste',
+  'menu.selectAll': 'Select All',
   'common.refresh': 'Refresh',
   'common.loading': 'Loading...',
   'common.empty': 'No data',

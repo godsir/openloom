@@ -1,6 +1,6 @@
 ﻿[package]
 name = "loom-lsp"
-version = "0.3.21"
+version = "0.3.22"
 edition = "2024"
 description = "LSP (Language Server Protocol) client for openLoom v2 �?connect to language servers, run diagnostics, completions, hover, and more"
 

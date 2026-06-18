@@ -1,19 +1,18 @@
 // Floating selection toolbar — appears when text is selected in the editor
-// Provides: block type switching, inline formatting, AI edit input, quick actions
+// Provides: block type switching, inline formatting, quick actions, quote to assistant
+// AI input lives in WriteAssistantPanel (right side) — not duplicated here.
 
-import React, { useState, useRef } from 'react';
+import React from 'react';
 import { useWriteStore, WriteBlockType } from '../../stores/write';
 import { detectBlockType, applyBlockType } from '../../write/block-type';
 import { toggleInlineFormat, hasInlineFormat, InlineFormatKind } from '../../write/inline-format';
 import { DEFAULT_QUICK_ACTIONS } from '../../write/quick-actions';
-import { resolveAgentPreset } from '../../write/agent-presets';
 import { createQuotedSelection } from '../../write/quoted-selection';
 import {
   IconHeading1, IconHeading2, IconHeading3,
   IconPilcrow, IconQuote, IconList, IconListOrdered, IconCode2,
   IconBold, IconItalic, IconStrikethrough,
   IconMessageSquare,
-  IconSparkles, IconWorkflow, IconPenLine, IconScanSearch, IconClipboardCheck,
 } from '../../utils/icons';
 import styles from './WriteInlineAgent.module.css';
 
@@ -55,15 +54,6 @@ const INLINE_FORMATS: InlineFormatDef[] = [
 
 const QUICK_ACTIONS = DEFAULT_QUICK_ACTIONS.slice(0, 5);
 
-const PERSONA_IDS = ['plot-coordinator', 'line-editor', 'foreshadowing', 'continuity'] as const;
-
-const PERSONA_ICON: Record<string, React.ComponentType<{ size?: number }>> = {
-  'plot-coordinator': IconWorkflow,
-  'line-editor': IconPenLine,
-  foreshadowing: IconScanSearch,
-  continuity: IconClipboardCheck,
-};
-
 export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
   editorValue,
   onApplyEdit,
@@ -72,11 +62,6 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
   const selection = useWriteStore((s) => s.selection);
   const setSelection = useWriteStore((s) => s.setSelection);
   const addQuotedSelection = useWriteStore((s) => s.addQuotedSelection);
-  const agentPresetId = useWriteStore((s) => s.agentPresetId);
-  const setAgentPresetId = useWriteStore((s) => s.setAgentPresetId);
-
-  const [aiInput, setAiInput] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const hasSelection = selection !== null;
 
@@ -120,17 +105,9 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
     setSelection(null);
   };
 
-  const handleAiEditSubmit = () => {
-    if (!aiInput.trim()) return;
-    const context = selection ? `\n\n"${selection.text}"` : '';
-    onSendToAssistant(`${aiInput}${context}`);
-    setAiInput('');
-    setSelection(null);
-  };
-
   return (
     <div className={styles.toolbar}>
-      {/* ── Row 1: Block types | Inline formats | Quick actions ── */}
+      {/* Block types | Inline formats | Quick actions */}
       <div className={styles.row}>
         <div className={styles.section}>
           {BLOCK_TYPES.map((bt) => {
@@ -192,58 +169,6 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
             <IconMessageSquare size={12} />
             <span>引用</span>
           </button>
-        </div>
-      </div>
-
-      {/* ── Row 2: AI input | Persona switcher ── */}
-      <div className={styles.row}>
-        <input
-          ref={inputRef}
-          className={styles.input}
-          value={aiInput}
-          onChange={(e) => setAiInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
-              e.preventDefault();
-              handleAiEditSubmit();
-            }
-            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-              e.preventDefault();
-              if (aiInput.trim()) {
-                onSendToAssistant(aiInput);
-                setAiInput('');
-                setSelection(null);
-              }
-            }
-          }}
-          placeholder="AI 指令... (Enter 发送)"
-        />
-
-        <span className={styles.divider} />
-
-        <div className={styles.section}>
-          <button
-            className={!agentPresetId ? styles.presetBtnActive : styles.presetBtn}
-            onClick={() => setAgentPresetId(null)}
-          >
-            <IconSparkles size={13} />
-            <span>默认</span>
-          </button>
-          {PERSONA_IDS.map((id) => {
-            const preset = resolveAgentPreset(id);
-            const PIcon = PERSONA_ICON[id];
-            return (
-              <button
-                key={id}
-                className={agentPresetId === id ? styles.presetBtnActive : styles.presetBtn}
-                onClick={() => setAgentPresetId(id)}
-                title={preset?.persona}
-              >
-                <PIcon size={13} />
-                <span>{preset?.name}</span>
-              </button>
-            );
-          })}
         </div>
       </div>
     </div>

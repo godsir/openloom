@@ -1,6 +1,6 @@
 ﻿[package]
 name = "loom-types"
-version = "0.3.21"
+version = "0.3.22"
 edition = "2024"
 description = "Unified type system for openLoom v2 �?canonical types for agents, messages, tools, MCP, sessions, memory, and config"
 
