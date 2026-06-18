@@ -10,8 +10,10 @@
 mod mcp_config;
 mod memory;
 mod plugins;
+mod tui;
 
 use clap::{Parser, Subcommand};
+use std::io::IsTerminal;
 use std::sync::Arc;
 
 fn data_dir() -> std::path::PathBuf {
@@ -992,8 +994,26 @@ async fn run_chat_demo(
     println!("[tools] {} available: {:?}\n", names.len(), names);
     drop(registry);
 
-    // Ctrl+C handler — first press warns, second press exits
+    // TTY check: use TUI if terminal, bare REPL otherwise
+    let use_tui = std::io::stdout().is_terminal();
+    if use_tui {
+        tui::run_tui(orchestrator, model.to_string(), session.to_string()).await?;
+    } else {
+        run_bare_repl(orchestrator, session.to_string()).await?;
+    }
+    Ok(())
+}
+
+/// Bare REPL — used when stdout is not a terminal (pipe, redirect).
+async fn run_bare_repl(
+    orchestrator: Arc<loom_core::Orchestrator>,
+    session: String,
+) -> anyhow::Result<()> {
+    use loom_types::StreamDelta;
+    use std::io::Write;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    // Ctrl+C handler
     let ctrlc_pressed = Arc::new(AtomicBool::new(false));
     let flag = ctrlc_pressed.clone();
     ctrlc::set_handler(move || {
@@ -1006,8 +1026,6 @@ async fn run_chat_demo(
     })
     .ok();
 
-    // Interactive loop
-    use std::io::Write;
     loop {
         print!("> ");
         std::io::stdout().flush().ok();
@@ -1040,12 +1058,11 @@ async fn run_chat_demo(
             continue;
         }
 
-        use loom_types::StreamDelta;
         let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamDelta>(256);
         let mut fut = std::pin::pin!(orchestrator.process_message_streaming(
             &line,
             tx,
-            session,
+            &session,
             None,
             vec![],
             vec![],
@@ -1080,24 +1097,22 @@ async fn run_chat_demo(
                         cache_read += cache_read_tokens;
                         cache_write += cache_write_tokens;
                     }
+                    Some(StreamDelta::ToolResult { success, .. }) => {
+                        print!("{} ", if success { "ok" } else { "FAILED" });
+                        std::io::stdout().flush().ok();
+                    }
+                    Some(StreamDelta::AuxiliaryUsage { .. }) => {}
+                    Some(StreamDelta::Image { .. }) => {}
                     None => { break fut.await; }
                     _ => {}
                 }
             }
         };
-        // Drain any remaining deltas
+        // Drain remaining deltas
         while let Ok(delta) = rx.try_recv() {
             match delta {
-                StreamDelta::Text(t) => {
-                    print!("{}", t);
-                    std::io::stdout().flush().ok();
-                }
-                StreamDelta::Usage {
-                    prompt_tokens,
-                    completion_tokens,
-                    cache_read_tokens,
-                    cache_write_tokens,
-                } => {
+                StreamDelta::Text(t) => { print!("{}", t); std::io::stdout().flush().ok(); }
+                StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens } => {
                     prompt += prompt_tokens;
                     completion += completion_tokens;
                     cache_read += cache_read_tokens;
@@ -1106,33 +1121,22 @@ async fn run_chat_demo(
                 _ => {}
             }
         }
-        // Flush any remaining thinking
         if !think_buf.is_empty() {
             print!("\n  [think] {}\n", think_buf);
         }
         match result {
             Ok(turn) => {
-                // Fallback to TurnResult if streaming didn't report usage
                 if prompt == 0 && completion == 0 {
                     prompt = turn.prompt_tokens as u64;
                     completion = turn.completion_tokens as u64;
                 }
                 println!();
                 let mut parts = vec![format!("in {}", prompt), format!("out {}", completion)];
-                if cache_read > 0 {
-                    parts.push(format!("cr {}", cache_read));
-                } else if turn.cached_tokens > 0 {
-                    parts.push(format!("cr ~{}", turn.cached_tokens));
-                }
-                if cache_write > 0 {
-                    parts.push(format!("cw {}", cache_write));
-                }
-                if turn.tool_calls_made > 0 {
-                    parts.push(format!("{} tools", turn.tool_calls_made));
-                }
-                if turn.iterations > 1 {
-                    parts.push(format!("{} iters", turn.iterations));
-                }
+                if cache_read > 0 { parts.push(format!("cr {}", cache_read)); }
+                else if turn.cached_tokens > 0 { parts.push(format!("cr ~{}", turn.cached_tokens)); }
+                if cache_write > 0 { parts.push(format!("cw {}", cache_write)); }
+                if turn.tool_calls_made > 0 { parts.push(format!("{} tools", turn.tool_calls_made)); }
+                if turn.iterations > 1 { parts.push(format!("{} iters", turn.iterations)); }
                 println!("[{}]\n", parts.join(" | "));
             }
             Err(e) => println!("\n[error] {}\n", e),
