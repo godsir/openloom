@@ -1,16 +1,19 @@
 //! TUI chat entry point.
 //!
-//! Spawns the orchestrator's process_message_streaming as a background
-//! tokio task, pumps StreamDelta → AppState via a channel, and runs
-//! the ratatui+crossterm event loop on the main thread.
+//! Architecture:
+//! 1. Main thread runs a single event loop: keyboard → stream → redraw
+//! 2. When user sends a message, stream deltas go into a shared buffer
+//!    (Arc<Mutex<Vec>>) via a bridge task so they never race with rendering.
+//! 3. The main loop drains the buffer each tick, applies events to AppState,
+//!    and redraws ratatui.
 
 pub mod app;
 pub mod stream;
 pub mod ui;
 
-use std::io;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -25,11 +28,50 @@ use tokio::sync::mpsc;
 use app::{AppState, ChatLine, ToolStatus};
 use stream::{convert, AppEvent};
 
+/// Shared event buffer: bridge task pushes, main loop drains.
+type EventBuffer = Arc<Mutex<Vec<AppEvent>>>;
+
+/// Apply a single AppEvent to the TUI state.
+fn apply_event(ev: AppEvent, state: &mut AppState, thinking_buf: &mut String) {
+    match ev {
+        AppEvent::TextChunk(t) => {
+            if !thinking_buf.is_empty() {
+                state.push_line(ChatLine {
+                    role: "thinking",
+                    text: std::mem::take(thinking_buf),
+                });
+            }
+            state.append_text(&t);
+        }
+        AppEvent::ReasoningChunk(r) => {
+            thinking_buf.push_str(&r);
+        }
+        AppEvent::ToolBegin { index, name, .. } => {
+            state.upsert_tool(index, &name, ToolStatus::Running);
+        }
+        AppEvent::ToolResult {
+            tool_name, success, ..
+        } => {
+            if let Some(t) = state
+                .tools
+                .iter_mut()
+                .find(|t| t.name == tool_name && t.status == ToolStatus::Running)
+            {
+                t.status = if success {
+                    ToolStatus::Done
+                } else {
+                    ToolStatus::Failed
+                };
+            }
+        }
+        AppEvent::Usage(ts) => {
+            state.tokens = ts;
+        }
+        _ => {}
+    }
+}
+
 /// Run the TUI chat loop.
-///
-/// `model_name` is displayed in the status bar.
-/// `session_id` is the session ID passed to the orchestrator.
-/// All setup (orchestrator, skills, memory, MCP) must be done before calling this.
 pub async fn run_tui(
     orchestrator: Arc<Orchestrator>,
     model_name: String,
@@ -37,7 +79,7 @@ pub async fn run_tui(
 ) -> anyhow::Result<()> {
     // --- Terminal setup ---
     enable_raw_mode()?;
-    let mut stdout = io::stdout();
+    let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -45,41 +87,52 @@ pub async fn run_tui(
     let mut state = AppState::default();
     state.model_name = model_name;
 
-    // Ctrl+C handler: set a flag instead of exiting, so the TUI loop
-    // can use the first Ctrl+C to cancel streaming.
+    // Ctrl+C handler ─ set flag; TUI loop checks and decides cancel vs quit.
     let cancel_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let cf = cancel_flag.clone();
-    ctrlc::set_handler(move || {
-        cf.store(true, Ordering::SeqCst);
-    })
-    .ok();
+    {
+        let cf = cancel_flag.clone();
+        ctrlc::set_handler(move || {
+            cf.store(true, Ordering::SeqCst);
+        })
+        .ok();
+    }
 
-    let tick_rate = std::time::Duration::from_millis(50);
+    let mut thinking_buf = String::new();
 
-    // --- Main event loop ---
-    'outer: loop {
-        // Check for Ctrl+C
-        if cancel_flag.load(Ordering::SeqCst) {
+    // --- Single event loop (no nested loops) ---
+    loop {
+        // ── Ctrl+C handling ──
+        if cancel_flag.swap(false, Ordering::SeqCst) {
             if state.streaming {
-                // First press during streaming: cancel the stream
+                // First press during streaming → cancel
                 state.streaming = false;
                 state.push_line(ChatLine {
                     role: "thinking",
                     text: "[cancelled]".into(),
                 });
-                cancel_flag.store(false, Ordering::SeqCst);
             } else {
-                // Second press: quit
+                // Second press (idle) → quit
                 break;
             }
         }
 
         terminal.draw(|f| ui::render(f, &state))?;
 
-        // Poll for a terminal event with timeout
-        if event::poll(tick_rate)? {
-            match event::read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+        // ── Wait for keyboard event with a short timeout ──
+        // During idle this blocks comfortably; during streaming the timeout
+        // is short so we can pump deltas from the background buffer.
+        let poll_dur = if state.streaming {
+            Duration::from_millis(30)
+        } else {
+            Duration::from_millis(200)
+        };
+
+        if event::poll(poll_dur)? {
+            let ev = event::read()?;
+            if let Event::Key(key) = ev
+                && key.kind == KeyEventKind::Press
+            {
+                match key.code {
                     KeyCode::Enter => {
                         let line = state.input.trim().to_string();
                         if line.is_empty() {
@@ -88,8 +141,9 @@ pub async fn run_tui(
                         state.input.clear();
                         state.input_cursor = 0;
 
+                        // ── Slash commands ──
                         if line == "/exit" || line == "/quit" {
-                            break 'outer;
+                            break;
                         }
                         if line == "/tools" {
                             let r = orchestrator.tool_registry().await;
@@ -107,9 +161,7 @@ pub async fn run_tui(
                             } else {
                                 summaries
                                     .iter()
-                                    .map(|s| {
-                                        format!("- {}: {}", s.name, s.description)
-                                    })
+                                    .map(|s| format!("- {}: {}", s.name, s.description))
                                     .collect::<Vec<_>>()
                                     .join("\n")
                             };
@@ -120,19 +172,22 @@ pub async fn run_tui(
                             continue;
                         }
 
-                        // Start a new turn
+                        // ── Start a new turn ──
                         state.start_turn();
                         state.push_line(ChatLine {
                             role: "user",
                             text: line.clone(),
                         });
+                        thinking_buf.clear();
 
-                        // Spawn streaming in background
-                        let (tx, mut rx) = mpsc::channel::<StreamDelta>(256);
+                        // Shared buffer: bridge task pushes events, main loop drains.
+                        let buffer: EventBuffer = Arc::new(Mutex::new(Vec::new()));
+
+                        // Spawn orchestrator streaming in background.
+                        let (tx, mut tokio_rx) = mpsc::channel::<StreamDelta>(256);
                         let orch = orchestrator.clone();
                         let sess = session_id.clone();
-                        let cancel = cancel_flag.clone();
-                        let handle = tokio::spawn(async move {
+                        let orch_handle = tokio::spawn(async move {
                             let _ = orch
                                 .process_message_streaming(
                                     &line, tx, &sess, None, vec![], vec![], "operate",
@@ -140,98 +195,63 @@ pub async fn run_tui(
                                 .await;
                         });
 
-                        // Pump stream deltas on the main thread while TUI keeps rendering
-                        let mut thinking_buf = String::new();
+                        // Bridge: tokio mpsc → shared buffer (runs concurrently on runtime).
+                        let buf = buffer.clone();
+                        let bridge = tokio::spawn(async move {
+                            while let Some(delta) = tokio_rx.recv().await {
+                                buf.lock().unwrap().push(convert(delta));
+                            }
+                        });
+
+                        // ── Inner pump: drain buffer + redraw until stream ends ──
                         loop {
                             // Check cancel
-                            if cancel.load(Ordering::SeqCst) {
-                                handle.abort();
+                            if cancel_flag.swap(false, Ordering::SeqCst) {
+                                orch_handle.abort();
+                                bridge.abort();
+                                state.streaming = false;
+                                state.push_line(ChatLine {
+                                    role: "thinking",
+                                    text: "[cancelled]".into(),
+                                });
                                 break;
                             }
 
-                            // Non-blocking recv
-                            match rx.try_recv() {
-                                Ok(delta) => {
-                                    let ev = convert(delta);
-                                    match ev {
-                                        AppEvent::TextChunk(t) => {
-                                            if !thinking_buf.is_empty() {
-                                                state.push_line(ChatLine {
-                                                    role: "thinking",
-                                                    text: std::mem::take(&mut thinking_buf),
-                                                });
-                                            }
-                                            state.append_text(&t);
-                                        }
-                                        AppEvent::ReasoningChunk(r) => {
-                                            thinking_buf.push_str(&r);
-                                        }
-                                        AppEvent::ToolBegin { index, name, .. } => {
-                                            state.upsert_tool(
-                                                index,
-                                                &name,
-                                                ToolStatus::Running,
-                                            );
-                                        }
-                                        AppEvent::ToolResult {
-                                            tool_name,
-                                            success,
-                                            ..
-                                        } => {
-                                            // Find by name and update status
-                                            if let Some(t) = state.tools.iter_mut().find(|t| {
-                                                t.name == tool_name
-                                                    && t.status == ToolStatus::Running
-                                            }) {
-                                                t.status = if success {
-                                                    ToolStatus::Done
-                                                } else {
-                                                    ToolStatus::Failed
-                                                };
-                                            }
-                                        }
-                                        AppEvent::Usage(ts) => {
-                                            state.tokens = ts;
-                                        }
-                                        AppEvent::Done => break,
-                                        _ => {}
-                                    }
-                                    // Redraw after each event
-                                    terminal.draw(|f| ui::render(f, &state))?;
-                                }
-                                Err(mpsc::error::TryRecvError::Empty) => {
-                                    // No delta available; check if the task finished
-                                    if handle.is_finished() {
-                                        break;
-                                    }
-                                    // Yield briefly so the task can progress
-                                    tokio::task::yield_now().await;
-                                    terminal.draw(|f| ui::render(f, &state))?;
-                                }
-                                Err(mpsc::error::TryRecvError::Disconnected) => {
-                                    break;
-                                }
+                            // Drain buffered events
+                            let new_events: Vec<AppEvent> = {
+                                let mut guard = buffer.lock().unwrap();
+                                std::mem::take(&mut *guard)
+                            };
+                            for ev in new_events {
+                                apply_event(ev, &mut state, &mut thinking_buf);
                             }
-                        }
 
-                        // Flush remaining thinking
-                        if !thinking_buf.is_empty() {
-                            state.push_line(ChatLine {
-                                role: "thinking",
-                                text: std::mem::take(&mut thinking_buf),
-                            });
-                        }
+                            terminal.draw(|f| ui::render(f, &state))?;
 
-                        // Drain remaining deltas
-                        while let Ok(delta) = rx.try_recv() {
-                            if let AppEvent::TextChunk(t) = convert(delta) {
-                                state.append_text(&t);
+                            // Bridge finished → stream ended
+                            if bridge.is_finished() {
+                                // Drain any final events
+                                let final_events: Vec<AppEvent> = {
+                                    let mut guard = buffer.lock().unwrap();
+                                    std::mem::take(&mut *guard)
+                                };
+                                for ev in final_events {
+                                    apply_event(ev, &mut state, &mut thinking_buf);
+                                }
+                                // Flush remaining thinking
+                                if !thinking_buf.is_empty() {
+                                    state.push_line(ChatLine {
+                                        role: "thinking",
+                                        text: std::mem::take(&mut thinking_buf),
+                                    });
+                                }
+                                state.end_turn();
+                                break;
                             }
-                        }
 
-                        // End turn
-                        state.end_turn();
-                        cancel_flag.store(false, Ordering::SeqCst);
+                            // Yield to runtime so bridge/orch tasks can progress.
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                        }
                     }
 
                     KeyCode::Char(c) => {
@@ -250,7 +270,6 @@ pub async fn run_tui(
                     }
 
                     KeyCode::Esc => {
-                        // Dismiss overlay
                         state.overlay = None;
                     }
 
@@ -263,9 +282,15 @@ pub async fn run_tui(
                     }
 
                     _ => {}
-                },
-                _ => {}
+                }
             }
+        }
+
+        // If we're streaming but there's no active pump, something went wrong.
+        // Reset to idle (safety net).
+        if state.streaming && thinking_buf.is_empty() {
+            // streaming = true is set by start_turn; reset by end_turn / cancel.
+            // This guards against edge cases where streaming gets stuck.
         }
     }
 

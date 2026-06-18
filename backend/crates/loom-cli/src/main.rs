@@ -221,8 +221,32 @@ enum McpAction {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt().with_env_filter("info").init();
     let cli = Cli::parse();
+
+    // TUI chat: send tracing to a file so it doesn't corrupt the terminal.
+    // Bare REPL (pipe) and all other commands: stderr as usual.
+    let is_tui_chat = matches!(cli.command, Command::Chat { .. })
+        && std::io::stdout().is_terminal();
+
+    if is_tui_chat {
+        let log_dir = data_dir();
+        let _ = std::fs::create_dir_all(&log_dir);
+        if let Ok(log_file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .write(true)
+            .open(log_dir.join("chat.log"))
+        {
+            tracing_subscriber::fmt()
+                .with_env_filter("info")
+                .with_writer(std::sync::Mutex::new(log_file))
+                .init();
+        } else {
+            tracing_subscriber::fmt().with_env_filter("info").init();
+        }
+    } else {
+        tracing_subscriber::fmt().with_env_filter("info").init();
+    }
 
     match cli.command {
         Command::Serve { host, port } => {
