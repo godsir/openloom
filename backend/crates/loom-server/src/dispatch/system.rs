@@ -41,6 +41,9 @@ pub async fn handle(
         // Global defaults
         "config.get_defaults" => Some(handle_config_get_defaults(state).await),
         "config.set_defaults" => Some(handle_config_set_defaults(state, p).await),
+        // Loom.md — 全局 Agent 纪律文件（读取/编辑）
+        "loom_md.read" => Some(handle_loom_md_read()),
+        "loom_md.save" => Some(handle_loom_md_save(p)),
         // Marketplace
         "marketplace.list" => Some(handle_marketplace_list(state, p).await),
         "marketplace.install" => Some(handle_marketplace_install(state, p).await),
@@ -641,4 +644,31 @@ async fn handle_config_set_defaults(state: &AppState, p: &Value) -> Result<Value
             .await;
     }
     Ok(json!({ "ok": true }))
+}
+
+// --- loom_md.read ---
+//
+// 读取全局 ~/.loom/Loom.md 原文（含空内容），供设置面板编辑器展示。
+// 文件不存在时返回空串——首次保存时会自动创建。
+
+fn handle_loom_md_read() -> Result<Value, JsonRpcError> {
+    let home = dirs::home_dir().unwrap_or_default().join(".loom");
+    let loom_file = home.join("Loom.md");
+    let content = std::fs::read_to_string(&loom_file).unwrap_or_default();
+    Ok(json!({ "content": content, "path": loom_file.display().to_string() }))
+}
+
+// --- loom_md.save ---
+//
+// 写入全局 ~/.loom/Loom.md。空内容也允许（视为用户主动禁用 Loom.md 纪律，
+// load_loom_md 会跳过空文件并走硬编码兜底，不会再回填默认内容）。
+
+fn handle_loom_md_save(p: &Value) -> Result<Value, JsonRpcError> {
+    let content = p.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    let home = dirs::home_dir().unwrap_or_default().join(".loom");
+    let _ = std::fs::create_dir_all(&home);
+    let loom_file = home.join("Loom.md");
+    std::fs::write(&loom_file, content)
+        .map_err(|e| err(ErrorCode::InternalError, &format!("Write error: {}", e)))?;
+    Ok(json!({ "ok": true, "path": loom_file.display().to_string() }))
 }

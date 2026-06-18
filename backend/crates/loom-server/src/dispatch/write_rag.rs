@@ -30,8 +30,6 @@ struct TextChunk {
 /// BM25-style inverted index over workspace files.
 /// Lives in AppState behind an RwLock for concurrent access.
 pub struct WorkspaceIndex {
-    /// The workspace root this index belongs to.
-    workspace_root: PathBuf,
     /// Chunks indexed, ordered by insertion.
     chunks: Vec<TextChunk>,
     /// Term → list of (chunk_index, term_frequency_in_chunk)
@@ -51,9 +49,8 @@ pub struct WorkspaceIndex {
 }
 
 impl WorkspaceIndex {
-    pub fn new(workspace_root: PathBuf) -> Self {
+    pub fn new() -> Self {
         Self {
-            workspace_root,
             chunks: Vec::new(),
             inverted: HashMap::new(),
             total_terms: 0,
@@ -117,7 +114,7 @@ async fn handle_index_workspace(
         .unwrap_or(0);
 
     // Build index by scanning workspace
-    let mut index = WorkspaceIndex::new(ws_path.clone());
+    let mut index = WorkspaceIndex::new();
     index.built_at = now;
 
     match scan_and_index(&ws_path, &mut index, "", 0) {

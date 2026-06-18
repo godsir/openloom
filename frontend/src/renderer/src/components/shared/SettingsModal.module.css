@@ -2382,6 +2382,46 @@
   cursor: not-allowed;
 }
 
+/* ── Loom.md 纪律文件编辑器 ── */
+
+.loomMdTextarea {
+  width: 100%;
+  min-height: 320px;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-family: var(--code-font, "JetBrains Mono", "Cascadia Code", Consolas, monospace);
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  outline: none;
+  resize: vertical;
+  white-space: pre-wrap;
+  word-break: break-word;
+  box-sizing: border-box;
+}
+
+.loomMdTextarea:focus {
+  border-color: var(--border-accent);
+}
+
+.loomMdFooter {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.loomMdFooter .globalDefaultsHint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
 /* ── Responsive ── */
 
 @media (max-width: 640px) {

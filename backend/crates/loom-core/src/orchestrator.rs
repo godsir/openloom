@@ -76,39 +76,72 @@ pub fn adapt_behavior(persona_text: &str) -> String {
     format!("## Behavior Adaptation\n{}\n", hints.iter().map(|h| format!("- {}", h)).collect::<Vec<_>>().join("\n"))
 }
 
+/// 大小写不敏感地定位目录下的 Loom.md（兼容 `loom.md` / `LOOM.MD` 等变体）。
+/// 优先直接命中标准名 `Loom.md`（多数平台一次 stat 即可），未命中再扫描目录，
+/// 以兼容区分大小写的文件系统（macOS/Linux）上用户手建的小写文件。
+fn locate_loom_md(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let primary = dir.join("Loom.md");
+    if primary.exists() {
+        return Some(primary);
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().eq_ignore_ascii_case("loom.md") {
+                return Some(entry.path());
+            }
+        }
+    }
+    None
+}
+
+/// 读取 Loom.md 并返回去首尾空白后的内容；空文件返回 None。
+fn read_loom_md_nonempty(path: &std::path::Path) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let trimmed = content.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
 /// Load Loom.md with priority order:
-/// 1. `$WORKSPACE/Loom.md` — completely overrides hardcoded defaults
-/// 2. `~/.loom/Loom.md` — auto-created with default system prompt on first startup
+/// 1. `$WORKSPACE/Loom.md` — workspace-level, completely overrides defaults
+/// 2. `~/.loom/Loom.md` — global, auto-created with the default system prompt
+///    on first startup (only when absent)
 /// 3. Returns `None` — caller falls back to the hardcoded system prompt
-///    (only if auto-creation fails; e.g. permission denied)
+///
+/// 文件名大小写不敏感。已存在但为空/不可读的 Loom.md 视为用户主动禁用：
+/// 不会被默认内容覆盖，直接返回 None 走硬编码兜底。
 pub fn load_loom_md(workspace_path: Option<&std::path::Path>, loom_dir: &std::path::Path) -> Option<String> {
-    // Priority 1: workspace-level Loom.md
+    // Priority 1: workspace-level Loom.md (case-insensitive)
     if let Some(ws) = workspace_path {
-        let workspace_loom = ws.join("Loom.md");
-        if workspace_loom.exists() {
-            if let Ok(content) = std::fs::read_to_string(&workspace_loom) {
-                let trimmed = content.trim().to_string();
-                if !trimmed.is_empty() {
-                    tracing::info!(path = %workspace_loom.display(), "loaded workspace-level Loom.md");
-                    return Some(trimmed);
-                }
+        if let Some(path) = locate_loom_md(ws) {
+            if let Some(content) = read_loom_md_nonempty(&path) {
+                tracing::info!(path = %path.display(), "loaded workspace-level Loom.md");
+                return Some(content);
             }
+            // workspace 级 Loom.md 存在但为空：视为该工作区主动禁用 Loom.md 纪律，
+            // 不再 fallback 到全局，直接返回 None。
+            tracing::info!(path = %path.display(), "workspace Loom.md is empty — treating as disabled");
+            return None;
         }
     }
 
-    // Priority 2: global ~/.loom/Loom.md — auto-create on first startup
+    // Priority 2: global ~/.loom/Loom.md (case-insensitive)
+    if let Some(path) = locate_loom_md(loom_dir) {
+        if let Some(content) = read_loom_md_nonempty(&path) {
+            tracing::info!(path = %path.display(), "loaded global Loom.md");
+            return Some(content);
+        }
+        // 全局 Loom.md 存在但为空/不可读：尊重用户意图，不回填默认内容，
+        // 返回 None 让调用方走硬编码兜底。
+        tracing::info!(path = %path.display(), "global Loom.md exists but is empty/unreadable — not overwriting");
+        return None;
+    }
+
+    // 仅当全局目录下完全不存在任何 Loom.md（含大小写变体）时，才首次自动创建。
     let global_loom = loom_dir.join("Loom.md");
-    if global_loom.exists() {
-        if let Ok(content) = std::fs::read_to_string(&global_loom) {
-            let trimmed = content.trim().to_string();
-            if !trimmed.is_empty() {
-                tracing::info!(path = %global_loom.display(), "loaded global Loom.md");
-                return Some(trimmed);
-            }
-        }
-    }
-
-    // Auto-create global Loom.md with the default system prompt on first startup
     if let Some(parent) = global_loom.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -3471,7 +3504,23 @@ impl Orchestrator {
         if !agent_config.persona.is_empty() {
             stable_prompt.push_str(&agent_config.persona);
         }
-        // 2. System instructions — base prompt or agent-specific override
+        // 2. System instructions — Loom.md 是共享纪律基座（类似 CLAUDE.md），
+        // 对所有 agent 始终加载：workspace 级 > 全局 > 硬编码默认。
+        // agent 专属的 system_prompt_override 追加在 Loom.md 之后，作为该 agent 的
+        // 特定补充。这样自定义 agent 也会遵守 Loom.md 纪律，而非用 override 把
+        // Loom.md 整个顶掉（此前 override 非空时 Loom.md 永远不会被读取）。
+        let ws_path = workspace_path.as_ref().map(|s| std::path::Path::new(s.as_str()));
+        let base = if let Some(loom_md) = load_loom_md(ws_path, &self.data_dir) {
+            loom_md
+        } else {
+            self.build_system_prompt().await
+        };
+        if !base.is_empty() {
+            if !stable_prompt.is_empty() {
+                stable_prompt.push_str("\n\n");
+            }
+            stable_prompt.push_str(&base);
+        }
         if let Some(ref override_prompt) = agent_config.system_prompt_override
             && !override_prompt.is_empty()
         {
@@ -3479,20 +3528,6 @@ impl Orchestrator {
                 stable_prompt.push_str("\n\n");
             }
             stable_prompt.push_str(override_prompt);
-        } else {
-            // Try Loom.md first (workspace-level > global > hardcoded fallback)
-            let ws_path = workspace_path.as_ref().map(|s| std::path::Path::new(s.as_str()));
-            let base = if let Some(loom_md) = load_loom_md(ws_path, &self.data_dir) {
-                loom_md
-            } else {
-                self.build_system_prompt().await
-            };
-            if !base.is_empty() {
-                if !stable_prompt.is_empty() {
-                    stable_prompt.push_str("\n\n");
-                }
-                stable_prompt.push_str(&base);
-            }
         }
         // 3. User profile — learned facts about the user (context, not identity)
         if !user_persona.is_empty() {

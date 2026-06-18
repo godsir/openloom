@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useStore } from '../../stores'
 import { useLocale } from '../../i18n'
-import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconPackage } from '../../utils/icons'
+import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconPackage, IconFileText } from '../../utils/icons'
 import Overlay from './Overlay'
 import AgentConfigPanel from './AgentConfigPanel'
+import LoomMdSection from './LoomMdSection'
 import { loomRpc } from '../../services/jsonrpc'
 import WorkspaceTab from './WorkspaceTab'
 import PetTab from './PetTab'
@@ -16,7 +17,7 @@ import PluginsTab from '../settings/PluginsTab'
 import AboutTab from '../settings/AboutTab'
 import TokenTab from '../settings/TokenTab'
 import KgTab from '../settings/KgTab'
-type Tab = 'software' | 'agent' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'about'
+type Tab = 'software' | 'agent' | 'loom' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'about'
 
 function GlobalDefaultsSection() {
   const { t } = useLocale()
@@ -104,6 +105,7 @@ export default function SettingsModal({
       label: t('settings.assistantGroup'),
       items: [
         { id: 'agent', label: t('settings.agent'), icon: <IconBot size={14} /> },
+        { id: 'loom', label: t('settings.loomMd'), icon: <IconFileText size={14} /> },
         { id: 'models', label: t('settings.models'), icon: <IconBox size={14} /> },
         { id: 'kg', label: t('settings.memorySystem'), icon: <IconBrain size={14} /> },
         { id: 'token', label: t('settings.tokenUsage'), icon: <IconBarChart size={14} /> },
@@ -161,6 +163,18 @@ export default function SettingsModal({
               <div className={styles.contentBody}>
                 <GlobalDefaultsSection />
                 <AgentConfigPanel />
+              </div>
+            </>
+          )}
+
+          {tab === 'loom' && (
+            <>
+              <div className={styles.contentHeader}>
+                <h3 className={styles.sectionTitle}>{t('settings.loomMd')}</h3>
+                <p className={styles.sectionDesc}>{t('settings.loomMdDesc')}</p>
+              </div>
+              <div className={styles.contentBody}>
+                <LoomMdSection />
               </div>
             </>
           )}
