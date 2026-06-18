@@ -6,6 +6,7 @@ import { useLocale, t as _t, LOCALES } from '../../i18n'
 import type { Locale } from '../../i18n'
 import Select, { type SelectOption } from '../shared/Select'
 import styles from '../shared/SettingsModal.module.css'
+import { readThemeColors } from '../../utils/theme'
 
 // ── Static font lists (bundled + system fallbacks) ──
 
@@ -81,16 +82,16 @@ function useCodeFontOptions(): SelectOption[] {
   ]
 }
 
-export const THEMES: { id: ThemeId; label: string; bg: string; surface: string; text: string; accent: string }[] = [
-  { id: 'dark', label: _t('theme.dark'), bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' },
-  { id: 'light', label: _t('theme.light'), bg: '#ffffff', surface: '#f1f5f9', text: '#0f172a', accent: '#0d9488' },
-  { id: 'midnight', label: _t('theme.midnight'), bg: '#0b1120', surface: '#0f172a', text: '#e2e8f0', accent: '#a5bff8' },
-  { id: 'warm-paper', label: _t('theme.warmPaper'), bg: '#fdfbf7', surface: '#f5f0e8', text: '#2d2416', accent: '#b05a30' },
-  { id: 'neon-pink', label: _t('theme.neonPink'), bg: '#1a1a1d', surface: '#222225', text: '#f0e0e8', accent: '#e6397c' },
-  { id: 'ember', label: _t('theme.ember'), bg: '#000026', surface: '#060630', text: '#ffe0c0', accent: '#ff770f' },
-  { id: 'navy-gold', label: _t('theme.navyGold'), bg: '#050F2E', surface: '#0A1A45', text: '#e2e8f0', accent: '#FFE76F' },
-  { id: 'umber-cream', label: _t('theme.umberCream'), bg: '#2D1B14', surface: '#3D271D', text: '#fff8f0', accent: '#D8C7B5' },
-  { id: 'custom', label: _t('theme.custom'), bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' },
+export const THEMES: { id: ThemeId; label: string }[] = [
+  { id: 'dark', label: _t('theme.dark') },
+  { id: 'light', label: _t('theme.light') },
+  { id: 'midnight', label: _t('theme.midnight') },
+  { id: 'warm-paper', label: _t('theme.warmPaper') },
+  { id: 'neon-pink', label: _t('theme.neonPink') },
+  { id: 'ember', label: _t('theme.ember') },
+  { id: 'navy-gold', label: _t('theme.navyGold') },
+  { id: 'umber-cream', label: _t('theme.umberCream') },
+  { id: 'custom', label: _t('theme.custom') },
 ]
 
 export function hexToRgb(hex: string): [number, number, number] {
@@ -631,7 +632,12 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
           {/* Theme */}
           <div className={styles.themeGrid}>
             {THEMES.map((th) => {
-              const previewColors = th.id === 'custom' ? customColors : { bg: th.bg, surface: th.surface, text: th.text, accent: th.accent }
+              const tc = th.id === 'custom' ? null : readThemeColors(th.id)
+              const previewColors = th.id === 'custom'
+                ? { bg: customColors.bg, surface: customColors.surface, accent: customColors.accent, text13: customColors.text + '22', text27: customColors.text + '44' }
+                : tc
+                  ? { bg: tc.bg, surface: tc.surface, accent: tc.accent, text13: tc.text13, text27: tc.text27 }
+                  : { bg: '#000', surface: '#111', accent: '#666', text13: 'rgba(255,255,255,0.13)', text27: 'rgba(255,255,255,0.27)' }
               return (
               <button
                 key={th.id}
@@ -648,8 +654,8 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                     '--pv-bg': previewColors.bg,
                     '--pv-surface': previewColors.surface,
                     '--pv-accent': previewColors.accent,
-                    '--pv-text-13': previewColors.text + '22',
-                    '--pv-text-27': previewColors.text + '44',
+                    '--pv-text-13': previewColors.text13,
+                    '--pv-text-27': previewColors.text27,
                   } as React.CSSProperties}
                 >
                   <div className={styles.themePreviewInner}>

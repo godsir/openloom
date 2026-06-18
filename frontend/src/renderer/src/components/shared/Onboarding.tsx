@@ -4,6 +4,7 @@ import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
 import { useStore } from '../../stores'
 import styles from './Onboarding.module.css'
+import { readThemeColors } from '../../utils/theme'
 
 // ── Types ──
 
@@ -286,20 +287,22 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
                 <span className={styles.themeLabel}>{t('onboarding.themeLabel')}</span>
                 <div className={styles.themeGrid}>
                   {[
-                    { id: 'dark', label: t('theme.dark'), cls: styles.themeDark },
-                    { id: 'midnight', label: t('theme.midnight'), cls: styles.themeMidnight },
-                    { id: 'light', label: t('theme.light'), cls: styles.themeLight },
-                    { id: 'warm-paper', label: t('theme.warm-paper'), cls: styles.themeWarm },
-                  ].map((th) => (
+                    { id: 'dark', label: t('theme.dark') },
+                    { id: 'midnight', label: t('theme.midnight') },
+                    { id: 'light', label: t('theme.light') },
+                    { id: 'warm-paper', label: t('theme.warm-paper') },
+                  ].map((th) => {
+                    const tc = readThemeColors(th.id)
+                    return (
                     <button
                       key={th.id}
-                      className={`${styles.themeCard} ${th.cls} ${selTheme === th.id ? styles.themeCardActive : ''}`}
+                      className={`${styles.themeCard} ${selTheme === th.id ? styles.themeCardActive : ''}`}
                       onClick={() => handleSetTheme(th.id)}
                     >
-                      <span className={styles.themeSwatch} />
+                      <span className={styles.themeSwatch} style={tc ? { background: tc.bg } : undefined} />
                       <span className={styles.themeName}>{th.label}</span>
                     </button>
-                  ))}
+                  )})}
                 </div>
               </div>
             </>

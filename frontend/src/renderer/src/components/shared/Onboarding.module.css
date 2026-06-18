@@ -521,19 +521,8 @@
   left: 0;
   right: 0;
   height: 40%;
-  background: linear-gradient(to top, rgba(0,0,0,0.25), transparent);
-  border-top: 1px solid rgba(255,255,255,0.06);
-}
-
-.themeDark .themeSwatch     { background: #0B0F14; }
-.themeMidnight .themeSwatch { background: #0b1120; }
-.themeLight .themeSwatch    { background: #f8fafc; }
-.themeWarm .themeSwatch     { background: #1e1b15; }
-
-.themeLight .themeSwatch::after,
-.themeWarm .themeSwatch::after {
-  background: linear-gradient(to top, rgba(0,0,0,0.12), transparent);
-  border-top: 1px solid rgba(0,0,0,0.08);
+  background: linear-gradient(to top, rgba(0,0,0,0.18), transparent);
+  border-top: 1px solid rgba(128,128,128,0.12);
 }
 
 .themeName {
