@@ -70,6 +70,21 @@ export function registerAppIpc(): void {
     return restartEngine()
   })
 
+  // ── Zoom factor (Ctrl+/- webContents zoom) ──
+
+  ipcMain.handle('get-zoom-factor', (event) => {
+    const wc = BrowserWindow.fromWebContents(event.sender)?.webContents
+    return wc?.zoomFactor ?? 1.0
+  })
+
+  ipcMain.handle('set-zoom-factor', (event, factor: number) => {
+    const wc = BrowserWindow.fromWebContents(event.sender)?.webContents
+    if (wc) {
+      wc.zoomFactor = factor
+      setStoreKey('zoomFactor', factor)
+    }
+  })
+
   // Native OS notification
   ipcMain.handle('show-notification', (event, title: string, body: string) => {
     const win = BrowserWindow.fromWebContents(event.sender)

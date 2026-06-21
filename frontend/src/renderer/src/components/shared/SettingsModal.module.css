@@ -2382,6 +2382,28 @@
   cursor: not-allowed;
 }
 
+/* ── Reset to default size button ── */
+
+.resetSizeBtn {
+  height: 28px;
+  padding: 0 14px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.resetSizeBtn:hover {
+  color: var(--accent);
+  border-color: var(--border-accent);
+  background: var(--accent-subtle);
+}
+
 /* ── Loom.md 纪律文件编辑器 ── */
 
 .loomMdTextarea {

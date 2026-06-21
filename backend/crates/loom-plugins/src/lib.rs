@@ -160,35 +160,78 @@ impl PluginManager {
 
         // Deduplicate on the plugin's canonical filesystem path so the SAME
         // directory discovered via two search roots collapses to one entry,
-        // while two DISTINCT plugins that merely share a name are both kept
-        // (the previous (name, source) key silently dropped the second one —
-        // including when name defaulted to the dir name). Falls back to the
-        // raw path if canonicalization fails. A true name collision (two
-        // different paths, same name) is surfaced via a warning instead of a
-        // silent drop. Entries are already in deterministic order from sorting
-        // in `scan_dir_depth`, so the retained copy is stable.
+        // while two DISTINCT plugins that share a name are resolved by source
+        // priority: loom > claude > openclaw (user's own plugins win), and by
+        // version within the same source (semver, higher wins). Cache hash-dir
+        // duplicates (claude-plugins-official) are silently collapsed.
         let mut seen_paths: std::collections::HashSet<std::path::PathBuf> =
             std::collections::HashSet::new();
-        let mut seen_names: std::collections::HashMap<String, std::path::PathBuf> =
+        let mut seen_names: std::collections::HashMap<String, (usize, String)> =
             std::collections::HashMap::new();
-        self.plugins.retain(|p| {
-            let canon = std::fs::canonicalize(&p.path).unwrap_or_else(|_| p.path.clone());
+
+        let source_rank = |s: &str| -> u8 {
+            match s {
+                "loom" => 3,
+                "claude" => 2,
+                "openclaw" => 1,
+                _ => 0,
+            }
+        };
+
+        let mut i = 0;
+        while i < self.plugins.len() {
+            let canon = std::fs::canonicalize(&self.plugins[i].path)
+                .unwrap_or_else(|_| self.plugins[i].path.clone());
             if !seen_paths.insert(canon.clone()) {
-                // Exact same plugin directory reached via multiple roots — drop the dup.
-                return false;
+                // Exact same plugin directory reached via multiple search roots.
+                self.plugins.remove(i);
+                continue;
             }
-            if let Some(existing) = seen_names.get(&p.manifest.name) {
-                tracing::warn!(
-                    name = %p.manifest.name,
-                    kept = %existing.display(),
-                    duplicate = %p.path.display(),
-                    "two distinct plugins share a name; keeping both (discovery order is deterministic)"
-                );
-            } else {
-                seen_names.insert(p.manifest.name.clone(), p.path.clone());
+            let name = self.plugins[i].manifest.name.clone();
+            let rank = source_rank(&self.plugins[i].source);
+            let ver = self.plugins[i].manifest.version.clone();
+
+            if let Some(&(existing_idx, _)) = seen_names.get(&name) {
+                let existing_rank = source_rank(&self.plugins[existing_idx].source);
+                let existing_ver = self.plugins[existing_idx].manifest.version.as_str();
+                let keep = if rank > existing_rank {
+                    // Higher-priority source wins
+                    i
+                } else if rank < existing_rank {
+                    existing_idx
+                } else {
+                    // Same source: semver comparison (higher wins, or keep existing on tie)
+                    match (semver::Version::parse(&ver), semver::Version::parse(existing_ver)) {
+                        (Ok(new_v), Ok(old_v)) if new_v > old_v => i,
+                        _ => existing_idx,
+                    }
+                };
+                if keep == i {
+                    // New entry wins — swap it into the existing slot and remove the old one
+                    self.plugins.swap(existing_idx, i);
+                    seen_names.insert(name.clone(), (existing_idx, self.plugins[existing_idx].source.clone()));
+                    // Remove the now-swapped-out old entry at position i
+                    self.plugins.remove(i);
+                    // Don't increment i — the swapped-in entry needs its own continuation
+                    continue;
+                } else {
+                    tracing::debug!(
+                        name = %self.plugins[i].manifest.name,
+                        kept = %self.plugins[existing_idx].path.display(),
+                        kept_source = %self.plugins[existing_idx].source,
+                        kept_ver = %self.plugins[existing_idx].manifest.version,
+                        dropped = %self.plugins[i].path.display(),
+                        dropped_source = %self.plugins[i].source,
+                        dropped_ver = %self.plugins[i].manifest.version,
+                        "duplicate plugin name resolved"
+                    );
+                    self.plugins.remove(i);
+                    continue;
+                }
             }
-            true
-        });
+            seen_names.insert(name.clone(), (i, self.plugins[i].source.clone()));
+            i += 1;
+        }
 
         Ok(self.plugins.len())
     }

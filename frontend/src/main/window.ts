@@ -1,5 +1,6 @@
 import { BrowserWindow, screen, app, shell, ipcMain } from 'electron'
 import { join } from 'path'
+import { getStoreKey } from './store'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -36,6 +37,14 @@ export function createMainWindow(port: number): BrowserWindow {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
+  })
+
+  // Restore saved zoom factor (default 1.0), overriding any stale Chromium zoom
+  const savedZoom = getStoreKey('zoomFactor', 1.0) as number
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.zoomFactor = savedZoom
+    }
   })
 
   mainWindow.on('closed', () => {

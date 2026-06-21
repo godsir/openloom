@@ -1502,6 +1502,9 @@ export const zhCN: TranslationMap = {
   'software.uiFontReset': '已恢复系统默认字体',
   'software.codeFontUpdated': '代码字体已更新',
   'software.codeFontReset': '已恢复系统默认等宽字体',
+  'software.resetToDefault': '恢复默认大小',
+  'software.resetToDefaultDesc': '将字体大小和界面/代码字体恢复为默认值',
+  'software.resetComplete': '已恢复默认字体大小',
 
   // ── Token Tab ───────────────────────────────────────────────────
   'token.title': 'Token 用量',

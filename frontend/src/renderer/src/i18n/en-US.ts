@@ -1502,6 +1502,9 @@ export const enUS: TranslationMap = {
   'software.uiFontReset': 'System default font restored',
   'software.codeFontUpdated': 'Code font updated',
   'software.codeFontReset': 'System default monospace font restored',
+  'software.resetToDefault': 'Reset to Default',
+  'software.resetToDefaultDesc': 'Restore font size, UI font and code font to defaults',
+  'software.resetComplete': 'Font size reset to default',
 
   // ── Token Tab ───────────────────────────────────────────────────
   'token.title': 'Token Usage',

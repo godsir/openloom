@@ -328,6 +328,28 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
     useStore.getState().addToast({ type: 'success', message: val ? t('software.codeFontUpdated') : t('software.codeFontReset') })
   }
 
+  const handleResetSize = async () => {
+    // Reset font size to default (14px) — persisted via store action
+    useStore.getState().setFontSize('default')
+    setFontSize('default')
+
+    // Reset UI font to system default — persisted
+    setUiFont('')
+    document.documentElement.style.removeProperty('--font')
+    document.documentElement.style.removeProperty('-webkit-text-stroke')
+    window.loom.setPreference('uiFont', '')
+
+    // Reset code font to system default — persisted
+    setCodeFont('')
+    document.documentElement.style.removeProperty('--font-mono')
+    window.loom.setPreference('codeFont', '')
+
+    // Reset Electron webContents zoom (Ctrl+/- zoom) to 1.0 — persisted
+    window.loom.setZoomFactor(1.0)
+
+    useStore.getState().addToast({ type: 'success', message: t('software.resetComplete') })
+  }
+
   return (
     <>
       <div className={styles.contentHeader}>
@@ -751,6 +773,18 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                     variant="form"
                   />
                 </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>{t('software.resetToDefault')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.resetToDefaultDesc')}</p>
+                </div>
+                <button
+                  onClick={handleResetSize}
+                  className={styles.resetSizeBtn}
+                >
+                  {t('software.resetToDefault')}
+                </button>
               </div>
             </>
           )}
