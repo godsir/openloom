@@ -182,6 +182,9 @@ export const zhTW: TranslationMap = {
 
   // ── Input ───────────────────────────────────────────────────────
   'input.startChat': '开始新對話...',
+  'input.openWorkspace': '在檔案管理器中開啟',
+  'input.memoryOn': '記憶記錄已開啟 — 點擊關閉',
+  'input.memoryOff': '記憶記錄已關閉 — 點擊開啟',
   'input.insertImage': '插入圖片',
   'input.addAttachment': '添加附件',
   'input.loadSkills': '載入技能',

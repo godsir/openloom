@@ -67,8 +67,12 @@ export default function InputArea() {
   const removeQuotedSelection = useStore(s => s.removeQuotedSelection)
   const todoPanelOpen = useStore(s => s.todoPanelOpen)
   const toggleTodoPanel = useStore(s => s.toggleTodoPanel)
+  const sessionMemoryEnabled = useStore(s => s.sessionMemoryEnabled)
+  const setSessionMemoryEnabledAction = useStore(s => s.setSessionMemoryEnabledAction)
   const { saveDraft, restoreDraft } = useStore.getState()
   const sessionWorkspace = sessionId ? sessionWorkspaces[sessionId] : undefined
+  // Memory enabled defaults to true (missing key = enabled)
+  const isMemoryEnabled = sessionId ? (sessionMemoryEnabled[sessionId] ?? true) : true
 
   // Load available skills (deduplicate by name)
   const refreshSkills = useCallback(async () => {
@@ -329,6 +333,18 @@ export default function InputArea() {
     }
   }
 
+  const toggleMemory = useCallback(async () => {
+    if (!sessionId) return
+    const next = !isMemoryEnabled
+    setSessionMemoryEnabledAction(sessionId, next)
+    try {
+      await loomRpc('session.set_memory_enabled', { session_id: sessionId, enabled: next })
+    } catch {
+      // Revert on failure
+      setSessionMemoryEnabledAction(sessionId, !next)
+    }
+  }, [sessionId, isMemoryEnabled, setSessionMemoryEnabledAction])
+
   const handleStop = async () => {
     if (!sessionId) return
     // Optimistically clear streaming state immediately so UI unlocks
@@ -487,6 +503,17 @@ export default function InputArea() {
                 <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
               </svg>
               <span className={styles.workspacePath}>{sessionWorkspace}</span>
+              <button
+                className={styles.workspaceOpenBtn}
+                title={t('input.openWorkspace')}
+                onClick={() => window.loom.openFolder(sessionWorkspace)}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                  <polyline points="15 3 21 3 21 9"/>
+                  <line x1="10" y1="14" x2="21" y2="3"/>
+                </svg>
+              </button>
             </div>
           )}
           {attachedFiles.length > 0 && (
@@ -595,6 +622,26 @@ export default function InputArea() {
                 </div>
               )}
             </div>
+            <div className={styles.toolbarDivider} />
+            <button
+              onClick={toggleMemory}
+              disabled={!isConnected || !sessionId}
+              className={`${styles.fileActionBtn} ${!isMemoryEnabled ? styles.memoryOff : ''}`}
+              title={isMemoryEnabled ? t('input.memoryOn') : t('input.memoryOff')}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/>
+                <path d="M12 6v4l3 2"/>
+                {isMemoryEnabled ? (
+                  <>
+                    <path d="M8 12a4 4 0 0 1 3-3.85"/>
+                    <path d="M10 16.5a4 4 0 0 0 4-4"/>
+                  </>
+                ) : (
+                  <line x1="4" y1="4" x2="20" y2="20" strokeWidth="2"/>
+                )}
+              </svg>
+            </button>
             <div className={styles.toolbarDivider} />
             <button
               onClick={toggleTodoPanel}

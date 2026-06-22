@@ -182,6 +182,9 @@ export const zhCN: TranslationMap = {
 
   // ── Input ───────────────────────────────────────────────────────
   'input.startChat': '开始新对话...',
+  'input.openWorkspace': '在文件管理器中打开',
+  'input.memoryOn': '记忆记录已开启 — 点击关闭',
+  'input.memoryOff': '记忆记录已关闭 — 点击开启',
   'input.insertImage': '插入图片',
   'input.addAttachment': '添加附件',
   'input.loadSkills': '加载技能',

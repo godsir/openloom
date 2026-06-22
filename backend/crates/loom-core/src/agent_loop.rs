@@ -21,6 +21,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::sync::mpsc;
 use tracing::info;
+use tracing::debug;
 
 use crate::event_bus::EventBus;
 use crate::hooks::HookContext;
@@ -585,6 +586,28 @@ fn tool_execution_denied(
     false
 }
 
+/// Build synthetic ToolCall ContentParts from tool_messages so that
+/// sanitize_message_sequence doesn't orphan the tool results on the next turn.
+/// This is needed for interrupted turns (UserCancelled / BudgetExhausted /
+/// MaxIterations) where the final assistant content_parts would otherwise only
+/// contain a text message like "[已中断]", causing all tool results to be dropped
+/// as orphaned.
+fn build_toolcall_parts(tool_messages: &[Message]) -> Vec<ContentPart> {
+    let mut parts = Vec::new();
+    for msg in tool_messages {
+        for part in &msg.content {
+            if let ContentPart::ToolResult { tool_call_id, name, .. } = part {
+                parts.push(ContentPart::ToolCall {
+                    id: tool_call_id.clone(),
+                    name: name.clone(),
+                    arguments: serde_json::json!({}),
+                });
+            }
+        }
+    }
+    parts
+}
+
 /// Execute one agent turn: user message → LLM → tools → response.
 pub async fn run_agent_turn(
     client: &dyn CloudClient,
@@ -792,7 +815,7 @@ async fn run_agent_turn_inner(
         for path in image_paths {
             if let Ok(image_part) = load_image_as_content_part(&path) {
                 last_msg.content.push(image_part);
-                info!(path = %path, "loaded image from path in user message");
+                debug!(path = %path, "loaded image from path in user message");
             }
         }
     }
@@ -917,6 +940,8 @@ async fn run_agent_turn_inner(
         digest.prefix_token_count,
     );
 
+    let mut safety_truncation_count: u32 = 0;
+
     for iteration in 0..config.max_iterations {
         // Drain steering queue: inject any GUI-provided guidance messages
         if let Some(ref queue) = config.steering_queue {
@@ -976,20 +1001,25 @@ async fn run_agent_turn_inner(
                 cache_read_tokens: 0,
                 cache_write_tokens: 0,
                 kv_cache_hit: None,
-                content_parts: vec![ContentPart::Text {
-                    text: format!(
-                        "任务进行中（已用 {} tokens）。输入「继续」以接着执行。",
-                        total_prompt
-                    ),
-                }],
+                content_parts: {
+                    let mut parts = build_toolcall_parts(&tool_messages);
+                    parts.push(ContentPart::Text {
+                        text: format!(
+                            "任务进行中（已用 {} tokens）。输入「继续」以接着执行。",
+                            total_prompt
+                        ),
+                    });
+                    parts
+                },
                 tool_messages,
                 vision_usage: None,
                 stop_reason: StopReason::BudgetExhausted,
             });
         }
-        // Mid-turn safety truncation (no LLM) — prevents single-turn blowups.
-        // Replaces the old compact_history call (which had an unimplemented LLM placeholder).
-        if config.compaction_config.enabled && !messages.is_empty() {
+        // Mid-turn safety: check token usage against context window ceiling.
+        // When compaction is enabled, try truncation first. When disabled, stop
+        // immediately if tokens exceed the ceiling to avoid LLM HTTP 400 errors.
+        if !messages.is_empty() {
             let bpe = loom_context::bpe();
             let total_tokens: usize = messages.iter()
                 .map(|m| loom_context::message_tokens(m, bpe))
@@ -997,14 +1027,95 @@ async fn run_agent_turn_inner(
             let cw = config.context_window.unwrap_or(config.max_prompt_budget.max(8192));
             let ceiling = (cw as f32 * 0.9) as usize;
             if total_tokens > ceiling {
-                let before = total_tokens;
-                messages = loom_context::mid_turn_safety_truncate(
-                    &messages,
-                    config.compaction_config.max_tool_output_chars,
+                if config.compaction_config.enabled {
+                    safety_truncation_count += 1;
+                    let before = total_tokens;
+                    messages = loom_context::mid_turn_safety_truncate(
+                        &messages,
+                        config.compaction_config.max_tool_output_chars,
+                    );
+                    let after: usize = messages.iter().map(|m| loom_context::message_tokens(m, bpe)).sum();
+                    tracing::info!(iteration, before, after, count = safety_truncation_count, "mid-turn safety truncation applied");
+                    // If safety truncation fired 3+ times this turn, or post-truncation
+                    // tokens still exceed 85% of the context window, stop and show ContinueButton
+                    // so the user can click to continue with a fresh context window (which also
+                    // triggers pre-turn LLM summarization at the 80% threshold).
+                    let critical_ceiling = (cw as f32 * 0.85) as usize;
+                    if safety_truncation_count >= 3 || after > critical_ceiling {
+                    info!(
+                        iteration,
+                        after,
+                        count = safety_truncation_count,
+                        "safety truncation repeated — stopping for user to continue"
+                    );
+                    return Ok(TurnResult {
+                        response: format!(
+                            "任务进行中（已用 {} tokens，达上下文上限）。输入「继续」以接着执行。",
+                            after
+                        ),
+                        thinking: String::new(),
+                        tool_calls_made,
+                        iterations: iteration,
+                        prompt_tokens: total_prompt,
+                        completion_tokens: total_completion,
+                        cached_tokens: 0,
+                        cache_read_tokens: 0,
+                        cache_write_tokens: 0,
+                        kv_cache_hit: None,
+                        content_parts: {
+                            let mut parts = build_toolcall_parts(&tool_messages);
+                            parts.push(ContentPart::Text {
+                                text: format!(
+                                    "任务进行中（已用 {} tokens，达上下文上限）。输入「继续」以接着执行。",
+                                    after
+                                ),
+                            });
+                            parts
+                        },
+                        tool_messages,
+                        vision_usage: None,
+                        stop_reason: StopReason::BudgetExhausted,
+                    });
+                }
+            } else {
+                // Compaction disabled but tokens exceed ceiling — stop immediately
+                // to avoid LLM HTTP 400 errors from context window overflow.
+                info!(
+                    iteration,
+                    total_tokens,
+                    ceiling,
+                    "token ceiling exceeded (compaction disabled) — stopping for user to continue"
                 );
-                let after: usize = messages.iter().map(|m| loom_context::message_tokens(m, bpe)).sum();
-                tracing::info!(iteration, before, after, "mid-turn safety truncation applied");
+                return Ok(TurnResult {
+                    response: format!(
+                        "任务进行中（已用 {} tokens，达上下文上限）。输入「继续」以接着执行。",
+                        total_tokens
+                    ),
+                    thinking: String::new(),
+                    tool_calls_made,
+                    iterations: iteration,
+                    prompt_tokens: total_prompt,
+                    completion_tokens: total_completion,
+                    cached_tokens: 0,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                    kv_cache_hit: None,
+                    content_parts: {
+                        let mut parts = build_toolcall_parts(&tool_messages);
+                        parts.push(ContentPart::Text {
+                            text: format!(
+                                "任务进行中（已用 {} tokens，达上下文上限）。输入「继续」以接着执行。",
+                                total_tokens
+                            ),
+                        });
+                        parts
+                    },
+                    tool_messages,
+                    vision_usage: None,
+                    stop_reason: StopReason::BudgetExhausted,
+                });
             }
+        }
         }
         // Check for user interruption before each iteration
         if cancel.is_cancelled() {
@@ -1033,9 +1144,11 @@ async fn run_agent_turn_inner(
                 cache_read_tokens: 0,
                 cache_write_tokens: 0,
                 kv_cache_hit: None,
-                content_parts: vec![ContentPart::Text {
-                    text: "[已中断]".into(),
-                }],
+                content_parts: {
+                    let mut parts = build_toolcall_parts(&tool_messages);
+                    parts.push(ContentPart::Text { text: "[已中断]".into() });
+                    parts
+                },
                 tool_messages,
                 vision_usage: None,
                 stop_reason: StopReason::UserCancelled,
@@ -1447,9 +1560,13 @@ async fn run_agent_turn_inner(
     Ok(TurnResult {
         response: "Agent reached maximum iterations without resolving.".into(),
         thinking: String::new(),
-        content_parts: vec![ContentPart::Text {
-            text: "Agent reached maximum iterations without resolving.".into(),
-        }],
+        content_parts: {
+            let mut parts = build_toolcall_parts(&tool_messages);
+            parts.push(ContentPart::Text {
+                text: "Agent reached maximum iterations without resolving.".into(),
+            });
+            parts
+        },
         tool_calls_made,
         iterations: config.max_iterations,
         prompt_tokens: total_prompt,
@@ -1670,7 +1787,7 @@ async fn run_agent_turn_streaming_inner(
         for path in image_paths {
             if let Ok(image_part) = load_image_as_content_part(&path) {
                 last_msg.content.push(image_part);
-                tracing::info!(path = %path, "loaded image from path in user message (streaming)");
+                tracing::debug!(path = %path, "loaded image from path in user message (streaming)");
             }
         }
     }
@@ -1854,6 +1971,8 @@ async fn run_agent_turn_streaming_inner(
         digest.prefix_token_count,
     );
 
+    let mut safety_truncation_count: u32 = 0;
+
     for iteration in 0..config.max_iterations {
         // Drain steering queue: inject any GUI-provided guidance messages
         if let Some(ref queue) = config.steering_queue {
@@ -1916,16 +2035,20 @@ async fn run_agent_turn_streaming_inner(
                 cache_read_tokens: 0,
                 cache_write_tokens: 0,
                 kv_cache_hit: None,
-                content_parts: vec![ContentPart::Text {
-                    text: "任务进行中，已达预算上限。".into(),
-                }],
+                content_parts: {
+                    let mut parts = build_toolcall_parts(&tool_messages);
+                    parts.push(ContentPart::Text {
+                        text: "任务进行中，已达预算上限。".into(),
+                    });
+                    parts
+                },
                 tool_messages,
                 vision_usage: None,
                 stop_reason: StopReason::BudgetExhausted,
             });
         }
-        // Mid-turn safety truncation (no LLM) — prevents single-turn blowups (streaming).
-        if config.compaction_config.enabled && !messages.is_empty() {
+        // Mid-turn safety: check token usage against context window ceiling (streaming).
+        if !messages.is_empty() {
             let bpe = loom_context::bpe();
             let total_tokens: usize = messages.iter()
                 .map(|m| loom_context::message_tokens(m, bpe))
@@ -1933,14 +2056,92 @@ async fn run_agent_turn_streaming_inner(
             let cw = config.context_window.unwrap_or(config.max_prompt_budget.max(8192));
             let ceiling = (cw as f32 * 0.9) as usize;
             if total_tokens > ceiling {
+                if config.compaction_config.enabled {
+                safety_truncation_count += 1;
                 let before = total_tokens;
                 messages = loom_context::mid_turn_safety_truncate(
                     &messages,
                     config.compaction_config.max_tool_output_chars,
                 );
                 let after: usize = messages.iter().map(|m| loom_context::message_tokens(m, bpe)).sum();
-                tracing::info!(iteration, before, after, "mid-turn safety truncation applied (streaming)");
+                tracing::info!(iteration, before, after, count = safety_truncation_count, "mid-turn safety truncation applied (streaming)");
+                // If safety truncation fired 3+ times this turn, or post-truncation
+                // tokens still exceed 85% of the context window, stop and show ContinueButton.
+                let critical_ceiling = (cw as f32 * 0.85) as usize;
+                if safety_truncation_count >= 3 || after > critical_ceiling {
+                    tracing::info!(
+                        iteration,
+                        after,
+                        count = safety_truncation_count,
+                        "safety truncation repeated — stopping for user to continue (streaming)"
+                    );
+                    let msg = format!(
+                        "任务进行中（已用 {} tokens，达上下文上限）。输入「继续」以接着执行。",
+                        after
+                    );
+                    let _ = delta_tx.send(StreamDelta::Text(msg.clone())).await;
+                    drop(delta_tx);
+                    return Ok(TurnResult {
+                        response: msg,
+                        thinking: String::new(),
+                        tool_calls_made,
+                        iterations: iteration,
+                        prompt_tokens: total_prompt,
+                        completion_tokens: total_completion,
+                        cached_tokens: 0,
+                        cache_read_tokens: 0,
+                        cache_write_tokens: 0,
+                        kv_cache_hit: None,
+                        content_parts: {
+                            let mut parts = build_toolcall_parts(&tool_messages);
+                            parts.push(ContentPart::Text {
+                                text: "任务进行中（已达上下文上限）。输入「继续」以接着执行。".into(),
+                            });
+                            parts
+                        },
+                        tool_messages,
+                        vision_usage: None,
+                        stop_reason: StopReason::BudgetExhausted,
+                    });
+                }
+            } else {
+                // Compaction disabled but tokens exceed ceiling — stop immediately (streaming).
+                tracing::info!(
+                    iteration,
+                    total_tokens,
+                    ceiling,
+                    "token ceiling exceeded (compaction disabled, streaming) — stopping"
+                );
+                let msg = format!(
+                    "任务进行中（已用 {} tokens，达上下文上限）。输入「继续」以接着执行。",
+                    total_tokens
+                );
+                let _ = delta_tx.send(StreamDelta::Text(msg.clone())).await;
+                drop(delta_tx);
+                return Ok(TurnResult {
+                    response: msg,
+                    thinking: String::new(),
+                    tool_calls_made,
+                    iterations: iteration,
+                    prompt_tokens: total_prompt,
+                    completion_tokens: total_completion,
+                    cached_tokens: 0,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                    kv_cache_hit: None,
+                    content_parts: {
+                        let mut parts = build_toolcall_parts(&tool_messages);
+                        parts.push(ContentPart::Text {
+                            text: "任务进行中（已达上下文上限）。输入「继续」以接着执行。".into(),
+                        });
+                        parts
+                    },
+                    tool_messages,
+                    vision_usage: None,
+                    stop_reason: StopReason::BudgetExhausted,
+                });
             }
+        }
         }
         // Check for user interruption before each iteration
         if cancel.is_cancelled() {
@@ -1971,9 +2172,11 @@ async fn run_agent_turn_streaming_inner(
                 cache_read_tokens: 0,
                 cache_write_tokens: 0,
                 kv_cache_hit: None,
-                content_parts: vec![ContentPart::Text {
-                    text: "[已中断]".into(),
-                }],
+                content_parts: {
+                    let mut parts = build_toolcall_parts(&tool_messages);
+                    parts.push(ContentPart::Text { text: "[已中断]".into() });
+                    parts
+                },
                 tool_messages,
                 vision_usage: None,
                 stop_reason: StopReason::UserCancelled,
@@ -2074,7 +2277,11 @@ async fn run_agent_turn_streaming_inner(
                             cache_read_tokens: attempt_cache_read_tokens as usize,
                             cache_write_tokens: attempt_cache_write_tokens as usize,
                             kv_cache_hit: None,
-                            content_parts: vec![ContentPart::Text { text: "[已中断]".into() }],
+                            content_parts: {
+                                let mut parts = build_toolcall_parts(&tool_messages);
+                                parts.push(ContentPart::Text { text: "[已中断]".into() });
+                                parts
+                            },
                             tool_messages,
                             vision_usage: None,
                             stop_reason: StopReason::UserCancelled,
@@ -2644,10 +2851,21 @@ async fn run_agent_turn_streaming_inner(
         });
     }
 
+    // When the turn ends due to MaxIterations (completed_iterations == 0),
+    // prepend synthetic ToolCall parts so that sanitize_message_sequence on the
+    // next turn doesn't orphan the tool results.
+    let final_content_parts = if completed_iterations == 0 {
+        let mut parts = build_toolcall_parts(&tool_messages);
+        parts.extend(content_parts);
+        parts
+    } else {
+        content_parts
+    };
+
     Ok(TurnResult {
         response: final_text,
         thinking: captured_thinking,
-        content_parts,
+        content_parts: final_content_parts,
         tool_calls_made,
         stop_reason: if completed_iterations > 0 { StopReason::Completed } else { StopReason::MaxIterations },
         iterations: if completed_iterations > 0 {

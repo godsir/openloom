@@ -1,5 +1,6 @@
 import { ipcMain, shell } from 'electron'
 import { resolve } from 'path'
+import { existsSync } from 'fs'
 
 // Only these URL schemes may be handed to the OS to open externally. Blocks
 // file:, smb:, and custom protocol-handler schemes that a malicious link
@@ -25,7 +26,9 @@ export function registerShellIpc(): void {
 
   ipcMain.handle('open-folder', async (_, filePath: string) => {
     if (typeof filePath !== 'string' || !filePath) throw new Error('invalid path')
-    shell.showItemInFolder(resolve(filePath))
+    const resolved = resolve(filePath)
+    if (!existsSync(resolved)) throw new Error('path does not exist: ' + resolved)
+    await shell.openPath(resolved)
   })
 
   ipcMain.handle('open-file', async (_, filePath: string) => {

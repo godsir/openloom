@@ -233,8 +233,9 @@ async fn main() -> anyhow::Result<()> {
         let _ = std::fs::create_dir_all(&log_dir);
         let file_appender = tracing_appender::rolling::never(&log_dir, "chat.log");
         let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-        // Leak the guard so the background writer lives for the entire process.
-        std::mem::forget(_guard);
+        // Box the guard so it lives for the entire process lifetime.
+        // Dropping it flushes the non-blocking buffer and joins the writer thread.
+        let _log_guard = Box::new(_guard);
         tracing_subscriber::fmt()
             .with_env_filter("info")
             .with_writer(non_blocking)
@@ -1034,6 +1035,18 @@ async fn run_bare_repl(
     use std::io::Write;
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    // Strip ANSI / control chars from AI output to prevent terminal injection
+    // in bare-stdout mode (no ratatui buffer isolation).
+    fn safe_print(s: &str) {
+        for c in s.chars() {
+            if c == '\x1b' || c == '\u{9b}' || (c.is_control() && c != '\n' && c != '\t' && c != '\r')
+            {
+                continue;
+            }
+            print!("{}", c);
+        }
+    }
+
     // Ctrl+C handler
     let ctrlc_pressed = Arc::new(AtomicBool::new(false));
     let flag = ctrlc_pressed.clone();
@@ -1100,14 +1113,14 @@ async fn run_bare_repl(
                 delta = rx.recv() => match delta {
                     Some(StreamDelta::Text(t)) => {
                         if !think_buf.is_empty() {
-                            print!("\n  [think] {}\n", think_buf); think_buf.clear();
+                            safe_print(&format!("\n  [think] {}\n", think_buf)); think_buf.clear();
                         }
-                        print!("{}", t); std::io::stdout().flush().ok();
+                        safe_print(&t); std::io::stdout().flush().ok();
                     }
                     Some(StreamDelta::Reasoning(r)) => { think_buf.push_str(&r); }
                     Some(StreamDelta::ToolCallBegin { name, .. }) => {
                         if !think_buf.is_empty() {
-                            print!("\n  [think] {}\n", think_buf); think_buf.clear();
+                            safe_print(&format!("\n  [think] {}\n", think_buf)); think_buf.clear();
                         }
                         tool_idx += 1;
                         print!("\n  [{tool_idx}] calling {}... ", name); std::io::stdout().flush().ok();
@@ -1132,7 +1145,7 @@ async fn run_bare_repl(
         // Drain remaining deltas
         while let Ok(delta) = rx.try_recv() {
             match delta {
-                StreamDelta::Text(t) => { print!("{}", t); std::io::stdout().flush().ok(); }
+                StreamDelta::Text(t) => { safe_print(&t); std::io::stdout().flush().ok(); }
                 StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens } => {
                     prompt += prompt_tokens;
                     completion += completion_tokens;
@@ -1143,7 +1156,7 @@ async fn run_bare_repl(
             }
         }
         if !think_buf.is_empty() {
-            print!("\n  [think] {}\n", think_buf);
+            safe_print(&format!("\n  [think] {}\n", think_buf));
         }
         match result {
             Ok(turn) => {

@@ -1567,13 +1567,52 @@ impl AgentTool for WebSearchTool {
         }
 
         let client = reqwest::Client::builder()
-            .user_agent("openLoom/0.2")
+            .user_agent("Mozilla/5.0 (compatible; openLoom/1.0; +https://github.com/godsir/openloom)")
             .timeout(std::time::Duration::from_secs(15))
             .build()?;
 
-        // Use DuckDuckGo Lite (no JS, plain HTML, no API key)
+        // ── Multi-backend search with fallback ───────────────────────
+        // Try DuckDuckGo Lite first (no API key, plain HTML).
+        // On failure (HTTP error / empty results), fall back to DDG HTML.
         let url = format!("https://lite.duckduckgo.com/lite/?q={}", urlencoding(query));
-        let html = client.get(&url).send().await?.text().await?;
+
+        let html = match retry_with_backoff(|| async {
+            let resp = client.get(&url).send().await?;
+            let status = resp.status();
+            let text = resp.text().await?;
+            if !status.is_success() {
+                anyhow::bail!("DDG Lite returned HTTP {}", status.as_u16());
+            }
+            Ok(text)
+        }, 2).await
+        {
+            Ok(html) => html,
+            Err(e) => {
+                tracing::warn!(%query, error = %e, "DDG Lite failed after retries; trying DDG HTML fallback");
+                // Fallback: DuckDuckGo HTML (non-Lite, may include JS but still parseable)
+                let html_url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding(query));
+                match retry_with_backoff(|| async {
+                    let resp = client.get(&html_url).send().await?;
+                    let status = resp.status();
+                    let text = resp.text().await?;
+                    if !status.is_success() {
+                        anyhow::bail!("DDG HTML returned HTTP {}", status.as_u16());
+                    }
+                    Ok(text)
+                }, 1).await
+                {
+                    Ok(html) => html,
+                    Err(e2) => {
+                        tracing::warn!(%query, error = %e2, "DDG HTML fallback also failed");
+                        return Ok(ToolResult {
+                            content: format!("搜索 '{}' 失败：搜索服务暂时不可用，请稍后重试。", query),
+                            is_error: true,
+                            structured_content: None,
+                        });
+                    }
+                }
+            }
+        };
 
         let results = parse_ddg_lite(&html, max_results);
         if results.is_empty() {
@@ -1650,6 +1689,30 @@ fn urlencoding(s: &str) -> String {
         }
     }
     result
+}
+
+/// Retry an async operation up to `max_retries` times with exponential backoff.
+/// First retry: 1s, second: 2s, etc. Returns the first successful result or the last error.
+async fn retry_with_backoff<F, Fut, T>(mut f: F, max_retries: u32) -> anyhow::Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<T>>,
+{
+    let mut last_err: Option<anyhow::Error> = None;
+    for attempt in 0..=max_retries {
+        if attempt > 0 {
+            let delay = std::time::Duration::from_secs(1u64 << (attempt - 1)); // 1s, 2s, 4s…
+            tokio::time::sleep(delay).await;
+        }
+        match f().await {
+            Ok(val) => return Ok(val),
+            Err(e) => {
+                tracing::debug!(attempt, error = %e, "retry_with_backoff: attempt failed");
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("retry_with_backoff: max retries exceeded")))
 }
 
 // ============================================================================

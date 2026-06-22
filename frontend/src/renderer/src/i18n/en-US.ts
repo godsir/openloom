@@ -182,6 +182,9 @@ export const enUS: TranslationMap = {
 
   // ── Input ───────────────────────────────────────────────────────
   'input.startChat': 'Start a new chat...',
+  'input.openWorkspace': 'Open in File Explorer',
+  'input.memoryOn': 'Memory On — click to disable',
+  'input.memoryOff': 'Memory Off — click to enable',
   'input.insertImage': 'Insert Image',
   'input.addAttachment': 'Add Attachment',
   'input.loadSkills': 'Load Skills',

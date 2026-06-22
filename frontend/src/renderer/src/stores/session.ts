@@ -27,6 +27,8 @@ export interface SessionSlice {
   selectedSessionIds: Set<string>
   sessionWorkspaces: Record<string, string>
   defaultWorkspace: string | null
+  /** Per-session memory toggle — false = extraction skipped. Missing = default true. */
+  sessionMemoryEnabled: Record<string, boolean>
   setSessions: (sessions: SessionSummary[]) => void
   setCurrentSessionId: (id: string | null) => void
   createSession: () => Promise<string>
@@ -43,6 +45,8 @@ export interface SessionSlice {
   deselectAllSessions: () => void
   loadSessions: () => Promise<void>
   setSessionWorkspace: (id: string, path: string) => void
+  /** Toggle per-session memory recording (default: true). */
+  setSessionMemoryEnabledAction: (id: string, enabled: boolean) => void
   closeCurrentSession: () => Promise<void>
   selectNextSession: () => void
   selectPrevSession: () => void
@@ -55,14 +59,32 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
   selectedSessionIds: new Set(),
   sessionWorkspaces: {},
   defaultWorkspace: null,
+  sessionMemoryEnabled: {},
+  // In-flight createSession promise to prevent duplicate sessions from concurrent calls
+  _creatingSession: null as Promise<string> | null,
 
   setSessions: (sessions) => set({ sessions }),
   setCurrentSessionId: (currentSessionId) => set({ currentSessionId }),
 
   createSession: async () => {
-    const result = await rpc<{ session_id: string }>('session.create', undefined, t('sessions.created'))
-    await get().loadSessions()
-    return result.session_id
+    // If a create is already in-flight, return its promise to avoid creating
+    // duplicate sessions when the user rapidly double-clicks or the UI triggers
+    // concurrent ensureSession calls.
+    const existing = get()._creatingSession
+    if (existing) return existing
+
+    const promise = (async () => {
+      try {
+        const result = await rpc<{ session_id: string }>('session.create', undefined, t('sessions.created'))
+        await get().loadSessions()
+        return result.session_id
+      } finally {
+        set({ _creatingSession: null })
+      }
+    })()
+
+    set({ _creatingSession: promise })
+    return promise
   },
 
   switchSession: async (id) => {
@@ -308,6 +330,12 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
     }))
   },
 
+  setSessionMemoryEnabledAction: (id, enabled) => {
+    set((state) => ({
+      sessionMemoryEnabled: { ...state.sessionMemoryEnabled, [id]: enabled },
+    }))
+  },
+
   closeCurrentSession: async () => {
     const { currentSessionId, sessions, deleteSession } = get()
     if (!currentSessionId) return
@@ -422,6 +450,11 @@ export function parseContentParts(content: any, sessionId: string, port: number)
         }
       } else if (tc.name === 'request_tools') {
         // meta-tool — skip
+      } else if (Object.keys(args).length === 0) {
+        // Synthetic placeholder ToolCall from an interrupted/truncated turn.
+        // build_toolcall_parts() creates these with empty args solely to prevent
+        // sanitize_message_sequence from orphaning tool_results on the next turn.
+        // Skip rendering — the real ToolCall (if any) will appear as a shell block.
       } else {
         blocks.push({
           type: 'shell',

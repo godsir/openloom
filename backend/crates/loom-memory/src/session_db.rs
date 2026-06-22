@@ -43,6 +43,14 @@ impl SessionDb {
             conn.execute_batch("ALTER TABLE sessions ADD COLUMN episodic_summary TEXT;")?;
         }
 
+        // Migration V4: add memory_enabled column (session-level memory toggle)
+        let has_memory_enabled: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'memory_enabled'")?
+            .exists([])?;
+        if !has_memory_enabled {
+            conn.execute_batch("ALTER TABLE sessions ADD COLUMN memory_enabled INTEGER NOT NULL DEFAULT 1;")?;
+        }
+
         Ok(Self { conn })
     }
 

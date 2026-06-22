@@ -397,10 +397,20 @@ fn parse_attached_file_contents(p: &Value) -> String {
                 tracing::warn!(%name, "attached file has empty content from frontend");
                 continue;
             }
-            result.push_str(&format!(
-                "\n\n<attached_file name=\"{name}\">\n{content}\n</attached_file>",
-            ));
-            tracing::info!(%name, len = content.len(), "attached file content injected (from frontend)");
+            // Content size limit: 20 MB to prevent memory exhaustion from
+            // excessively large inline file data sent by the frontend.
+            if content.len() > 20_971_520 {
+                tracing::warn!(%name, len = content.len(), "attached file content too large (>20MB), truncating");
+                result.push_str(&format!(
+                    "\n\n<attached_file name=\"{name}\" truncated=\"true\">\n{}\n</attached_file>",
+                    &content[..20_971_520]
+                ));
+            } else {
+                result.push_str(&format!(
+                    "\n\n<attached_file name=\"{name}\">\n{content}\n</attached_file>",
+                ));
+            }
+            tracing::info!(%name, len = content.len().min(20_971_520), "attached file content injected (from frontend)");
             continue;
         }
 

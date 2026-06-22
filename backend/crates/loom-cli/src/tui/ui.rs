@@ -1,273 +1,356 @@
-//! TUI layout and rendering.
+//! TUI rendering — Claude Code-style inline history flow.
 //!
-//! Three panels:
-//! 1. Chat area (scrollable)
-//! 2. Tool call panel (only visible when tools are active)
-//! 3. Input line + status bar
+//! No panel borders. No separate tool panel. Everything flows inline.
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
+use pulldown_cmark::{Event as MdEvent, Parser, Tag, TagEnd, CodeBlockKind, HeadingLevel};
 
-use crate::tui::app::{AppState, ToolStatus};
+use crate::tui::app::{AppState, ContentBlock, HistoryItem, ToolStatus};
+
+// ── Colors ─────────────────────────────────────────────────────────
+
+mod c {
+    use ratatui::style::Color;
+    pub const MUTED:     Color = Color::DarkGray;
+    pub const ACCENT:    Color = Color::Rgb(110, 110, 250);
+    pub const USER:      Color = Color::Cyan;
+    pub const THINK:     Color = Color::Rgb(180, 160, 80);
+    pub const TOOL_DONE: Color = Color::Green;
+    pub const TOOL_ERR:  Color = Color::Red;
+    pub const TOOL_RUN:  Color = Color::Rgb(110, 110, 250);
+    pub const CODE_BG:   Color = Color::Rgb(28, 30, 38);
+    pub const CODE_FG:   Color = Color::Rgb(200, 210, 220);
+    pub const WARN:      Color = Color::Yellow;
+    pub const CURSOR:    Color = Color::Rgb(100, 100, 150);
+}
+
+// ── Entry ──────────────────────────────────────────────────────────
 
 pub fn render(f: &mut Frame, state: &AppState) {
-    // Main vertical split
-    let has_tools = !state.tools.is_empty();
-    let main_chunks = if has_tools {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(3),                          // chat
-                Constraint::Length(tool_panel_height(&state.tools)),
-                Constraint::Length(1),                       // input + status
-            ])
-            .split(f.area())
-    } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(3),     // chat
-                Constraint::Length(1),  // input + status
-            ])
-            .split(f.area())
-    };
+    let area = f.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(2)])
+        .split(area);
 
-    if has_tools {
-        render_chat(f, main_chunks[0], state);
-        render_tool_panel(f, main_chunks[1], state);
-        render_input_bar(f, main_chunks[2], state);
-    } else {
-        render_chat(f, main_chunks[0], state);
-        render_input_bar(f, main_chunks[1], state);
-    }
-
-    // Render overlay if present
-    if let Some(ref overlay) = state.overlay {
-        render_overlay(f, f.area(), overlay);
-    }
+    state.viewport_rows.set(chunks[0].height);
+    render_history(f, chunks[0], state);
+    render_input(f, chunks[1], state);
+    if let Some(ref o) = state.overlay { render_overlay(f, area, o); }
 }
 
-fn tool_panel_height(tools: &[crate::tui::app::ToolEntry]) -> u16 {
-    // 1 border top + 1 border bottom + up to 6 tool rows
-    (tools.len().min(6) as u16) + 2
-}
+// ── History ────────────────────────────────────────────────────────
 
-fn render_chat(f: &mut Frame, area: Rect, state: &AppState) {
-    let block = Block::default()
-        .title(" openLoom chat ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray));
+fn render_history(f: &mut Frame, area: Rect, state: &AppState) {
+    if state.history.is_empty() {
+        render_welcome(f, area);
+        return;
+    }
 
-    if state.chat_lines.is_empty() {
-        render_welcome(f, block.inner(area));
-        f.render_widget(block, area);
-    } else {
-        let lines: Vec<Line> = state
-            .chat_lines
-            .iter()
-            .map(|cl| {
-                let role_span = match cl.role {
-                    "user" => Span::styled("> ", Style::default().fg(Color::Cyan)),
-                    "assistant" => Span::raw(""),
-                    "thinking" => {
-                        Span::styled("  [think] ", Style::default().fg(Color::Yellow))
+    let mut lines: Vec<Line> = Vec::new();
+    for item in &state.history {
+        match item {
+            HistoryItem::User { text } => {
+                if !lines.is_empty() { lines.push(Line::raw("")); }
+                lines.push(Line::from(Span::styled(format!("▌ {}", text), Style::default().fg(c::USER).add_modifier(Modifier::BOLD))));
+            }
+            HistoryItem::Assistant { blocks } => {
+                for block in blocks {
+                    match block {
+                        ContentBlock::Markdown(md) => {
+                            render_markdown_lines(&mut lines, md, area.width.saturating_sub(2));
+                        }
                     }
-                    "tool" => Span::styled("  [tool] ", Style::default().fg(Color::Magenta)),
-                    _ => Span::raw(""),
-                };
-                let text_span = Span::raw(&cl.text);
-                Line::from(vec![role_span, text_span])
-            })
-            .collect();
+                }
+            }
+            HistoryItem::Thinking { text } => {
+                lines.push(Line::raw(""));
+                lines.push(Line::from(Span::styled("  ▶ thinking…", Style::default().fg(c::THINK).add_modifier(Modifier::ITALIC))));
+                for ln in text.lines() {
+                    let t = ln.trim();
+                    if t.is_empty() { continue; }
+                    lines.push(Line::from(Span::styled(format!("    {}", truncate(t, area.width.saturating_sub(4) as usize)), Style::default().fg(c::THINK))));
+                }
+            }
+            HistoryItem::ToolGroup { tools } => {
+                lines.push(Line::raw(""));
+                for tc in tools {
+                    let (icon, color) = match tc.status {
+                        ToolStatus::Running => ("◉", c::TOOL_RUN),
+                        ToolStatus::Done    => ("●", c::TOOL_DONE),
+                        ToolStatus::Failed  => ("✕", c::TOOL_ERR),
+                    };
+                    lines.push(Line::from(Span::styled(
+                        format!("  {} {} {}", icon, tc.name, truncate(&tc.args, 60)),
+                        Style::default().fg(color),
+                    )));
+                    if let Some(ref res) = tc.result {
+                        for ln in res.lines().take(10) {
+                            lines.push(Line::from(Span::styled(format!("    │ {}", truncate(ln, area.width.saturating_sub(6) as usize)), Style::default().fg(c::MUTED))));
+                        }
+                    }
+                }
+            }
+            HistoryItem::Info { text } => {
+                lines.push(Line::raw(""));
+                lines.push(Line::from(Span::styled(format!("  ✦ {}", text), Style::default().fg(c::MUTED).add_modifier(Modifier::ITALIC))));
+            }
+        }
+    }
 
-        let paragraph = Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false })
-            .scroll((state.scroll_offset, 0));
+    if state.streaming {
+        if let Some(HistoryItem::Assistant { .. }) = state.history.last() {} else {
+            lines.push(Line::from(Span::styled(" ●", Style::default().fg(c::ACCENT))));
+        }
+    }
 
-        f.render_widget(paragraph, area);
+    let p = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .scroll((state.scroll_offset, 0));
+    f.render_widget(p, area);
+
+    if !state.scroll_following && state.scroll_offset > 0 {
+        let ha = Rect::new(area.x, area.y + area.height.saturating_sub(1), area.width, 1);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(" ↑ scrolled · End to follow ↑ ", Style::default().fg(c::WARN).bg(Color::Rgb(40, 38, 20))))),
+            ha,
+        );
     }
 }
+
+// ── Markdown → lines ───────────────────────────────────────────────
+
+fn render_markdown_lines(lines: &mut Vec<Line>, md: &str, max_w: u16) {
+    let max_chars = max_w.saturating_sub(2) as usize;
+    let parser = Parser::new_ext(md, pulldown_cmark::Options::ENABLE_STRIKETHROUGH);
+
+    let mut code_buf = String::new();
+    let mut code_lang = String::new();
+    let mut in_code = false;
+
+    for event in parser {
+        match event {
+            MdEvent::Start(Tag::CodeBlock(kind)) => {
+                in_code = true;
+                code_lang = match kind { CodeBlockKind::Fenced(l) => l.to_string(), _ => String::new() };
+                code_buf.clear();
+            }
+            MdEvent::End(TagEnd::CodeBlock) => {
+                if in_code {
+                    if !code_lang.is_empty() {
+                        lines.push(Line::from(Span::styled(format!("  ── {} ──", code_lang), Style::default().fg(c::MUTED))));
+                    }
+                    for cl in code_buf.lines() {
+                        lines.push(Line::from(Span::styled(
+                            format!("  {}", truncate(cl, max_chars.saturating_sub(2))),
+                            Style::default().fg(c::CODE_FG).bg(c::CODE_BG),
+                        )));
+                    }
+                    lines.push(Line::raw(""));
+                }
+                in_code = false; code_lang.clear(); code_buf.clear();
+            }
+            MdEvent::Text(t) | MdEvent::Code(t) => {
+                if in_code { code_buf.push_str(&t); }
+                else {
+                    let indented = indent_if_list(lines);
+                    let inline_spans = render_inline(&t);
+                    let mut combined = vec![Span::raw(indented)];
+                    combined.extend(inline_spans);
+                    lines.push(Line::from(combined));
+                }
+            }
+            MdEvent::Start(Tag::Heading { level, .. }) => {
+                let sz = match level {
+                    HeadingLevel::H1 => ("\n══ ", Modifier::BOLD),
+                    HeadingLevel::H2 => ("\n── ", Modifier::BOLD),
+                    _                => ("\n·· ", Modifier::empty()),
+                };
+                lines.push(Line::from(Span::styled(sz.0, Style::default().fg(c::ACCENT).add_modifier(sz.1))));
+            }
+            MdEvent::Start(Tag::Item) => {
+                lines.push(Line::from(Span::raw("  • ")));
+            }
+            MdEvent::HardBreak | MdEvent::SoftBreak => {
+                if !in_code { lines.push(Line::raw("")); } else { code_buf.push('\n'); }
+            }
+            MdEvent::Rule => {
+                lines.push(Line::raw(""));
+                lines.push(Line::from(Span::styled("─".repeat(max_chars.min(40)), Style::default().fg(c::MUTED))));
+                lines.push(Line::raw(""));
+            }
+            MdEvent::Start(Tag::BlockQuote(_)) => {
+                lines.push(Line::from(Span::styled("▌ ", Style::default().fg(c::MUTED).add_modifier(Modifier::BOLD))));
+            }
+            _ => {}
+        }
+    }
+}
+
+fn indent_if_list(lines: &[Line]) -> String {
+    // Cheap heuristic: if previous line starts with "  • ", indent.
+    if lines.last().map_or(false, |l| {
+        l.spans.first().map_or(false, |s| s.content.starts_with("  • "))
+    }) { "  ".to_string() } else { String::new() }
+}
+
+// ── Inline formatting ──────────────────────────────────────────────
+
+fn render_inline(text: &str) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span> = Vec::new();
+    let mut pos = 0;
+    let bytes = text.as_bytes();
+    let len = text.len();
+
+    while pos < len {
+        if bytes[pos..].starts_with(b"**") {
+            if let Some(end) = text[pos + 2..].find("**") {
+                let c = &text[pos + 2..pos + 2 + end];
+                spans.push(Span::styled(c.to_string(), Style::default().add_modifier(Modifier::BOLD)));
+                pos += 2 + end + 2; continue;
+            }
+        }
+        if bytes[pos] == b'*' && pos + 1 < len && bytes[pos + 1] != b'*' {
+            if let Some(end) = text[pos + 1..].find('*') {
+                let c = &text[pos + 1..pos + 1 + end];
+                spans.push(Span::styled(c.to_string(), Style::default().add_modifier(Modifier::ITALIC)));
+                pos += 1 + end + 1; continue;
+            }
+        }
+        if bytes[pos] == b'`' {
+            if let Some(end) = text[pos + 1..].find('`') {
+                let c = &text[pos + 1..pos + 1 + end];
+                spans.push(Span::styled(c.to_string(), Style::default().fg(c::WARN).bg(c::CODE_BG)));
+                pos += 1 + end + 1; continue;
+            }
+        }
+        if bytes[pos..].starts_with(b"~~") {
+            if let Some(end) = text[pos + 2..].find("~~") {
+                let c = &text[pos + 2..pos + 2 + end];
+                spans.push(Span::styled(c.to_string(), Style::default().add_modifier(Modifier::CROSSED_OUT)));
+                pos += 2 + end + 2; continue;
+            }
+        }
+        // [link](url)
+        if bytes[pos] == b'[' {
+            if let Some(bracket_end) = text[pos..].find("](") {
+                let link_text = &text[pos + 1..pos + bracket_end];
+                let after = &text[pos + bracket_end + 2..];
+                if let Some(paren_end) = after.find(')') {
+                    spans.push(Span::styled(link_text.to_string(), Style::default().fg(c::ACCENT).add_modifier(Modifier::UNDERLINED)));
+                    pos += 1 + bracket_end + 2 + paren_end + 1; continue;
+                }
+            }
+        }
+
+        // Literal run
+        let next = find_next_marker(text, pos);
+        if next > pos { spans.push(Span::raw(text[pos..next].to_string())); pos = next; }
+        else { spans.push(Span::raw(text[pos..].to_string())); break; }
+    }
+    spans
+}
+
+fn find_next_marker(text: &str, pos: usize) -> usize {
+    let from = safe_next(text, pos);
+    let mut next = text.len();
+    for m in &["**", "*", "`", "~~", "["] {
+        if let Some(i) = text[from..].find(m) {
+            next = next.min(from + i);
+        }
+    }
+    next
+}
+
+fn safe_next(text: &str, pos: usize) -> usize {
+    text[pos..].chars().next().map(|c| pos + c.len_utf8()).unwrap_or(text.len())
+}
+
+fn truncate(s: &str, n: usize) -> &str {
+    if s.len() <= n { return s; }
+    let mut count = 0;
+    for (i, _) in s.char_indices() { if count >= n { return &s[..i]; } count += 1; }
+    s
+}
+
+// ── Welcome ────────────────────────────────────────────────────────
 
 fn render_welcome(f: &mut Frame, area: Rect) {
     let version = env!("CARGO_PKG_VERSION");
-
-    let lines: Vec<Line> = vec![
+    let lines = vec![
         Line::raw(""),
-        Line::from(Span::styled(
-            "  ╔══════════════════════════════════════╗",
-            Style::default().fg(Color::Rgb(106, 106, 247)),
-        )),
-        Line::from(vec![
-            Span::styled(
-                "  ║      ",
-                Style::default().fg(Color::Rgb(106, 106, 247)),
-            ),
-            Span::styled(
-                "openLoom",
-                Style::default()
-                    .fg(Color::Rgb(106, 106, 247))
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ),
-            Span::styled(
-                " — local-first AI assistant",
-                Style::default().fg(Color::Gray),
-            ),
-            Span::styled(
-                "      ║",
-                Style::default().fg(Color::Rgb(106, 106, 247)),
-            ),
-        ]),
-        Line::from(Span::styled(
-            format!(
-                "  ║              v{:<22}║",
-                version
-            ),
-            Style::default().fg(Color::Rgb(106, 106, 247)),
-        )),
-        Line::from(Span::styled(
-            "  ╚══════════════════════════════════════╝",
-            Style::default().fg(Color::Rgb(106, 106, 247)),
-        )),
+        Line::from(Span::styled(format!("  openLoom v{}", version), Style::default().fg(c::ACCENT).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled("  local-first AI assistant", Style::default().fg(c::MUTED))),
         Line::raw(""),
-        Line::from(Span::styled(
-            "  Commands:",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(ratatui::style::Modifier::BOLD),
-        )),
-        Line::from(vec![
-            Span::styled("    /tools ", Style::default().fg(Color::Cyan)),
-            Span::raw("  — list available tools"),
-        ]),
-        Line::from(vec![
-            Span::styled("    /skills", Style::default().fg(Color::Cyan)),
-            Span::raw("  — list loaded skills"),
-        ]),
-        Line::from(vec![
-            Span::styled("    /exit  ", Style::default().fg(Color::Cyan)),
-            Span::raw("  — quit"),
-        ]),
+        Line::from(Span::styled("  Commands:", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from(vec![Span::styled("    /help  ", Style::default().fg(c::USER)), Span::raw("shortcuts & commands")]),
+        Line::from(vec![Span::styled("    /tools ", Style::default().fg(c::USER)), Span::raw("list tools")]),
+        Line::from(vec![Span::styled("    /skills", Style::default().fg(c::USER)), Span::raw("list skills")]),
+        Line::from(vec![Span::styled("    /exit  ", Style::default().fg(c::USER)), Span::raw("quit")]),
         Line::raw(""),
-        Line::from(Span::styled(
-            "  Type a message and press Enter to start.",
-            Style::default().fg(Color::DarkGray),
-        )),
+        Line::from(Span::styled("  ↑↓ scroll · PgUp/Dn page · Esc clear · ^C quit", Style::default().fg(c::MUTED))),
     ];
-
-    // Center vertically
-    let total_height = lines.len() as u16;
-    let vpad = area.height.saturating_sub(total_height) / 2;
-    let centered_area = Rect::new(
-        area.x,
-        area.y + vpad,
-        area.width,
-        total_height,
-    );
-
-    let paragraph = Paragraph::new(lines);
-    f.render_widget(paragraph, centered_area);
+    let h = lines.len() as u16;
+    f.render_widget(Paragraph::new(lines), Rect::new(area.x, area.y + area.height.saturating_sub(h) / 2, area.width, h));
 }
 
-fn render_tool_panel(f: &mut Frame, area: Rect, state: &AppState) {
-    let block = Block::default()
-        .title(" tools ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray));
+// ── Input bar ──────────────────────────────────────────────────────
 
-    let lines: Vec<Line> = state
-        .tools
-        .iter()
-        .map(|t| {
-            let icon = match t.status {
-                ToolStatus::Waiting => "⏳",
-                ToolStatus::Running => "🔄",
-                ToolStatus::Done => "✅",
-                ToolStatus::Failed => "❌",
-            };
-            let style = match t.status {
-                ToolStatus::Waiting => Style::default().fg(Color::Yellow),
-                ToolStatus::Running => Style::default().fg(Color::Cyan),
-                ToolStatus::Done => Style::default().fg(Color::Green),
-                ToolStatus::Failed => Style::default().fg(Color::Red),
-            };
-            Line::from(Span::styled(
-                format!(
-                    " [{}.{}] {} {}",
-                    t.index,
-                    icon,
-                    t.name,
-                    status_label(&t.status)
-                ),
-                style,
-            ))
-        })
-        .collect();
+fn render_input(f: &mut Frame, area: Rect, state: &AppState) {
+    let chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(1), Constraint::Length(1)]).split(area);
 
-    let paragraph = Paragraph::new(lines).block(block);
-    f.render_widget(paragraph, area);
-}
+    let full = format!("> {}", state.input);
+    let cursor_col = 2 + state.cursor;
+    let mut spans: Vec<Span> = Vec::new();
 
-fn status_label(s: &ToolStatus) -> &'static str {
-    match s {
-        ToolStatus::Waiting => "pending",
-        ToolStatus::Running => "running…",
-        ToolStatus::Done => "done",
-        ToolStatus::Failed => "failed",
-    }
-}
-
-fn render_input_bar(f: &mut Frame, area: Rect, state: &AppState) {
-    // Split into input (left) and status (right)
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-        .split(area);
-
-    // Input: "> text" with spinner if streaming
-    let input_text = if state.streaming {
-        format!("> {} ⏳", state.input)
+    if state.input.is_empty() {
+        spans.push(Span::styled("> ", Style::default().fg(c::MUTED)));
+        spans.push(Span::styled("Type a message…", Style::default().fg(c::MUTED).add_modifier(Modifier::ITALIC)));
+    } else if cursor_col < full.len() && !state.streaming {
+        let before = &full[..cursor_col];
+        let at = full[cursor_col..].chars().next().unwrap_or(' ');
+        let after = &full[cursor_col + at.len_utf8()..];
+        spans.push(Span::raw(before.to_string()));
+        spans.push(Span::styled(at.to_string(), Style::default().fg(Color::Black).bg(c::CURSOR)));
+        if !after.is_empty() { spans.push(Span::raw(after.to_string())); }
+    } else if state.streaming {
+        spans.push(Span::styled(&full, Style::default().fg(c::MUTED)));
     } else {
-        format!("> {}", state.input)
-    };
-    let input_span = Span::styled(&input_text, Style::default().fg(Color::White));
-    f.render_widget(Paragraph::new(Line::from(input_span)), chunks[0]);
+        spans.push(Span::raw(&full));
+        spans.push(Span::styled(" ", Style::default().fg(Color::Black).bg(c::CURSOR)));
+    }
 
-    // Status bar
-    let status = format!(
-        "{} | in {} out {}",
-        state.model_name, state.tokens.prompt, state.tokens.completion,
-    );
-    let status_span = Span::styled(&status, Style::default().fg(Color::DarkGray));
-    f.render_widget(
-        Paragraph::new(Line::from(status_span))
-            .alignment(ratatui::layout::Alignment::Right),
-        chunks[1],
-    );
+    f.render_widget(Paragraph::new(Line::from(spans)), chunks[0]);
+
+    let lhs = format!("{} │ in {} out {}", state.model_name, state.tokens.prompt, state.tokens.completion);
+    let rhs = if state.streaming { "^C cancel" } else { "^C quit │ ↑↓ scroll │ Esc clear │ /help" };
+
+    let bar = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(50), Constraint::Percentage(50)]).split(chunks[1]);
+    f.render_widget(Paragraph::new(Line::styled(&lhs, Style::default().fg(c::MUTED))), bar[0]);
+    f.render_widget(Paragraph::new(Line::styled(rhs, Style::default().fg(c::MUTED))).alignment(Alignment::Right), bar[1]);
 }
+
+// ── Overlay ────────────────────────────────────────────────────────
 
 fn render_overlay(f: &mut Frame, area: Rect, overlay: &crate::tui::app::OverlayContent) {
-    // Center a popup taking ~60% width, max 60% height
-    let popup_width = (area.width as f32 * 0.6) as u16;
-    let popup_height = (area.height as f32 * 0.6) as u16;
-    let popup_x = (area.width - popup_width) / 2;
-    let popup_y = (area.height - popup_height) / 2;
-    let popup_area = Rect::new(area.x + popup_x, area.y + popup_y, popup_width, popup_height);
+    let lines = overlay.body.lines().count();
+    let h = (lines + 2).min((area.height as f32 * 0.85) as usize) as u16;
+    let w = (area.width as f32 * 0.65) as u16;
+    let x = (area.width - w) / 2;
+    let y = (area.height - h) / 2;
 
     let block = Block::default()
-        .title(format!(" {} ", overlay.title))
+        .title(format!(" {} (Esc) ", overlay.title))
         .borders(Borders::ALL)
-        .style(Style::default().bg(Color::Rgb(30, 30, 40)));
+        .border_style(Style::default().fg(c::ACCENT))
+        .style(Style::default().bg(Color::Rgb(20, 22, 30)));
 
-    let paragraph = Paragraph::new(overlay.body.as_str())
-        .block(block)
-        .wrap(Wrap { trim: false });
-
-    f.render_widget(ratatui::widgets::Clear, popup_area);
-    f.render_widget(paragraph, popup_area);
+    f.render_widget(ratatui::widgets::Clear, Rect::new(area.x + x, area.y + y, w, h));
+    f.render_widget(Paragraph::new(overlay.body.as_str()).block(block).wrap(Wrap { trim: false }), Rect::new(area.x + x, area.y + y, w, h));
 }

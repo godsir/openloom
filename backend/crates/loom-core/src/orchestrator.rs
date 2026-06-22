@@ -1,7 +1,7 @@
 //! Top-level orchestrator — wires AgentPool, ToolRegistry, McpClient,
 //! inference, and the agent loop into a single entry point.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -321,6 +321,8 @@ pub struct Orchestrator {
     todo_store: Arc<TodoStore>,
     /// In-memory todo cache per session, refreshed on read/write.
     session_todos: RwLock<HashMap<String, Vec<TodoItem>>>,
+    /// Sessions where automatic memory extraction is disabled (record → extraction skipped).
+    memory_disabled_sessions: RwLock<HashSet<String>>,
 }
 
 /// Trait for memory backends (SqliteEventStore, etc.)
@@ -386,6 +388,9 @@ pub trait MemoryStore: Send + Sync {
     async fn get_session_workspace(&self, session_id: &str) -> Result<Option<String>>;
     async fn get_default_workspace(&self) -> Result<Option<String>>;
     async fn set_default_workspace(&self, path: &str) -> Result<()>;
+    // Session memory toggle (persisted across restarts)
+    async fn set_session_memory_enabled(&self, session_id: &str, enabled: bool) -> Result<()>;
+    async fn get_session_memory_enabled(&self, session_id: &str) -> Result<Option<bool>>;
     // Model config CRUD
     async fn save_model_config(&self, config: &loom_types::ModelConfig) -> Result<()>;
     async fn get_model_config(&self, name: &str) -> Result<Option<loom_types::ModelConfig>>;
@@ -945,6 +950,7 @@ impl Orchestrator {
             last_stop_reasons: RwLock::new(HashMap::new()),
             todo_store,
             session_todos: RwLock::new(HashMap::new()),
+            memory_disabled_sessions: RwLock::new(HashSet::new()),
         }
     }
 
@@ -1148,6 +1154,29 @@ impl Orchestrator {
         *self.default_max_prompt_budget.write().await = val;
     }
 
+    /// Enable or disable automatic memory extraction for a session.
+    /// When disabled, entity/cognition/relationship extraction is skipped after each turn.
+    /// Also persists the preference so it survives restarts.
+    pub async fn set_session_memory_enabled(&self, session_id: &str, enabled: bool) {
+        let mut disabled = self.memory_disabled_sessions.write().await;
+        if enabled {
+            disabled.remove(session_id);
+        } else {
+            disabled.insert(session_id.to_string());
+        }
+        // Persist to DB
+        if let Some(ref store) = *self.memory_store.read().await {
+            if let Err(e) = store.set_session_memory_enabled(session_id, enabled).await {
+                tracing::warn!(session_id, error = %e, "failed to persist memory_enabled flag");
+            }
+        }
+    }
+
+    /// Check whether automatic memory extraction is enabled for a session (default: true).
+    pub async fn is_session_memory_enabled(&self, session_id: &str) -> bool {
+        !self.memory_disabled_sessions.read().await.contains(session_id)
+    }
+
     /// Get the current sandbox configuration (defaults to disabled).
     pub async fn sandbox_config(&self) -> loom_types::config::SandboxConfig {
         self.sandbox_config.read().await.clone()
@@ -1156,6 +1185,23 @@ impl Orchestrator {
     /// Set the sandbox configuration.
     pub async fn set_sandbox_config(&self, config: loom_types::config::SandboxConfig) {
         *self.sandbox_config.write().await = config;
+    }
+
+    /// Build a continuation note to inject into the next turn's system prompt,
+    /// telling the LLM how to resume after the previous turn was interrupted or truncated.
+    fn continuation_note_for(reason: Option<StopReason>) -> Option<String> {
+        match reason {
+            Some(StopReason::UserCancelled) => {
+                Some("上轮任务被用户中断。用户的接下来消息是反馈或补充，请继续执行未完成的工作，不要从头开始。".into())
+            }
+            Some(StopReason::BudgetExhausted) => {
+                Some("上轮任务因token预算耗尽而暂停。请从上次中断的地方继续执行，不要重复已完成的操作。".into())
+            }
+            Some(StopReason::MaxIterations) => {
+                Some("上轮任务因达到最大迭代次数而暂停。请从上次中断的地方继续执行，不要重复已完成的操作。".into())
+            }
+            _ => None,
+        }
     }
 
     /// Set the API key store shared with the server layer.
@@ -3021,6 +3067,12 @@ impl Orchestrator {
         assistant_response: String,
         event_id: i64,
     ) {
+        // Skip extraction when memory recording is disabled for this session
+        if !self.is_session_memory_enabled(&session_id).await {
+            tracing::debug!(%session_id, "memory extraction skipped — disabled for session");
+            return;
+        }
+
         // Build LLM client before spawning.
         // Three-tier fallback:
         //   1. Dedicated entity model from ~/.loom/auxiliary.json
@@ -4114,15 +4166,9 @@ impl Orchestrator {
                 let todos = self.list_todos(session_id).await.unwrap_or_default();
                 build_todo_continuation_instruction(&todos)
             },
-            // Inject continuation note when the previous turn was cancelled —
-            // tells the LLM to keep going rather than starting a fresh conversation.
-            continuation_note: {
-                if self.get_last_stop_reason(session_id).await == Some(StopReason::UserCancelled) {
-                    Some("上轮任务被用户中断。用户的接下来消息是反馈或补充，请继续执行未完成的工作，不要从头开始。".into())
-                } else {
-                    None
-                }
-            },
+            // Inject continuation note when the previous turn was interrupted or
+            // truncated — tells the LLM to keep going rather than starting fresh.
+            continuation_note: Self::continuation_note_for(self.get_last_stop_reason(session_id).await),
             summary,
             temperature: agent_config.temperature.unwrap_or(0.0),
             max_iterations: agent_config.max_iterations.unwrap_or(default_max_iters),
@@ -5288,13 +5334,7 @@ impl Orchestrator {
             let todos = self.list_todos(session_id).await.unwrap_or_default();
             build_todo_continuation_instruction(&todos)
         };
-        let continuation_note = {
-            if self.get_last_stop_reason(session_id).await == Some(StopReason::UserCancelled) {
-                Some("上轮任务被用户中断。用户的接下来消息是反馈或补充，请继续执行未完成的工作，不要从头开始。".into())
-            } else {
-                None
-            }
-        };
+        let continuation_note = Self::continuation_note_for(self.get_last_stop_reason(session_id).await);
 
         let config = AgentLoopConfig {
             system_prompt: stable_prompt,

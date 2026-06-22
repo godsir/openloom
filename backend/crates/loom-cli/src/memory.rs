@@ -753,6 +753,30 @@ impl MemoryStore for LoomMemoryStore {
         loom_memory::store::set_default_workspace(path)
     }
 
+    async fn set_session_memory_enabled(&self, session_id: &str, enabled: bool) -> Result<()> {
+        let store = self.session_db.lock().expect("lock poisoned");
+        store.conn().execute(
+            "UPDATE sessions SET memory_enabled = ?1 WHERE id = ?2",
+            rusqlite::params![enabled as i32, session_id],
+        )?;
+        Ok(())
+    }
+
+    async fn get_session_memory_enabled(&self, session_id: &str) -> Result<Option<bool>> {
+        let store = self.session_db.lock().expect("lock poisoned");
+        let result = store.conn().query_row(
+            "SELECT memory_enabled FROM sessions WHERE id = ?1",
+            rusqlite::params![session_id],
+            |row| row.get::<_, i32>(0),
+        );
+        match result {
+            Ok(1) => Ok(Some(true)),
+            Ok(0) => Ok(Some(false)),
+            Ok(_) => Ok(Some(true)), // default
+            Err(_) => Ok(None),
+        }
+    }
+
     async fn save_model_config(&self, config: &ModelConfig) -> Result<()> {
         let store = self.config_db.lock().expect("lock poisoned");
         ModelConfigStore::new(store.conn()).upsert(config)

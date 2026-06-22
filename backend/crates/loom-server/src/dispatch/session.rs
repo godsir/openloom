@@ -176,6 +176,7 @@ pub async fn handle(
         "session.auto_title" => Some(handle_session_auto_title(state, p).await),
         "session.delete" => Some(handle_session_delete(state, p).await),
         "session.bind_agent" => Some(handle_session_bind_agent(state, p).await),
+        "session.set_memory_enabled" => Some(handle_session_set_memory_enabled(state, p).await),
         // Workspace
         "workspace.get" => Some(handle_workspace_get(state, p).await),
         "workspace.set_session" => Some(handle_workspace_set_session(state, p).await),
@@ -352,6 +353,21 @@ async fn handle_session_bind_agent(state: &AppState, p: &Value) -> Result<Value,
         .bind_agent_persisted(session_id, config_name)
         .await;
     Ok(json!({ "ok": true }))
+}
+
+// --- session.set_memory_enabled ---
+
+async fn handle_session_set_memory_enabled(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let session_id = p
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| err(ErrorCode::InvalidRequest, "session_id required"))?;
+    let enabled = p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+    state
+        .orchestrator
+        .set_session_memory_enabled(session_id, enabled)
+        .await;
+    Ok(json!({ "ok": true, "enabled": enabled }))
 }
 
 // --- workspace.get ---

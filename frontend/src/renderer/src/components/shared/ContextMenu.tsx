@@ -56,6 +56,7 @@ export default function ContextMenu({ open, x, y, onClose, children }: ContextMe
       className={styles.menu}
       style={{ position: 'fixed', zIndex: 50000, left: pos.left, top: pos.top }}
       onContextMenu={(e) => e.preventDefault()}
+      onClick={(e) => e.stopPropagation()}
     >
       {children}
     </div>

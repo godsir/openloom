@@ -136,6 +136,27 @@ impl McpConnection {
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
         cmd.kill_on_drop(true);
+
+        // ── Environment isolation ──────────────────────────────────
+        // Clear inherited env to prevent MCP servers from reading the parent
+        // process's API keys and other secrets. Then restore only a minimal
+        // safe allowlist of system vars that tools legitimately need.
+        cmd.env_clear();
+        for (k, v) in std::env::vars() {
+            let uk = k.to_uppercase();
+            if uk == "PATH" || uk == "HOME" || uk == "USER" || uk == "USERNAME"
+                || uk == "TEMP" || uk == "TMP" || uk == "TMPDIR"
+                || uk == "LANG" || uk == "LC_ALL" || uk == "LC_CTYPE"
+                || uk == "SYSTEMROOT" || uk == "SYSTEMDRIVE"
+                || uk == "XDG_CACHE_HOME" || uk == "XDG_CONFIG_HOME"
+                || uk == "XDG_DATA_HOME" || uk == "XDG_RUNTIME_DIR"
+                || uk.starts_with("CARGO_") || uk.starts_with("RUST")
+                || uk == "TERM" || uk == "COLORTERM" || uk == "SHELL"
+            {
+                cmd.env(k, v);
+            }
+        }
+        // User-specified env vars override any inherited/default values
         for (k, v) in &config.env {
             cmd.env(k, v);
         }

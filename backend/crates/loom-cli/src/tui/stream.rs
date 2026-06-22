@@ -1,85 +1,72 @@
 //! StreamDelta → AppEvent converter.
 //!
-//! Receives StreamDelta from the orchestrator channel and maps each
-//! variant to an AppEvent for the main TUI loop.
+//! Single choke point for ANSI sanitization — all AI-generated text
+//! passes through here before entering the TUI.
 
 use crate::tui::app::TokenStats;
 use loom_types::StreamDelta;
 
-/// Events the TUI main loop consumes.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum AppEvent {
-    /// Append text delta to current assistant response.
     TextChunk(String),
-    /// Append reasoning delta to thinking line.
     ReasoningChunk(String),
-    /// A tool call started.
-    ToolBegin {
-        index: usize,
-        id: String,
-        name: String,
-    },
-    /// A chunk of tool call arguments (ignored by TUI display).
-    ToolArgsChunk { index: usize, chunk: String },
-    /// A tool call completed or failed.
-    ToolResult {
-        call_id: String,
-        tool_name: String,
-        success: bool,
-    },
-    /// Token usage update.
+    ToolBegin { index: usize, name: String },
+    ToolArgsChunk { #[allow(dead_code)] index: usize, chunk: String },
+    ToolResult { tool_name: String, success: bool },
     Usage(TokenStats),
-    /// Auxiliary model usage (ignored by TUI display for now).
-    AuxiliaryUsage {
-        model: String,
-        prompt_tokens: u64,
-        completion_tokens: u64,
-    },
-    /// Stream ended normally.
-    Done,
+    #[allow(dead_code)]
+    AuxiliaryUsage { prompt_tokens: u64, completion_tokens: u64 },
 }
 
-/// Convert a StreamDelta into an AppEvent.
+/// Strip ANSI escape sequences and non-printable control chars.
+/// Keeps \n, \t, \r.
+pub fn sanitize(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if let Some(&next) = chars.peek() {
+                if next == '[' || next == ']' {
+                    chars.next();
+                    while let Some(&inner) = chars.peek() {
+                        if (0x40..=0x7E).contains(&(inner as u32)) { chars.next(); break; }
+                        if inner == '\x1b' || !inner.is_ascii() { break; }
+                        chars.next();
+                    }
+                }
+            }
+        } else if c == '\u{9b}' {
+            while let Some(&inner) = chars.peek() {
+                if (0x40..=0x7E).contains(&(inner as u32)) { chars.next(); break; }
+                if inner == '\x1b' || !inner.is_ascii() { break; }
+                chars.next();
+            }
+        } else if c == '\x07' {
+            out.push('\u{2407}');
+        } else if c.is_control() && c != '\n' && c != '\t' && c != '\r' {
+            out.push('·');
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 pub fn convert(delta: StreamDelta) -> AppEvent {
     match delta {
-        StreamDelta::Text(t) => AppEvent::TextChunk(t),
-        StreamDelta::Reasoning(r) => AppEvent::ReasoningChunk(r),
-        StreamDelta::ToolCallBegin { index, id, name } => AppEvent::ToolBegin { index, id, name },
-        StreamDelta::ToolCallArgsChunk { index, chunk } => {
-            AppEvent::ToolArgsChunk { index, chunk }
+        StreamDelta::Text(t) => AppEvent::TextChunk(sanitize(&t)),
+        StreamDelta::Reasoning(r) => AppEvent::ReasoningChunk(sanitize(&r)),
+        StreamDelta::ToolCallBegin { index, name, .. } => AppEvent::ToolBegin { index, name: sanitize(&name) },
+        StreamDelta::ToolCallArgsChunk { index, chunk } => AppEvent::ToolArgsChunk { index, chunk: sanitize(&chunk) },
+        StreamDelta::ToolResult { tool_name, success, .. } => AppEvent::ToolResult { tool_name: sanitize(&tool_name), success },
+        StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens } => {
+            AppEvent::Usage(TokenStats { prompt: prompt_tokens, completion: completion_tokens, cache_read: cache_read_tokens, cache_write: cache_write_tokens, tool_count: 0 })
         }
-        StreamDelta::ToolResult {
-            call_id,
-            tool_name,
-            success,
-            ..
-        } => AppEvent::ToolResult {
-            call_id,
-            tool_name,
-            success,
-        },
-        StreamDelta::Usage {
-            prompt_tokens,
-            completion_tokens,
-            cache_read_tokens,
-            cache_write_tokens,
-        } => AppEvent::Usage(TokenStats {
-            prompt: prompt_tokens,
-            completion: completion_tokens,
-            cache_read: cache_read_tokens,
-            cache_write: cache_write_tokens,
-            tool_count: 0,
-        }),
-        StreamDelta::AuxiliaryUsage {
-            model,
-            prompt_tokens,
-            completion_tokens,
-        } => AppEvent::AuxiliaryUsage {
-            model,
-            prompt_tokens,
-            completion_tokens,
-        },
-        StreamDelta::Image { .. } => AppEvent::TextChunk("[image]".into()),
+        StreamDelta::AuxiliaryUsage { prompt_tokens, completion_tokens, .. } => {
+            AppEvent::AuxiliaryUsage { prompt_tokens, completion_tokens }
+        }
+        StreamDelta::Image { media_type, data, .. } => {
+            AppEvent::TextChunk(format!("  [image: {} {}KB]", media_type, data.len() / 1024))
+        }
     }
 }
