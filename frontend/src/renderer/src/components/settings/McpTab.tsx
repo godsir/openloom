@@ -570,6 +570,7 @@ function LspTab() {
   const [rescanning, setRescanning] = useState(false)
   const [diagServers, setDiagServers] = useState<Array<{ language: string; total: number; files: Array<{ file: string; count: number }> }>>([])
   const [showDiag, setShowDiag] = useState(false)
+  const [filter, setFilter] = useState<'all' | 'installed' | 'missing'>('installed')
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -699,6 +700,21 @@ function LspTab() {
         </div>
       </div>
 
+      {/* Quick filter tabs */}
+      <div className={styles.lspFilterRow}>
+        {(['installed', 'missing', 'all'] as const).map(f => (
+          <button
+            key={f}
+            className={`${styles.lspFilterTab} ${filter === f ? styles.lspFilterTabActive : ''}`}
+            onClick={() => setFilter(f)}
+          >
+            {f === 'installed' ? t('lsp.filterInstalled', { n: installed })
+             : f === 'missing' ? t('lsp.filterMissing', { n: languages.length - installed })
+             : t('lsp.filterAll', { n: languages.length })}
+          </button>
+        ))}
+      </div>
+
       {error && <p className={styles.toolsError}>{error}</p>}
 
       {/* Language grid */}
@@ -706,7 +722,9 @@ function LspTab() {
         <p className={styles.toolsEmpty}>{t('common.loading')}</p>
       ) : (
         <div className={styles.lspGrid}>
-          {languages.map(l => {
+          {languages
+            .filter(l => filter === 'all' || (filter === 'installed' ? l.available : !l.available))
+            .map(l => {
             const isStarting = starting === l.language
             return (
               <div
@@ -732,31 +750,23 @@ function LspTab() {
                 {/* Actions */}
                 <div className={styles.lspCardActions}>
                   {l.available ? (
-                    l.running ? (
-                      <button
-                        className={styles.lspStopBtn}
-                        onClick={() => handleShutdown(l.language)}
-                      >
-                        {t('lsp.stop')}
-                      </button>
-                    ) : (
-                      <button
-                        className={styles.lspStartBtn}
-                        onClick={() => handleStart(l.language, l.command)}
-                        disabled={isStarting}
-                      >
-                        {isStarting ? t('lsp.starting') : t('lsp.start')}
-                      </button>
-                    )
-                  ) : (
                     <>
-                      <button
-                        className={styles.lspInstallBtn}
-                        onClick={() => handleInstall(l.language, l.command)}
-                        disabled={installing === l.language}
-                      >
-                        {installing === l.language ? t('lsp.installing') : t('lsp.install')}
-                      </button>
+                      {l.running ? (
+                        <button
+                          className={styles.lspStopBtn}
+                          onClick={() => handleShutdown(l.language)}
+                        >
+                          {t('lsp.stop')}
+                        </button>
+                      ) : (
+                        <button
+                          className={styles.lspStartBtn}
+                          onClick={() => handleStart(l.language, l.command)}
+                          disabled={isStarting}
+                        >
+                          {isStarting ? t('lsp.starting') : t('lsp.start')}
+                        </button>
+                      )}
                       {l.uninstall_command && (
                         <button
                           className={styles.lspUninstallBtn}
@@ -767,6 +777,14 @@ function LspTab() {
                         </button>
                       )}
                     </>
+                  ) : (
+                    <button
+                      className={styles.lspInstallBtn}
+                      onClick={() => handleInstall(l.language, l.command)}
+                      disabled={installing === l.language}
+                    >
+                      {installing === l.language ? t('lsp.installing') : t('lsp.install')}
+                    </button>
                   )}
                 </div>
 

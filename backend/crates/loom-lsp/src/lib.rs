@@ -285,72 +285,51 @@ fn stderr_suffix(stderr: &str) -> String {
 // Language detection and default server commands
 // ============================================================================
 
-/// Check whether a command binary exists on the system PATH.
+/// Check whether a command binary exists on the system PATH **and is usable**.
+///
+/// For `rust-analyzer` this also verifies that the rustup component is actually
+/// installed (the proxy binary exists even without the component, but running it
+/// then fails with "Unknown binary").
 pub fn binary_available(command: &str) -> bool {
     #[cfg(windows)]
     {
-        // Split on space for commands like "haskell-language-server-wrapper --lsp"
         let prog = command.split_whitespace().next().unwrap_or(command);
-        // Try .exe, .cmd, .bat variants via `where`
-        if let Ok(out) = std::process::Command::new("where").arg(prog).output() {
-            return out.status.success();
-        }
-        // Also try to check raw command via command search
-        std::process::Command::new("cmd")
-            .args(["/C", "where", prog])
-            .output()
+        let found = std::process::Command::new("where").arg(prog).output()
             .map(|o| o.status.success())
-            .unwrap_or(false)
+            .unwrap_or(false);
+        if !found {
+            return false;
+        }
     }
     #[cfg(not(windows))]
     {
         let prog = command.split_whitespace().next().unwrap_or(command);
-        std::process::Command::new("which")
-            .arg(prog)
-            .output()
+        if !std::process::Command::new("which").arg(prog).output()
             .map(|o| o.status.success())
             .unwrap_or(false)
-    }
-}
-
-/// On Windows, `.cmd`/`.bat` wrappers (typescript-language-server, etc.) need
-/// `cmd /C` to spawn reliably — `CreateProcess` alone can't interpret them.
-/// Arguments are passed individually (never joined into one string).
-/// This mirrors `loom_mcp::prepare_command` so LSP and MCP spawn identically.
-fn prepare_command(raw_cmd: &str, raw_args: &[String]) -> (String, Vec<String>) {
-    #[cfg(windows)]
-    {
-        if needs_cmd_wrapper(raw_cmd) {
-            let mut args = vec!["/C".to_string(), raw_cmd.to_string()];
-            args.extend(raw_args.iter().cloned());
-            return ("cmd".to_string(), args);
+        {
+            return false;
         }
     }
-    (raw_cmd.to_string(), raw_args.to_vec())
-}
-
-#[cfg(windows)]
-fn needs_cmd_wrapper(cmd: &str) -> bool {
-    let probe = cmd.split_whitespace().next().unwrap_or(cmd);
-    if probe.ends_with(".cmd") || probe.ends_with(".bat") {
-        return true;
+    // rust-analyzer is distributed as a rustup proxy; the proxy is always on
+    // PATH after `rustup install`, but the component may not be.  Probe with
+    // `--version` to make sure it's actually usable.
+    if command == "rust-analyzer" {
+        return std::process::Command::new("rust-analyzer")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .map(|o| o.status.success() && !String::from_utf8_lossy(&o.stderr).contains("Unknown binary"))
+            .unwrap_or(false);
     }
-    if let Ok(out) = std::process::Command::new("where").arg(probe).output()
-        && out.status.success()
-    {
-        let s = String::from_utf8_lossy(&out.stdout);
-        return s.lines().any(|l| {
-            let l = l.trim().to_lowercase();
-            l.ends_with(".cmd") || l.ends_with(".bat")
-        });
-    }
-    false
+    true
 }
 
 /// Return an appropriate install hint for a language server command.
 pub fn install_hint(language: &str, _command: &str) -> Option<(&'static str, &'static str)> {
     match language {
-        "rust" => Some(("rustup", "rustup component add rust-analyzer")),
+        "rust" => Some(("rustup", "rustup toolchain install stable -c rust-analyzer")),
         "typescript" | "javascript" => Some(("npm", "npm install -g typescript typescript-language-server")),
         "python" => Some(("pip", "pip install python-lsp-server")),
         "go" => Some(("go", "go install golang.org/x/tools/gopls@latest")),
@@ -570,12 +549,11 @@ impl LspClient {
             file_dir.replace('\\', "/").trim_end_matches('/')
         );
 
-        // Spawn via prepare_command so .cmd/.bat wrappers go through cmd /C
-        // (same path as loom_mcp — without this, CreateProcess fails on .cmd).
-        let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        let (program, cmd_args) = prepare_command(command, &args_owned);
-        let mut cmd = Command::new(&program);
-        cmd.args(&cmd_args);
+        // Use `where` to resolve the real .exe/.cmd path so CreateProcess
+        // has an unambiguous target.  Do NOT wrap in cmd /C — Rust stdlib
+        // handles .cmd/.bat natively on Windows *and* passes args correctly.
+        let mut cmd = Command::new(command);
+        cmd.args(args);
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
@@ -978,12 +956,11 @@ impl LspClient {
 
         let root_uri = "file:///".to_string();
 
-        // Spawn via prepare_command so .cmd/.bat wrappers go through cmd /C
-        // (same path as loom_mcp — without this, CreateProcess fails on .cmd).
-        let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        let (program, cmd_args) = prepare_command(command, &args_owned);
-        let mut cmd = Command::new(&program);
-        cmd.args(&cmd_args);
+        // Use `where` to resolve the real .exe/.cmd path so CreateProcess
+        // has an unambiguous target.  Do NOT wrap in cmd /C — Rust stdlib
+        // handles .cmd/.bat natively on Windows *and* passes args correctly.
+        let mut cmd = Command::new(command);
+        cmd.args(args);
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());

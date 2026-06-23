@@ -1,11 +1,11 @@
 # openLoom
 
-本地优先的私人 AI 助理内核。多 Agent 编排、认知图谱记忆、Skills/Plugins/MCP/LSP 工具链、插件市场、桌面宠物，支持云端和本地模型。
+本地优先的私人 AI 助理内核。多 Agent 编排、认知图谱记忆、Skills/MCP/LSP 工具链、桌面宠物，支持云端和本地模型。
 
 ## 架构
 
 ```
-backend/crates/                   15 个 crate，Rust 2024 + Tokio
+backend/crates/                   13 个 crate，Rust 2024 + Tokio
 ├── loom-types        ← 统一类型系统（Agent / Message / Tool / MCP / KG / Session）
 ├── loom-inference    ← 推理引擎分发（Anthropic / OpenAI / DeepSeek / LM Studio / Ollama）
 ├── loom-memory       ← 记忆内核（SQLite + FTS5，三库拆分，认知图谱，人格演化）
@@ -16,10 +16,8 @@ backend/crates/                   15 个 crate，Rust 2024 + Tokio
 ├── loom-cli          ← CLI 入口（serve / chat / mcp / kg / doctor）
 ├── loom-cron         ← 定时任务调度（SQLite 持久化，AI 提示词驱动，cron 表达式）
 ├── loom-mcp          ← MCP 客户端（stdio + HTTP/SSE，resources/prompts 协议）
-├── loom-lsp          ← LSP 客户端（30+ 语言，diagnostics/hover/completion/definition/references）
+├── loom-lsp          ← LSP 客户端（30+ 语言，二进制检测、一键安装/卸载、安装进度、诊断面板）
 ├── loom-skills       ← Skills 解析（Claude Code + OpenClaw SKILL.md 兼容）
-├── loom-plugins      ← 插件发现与 manifest 加载（manifest.json + plugin.toml）
-├── loom-marketplace  ← 插件市场（目录、安装、卸载、更新）
 └── loom-bridge       ← 外部消息平台接入（Telegram + WeChat iLink）
 
 frontend/                        Electron 38 + React 19
@@ -33,7 +31,7 @@ frontend/                        Electron 38 + React 19
      ├── components/kg/       ← 知识图谱（2D 星图可视化、节点详情、维护面板）
      ├── components/plan/     ← 计划面板（任务分解、进度追踪）
      ├── components/todo/     ← 待办面板（任务管理、状态流转）
-     ├── components/settings/ ← 全页设置（模型、Agent、MCP、LSP、Skills、插件、定时任务、KG、主题、关于）
+     ├── components/settings/ ← 全页设置（模型、Agent、MCP、LSP、Skills、定时任务、KG、主题、关于）
      ├── components/shared/   ← 通用组件（按钮、模态框、Toggle 等）
      ├── i18n/                ← 国际化（zh-CN / zh-TW / en-US）
      └── services/            ← 前端服务层（JSON-RPC、WebSocket、FIM、流缓冲）
@@ -157,21 +155,7 @@ loom kg stats
 - 扫描路径：`~/.loom/skills/`、`~/.claude/skills/`、`~/.openclaw/skills/`
 - 前端支持文件夹和 ZIP 导入
 
-### Plugin 系统
-
-- 兼容 Claude Code (manifest.json) + openLoom (plugin.toml) 格式
-- 递归扫描 4 层，自动发现 SKILL.md 目录
-- 支持捆绑 Skills + MCP 配置
-- 前端插件列表和重载
-
-### 插件市场
-
-- 内置精选目录 + 远程市场 URL 支持，按分类筛选和搜索
-- 一键安装 / 卸载 / 更新插件
-- 自定义市场源：支持添加远程 JSON 目录 URL，持久化存储
-- 前端市场面板与本地插件合并为统一 Tab（「已安装」/「市场」切换）
-
-### 技能市场
+### 技能市场（Clawhub）
 
 - Clawhub 社区技能注册表集成 + 自定义源支持
 - 支持修改 API 基地址（默认 clawhub.ai，可替换为镜像或私有源）
@@ -182,14 +166,17 @@ loom kg stats
 
 - 双传输：stdio 子进程 + HTTP/SSE
 - 完整 resources/list、resources/read、prompts/list、prompts/get 协议
-- 工具超时保护、连接健康检查、自动重连
+- 默认内置 playwright + context7，开箱即用
+- 工具超时保护、连接健康检查
+- DB 持久化配置，断开/删除状态跨重启保留
 - 前端 MCP 服务器 CRUD 面板、工具列表预览
 
 ### LSP 集成
 
 - 30+ 语言支持：Rust、TypeScript、Python、Go、C/C++、Java、C#、Swift、Kotlin、Scala、Ruby、Lua、Zig、Haskell、Dart、Vue、Svelte 等
 - diagnostics、hover、completion、definition、references、document_symbols
-- 前端 LSP 面板：启动/停止服务器、查看诊断、快速启动预设语言
+- 一键安装/卸载语言服务器，实时安装进度日志
+- 前端 LSP 面板：语言卡片网格、状态指示灯（运行中/就绪/未安装）、诊断汇总
 
 ### 桌面宠物
 
@@ -269,11 +256,9 @@ loom kg stats
 | Model | 11 | list、switch、config CRUD、save_key、check_key、discover |
 | Workspace | 3 | get、set_session、set_default |
 | Skills | 5 | list、get、import、delete、reload |
-| Plugins | 2 | list、reload |
-| Marketplace | 4 | list、install、uninstall、update |
 | Clawhub | 3 | list、install、uninstall（技能市场） |
 | MCP | 13 | list_tools、connect、disconnect、resources、prompts、health、config CRUD |
-| LSP | 11 | diagnostics、completion、hover、definition、references、symbols 等 |
+| LSP | 13 | diagnostics、completion、hover、definition、references、symbols、check、install、uninstall、all_diagnostics |
 | Tools | 2 | list、respond（工具权限响应） |
 | Stats | 3 | token_summary、token_history、reset |
 | Config | 10 | vision、auxiliary、sandbox、defaults 等 get/set |
@@ -298,14 +283,14 @@ loom kg stats
 
 ```
 ~/.loom/
-├── loom.db          ← 配置库（model_configs / agent_configs / mcp_servers）
-├── memory.db        ← 记忆库（events / cognitions / kg_* / cognition_snapshots）
-├── session.db       ← 会话库（sessions / message_history / token_usage / bridge_*）
+├── data/
+│   ├── session.db       ← 会话库（sessions / message_history / token_usage / bridge_*）
+│   ├── memory.db        ← 记忆库（events / cognitions / kg_* / cognition_snapshots）
+│   └── cron.db          ← 定时任务库
 ├── skills/          ← 全局技能定义
-├── plugins/         ← 插件目录
 ├── pets/            ← 桌宠资源（Petdex sprite sheet）
 ├── mcp.json         ← MCP 服务器配置
-└── workspace.json   ← 默认工作空间
+└── Loom.md          ← 全局 Agent 纪律文件
 ```
 
 ## 开发

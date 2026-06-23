@@ -764,6 +764,36 @@
   align-items: center;
 }
 
+.lspFilterRow {
+  display: flex;
+  gap: 4px;
+  margin: 12px 0 0;
+}
+
+.lspFilterTab {
+  height: 28px;
+  padding: 0 14px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  cursor: pointer;
+  transition: all 0.15s var(--ease-standard);
+}
+
+.lspFilterTab:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
+.lspFilterTabActive {
+  color: var(--accent, #6a6af7);
+  border-color: var(--accent, #6a6af7);
+  background: rgba(106,106,247,0.08);
+}
+
 /* LSP card grid — 2-column layout */
 .lspGrid {
   display: grid;

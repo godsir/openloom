@@ -1,6 +1,6 @@
 # openLoom Backend API
 
-> Auto-generated from dispatch code. Methods: 136
+> JSON-RPC 2.0 接口。方法数 130+
 
 ## Transport
 
@@ -380,62 +380,6 @@
 
 ---
 
-## Plugins
-
-### plugins.list
-
-```json
-// → { "plugins": plugins }
-```
-
-### plugins.reload
-
-```json
-// → { "ok": true, "skill_count": count, "plugin_count": n }
-```
-
----
-
-## Marketplace
-
-### marketplace.list
-
-```json
-// → { "plugins": results }
-```
-
-### marketplace.install
-
-| Param | 类型 | 必需 | 说明 |
-|-------|------|:---:|------|
-| `plugin_id` | string |  |  |
-
-```json
-// → { "ok": true, "path": target.display().to_string() }
-```
-
-### marketplace.uninstall
-
-| Param | 类型 | 必需 | 说明 |
-|-------|------|:---:|------|
-| `plugin_id` | string |  |  |
-
-```json
-// → { "ok": true }
-```
-
-### marketplace.update
-
-| Param | 类型 | 必需 | 说明 |
-|-------|------|:---:|------|
-| `plugin_id` | string |  |  |
-
-```json
-// → { "ok": true }
-```
-
----
-
 ## Clawhub
 
 ### clawhub.list
@@ -668,6 +612,53 @@
 
 ```json
 // → { "languages": list }
+```
+
+### lsp.check
+
+```json
+// → { "languages": [{ "language", "command", "available", "running", "install_hint", "uninstall_command" }] }
+```
+
+### lsp.install
+
+| Param | 类型 | 必需 | 说明 |
+|-------|------|:---:|------|
+| `language` | string | ✓ | 语言 ID（如 typescript） |
+| `command` | string | ✓ | 语言服务器的命令名 |
+
+```json
+// → { "task_id": "<uuid>" }
+```
+
+使用 `lsp.install_status` 轮询进度。
+
+### lsp.uninstall
+
+| Param | 类型 | 必需 | 说明 |
+|-------|------|:---:|------|
+| `language` | string | ✓ | 语言 ID |
+
+```json
+// → { "task_id": "<uuid>" }
+```
+
+使用 `lsp.install_status` 轮询进度。
+
+### lsp.install_status
+
+| Param | 类型 | 必需 | 说明 |
+|-------|------|:---:|------|
+| `task_id` | string | ✓ | 从 `lsp.install` / `lsp.uninstall` 返回的 task_id |
+
+```json
+// → { "task_id", "lines": [...], "done": bool, "ok": bool, "exit_code": int }
+```
+
+### lsp.all_diagnostics
+
+```json
+// → { "servers": [{ "language", "total", "files": [{ "file", "count" }] }] }
 ```
 
 ### lsp.start
