@@ -252,7 +252,8 @@ export const enUS: TranslationMap = {
   'about.backendConnection': 'Backend Connection',
   'about.currentModel': 'Current Model',
   'about.noModel': 'None selected',
-  'about.agentCount': 'Agent Count',
+  'about.agentCount': 'Configured Agents',
+  'about.activeAgentCount': 'Active Agents',
   'about.toolCount': 'Tool Count',
 
   // ── Cron ────────────────────────────────────────────────────────
@@ -1202,6 +1203,9 @@ export const enUS: TranslationMap = {
   'about.descriptionFull': 'Local-first private AI assistant. All data stored locally.',
   'about.systemLoadFailed': 'Failed to load system info',
   'about.autoUpdate': 'Auto Update',
+  'about.updateChannel': 'Update channel',
+  'about.channelStable': 'Stable',
+  'about.channelBeta': 'Beta',
   'about.checkingUpdate': 'Checking for updates...',
   'about.newVersionAvailable': 'New version {version} available',
   'about.newVersionFound': 'New version found',

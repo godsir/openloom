@@ -252,7 +252,8 @@ export const zhTW: TranslationMap = {
   'about.backendConnection': '后端連接',
   'about.currentModel': '目前模型',
   'about.noModel': '未選擇',
-  'about.agentCount': 'Agent 數量',
+  'about.agentCount': '已配置 Agent',
+  'about.activeAgentCount': '活躍 Agent',
   'about.toolCount': '工具數量',
 
   // ── Cron ────────────────────────────────────────────────────────
@@ -1202,6 +1203,9 @@ export const zhTW: TranslationMap = {
   'about.descriptionFull': '本地优先的私人 AI 助理。所有資料儲存在本地。',
   'about.systemLoadFailed': '系統資訊載入失敗',
   'about.autoUpdate': '自动更新',
+  'about.updateChannel': '更新渠道',
+  'about.channelStable': '穩定版',
+  'about.channelBeta': '測試版',
   'about.checkingUpdate': '正在檢查更新...',
   'about.newVersionAvailable': '发现新版本 {version}',
   'about.newVersionFound': '发现新版本',

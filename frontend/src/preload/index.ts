@@ -18,6 +18,8 @@ export interface LoomApi {
   checkForUpdates: () => Promise<void>
   downloadUpdate: () => Promise<void>
   installUpdate: () => void
+  getUpdateChannel: () => Promise<string>
+  setUpdateChannel: (channel: string) => Promise<void>
   onUpdateAvailable: (cb: (info: unknown) => void) => () => void
   onUpdateNotAvailable: (cb: () => void) => () => void
   onUpdateDownloadProgress: (cb: (progress: { percent: number; bytesPerSecond: number; transferred: number; total: number }) => void) => () => void
@@ -97,6 +99,8 @@ contextBridge.exposeInMainWorld('loom', {
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
+  getUpdateChannel: () => ipcRenderer.invoke('get-update-channel'),
+  setUpdateChannel: (channel: string) => ipcRenderer.invoke('set-update-channel', channel),
   onUpdateAvailable: (cb: (info: unknown) => void) => {
     const fn = (_e: unknown, info: unknown): void => cb(info)
     ipcRenderer.on('update-available', fn)

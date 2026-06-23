@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, app, Notification } from 'electron'
 import * as path from 'path'
 import { getStoreKey, setStoreKey } from '../store'
-import { checkForUpdates, downloadUpdate, installUpdate } from '../updater'
+import { checkForUpdates, downloadUpdate, installUpdate, getUpdateChannel, setUpdateChannel } from '../updater'
 import { restartEngine } from '../engine'
 
 export function registerAppIpc(): void {
@@ -63,6 +63,14 @@ export function registerAppIpc(): void {
 
   ipcMain.handle('install-update', () => {
     installUpdate()
+  })
+
+  ipcMain.handle('get-update-channel', () => {
+    return getUpdateChannel()
+  })
+
+  ipcMain.handle('set-update-channel', (_event, channel: string) => {
+    setUpdateChannel(channel as 'stable' | 'beta')
   })
 
   // Engine restart

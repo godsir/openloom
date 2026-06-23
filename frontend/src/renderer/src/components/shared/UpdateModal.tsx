@@ -26,6 +26,21 @@ export default function UpdateModal() {
 
   const { status, version, releaseNotes, progress, bytesPerSecond, transferred, total, error } = update
 
+  // electron-updater returns release notes as HTML from the GitHub API.
+  // Strip tags and decode entities for a clean plain-text display.
+  const cleanNotes = releaseNotes
+    ? releaseNotes
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<[^>]*>/g, '')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+    : null
+
   const show = modalOpen && (status === 'available' || status === 'downloading' || status === 'downloaded' || status === 'error')
 
   const handleClose = () => {
@@ -42,8 +57,8 @@ export default function UpdateModal() {
               {t('updates.found', { version: version || '' })}
             </div>
             <div className={styles.versionSub}>{t('updates.recommend')}</div>
-            {releaseNotes && (
-              <div className={styles.releaseNotes}>{releaseNotes}</div>
+            {cleanNotes && (
+              <div className={styles.releaseNotes}>{cleanNotes}</div>
             )}
             <div className={styles.actions}>
               <button className={styles.dismissBtn} onClick={dismissUpdate}>{t('updates.later')}</button>

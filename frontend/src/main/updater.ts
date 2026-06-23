@@ -1,20 +1,39 @@
 import { autoUpdater } from 'electron-updater'
 import { app, BrowserWindow } from 'electron'
+import { getStoreKey, setStoreKey, readStore } from './store'
 
 let initialized = false
 
-export function setupAutoUpdater(mainWindow: BrowserWindow): void {
-  if (initialized) return
-  initialized = true
+/** Read the preferred update channel from preferences.json. */
+export function getUpdateChannel(): 'stable' | 'beta' {
+  return (getStoreKey<string>('update_channel', 'stable') === 'beta') ? 'beta' : 'stable'
+}
 
+export function setUpdateChannel(channel: 'stable' | 'beta'): void {
+  setStoreKey('update_channel', channel)
+  // Reconfigure and re-check immediately so the user sees the new channel's
+  // latest release right away.
+  configureUpdater()
+  autoUpdater.checkForUpdates().catch(() => {})
+}
+
+function configureUpdater(): void {
+  const channel = getStoreKey<string>('update_channel', 'stable')
   autoUpdater.setFeedURL({
     provider: 'github',
     owner: 'godsir',
     repo: 'openloom',
   })
-
+  autoUpdater.allowPrerelease = channel === 'beta'
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false
+}
+
+export function setupAutoUpdater(mainWindow: BrowserWindow): void {
+  if (initialized) return
+  initialized = true
+
+  configureUpdater()
 
   autoUpdater.on('update-available', (info) => {
     mainWindow.webContents.send('update-available', info)

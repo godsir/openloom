@@ -51,9 +51,12 @@ pub async fn handle(
 // --- system.health ---
 
 async fn handle_system_health(state: &AppState) -> Result<Value, JsonRpcError> {
+    let agent_configs = state.orchestrator.agent_config_list().await.len();
+    let active_agents = state.orchestrator.list_agents().await.len();
     Ok(json!({
         "status": "ok", "version": "0.2.18",
-        "agent_count": state.orchestrator.list_agents().await.len(),
+        "agent_count": agent_configs,
+        "active_agent_count": active_agents,
         "tool_count": state.orchestrator.tool_registry().await.len(),
     }))
 }

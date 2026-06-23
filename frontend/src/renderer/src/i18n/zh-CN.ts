@@ -252,7 +252,8 @@ export const zhCN: TranslationMap = {
   'about.backendConnection': '后端连接',
   'about.currentModel': '当前模型',
   'about.noModel': '未选择',
-  'about.agentCount': 'Agent 数量',
+  'about.agentCount': '已配置 Agent',
+  'about.activeAgentCount': '活跃 Agent',
   'about.toolCount': '工具数量',
 
   // ── Cron ────────────────────────────────────────────────────────
@@ -1202,6 +1203,9 @@ export const zhCN: TranslationMap = {
   'about.descriptionFull': '本地优先的私人 AI 助理。所有数据存储在本地。',
   'about.systemLoadFailed': '系统信息加载失败',
   'about.autoUpdate': '自动更新',
+  'about.updateChannel': '更新渠道',
+  'about.channelStable': '稳定版',
+  'about.channelBeta': '测试版',
   'about.checkingUpdate': '正在检查更新...',
   'about.newVersionAvailable': '发现新版本 {version}',
   'about.newVersionFound': '发现新版本',
