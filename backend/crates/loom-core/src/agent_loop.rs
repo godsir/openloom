@@ -8,7 +8,6 @@ use anyhow::Result;
 use loom_context::{AssembleOptions, ContextAssembler};
 use loom_inference::engine::CloudClient;
 use loom_memory::TodoStore;
-use loom_plugins::hooks::HookEvent;
 use loom_security::check_permission;
 use loom_types::SkillPermissions;
 use loom_types::{
@@ -24,7 +23,6 @@ use tracing::info;
 use tracing::debug;
 
 use crate::event_bus::EventBus;
-use crate::hooks::HookContext;
 use crate::tool_context::ToolContext;
 use crate::tool_registry::ToolRegistry;
 
@@ -94,9 +92,6 @@ pub struct AgentLoopConfig {
     /// Set to `SkillPermissions::default()` for zero trust (deny shell, deny file writes);
     /// set shell=true / fs_write=Some(vec![]) to restore the old open-everything behaviour.
     pub default_permissions: SkillPermissions,
-    /// Hook registry for firing PreToolUse / PostToolUse / PostToolUseFailure events.
-    /// None when hooks are not loaded (default).
-    pub hook_registry: Option<std::sync::Arc<tokio::sync::RwLock<crate::hooks::HookRegistry>>>,
     /// Session ID for hook context.
     pub session_id: String,
     /// Agent ID for hook context.
@@ -236,7 +231,6 @@ impl Default for AgentLoopConfig {
             context_window: None,
             summary_at_count: 0,
             default_permissions: SkillPermissions::default(),
-            hook_registry: None,
             session_id: String::new(),
             agent_id: String::new(),
             key_store: None,
@@ -969,24 +963,6 @@ async fn run_agent_turn_inner(
                 "token budget exceeded"
             );
 
-            // Fire Notification hook
-            if let Some(ref hook_reg) = config.hook_registry {
-                let mut hook_ctx = HookContext {
-                    session_id: config.session_id.clone(),
-                    agent_id: config.agent_id.clone(),
-                    ..Default::default()
-                };
-                let _ = hook_reg
-                    .read()
-                    .await
-                    .fire(
-                        &HookEvent::Notification,
-                        Some("token_budget"),
-                        &mut hook_ctx,
-                    )
-                    .await;
-            }
-
             return Ok(TurnResult {
                 response: format!(
                     "任务进行中（已用 {} tokens，达到预算上限）。输入「继续」以接着执行。",
@@ -1119,19 +1095,6 @@ async fn run_agent_turn_inner(
         }
         // Check for user interruption before each iteration
         if cancel.is_cancelled() {
-            // Fire Stop hook
-            if let Some(ref hook_reg) = config.hook_registry {
-                let mut hook_ctx = HookContext {
-                    session_id: config.session_id.clone(),
-                    agent_id: config.agent_id.clone(),
-                    ..Default::default()
-                };
-                let _ = hook_reg
-                    .read()
-                    .await
-                    .fire(&HookEvent::Stop, None, &mut hook_ctx)
-                    .await;
-            }
             info!("agent turn cancelled by user at iteration {}", iteration);
             return Ok(TurnResult {
                 response: "[已中断]".into(),
@@ -1215,23 +1178,6 @@ async fn run_agent_turn_inner(
                                 error = %msg,
                                 "upstream rejected tools for image-response model, retrying without tools"
                             );
-                            // Fire Notification hook
-                            if let Some(ref hook_reg) = config.hook_registry {
-                                let mut hook_ctx = HookContext {
-                                    session_id: config.session_id.clone(),
-                                    agent_id: config.agent_id.clone(),
-                                    ..Default::default()
-                                };
-                                let _ = hook_reg
-                                    .read()
-                                    .await
-                                    .fire(
-                                        &HookEvent::Notification,
-                                        Some("image_tool_retry"),
-                                        &mut hook_ctx,
-                                    )
-                                    .await;
-                            }
                             force_no_tools = true;
                             break None;
                         }
@@ -1283,20 +1229,6 @@ async fn run_agent_turn_inner(
         // If the LLM returned tool calls, dispatch them
         if !response.tool_calls.is_empty() {
             info!(count = response.tool_calls.len(), names = ?response.tool_calls.iter().map(|t| &t.name).collect::<Vec<_>>(), "tool calls received");
-
-            // Fire Notification hook for tool dispatch
-            if let Some(ref hook_reg) = config.hook_registry {
-                let mut hook_ctx = HookContext {
-                    session_id: config.session_id.clone(),
-                    agent_id: config.agent_id.clone(),
-                    ..Default::default()
-                };
-                let _ = hook_reg
-                    .read()
-                    .await
-                    .fire(&HookEvent::Notification, Some("tool_calls"), &mut hook_ctx)
-                    .await;
-            }
 
             // Add assistant message with tool calls + thinking (if any)
             let mut assistant_content: Vec<ContentPart> = Vec::new();
@@ -1356,24 +1288,6 @@ async fn run_agent_turn_inner(
 
 
                 if !allowed {
-                    // Fire PermissionRequest hook
-                    if let Some(ref hook_reg) = config.hook_registry {
-                        let mut hook_ctx = HookContext {
-                            session_id: config.session_id.clone(),
-                            agent_id: config.agent_id.clone(),
-                            tool_name: Some(tool_name.clone()),
-                            ..Default::default()
-                        };
-                        let _ = hook_reg
-                            .read()
-                            .await
-                            .fire(
-                                &HookEvent::PermissionRequest,
-                                Some(&tool_name),
-                                &mut hook_ctx,
-                            )
-                            .await;
-                    }
                     let reason = match config.permission_mode.as_str() {
                         "plan" => format!(
                             "【规划模式】当前处于 Plan 模式，不允许执行 {} 操作。\
@@ -1409,22 +1323,6 @@ async fn run_agent_turn_inner(
                 // Drain progress updates in background to avoid SendError in tool implementations
                 tokio::spawn(async move { while progress_rx.recv().await.is_some() {} });
 
-                // Fire PreToolUse hook
-                if let Some(ref hook_reg) = config.hook_registry {
-                    let mut hook_ctx = HookContext {
-                        session_id: config.session_id.clone(),
-                        agent_id: config.agent_id.clone(),
-                        tool_name: Some(tool_name.clone()),
-                        tool_args: Some(tc.arguments.clone()),
-                        ..Default::default()
-                    };
-                    let _result = hook_reg
-                        .read()
-                        .await
-                        .fire(&HookEvent::PreToolUse, Some(&tool_name), &mut hook_ctx)
-                        .await;
-                }
-
                 match registry
                     .execute(&tc.name, tc.arguments.clone(), progress_tx, &tool_context)
                     .await
@@ -1437,52 +1335,12 @@ async fn run_agent_turn_inner(
                             result.content
                         };
 
-                        // Fire PostToolUse hook
-                        if let Some(ref hook_reg) = config.hook_registry {
-                            let mut hook_ctx = HookContext {
-                                session_id: config.session_id.clone(),
-                                agent_id: config.agent_id.clone(),
-                                tool_name: Some(tool_name.clone()),
-                                tool_args: Some(tc.arguments.clone()),
-                                tool_result: Some(content.clone()),
-                                tool_success: Some(!result.is_error),
-                                ..Default::default()
-                            };
-                            let _result = hook_reg
-                                .read()
-                                .await
-                                .fire(&HookEvent::PostToolUse, Some(&tool_name), &mut hook_ctx)
-                                .await;
-                        }
-
                         let tool_msg = Message::tool(&tc.id, &tool_name, &content);
                         messages.push(tool_msg.clone());
                         tool_messages.push(tool_msg);
                     }
                     Err(e) => {
                         let err_msg = format!("Tool execution failed: {}", e);
-
-                        // Fire PostToolUseFailure hook
-                        if let Some(ref hook_reg) = config.hook_registry {
-                            let mut hook_ctx = HookContext {
-                                session_id: config.session_id.clone(),
-                                agent_id: config.agent_id.clone(),
-                                tool_name: Some(tool_name.clone()),
-                                tool_args: Some(tc.arguments.clone()),
-                                tool_result: Some(err_msg.clone()),
-                                tool_success: Some(false),
-                                ..Default::default()
-                            };
-                            let _result = hook_reg
-                                .read()
-                                .await
-                                .fire(
-                                    &HookEvent::PostToolUseFailure,
-                                    Some(&tool_name),
-                                    &mut hook_ctx,
-                                )
-                                .await;
-                        }
 
                         // Skip pushing malformed tool messages with empty IDs
                         if !tc.id.is_empty() && !tool_name.is_empty() {
@@ -2000,24 +1858,6 @@ async fn run_agent_turn_streaming_inner(
                 "token budget exceeded (streaming)"
             );
 
-            // Fire Notification hook
-            if let Some(ref hook_reg) = config.hook_registry {
-                let mut hook_ctx = HookContext {
-                    session_id: config.session_id.clone(),
-                    agent_id: config.agent_id.clone(),
-                    ..Default::default()
-                };
-                let _ = hook_reg
-                    .read()
-                    .await
-                    .fire(
-                        &HookEvent::Notification,
-                        Some("token_budget"),
-                        &mut hook_ctx,
-                    )
-                    .await;
-            }
-
             let msg = format!(
                 "任务进行中（已用 {} tokens，达到预算上限）。输入「继续」以接着执行。",
                 total_prompt
@@ -2145,19 +1985,6 @@ async fn run_agent_turn_streaming_inner(
         }
         // Check for user interruption before each iteration
         if cancel.is_cancelled() {
-            // Fire Stop hook
-            if let Some(ref hook_reg) = config.hook_registry {
-                let mut hook_ctx = HookContext {
-                    session_id: config.session_id.clone(),
-                    agent_id: config.agent_id.clone(),
-                    ..Default::default()
-                };
-                let _ = hook_reg
-                    .read()
-                    .await
-                    .fire(&HookEvent::Stop, None, &mut hook_ctx)
-                    .await;
-            }
             tracing::info!("agent turn cancelled by user at iteration {}", iteration);
             let _ = delta_tx.send(StreamDelta::Text("[已中断]".into())).await;
             drop(delta_tx);
@@ -2249,19 +2076,6 @@ async fn run_agent_turn_streaming_inner(
                     biased;
                     _ = cancel.cancelled() => {
                         tracing::info!("agent turn cancelled during LLM stream");
-                        // Fire Stop hook
-                        if let Some(ref hook_reg) = config.hook_registry {
-                            let mut hook_ctx = HookContext {
-                                session_id: config.session_id.clone(),
-                                agent_id: config.agent_id.clone(),
-                                ..Default::default()
-                            };
-                            let _ = hook_reg
-                                .read()
-                                .await
-                                .fire(&HookEvent::Stop, None, &mut hook_ctx)
-                                .await;
-                        }
                         drop(stream_rx);
                         // stream_fut is a pinned future that doesn't need explicit drop
                         let _ = delta_tx.send(StreamDelta::Text("[已中断]".into())).await;
@@ -2457,20 +2271,6 @@ async fn run_agent_turn_streaming_inner(
         }
 
         if !pending_tool_calls.is_empty() {
-            // Fire Notification hook for tool dispatch
-            if let Some(ref hook_reg) = config.hook_registry {
-                let mut hook_ctx = HookContext {
-                    session_id: config.session_id.clone(),
-                    agent_id: config.agent_id.clone(),
-                    ..Default::default()
-                };
-                let _ = hook_reg
-                    .read()
-                    .await
-                    .fire(&HookEvent::Notification, Some("tool_calls"), &mut hook_ctx)
-                    .await;
-            }
-
             let mut assistant_content: Vec<ContentPart> = Vec::new();
             if !this_thinking.is_empty() {
                 assistant_content.push(ContentPart::Thinking {
@@ -2594,20 +2394,6 @@ async fn run_agent_turn_streaming_inner(
 
 
                 if !allowed {
-                    // Fire PermissionRequest hook
-                    if let Some(ref hook_reg) = config.hook_registry {
-                        let mut hook_ctx = HookContext {
-                            session_id: config.session_id.clone(),
-                            agent_id: config.agent_id.clone(),
-                            tool_name: Some(tc_name.to_string()),
-                            ..Default::default()
-                        };
-                        let _ = hook_reg
-                            .read()
-                            .await
-                            .fire(&HookEvent::PermissionRequest, Some(tc_name), &mut hook_ctx)
-                            .await;
-                    }
                     let reason = match config.permission_mode.as_str() {
                         "plan" => format!(
                             "【规划模式】当前处于 Plan 模式，不允许执行 {} 操作。\
@@ -2685,22 +2471,6 @@ async fn run_agent_turn_streaming_inner(
                 // Drain progress updates in background to avoid SendError in tool implementations
                 tokio::spawn(async move { while progress_rx.recv().await.is_some() {} });
 
-                // Fire PreToolUse hook
-                if let Some(ref hook_reg) = config.hook_registry {
-                    let mut hook_ctx = HookContext {
-                        session_id: config.session_id.clone(),
-                        agent_id: config.agent_id.clone(),
-                        tool_name: Some(tc_name.to_string()),
-                        tool_args: Some(arguments.clone()),
-                        ..Default::default()
-                    };
-                    let _result = hook_reg
-                        .read()
-                        .await
-                        .fire(&HookEvent::PreToolUse, Some(tc_name), &mut hook_ctx)
-                        .await;
-                }
-
                 info!(tool_name = %tc_name, tool_args = %tc_args, "executing tool (streaming)");
                 match registry
                     .execute(tc_name, arguments, progress_tx, &tool_context)
@@ -2722,26 +2492,6 @@ async fn run_agent_turn_streaming_inner(
                             tracing::warn!(tool_name = %tc_name, error = %content, "tool failed (streaming)");
                         }
 
-                        // Fire PostToolUse hook
-                        if let Some(ref hook_reg) = config.hook_registry {
-                            let mut hook_ctx = HookContext {
-                                session_id: config.session_id.clone(),
-                                agent_id: config.agent_id.clone(),
-                                tool_name: Some(tc_name.to_string()),
-                                tool_args: Some(
-                                    serde_json::from_str(tc_args).unwrap_or(serde_json::json!({})),
-                                ),
-                                tool_result: Some(content.clone()),
-                                tool_success: Some(success),
-                                ..Default::default()
-                            };
-                            let _result = hook_reg
-                                .read()
-                                .await
-                                .fire(&HookEvent::PostToolUse, Some(tc_name), &mut hook_ctx)
-                                .await;
-                        }
-
                         let tool_msg = Message::tool(tc_id, tc_name, &content);
                         messages.push(tool_msg.clone());
                         tool_messages.push(tool_msg);
@@ -2757,26 +2507,6 @@ async fn run_agent_turn_streaming_inner(
                     }
                     Err(e) => {
                         let err_msg = format!("Tool execution failed: {}", e);
-
-                        // Fire PostToolUseFailure hook
-                        if let Some(ref hook_reg) = config.hook_registry {
-                            let mut hook_ctx = HookContext {
-                                session_id: config.session_id.clone(),
-                                agent_id: config.agent_id.clone(),
-                                tool_name: Some(tc_name.to_string()),
-                                tool_args: Some(
-                                    serde_json::from_str(tc_args).unwrap_or(serde_json::json!({})),
-                                ),
-                                tool_result: Some(err_msg.clone()),
-                                tool_success: Some(false),
-                                ..Default::default()
-                            };
-                            let _result = hook_reg
-                                .read()
-                                .await
-                                .fire(&HookEvent::PostToolUseFailure, Some(tc_name), &mut hook_ctx)
-                                .await;
-                        }
 
                         // Skip pushing malformed tool messages with empty IDs —
                         // they cause 400 errors with providers that validate tool_call_id

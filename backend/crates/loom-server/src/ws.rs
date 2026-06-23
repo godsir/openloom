@@ -57,8 +57,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                                             let _ = tx.send(json).await;
                                         }
                                     });
-                                } else if req.method.starts_with("marketplace.") || req.method.starts_with("plugins.") || req.method.starts_with("clawhub.") {
-                                    // Marketplace / plugin ops can take time (git clone, filesystem I/O):
+                                } else if req.method.starts_with("clawhub.") {
+                                    // Clawhub ops can take time (network I/O):
                                     // spawn in background so other RPCs and event forwarding aren't blocked
                                     let st = state.clone();
                                     let tx = resp_tx.clone();

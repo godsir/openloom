@@ -16,7 +16,7 @@ loom-inference = { path = "../loom-inference" }
 loom-memory = { path = "../loom-memory", features = ["sqlite-vec"] }
 loom-mcp = { path = "../loom-mcp" }
 loom-skills = { path = "../loom-skills" }
-loom-plugins = { path = "../loom-plugins" }
+
 loom-bridge = { path = "../loom-bridge" }
 rusqlite = "0.32"
 anyhow = "1"

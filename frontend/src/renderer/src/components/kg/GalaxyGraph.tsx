@@ -125,7 +125,8 @@ function getNeighborIndices(
 // ── Node Sprite Cache ──────────────────────────────────────────────
 
 function createNodeSprite(hue: number, sat: number, lit: number, r: number, isUser: boolean): HTMLCanvasElement {
-  const size = Math.ceil(r * 5)
+  const bloomR = r * (isUser ? 4.0 : 3.0)
+  const size = Math.ceil(bloomR * 2.1)  // 确保完整容纳辉光，避免正方形切边
   const off = document.createElement('canvas')
   off.width = size
   off.height = size
@@ -133,7 +134,6 @@ function createNodeSprite(hue: number, sat: number, lit: number, r: number, isUs
   const cx = size / 2
   const cy = size / 2
 
-  const bloomR = r * (isUser ? 4.0 : 3.0)
   const bloom = ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, bloomR)
   bloom.addColorStop(0,    `hsla(${hue}, ${sat}%, ${Math.min(lit + 18, 92)}%, 0.55)`)
   bloom.addColorStop(0.35, `hsla(${hue}, ${sat}%, ${lit}%, 0.18)`)

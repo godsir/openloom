@@ -1,4 +1,4 @@
-//! LSP (Language Server Protocol) client for openLoom v2.
+﻿//! LSP (Language Server Protocol) client for openLoom v2.
 //!
 //! Manages language server processes via stdio JSON-RPC, supporting
 //! diagnostics, completion, hover, definition, references, and document symbols.
@@ -24,7 +24,7 @@ const LSP_TIMEOUT_SECS: u64 = 30;
 const MAX_OPEN_FILES: usize = 128;
 
 // ============================================================================
-// LSP Connection — single language server process
+// LSP Connection 鈥?single language server process
 // ============================================================================
 
 /// Push-diagnostics store: maps a document URI to its latest list of
@@ -56,7 +56,7 @@ impl LspConnection {
             let mut line = String::new();
             let n = reader.read_line(&mut line).await?;
             if n == 0 {
-                return Err(anyhow!("LSP: server closed stream while reading headers"));
+                return Err(anyhow!("LSP process closed its stdout before responding — the language server may have crashed on startup. Check that the command and its dependencies are correctly installed."));
             }
             if line == "\r\n" || line == "\n" {
                 break;
@@ -214,7 +214,7 @@ impl LspConnection {
 }
 
 // ============================================================================
-// Server entry — wraps an LspConnection with its I/O handles and metadata
+// Server entry 鈥?wraps an LspConnection with its I/O handles and metadata
 // ============================================================================
 
 struct ServerEntry {
@@ -225,23 +225,44 @@ struct ServerEntry {
     doc_version: AtomicU64,
     /// Latest push diagnostics (`textDocument/publishDiagnostics`) keyed by URI.
     diagnostics: DiagnosticsStore,
+    /// Ring buffer of recent stderr lines — surfaced in error messages when
+    /// the language server crashes during a request.
+    stderr_buf: Arc<StdMutex<VecDeque<String>>>,
 }
 
 impl ServerEntry {
+    fn stderr_tail(&self) -> String {
+        self.stderr_buf
+            .lock()
+            .ok()
+            .map(|g| g.iter().cloned().collect::<Vec<_>>().join("\n"))
+            .unwrap_or_default()
+    }
+
     async fn request(&self, method: &str, params: &Value) -> Result<Value> {
-        tokio::time::timeout(Duration::from_secs(LSP_TIMEOUT_SECS), async {
+        let result = tokio::time::timeout(Duration::from_secs(LSP_TIMEOUT_SECS), async {
             let mut stdin = self.stdin.lock().await;
             let mut stdout = self.stdout.lock().await;
             self.conn
                 .send_request(&mut stdin, &mut stdout, &self.diagnostics, method, params)
                 .await
         })
-        .await
-        .map_err(|_| {
-            anyhow!(
-                "LSP request '{method}' timed out after {LSP_TIMEOUT_SECS}s"
-            )
-        })?
+        .await;
+
+        match result {
+            Ok(Ok(v)) => Ok(v),
+            Ok(Err(e)) => {
+                let stderr = self.stderr_tail();
+                Err(anyhow!("{e}{}", stderr_suffix(&stderr)))
+            }
+            Err(_) => {
+                let stderr = self.stderr_tail();
+                Err(anyhow!(
+                    "LSP request '{method}' timed out after {LSP_TIMEOUT_SECS}s{}",
+                    stderr_suffix(&stderr)
+                ))
+            }
+        }
     }
 
     async fn notify(&self, method: &str, params: &Value) -> Result<()> {
@@ -252,9 +273,134 @@ impl ServerEntry {
     }
 }
 
+fn stderr_suffix(stderr: &str) -> String {
+    if stderr.is_empty() {
+        String::new()
+    } else {
+        format!("\n--- language server stderr ---\n{stderr}")
+    }
+}
+
 // ============================================================================
 // Language detection and default server commands
 // ============================================================================
+
+/// Check whether a command binary exists on the system PATH.
+pub fn binary_available(command: &str) -> bool {
+    #[cfg(windows)]
+    {
+        // Split on space for commands like "haskell-language-server-wrapper --lsp"
+        let prog = command.split_whitespace().next().unwrap_or(command);
+        // Try .exe, .cmd, .bat variants via `where`
+        if let Ok(out) = std::process::Command::new("where").arg(prog).output() {
+            return out.status.success();
+        }
+        // Also try to check raw command via command search
+        std::process::Command::new("cmd")
+            .args(["/C", "where", prog])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        let prog = command.split_whitespace().next().unwrap_or(command);
+        std::process::Command::new("which")
+            .arg(prog)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+}
+
+/// On Windows, `.cmd`/`.bat` wrappers (typescript-language-server, etc.) need
+/// `cmd /C` to spawn reliably — `CreateProcess` alone can't interpret them.
+/// Arguments are passed individually (never joined into one string).
+/// This mirrors `loom_mcp::prepare_command` so LSP and MCP spawn identically.
+fn prepare_command(raw_cmd: &str, raw_args: &[String]) -> (String, Vec<String>) {
+    #[cfg(windows)]
+    {
+        if needs_cmd_wrapper(raw_cmd) {
+            let mut args = vec!["/C".to_string(), raw_cmd.to_string()];
+            args.extend(raw_args.iter().cloned());
+            return ("cmd".to_string(), args);
+        }
+    }
+    (raw_cmd.to_string(), raw_args.to_vec())
+}
+
+#[cfg(windows)]
+fn needs_cmd_wrapper(cmd: &str) -> bool {
+    let probe = cmd.split_whitespace().next().unwrap_or(cmd);
+    if probe.ends_with(".cmd") || probe.ends_with(".bat") {
+        return true;
+    }
+    if let Ok(out) = std::process::Command::new("where").arg(probe).output()
+        && out.status.success()
+    {
+        let s = String::from_utf8_lossy(&out.stdout);
+        return s.lines().any(|l| {
+            let l = l.trim().to_lowercase();
+            l.ends_with(".cmd") || l.ends_with(".bat")
+        });
+    }
+    false
+}
+
+/// Return an appropriate install hint for a language server command.
+pub fn install_hint(language: &str, _command: &str) -> Option<(&'static str, &'static str)> {
+    match language {
+        "rust" => Some(("rustup", "rustup component add rust-analyzer")),
+        "typescript" | "javascript" => Some(("npm", "npm install -g typescript typescript-language-server")),
+        "python" => Some(("pip", "pip install python-lsp-server")),
+        "go" => Some(("go", "go install golang.org/x/tools/gopls@latest")),
+        "c" | "cpp" => Some(("scoop", "scoop install llvm  # provides clangd")),
+        "java" => Some(("scoop", "scoop install jdtls")),
+        "csharp" => Some(("dotnet", "dotnet tool install -g OmniSharp")),
+        "swift" => Some(("xcode", "Xcode includes sourcekit-lsp")),
+        "kotlin" => Some(("scoop", r#"scoop install kotlin-language-server"#)),
+        "scala" => Some(("cs", "cs install metals")),
+        "ruby" => Some(("gem", "gem install solargraph")),
+        "lua" => Some(("scoop", "scoop install lua-language-server")),
+        "zig" => Some(("scoop", "scoop install zls")),
+        "haskell" => Some(("ghcup", "ghcup install hls")),
+        "dart" => Some(("dart", "dart pub global activate dart_language_server")),
+        "vue" => Some(("npm", "npm install -g @vue/language-server")),
+        "svelte" => Some(("npm", "npm install -g svelte-language-server")),
+        "html" => Some(("npm", "npm install -g vscode-langservers-extracted")),
+        "css" => Some(("npm", "npm install -g vscode-langservers-extracted")),
+        "json" => Some(("npm", "npm install -g vscode-langservers-extracted")),
+        "yaml" => Some(("npm", "npm install -g yaml-language-server")),
+        "toml" => Some(("cargo", "cargo install taplo-cli --features lsp")),
+        "markdown" => Some(("scoop", "scoop install marksman")),
+        "bash" => Some(("npm", "npm install -g bash-language-server")),
+        "dockerfile" => Some(("npm", "npm install -g dockerfile-language-server-nodejs")),
+        _ => None,
+    }
+}
+
+/// Return an uninstall command for a language server, if one exists.
+/// Returns None for servers that have no clean uninstall path
+/// (e.g. `go install` products, scoop-managed clangd).
+pub fn uninstall_hint(language: &str) -> Option<&'static str> {
+    match language {
+        "rust" => Some("rustup component remove rust-analyzer"),
+        "typescript" | "javascript" => Some("npm uninstall -g typescript typescript-language-server"),
+        "python" => Some("pip uninstall -y python-lsp-server"),
+        "csharp" => Some("dotnet tool uninstall -g OmniSharp"),
+        "ruby" => Some("gem uninstall solargraph"),
+        "vue" => Some("npm uninstall -g @vue/language-server"),
+        "svelte" => Some("npm uninstall -g svelte-language-server"),
+        "html" | "css" | "json" => Some("npm uninstall -g vscode-langservers-extracted"),
+        "yaml" => Some("npm uninstall -g yaml-language-server"),
+        "toml" => Some("cargo uninstall taplo-cli"),
+        "bash" => Some("npm uninstall -g bash-language-server"),
+        "dockerfile" => Some("npm uninstall -g dockerfile-language-server-nodejs"),
+        // go (go install), c/cpp (scoop llvm), java (scoop jdtls), swift (xcode),
+        // kotlin/scala/lua/zig/haskell/dart/markdown — no clean single-command uninstall.
+        _ => None,
+    }
+}
 
 fn language_config(ext: &str) -> Option<(&'static str, &'static str, Vec<&'static str>)> {
     match ext {
@@ -424,19 +570,26 @@ impl LspClient {
             file_dir.replace('\\', "/").trim_end_matches('/')
         );
 
-        let mut cmd = Command::new(command);
-        cmd.args(args);
+        // Spawn via prepare_command so .cmd/.bat wrappers go through cmd /C
+        // (same path as loom_mcp — without this, CreateProcess fails on .cmd).
+        let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let (program, cmd_args) = prepare_command(command, &args_owned);
+        let mut cmd = Command::new(&program);
+        cmd.args(&cmd_args);
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
         cmd.kill_on_drop(true);
 
         let mut process = cmd.spawn().with_context(|| {
-            format!("Failed to spawn '{command}'. Install it to use .{ext} LSP features.")
+            format!("Failed to spawn '{command}' — the language server binary wasn't found on PATH. Try reinstalling it.")
         })?;
 
-        // Drain stderr to prevent deadlock
+        // Drain stderr into a ring buffer so we can surface the last N lines
+        // when a request fails (language server crashed on startup, etc.)
+        let stderr_buf = Arc::new(StdMutex::new(VecDeque::with_capacity(50)));
         if let Some(stderr) = process.stderr.take() {
+            let buf = stderr_buf.clone();
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stderr);
                 let mut line = String::new();
@@ -445,9 +598,15 @@ impl LspClient {
                     match reader.read_line(&mut line).await {
                         Ok(0) | Err(_) => break,
                         Ok(_) => {
-                            let trimmed = line.trim();
+                            let trimmed = line.trim_end().to_string();
                             if !trimmed.is_empty() {
-                                tracing::debug!(target: "lsp_stderr", "{}", trimmed);
+                                tracing::warn!(target: "lsp_stderr", "{}", trimmed);
+                                if let Ok(mut g) = buf.lock() {
+                                    if g.len() >= 50 {
+                                        g.pop_front();
+                                    }
+                                    g.push_back(trimmed);
+                                }
                             }
                         }
                     }
@@ -476,6 +635,7 @@ impl LspClient {
             language_id: lang_id.to_string(),
             doc_version: AtomicU64::new(1),
             diagnostics: Arc::new(StdMutex::new(HashMap::new())),
+            stderr_buf,
         });
 
         let _result = entry
@@ -601,7 +761,7 @@ impl LspClient {
         // notifications into the store along the way. If the pull request
         // returns results directly, prefer those; otherwise fall back to the
         // authoritative stored push diagnostics. Servers that don't support
-        // the pull method (e.g. rust-analyzer) error here — that's expected,
+        // the pull method (e.g. rust-analyzer) error here 鈥?that's expected,
         // so we ignore the error and rely on the push store.
         let pulled = entry
             .request(
@@ -784,6 +944,28 @@ impl LspClient {
         ]
     }
 
+    /// Collect diagnostics from all running language servers.
+    /// Returns a map of language_id -> { file_path -> diagnostic count }.
+    pub async fn all_diagnostics(&self) -> HashMap<String, HashMap<String, usize>> {
+        let servers = self.servers.read().await;
+        let mut result = HashMap::new();
+        for (lang, entry) in servers.iter() {
+            let mut files = HashMap::new();
+            if let Ok(store) = entry.diagnostics.lock() {
+                for (uri, diags) in store.iter() {
+                    // file:///C:/path -> C:/path
+                    let path = uri
+                        .strip_prefix("file:///")
+                        .map(|s| s.replace("%3A", ":").replace("%20", " "))
+                        .unwrap_or_else(|| uri.clone());
+                    files.insert(path, diags.len());
+                }
+            }
+            result.insert(lang.clone(), files);
+        }
+        result
+    }
+
     pub async fn start_custom(&self, language: &str, command: &str, args: &[String]) -> Result<()> {
         if self.servers.read().await.contains_key(language) {
             return Ok(());
@@ -796,8 +978,12 @@ impl LspClient {
 
         let root_uri = "file:///".to_string();
 
-        let mut cmd = Command::new(command);
-        cmd.args(args);
+        // Spawn via prepare_command so .cmd/.bat wrappers go through cmd /C
+        // (same path as loom_mcp — without this, CreateProcess fails on .cmd).
+        let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let (program, cmd_args) = prepare_command(command, &args_owned);
+        let mut cmd = Command::new(&program);
+        cmd.args(&cmd_args);
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
@@ -807,7 +993,10 @@ impl LspClient {
             .spawn()
             .with_context(|| format!("Failed to spawn '{command}'"))?;
 
+        // Drain stderr into a ring buffer (same pattern as ensure_server)
+        let stderr_buf = Arc::new(StdMutex::new(VecDeque::with_capacity(50)));
         if let Some(stderr) = process.stderr.take() {
+            let buf = stderr_buf.clone();
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stderr);
                 let mut line = String::new();
@@ -815,7 +1004,18 @@ impl LspClient {
                     line.clear();
                     match reader.read_line(&mut line).await {
                         Ok(0) | Err(_) => break,
-                        _ => tracing::debug!(target: "lsp_stderr", "{}", line.trim_end()),
+                        Ok(_) => {
+                            let trimmed = line.trim_end().to_string();
+                            if !trimmed.is_empty() {
+                                tracing::warn!(target: "lsp_stderr", "{}", trimmed);
+                                if let Ok(mut g) = buf.lock() {
+                                    if g.len() >= 50 {
+                                        g.pop_front();
+                                    }
+                                    g.push_back(trimmed);
+                                }
+                            }
+                        }
                     }
                 }
             });
@@ -842,6 +1042,7 @@ impl LspClient {
             language_id: language.to_string(),
             doc_version: AtomicU64::new(1),
             diagnostics: Arc::new(StdMutex::new(HashMap::new())),
+            stderr_buf,
         });
 
         let _result = entry

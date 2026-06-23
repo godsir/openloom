@@ -233,6 +233,14 @@ async fn handle_mcp_disconnect(state: &AppState, p: &Value) -> Result<Value, Jso
         .disconnect(name)
         .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    // Mark autostart=false so the server stays disconnected across restarts.
+    // Re-connecting via the UI (mcp.connect with persist=true) sets it back to true.
+    if let Ok(saved) = state.orchestrator.list_saved_mcp_servers().await
+        && let Some((cfg, _)) = saved.iter().find(|(c, _)| c.name == name)
+    {
+        let cfg = cfg.clone();
+        let _ = state.orchestrator.save_mcp_server(&cfg, false).await;
+    }
     Ok(json!({ "ok": true }))
 }
 

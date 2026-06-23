@@ -13,7 +13,7 @@ loom-memory = { path = "../loom-memory" }
 loom-context = { path = "../loom-context" }
 loom-security = { path = "../loom-security" }
 loom-skills = { path = "../loom-skills" }
-loom-plugins = { path = "../loom-plugins" }
+
 loom-cron = { path = "../loom-cron" }
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }
 anyhow = "1"

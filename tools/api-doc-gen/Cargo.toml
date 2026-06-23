@@ -1,9 +1,0 @@
-[package]
-name = "api-doc-gen"
-version = "0.1.0"
-edition = "2024"
-description = "Auto-generate docs/api.md from dispatch/*.rs source code"
-
-[[bin]]
-name = "api-doc-gen"
-path = "src/main.rs"

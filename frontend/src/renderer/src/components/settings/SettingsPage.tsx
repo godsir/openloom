@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useStore } from '../../stores'
-import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconPackage, IconBug, IconChevronUp, IconCommand, IconEdit, IconFileText } from '../../utils/icons'
+import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconBug, IconChevronUp, IconCommand, IconEdit, IconFileText } from '../../utils/icons'
 import AgentConfigPanel from '../shared/AgentConfigPanel'
 import LoomMdSection from '../shared/LoomMdSection'
 import { loomRpc } from '../../services/jsonrpc'
@@ -12,7 +12,6 @@ import SoftwareTab from './SoftwareTab'
 import ModelsTab from './ModelsTab'
 import McpLspTab from './McpTab'
 import SkillsTab from './SkillsTab'
-import PluginsTab from './PluginsTab'
 import AboutTab from './AboutTab'
 import DevTestTab from './DevTestTab'
 import ShortcutsTab from './ShortcutsTab'
@@ -20,7 +19,7 @@ import TokenTab from './TokenTab'
 import KgTab from './KgTab'
 import { WriteSettingsSection } from '../write/WriteSettingsSection'
 
-type Tab = 'software' | 'agent' | 'loom' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'write' | 'about'
+type Tab = 'software' | 'agent' | 'loom' | 'models' | 'workspace' | 'mcp' | 'skills' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'write' | 'about'
 
 function GlobalDefaultsSection() {
   const { t } = useLocale()
@@ -108,7 +107,6 @@ function useSettingsTabs() {
       items: [
         { id: 'workspace' as Tab, label: t('settings.workspace'), icon: <IconFolder size={14} /> },
         { id: 'mcp' as Tab, label: t('settings.mcpLsp'), icon: <IconTerminal size={14} /> },
-        { id: 'plugins' as Tab, label: t('settings.plugins'), icon: <IconPackage size={14} /> },
         { id: 'skills' as Tab, label: t('settings.skills'), icon: <IconSparkles size={14} /> },
         { id: 'write' as Tab, label: t('write.settings', '写作设置'), icon: <IconEdit size={14} /> },
       ],
@@ -247,7 +245,6 @@ export default function SettingsPage() {
         )}
 
         {tab === 'skills' && <SkillsTab />}
-        {tab === 'plugins' && <PluginsTab />}
         {tab === 'write' && (
           <>
             <div className={styles.contentHeader}>

@@ -98,6 +98,10 @@ struct McpConnection {
 /// .sh script, try to locate Git Bash or WSL to run it. Falls back to the
 /// original command if no interpreter is found (may trigger the OS file
 /// association dialog, but that's better than silently breaking).
+///
+/// Also on Windows, `.cmd`/`.bat` wrappers (npx, npm-global tools, etc.)
+/// need `cmd /C` to launch reliably. Arguments are passed individually —
+/// never joined into a single string (which would mangle quoted args).
 fn prepare_command(raw_cmd: &str, raw_args: &[String]) -> (String, Vec<String>) {
     #[cfg(windows)]
     {
@@ -109,8 +113,32 @@ fn prepare_command(raw_cmd: &str, raw_args: &[String]) -> (String, Vec<String>) 
                 return (b, args);
             }
         }
+        if needs_cmd_wrapper(raw_cmd) {
+            let mut args = vec!["/C".to_string(), raw_cmd.to_string()];
+            args.extend(raw_args.iter().cloned());
+            return ("cmd".to_string(), args);
+        }
     }
     (raw_cmd.to_string(), raw_args.to_vec())
+}
+
+#[cfg(windows)]
+fn needs_cmd_wrapper(cmd: &str) -> bool {
+    let probe = cmd.split_whitespace().next().unwrap_or(cmd);
+    if probe.ends_with(".cmd") || probe.ends_with(".bat") {
+        return true;
+    }
+    // `where` returns all matches; if any is a .cmd/.bat, we must wrap.
+    if let Ok(out) = std::process::Command::new("where").arg(probe).output()
+        && out.status.success()
+    {
+        let s = String::from_utf8_lossy(&out.stdout);
+        return s.lines().any(|l| {
+            let l = l.trim().to_lowercase();
+            l.ends_with(".cmd") || l.ends_with(".bat")
+        });
+    }
+    false
 }
 
 #[cfg(windows)]
@@ -132,31 +160,17 @@ impl McpConnection {
         let (program, args) = prepare_command(&config.command, &config.args);
         let mut cmd = Command::new(&program);
         cmd.args(&args);
+
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
         cmd.kill_on_drop(true);
 
-        // ── Environment isolation ──────────────────────────────────
-        // Clear inherited env to prevent MCP servers from reading the parent
-        // process's API keys and other secrets. Then restore only a minimal
-        // safe allowlist of system vars that tools legitimately need.
-        cmd.env_clear();
-        for (k, v) in std::env::vars() {
-            let uk = k.to_uppercase();
-            if uk == "PATH" || uk == "HOME" || uk == "USER" || uk == "USERNAME"
-                || uk == "TEMP" || uk == "TMP" || uk == "TMPDIR"
-                || uk == "LANG" || uk == "LC_ALL" || uk == "LC_CTYPE"
-                || uk == "SYSTEMROOT" || uk == "SYSTEMDRIVE"
-                || uk == "XDG_CACHE_HOME" || uk == "XDG_CONFIG_HOME"
-                || uk == "XDG_DATA_HOME" || uk == "XDG_RUNTIME_DIR"
-                || uk.starts_with("CARGO_") || uk.starts_with("RUST")
-                || uk == "TERM" || uk == "COLORTERM" || uk == "SHELL"
-            {
-                cmd.env(k, v);
-            }
-        }
-        // User-specified env vars override any inherited/default values
+        // ── Environment ──────────────────────────────────────────────
+        // Inherit from parent process so that tools like npx/node resolve
+        // correctly.  Only override with user-specified per-server env vars;
+        // secrets isolation is the user's responsibility via mcp.json `env`.
+        cmd.envs(std::env::vars());
         for (k, v) in &config.env {
             cmd.env(k, v);
         }
@@ -168,7 +182,7 @@ impl McpConnection {
             .spawn()
             .with_context(|| format!("failed to spawn '{}'. Is it installed?", config.command))?;
 
-        // Drain stderr to prevent child process deadlock
+        // Drain stderr to prevent deadlock, log to tracing for debugging.
         if let Some(stderr) = process.stderr.take() {
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stderr);
@@ -180,11 +194,12 @@ impl McpConnection {
                         Ok(_) => {
                             let trimmed = line.trim();
                             if !trimmed.is_empty() {
-                                tracing::debug!(target: "mcp_stderr", "{}", trimmed);
+                                tracing::warn!(target: "mcp_stderr", "{}", trimmed);
                             }
                         }
                     }
                 }
+                tracing::info!(target: "mcp_stderr", "process stderr stream ended");
             });
         }
 
@@ -271,7 +286,7 @@ impl McpConnection {
             let n = self.stdout.read_line(&mut line).await?;
             if n == 0 {
                 return Err(anyhow!(
-                    "MCP stdout closed before response to '{method}' (id={id})"
+                    "MCP stdout closed before response to '{method}' (id={id}). Check backend logs (mcp_stderr target) for stderr output."
                 ));
             }
             let trimmed = line.trim();

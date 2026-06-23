@@ -22,11 +22,10 @@ interface SkillInfo {
 function skillSource(path: string | undefined): { group: string; icon: string } {
   if (!path) return { group: _t('skills.sourceOther'), icon: 'M' }
   const p = path.replace(/\\/g, '/')
-  if (p.includes('.claude/plugins') || p.includes('.claude/skills')) return { group: _t('skills.sourceClaudeCode'), icon: 'C' }
+  if (p.includes('.claude/skills')) return { group: _t('skills.sourceClaudeCode'), icon: 'C' }
   if (p.includes('.openclaw')) return { group: _t('skills.sourceOpenclaw'), icon: 'O' }
   if (p.includes('.codex')) return { group: _t('skills.sourceCodex'), icon: 'X' }
   if (p.includes('.loom/skills')) return { group: _t('skills.sourceLoomUser'), icon: 'L' }
-  if (p.includes('.loom/plugins')) return { group: _t('skills.sourceLoomPlugin'), icon: 'P' }
   return { group: _t('skills.sourceOther'), icon: 'M' }
 }
 

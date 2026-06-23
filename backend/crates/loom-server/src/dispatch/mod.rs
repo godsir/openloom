@@ -1,6 +1,6 @@
 //! JSON-RPC 2.0 dispatch — routes incoming requests to orchestrator methods.
 //!
-//! Supported: system, agent, chat, completion, session, config, mcp, lsp, tools, skills, plugins.
+//! Supported: system, agent, chat, completion, session, config, mcp, lsp, tools, skills.
 //!
 //! Each submodule exports a `handle` function returning
 //! `Option<Result<Value, JsonRpcError>>`.  The main match in this file
@@ -15,7 +15,6 @@ mod lsp;
 mod mcp;
 mod model;
 mod plan;
-mod plugins;
 pub mod session;
 mod skills;
 mod system;
@@ -82,9 +81,6 @@ pub async fn dispatch_method(
         return result;
     }
     if let Some(result) = skills::handle(state, method, &p).await {
-        return result;
-    }
-    if let Some(result) = plugins::handle(state, method, &p).await {
         return result;
     }
     if let Some(result) = kg::handle(state, method, &p).await {

@@ -14,7 +14,6 @@ import { createKgSlice, KgSlice } from './kg'
 import { createLightboxSlice, LightboxSlice } from './lightbox'
 import { createTokenStatsSlice, TokenStatsSlice } from './tokenStats'
 import { createUpdateSlice, UpdateSlice } from './update'
-import { createPluginSlice, PluginSlice } from './plugin'
 import { createCronSlice, CronSlice } from './cron'
 import { createPlanSlice, PlanSlice } from './plan'
 import { createTodoSlice, TodoSlice } from './todo'
@@ -36,7 +35,6 @@ export type AppStore = ConnectionSlice &
   LightboxSlice &
   TokenStatsSlice &
   UpdateSlice &
-  PluginSlice &
   CronSlice &
   PlanSlice &
   TodoSlice &
@@ -59,7 +57,6 @@ export const useStore = create<AppStore>()((...a) => ({
   ...createLightboxSlice(...a),
   ...createTokenStatsSlice(...a),
   ...createUpdateSlice(...a),
-  ...createPluginSlice(...a),
   ...createCronSlice(...a),
   ...createPlanSlice(...a),
   ...createTodoSlice(...a),

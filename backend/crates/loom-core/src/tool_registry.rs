@@ -326,7 +326,6 @@ impl AgentTool for SpawnAgentTool {
             context_window: None,
             summary_at_count: 0,
             default_permissions: config.default_permissions.clone(),
-            hook_registry: None,
             session_id: String::new(),
             agent_id: String::new(),
             key_store: None,

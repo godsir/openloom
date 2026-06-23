@@ -10,10 +10,13 @@ interface McpTool {
   description?: string
 }
 
-interface LspServerInfo {
-  language?: string
-  name?: string
-  [key: string]: unknown
+interface LspLangInfo {
+  language: string
+  command: string
+  available: boolean
+  running: boolean
+  install_hint?: { manager: string; command: string }
+  uninstall_command?: string
 }
 
 interface McpServerConfig {
@@ -520,28 +523,60 @@ function McpEditor({ value, onChange, onCancel, onSave, onSaveAndConnect, busy, 
 
 /* ─── LSP Tab ─── */
 
+/** Simple SVG icon per language — consistent visual weight, no emoji fallback issues. */
+function LangIcon({ lang }: { lang: string }) {
+  const cls = styles.lspCardIconBox
+  switch (lang) {
+    case 'rust':       return <span className={cls} style={{background:'#dea584',color:'#000'}}>Rs</span>
+    case 'typescript': return <span className={cls} style={{background:'#3178c6',color:'#fff'}}>TS</span>
+    case 'javascript': return <span className={cls} style={{background:'#f7df1e',color:'#000'}}>JS</span>
+    case 'python':     return <span className={cls} style={{background:'#3776ab',color:'#fff'}}>Py</span>
+    case 'go':         return <span className={cls} style={{background:'#00add8',color:'#fff'}}>Go</span>
+    case 'c':          return <span className={cls} style={{background:'#555',color:'#fff'}}>C</span>
+    case 'cpp':        return <span className={cls} style={{background:'#649ad2',color:'#fff'}}>C++</span>
+    case 'java':       return <span className={cls} style={{background:'#ed8b00',color:'#fff'}}>Jv</span>
+    case 'csharp':     return <span className={cls} style={{background:'#9b4f96',color:'#fff'}}>C#</span>
+    case 'swift':      return <span className={cls} style={{background:'#f05138',color:'#fff'}}>Sw</span>
+    case 'kotlin':     return <span className={cls} style={{background:'#7f52ff',color:'#fff'}}>Kt</span>
+    case 'scala':      return <span className={cls} style={{background:'#dc322f',color:'#fff'}}>Sc</span>
+    case 'ruby':       return <span className={cls} style={{background:'#cc342d',color:'#fff'}}>Rb</span>
+    case 'lua':        return <span className={cls} style={{background:'#000080',color:'#fff'}}>Lu</span>
+    case 'zig':        return <span className={cls} style={{background:'#f7a41d',color:'#000'}}>Zg</span>
+    case 'haskell':    return <span className={cls} style={{background:'#5e5086',color:'#fff'}}>Hs</span>
+    case 'dart':       return <span className={cls} style={{background:'#00b4ab',color:'#fff'}}>Da</span>
+    case 'vue':        return <span className={cls} style={{background:'#42b883',color:'#fff'}}>Vue</span>
+    case 'svelte':     return <span className={cls} style={{background:'#ff3e00',color:'#fff'}}>Sv</span>
+    case 'html':       return <span className={cls} style={{background:'#e34c26',color:'#fff'}}>Ht</span>
+    case 'css':        return <span className={cls} style={{background:'#264de4',color:'#fff'}}>CS</span>
+    case 'json':       return <span className={cls} style={{background:'#5e5e5e',color:'#fff'}}>{`{}`}</span>
+    case 'yaml':       return <span className={cls} style={{background:'#cb171e',color:'#fff'}}>Ym</span>
+    case 'toml':       return <span className={cls} style={{background:'#9c4221',color:'#fff'}}>Tl</span>
+    case 'markdown':   return <span className={cls} style={{background:'#000',color:'#fff'}}>Md</span>
+    case 'bash':       return <span className={cls} style={{background:'#4eaa25',color:'#fff'}}>Sh</span>
+    case 'dockerfile': return <span className={cls} style={{background:'#2496ed',color:'#fff'}}>Df</span>
+    default:           return <span className={cls} style={{background:'#555',color:'#fff'}}>{lang.slice(0,2).toUpperCase()}</span>
+  }
+}
+
 function LspTab() {
   const { t } = useLocale()
-  const [servers, setServers] = useState<LspServerInfo[]>([])
-  const [supported, setSupported] = useState<{ language: string; command: string }[]>([])
+  const [languages, setLanguages] = useState<LspLangInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [showForm, setShowForm] = useState(false)
-  const [formLang, setFormLang] = useState('')
-  const [formCmd, setFormCmd] = useState('')
-  const [formArgs, setFormArgs] = useState('')
-  const [starting, setStarting] = useState(false)
+  const [starting, setStarting] = useState<string | null>(null)
+  const [installing, setInstalling] = useState<string | null>(null)
+  const [installLog, setInstallLog] = useState<string[]>([])
+  const [installDone, setInstallDone] = useState<boolean>(false)
+  const [rescanning, setRescanning] = useState(false)
+  const [diagServers, setDiagServers] = useState<Array<{ language: string; total: number; files: Array<{ file: string; count: number }> }>>([])
+  const [showDiag, setShowDiag] = useState(false)
 
   const loadData = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const [serversRes, langRes] = await Promise.allSettled([
-        loomRpc<{ servers: LspServerInfo[] }>('lsp.list_servers'),
-        loomRpc<{ languages: { language: string; command: string }[] }>('lsp.supported_languages'),
-      ])
-      if (serversRes.status === 'fulfilled') setServers(serversRes.value.servers ?? [])
-      if (langRes.status === 'fulfilled') setSupported(langRes.value.languages ?? [])
+      const res = await loomRpc<{ languages: LspLangInfo[] }>('lsp.check')
+      setLanguages(res.languages ?? [])
     } catch (e: any) {
       setError(_t('mcp.loadFailed', { message: e.message || e }))
     } finally {
@@ -551,10 +586,23 @@ function LspTab() {
 
   useEffect(() => { loadData() }, [loadData])
 
-  const handleShutdown = async (language: string) => {
+  const handleStart = async (lang: string, cmd: string) => {
+    setStarting(lang)
     try {
-      await loomRpc('lsp.shutdown', { language })
-      useStore.getState().addToast({ type: 'success', message: _t('lsp.serverStopped', { language }) })
+      await loomRpc('lsp.start', { language: lang, command: cmd, args: [] })
+      useStore.getState().addToast({ type: 'success', message: `${lang} LSP started` })
+      await loadData()
+    } catch (e: any) {
+      setError(_t('lsp.startFailed', { message: e.message || e }))
+    } finally {
+      setStarting(null)
+    }
+  }
+
+  const handleShutdown = async (lang: string) => {
+    try {
+      await loomRpc('lsp.shutdown', { language: lang })
+      useStore.getState().addToast({ type: 'success', message: _t('lsp.serverStopped', { language: lang }) })
       await loadData()
     } catch (e: any) {
       setError(_t('lsp.stopFailed', { message: e.message || e }))
@@ -571,147 +619,224 @@ function LspTab() {
     }
   }
 
-  const handleStart = async () => {
-    if (!formLang.trim() || !formCmd.trim()) return
-    setStarting(true)
+  const runLspTask = async (lang: string, rpcMethod: 'lsp.install' | 'lsp.uninstall', payload: Record<string, unknown>, successMsg: string, failPrefix: string) => {
+    setInstalling(lang)
+    setInstallLog([])
+    setInstallDone(false)
     try {
-      const args = formArgs.trim() ? formArgs.trim().split(/\s+/) : []
-      await loomRpc('lsp.start', { language: formLang.trim(), command: formCmd.trim(), args })
-      useStore.getState().addToast({ type: 'success', message: _t('lsp.serverStopped', { language: formLang.trim() }) })
-      setShowForm(false)
-      setFormLang('')
-      setFormCmd('')
-      setFormArgs('')
-      await loadData()
+      const { task_id } = await loomRpc<{ task_id: string }>(rpcMethod, payload)
+      const poll = setInterval(async () => {
+        try {
+          const status = await loomRpc<{
+            task_id: string; lines: string[]; done: boolean; ok: boolean; exit_code: number | null
+          }>('lsp.install_status', { task_id })
+          setInstallLog(status.lines ?? [])
+          if (status.done) {
+            clearInterval(poll)
+            setInstallDone(true)
+            if (status.ok) {
+              useStore.getState().addToast({ type: 'success', message: successMsg })
+              await loadData()
+            } else {
+              setError(`${failPrefix} (exit ${status.exit_code})`)
+            }
+            setTimeout(() => { setInstalling(null); setInstallLog([]); setInstallDone(false) }, 3000)
+          }
+        } catch {
+          clearInterval(poll)
+          setInstalling(null)
+          setInstallLog([])
+          setInstallDone(false)
+        }
+      }, 400)
     } catch (e: any) {
-      setError(_t('lsp.startFailed', { message: e.message || e }))
-    } finally {
-      setStarting(false)
+      setError(`${failPrefix}: ${e.message || e}`)
+      setInstalling(null)
     }
   }
 
-  const handleSelectPreset = (lang: string) => {
-    const preset = supported.find(s => s.language === lang)
-    if (preset) {
-      setFormLang(preset.language)
-      setFormCmd(preset.command)
-      setFormArgs('')
-      setShowForm(true)
-    }
+  const handleInstall = (lang: string, cmd: string) =>
+    runLspTask(lang, 'lsp.install', { language: lang, command: cmd }, `${lang} LSP installed`, 'Install failed')
+
+  const handleUninstall = (lang: string) =>
+    runLspTask(lang, 'lsp.uninstall', { language: lang }, `${lang} LSP uninstalled`, 'Uninstall failed')
+
+  const handleRescan = async () => {
+    setRescanning(true)
+    await loadData()
+    setRescanning(false)
   }
+
+  const loadDiags = async () => {
+    try {
+      const res = await loomRpc<{ servers: Array<{ language: string; total: number; files: Array<{ file: string; count: number }> }> }>('lsp.all_diagnostics')
+      setDiagServers(res.servers ?? [])
+    } catch { /* non-critical */ }
+  }
+
+  const installed = languages.filter(l => l.available).length
+  const active = languages.filter(l => l.running).length
 
   return (
-    <>
-      <div className={styles.aboutSection}>
-        <div className={styles.sectionHeaderRow}>
+    <div className={styles.aboutSection}>
+      {/* Header */}
+      <div className={styles.sectionHeaderRow}>
+        <div>
           <h4 className={styles.sectionSubTitle}>{t('lsp.title')}</h4>
-          {!showForm && (
-            <button className={styles.mcpAddBtn} onClick={() => setShowForm(true)}>
-              {t('lsp.startServer')}
+          <p className={styles.pluginsDesc}>
+            {t('lsp.statsLine', { installed, active, total: languages.length })}
+          </p>
+        </div>
+        <div className={styles.lspHeaderActions}>
+          {active > 0 && (
+            <button className={styles.lspStopAllBtn} onClick={handleShutdownAll}>
+              {t('lsp.stopAll')}
             </button>
           )}
+          <button className={styles.mcpAddBtn} onClick={handleRescan} disabled={rescanning}>
+            {t('lsp.scan')}
+          </button>
         </div>
-        {error && <p className={styles.toolsError}>{error}</p>}
-        {loading ? (
-          <p className={styles.toolsEmpty}>{t('common.loading')}</p>
-        ) : (
-          <>
-            {/* Active servers */}
-            <div className={styles.lspServerList}>
-              {servers.length === 0 ? (
-                <p className={styles.toolsEmpty}>{t('lsp.noActiveServers')}</p>
-              ) : (
-                <>
-                  {servers.map((srv, i) => {
-                    const lang = srv.language ?? srv.name ?? `Server ${i + 1}`
-                    return (
-                      <div key={i} className={styles.lspServerItem}>
-                        <span className={styles.lspServerName}>{lang}</span>
-                        <button
-                          className={styles.lspStopBtn}
-                          onClick={() => handleShutdown(srv.language ?? srv.name ?? '')}
-                        >
-                          {t('lsp.stop')}
-                        </button>
-                      </div>
+      </div>
+
+      {error && <p className={styles.toolsError}>{error}</p>}
+
+      {/* Language grid */}
+      {loading ? (
+        <p className={styles.toolsEmpty}>{t('common.loading')}</p>
+      ) : (
+        <div className={styles.lspGrid}>
+          {languages.map(l => {
+            const isStarting = starting === l.language
+            return (
+              <div
+                key={l.language}
+                className={`${styles.lspCard} ${l.running ? styles.lspCardRunning : ''} ${l.available ? '' : styles.lspCardMissing}`}
+              >
+                {/* Top row: icon, name, status */}
+                <div className={styles.lspCardTop}>
+                  <LangIcon lang={l.language} />
+                  <div className={styles.lspCardInfo}>
+                    <span className={styles.lspCardName}>{l.language}</span>
+                    <span className={styles.lspCardCmd}>{l.command}</span>
+                  </div>
+                  <span className={`
+                    ${styles.lspCardStatus}
+                    ${l.running ? styles.lspCardStatusLive : ''}
+                    ${!l.available ? styles.lspCardStatusMissing : ''}
+                  `}>
+                    {l.running ? t('lsp.statusLive') : l.available ? t('lsp.statusReady') : t('lsp.statusMissing')}
+                  </span>
+                </div>
+
+                {/* Actions */}
+                <div className={styles.lspCardActions}>
+                  {l.available ? (
+                    l.running ? (
+                      <button
+                        className={styles.lspStopBtn}
+                        onClick={() => handleShutdown(l.language)}
+                      >
+                        {t('lsp.stop')}
+                      </button>
+                    ) : (
+                      <button
+                        className={styles.lspStartBtn}
+                        onClick={() => handleStart(l.language, l.command)}
+                        disabled={isStarting}
+                      >
+                        {isStarting ? t('lsp.starting') : t('lsp.start')}
+                      </button>
                     )
-                  })}
-                  <button className={styles.lspStopAllBtn} onClick={handleShutdownAll}>
-                    {t('lsp.stopAll')}
-                  </button>
-                </>
-              )}
-            </div>
+                  ) : (
+                    <>
+                      <button
+                        className={styles.lspInstallBtn}
+                        onClick={() => handleInstall(l.language, l.command)}
+                        disabled={installing === l.language}
+                      >
+                        {installing === l.language ? t('lsp.installing') : t('lsp.install')}
+                      </button>
+                      {l.uninstall_command && (
+                        <button
+                          className={styles.lspUninstallBtn}
+                          onClick={() => handleUninstall(l.language)}
+                          disabled={installing === l.language}
+                        >
+                          {t('lsp.uninstall')}
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
 
-            {/* Start form */}
-            {showForm && (
-              <div className={styles.mcpAddForm}>
-                <div className={styles.mcpFormRow}>
-                  <label className={styles.mcpFormLabel}>{t('lsp.languageId')}</label>
-                  <input
-                    value={formLang}
-                    onChange={e => setFormLang(e.target.value)}
-                    placeholder={'rust, python, go'}
-                    className={styles.mcpFormInput}
-                  />
-                </div>
-                <div className={styles.mcpFormRow}>
-                  <label className={styles.mcpFormLabel}>{t('lsp.command')}</label>
-                  <input
-                    value={formCmd}
-                    onChange={e => setFormCmd(e.target.value)}
-                    placeholder={'rust-analyzer, pylsp'}
-                    className={styles.mcpFormInput}
-                  />
-                </div>
-                <div className={styles.mcpFormRow}>
-                  <label className={styles.mcpFormLabel}>{t('lsp.args')}</label>
-                  <input
-                    value={formArgs}
-                    onChange={e => setFormArgs(e.target.value)}
-                    placeholder={t('lsp.args')}
-                    className={styles.mcpFormInput}
-                  />
-                </div>
-                <div className={styles.mcpFormActions}>
-                  <button className={styles.mcpCancelBtn} onClick={() => setShowForm(false)}>{t('common.cancel')}</button>
-                  <button
-                    className={styles.mcpConnectBtn}
-                    onClick={handleStart}
-                    disabled={starting || !formLang.trim() || !formCmd.trim()}
-                  >
-                    {starting ? t('lsp.starting') : t('lsp.start')}
-                  </button>
-                </div>
+                {/* Install hint / live progress */}
+                {!l.available && l.install_hint && (
+                  <>
+                    <div className={styles.lspInstallHint}>
+                      <span className={styles.lspInstallManager}>{l.install_hint.manager}</span>
+                      <code className={styles.lspInstallCmd}>{l.install_hint.command}</code>
+                    </div>
+                    {installing === l.language && (
+                      <div className={styles.lspInstallLog}>
+                        {installLog.length === 0 && !installDone && (
+                          <span className={styles.lspInstallSpinner}>{t('lsp.startingInstall')}</span>
+                        )}
+                        {installLog.map((line, i) => (
+                          <div key={i} className={styles.lspInstallLogLine}>{line}</div>
+                        ))}
+                        {installDone && (
+                          <span className={styles.lspInstallDone}>{t('lsp.doneScanning')}</span>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
-            )}
+            )
+          })}
+        </div>
+      )}
 
-            {/* Supported languages as quick-start pills */}
-            {supported.length > 0 && (
-              <div className={styles.lspQuickStart}>
-                <div className={styles.toolsSectionLabel}>{t('lsp.quickStart')}</div>
-                <div className={styles.toolsBadgeGrid}>
-                  {supported.map(s => (
-                    <button
-                      key={s.language}
-                      className={styles.toolsBadge}
-                      onClick={() => handleSelectPreset(s.language)}
-                      title={s.command}
-                    >
-                      {s.language}
-                    </button>
-                  ))}
+      {/* Diagnostics */}
+      <div className={styles.lspDiagSection}>
+        <div className={styles.sectionHeaderRow}>
+          <h4 className={styles.sectionSubTitle}>{t('lsp.diagnostics')}</h4>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className={styles.mcpAddBtn} onClick={loadDiags}>{t('lsp.fetch')}</button>
+            {diagServers.length > 0 && (
+              <button className={styles.lspStopAllBtn} onClick={() => setShowDiag(!showDiag)}>
+                {showDiag ? t('lsp.hide') : t('lsp.showIssues', { n: diagServers.reduce((s, d) => s + d.total, 0) })}
+              </button>
+            )}
+          </div>
+        </div>
+        {diagServers.length === 0 ? (
+          <p className={styles.toolsEmpty}>{t('lsp.noDiagnostics')}</p>
+        ) : showDiag && (
+          <div className={styles.lspDiagGrid}>
+            {diagServers.filter(d => d.total > 0).map(ds => (
+              <div key={ds.language} className={styles.lspDiagCard}>
+                <div className={styles.lspDiagHeader}>
+                  <span className={styles.lspCardName}>{ds.language}</span>
+                  <span className={`${styles.lspCardStatus} ${ds.total > 0 ? styles.lspCardStatusMissing : ''}`}>
+                    {t('lsp.issuesCount', { n: ds.total })}
+                  </span>
                 </div>
+                {ds.files.filter(f => f.count > 0).map(f => (
+                  <div key={f.file} className={styles.lspDiagRow}>
+                    <code className={styles.lspDiagFile}>{f.file.replace(/\\/g, '/').split('/').pop() ?? f.file}</code>
+                    <span className={styles.lspDiagCount}>{f.count}</span>
+                  </div>
+                ))}
               </div>
-            )}
-
-            <p className={styles.lspInfoText}>
-              {t('lsp.infoText')}
-            </p>
-          </>
+            ))}
+          </div>
         )}
       </div>
-    </>
+
+      <p className={styles.lspInfoText}>{t('lsp.infoText')}</p>
+    </div>
   )
 }
 

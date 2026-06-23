@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useStore } from '../../stores'
 import { useLocale } from '../../i18n'
-import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconPackage, IconFileText } from '../../utils/icons'
+import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconFileText } from '../../utils/icons'
 import Overlay from './Overlay'
 import AgentConfigPanel from './AgentConfigPanel'
 import LoomMdSection from './LoomMdSection'
@@ -13,11 +13,10 @@ import SoftwareTab from '../settings/SoftwareTab'
 import ModelsTab from '../settings/ModelsTab'
 import McpLspTab from '../settings/McpTab'
 import SkillsTab from '../settings/SkillsTab'
-import PluginsTab from '../settings/PluginsTab'
 import AboutTab from '../settings/AboutTab'
 import TokenTab from '../settings/TokenTab'
 import KgTab from '../settings/KgTab'
-type Tab = 'software' | 'agent' | 'loom' | 'models' | 'workspace' | 'mcp' | 'skills' | 'plugins' | 'pet' | 'kg' | 'token' | 'about'
+type Tab = 'software' | 'agent' | 'loom' | 'models' | 'workspace' | 'mcp' | 'skills' | 'pet' | 'kg' | 'token' | 'about'
 
 function GlobalDefaultsSection() {
   const { t } = useLocale()
@@ -116,7 +115,6 @@ export default function SettingsModal({
       items: [
         { id: 'workspace', label: t('settings.workspace'), icon: <IconFolder size={14} /> },
         { id: 'mcp', label: t('settings.mcpLsp'), icon: <IconTerminal size={14} /> },
-        { id: 'plugins', label: t('settings.plugins'), icon: <IconPackage size={14} /> },
         { id: 'skills', label: t('settings.skills'), icon: <IconSparkles size={14} /> },
       ],
     },
@@ -206,7 +204,6 @@ export default function SettingsModal({
           )}
 
           {tab === 'skills' && <SkillsTab />}
-          {tab === 'plugins' && <PluginsTab />}
 
           {tab === 'pet' && (
             <>

@@ -135,12 +135,10 @@ async fn handle_skills_reload(state: &AppState) -> Result<Value, JsonRpcError> {
 
 // ---------------------------------------------------------------------------
 // Shared helper: reload skills into orchestrator
-// Used by: skills.import, skills.delete, plugins.reload, marketplace.* handlers
+// Used by: skills.import, skills.delete, clawhub.* handlers
 // ---------------------------------------------------------------------------
 
 /// Reload skills from all standard paths into the orchestrator.
-/// Used by plugins.reload, skills.import, and skills.delete to keep
-/// orchestrator skill state in sync with the filesystem.
 pub(crate) async fn reload_skills_into_orchestrator(
     orchestrator: &Arc<loom_core::Orchestrator>,
 ) -> Result<usize, String> {
@@ -148,52 +146,6 @@ pub(crate) async fn reload_skills_into_orchestrator(
     let data_dir = home.join(".loom");
     let mut loader = SkillLoader::new();
     loader.add_standard_paths(&data_dir);
-
-    // Also discover plugins and feed their skill paths to the loader
-    let mut plugin_manager = loom_plugins::PluginManager::new();
-    if let Ok(n) = plugin_manager.discover(&home)
-        && n > 0
-    {
-        tracing::info!(plugin_count = n, "plugins discovered during skill reload");
-        for path in plugin_manager.skill_paths() {
-            if path.exists() {
-                loader.add_path(path, "plugin");
-            }
-        }
-    }
-
-    // Reconnect plugin MCP servers — kept in sync with plugin manifests
-    let mcp_configs = plugin_manager.mcp_configs();
-    if !mcp_configs.is_empty() {
-        let orch = orchestrator.clone();
-        tokio::spawn(async move {
-            for mcp in mcp_configs {
-                let config = loom_mcp::McpServerConfig {
-                    name: mcp.name.clone(),
-                    transport: mcp.transport.clone(),
-                    command: mcp.command.clone(),
-                    args: mcp.args.clone(),
-                    url: mcp.url.clone(),
-                    headers: mcp.headers.clone(),
-                    env: mcp.env.clone(),
-                    cwd: None,
-                    startup_timeout_secs: 10,
-                    tool_timeout_secs: 60,
-                    enabled_tools: None,
-                    disabled_tools: None,
-                };
-                match orch.connect_mcp_server(config).await {
-                    Ok(_) => tracing::info!(server = %mcp.name, "plugin MCP server reconnected"),
-                    Err(e) => {
-                        tracing::warn!(server = %mcp.name, error = %e, "plugin MCP server reconnect failed")
-                    }
-                }
-            }
-        });
-    }
-
-    // Reload hook registry from plugins after MCP reconnection
-    orchestrator.reload_hooks(&plugin_manager).await;
 
     match loader.discover() {
         Ok(skills) => {

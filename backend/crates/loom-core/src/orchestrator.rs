@@ -251,7 +251,6 @@ use crate::agent_loop::{
 };
 use crate::agent_pool::{AgentPool, AgentSummary};
 use crate::event_bus::{AgentEvent, EventBus};
-use crate::hooks::{HookContext, HookRegistry};
 use crate::slash_router::SlashRouter;
 use crate::tool_registry::{AgentTool, SpawnAgentTool, SpawnContext, ToolRegistry};
 use loom_cron::CronScheduler;
@@ -276,8 +275,6 @@ pub struct Orchestrator {
     /// Serialises concurrent model-switch calls so `model.switch` and
     /// the per-message model override in `chat.send` never race.
     model_switch_lock: tokio::sync::Mutex<()>,
-    /// Compiled hook registry from plugin hook configs.
-    hook_registry: Arc<RwLock<HookRegistry>>,
     /// In-memory API key store shared with the server's AppState.
     /// Maps env-var names (e.g. "OPENAI_API_KEY") to their values.
     /// Set via set_key_store() after construction, before any cloud client is built.
@@ -894,9 +891,7 @@ impl Orchestrator {
         let lsp_client = Arc::new(LspClient::new());
         register_lsp_tools(&mut registry, &lsp_client);
 
-        let hook_registry = Arc::new(RwLock::new(HookRegistry::new()));
-        let mut pool = AgentPool::new(max_depth, default_max_iterations, default_timeout_secs);
-        pool.set_hook_registry(Some(hook_registry.clone()));
+        let pool = AgentPool::new(max_depth, default_max_iterations, default_timeout_secs);
         let pool = Arc::new(pool);
 
         // Eagerly create global ~/.loom/Loom.md on first startup
@@ -928,7 +923,6 @@ impl Orchestrator {
             model_configs,
             active_model_name,
             model_switch_lock: tokio::sync::Mutex::new(()),
-            hook_registry,
             key_store: Arc::new(RwLock::new(HashMap::new())),
             pending_permissions: Arc::new(RwLock::new(HashMap::new())),
             data_dir,
@@ -1304,6 +1298,14 @@ impl Orchestrator {
         // Register MCP tools into the tool registry
         let tools = self.mcp_client.server_tools(&name).await?;
         let mut registry = self.tool_registry.write().await;
+        // If this server was previously connected, its old tools are still in
+        // the registry (mcp_client.connect only replaced the connection map
+        // entry). Remove them first to avoid "tool name collision" on re-register.
+        let prefix = ToolRegistry::mcp_tool_prefix(&name);
+        let evicted = registry.remove_by_prefix(&prefix);
+        if !evicted.is_empty() {
+            tracing::info!(server = %name, count = evicted.len(), "evicted stale MCP tools before re-register");
+        }
         for tool in tools {
             let server = name.clone();
             let tool_name = ToolRegistry::mcp_tool_name(&server, &tool.name);
@@ -1496,37 +1498,6 @@ impl Orchestrator {
             .keys()
             .cloned()
             .collect()
-    }
-
-    // === Hook Registry ===
-
-    /// Load hook configs from discovered plugins into the runtime registry.
-    /// Called once at startup after PluginManager discovery.
-    pub async fn load_hooks_from_plugins(&self, plugin_manager: &loom_plugins::PluginManager) {
-        let registry = HookRegistry::load_from_plugins(plugin_manager).await;
-        *self.hook_registry.write().await = registry;
-    }
-
-    /// Reload the hook registry from plugins (when plugins are installed/removed).
-    pub async fn reload_hooks(&self, plugin_manager: &loom_plugins::PluginManager) {
-        self.hook_registry.read().await.reload(plugin_manager).await;
-    }
-
-    /// Get a clone of the hook registry for external access.
-    pub fn hook_registry(&self) -> Arc<RwLock<HookRegistry>> {
-        self.hook_registry.clone()
-    }
-
-    /// Fire hooks for a given event with the provided context.
-    /// Returns a summary of what happened. Never panics.
-    pub async fn fire_hooks(
-        &self,
-        event: &loom_plugins::hooks::HookEvent,
-        subject: Option<&str>,
-        ctx: &mut HookContext,
-    ) -> crate::hooks::HookFireResult {
-        let registry = self.hook_registry.read().await;
-        registry.fire(event, subject, ctx).await
     }
 
     /// Set persona summary (injected into system prompt).
@@ -4192,7 +4163,6 @@ impl Orchestrator {
                 self.model_configs.read().await.get(&name).map(|c| c.context_size).filter(|s| *s > 0)
             },
             summary_at_count: new_at_count,
-            hook_registry: Some(self.hook_registry.clone()),
             session_id: session_id.to_string(),
             agent_id: agent_id.to_string(),
             key_store: Some(self.key_store.clone()),
@@ -4235,58 +4205,6 @@ impl Orchestrator {
             .transition(&agent_id, AgentStatus::Thinking, Some("processing".into()))
             .await;
         tracing::info!(session_id, "[orchestrator] step: pool.transition done");
-
-        // Fire SessionStart hook
-        {
-            let mut hook_ctx = HookContext {
-                session_id: sid.clone(),
-                agent_id: agent_id.to_string(),
-                ..Default::default()
-            };
-            tracing::debug!(session_id = %sid, agent_id = %agent_id, "firing SessionStart hook");
-            let _ = self
-                .hook_registry
-                .read()
-                .await
-                .fire(
-                    &loom_plugins::hooks::HookEvent::SessionStart,
-                    None,
-                    &mut hook_ctx,
-                )
-                .await;
-        }
-
-        // Fire UserPromptSubmit hook
-        {
-            let mut hook_ctx = HookContext {
-                session_id: sid.clone(),
-                agent_id: agent_id.to_string(),
-                user_message: Some(user_msg.clone()),
-                ..Default::default()
-            };
-            let _result = self
-                .hook_registry
-                .read()
-                .await
-                .fire(
-                    &loom_plugins::hooks::HookEvent::UserPromptSubmit,
-                    None,
-                    &mut hook_ctx,
-                )
-                .await;
-            // Inject prompt hook output into system prompt
-            if !hook_ctx.prompt_injections.is_empty() {
-                let injections = hook_ctx.prompt_injections.join("\n");
-                tracing::info!(
-                    count = hook_ctx.prompt_injections.len(),
-                    "hook prompt injections added to context"
-                );
-                // Note: injections would be appended to system prompt here.
-                // For now, log them at debug level so they are visible but not
-                // injected (future phase: pass to agent loop).
-                tracing::debug!(injections = %injections, "hook prompt injections");
-            }
-        }
 
         tracing::info!(
             session_id,
@@ -4890,25 +4808,6 @@ impl Orchestrator {
                     .await;
                 }
 
-                // Fire TaskCompleted hook
-                {
-                    let mut hook_ctx = HookContext {
-                        session_id: sid.clone(),
-                        agent_id: agent_id.to_string(),
-                        ..Default::default()
-                    };
-                    tracing::debug!(session_id = %sid, agent_id = %agent_id, "firing TaskCompleted hook");
-                    let _ = self
-                        .hook_registry
-                        .read()
-                        .await
-                        .fire(
-                            &loom_plugins::hooks::HookEvent::TaskCompleted,
-                            None,
-                            &mut hook_ctx,
-                        )
-                        .await;
-                }
             } // end else (not interrupted)
         } else {
             let _ = self
@@ -4919,26 +4818,6 @@ impl Orchestrator {
                         message: "LLM error".into(),
                     },
                     None,
-                )
-                .await;
-        }
-
-        // Fire SessionEnd hook
-        {
-            let mut hook_ctx = HookContext {
-                session_id: sid.clone(),
-                agent_id: agent_id.to_string(),
-                ..Default::default()
-            };
-            tracing::debug!(session_id = %sid, agent_id = %agent_id, "firing SessionEnd hook");
-            let _ = self
-                .hook_registry
-                .read()
-                .await
-                .fire(
-                    &loom_plugins::hooks::HookEvent::SessionEnd,
-                    None,
-                    &mut hook_ctx,
                 )
                 .await;
         }
@@ -5048,53 +4927,7 @@ impl Orchestrator {
             .await;
 
         let sid = session_id.to_string();
-        let user_msg = user_message.to_string();
-
-        // Fire SessionStart hook
-        {
-            let mut hook_ctx = HookContext {
-                session_id: sid.clone(),
-                agent_id: agent_id.to_string(),
-                ..Default::default()
-            };
-            tracing::debug!(session_id = %sid, agent_id = %agent_id, "firing SessionStart hook");
-            let _ = self
-                .hook_registry
-                .read()
-                .await
-                .fire(
-                    &loom_plugins::hooks::HookEvent::SessionStart,
-                    None,
-                    &mut hook_ctx,
-                )
-                .await;
-        }
-
-        // Fire UserPromptSubmit hook
-        {
-            let mut hook_ctx = HookContext {
-                session_id: sid.clone(),
-                agent_id: agent_id.to_string(),
-                user_message: Some(user_msg.clone()),
-                ..Default::default()
-            };
-            let _ = self
-                .hook_registry
-                .read()
-                .await
-                .fire(
-                    &loom_plugins::hooks::HookEvent::UserPromptSubmit,
-                    None,
-                    &mut hook_ctx,
-                )
-                .await;
-            if !hook_ctx.prompt_injections.is_empty() {
-                tracing::debug!(
-                    count = hook_ctx.prompt_injections.len(),
-                    "hook prompt injections"
-                );
-            }
-        }
+        let _user_msg = user_message.to_string();
 
         let client: Arc<dyn CloudClient> = {
             let guard = self.cloud_client.read().await;
@@ -5152,26 +4985,6 @@ impl Orchestrator {
             context_window,
             self.compaction_config.trigger_threshold_pct,
         );
-
-        // Fire PreCompact hook before summarization
-        if should_summarize {
-            let mut hook_ctx = HookContext {
-                session_id: sid.clone(),
-                agent_id: agent_id.to_string(),
-                ..Default::default()
-            };
-            tracing::debug!(session_id = %sid, "firing PreCompact hook");
-            let _ = self
-                .hook_registry
-                .read()
-                .await
-                .fire(
-                    &loom_plugins::hooks::HookEvent::PreCompact,
-                    None,
-                    &mut hook_ctx,
-                )
-                .await;
-        }
 
         // Phase 2: call LLM for summary if needed (no lock held)
         let (summary, new_at_count) = if should_summarize {
@@ -5354,7 +5167,6 @@ impl Orchestrator {
                 self.model_configs.read().await.get(&name).map(|c| c.context_size).filter(|s| *s > 0)
             },
             summary_at_count: new_at_count,
-            hook_registry: Some(self.hook_registry.clone()),
             session_id: session_id.to_string(),
             agent_id: agent_id.to_string(),
             key_store: Some(self.key_store.clone()),
@@ -5638,25 +5450,6 @@ impl Orchestrator {
                     .await;
                 }
 
-                // Fire TaskCompleted hook
-                {
-                    let mut hook_ctx = HookContext {
-                        session_id: sid.clone(),
-                        agent_id: agent_id.to_string(),
-                        ..Default::default()
-                    };
-                    tracing::debug!(session_id = %sid, agent_id = %agent_id, "firing TaskCompleted hook");
-                    let _ = self
-                        .hook_registry
-                        .read()
-                        .await
-                        .fire(
-                            &loom_plugins::hooks::HookEvent::TaskCompleted,
-                            None,
-                            &mut hook_ctx,
-                        )
-                        .await;
-                }
             } // end else (not interrupted)
         } else {
             let _ = self
@@ -5667,26 +5460,6 @@ impl Orchestrator {
                         message: "LLM error".into(),
                     },
                     None,
-                )
-                .await;
-        }
-
-        // Fire SessionEnd hook
-        {
-            let mut hook_ctx = HookContext {
-                session_id: sid.clone(),
-                agent_id: agent_id.to_string(),
-                ..Default::default()
-            };
-            tracing::debug!(session_id = %sid, agent_id = %agent_id, "firing SessionEnd hook");
-            let _ = self
-                .hook_registry
-                .read()
-                .await
-                .fire(
-                    &loom_plugins::hooks::HookEvent::SessionEnd,
-                    None,
-                    &mut hook_ctx,
                 )
                 .await;
         }

@@ -9,7 +9,6 @@
 
 mod mcp_config;
 mod memory;
-mod plugins;
 mod tui;
 
 use clap::{Parser, Subcommand};
@@ -80,24 +79,10 @@ fn sync_builtin_resources(loom_dir: &std::path::Path) {
         }
     };
 
-    let ps = builtin.join("plugins");
     let ss = builtin.join("skills");
-    let pd = loom_dir.join("plugins");
     let sd = loom_dir.join("skills");
-    let mut pc = 0usize;
     let mut sc = 0usize;
 
-    if ps.exists() {
-        for e in std::fs::read_dir(&ps).into_iter().flatten().flatten() {
-            let sp = e.path();
-            if !sp.is_dir() { continue; }
-            let n = sp.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if n.is_empty() { continue; }
-            let dp = pd.join(n);
-            if dp.exists() { continue; }
-            if copy_dir_entries(&sp, &dp).is_ok() { pc += 1; }
-        }
-    }
     if ss.exists() {
         for e in std::fs::read_dir(&ss).into_iter().flatten().flatten() {
             let sp = e.path();
@@ -110,8 +95,8 @@ fn sync_builtin_resources(loom_dir: &std::path::Path) {
         }
     }
 
-    if pc > 0 || sc > 0 {
-        println!("[server] builtin sync: {} plugins, {} skills", pc, sc);
+    if sc > 0 {
+        println!("[server] builtin sync: {} skills", sc);
     }
 }
 
@@ -300,40 +285,60 @@ async fn main() -> anyhow::Result<()> {
                     }
                 );
             }
-            // Load MCP servers from config files (~/.loom/mcp.json, .loom/mcp.json)
-            match mcp_config::load_mcp_configs(&loom_dir) {
-                Ok((configs, sources)) => {
-                    for src in &sources {
-                        tracing::info!("[mcp] config: {}", src);
+            // Migrate known-bad default package names from earlier versions,
+            // then seed defaults on first run.  DB is the single source of
+            // truth after that — user disconnect/delete is respected across
+            // restarts, and mcp.json is no longer auto-loaded.
+            {
+                let existing = orchestrator
+                    .list_saved_mcp_servers()
+                    .await
+                    .unwrap_or_default();
+
+                // 1) Fix the wrong context7 package name.
+                for (cfg, autostart) in &existing {
+                    let mut updated = cfg.clone();
+                    let mut changed = false;
+                    for arg in &mut updated.args {
+                        if arg.contains("@anthropic/context7-mcp") {
+                            *arg = arg.replace("@anthropic/context7-mcp", "@upstash/context7-mcp");
+                            changed = true;
+                        }
                     }
-                    for config in configs {
-                        let name = config.name.clone();
-                        tracing::info!("[mcp] connecting {} ({})...", name, config.transport);
-                        match orchestrator.connect_mcp_server(config).await {
-                            Ok(server_name) => {
-                                let tools = orchestrator
-                                    .mcp_client()
-                                    .server_tools(&server_name)
-                                    .await
-                                    .unwrap_or_default();
-                                tracing::info!(
-                                    "[mcp] '{}' connected — {} tools",
-                                    server_name,
-                                    tools.len()
-                                );
-                            }
-                            Err(e) => {
-                                tracing::warn!("[mcp] failed to connect '{}': {}", name, e);
-                            }
+                    if changed {
+                        let name = updated.name.clone();
+                        let _ = orchestrator.save_mcp_server(&updated, *autostart).await;
+                        tracing::info!("[mcp] migrated '{}' → @upstash/context7-mcp", name);
+                    }
+                }
+
+                // 2) Remove the broken github default (no valid npm package).
+                for (cfg, _) in &existing {
+                    if cfg.name == "github"
+                        && cfg.args.iter().any(|a| a.contains("@anthropic/github-mcp"))
+                    {
+                        let _ = orchestrator.delete_saved_mcp_server("github").await;
+                        tracing::info!("[mcp] removed broken 'github' default (no valid npm package)");
+                    }
+                }
+
+                // 3) Seed defaults on first run (DB empty).
+                if existing.is_empty() {
+                    for d in mcp_config::default_mcp_server_configs() {
+                        let name = d.name.clone();
+                        if let Err(e) = orchestrator.save_mcp_server(&d, true).await {
+                            tracing::warn!("[mcp] seed default '{}' failed: {}", name, e);
+                        } else {
+                            tracing::info!("[mcp] seeded default '{}'", name);
                         }
                     }
                 }
-                Err(e) => {
-                    tracing::warn!("[mcp] failed to load configs: {}", e);
-                }
             }
-            // Reconnect MCP servers previously saved via the UI (DB-persisted),
-            // skipping any entry already brought up by the file-based loader.
+            // Ensure default mcp.json exists on disk for user visibility/editing.
+            // (Not auto-loaded — DB is the runtime source of truth.)
+            mcp_config::ensure_default_mcp_config(&loom_dir);
+            // Connect all DB-persisted servers marked autostart=true.
+            // Servers the user disconnected (autostart=false) or deleted are skipped.
             orchestrator.autostart_mcp_servers().await;
             // === Skills ===
             {
@@ -351,80 +356,6 @@ async fn main() -> anyhow::Result<()> {
                     }
                     Ok(_) => println!("[server] 0 skills loaded"),
                     Err(e) => eprintln!("[server] skills error: {}", e),
-                }
-                // Load hooks from plugins (empty registry — will be updated when plugins are discovered below)
-                let hook_pm = plugins::PluginManager::new();
-                orchestrator.load_hooks_from_plugins(&hook_pm).await;
-            }
-            // === Plugins ===
-            {
-                let home = loom_dir.parent().unwrap_or(&loom_dir);
-                let mut plugin_manager = plugins::PluginManager::new();
-                match plugin_manager.discover(home) {
-                    Ok(n) if n > 0 => {
-                        println!("[server] {} plugins discovered:", n);
-                        for (name, desc, source) in plugin_manager.list() {
-                            println!(
-                                "  - {} [{}]: {}",
-                                name,
-                                source,
-                                if desc.is_empty() {
-                                    "(no description)"
-                                } else {
-                                    desc
-                                }
-                            );
-                        }
-                        // Reload skills with plugin paths included
-                        let mut skill_loader = loom_skills::SkillLoader::new();
-                        skill_loader.add_standard_paths(&loom_dir);
-                        for path in plugin_manager.skill_paths() {
-                            if path.exists() {
-                                skill_loader.add_path(path, "plugin");
-                            }
-                        }
-                        match skill_loader.discover() {
-                            Ok(new_skills) if !new_skills.is_empty() => {
-                                orchestrator
-                                    .set_skills(loom_skills::SkillState::from_skills(&new_skills))
-                                    .await;
-                                println!(
-                                    "[server] {} skills loaded (with plugins)",
-                                    new_skills.len()
-                                );
-                            }
-                            _ => {}
-                        }
-                        // Load hooks from discovered plugins
-                        orchestrator.load_hooks_from_plugins(&plugin_manager).await;
-                        // Connect plugin MCP servers
-                        for mcp in plugin_manager.mcp_configs() {
-                            let config = loom_mcp::McpServerConfig {
-                                name: mcp.name.clone(),
-                                transport: mcp.transport.clone(),
-                                command: mcp.command.clone(),
-                                args: mcp.args.clone(),
-                                url: mcp.url.clone(),
-                                headers: mcp.headers.clone(),
-                                env: mcp.env.clone(),
-                                cwd: None,
-                                startup_timeout_secs: 30,
-                                tool_timeout_secs: 60,
-                                enabled_tools: None,
-                                disabled_tools: None,
-                            };
-                            println!("[server] connecting plugin MCP '{}'...", mcp.name);
-                            match orchestrator.connect_mcp_server(config).await {
-                                Ok(name) => println!("[server] plugin MCP '{}' connected", name),
-                                Err(e) => println!(
-                                    "[server] plugin MCP '{}' failed: {:.120}",
-                                    mcp.name, e
-                                ),
-                            }
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(e) => eprintln!("[server] plugins error: {}", e),
                 }
             }
             // === Graceful shutdown: wire SIGTERM/SIGINT/Ctrl+C ===
@@ -574,6 +505,7 @@ fn mcp_add(
             .unwrap_or_default(),
         url: url.map(String::from),
         headers: hdrs,
+        env: Default::default(),
     };
 
     config.mcp_servers.insert(name.to_string(), entry);
@@ -819,10 +751,7 @@ async fn run_chat_demo(
             Ok(_) => println!("[skills] 0 loaded (no SKILL.md found)"),
             Err(e) => println!("[skills] error: {}", e),
         }
-        // Load hooks from plugins (empty registry — will be updated when plugins are discovered below)
-        let hook_pm = plugins::PluginManager::new();
-        orchestrator.load_hooks_from_plugins(&hook_pm).await;
-    } // close if let Some(home)
+    }
 
     // === Memory ===
     let data_dir = data_dir_path;
@@ -862,43 +791,30 @@ async fn run_chat_demo(
         Err(e) => println!("[memory] unavailable: {}", e),
     }
 
-    // Load MCP configs from files
-    if load_config {
-        let dir = loom_dir.clone();
-        match mcp_config::load_mcp_configs(&dir) {
-            Ok((configs, sources)) => {
-                for src in &sources {
-                    println!("[mcp] config: {}", src);
-                }
-                for config in configs {
-                    let name = config.name.clone();
-                    println!("[mcp] connecting {} ({})...", name, config.transport);
-                    match orchestrator.connect_mcp_server(config).await {
-                        Ok(server_name) => {
-                            let tools = orchestrator
-                                .mcp_client()
-                                .server_tools(&server_name)
-                                .await
-                                .unwrap_or_default();
-                            println!("[mcp] '{}' connected — {} tools", server_name, tools.len());
-                            for t in &tools {
-                                let desc = if t.description.chars().count() > 60 {
-                                    format!(
-                                        "{}...",
-                                        t.description.chars().take(57).collect::<String>()
-                                    )
-                                } else {
-                                    t.description.clone()
-                                };
-                                println!("       - {}: {}", t.name, desc);
-                            }
-                        }
-                        Err(e) => println!("[mcp] '{}' failed: {:.120}", name, e),
-                    }
+    // Seed default MCP servers into the DB on first run only.
+    // After that the DB is the single source of truth.
+    {
+        let existing = orchestrator
+            .list_saved_mcp_servers()
+            .await
+            .unwrap_or_default();
+        if existing.is_empty() {
+            for d in mcp_config::default_mcp_server_configs() {
+                let name = d.name.clone();
+                if let Err(e) = orchestrator.save_mcp_server(&d, true).await {
+                    println!("[mcp] seed default '{}' failed: {}", name, e);
+                } else {
+                    println!("[mcp] seeded default '{}'", name);
                 }
             }
-            Err(e) => tracing::debug!("MCP config load: {}", e),
         }
+    }
+    // Ensure default mcp.json exists on disk for user visibility/editing.
+    mcp_config::ensure_default_mcp_config(&loom_dir);
+
+    // Connect DB-persisted servers marked autostart=true (no mcp.json reload).
+    if load_config {
+        orchestrator.autostart_mcp_servers().await;
     }
 
     // Quick MCP from CLI args
@@ -920,70 +836,6 @@ async fn run_chat_demo(
             }
             Err(e) => println!("[mcp] parse error: {}", e),
         }
-    }
-
-    // Tool list
-    // === Plugins ===
-    let home = loom_dir.parent().unwrap_or(&loom_dir);
-    let mut plugin_manager = plugins::PluginManager::new();
-    match plugin_manager.discover(home) {
-        Ok(n) if n > 0 => {
-            println!("[plugins] {} discovered:", n);
-            for (name, desc, source) in plugin_manager.list() {
-                println!(
-                    "  - {} [{}]: {}",
-                    name,
-                    source,
-                    if desc.is_empty() {
-                        "(no description)"
-                    } else {
-                        desc
-                    }
-                );
-            }
-            // Load plugin skill paths into skill loader
-            for path in plugin_manager.skill_paths() {
-                if path.exists() {
-                    skill_loader.add_path(path, "plugin");
-                }
-            }
-            // Re-discover skills with plugin paths included
-            match skill_loader.discover() {
-                Ok(new_skills) if !new_skills.is_empty() => {
-                    orchestrator
-                        .set_skills(loom_skills::SkillState::from_skills(&new_skills))
-                        .await;
-                    println!("[plugins] {} skills loaded", new_skills.len());
-                }
-                _ => {}
-            }
-            // Load hooks from discovered plugins
-            orchestrator.load_hooks_from_plugins(&plugin_manager).await;
-            // Connect plugin MCP servers
-            for mcp in plugin_manager.mcp_configs() {
-                let config = loom_mcp::McpServerConfig {
-                    name: mcp.name.clone(),
-                    transport: mcp.transport.clone(),
-                    command: mcp.command.clone(),
-                    args: mcp.args.clone(),
-                    url: mcp.url.clone(),
-                    headers: mcp.headers.clone(),
-                    env: Default::default(),
-                    cwd: None,
-                    startup_timeout_secs: 30,
-                    tool_timeout_secs: 60,
-                    enabled_tools: None,
-                    disabled_tools: None,
-                };
-                println!("[plugins] connecting MCP '{}'...", mcp.name);
-                match orchestrator.connect_mcp_server(config).await {
-                    Ok(name) => println!("[plugins] MCP '{}' connected", name),
-                    Err(e) => println!("[plugins] MCP '{}' failed: {:.120}", mcp.name, e),
-                }
-            }
-        }
-        Ok(_) => {}
-        Err(e) => println!("[plugins] error: {}", e),
     }
 
     // === Bridge ===

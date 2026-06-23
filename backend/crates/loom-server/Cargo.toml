@@ -9,8 +9,7 @@ loom-types = { path = "../loom-types" }
 loom-core = { path = "../loom-core" }
 loom-mcp = { path = "../loom-mcp" }
 loom-skills = { path = "../loom-skills" }
-loom-plugins = { path = "../loom-plugins" }
-loom-marketplace = { path = "../loom-marketplace" }
+loom-lsp = { path = "../loom-lsp" }
 loom-cron = { path = "../loom-cron" }
 loom-memory = { path = "../loom-memory" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "signal"] }

@@ -42,10 +42,116 @@ pub struct McpConfigEntry {
     pub url: Option<String>,
     #[serde(default)]
     pub headers: HashMap<String, String>,
+    /// Per-server environment variables (e.g. GITHUB_PERSONAL_ACCESS_TOKEN).
+    #[serde(default)]
+    pub env: HashMap<String, String>,
 }
 
 fn default_mcp_type() -> String {
     "stdio".into()
+}
+
+/// Default MCP server configs that ship with openLoom.
+///
+/// Previously shipped as built-in plugins (playwright, github, context7).
+/// Called at startup to seed the DB if those entries are missing.
+///
+/// Package names verified against npm:
+/// - `@playwright/mcp`      — Microsoft official
+/// - `@upstash/context7-mcp` — Context7 by Upstash
+/// GitHub's official MCP server is a Go binary (not on npm), so it is not
+/// included as a default; users can add it via the UI (Docker/binary).
+pub fn default_mcp_server_configs() -> Vec<loom_mcp::McpServerConfig> {
+    vec![
+        loom_mcp::McpServerConfig {
+            name: "playwright".into(),
+            transport: "stdio".into(),
+            command: "npx".into(),
+            args: vec!["-y".into(), "@playwright/mcp@latest".into()],
+            url: None,
+            headers: Default::default(),
+            env: Default::default(),
+            cwd: None,
+            startup_timeout_secs: 120,
+            tool_timeout_secs: 60,
+            enabled_tools: None,
+            disabled_tools: None,
+        },
+        loom_mcp::McpServerConfig {
+            name: "context7".into(),
+            transport: "stdio".into(),
+            command: "npx".into(),
+            args: vec!["-y".into(), "@upstash/context7-mcp".into()],
+            url: None,
+            headers: Default::default(),
+            env: Default::default(),
+            cwd: None,
+            startup_timeout_secs: 120,
+            tool_timeout_secs: 60,
+            enabled_tools: None,
+            disabled_tools: None,
+        },
+    ]
+}
+
+/// Create a default `mcp.json` if one does not yet exist at `<data_dir>/mcp.json`.
+///
+/// The default includes two bundled MCP servers: playwright (browser
+/// automation) and context7 (documentation lookup).  Users can edit or
+/// remove any entry.
+pub fn ensure_default_mcp_config(data_dir: &Path) {
+    let user_path = data_dir.join("mcp.json");
+    if user_path.exists() {
+        return;
+    }
+
+    let default: McpConfigFile = {
+        let mut servers = std::collections::HashMap::new();
+
+        servers.insert(
+            "playwright".into(),
+            McpConfigEntry {
+                transport: "stdio".into(),
+                command: "npx".into(),
+                args: vec!["-y".into(), "@playwright/mcp@latest".into()],
+                url: None,
+                headers: Default::default(),
+                env: Default::default(),
+            },
+        );
+
+        servers.insert(
+            "context7".into(),
+            McpConfigEntry {
+                transport: "stdio".into(),
+                command: "npx".into(),
+                args: vec!["-y".into(), "@upstash/context7-mcp".into()],
+                url: None,
+                headers: Default::default(),
+                env: Default::default(),
+            },
+        );
+
+        McpConfigFile {
+            mcp_servers: servers,
+        }
+    };
+
+    if let Some(parent) = user_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match serde_json::to_string_pretty(&default) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&user_path, &json) {
+                tracing::warn!(path = %user_path.display(), error = %e, "failed to write default mcp.json");
+            } else {
+                tracing::info!(path = %user_path.display(), "created default mcp.json (3 servers)");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to serialise default mcp.json");
+        }
+    }
 }
 
 /// Load MCP servers from config files.
@@ -53,6 +159,11 @@ fn default_mcp_type() -> String {
 /// Scans in priority order:
 /// 1. Project-level: `<cwd>/.loom/mcp.json`
 /// 2. User-level: `<data_dir>/mcp.json`
+///
+/// NOTE: The desktop app no longer auto-loads from mcp.json at startup — the
+/// DB is the single source of truth (so user disconnect/delete persists).
+/// This loader is retained for CLI / programmatic use and `loom mcp list`.
+#[allow(dead_code)]
 pub fn load_mcp_configs(data_dir: &Path) -> Result<(Vec<loom_mcp::McpServerConfig>, Vec<String>)> {
     let mut configs = Vec::new();
     let mut sources = Vec::new();
@@ -90,6 +201,7 @@ pub fn load_mcp_configs(data_dir: &Path) -> Result<(Vec<loom_mcp::McpServerConfi
     Ok((configs, sources))
 }
 
+#[allow(dead_code)]
 fn load_config_file(path: &std::path::Path) -> Result<Vec<loom_mcp::McpServerConfig>> {
     let content = std::fs::read_to_string(path)?;
     let parsed: McpConfigFile = serde_json::from_str(&content)?;
@@ -107,9 +219,9 @@ fn load_config_file(path: &std::path::Path) -> Result<Vec<loom_mcp::McpServerCon
             headers: entry.headers.clone(),
             command: entry.command.clone(),
             args: entry.args.clone(),
-            env: Default::default(),
+            env: entry.env.clone(),
             cwd: None,
-            startup_timeout_secs: 30,
+            startup_timeout_secs: 120,
             tool_timeout_secs: 60,
             enabled_tools: None,
             disabled_tools: None,
@@ -146,7 +258,7 @@ pub fn parse_mcp_args(args: &str) -> Result<loom_mcp::McpServerConfig> {
             args: vec![],
             env: Default::default(),
             cwd: None,
-            startup_timeout_secs: 30,
+            startup_timeout_secs: 120,
             tool_timeout_secs: 60,
             enabled_tools: None,
             disabled_tools: None,
@@ -165,7 +277,7 @@ pub fn parse_mcp_args(args: &str) -> Result<loom_mcp::McpServerConfig> {
             headers: Default::default(),
             env: Default::default(),
             cwd: None,
-            startup_timeout_secs: 30,
+            startup_timeout_secs: 120,
             tool_timeout_secs: 60,
             enabled_tools: None,
             disabled_tools: None,

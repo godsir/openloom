@@ -7,13 +7,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use loom_plugins::hooks::HookEvent;
 use loom_types::{AgentConfig, AgentId, SessionId};
 use tokio::sync::RwLock;
 
 use crate::agent::{Agent, AgentStatus};
 use crate::event_bus::{AgentEvent, EventBus};
-use crate::hooks::{HookContext, HookRegistry};
 
 /// Summary of an agent's current state for UI display.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -32,8 +30,6 @@ pub struct AgentPool {
     agents: Arc<RwLock<HashMap<AgentId, Agent>>>,
     event_bus: EventBus,
     max_depth: usize,
-    /// Hook registry for firing lifecycle hooks (TeammateIdle, etc.).
-    hook_registry: Option<Arc<RwLock<HookRegistry>>>,
 }
 
 impl AgentPool {
@@ -46,18 +42,12 @@ impl AgentPool {
             agents: Arc::new(RwLock::new(HashMap::new())),
             event_bus: EventBus::new(65536),
             max_depth,
-            hook_registry: None,
         }
     }
 
     /// Get a reference to the event bus for external subscribers.
     pub fn event_bus(&self) -> &EventBus {
         &self.event_bus
-    }
-
-    /// Set the hook registry for firing lifecycle hooks.
-    pub fn set_hook_registry(&mut self, registry: Option<Arc<RwLock<HookRegistry>>>) {
-        self.hook_registry = registry;
     }
 
     /// Register a new agent in the pool.
@@ -75,20 +65,6 @@ impl AgentPool {
 
         let id = agent.id.clone();
         agent.status = AgentStatus::Idle;
-
-        // Fire TeammateIdle hook
-        if let Some(ref hook_reg) = self.hook_registry {
-            let mut hook_ctx = HookContext {
-                session_id: agent.session_id.to_string(),
-                agent_id: id.to_string(),
-                ..Default::default()
-            };
-            let _ = hook_reg
-                .read()
-                .await
-                .fire(&HookEvent::TeammateIdle, None, &mut hook_ctx)
-                .await;
-        }
 
         self.agents.write().await.insert(id.clone(), agent);
 
@@ -121,24 +97,6 @@ impl AgentPool {
                 child_name: agent.config.name.clone(),
             });
 
-            // Fire SubagentStart hook
-            if let Some(ref hook_reg) = self.hook_registry {
-                let mut hook_ctx = HookContext {
-                    session_id: agent.session_id.to_string(),
-                    agent_id: pid.to_string(),
-                    subagent_name: Some(agent.config.name.clone()),
-                    ..Default::default()
-                };
-                let _ = hook_reg
-                    .read()
-                    .await
-                    .fire(
-                        &HookEvent::SubagentStart,
-                        Some(&agent.config.name),
-                        &mut hook_ctx,
-                    )
-                    .await;
-            }
         }
 
         self.register(agent).await
@@ -265,33 +223,6 @@ impl AgentPool {
             child_id: child_id.clone(),
             result: result.clone(),
         });
-
-        // Fire SubagentStop hook (before acquiring write lock)
-        {
-            let child_name = {
-                let agents = self.agents.read().await;
-                agents.get(child_id).map(|a| a.config.name.clone())
-            };
-            let session_id = {
-                let agents = self.agents.read().await;
-                agents.get(parent_id).map(|a| a.session_id.to_string())
-            };
-            if let (Some(hook_reg), Some(sid)) = (&self.hook_registry, session_id) {
-                let subject = child_name.clone();
-                let mut hook_ctx = HookContext {
-                    session_id: sid,
-                    agent_id: parent_id.to_string(),
-                    subagent_name: child_name,
-                    subagent_result: Some(result.clone()),
-                    ..Default::default()
-                };
-                let _ = hook_reg
-                    .read()
-                    .await
-                    .fire(&HookEvent::SubagentStop, subject.as_deref(), &mut hook_ctx)
-                    .await;
-            }
-        }
 
         let mut agents = self.agents.write().await;
         let parent = agents
