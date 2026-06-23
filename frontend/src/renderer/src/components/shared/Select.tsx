@@ -71,11 +71,24 @@ export default function Select<T extends string = string>({
     const shouldFlip = spaceBelow < estimatedHeight && spaceAbove > spaceBelow
 
     const width = menuWidth ?? Math.max(rect.width, 160)
+    let left = rect.left
+    // Keep the menu inside the viewport when the trigger sits near the right
+    // edge (e.g. the channel pill under page zoom): right-align to the
+    // trigger rather than overflowing the window.
+    if (left + width > window.innerWidth - VIEWPORT_MARGIN) {
+      left = Math.max(rect.right - width, VIEWPORT_MARGIN)
+    }
+    // Cap height to the space available in the chosen direction so the menu
+    // scrolls internally instead of overflowing the viewport.
+    const maxHeight = Math.min(
+      MENU_MAX_HEIGHT,
+      Math.max(shouldFlip ? spaceAbove : spaceBelow, 0),
+    )
     const pos: React.CSSProperties = {
       position: 'fixed',
-      left: rect.left,
+      left,
       width,
-      maxHeight: MENU_MAX_HEIGHT,
+      maxHeight,
       overflowY: 'auto',
       zIndex: 9999,
     }

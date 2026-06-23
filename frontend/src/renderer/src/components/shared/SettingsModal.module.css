@@ -279,6 +279,52 @@
   gap: 10px;
 }
 
+/* About tab — hero + supporting grid (scoped to About; .aboutSection stays
+   shared with McpTab/SoftwareTab, so the wider gap lives here instead). */
+.aboutLayout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.aboutHero {
+  background: var(--accent-subtle);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-xl);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.aboutHeroMeta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.aboutHeroData {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  min-width: 0;
+}
+
+.aboutGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .aboutGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .aboutCard {
   padding: 16px;
   border-radius: var(--r-md);
@@ -298,20 +344,19 @@
 .aboutAppRow {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin-bottom: 12px;
+  gap: 16px;
 }
 
 .aboutAppIcon {
-  width: 48px;
-  height: 48px;
+  width: 64px;
+  height: 64px;
   border-radius: var(--r-lg);
   object-fit: contain;
   flex-shrink: 0;
 }
 
 .aboutAppName {
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 600;
   color: var(--text);
   margin: 0;
@@ -340,7 +385,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-top: 10px;
+  margin-top: 0;
   font-size: 12px;
   font-family: var(--font-mono);
   color: var(--text-muted);
@@ -350,17 +395,6 @@
 
 .aboutGitLink:hover {
   color: var(--accent);
-}
-
-.aboutDataRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-  padding: 8px 10px;
-  border-radius: var(--r-sm);
-  background: var(--bg);
-  font-size: 11px;
 }
 
 .aboutDataLabel {
@@ -410,13 +444,26 @@
   color: var(--amber, #f59e0b);
 }
 
-.aboutUpdateBody {
-  margin-bottom: 12px;
-}
-
 .aboutUpdateActions {
   display: flex;
   gap: 8px;
+}
+
+.aboutUpdateHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.aboutUpdateHead .aboutCardTitle {
+  margin: 0;
+}
+
+.aboutUpdateStatus {
+  min-height: 16px;
+  margin-bottom: 14px;
 }
 
 .aboutRow {
@@ -432,27 +479,6 @@
 .aboutLabel {
   font-size: 12px;
   color: var(--text-secondary);
-}
-
-.aboutValue {
-  font-size: 12px;
-  font-family: var(--font-mono);
-  color: var(--text);
-}
-
-.aboutValueGreen {
-  color: var(--green);
-}
-
-.aboutValueAmber {
-  color: var(--amber);
-}
-
-.aboutFooter {
-  font-size: 11px;
-  color: var(--text-muted);
-  line-height: 1.6;
-  margin-top: 8px;
 }
 
 /* Shared tools styles (reused by MCP) */
