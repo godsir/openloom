@@ -57,23 +57,6 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                                             let _ = tx.send(json).await;
                                         }
                                     });
-                                } else if req.method.starts_with("clawhub.") {
-                                    // Clawhub ops can take time (network I/O):
-                                    // spawn in background so other RPCs and event forwarding aren't blocked
-                                    let st = state.clone();
-                                    let tx = resp_tx.clone();
-                                    tokio::spawn(async move {
-                                        let response = dispatch::dispatch_method(&st, &req).await;
-                                        let resp = JsonRpcResponse {
-                                            jsonrpc: "2.0".into(),
-                                            result: response.as_ref().ok().cloned(),
-                                            error: response.as_ref().err().cloned(),
-                                            id: req.id,
-                                        };
-                                        if let Ok(json) = serde_json::to_string(&resp) {
-                                            let _ = tx.send(json).await;
-                                        }
-                                    });
                                 } else {
                                     // Short RPCs: dispatch inline
                                     let response = dispatch::dispatch_method(&state, &req).await;

@@ -12,6 +12,8 @@ extraResources:
       - icon.png
   - from: ../target/release/loom.exe
     to: engine/loom.exe
+  - from: ../resources/builtin
+    to: builtin
 win:
   target: nsis
   icon: src/asset/icon.ico

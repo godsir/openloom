@@ -110,15 +110,80 @@ async fn handle_skills_delete(state: &AppState, p: &Value) -> Result<Value, Json
     if name.is_empty() {
         return Err(err(ErrorCode::InvalidRequest, "name required"));
     }
-    let home = dirs::home_dir().unwrap_or_default();
-    let skill_dir = home.join(".loom").join("skills").join(name);
+
+    // Resolve the skill's actual on-disk location from the orchestrator's
+    // loaded skills. Skills can live in multiple roots (.loom, .claude,
+    // .openclaw, .codex, plus project-local variants), so we must not
+    // hardcode ~/.loom/skills — that silently no-ops for everything else.
+    let summaries = state.orchestrator.get_skill_summaries().await;
+    let source_path = match summaries.iter().find(|s| s.name == name) {
+        Some(s) => s.source_path.clone(),
+        None => {
+            return Err(err(
+                ErrorCode::MethodNotFound,
+                &format!("skill '{}' not found", name),
+            ))
+        }
+    };
+
+    // source_path points at the SKILL.md file; the skill dir is its parent.
+    let skill_dir = match std::path::Path::new(&source_path).parent() {
+        Some(d) => d.to_path_buf(),
+        None => {
+            return Err(err(
+                ErrorCode::InternalError,
+                "cannot resolve skill directory",
+            ))
+        }
+    };
+
+    // Safety: only delete if the directory is inside a known skill root.
+    // Prevents path-traversal / arbitrary directory deletion.
+    if !is_deletable_skill_dir(&skill_dir) {
+        return Err(err(
+            ErrorCode::InvalidRequest,
+            "skill is not in a deletable location",
+        ));
+    }
+
     if skill_dir.exists() {
         std::fs::remove_dir_all(&skill_dir)
             .map_err(|e| err(ErrorCode::InternalError, &format!("delete failed: {}", e)))?;
     }
+
     // Refresh orchestrator skill state
     let _ = reload_skills_into_orchestrator(&state.orchestrator).await;
     Ok(json!({ "ok": true }))
+}
+
+/// A skill directory may only be deleted if it lives STRICTLY inside one of
+/// the standard skill roots (user-global or project-local). The skill dir
+/// must not be a root itself — otherwise deleting a SKILL.md that sits
+/// directly in a root would wipe the entire skills path. Plugin/builtin
+/// skills are intentionally excluded.
+fn is_deletable_skill_dir(dir: &std::path::Path) -> bool {
+    let canonical = match dir.canonicalize() {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return false,
+    };
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let roots = [
+        home.join(".loom").join("skills"),
+        home.join(".claude").join("skills"),
+        home.join(".openclaw").join("skills"),
+        home.join(".codex").join("skills"),
+        cwd.join(".loom").join("skills"),
+        cwd.join(".claude").join("skills"),
+    ];
+    roots.iter().any(|r| {
+        r.canonicalize()
+            .map(|rc| canonical.starts_with(&rc) && canonical != rc)
+            .unwrap_or(false)
+    })
 }
 
 // --- skills.reload ---
@@ -135,7 +200,7 @@ async fn handle_skills_reload(state: &AppState) -> Result<Value, JsonRpcError> {
 
 // ---------------------------------------------------------------------------
 // Shared helper: reload skills into orchestrator
-// Used by: skills.import, skills.delete, clawhub.* handlers
+// Used by: skills.import, skills.delete handlers
 // ---------------------------------------------------------------------------
 
 /// Reload skills from all standard paths into the orchestrator.

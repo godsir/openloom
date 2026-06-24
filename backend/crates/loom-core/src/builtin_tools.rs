@@ -977,7 +977,7 @@ impl AgentTool for UseSkillTool {
             let available: Vec<&String> = state.bodies.keys().collect();
             if available.is_empty() {
                 return Ok(ToolResult {
-                    content: "没有安装任何技能。你可以在技能市场导入技能。".into(),
+                    content: "没有安装任何技能。你可以在设置 → 技能中导入技能。".into(),
                     is_error: false,
                     structured_content: None,
                 });

@@ -7,8 +7,8 @@ type TranslationMap = Record<string, string>
 const zhCN: TranslationMap = {
   // ── Tray ─────────────────────────────────────────────────────────
   'tray.showLoom': '显示 openLoom',
-  'tray.hidePet': '隐藏桌宠',
-  'tray.showPet': '显示桌宠',
+  'tray.hidePet': '隐藏形象',
+  'tray.showPet': '显示形象',
   'tray.dndOff': '关闭勿扰模式',
   'tray.dndOn': '开启勿扰模式',
   'tray.settings': '设置...',
@@ -17,7 +17,7 @@ const zhCN: TranslationMap = {
   'pet.sizeSmall': '大小：小 (128px)',
   'pet.sizeMedium': '大小：中 (192px)',
   'pet.sizeLarge': '大小：大 (256px)',
-  'pet.closePet': '关闭桌宠',
+  'pet.closePet': '关闭形象',
   // ── Text context menu ────────────────────────────────────────────
   'menu.cut': '剪切',
   'menu.copy': '复制',
@@ -28,8 +28,8 @@ const zhCN: TranslationMap = {
 const enUS: TranslationMap = {
   // ── Tray ─────────────────────────────────────────────────────────
   'tray.showLoom': 'Show openLoom',
-  'tray.hidePet': 'Hide Pet',
-  'tray.showPet': 'Show Pet',
+  'tray.hidePet': 'Hide Avatar',
+  'tray.showPet': 'Show Avatar',
   'tray.dndOff': 'Disable DND',
   'tray.dndOn': 'Enable DND',
   'tray.settings': 'Settings...',
@@ -38,7 +38,7 @@ const enUS: TranslationMap = {
   'pet.sizeSmall': 'Size: Small (128px)',
   'pet.sizeMedium': 'Size: Medium (192px)',
   'pet.sizeLarge': 'Size: Large (256px)',
-  'pet.closePet': 'Close Pet',
+  'pet.closePet': 'Close Avatar',
   // ── Text context menu ────────────────────────────────────────────
   'menu.cut': 'Cut',
   'menu.copy': 'Copy',
@@ -49,8 +49,8 @@ const enUS: TranslationMap = {
 const zhTW: TranslationMap = {
   // ── Tray ─────────────────────────────────────────────────────────
   'tray.showLoom': '顯示 openLoom',
-  'tray.hidePet': '隱藏桌寵',
-  'tray.showPet': '顯示桌寵',
+  'tray.hidePet': '隱藏形象',
+  'tray.showPet': '顯示形象',
   'tray.dndOff': '關閉勿擾模式',
   'tray.dndOn': '開啟勿擾模式',
   'tray.settings': '設定...',
@@ -59,7 +59,7 @@ const zhTW: TranslationMap = {
   'pet.sizeSmall': '大小：小 (128px)',
   'pet.sizeMedium': '大小：中 (192px)',
   'pet.sizeLarge': '大小：大 (256px)',
-  'pet.closePet': '關閉桌寵',
+  'pet.closePet': '關閉形象',
   // ── Text context menu ────────────────────────────────────────────
   'menu.cut': '剪下',
   'menu.copy': '複製',

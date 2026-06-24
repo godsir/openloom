@@ -32,6 +32,9 @@ fn find_builtin_dir() -> Option<std::path::PathBuf> {
     {
         candidates.push(dir.join("resources").join("builtin"));
         candidates.push(dir.join("..").join("resources").join("builtin"));
+        // Packaged layout: exe at <app>/resources/engine/loom.exe,
+        // builtin at <app>/resources/builtin → relative "../builtin".
+        candidates.push(dir.join("..").join("builtin"));
     }
     if let Ok(cwd) = std::env::current_dir() {
         candidates.push(cwd.join("resources").join("builtin"));

@@ -2,12 +2,11 @@ import { useState, useEffect, useCallback } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
-import { IconFolder, IconPackage, IconRefresh, IconSearch, IconChevronRight, IconChevronDown, IconStore } from '../../utils/icons'
+import { IconFolder, IconPackage, IconRefresh, IconSearch } from '../../utils/icons'
 import { renderMarkdown } from '../../utils/markdown'
 import { sanitizeHtml } from '../../utils/markdown-sanitizer'
 import { useLocale, t as _t } from '../../i18n'
 import styles from '../shared/SettingsModal.module.css'
-import SkillMarketTab from './SkillMarketTab'
 
 interface SkillInfo {
   name: string
@@ -18,16 +17,20 @@ interface SkillInfo {
   always_active?: boolean
 }
 
-/** Derive a source category from a skill's on-disk path. */
-function skillSource(path: string | undefined): { group: string; icon: string } {
-  if (!path) return { group: _t('skills.sourceOther'), icon: 'M' }
+/** Derive a source category from a skill's on-disk path.
+ *  `group` is the full i18n label, `short` is the compact chip/card label,
+ *  `icon` is the single-letter avatar. */
+function skillSource(path: string | undefined): { group: string; short: string; icon: string } {
+  if (!path) return { group: _t('skills.sourceOther'), short: _t('skills.sourceOther'), icon: 'M' }
   const p = path.replace(/\\/g, '/')
-  if (p.includes('.claude/skills')) return { group: _t('skills.sourceClaudeCode'), icon: 'C' }
-  if (p.includes('.openclaw')) return { group: _t('skills.sourceOpenclaw'), icon: 'O' }
-  if (p.includes('.codex')) return { group: _t('skills.sourceCodex'), icon: 'X' }
-  if (p.includes('.loom/skills')) return { group: _t('skills.sourceLoomUser'), icon: 'L' }
-  return { group: _t('skills.sourceOther'), icon: 'M' }
+  if (p.includes('.claude/skills')) return { group: _t('skills.sourceClaudeCode'), short: 'Claude', icon: 'C' }
+  if (p.includes('.openclaw')) return { group: _t('skills.sourceOpenclaw'), short: 'OpenClaw', icon: 'O' }
+  if (p.includes('.codex')) return { group: _t('skills.sourceCodex'), short: 'Codex', icon: 'X' }
+  if (p.includes('.loom/skills')) return { group: _t('skills.sourceLoomUser'), short: 'Loom', icon: 'L' }
+  return { group: _t('skills.sourceOther'), short: _t('skills.sourceOther'), icon: 'M' }
 }
+
+const ALL = '__all__'
 
 export default function SkillsTab() {
   const { t } = useLocale()
@@ -40,17 +43,11 @@ export default function SkillsTab() {
   const [importing, setImporting] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
-  const [view, setView] = useState<'installed' | 'market'>('installed')
+  const [activeSource, setActiveSource] = useState<string>(ALL)
+  const [copied, setCopied] = useState(false)
+  const [page, setPage] = useState(0)
 
-  const toggleGroup = (group: string) => {
-    setCollapsedGroups(prev => {
-      const next = new Set(prev)
-      if (next.has(group)) next.delete(group)
-      else next.add(group)
-      return next
-    })
-  }
+  const PAGE_SIZE = 12
 
   const loadSkills = useCallback(async () => {
     setLoading(true)
@@ -65,22 +62,45 @@ export default function SkillsTab() {
     }
   }, [])
 
-  // Filter + Group
+  useEffect(() => { loadSkills() }, [loadSkills])
+
+  // Reset to first page whenever the source filter or search changes
+  useEffect(() => { setPage(0) }, [activeSource, searchQuery])
+
+  // Search filter
   const q = searchQuery.toLowerCase().trim()
-  const filtered = q
+  const searched = q
     ? skills.filter(s => s.name.toLowerCase().includes(q) || (s.description ?? '').toLowerCase().includes(q))
     : skills
-  const grouped: Record<string, { icon: string; skills: SkillInfo[] }> = {}
-  for (const s of filtered) {
-    const { group, icon } = skillSource(s.path)
-    if (!grouped[group]) grouped[group] = { icon, skills: [] }
-    grouped[group].skills.push(s)
+
+  // Source chips with counts (derived from the full set so counts stay stable
+  // while typing in search — chips reflect what exists, not what's filtered).
+  const sourceOrder: { short: string; group: string }[] = []
+  const sourceCounts: Record<string, number> = {}
+  for (const s of skills) {
+    const { group, short } = skillSource(s.path)
+    if (!(group in sourceCounts)) {
+      sourceCounts[group] = 0
+      sourceOrder.push({ short, group })
+    }
+    sourceCounts[group]++
   }
 
-  useEffect(() => { loadSkills() }, [loadSkills])
+  // Apply source-chip filter on top of search
+  const filtered = activeSource === ALL
+    ? searched
+    : searched.filter(s => skillSource(s.path).group === activeSource)
+
+  // Pagination: 12 per page (3 rows × 4 cols)
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages - 1)
+  const paged = filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE)
+
+  const selected = selectedSkill ? skills.find(s => s.name === selectedSkill) ?? null : null
 
   const handleSelectSkill = async (name: string) => {
     if (selectedSkill === name) {
+      // Toggle closed
       setSelectedSkill(null)
       setSkillContent(null)
       return
@@ -108,10 +128,8 @@ export default function SkillsTab() {
         setImporting(true)
         try {
           const fileList = input.files
-          // Derive skill name from common path prefix (top folder name)
           const firstPath = fileList[0].webkitRelativePath || fileList[0].name
           const skillName = firstPath.split('/')[0]
-
           const files: { path: string; content: string }[] = []
           for (let i = 0; i < fileList.length; i++) {
             const f = fileList[i]
@@ -119,7 +137,6 @@ export default function SkillsTab() {
             const content = await f.text()
             files.push({ path: relPath, content })
           }
-
           await rpc('skills.import', { name: skillName, files }, _t('skills.importSuccess', { name: skillName }))
           await loadSkills()
         } catch (e: any) {
@@ -167,8 +184,19 @@ export default function SkillsTab() {
     if (!ok) return
     try {
       await rpc('skills.delete', { name }, _t('skills.deleteSuccess', { name }))
+      setSelectedSkill(null)
+      setSkillContent(null)
       await loadSkills()
     } catch { /* toast already shown */ }
+  }
+
+  const handleCopyPath = async (path?: string) => {
+    if (!path) return
+    try {
+      await navigator.clipboard.writeText(path)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch { /* clipboard unavailable */ }
   }
 
   const renderBody = (raw: string) => {
@@ -186,22 +214,6 @@ export default function SkillsTab() {
             {t('skills.title')}
             <span className={styles.pluginsCountBadge}>{t('skills.countBadge', { n: skills.length })}</span>
           </h3>
-          <div className={styles.marketplaceKindToggle}>
-            <button
-              className={`${styles.marketplaceKindBtn} ${view === 'installed' ? styles.marketplaceKindActive : ''}`}
-              onClick={() => setView('installed')}
-            >
-              <IconPackage size={13} />
-              {t('skills.installed')}
-            </button>
-            <button
-              className={`${styles.marketplaceKindBtn} ${view === 'market' ? styles.marketplaceKindActive : ''}`}
-              onClick={() => setView('market')}
-            >
-              <IconStore size={13} />
-              {t('skills.market')}
-            </button>
-          </div>
           <button
             onClick={async () => {
               setRefreshing(true)
@@ -233,10 +245,10 @@ export default function SkillsTab() {
         </div>
         <p className={styles.sectionDesc}>{t('skills.description')}</p>
       </div>
-      {view === 'market' ? (
-        <SkillMarketTab hideHeader />
-      ) : (
-        <div className={styles.contentBody}>
+
+      <div className={styles.skillLayout}>
+        {/* ── Main: chips + grid ── */}
+        <div className={styles.skillMain}>
           {error && <p className={styles.toolsError}>{error}</p>}
 
           <div className={styles.skillActions}>
@@ -248,85 +260,139 @@ export default function SkillsTab() {
             </button>
           </div>
 
+          {/* Source filter chips */}
+          {sourceOrder.length > 0 && (
+            <div className={styles.skillChips}>
+              <button
+                className={`${styles.skillChip} ${activeSource === ALL ? styles.skillChipActive : ''}`}
+                onClick={() => setActiveSource(ALL)}
+              >
+                {t('skills.filterAll')} <span className={styles.skillChipCount}>{skills.length}</span>
+              </button>
+              {sourceOrder.map(({ short, group }) => (
+                <button
+                  key={group}
+                  className={`${styles.skillChip} ${activeSource === group ? styles.skillChipActive : ''}`}
+                  onClick={() => setActiveSource(group)}
+                >
+                  {short} <span className={styles.skillChipCount}>{sourceCounts[group]}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           {loading ? (
-          <p className={styles.toolsEmpty}>{t('common.loading')}</p>
-        ) : (
-          <>
-            <div className={styles.skillList}>
-              {filtered.length === 0 ? (
-                <p className={styles.toolsEmpty}>{searchQuery ? t('skills.noResults') : t('skills.noDiscovered')}</p>
-              ) : (
-                Object.entries(grouped).map(([group, { icon, skills: groupSkills }]) => (
-                  <div key={group} className={styles.skillGroup}>
+            <p className={styles.toolsEmpty}>{t('common.loading')}</p>
+          ) : filtered.length === 0 ? (
+            <p className={styles.toolsEmpty}>{searchQuery ? t('skills.noResults') : t('skills.noDiscovered')}</p>
+          ) : (
+            <>
+              <div className={styles.skillGrid}>
+                {paged.map((skill, i) => {
+                  const isSelected = selectedSkill === skill.name
+                  const { icon } = skillSource(skill.path)
+                  return (
                     <div
-                      className={styles.skillGroupHeader}
-                      onClick={() => toggleGroup(group)}
-                    >
-                      {collapsedGroups.has(group)
-                        ? <IconChevronRight size={10} className={styles.skillGroupChevron} />
-                        : <IconChevronDown size={10} className={styles.skillGroupChevron} />
-                      }
-                      <span className={styles.skillGroupIcon}>{icon}</span>
-                      <span className={styles.skillGroupName}>{group}</span>
-                      <span className={styles.skillGroupCount}>{groupSkills.length}</span>
-                    </div>
-                    <div className={`${styles.skillGroupBody} ${collapsedGroups.has(group) ? styles.skillGroupBodyCollapsed : ''}`}>
-                      <div className={styles.skillGroupBodyInner}>
-                    {groupSkills.map((skill, i) => {
-                    const isSelected = selectedSkill === skill.name
-                    return (
-                  <div key={skill.path || `${skill.name}-${i}`}>
-                    <div
-                      className={`${styles.skillCard} ${selectedSkill === skill.name ? styles.skillCardActive : ''}`}
+                      key={skill.path || `${skill.name}-${i}`}
+                      className={`${styles.skillGridCard} ${isSelected ? styles.skillGridCardActive : ''}`}
                       onClick={() => handleSelectSkill(skill.name)}
                     >
-                      <div className={styles.skillCardHeader}>
-                        <span className={styles.skillCardName}>{skill.name}</span>
-                        <div className={styles.skillBadges}>
-                          {skill.version && (
-                            <span className={styles.skillBadge}>{skill.version}</span>
-                          )}
-                          {skill.user_invocable && (
-                            <span className={`${styles.skillBadge} ${styles.skillBadgeAccent}`}>user</span>
-                          )}
-                          {skill.always_active && (
-                            <span className={`${styles.skillBadge} ${styles.skillBadgeGreen}`}>active</span>
-                          )}
-                          <button
-                            className={styles.mcpDisconnectBtn}
-                            onClick={(e) => { e.stopPropagation(); handleDelete(skill.name) }}
-                          >
-                            {t('common.delete')}
-                          </button>
-                        </div>
+                      <div className={styles.skillGridCardTop}>
+                        <span className={styles.skillCardIcon}>{icon}</span>
+                        <span className={styles.skillGridCardName}>{skill.name}</span>
                       </div>
-                      {skill.description && (
-                        <p className={styles.skillCardDesc}>{skill.description}</p>
+                      <p className={styles.skillGridCardDesc}>{skill.description}</p>
+                      {(skill.version || skill.always_active) && (
+                        <div className={styles.skillGridCardStatus}>
+                          {skill.version && <span className={styles.skillGridCardVer}>{skill.version}</span>}
+                          {skill.version && skill.always_active && <span className={styles.skillGridCardStatusDot} />}
+                          {skill.always_active && (
+                            <span className={styles.skillGridCardResident}>
+                              <span className={styles.skillGridCardResidentDot} />
+                              {t('skills.resident')}
+                            </span>
+                          )}
+                        </div>
                       )}
                     </div>
-                    {isSelected && (
-                      <div className={styles.skillDetail}>
-                        {loadingContent ? (
-                          <p className={styles.toolsEmpty}>{t('common.loading')}</p>
-                        ) : (
-                          <div className={styles.skillDetailRendered} dangerouslySetInnerHTML={{ __html: renderBody(skillContent!) }} />
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )})}
-                      </div>
-                    </div>
+                  )
+                })}
               </div>
-              )))}
+
+              {filtered.length > PAGE_SIZE && (
+                <div className={styles.skillPagination}>
+                  <span className={styles.skillPageInfo}>
+                    {t('skills.pageInfo', { total: String(filtered.length), current: String(safePage + 1), pages: String(totalPages) })}
+                  </span>
+                  <div className={styles.skillPageControls}>
+                    <button className={styles.skillPageBtn} disabled={safePage === 0} onClick={() => setPage(0)}>{t('skills.firstPage')}</button>
+                    <button className={styles.skillPageBtn} disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>{t('skills.previousPage')}</button>
+                    <button className={styles.skillPageBtn} disabled={safePage >= totalPages - 1} onClick={() => setPage(safePage + 1)}>{t('skills.nextPage')}</button>
+                    <button className={styles.skillPageBtn} disabled={safePage >= totalPages - 1} onClick={() => setPage(totalPages - 1)}>{t('skills.lastPage')}</button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          <p className={styles.lspInfoText}>{t('skills.infoText')}</p>
+        </div>
+
+        {/* ── Drawer: floating detail overlay ── */}
+        {selected && (
+          <>
+            <div
+              className={styles.skillDrawerBackdrop}
+              onClick={() => { setSelectedSkill(null); setSkillContent(null) }}
+            />
+            <div className={styles.skillDrawer}>
+            <div className={styles.skillDrawerHead}>
+              <div className={styles.skillDrawerTitle}>
+                <span className={styles.skillCardIcon}>{skillSource(selected.path).icon}</span>
+                <span className={styles.skillDrawerName}>{selected.name}</span>
+              </div>
+              <button
+                className={styles.skillDrawerClose}
+                onClick={() => { setSelectedSkill(null); setSkillContent(null) }}
+                title={t('skills.closeDetail')}
+              >✕</button>
             </div>
-            <p className={styles.lspInfoText}>
-              {t('skills.infoText')}
-            </p>
+
+            {(selected.version || selected.user_invocable || selected.always_active || selected.path) && (
+              <div className={styles.skillDrawerBadges}>
+                {selected.version && <span className={styles.skillBadge}>{selected.version}</span>}
+                {selected.user_invocable && <span className={`${styles.skillBadge} ${styles.skillBadgeAccent}`}>user</span>}
+                {selected.always_active && <span className={`${styles.skillBadge} ${styles.skillBadgeGreen}`}>active</span>}
+              </div>
+            )}
+
+            <div className={styles.skillDrawerBody}>
+              {loadingContent ? (
+                <p className={styles.toolsEmpty}>{t('common.loading')}</p>
+              ) : (
+                <div className={styles.skillDetailRendered} dangerouslySetInnerHTML={{ __html: renderBody(skillContent!) }} />
+              )}
+            </div>
+
+            <div className={styles.skillDrawerFoot}>
+              <button
+                className={styles.skillDrawerBtn}
+                onClick={() => handleCopyPath(selected.path)}
+                disabled={!selected.path}
+              >
+                {copied ? t('skills.pathCopied') : t('skills.copyPath')}
+              </button>
+              <button
+                className={`${styles.skillDrawerBtn} ${styles.skillDrawerBtnDanger}`}
+                onClick={() => handleDelete(selected.name)}
+              >
+                {t('common.delete')}
+              </button>
+            </div>
+          </div>
           </>
         )}
-        </div>
-      )}
+      </div>
     </>
   )
 }
