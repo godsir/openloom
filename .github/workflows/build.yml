@@ -28,6 +28,7 @@ jobs:
           $pkg = Get-Content frontend/package.json -Raw | ConvertFrom-Json
           $pkg.version = "$($pkg.version)-beta.${{ github.run_number }}"
           $pkg | ConvertTo-Json -Depth 32 | Set-Content frontend/package.json -Encoding utf8
+          Write-Host "Beta version: $($pkg.version)"
 
       - name: Build backend
         run: cargo build -p loom-cli --release
@@ -37,22 +38,6 @@ jobs:
         run: |
           npm install
           npm run build
-          npx electron-builder --win --publish never
-
-
-      - name: Create beta release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: "Beta Build #${{ github.run_number }}"
-          tag_name: "beta-${{ github.run_number }}"
-          files: frontend/dist/*.exe
-          prerelease: true
-          body: |
-            🚧 自动构建的测试版
-
-            **Commit**: [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
-            **构建号**: `#{${{ github.run_number }}}`
-            **分支**: `${{ github.ref_name }}`
-
-            ⚠️ 这是开发中的测试版本，可能有 bug。
-          token: ${{ secrets.GITHUB_TOKEN }}
+          npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

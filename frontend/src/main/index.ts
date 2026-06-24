@@ -90,11 +90,9 @@ app.whenReady().then(async () => {
   // Start 30-second config directory poll watcher for model config hot-reload
   startConfigWatcher()
 
-  // Auto-updater (only in production)
-  if (app.isPackaged) {
-    setupAutoUpdater(win)
-    checkForUpdates()
-  }
+  // Auto-updater
+  setupAutoUpdater(win)
+  checkForUpdates()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

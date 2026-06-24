@@ -24,9 +24,24 @@ function configureUpdater(): void {
     owner: 'godsir',
     repo: 'openloom',
   })
-  autoUpdater.allowPrerelease = channel === 'beta'
+  const isBeta = channel === 'beta'
+  if (isBeta) {
+    autoUpdater.channel = 'beta'
+  } else {
+    // The channel setter validates when transitioning from a non-null
+    // value, preventing us from clearing it. Reset internal field directly.
+    ;(autoUpdater as any)._channel = null
+    autoUpdater.allowDowngrade = false
+  }
+  autoUpdater.allowPrerelease = isBeta
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false
+
+  // Allow update checks in dev mode too (electron-updater skips unless
+  // app.isPackaged or forceDevUpdateConfig is true).
+  if (!app.isPackaged) {
+    autoUpdater.forceDevUpdateConfig = true
+  }
 }
 
 export function setupAutoUpdater(mainWindow: BrowserWindow): void {
@@ -56,16 +71,14 @@ export function setupAutoUpdater(mainWindow: BrowserWindow): void {
     mainWindow.webContents.send('update-error', err.message)
   })
 
-  // Automatic background checks only in packaged builds
-  if (!app.isPackaged) return
+  // Background checks: 30s after startup then every 4 hours
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch(() => {})
+  }, 30000)
 
   setInterval(() => {
     autoUpdater.checkForUpdates().catch(() => {})
   }, 4 * 60 * 60 * 1000)
-
-  setTimeout(() => {
-    autoUpdater.checkForUpdates().catch(() => {})
-  }, 30000)
 }
 
 export function checkForUpdates(): void {
