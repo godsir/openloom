@@ -26,9 +26,11 @@ jobs:
         shell: pwsh
         run: |
           $pkg = Get-Content frontend/package.json -Raw | ConvertFrom-Json
-          $pkg.version = "$($pkg.version)-beta.${{ github.run_number }}"
+          $betaVersion = "$($pkg.version)-beta.${{ github.run_number }}"
+          $pkg.version = $betaVersion
           $pkg | ConvertTo-Json -Depth 32 | Set-Content frontend/package.json -Encoding utf8
-          Write-Host "Beta version: $($pkg.version)"
+          "BETA_VERSION=$betaVersion" >> $env:GITHUB_ENV
+          Write-Host "Beta version: $betaVersion"
 
       - name: Build backend
         run: cargo build -p loom-cli --release
@@ -38,6 +40,25 @@ jobs:
         run: |
           npm install
           npm run build
-          npx electron-builder --win --publish always
+          npx electron-builder --win --publish never
+
+      - name: Create beta release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ env.BETA_VERSION }}"
+          name: "Beta ${{ env.BETA_VERSION }}"
+          prerelease: true
+          files: |
+            frontend/dist/*.exe
+            frontend/dist/*.exe.blockmap
+            frontend/dist/*.yml
+          body: |
+            🚧 自动构建的测试版
+
+            **版本**: `${{ env.BETA_VERSION }}`
+            **Commit**: [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+            **构建号**: #${{ github.run_number }}
+
+            ⚠️ 这是开发中的测试版本，可能有 bug。
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
