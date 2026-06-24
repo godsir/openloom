@@ -3553,7 +3553,10 @@ impl Orchestrator {
             stable_prompt.push_str(override_prompt);
         }
         // 3. User profile — learned facts about the user (context, not identity)
-        if !user_persona.is_empty() {
+        // Skipped when memory is disabled: the persona is memory-derived, so a
+        // memory-off session should not inject it (even if a stale value lingers
+        // in the global persona_context from a prior memory-on session).
+        if !user_persona.is_empty() && self.is_session_memory_enabled(session_id).await {
             stable_prompt.push_str(&format!("\n\n## User Profile\n{}", user_persona));
         }
 
@@ -3679,7 +3682,9 @@ impl Orchestrator {
         // Inject knowledge graph context — layer-aware (Phase 2):
         // Moved to dynamic context because entity candidates are extracted from
         // the current user message and change EVERY turn.
-        {
+        // Skipped entirely when memory is disabled for this session (saves the
+        // per-turn KG query + injection tokens for plain-chat sessions).
+        if self.is_session_memory_enabled(session_id).await {
             let mem_guard = self.memory_store.read().await;
             if let Some(ref store) = *mem_guard {
                 let candidates = extract_entity_candidates(user_message);
@@ -3820,7 +3825,9 @@ impl Orchestrator {
         // This captures all async extraction results from the previous turn
         // (which now runs in a non-blocking tokio::spawn task).
         // Phase 2: use rich persona with confidence scores and layered structure.
-        {
+        // Skipped when memory is disabled — persona is memory-derived, so a
+        // memory-off session should not inject a (stale) user profile either.
+        if self.is_session_memory_enabled(session_id).await {
             let store = self.memory_store.read().await;
             if let Some(ref s) = *store
                 && let Ok(Some(persona)) = s.get_rich_persona().await
@@ -4853,7 +4860,9 @@ impl Orchestrator {
         // This captures all async extraction results from the previous turn
         // (which now runs in a non-blocking tokio::spawn task).
         // Phase 2: use rich persona with confidence scores and layered structure.
-        {
+        // Skipped when memory is disabled (same rationale as
+        // process_message_with_config).
+        if self.is_session_memory_enabled(session_id).await {
             let store = self.memory_store.read().await;
             if let Some(ref s) = *store
                 && let Ok(Some(persona)) = s.get_rich_persona().await

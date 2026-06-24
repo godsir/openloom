@@ -13,6 +13,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -32,6 +34,33 @@ jobs:
           "BETA_VERSION=$betaVersion" >> $env:GITHUB_ENV
           Write-Host "Beta version: $betaVersion"
 
+      - name: Generate changelog
+        shell: bash
+        run: |
+          # Find latest stable tag ( vX.Y.Z without prerelease suffix )
+          STABLE_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | grep -v -- '-' | head -1)
+          if [ -z "$STABLE_TAG" ]; then
+            RANGE="HEAD~30..HEAD"
+          else
+            RANGE="${STABLE_TAG}..HEAD"
+          fi
+          echo "Changelog range: $RANGE"
+          COMMITS=$(git log "$RANGE" --pretty=format:'* %s' --no-merges)
+          {
+            echo "🚧 自动构建的测试版"
+            echo ""
+            echo "**版本**: \`${BETA_VERSION}\`"
+            echo "**构建号**: #${{ github.run_number }}"
+            echo ""
+            echo "## 更新内容"
+            echo ""
+            echo "$COMMITS"
+            echo ""
+            echo "⚠️ 这是开发中的测试版本，可能有 bug。"
+          } > release-notes.md
+          echo "--- generated notes ---"
+          cat release-notes.md
+
       - name: Build backend
         run: cargo build -p loom-cli --release
 
@@ -48,17 +77,10 @@ jobs:
           tag_name: "v${{ env.BETA_VERSION }}"
           name: "Beta ${{ env.BETA_VERSION }}"
           prerelease: true
+          body_path: release-notes.md
           files: |
             frontend/dist/*.exe
             frontend/dist/*.exe.blockmap
             frontend/dist/*.yml
-          body: |
-            🚧 自动构建的测试版
-
-            **版本**: `${{ env.BETA_VERSION }}`
-            **Commit**: [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
-            **构建号**: #${{ github.run_number }}
-
-            ⚠️ 这是开发中的测试版本，可能有 bug。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

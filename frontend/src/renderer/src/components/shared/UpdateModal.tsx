@@ -1,6 +1,8 @@
+import { useMemo, useRef, useEffect, useCallback } from 'react'
 import Overlay from './Overlay'
 import { useStore } from '../../stores'
 import { useLocale } from '../../i18n'
+import { sanitizeHtml } from '../../utils/markdown-sanitizer'
 import styles from './UpdateModal.module.css'
 
 function formatBytes(bytes: number): string {
@@ -26,20 +28,31 @@ export default function UpdateModal() {
 
   const { status, version, releaseNotes, progress, bytesPerSecond, transferred, total, error } = update
 
-  // electron-updater returns release notes as HTML from the GitHub API.
-  // Strip tags and decode entities for a clean plain-text display.
-  const cleanNotes = releaseNotes
-    ? releaseNotes
-        .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<[^>]*>/g, '')
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-        .replace(/\n{3,}/g, '\n\n')
-        .trim()
-    : null
+  // electron-updater returns release notes as HTML from the GitHub atom feed.
+  // Sanitize (strip scripts / dangerous attrs) then render as formatted HTML.
+  const safeNotes = useMemo(
+    () => (releaseNotes ? sanitizeHtml(releaseNotes) : ''),
+    [releaseNotes],
+  )
+
+  // Open external links in the system browser instead of navigating the window.
+  const notesRef = useRef<HTMLDivElement>(null)
+  const handleNotesClick = useCallback((e: MouseEvent) => {
+    const link = (e.target as HTMLElement).closest('a')
+    if (link) {
+      const href = link.getAttribute('href') || ''
+      if (/^https?:\/\//i.test(href)) {
+        e.preventDefault()
+        window.loom.openExternal(href)
+      }
+    }
+  }, [])
+  useEffect(() => {
+    const el = notesRef.current
+    if (!el) return
+    el.addEventListener('click', handleNotesClick)
+    return () => el.removeEventListener('click', handleNotesClick)
+  }, [handleNotesClick, safeNotes])
 
   const show = modalOpen && (status === 'available' || status === 'downloading' || status === 'downloaded' || status === 'error')
 
@@ -57,8 +70,12 @@ export default function UpdateModal() {
               {t('updates.found', { version: version || '' })}
             </div>
             <div className={styles.versionSub}>{t('updates.recommend')}</div>
-            {cleanNotes && (
-              <div className={styles.releaseNotes}>{cleanNotes}</div>
+            {safeNotes && (
+              <div
+                ref={notesRef}
+                className={styles.releaseNotes}
+                dangerouslySetInnerHTML={{ __html: safeNotes }}
+              />
             )}
             <div className={styles.actions}>
               <button className={styles.dismissBtn} onClick={dismissUpdate}>{t('updates.later')}</button>
