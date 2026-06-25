@@ -38,13 +38,13 @@ export default function AppShell({ children }: { children?: ReactNode }) {
   const isUpdateAvailable = update.status === 'available'
   const isEngineStopped = engineState === 'stopped'
 
-  const activeState: string = isEngineStopped ? 'crash' : (isStreaming && isDownloading) ? 'split' : isDownloading ? 'download' : isUpdateAvailable ? 'update' : isStreaming ? 'streaming' : 'idle'
+  const activeState: string = isEngineStopped ? 'crash' : (isStreaming && isDownloading) ? 'split' : update.status === 'downloaded' ? 'downloaded' : update.status === 'error' ? 'uperror' : isDownloading ? 'download' : isUpdateAvailable ? 'update' : isStreaming ? 'streaming' : 'idle'
 
   const islandExpanded = useStore(s => s.islandExpanded)
   const setIslandExpanded = useStore(s => s.setIslandExpanded)
 
   // idle/transient/split 不展开；其余状态可展开成详情卡片
-  const expandable = activeState === 'streaming' || activeState === 'download' || activeState === 'update' || activeState === 'crash'
+  const expandable = activeState === 'streaming' || activeState === 'download' || activeState === 'downloaded' || activeState === 'uperror' || activeState === 'update' || activeState === 'crash'
 
   const ISLAND_SIZE: Record<string, { w: number; h: number }> = {
     idle: { w: 250, h: 38 },
@@ -52,6 +52,8 @@ export default function AppShell({ children }: { children?: ReactNode }) {
     split: { w: 340, h: 38 },
     streaming: { w: 260, h: 84 },
     download: { w: 280, h: 84 },
+    downloaded: { w: 260, h: 84 },
+    uperror: { w: 240, h: 84 },
     update: { w: 260, h: 84 },
     crash: { w: 260, h: 84 },
   }

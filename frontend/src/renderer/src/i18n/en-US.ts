@@ -88,6 +88,10 @@ export const enUS: TranslationMap = {
   'island.preparing': 'Preparing download...',
   'island.noReleaseNotes': 'No release notes',
   'island.crashHint': 'Backend engine stopped. Click below to restart',
+  'island.downloaded': 'Downloaded',
+  'island.restartInstall': 'Restart & Install',
+  'island.updateFailed': 'Update Failed',
+  'island.retry': 'Retry',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': 'Sessions',

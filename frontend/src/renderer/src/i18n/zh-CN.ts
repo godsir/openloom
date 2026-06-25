@@ -88,6 +88,10 @@ export const zhCN: TranslationMap = {
   'island.preparing': '准备下载...',
   'island.noReleaseNotes': '暂无更新说明',
   'island.crashHint': '后端引擎已停止运行，点击下方按钮重启',
+  'island.downloaded': '下载完成',
+  'island.restartInstall': '重启安装',
+  'island.updateFailed': '更新失败',
+  'island.retry': '重试',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': '会话',

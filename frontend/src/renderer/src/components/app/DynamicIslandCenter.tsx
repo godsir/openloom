@@ -23,21 +23,25 @@ export default function DynamicIslandCenter() {
 
   const isStreaming = streamingIds.size > 0
   const isDownloading = update.status === 'downloading'
+  const isDownloaded = update.status === 'downloaded'
+  const isUpdateError = update.status === 'error'
   const isUpdateAvailable = update.status === 'available'
   const isEngineStopped = engineState === 'stopped'
   const hasTransient = !!islandTransient
   const isSplit = isStreaming && isDownloading
-  const expandable = isStreaming || isDownloading || isUpdateAvailable || isEngineStopped
+  const expandable = isStreaming || isDownloading || isDownloaded || isUpdateAvailable || isUpdateError || isEngineStopped
 
   const activeState = useMemo(() => {
     if (hasTransient) return 'transient' as const
     if (isEngineStopped) return 'crash' as const
     if (isSplit) return 'split' as const
+    if (isDownloaded) return 'downloaded' as const
+    if (isUpdateError) return 'uperror' as const
     if (isDownloading) return 'download' as const
     if (isUpdateAvailable) return 'update' as const
     if (isStreaming) return 'streaming' as const
     return 'idle' as const
-  }, [hasTransient, isEngineStopped, isSplit, isDownloading, isUpdateAvailable, isStreaming])
+  }, [hasTransient, isEngineStopped, isSplit, isDownloaded, isUpdateError, isDownloading, isUpdateAvailable, isStreaming])
 
   const activeStreamId = (currentSessionId && streamingIds.has(currentSessionId))
     ? currentSessionId
@@ -233,12 +237,45 @@ export default function DynamicIslandCenter() {
       <div className={styles.dynamicLayer} data-active={activeState === 'download' ? 'true' : 'false'}>
         <div className={styles.layerRow}>
           <IconDownload size={13} className={styles.dynamicIcon} />
-          <span className={styles.dynamicTitle}>{t('app.downloading')} {pct}%</span>
+          <span className={styles.dynamicTitle}>{t('app.downloading')} <span className={styles.dynamicNum}>{pct}%</span></span>
         </div>
         <div className={styles.layerRow}>
           <div className={styles.progressTrack}>
             <div className={styles.progressFill} style={{ width: `${pct}%` }} />
           </div>
+        </div>
+      </div>
+
+      {/* Downloaded — 待安装 */}
+      <div className={styles.dynamicLayer} data-active={activeState === 'downloaded' ? 'true' : 'false'}>
+        <div className={styles.layerRow}>
+          <IconCheck size={13} className={styles.dynamicIconCheck} />
+          <span className={styles.dynamicTitle}>{t('island.downloaded')}</span>
+        </div>
+        <div className={styles.layerRow}>
+          <button
+            className={styles.islandActionBtn}
+            onClick={() => useStore.getState().installUpdate()}
+          >
+            <IconRotateCcw size={12} />
+            {t('island.restartInstall')}
+          </button>
+        </div>
+      </div>
+
+      {/* Update error */}
+      <div className={styles.dynamicLayer} data-active={activeState === 'uperror' ? 'true' : 'false'}>
+        <div className={styles.layerRow}>
+          <IconAlertCircle size={13} className={styles.dynamicIconCrash} />
+          <span className={styles.dynamicTitle}>{t('island.updateFailed')}</span>
+        </div>
+        <div className={styles.layerRow}>
+          <button
+            className={styles.islandActionBtn}
+            onClick={() => useStore.getState().downloadUpdate()}
+          >
+            {t('island.retry')}
+          </button>
         </div>
       </div>
 

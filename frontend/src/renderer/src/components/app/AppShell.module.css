@@ -93,6 +93,15 @@
 
 .titlebarIsland[data-dynamic="download"] {
   border-color: rgba(var(--accent-rgb), 0.3);
+  animation: islandGlow 2.5s ease-in-out infinite;
+}
+
+.titlebarIsland[data-dynamic="downloaded"] {
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.titlebarIsland[data-dynamic="uperror"] {
+  border-color: rgba(239, 68, 68, 0.35);
 }
 
 .titlebarIsland[data-dynamic="update"] {
@@ -225,12 +234,36 @@
   white-space: nowrap;
 }
 
-/* streaming 状态标题：Siri 风格渐变流光 */
-.titlebarIsland[data-dynamic="streaming"] .dynamicTitle {
+/* 百分比数字等宽，防跳动 */
+.dynamicNum {
+  font-variant-numeric: tabular-nums;
+  display: inline-block;
+  min-width: 2.2em;
+  text-align: right;
+}
+
+/* streaming/download 状态标题：渐变流光 */
+.titlebarIsland[data-dynamic="streaming"] .dynamicTitle,
+.titlebarIsland[data-dynamic="download"] .dynamicTitle {
   background: linear-gradient(
     90deg,
     var(--text) 0%,
     var(--accent) 50%,
+    var(--text) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: titleShimmer 2.5s linear infinite;
+}
+
+/* downloaded 标题：绿色流光 */
+.titlebarIsland[data-dynamic="downloaded"] .dynamicTitle {
+  background: linear-gradient(
+    90deg,
+    var(--text) 0%,
+    #22c55e 50%,
     var(--text) 100%
   );
   background-size: 200% 100%;
@@ -451,18 +484,21 @@
   overflow: hidden;
 }
 
-/* 流光扫过 */
+/* 流光扫过 — 宽光带，柔和 */
 .progressFill::after {
   content: '';
   position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
-  animation: progressShine 1.4s ease-in-out infinite;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 60%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  animation: progressShine 1.2s linear infinite;
 }
 
 @keyframes progressShine {
   0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
+  100% { transform: translateX(250%); }
 }
 
 .windowControls {

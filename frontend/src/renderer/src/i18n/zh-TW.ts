@@ -88,6 +88,10 @@ export const zhTW: TranslationMap = {
   'island.preparing': '準備下載...',
   'island.noReleaseNotes': '暫無更新說明',
   'island.crashHint': '後端引擎已停止運作，點擊下方按鈕重啟',
+  'island.downloaded': '下載完成',
+  'island.restartInstall': '重啟安裝',
+  'island.updateFailed': '更新失敗',
+  'island.retry': '重試',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': '對話',

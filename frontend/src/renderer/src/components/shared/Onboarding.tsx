@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useLocale, type Locale } from '../../i18n'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
@@ -61,6 +61,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
 
   const [step, setStep] = useState(0)
   const [stepKey, setStepKey] = useState(0)
+  const [direction, setDirection] = useState<1 | -1>(1)
 
   // Step 0 – Language
   const [selLocale, setSelLocale] = useState<Locale>(locale)
@@ -81,14 +82,35 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
       .catch(() => {})
   }, [])
 
+  // 背景视差：鼠标移动驱动 orb 偏移（用 CSS 变量，rAF 节流）
+  const parallaxRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    let raf = 0
+    const onMove = (e: MouseEvent) => {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        const x = (e.clientX / window.innerWidth - 0.5) * 2 // -1..1
+        const y = (e.clientY / window.innerHeight - 0.5) * 2
+        const el = parallaxRef.current
+        if (el) el.style.setProperty('--parallax-x', x.toFixed(3)),
+          el.style.setProperty('--parallax-y', y.toFixed(3))
+      })
+    }
+    window.addEventListener('mousemove', onMove)
+    return () => { window.removeEventListener('mousemove', onMove); if (raf) cancelAnimationFrame(raf) }
+  }, [])
+
   // ── Navigation ──
 
   const goNext = () => {
+    setDirection(1)
     setStepKey((k) => k + 1)
     setStep((s) => Math.min(s + 1, TOTAL_STEPS - 1))
   }
 
   const goPrev = () => {
+    setDirection(-1)
     setStepKey((k) => k + 1)
     setStep((s) => Math.max(s - 1, 0))
   }
@@ -158,7 +180,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
   }
 
   return (
-    <div className={styles.backdrop}>
+    <div className={styles.backdrop} ref={parallaxRef}>
       {/* BG orbs */}
       <div className={`${styles.bgOrb} ${styles.bgOrb1}`} />
       <div className={`${styles.bgOrb} ${styles.bgOrb2}`} />
@@ -206,7 +228,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
         </div>
 
         {/* ── Content area ── */}
-        <div key={stepKey} className={styles.content}>
+        <div key={stepKey} className={styles.content} data-direction={direction}>
           {/* ═══ Step 0: Language ═══ */}
           {step === 0 && (
             <>
@@ -299,7 +321,18 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
                       className={`${styles.themeCard} ${selTheme === th.id ? styles.themeCardActive : ''}`}
                       onClick={() => handleSetTheme(th.id)}
                     >
-                      <span className={styles.themeSwatch} style={tc ? { background: tc.bg } : undefined} />
+                      <span className={styles.themeSwatch} style={tc ? { background: tc.bg, borderColor: tc.text27 } : undefined}>
+                        {tc && (
+                          <>
+                            <span className={styles.swatchSidebar} style={{ background: tc.surface }} />
+                            <span className={styles.swatchMain}>
+                              <span className={styles.swatchLine} style={{ background: tc.text27 }} />
+                              <span className={styles.swatchLine} style={{ background: tc.text13, width: '60%' }} />
+                              <span className={styles.swatchAccent} style={{ background: tc.accent }} />
+                            </span>
+                          </>
+                        )}
+                      </span>
                       <span className={styles.themeName}>{th.label}</span>
                     </button>
                   )})}

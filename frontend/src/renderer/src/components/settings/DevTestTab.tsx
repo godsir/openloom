@@ -2,8 +2,63 @@ import { useState } from 'react'
 import { useLocale } from '../../i18n'
 import { useStore } from '../../stores'
 import TypingIndicator from '../shared/TypingIndicator'
+import { IconDownload, IconCheck, IconAlertCircle } from '../../utils/icons'
 import styles from '../shared/SettingsModal.module.css'
 import tabStyles from './DevTestTab.module.css'
+
+/** 迷你更新弹窗预览卡片：点击设置对应状态（不弹窗），高亮当前激活态 */
+function UpdatePreviewCard({ label, labelCn, onClick }: { label: string; labelCn: string; onClick: () => void }) {
+  const update = useStore((s) => s.update)
+  const { t } = useLocale()
+  const status = update.status
+  const matched = label.toLowerCase() === status
+  const pct = Math.round(update.progress)
+
+  const render = () => {
+    if (label === 'Available') {
+      return (
+        <div className={tabStyles.previewBody}>
+          <div className={tabStyles.previewHeader}><IconDownload size={14} className={tabStyles.previewIcon} />{t('updates.found', { version: update.version ?? '' })}</div>
+          <div className={tabStyles.previewNotes}>{update.releaseNotes?.slice(0, 60) ?? ''}</div>
+          <div className={tabStyles.previewActions}><span className={tabStyles.previewPrimary}>{t('updates.download')}</span></div>
+        </div>
+      )
+    }
+    if (label === 'Downloading') {
+      return (
+        <div className={tabStyles.previewBody}>
+          <div className={tabStyles.previewHeader}><IconDownload size={14} className={tabStyles.previewIcon} />{t('updates.downloading', { version: update.version ?? '' })}</div>
+          <div className={tabStyles.previewPct}>{pct}%</div>
+          <div className={tabStyles.previewBar}><div className={tabStyles.previewBarFill} style={{ width: `${pct}%` }} /></div>
+        </div>
+      )
+    }
+    if (label === 'Downloaded') {
+      return (
+        <div className={tabStyles.previewBody}>
+          <div className={tabStyles.previewHeader}><IconCheck size={14} className={tabStyles.previewIconSuccess} />{t('updates.downloadComplete', { version: update.version ?? '' })}</div>
+          <div className={tabStyles.previewActions}><span className={tabStyles.previewPrimary}>{t('updates.restartNow')}</span></div>
+        </div>
+      )
+    }
+    return (
+      <div className={tabStyles.previewBody}>
+        <div className={tabStyles.previewHeader}><IconAlertCircle size={14} className={tabStyles.previewIconError} />{t('updates.failed')}</div>
+        <div className={tabStyles.previewError}>{update.error ?? ''}</div>
+      </div>
+    )
+  }
+
+  return (
+    <button
+      className={`${tabStyles.updatePreviewCard} ${matched ? tabStyles.previewActive : ''}`}
+      onClick={onClick}
+    >
+      <div className={tabStyles.previewLabel}>{labelCn}{matched && ' ●'}</div>
+      {render()}
+    </button>
+  )
+}
 
 export default function DevTestTab() {
   const { t } = useLocale()
@@ -153,10 +208,10 @@ export default function DevTestTab() {
           <h4 className={tabStyles.sectionTitle}>{t('devTest.dialogsSection')}</h4>
           <p className={tabStyles.sectionDesc}>{t('devTest.dialogsDesc')}</p>
           <div className={tabStyles.btnRow}>
-            <button className={tabStyles.btnDanger} onClick={triggerHighRiskPermission}>High‑Risk Permission</button>
-            <button className={tabStyles.btnWarning} onClick={triggerMediumRiskPermission}>Medium‑Risk Permission</button>
-            <button className={tabStyles.btnDangerOutline} onClick={triggerConfirmDanger}>Confirm (Danger)</button>
-            <button className={tabStyles.btnOutline} onClick={triggerConfirmNormal}>Confirm (Normal)</button>
+            <button className={tabStyles.btnDanger} onClick={triggerHighRiskPermission}>高风险权限</button>
+            <button className={tabStyles.btnWarning} onClick={triggerMediumRiskPermission}>中风险权限</button>
+            <button className={tabStyles.btnDangerOutline} onClick={triggerConfirmDanger}>危险确认</button>
+            <button className={tabStyles.btnOutline} onClick={triggerConfirmNormal}>普通确认</button>
           </div>
         </div>
 
@@ -167,14 +222,14 @@ export default function DevTestTab() {
           <h4 className={tabStyles.sectionTitle}>{t('devTest.toastSection')}</h4>
           <p className={tabStyles.sectionDesc}>{t('devTest.toastDesc')}</p>
           <div className={tabStyles.btnRow}>
-            <button className={tabStyles.btnToastInfo} onClick={() => showToast('info')}>Info</button>
-            <button className={tabStyles.btnToastSuccess} onClick={() => showToast('success')}>Success</button>
-            <button className={tabStyles.btnToastWarning} onClick={() => showToast('warning')}>Warning</button>
-            <button className={tabStyles.btnToastError} onClick={() => showToast('error')}>Error</button>
-            <button className={tabStyles.btnOutline} onClick={showLongToast}>Long Text</button>
-            <button className={tabStyles.btnAccent} onClick={showActionToast}>With Action</button>
-            <button className={tabStyles.btnAccentOutline} onClick={showPersistentToast}>Persistent</button>
-            <button className={tabStyles.btnOutline} onClick={showStackedToasts}>Stack 4</button>
+            <button className={tabStyles.btnToastInfo} onClick={() => showToast('info')}>信息</button>
+            <button className={tabStyles.btnToastSuccess} onClick={() => showToast('success')}>成功</button>
+            <button className={tabStyles.btnToastWarning} onClick={() => showToast('warning')}>警告</button>
+            <button className={tabStyles.btnToastError} onClick={() => showToast('error')}>错误</button>
+            <button className={tabStyles.btnOutline} onClick={showLongToast}>长文本</button>
+            <button className={tabStyles.btnAccent} onClick={showActionToast}>带操作</button>
+            <button className={tabStyles.btnAccentOutline} onClick={showPersistentToast}>持久化</button>
+            <button className={tabStyles.btnOutline} onClick={showStackedToasts}>堆叠 4 个</button>
           </div>
         </div>
 
@@ -182,14 +237,39 @@ export default function DevTestTab() {
 
         {/* ── Update Modal States ── */}
         <div className={tabStyles.section}>
-          <h4 className={tabStyles.sectionTitle}>Update Modal</h4>
-          <p className={tabStyles.sectionDesc}>Simulate each update flow UI state.</p>
+          <h4 className={tabStyles.sectionTitle}>更新弹窗</h4>
+          <p className={tabStyles.sectionDesc}>模拟更新流程各状态 UI。</p>
           <div className={tabStyles.btnRow}>
-            <button className={tabStyles.btnOutline} onClick={triggerUpdateAvailable}>Available</button>
-            <button className={tabStyles.btnOutline} onClick={triggerUpdateDownloading}>Downloading</button>
-            <button className={tabStyles.btnOutline} onClick={triggerUpdateDownloaded}>Downloaded</button>
-            <button className={tabStyles.btnDangerOutline} onClick={triggerUpdateError}>Error</button>
-            <button className={tabStyles.btnOutline} onClick={dismissUpdate}>Dismiss</button>
+            <button className={tabStyles.btnOutline} onClick={triggerUpdateAvailable}>有更新</button>
+            <button className={tabStyles.btnOutline} onClick={triggerUpdateDownloading}>下载中</button>
+            <button className={tabStyles.btnOutline} onClick={triggerUpdateDownloaded}>已下载</button>
+            <button className={tabStyles.btnDangerOutline} onClick={triggerUpdateError}>错误</button>
+            <button className={tabStyles.btnOutline} onClick={dismissUpdate}>忽略</button>
+          </div>
+
+          {/* 内联预览：不弹窗，直接展示各状态 */}
+          <p className={tabStyles.sectionDesc} style={{ marginTop: 14 }}>内联预览（不弹窗）：</p>
+          <div className={tabStyles.updatePreviewRow}>
+            <UpdatePreviewCard
+              label="Available"
+              labelCn="有更新"
+              onClick={() => set({ update: { status: 'available' as const, version: '9.9.9-test', releaseNotes: '## What\'s Changed\n\n- New feature A\n- Bug fix B', progress: 0, bytesPerSecond: 0, transferred: 0, total: 0, error: null }, updateModalOpen: false })}
+            />
+            <UpdatePreviewCard
+              label="Downloading"
+              labelCn="下载中"
+              onClick={() => set({ update: { status: 'downloading' as const, version: '9.9.9-test', releaseNotes: null, progress: 67, bytesPerSecond: 1024 * 1024 * 2, transferred: 35_000_000, total: 52_000_000, error: null }, updateModalOpen: false })}
+            />
+            <UpdatePreviewCard
+              label="Downloaded"
+              labelCn="已下载"
+              onClick={() => set({ update: { status: 'downloaded' as const, version: '9.9.9-test', releaseNotes: null, progress: 100, bytesPerSecond: 0, transferred: 52_000_000, total: 52_000_000, error: null }, updateModalOpen: false })}
+            />
+            <UpdatePreviewCard
+              label="Error"
+              labelCn="错误"
+              onClick={() => set({ update: { status: 'error' as const, version: '9.9.9-test', releaseNotes: null, progress: 0, bytesPerSecond: 0, transferred: 0, total: 0, error: 'Failed to download update: network timeout after 30s' }, updateModalOpen: false })}
+            />
           </div>
         </div>
 
@@ -203,27 +283,27 @@ export default function DevTestTab() {
             <button className={tabStyles.btnOutline} onClick={() => {
               useStore.getState().removeStreamingSession('test-dynamic')
               useStore.setState({ update: { ...useStore.getState().update, status: 'idle' }, engineState: 'running' })
-            }}>Reset (Idle)</button>
+            }}>重置 (空闲)</button>
             <button className={tabStyles.btnAccentOutline} onClick={() => {
               useStore.getState().addStreamingSession('test-dynamic')
               useStore.getState().setStreamingActivity('test-dynamic', { phase: 'generating' })
-            }}>AI Generating</button>
+            }}>AI 生成中</button>
             <button className={tabStyles.btnOutline} onClick={() => {
               useStore.getState().addStreamingSession('test-dynamic')
               useStore.getState().setStreamingActivity('test-dynamic', { phase: 'thinking' })
-            }}>Thinking</button>
+            }}>思考中</button>
             <button className={tabStyles.btnOutline} onClick={() => {
               useStore.getState().addStreamingSession('test-dynamic')
               useStore.getState().setStreamingActivity('test-dynamic', { phase: 'tool', detail: 'read_file' })
-            }}>Tool Call</button>
+            }}>工具调用</button>
             <button className={tabStyles.btnOutline} onClick={() => {
               useStore.getState().addStreamingSession('test-dynamic')
               useStore.getState().setStreamingActivity('test-dynamic', { phase: 'skill', detail: 'web_search' })
-            }}>Skill Call</button>
+            }}>技能调用</button>
             <button className={tabStyles.btnOutline} onClick={() => {
               useStore.getState().addStreamingSession('test-dynamic')
               useStore.getState().setStreamingActivity('test-dynamic', { phase: 'vision', visionDone: 2, visionTotal: 3 })
-            }}>Vision</button>
+            }}>视觉处理</button>
             <button className={tabStyles.btnAccentOutline} onClick={() => {
               // 自动流转演示：thinking → tool → generating
               useStore.getState().addStreamingSession('test-dynamic')
@@ -231,27 +311,27 @@ export default function DevTestTab() {
               s.setStreamingActivity('test-dynamic', { phase: 'thinking' })
               setTimeout(() => useStore.getState().setStreamingActivity('test-dynamic', { phase: 'tool', detail: 'read_file' }), 1500)
               setTimeout(() => useStore.getState().setStreamingActivity('test-dynamic', { phase: 'generating' }), 3000)
-            }}>Auto Flow</button>
+            }}>自动流转</button>
             <button className={tabStyles.btnOutline} onClick={() => {
               useStore.getState().removeStreamingSession('test-dynamic')
               useStore.setState({ update: { ...useStore.getState().update, status: 'downloading', version: '9.9.9-test', progress: 0.67 } })
-            }}>Downloading</button>
+            }}>下载中</button>
             <button className={tabStyles.btnOutline} onClick={() => {
               useStore.getState().removeStreamingSession('test-dynamic')
               useStore.setState({ update: { ...useStore.getState().update, status: 'available', version: '9.9.9-test' } })
-            }}>Update Available</button>
+            }}>有更新</button>
             <button className={tabStyles.btnDangerOutline} onClick={() => {
               useStore.getState().removeStreamingSession('test-dynamic')
               useStore.setState({ update: { ...useStore.getState().update, status: 'idle' }, engineState: 'stopped' })
-            }}>Engine Crash</button>
+            }}>引擎崩溃</button>
             <button className={tabStyles.btnToastSuccess} onClick={() => {
               useStore.getState().showIslandTransient('已复制')
-            }}>Transient (Copied)</button>
+            }}>瞬态反馈 (已复制)</button>
             <button className={tabStyles.btnAccentOutline} onClick={() => {
               useStore.getState().addStreamingSession('test-dynamic')
               useStore.getState().setStreamingActivity('test-dynamic', { phase: 'generating' })
               useStore.setState({ update: { ...useStore.getState().update, status: 'downloading', version: '9.9.9-test', progress: 0.45 } })
-            }}>Split (Stream+DL)</button>
+            }}>分屏 (生成+下载)</button>
           </div>
         </div>
 
@@ -259,35 +339,35 @@ export default function DevTestTab() {
 
         {/* ── Status Bars & Misc ── */}
         <div className={tabStyles.section}>
-          <h4 className={tabStyles.sectionTitle}>Status Bars & Misc</h4>
-          <p className={tabStyles.sectionDesc}>Preview inline status indicators and small UI elements.</p>
+          <h4 className={tabStyles.sectionTitle}>状态栏与其他</h4>
+          <p className={tabStyles.sectionDesc}>预览内联状态指示器和小型 UI 元素。</p>
 
           {/* Status bar previews */}
           <div className={tabStyles.statusPreviewGroup}>
             <div className={tabStyles.statusBar}>
-              <span className={tabStyles.statusDot} /> AI is replying...
+              <span className={tabStyles.statusDot} /> AI 正在回复...
             </div>
             <div className={`${tabStyles.statusBar} ${tabStyles.statusBarPurple}`}>
-              <span className={tabStyles.statusLabel}>Subagent:</span> scanning files...
+              <span className={tabStyles.statusLabel}>子代理：</span> 扫描文件中...
             </div>
             <div className={`${tabStyles.statusBar} ${tabStyles.statusBarRed}`}>
-              <span>!</span> Connection lost — reconnecting in 3s
+              <span>!</span> 连接已断开 — 3 秒后重连
             </div>
           </div>
 
           {/* Typing indicator & overlays */}
           <div className={tabStyles.btnRow} style={{ marginTop: 14 }}>
             <button className={tabStyles.btnOutline} onClick={() => setShowTyping(!showTyping)}>
-              {showTyping ? 'Hide' : 'Show'} Typing Indicator
+              {showTyping ? '隐藏' : '显示'}打字指示器
             </button>
             <button className={tabStyles.btnAccentOutline} onClick={() => setShowOnboarding(true)}>
-              Show Onboarding
+              显示引导页
             </button>
           </div>
           {showTyping && (
             <div className={tabStyles.inlinePreview}>
               <TypingIndicator />
-              <span className={tabStyles.inlineLabel}>AI is thinking...</span>
+              <span className={tabStyles.inlineLabel}>AI 思考中...</span>
             </div>
           )}
         </div>

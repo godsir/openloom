@@ -3,6 +3,7 @@ import Overlay from './Overlay'
 import { useStore } from '../../stores'
 import { useLocale } from '../../i18n'
 import { sanitizeHtml } from '../../utils/markdown-sanitizer'
+import { IconCheck, IconAlertCircle, IconDownload } from '../../utils/icons'
 import styles from './UpdateModal.module.css'
 
 function formatBytes(bytes: number): string {
@@ -57,7 +58,11 @@ export default function UpdateModal() {
   const show = modalOpen && (status === 'available' || status === 'downloading' || status === 'downloaded' || status === 'error')
 
   const handleClose = () => {
-    if (status === 'downloading') return
+    // 下载中：关弹窗但保留下载状态（后台继续，灵动岛仍显示进度）
+    if (status === 'downloading') {
+      useStore.getState().closeUpdateModal()
+      return
+    }
     dismissUpdate()
   }
 
@@ -67,6 +72,7 @@ export default function UpdateModal() {
         {status === 'available' && (
           <>
             <div className={styles.versionHeader}>
+              <IconDownload size={20} className={styles.headerIcon} />
               {t('updates.found', { version: version || '' })}
             </div>
             <div className={styles.versionSub}>{t('updates.recommend')}</div>
@@ -88,6 +94,7 @@ export default function UpdateModal() {
         {status === 'downloading' && (
           <>
             <div className={styles.versionHeader}>
+              <IconDownload size={20} className={styles.headerIcon} />
               {t('updates.downloading', { version: version || '' })}
             </div>
             <div className={styles.progressSection}>
@@ -106,6 +113,7 @@ export default function UpdateModal() {
         {status === 'downloaded' && (
           <>
             <div className={styles.versionHeader}>
+              <IconCheck size={20} className={styles.headerIconSuccess} />
               {t('updates.downloadComplete', { version: version || '' })}
             </div>
             <div className={styles.downloadedInfo}>
@@ -120,7 +128,10 @@ export default function UpdateModal() {
 
         {status === 'error' && (
           <>
-            <div className={styles.versionHeader}>{t('updates.failed')}</div>
+            <div className={styles.versionHeader}>
+              <IconAlertCircle size={20} className={styles.headerIconError} />
+              {t('updates.failed')}
+            </div>
             <div className={styles.errorMessage}>{error}</div>
             <div className={styles.actions}>
               <button className={styles.dismissBtn} onClick={dismissUpdate}>{t('common.close')}</button>
