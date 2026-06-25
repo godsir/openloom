@@ -49,6 +49,14 @@ export default function ChatArea() {
     setShowScrollBtn(false)
   }, [sessionId])
 
+  // 会话切换时短暂禁用单条消息入场动画，避免整列错位动画；整体用列表淡入
+  const [switchFade, setSwitchFade] = useState(false)
+  useEffect(() => {
+    setSwitchFade(true)
+    const timer = setTimeout(() => setSwitchFade(false), 350)
+    return () => clearTimeout(timer)
+  }, [sessionId])
+
   const handleScroll = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
@@ -104,9 +112,15 @@ export default function ChatArea() {
           </div>
         </div>
       ) : (
-        <div className={styles.chatScroll} ref={scrollRef} onScroll={handleScroll}>
+        <div className={styles.chatScroll} ref={scrollRef} onScroll={handleScroll} data-switch={switchFade ? 'true' : 'false'}>
           {messages.map((msg, idx) => (
-            <div key={msg.id} className={styles.messageGap} data-message-id={msg.id}>
+            <div
+              key={msg.id}
+              className={styles.messageGap}
+              data-message-id={msg.id}
+              data-streaming={isStreaming && idx === messages.length - 1 && msg.role === 'assistant' ? 'true' : 'false'}
+              data-switch={switchFade ? 'true' : 'false'}
+            >
               {msg.role === 'user'
                 ? <UserMessage message={msg} />
                 : <AssistantMessage

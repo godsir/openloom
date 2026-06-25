@@ -189,6 +189,7 @@ export default function SettingsPage() {
       </div>
 
       <div className={styles.content} ref={contentRef}>
+        <div key={tab} className={styles.tabView}>
         {tab === 'software' && <SoftwareTab theme={theme} setTheme={setTheme} />}
 
         {tab === 'shortcuts' && <ShortcutsTab />}
@@ -283,6 +284,7 @@ export default function SettingsPage() {
         {tab === 'token' && <TokenTab />}
         {tab === 'devtest' && <DevTestTab />}
         {tab === 'about' && <AboutTab wsState={wsState} />}
+        </div>
 
         {/* Scroll-to-top */}
         {showScrollTop && (

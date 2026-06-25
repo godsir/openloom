@@ -1,4 +1,5 @@
 import { useStore } from '../stores'
+import type { StreamingActivity } from '../stores/streaming'
 import { renderMarkdown } from '../utils/markdown'
 import { sanitizeHtml } from '../utils/markdown-sanitizer'
 import { t } from '../i18n'
@@ -66,6 +67,7 @@ class StreamBufferManager {
     buf.visionDone = false
     buf.visionBatches = []
     if (buf.rafId) { cancelAnimationFrame(buf.rafId); buf.rafId = null }
+    useStore.getState().setStreamingActivity(sessionId, { phase: 'generating' })
   }
 
   /** Remove a message from the store by ID. */
@@ -461,6 +463,9 @@ class StreamBufferManager {
       next.set(sessionId, updatedMsgs)
       useStore.setState({ messagesBySession: next })
     }
+
+    // 同步生成子阶段到灵动岛
+    this.pushActivity(sessionId, buf)
   }
 
   // Render markdown at newline boundaries to avoid flicker (tables, code fences).
@@ -474,6 +479,32 @@ class StreamBufferManager {
     const tail = lastNewline >= 0 ? source.slice(lastNewline + 1) : source
     if (!stable) return sanitizeHtml(renderMarkdown(tail))
     return sanitizeHtml(renderMarkdown(stable)) + '\n' + escapeHtml(tail)
+  }
+
+  /** 从 buffer 状态推导当前生成子阶段，供灵动岛流转显示 */
+  private deriveActivity(buf: BufferState): StreamingActivity {
+    // 视觉处理优先级最高
+    if (buf.inVision || buf.visionBatches.some(b => b.status === 'running')) {
+      const done = buf.visionBatches.filter(b => b.status === 'done').length
+      const total = buf.visionBatches[0]?.totalBatches ?? 0
+      return { phase: 'vision', visionDone: done, visionTotal: total }
+    }
+    if (buf.inThinking) {
+      return { phase: 'thinking' }
+    }
+    const runningSkill = buf.skillCalls.find(s => s.status === 'running')
+    if (runningSkill) {
+      return { phase: 'skill', detail: runningSkill.name }
+    }
+    const runningTool = buf.shellCalls.find(s => s.status === 'running')
+    if (runningTool) {
+      return { phase: 'tool', detail: runningTool.name }
+    }
+    return { phase: 'generating' }
+  }
+
+  private pushActivity(sessionId: string, buf: BufferState): void {
+    useStore.getState().setStreamingActivity(sessionId, this.deriveActivity(buf))
   }
 
   snapshot(sessionId: string): BufferState | null {

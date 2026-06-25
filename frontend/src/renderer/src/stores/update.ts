@@ -160,7 +160,8 @@ export const createUpdateSlice: StateCreator<UpdateSlice> = (set, get) => ({
       return
     }
     const version = get().update.version
-    set({ updateModalOpen: false, dismissedVersion: version })
+    // 清除 update 状态（灵动岛不再显示），并记录已忽略版本
+    set({ update: { ...initialUpdate }, updateModalOpen: false, dismissedVersion: version })
   },
 
   closeUpdateModal: () => {

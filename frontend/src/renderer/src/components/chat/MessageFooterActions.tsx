@@ -43,7 +43,10 @@ export default function MessageFooterActions({ messageId, role, timestamp, usage
       .filter((b) => b.type === 'text')
       .map((b) => (b.source as string) || (b.html as string) || '')
       .join('\n')
-    if (text) navigator.clipboard.writeText(text)
+    if (text) {
+      navigator.clipboard.writeText(text)
+      useStore.getState().showIslandTransient(t('island.copied'))
+    }
   }
 
   const handleDelete = async () => {

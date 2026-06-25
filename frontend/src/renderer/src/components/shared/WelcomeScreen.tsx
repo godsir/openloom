@@ -33,7 +33,6 @@ export default function WelcomeScreen() {
             className={styles.bannerImg}
           />
         </div>
-        <h1 className={styles.title}>openLoom</h1>
         <p className={styles.subtitle}>{t('welcome.subtitle')}</p>
 
         <div className={styles.features}>

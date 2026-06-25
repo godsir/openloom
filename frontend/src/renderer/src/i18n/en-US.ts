@@ -7,6 +7,7 @@ export const enUS: TranslationMap = {
   'common.delete': 'Delete',
   'common.confirm': 'Confirm',
   'common.close': 'Close',
+  'common.dismiss': 'Dismiss',
   'common.back': 'Back',
   'common.backToTop': 'Back to top',
 
@@ -68,6 +69,25 @@ export const enUS: TranslationMap = {
   'app.maximize': 'Maximize',
   'app.toggleSidebar': 'Toggle Sidebar',
   'app.modeSwitch': 'Mode Switch',
+  'app.generating': 'Generating...',
+  'app.generatingHint': 'Thinking, please wait',
+  'app.downloading': 'Downloading',
+  'app.updateAvailable': 'Update Available',
+  'app.updateNow': 'Update Now',
+
+  // ── Dynamic Island ──────────────────────────────────────────────
+  'island.thinking': 'Thinking...',
+  'island.thinkingHint': 'Reasoning through it',
+  'island.vision': 'Analyzing image',
+  'island.visionHint': 'Recognizing content',
+  'island.visionProgress': 'Processing {done}/{total}',
+  'island.skill': 'Running skill',
+  'island.tool': 'Calling tool',
+  'island.copied': 'Copied',
+  'island.streamingHint': 'Interacting with AI, auto-restores when done',
+  'island.preparing': 'Preparing download...',
+  'island.noReleaseNotes': 'No release notes',
+  'island.crashHint': 'Backend engine stopped. Click below to restart',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': 'Sessions',

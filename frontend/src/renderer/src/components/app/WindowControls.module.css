@@ -1,11 +1,13 @@
 .controls {
   display: flex;
-  align-self: stretch;
+  align-items: center;
+  gap: 6px;
   -webkit-app-region: no-drag;
 }
 
 .btn {
-  width: 46px;
+  width: 30px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -13,12 +15,13 @@
   background: none;
   border: none;
   cursor: pointer;
+  border-radius: var(--r-md);
   transition: all 0.15s ease;
 }
 
 .btn:hover {
   color: var(--text);
-  background: var(--bg-active);
+  background: var(--accent-subtle);
 }
 
 .closeBtn {

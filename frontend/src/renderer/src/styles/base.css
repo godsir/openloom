@@ -346,10 +346,6 @@ body{
   }
 }
 
-@media(prefers-reduced-motion:reduce){
-  *,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}
-}
-
 /* ================================================================
    GPU COMPOSITE LAYER PROMOTION
    Prevents Win11 DWM flickering: backdrop-filter + opacity

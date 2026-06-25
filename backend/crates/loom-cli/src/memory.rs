@@ -266,8 +266,12 @@ impl MemoryStore for LoomMemoryStore {
 
     async fn load_history(&self, session_id: &str, limit: usize) -> Result<Vec<Message>> {
         let store = self.session_db.lock().expect("lock poisoned");
+        // 取最近 limit 条，再按 seq 升序返回（正序展示）。子查询 DESC 取最近，外层 ASC 正序。
         let mut stmt = store.conn().prepare(
-            "SELECT role, content, metadata, timestamp FROM message_history WHERE session_id = ?1 ORDER BY seq ASC LIMIT ?2"
+            "SELECT role, content, metadata, timestamp FROM (
+                SELECT role, content, metadata, timestamp, seq FROM message_history
+                WHERE session_id = ?1 ORDER BY seq DESC LIMIT ?2
+            ) ORDER BY seq ASC"
         )?;
         let rows = stmt.query_map(rusqlite::params![session_id, limit as i64], |row| {
             let role: String = row.get(0)?;

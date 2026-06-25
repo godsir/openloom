@@ -7,6 +7,7 @@ export const zhTW: TranslationMap = {
   'common.delete': '刪除',
   'common.confirm': '確認',
   'common.close': '關閉',
+  'common.dismiss': '忽略',
   'common.back': '返回',
   'common.backToTop': '回到顶部',
 
@@ -68,6 +69,25 @@ export const zhTW: TranslationMap = {
   'app.maximize': '最大化',
   'app.toggleSidebar': '切換側邊欄',
   'app.modeSwitch': '模式切換',
+  'app.generating': 'AI 生成中...',
+  'app.generatingHint': '正在思考，請稍候',
+  'app.downloading': '下載中',
+  'app.updateAvailable': '新版本可用',
+  'app.updateNow': '立即更新',
+
+  // ── Dynamic Island ──────────────────────────────────────────────
+  'island.thinking': '正在思考...',
+  'island.thinkingHint': '梳理思路中',
+  'island.vision': '分析圖片中',
+  'island.visionHint': '辨識圖像內容',
+  'island.visionProgress': '處理 {done}/{total} 張',
+  'island.skill': '呼叫技能',
+  'island.tool': '呼叫工具',
+  'island.copied': '已複製',
+  'island.streamingHint': '正在與 AI 互動，結束後自動恢復',
+  'island.preparing': '準備下載...',
+  'island.noReleaseNotes': '暫無更新說明',
+  'island.crashHint': '後端引擎已停止運作，點擊下方按鈕重啟',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': '對話',

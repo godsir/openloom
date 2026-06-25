@@ -195,6 +195,68 @@ export default function DevTestTab() {
 
         <div className={tabStyles.divider} />
 
+        {/* ── Dynamic Island States ── */}
+        <div className={tabStyles.section}>
+          <h4 className={tabStyles.sectionTitle}>Dynamic Island</h4>
+          <p className={tabStyles.sectionDesc}>模拟灵动岛状态，直接在设置页查看效果。</p>
+          <div className={tabStyles.btnRow}>
+            <button className={tabStyles.btnOutline} onClick={() => {
+              useStore.getState().removeStreamingSession('test-dynamic')
+              useStore.setState({ update: { ...useStore.getState().update, status: 'idle' }, engineState: 'running' })
+            }}>Reset (Idle)</button>
+            <button className={tabStyles.btnAccentOutline} onClick={() => {
+              useStore.getState().addStreamingSession('test-dynamic')
+              useStore.getState().setStreamingActivity('test-dynamic', { phase: 'generating' })
+            }}>AI Generating</button>
+            <button className={tabStyles.btnOutline} onClick={() => {
+              useStore.getState().addStreamingSession('test-dynamic')
+              useStore.getState().setStreamingActivity('test-dynamic', { phase: 'thinking' })
+            }}>Thinking</button>
+            <button className={tabStyles.btnOutline} onClick={() => {
+              useStore.getState().addStreamingSession('test-dynamic')
+              useStore.getState().setStreamingActivity('test-dynamic', { phase: 'tool', detail: 'read_file' })
+            }}>Tool Call</button>
+            <button className={tabStyles.btnOutline} onClick={() => {
+              useStore.getState().addStreamingSession('test-dynamic')
+              useStore.getState().setStreamingActivity('test-dynamic', { phase: 'skill', detail: 'web_search' })
+            }}>Skill Call</button>
+            <button className={tabStyles.btnOutline} onClick={() => {
+              useStore.getState().addStreamingSession('test-dynamic')
+              useStore.getState().setStreamingActivity('test-dynamic', { phase: 'vision', visionDone: 2, visionTotal: 3 })
+            }}>Vision</button>
+            <button className={tabStyles.btnAccentOutline} onClick={() => {
+              // 自动流转演示：thinking → tool → generating
+              useStore.getState().addStreamingSession('test-dynamic')
+              const s = useStore.getState()
+              s.setStreamingActivity('test-dynamic', { phase: 'thinking' })
+              setTimeout(() => useStore.getState().setStreamingActivity('test-dynamic', { phase: 'tool', detail: 'read_file' }), 1500)
+              setTimeout(() => useStore.getState().setStreamingActivity('test-dynamic', { phase: 'generating' }), 3000)
+            }}>Auto Flow</button>
+            <button className={tabStyles.btnOutline} onClick={() => {
+              useStore.getState().removeStreamingSession('test-dynamic')
+              useStore.setState({ update: { ...useStore.getState().update, status: 'downloading', version: '9.9.9-test', progress: 0.67 } })
+            }}>Downloading</button>
+            <button className={tabStyles.btnOutline} onClick={() => {
+              useStore.getState().removeStreamingSession('test-dynamic')
+              useStore.setState({ update: { ...useStore.getState().update, status: 'available', version: '9.9.9-test' } })
+            }}>Update Available</button>
+            <button className={tabStyles.btnDangerOutline} onClick={() => {
+              useStore.getState().removeStreamingSession('test-dynamic')
+              useStore.setState({ update: { ...useStore.getState().update, status: 'idle' }, engineState: 'stopped' })
+            }}>Engine Crash</button>
+            <button className={tabStyles.btnToastSuccess} onClick={() => {
+              useStore.getState().showIslandTransient('已复制')
+            }}>Transient (Copied)</button>
+            <button className={tabStyles.btnAccentOutline} onClick={() => {
+              useStore.getState().addStreamingSession('test-dynamic')
+              useStore.getState().setStreamingActivity('test-dynamic', { phase: 'generating' })
+              useStore.setState({ update: { ...useStore.getState().update, status: 'downloading', version: '9.9.9-test', progress: 0.45 } })
+            }}>Split (Stream+DL)</button>
+          </div>
+        </div>
+
+        <div className={tabStyles.divider} />
+
         {/* ── Status Bars & Misc ── */}
         <div className={tabStyles.section}>
           <h4 className={tabStyles.sectionTitle}>Status Bars & Misc</h4>

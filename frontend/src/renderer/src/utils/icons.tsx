@@ -75,6 +75,7 @@ export {
   FolderOpen as IconFolderOpen,
   Folder as IconFolderClosed,
   Bug as IconBug,
+  Download as IconDownload,
   // Write mode inline agent toolbar icons
   Bold as IconBold,
   Italic as IconItalic,

@@ -1840,7 +1840,7 @@ impl Orchestrator {
     pub async fn load_history(&self, session_id: &str) -> Result<()> {
         let store = self.memory_store.read().await;
         if let Some(ref s) = *store {
-            let mut msgs = s.load_history(session_id, 50).await?;
+            let mut msgs = s.load_history(session_id, 10000).await?;
             tracing::info!(
                 session_id,
                 db_returned = msgs.len(),

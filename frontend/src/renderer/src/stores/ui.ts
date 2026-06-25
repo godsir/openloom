@@ -27,6 +27,7 @@ export interface UiSlice {
   thinkingDrawerOpen: boolean
   scheduledTasksOpen: boolean
   showOnboarding: boolean
+  islandExpanded: boolean
   appMode: 'chat' | 'write' | 'settings'
   setTheme: (theme: ThemeId) => void
   setFontSize: (size: FontSizeId) => void
@@ -38,6 +39,7 @@ export interface UiSlice {
   setThinkingDrawerOpen: (open: boolean) => void
   setScheduledTasksOpen: (open: boolean) => void
   setShowOnboarding: (open: boolean) => void
+  setIslandExpanded: (open: boolean) => void
   setAppMode: (mode: 'chat' | 'write' | 'settings') => void
 }
 
@@ -59,6 +61,7 @@ export const createUiSlice: StateCreator<UiSlice> = (set, get) => ({
   thinkingDrawerOpen: false,
   scheduledTasksOpen: false,
   showOnboarding: false,
+  islandExpanded: false,
   appMode: 'chat',
 
   setTheme: (theme) => {
@@ -91,5 +94,6 @@ export const createUiSlice: StateCreator<UiSlice> = (set, get) => ({
   setThinkingDrawerOpen: (open) => set({ thinkingDrawerOpen: open }),
   setScheduledTasksOpen: (open) => set({ scheduledTasksOpen: open }),
   setShowOnboarding: (open) => set({ showOnboarding: open }),
+  setIslandExpanded: (open) => set({ islandExpanded: open }),
   setAppMode: (mode) => set({ appMode: mode }),
 })

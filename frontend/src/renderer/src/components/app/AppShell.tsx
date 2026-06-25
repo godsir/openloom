@@ -1,7 +1,8 @@
-import { useState, useRef, type ReactNode } from 'react'
+import { useState, useRef, useEffect, type ReactNode } from 'react'
 import { useStore } from '../../stores'
 import Sidebar from './Sidebar'
 import WindowControls from './WindowControls'
+import DynamicIslandCenter from './DynamicIslandCenter'
 import ChatWorkspace from '../chat/ChatWorkspace'
 import { WriteWorkspaceView } from '../write/WriteWorkspaceView'
 import SettingsPage from '../settings/SettingsPage'
@@ -10,6 +11,8 @@ import { IconPanelLeftClose, IconPanelLeft, IconAlertCircle, IconWifiOff, IconRe
 import { connectWebSocket } from '../../services/websocket'
 import { useLocale } from '../../i18n'
 import TextEditingContextMenu from '../shared/TextEditingContextMenu'
+import logoRelease from '@asset/icon.png'
+import logoDev from '@asset/icon_dev.png'
 import styles from './AppShell.module.css'
 
 export default function AppShell({ children }: { children?: ReactNode }) {
@@ -26,6 +29,39 @@ export default function AppShell({ children }: { children?: ReactNode }) {
   const prevModeRef = useRef<'chat' | 'write'>('chat')
   const [reconnecting, setReconnecting] = useState(false)
   const [restarting, setRestarting] = useState(false)
+  const isDev = !(window.__isPackaged__ ?? true)
+
+  const streamingIds = useStore(s => s.streamingSessionIds)
+  const update = useStore(s => s.update)
+  const isStreaming = streamingIds.size > 0
+  const isDownloading = update.status === 'downloading'
+  const isUpdateAvailable = update.status === 'available'
+  const isEngineStopped = engineState === 'stopped'
+
+  const activeState: string = isEngineStopped ? 'crash' : (isStreaming && isDownloading) ? 'split' : isDownloading ? 'download' : isUpdateAvailable ? 'update' : isStreaming ? 'streaming' : 'idle'
+
+  const islandExpanded = useStore(s => s.islandExpanded)
+  const setIslandExpanded = useStore(s => s.setIslandExpanded)
+
+  // idle/transient/split 不展开；其余状态可展开成详情卡片
+  const expandable = activeState === 'streaming' || activeState === 'download' || activeState === 'update' || activeState === 'crash'
+
+  const ISLAND_SIZE: Record<string, { w: number; h: number }> = {
+    idle: { w: 250, h: 38 },
+    transient: { w: 200, h: 38 },
+    split: { w: 340, h: 38 },
+    streaming: { w: 260, h: 84 },
+    download: { w: 280, h: 84 },
+    update: { w: 260, h: 84 },
+    crash: { w: 260, h: 84 },
+  }
+  const EXPANDED_SIZE = { w: 340, h: 180 }
+  const size = (islandExpanded && expandable) ? EXPANDED_SIZE : (ISLAND_SIZE[activeState] ?? ISLAND_SIZE.idle)
+
+  // 状态消失时自动收起展开
+  useEffect(() => {
+    if (!expandable && islandExpanded) setIslandExpanded(false)
+  }, [expandable, islandExpanded, setIslandExpanded])
 
   const handleReconnect = async () => {
     setReconnecting(true)
@@ -55,15 +91,28 @@ export default function AppShell({ children }: { children?: ReactNode }) {
   return (
     <div className={styles.shell}>
       <header className={styles.titlebar}>
-        <div className={styles.titlebarLeft}>
+        <div className={styles.titlebarBrand}>
+          <img src={isDev ? logoDev : logoRelease} alt="OpenLoom" className={styles.titlebarLogo} />
+          <span className={styles.titlebarBrandName}>OpenLoom</span>
+        </div>
+        <div
+          className={styles.titlebarIsland}
+          data-dynamic={activeState}
+          data-expanded={islandExpanded && expandable ? 'true' : 'false'}
+          style={{ width: size.w, height: size.h }}
+          onClick={expandable ? () => setIslandExpanded(!islandExpanded) : undefined}
+        >
           {appMode === 'settings' ? (
-            <button
-              onClick={() => setAppMode(prevModeRef.current)}
-              className={styles.toggleBtn}
-              title={t('common.back')}
-            >
-              <IconArrowLeft size={16} />
-            </button>
+            <>
+              <button
+                onClick={() => setAppMode(prevModeRef.current)}
+                className={`${styles.toggleBtn} ${styles.islandLeftBtn}`}
+                title={t('common.back')}
+              >
+                <IconArrowLeft size={16} />
+              </button>
+              <DynamicIslandCenter />
+            </>
           ) : (
             <>
               <button
@@ -74,7 +123,7 @@ export default function AppShell({ children }: { children?: ReactNode }) {
                     toggleSidebar()
                   }
                 }}
-                className={styles.toggleBtn}
+                className={`${styles.toggleBtn} ${styles.islandLeftBtn}`}
                 title={`⌘B ${t('app.toggleSidebar')}`}
               >
                 {appMode === 'write'
@@ -82,12 +131,13 @@ export default function AppShell({ children }: { children?: ReactNode }) {
                   : (sidebarOpen ? <IconPanelLeftClose size={16} /> : <IconPanelLeft size={16} />)
                 }
               </button>
+              <DynamicIslandCenter />
               <button
                 onClick={() => {
                   prevModeRef.current = appMode === 'write' ? 'write' : 'chat'
                   setAppMode('settings')
                 }}
-                className={styles.toggleBtn}
+                className={`${styles.toggleBtn} ${styles.islandRightBtn}`}
                 title={t('app.settings')}
               >
                 <IconSettings size={16} />
@@ -95,39 +145,7 @@ export default function AppShell({ children }: { children?: ReactNode }) {
             </>
           )}
         </div>
-
-        <div className={styles.titlebarCenter}>
-          {appMode === 'settings' ? (
-            <span className={styles.titlebarPageTitle}>{t('app.settings')}</span>
-          ) : (
-            <div className={styles.modeToggle} data-active={appMode} role="radiogroup" aria-label={t('app.modeSwitch')}>
-              <button
-                className={`${styles.modeToggleOption} ${appMode === 'chat' ? styles.modeToggleOptionActive : ''}`}
-                onClick={() => {
-                  if (appMode === 'chat') return
-                  setAppMode('chat')
-                  if (!sidebarOpen) toggleSidebar()
-                }}
-              >
-                <IconMessageSquare size={13} />
-                <span>{t('app.chat')}</span>
-              </button>
-              <button
-                className={`${styles.modeToggleOption} ${appMode === 'write' ? styles.modeToggleOptionActive : ''}`}
-                onClick={() => {
-                  if (appMode === 'write') return
-                  setAppMode('write')
-                  if (sidebarOpen) toggleSidebar()
-                }}
-              >
-                <IconEdit size={13} />
-                <span>{t('app.write')}</span>
-              </button>
-            </div>
-          )}
-        </div>
-
-        <div className={styles.titlebarRight}>
+        <div className={styles.windowControls}>
           <WindowControls />
         </div>
       </header>
@@ -142,7 +160,9 @@ export default function AppShell({ children }: { children?: ReactNode }) {
           </div>
         )}
         <main className={styles.main} data-content>
-          {appMode === 'settings' ? <SettingsPage /> : appMode === 'write' ? <WriteWorkspaceView /> : <ChatWorkspace />}
+          <div key={appMode} className={styles.modeView}>
+            {appMode === 'settings' ? <SettingsPage /> : appMode === 'write' ? <WriteWorkspaceView /> : <ChatWorkspace />}
+          </div>
           {children}
 
           {/* Engine crashed banner */}

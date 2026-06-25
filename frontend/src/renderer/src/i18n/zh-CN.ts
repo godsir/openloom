@@ -7,6 +7,7 @@ export const zhCN: TranslationMap = {
   'common.delete': '删除',
   'common.confirm': '确认',
   'common.close': '关闭',
+  'common.dismiss': '忽略',
   'common.back': '返回',
   'common.backToTop': '回到顶部',
 
@@ -68,6 +69,25 @@ export const zhCN: TranslationMap = {
   'app.maximize': '最大化',
   'app.toggleSidebar': '切换侧边栏',
   'app.modeSwitch': '模式切换',
+  'app.generating': 'AI 生成中...',
+  'app.generatingHint': '正在思考，请稍候',
+  'app.downloading': '下载中',
+  'app.updateAvailable': '新版本可用',
+  'app.updateNow': '立即更新',
+
+  // ── Dynamic Island ──────────────────────────────────────────────
+  'island.thinking': '正在思考...',
+  'island.thinkingHint': '梳理思路中',
+  'island.vision': '分析图片中',
+  'island.visionHint': '识别图像内容',
+  'island.visionProgress': '处理 {done}/{total} 张',
+  'island.skill': '调用技能',
+  'island.tool': '调用工具',
+  'island.copied': '已复制',
+  'island.streamingHint': '正在与 AI 交互，结束后自动恢复',
+  'island.preparing': '准备下载...',
+  'island.noReleaseNotes': '暂无更新说明',
+  'island.crashHint': '后端引擎已停止运行，点击下方按钮重启',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': '会话',
