@@ -7,3 +7,5 @@ export type {
   WechatQrWaitResult,
   WechatMessage,
 } from './wechatChannel';
+export { IMGatewayManager } from './imGatewayManager';
+export type { IMGatewayManagerOptions } from './imGatewayManager';

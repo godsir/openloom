@@ -7,6 +7,11 @@ import { setupAutoUpdater, checkForUpdates } from './updater'
 import { getStoreKey } from './store'
 import { initPet, registerPetProtocol } from './pet'
 import { startConfigWatcher } from './config-watcher'
+import { join } from 'path'
+import { homedir } from 'os'
+import { existsSync, mkdirSync } from 'fs'
+import Database from 'better-sqlite3'
+import { IMStore, IMGatewayManager } from './im'
 
 // Windows tuning.
 if (process.platform === 'win32') {
@@ -63,7 +68,7 @@ app.whenReady().then(async () => {
   // In dev mode, force-disable to prevent polluting the user's OS startup items.
   if (app.isPackaged) {
     const autoStart = getStoreKey('autoStart', false)
-    app.setLoginItemSettings({ openAtLogin: autoStart })
+    app.setLoginItemSettings({ openAtLogin: autoStart, args: ['--start-hidden'] })
   } else {
     app.setLoginItemSettings({ openAtLogin: false })
   }
@@ -90,6 +95,38 @@ app.whenReady().then(async () => {
   // Start 30-second config directory poll watcher for model config hot-reload
   startConfigWatcher()
 
+  // IM — instant messaging integration
+  try {
+    const loomDir = join(homedir(), '.loom')
+    if (!existsSync(loomDir)) mkdirSync(loomDir, { recursive: true })
+    const imDb = new Database(join(loomDir, 'im.db'))
+    imDb.pragma('journal_mode = WAL')
+    imDb.pragma('busy_timeout = 3000')
+
+    const imStore = new IMStore(imDb)
+    const imGatewayManager = new IMGatewayManager({
+      imStore,
+      onMessage: (msg) => {
+        // Forward IM message to renderer via IPC
+        win?.webContents.send('im:message', msg)
+      },
+    })
+
+    // Make available globally for IPC handlers
+    ;(global as any).__imStore = imStore
+    ;(global as any).__imGatewayManager = imGatewayManager
+    ;(global as any).__imDb = imDb
+
+    // Start all enabled IM channels
+    imGatewayManager.startAllEnabled().catch(err => {
+      console.error('[IM] Failed to start IM gateways:', err)
+    })
+
+    console.log('[IM] IM gateway manager initialized')
+  } catch (e) {
+    console.error('[IM] Failed to initialize IM:', e)
+  }
+
   // Auto-updater
   setupAutoUpdater(win)
   checkForUpdates()
@@ -105,6 +142,15 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  // Stop IM gateways
+  try {
+    const mgr = (global as any).__imGatewayManager as IMGatewayManager | undefined
+    if (mgr) mgr.stopAll()
+    const db = (global as any).__imDb as Database.Database | undefined
+    if (db) db.close()
+  } catch (e) {
+    console.error('[IM] cleanup error:', e)
+  }
 })
 
 app.on('window-all-closed', async () => {
