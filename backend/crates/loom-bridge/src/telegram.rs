@@ -9,6 +9,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use crate::bot_info::BotInfo;
 use crate::store::{NullOffsetStore, OffsetStore};
 use crate::types::*;
 
@@ -52,6 +53,8 @@ const BACKOFF_MAX: Duration = Duration::from_secs(60);
 const OFFSET_KEY: &str = "telegram:offset";
 
 pub struct TelegramAdapter {
+    instance_id: String,
+    instance_name: String,
     bot_token: BotToken,
     client: reqwest::Client,
     health: AdapterHealth,
@@ -63,9 +66,11 @@ pub struct TelegramAdapter {
 }
 
 impl TelegramAdapter {
-    pub fn new(bot_token: String) -> Self {
+    pub fn new(instance_id: String, instance_name: String, bot_token: String) -> Self {
         let (tx, rx) = mpsc::channel(256);
         Self {
+            instance_id,
+            instance_name,
             bot_token: BotToken::new(bot_token),
             client: reqwest::Client::new(),
             health: AdapterHealth::Disconnected,
@@ -81,8 +86,13 @@ impl TelegramAdapter {
     /// the confirmed update offset survives process restarts. The store is only
     /// touched between `.await` points in the poll loop, so it must be cheap and
     /// non-blocking.
-    pub fn with_offset_store(bot_token: String, offset_store: Arc<dyn OffsetStore>) -> Self {
-        let mut adapter = Self::new(bot_token);
+    pub fn with_offset_store(
+        instance_id: String,
+        instance_name: String,
+        bot_token: String,
+        offset_store: Arc<dyn OffsetStore>,
+    ) -> Self {
+        let mut adapter = Self::new(instance_id, instance_name, bot_token);
         adapter.offset_store = offset_store;
         adapter
     }
@@ -163,11 +173,11 @@ impl ChannelAdapter for TelegramAdapter {
     }
 
     fn instance_id(&self) -> &str {
-        "default"
+        &self.instance_id
     }
 
     fn instance_name(&self) -> &str {
-        "Telegram"
+        &self.instance_name
     }
 
     async fn connect(&mut self) -> Result<()> {
@@ -180,7 +190,7 @@ impl ChannelAdapter for TelegramAdapter {
             Err(e) => {
                 let msg = e.to_string();
                 self.health = AdapterHealth::Error(msg.clone());
-                tracing::error!("Telegram connect failed: {msg}");
+                tracing::error!("Telegram ({}) connect failed: {msg}", self.instance_id);
                 return Err(e);
             }
         };
@@ -284,7 +294,7 @@ impl ChannelAdapter for TelegramAdapter {
         self.poll_handle = Some(handle);
         self.health = AdapterHealth::Connected;
         // Log the bot identity, never the token/URL.
-        tracing::info!("Telegram adapter connected as @{bot_username}");
+        tracing::info!("Telegram ({}) adapter connected as @{bot_username}", self.instance_id);
         Ok(())
     }
 
@@ -294,7 +304,7 @@ impl ChannelAdapter for TelegramAdapter {
             h.abort();
         }
         self.health = AdapterHealth::Disconnected;
-        tracing::info!("Telegram adapter disconnected");
+        tracing::info!("Telegram ({}) adapter disconnected", self.instance_id);
         Ok(())
     }
 
@@ -329,8 +339,16 @@ impl ChannelAdapter for TelegramAdapter {
     }
 
     async fn validate_credentials(&self) -> Result<()> {
-        let _ = self.validate().await?;
+        let username = self.validate().await?;
+        tracing::info!("Telegram ({}) bot validated: @{username}", self.instance_id);
         Ok(())
+    }
+
+    async fn get_bot_info(&self) -> Option<BotInfo> {
+        self.validate().await.ok().map(|username| BotInfo {
+            username: Some(username),
+            display_name: Some(self.instance_name.clone()),
+        })
     }
 }
 

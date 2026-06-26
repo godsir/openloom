@@ -846,11 +846,26 @@ async fn run_chat_demo(
     if let Ok(token) = std::env::var("TELEGRAM_BOT_TOKEN")
         && !token.is_empty()
     {
-        let tg = loom_bridge::TelegramAdapter::new(token);
+        let tg = loom_bridge::TelegramAdapter::new("default".to_string(), "Telegram".to_string(), token);
         let mgr = bridge_manager.clone();
         let _handle = tokio::spawn(async move {
-            mgr.register(Box::new(tg)).await;
-            let _ = mgr.start_platform(loom_bridge::Platform::Telegram).await;
+            let config = loom_bridge::InstanceConfig {
+                id: "00000000-0000-0000-0000-000000000001".to_string(),
+                platform: loom_bridge::Platform::Telegram,
+                instance_id: "default".to_string(),
+                instance_name: "Telegram".to_string(),
+                enabled: true,
+                config_json: serde_json::json!({}),
+                dm_policy: loom_bridge::AccessMode::Open,
+                allow_from: vec![],
+                group_policy: loom_bridge::AccessMode::Open,
+                group_allow_from: vec![],
+                agent_id: None,
+                created_at: chrono::Utc::now().timestamp(),
+                updated_at: chrono::Utc::now().timestamp(),
+            };
+            mgr.register(config, Box::new(tg)).await;
+            let _ = mgr.start_instance(loom_bridge::Platform::Telegram, "default").await;
             println!("[bridge] Telegram connected");
         });
     }
@@ -860,8 +875,23 @@ async fn run_chat_demo(
         let wx = loom_bridge::WechatAdapter::new(key);
         let mgr = bridge_manager.clone();
         let _handle = tokio::spawn(async move {
-            mgr.register(Box::new(wx)).await;
-            let _ = mgr.start_platform(loom_bridge::Platform::Wechat).await;
+            let config = loom_bridge::InstanceConfig {
+                id: "00000000-0000-0000-0000-000000000002".to_string(),
+                platform: loom_bridge::Platform::Wechat,
+                instance_id: "default".to_string(),
+                instance_name: "WeChat".to_string(),
+                enabled: true,
+                config_json: serde_json::json!({}),
+                dm_policy: loom_bridge::AccessMode::Open,
+                allow_from: vec![],
+                group_policy: loom_bridge::AccessMode::Open,
+                group_allow_from: vec![],
+                agent_id: None,
+                created_at: chrono::Utc::now().timestamp(),
+                updated_at: chrono::Utc::now().timestamp(),
+            };
+            mgr.register(config, Box::new(wx)).await;
+            let _ = mgr.start_instance(loom_bridge::Platform::Wechat, "default").await;
             println!("[bridge] WeChat (iLink) connected");
         });
     }
