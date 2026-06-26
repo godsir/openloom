@@ -1,11 +1,12 @@
 //! JSON-RPC 2.0 dispatch — routes incoming requests to orchestrator methods.
 //!
-//! Supported: system, agent, chat, completion, session, config, mcp, lsp, tools, skills.
+//! Supported: system, agent, chat, completion, session, config, mcp, lsp, tools, skills, bridge.
 //!
 //! Each submodule exports a `handle` function returning
 //! `Option<Result<Value, JsonRpcError>>`.  The main match in this file
 //! delegates to each sub-handler in sequence.
 
+mod bridge;
 mod chat;
 mod completion;
 mod cron;
@@ -74,6 +75,9 @@ pub async fn dispatch_method(
         return result;
     }
     if let Some(result) = mcp::handle(state, method, &p).await {
+        return result;
+    }
+    if let Some(result) = bridge::handle(state, method, &p).await {
         return result;
     }
     if let Some(result) = lsp::handle(state, method, &p).await {

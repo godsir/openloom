@@ -361,6 +361,89 @@ async fn main() -> anyhow::Result<()> {
                     Err(e) => eprintln!("[server] skills error: {}", e),
                 }
             }
+            // === Bridge ===
+            let bridge_manager = std::sync::Arc::new(loom_bridge::BridgeManager::new());
+            let db_path = data_dir.join("loom.db");
+            if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+                let _ = conn.execute_batch(
+                    "PRAGMA journal_mode=WAL;
+                     PRAGMA busy_timeout=5000;
+                     PRAGMA foreign_keys=ON;",
+                );
+                let store = loom_bridge::BridgeStore::new(&conn);
+                if let Ok(configs) = store.list_channel_configs() {
+                    for cfg in configs {
+                        if !cfg.enabled {
+                            continue;
+                        }
+                        match cfg.platform {
+                            loom_bridge::Platform::Telegram => {
+                                let token = cfg
+                                    .config_json
+                                    .get("botToken")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                if !token.is_empty() {
+                                    let adapter = loom_bridge::TelegramAdapter::new(
+                                        cfg.instance_id.clone(),
+                                        cfg.instance_name.clone(),
+                                        token.to_string(),
+                                    );
+                                    bridge_manager.register(cfg.clone(), Box::new(adapter)).await;
+                                }
+                            }
+                            loom_bridge::Platform::Feishu => {
+                                let app_id = cfg
+                                    .config_json
+                                    .get("appId")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let app_secret = cfg
+                                    .config_json
+                                    .get("appSecret")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let domain = cfg
+                                    .config_json
+                                    .get("domain")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("feishu");
+                                if !app_id.is_empty() && !app_secret.is_empty() {
+                                    let adapter = loom_bridge::FeishuAdapter::new(
+                                        cfg.instance_id.clone(),
+                                        cfg.instance_name.clone(),
+                                        app_id.to_string(),
+                                        app_secret.to_string(),
+                                        domain.to_string(),
+                                    );
+                                    bridge_manager.register(cfg.clone(), Box::new(adapter)).await;
+                                }
+                            }
+                            loom_bridge::Platform::Wechat => {
+                                if !cfg.instance_id.is_empty() {
+                                    let adapter = loom_bridge::WechatAdapter::new(
+                                        cfg.instance_id.clone(),
+                                        cfg.instance_name.clone(),
+                                    );
+                                    bridge_manager.register(cfg.clone(), Box::new(adapter)).await;
+                                }
+                            }
+                            _ => {
+                                tracing::info!(
+                                    "Platform {} not yet implemented in Rust layer",
+                                    cfg.platform.name()
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            // Start all enabled
+            let mgr = bridge_manager.clone();
+            tokio::spawn(async move {
+                mgr.start_all_enabled().await;
+            });
+
             // === Graceful shutdown: wire SIGTERM/SIGINT/Ctrl+C ===
             let shutdown_token = tokio_util::sync::CancellationToken::new();
             {
@@ -390,7 +473,7 @@ async fn main() -> anyhow::Result<()> {
                     token.cancel();
                 });
             }
-            loom_server::serve(&host, port, orchestrator.clone(), &loom_dir, shutdown_token)
+            loom_server::serve(&host, port, orchestrator.clone(), bridge_manager.clone(), &loom_dir, shutdown_token)
                 .await?;
 
             // Drain inflight agent loops (10s timeout) + close SQLite

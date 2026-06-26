@@ -9,6 +9,7 @@ use std::sync::{Arc, RwLock};
 
 use axum::{Json, Router, extract::State, routing::get};
 use loom_core::Orchestrator;
+use loom_bridge::BridgeManager;
 use tokio::sync;
 use tokio_util::sync::CancellationToken;
 
@@ -24,6 +25,7 @@ pub use ws::ws_handler;
 /// Shared application state passed to all route handlers.
 pub struct AppState {
     pub orchestrator: Arc<Orchestrator>,
+    pub bridge_manager: Arc<BridgeManager>,
     pub sessions: SessionStore,
     pub data_dir: PathBuf,
     /// Global shutdown token — cancelled on SIGTERM/SIGINT.
@@ -40,12 +42,14 @@ pub struct AppState {
 impl AppState {
     pub fn new(
         orchestrator: Arc<Orchestrator>,
+        bridge_manager: Arc<BridgeManager>,
         data_dir: PathBuf,
         shutdown_token: CancellationToken,
         key_store: Arc<sync::RwLock<HashMap<String, String>>>,
     ) -> Self {
         Self {
             orchestrator,
+            bridge_manager,
             sessions: SessionStore::default(),
             data_dir,
             shutdown_token,
@@ -94,6 +98,7 @@ pub async fn serve(
     host: &str,
     port: u16,
     orchestrator: Arc<Orchestrator>,
+    bridge_manager: Arc<BridgeManager>,
     data_dir: &std::path::Path,
     shutdown_token: CancellationToken,
 ) -> anyhow::Result<()> {
@@ -107,6 +112,7 @@ pub async fn serve(
 
     let state = Arc::new(AppState::new(
         orchestrator,
+        bridge_manager,
         data_dir.to_path_buf(),
         shutdown_token.clone(),
         key_store,

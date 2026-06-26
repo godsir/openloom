@@ -1789,6 +1789,7 @@ dependencies = [
  "dirs",
  "futures",
  "keyring",
+ "loom-bridge",
  "loom-core",
  "loom-cron",
  "loom-lsp",
