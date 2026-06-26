@@ -843,59 +843,86 @@ async fn run_chat_demo(
 
     // === Bridge ===
     let bridge_manager = std::sync::Arc::new(loom_bridge::BridgeManager::new());
-    if let Ok(token) = std::env::var("TELEGRAM_BOT_TOKEN")
-        && !token.is_empty()
-    {
-        let tg = loom_bridge::TelegramAdapter::new("default".to_string(), "Telegram".to_string(), token);
-        let mgr = bridge_manager.clone();
-        let _handle = tokio::spawn(async move {
-            let config = loom_bridge::InstanceConfig {
-                id: "00000000-0000-0000-0000-000000000001".to_string(),
-                platform: loom_bridge::Platform::Telegram,
-                instance_id: "default".to_string(),
-                instance_name: "Telegram".to_string(),
-                enabled: true,
-                config_json: serde_json::json!({}),
-                dm_policy: loom_bridge::AccessMode::Open,
-                allow_from: vec![],
-                group_policy: loom_bridge::AccessMode::Open,
-                group_allow_from: vec![],
-                agent_id: None,
-                created_at: chrono::Utc::now().timestamp(),
-                updated_at: chrono::Utc::now().timestamp(),
-            };
-            mgr.register(config, Box::new(tg)).await;
-            let _ = mgr.start_instance(loom_bridge::Platform::Telegram, "default").await;
-            println!("[bridge] Telegram connected");
-        });
+    let db_path = data_dir.join("loom.db");
+    if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+        let _ = conn.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA busy_timeout=5000;
+             PRAGMA foreign_keys=ON;",
+        );
+        let store = loom_bridge::BridgeStore::new(&conn);
+        if let Ok(configs) = store.list_channel_configs() {
+            for cfg in configs {
+                if !cfg.enabled {
+                    continue;
+                }
+                match cfg.platform {
+                    loom_bridge::Platform::Telegram => {
+                        let token = cfg
+                            .config_json
+                            .get("botToken")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if !token.is_empty() {
+                            let adapter = loom_bridge::TelegramAdapter::new(
+                                cfg.instance_id.clone(),
+                                cfg.instance_name.clone(),
+                                token.to_string(),
+                            );
+                            bridge_manager.register(cfg.clone(), Box::new(adapter)).await;
+                        }
+                    }
+                    loom_bridge::Platform::Feishu => {
+                        let app_id = cfg
+                            .config_json
+                            .get("appId")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let app_secret = cfg
+                            .config_json
+                            .get("appSecret")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let domain = cfg
+                            .config_json
+                            .get("domain")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("feishu");
+                        if !app_id.is_empty() && !app_secret.is_empty() {
+                            let adapter = loom_bridge::FeishuAdapter::new(
+                                cfg.instance_id.clone(),
+                                cfg.instance_name.clone(),
+                                app_id.to_string(),
+                                app_secret.to_string(),
+                                domain.to_string(),
+                            );
+                            bridge_manager.register(cfg.clone(), Box::new(adapter)).await;
+                        }
+                    }
+                    loom_bridge::Platform::Wechat => {
+                        if !cfg.instance_id.is_empty() {
+                            let adapter = loom_bridge::WechatAdapter::new(
+                                cfg.instance_id.clone(),
+                                cfg.instance_name.clone(),
+                            );
+                            bridge_manager.register(cfg.clone(), Box::new(adapter)).await;
+                        }
+                    }
+                    _ => {
+                        tracing::info!(
+                            "Platform {} not yet implemented in Rust layer",
+                            cfg.platform.name()
+                        );
+                    }
+                }
+            }
+        }
     }
-    if let Ok(key) = std::env::var("ILINK_API_KEY")
-        && !key.is_empty()
-    {
-        // WeChat stub — the real channel runs in the Electron main process.
-        let wx = loom_bridge::WechatAdapter::new("default".into(), "WeChat".into());
-        let mgr = bridge_manager.clone();
-        let _handle = tokio::spawn(async move {
-            let config = loom_bridge::InstanceConfig {
-                id: "00000000-0000-0000-0000-000000000002".to_string(),
-                platform: loom_bridge::Platform::Wechat,
-                instance_id: "default".to_string(),
-                instance_name: "WeChat".to_string(),
-                enabled: true,
-                config_json: serde_json::json!({}),
-                dm_policy: loom_bridge::AccessMode::Open,
-                allow_from: vec![],
-                group_policy: loom_bridge::AccessMode::Open,
-                group_allow_from: vec![],
-                agent_id: None,
-                created_at: chrono::Utc::now().timestamp(),
-                updated_at: chrono::Utc::now().timestamp(),
-            };
-            mgr.register(config, Box::new(wx)).await;
-            let _ = mgr.start_instance(loom_bridge::Platform::Wechat, "default").await;
-            println!("[bridge] WeChat (iLink) connected");
-        });
-    }
+    // Start all enabled
+    let mgr = bridge_manager.clone();
+    tokio::spawn(async move {
+        mgr.start_all_enabled().await;
+    });
 
     let registry = orchestrator.tool_registry().await;
     let names = registry.list_names();
