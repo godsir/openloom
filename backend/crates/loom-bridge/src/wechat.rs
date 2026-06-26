@@ -126,6 +126,14 @@ impl ChannelAdapter for WechatAdapter {
         Platform::Wechat
     }
 
+    fn instance_id(&self) -> &str {
+        "default"
+    }
+
+    fn instance_name(&self) -> &str {
+        "WeChat"
+    }
+
     async fn connect(&mut self) -> Result<()> {
         self.health = AdapterHealth::Connecting;
 
@@ -264,6 +272,10 @@ impl ChannelAdapter for WechatAdapter {
     }
     fn health(&self) -> AdapterHealth {
         self.health.clone()
+    }
+
+    async fn validate_credentials(&self) -> Result<()> {
+        self.validate().await
     }
 }
 

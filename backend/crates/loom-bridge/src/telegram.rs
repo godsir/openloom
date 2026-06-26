@@ -162,6 +162,14 @@ impl ChannelAdapter for TelegramAdapter {
         Platform::Telegram
     }
 
+    fn instance_id(&self) -> &str {
+        "default"
+    }
+
+    fn instance_name(&self) -> &str {
+        "Telegram"
+    }
+
     async fn connect(&mut self) -> Result<()> {
         self.health = AdapterHealth::Connecting;
 
@@ -318,6 +326,11 @@ impl ChannelAdapter for TelegramAdapter {
     }
     fn health(&self) -> AdapterHealth {
         self.health.clone()
+    }
+
+    async fn validate_credentials(&self) -> Result<()> {
+        let _ = self.validate().await?;
+        Ok(())
     }
 }
 

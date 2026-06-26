@@ -6,13 +6,21 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
+use crate::bot_info::BotInfo;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Platform {
     Telegram,
     Feishu,
+    #[serde(rename = "wechat")]
     Wechat,
+    Wecom,
+    Dingtalk,
+    #[serde(rename = "qq")]
     QQ,
+    Discord,
+    Popo,
 }
 
 impl Platform {
@@ -21,9 +29,27 @@ impl Platform {
             Platform::Telegram => "telegram",
             Platform::Feishu => "feishu",
             Platform::Wechat => "wechat",
+            Platform::Wecom => "wecom",
+            Platform::Dingtalk => "dingtalk",
             Platform::QQ => "qq",
+            Platform::Discord => "discord",
+            Platform::Popo => "popo",
         }
     }
+
+    /// Which layer implements this platform's adapter
+    pub fn layer(&self) -> AdapterLayer {
+        match self {
+            Platform::Wechat | Platform::Popo => AdapterLayer::Electron,
+            _ => AdapterLayer::Rust,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdapterLayer {
+    Rust,
+    Electron,
 }
 
 impl std::fmt::Display for Platform {
@@ -152,9 +178,19 @@ pub enum AccessMode {
 #[async_trait]
 pub trait ChannelAdapter: Send + Sync {
     fn platform(&self) -> Platform;
+    fn instance_id(&self) -> &str;
+    fn instance_name(&self) -> &str;
+
     async fn connect(&mut self) -> Result<()>;
     async fn disconnect(&mut self) -> Result<()>;
     async fn send(&self, chat_id: &str, content: MessageContent) -> Result<String>;
     fn receive_rx(&mut self) -> &mut mpsc::Receiver<BridgeMessage>;
     fn health(&self) -> AdapterHealth;
+
+    /// Validate credentials without establishing long connection (for "test connectivity")
+    async fn validate_credentials(&self) -> Result<()>;
+    /// Get bot identity info (username etc.)
+    async fn get_bot_info(&self) -> Option<BotInfo> {
+        None
+    }
 }
