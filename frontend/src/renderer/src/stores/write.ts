@@ -110,7 +110,9 @@ const createWriteSettingsSlice = (set: any, _get: any): WriteSettingsSlice => ({
   autoSaveIntervalMs: 900,
 
   setWorkspaceRoot: (root) => {
+    console.log('[writeStore] setWorkspaceRoot called:', root);
     set({ workspaceRoot: root, entriesByDir: {}, expandedDirs: {}, activeFilePath: null, fileContent: '' });
+    try { console.log('[writeStore] after set, state.workspaceRoot =', _get()?.workspaceRoot, '| loom:writeStore =', localStorage.getItem('loom:writeStore')); } catch {}
     if (root) { try { localStorage.setItem('loom:writeWorkspace', root); } catch {} }
   },
   setPreviewMode: (mode) => {
@@ -322,6 +324,9 @@ export const useWriteStore = create<WriteStore>()(
     }),
     {
       name: 'loom:writeStore',
+      onRehydrateStorage: () => (state) => {
+        try { console.log('[writeStore] rehydrated, state.workspaceRoot =', state?.workspaceRoot ?? null, '| loom:writeStore =', localStorage.getItem('loom:writeStore')); } catch {}
+      },
       partialize: (state) => ({
         workspaceRoot: state.workspaceRoot,
         defaultWorkspaceRoot: state.defaultWorkspaceRoot,

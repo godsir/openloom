@@ -58,6 +58,9 @@ export default function InputArea() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const skillPopoverRef = useRef<HTMLDivElement>(null)
   const sessionId = useStore(s => s.currentSessionId)
+  // IM sessions (created by ImBridge, id prefixed with "im:") are chat-only on
+  // the IM side — desktop can view/delete but must not send messages into them.
+  const isImSession = !!sessionId && sessionId.startsWith('im:')
   const sessionWorkspaces = useStore(s => s.sessionWorkspaces)
   const createSession = useStore(s => s.createSession)
   const switchSession = useStore(s => s.switchSession)
@@ -540,9 +543,9 @@ export default function InputArea() {
             onChange={handleTextChange}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder={placeholder}
+            placeholder={isImSession ? t('im.desktopLocked', 'IM 会话，请在微信中对话') : placeholder}
             rows={2}
-            disabled={!isConnected}
+            disabled={!isConnected || isImSession}
             className={styles.textarea}
           />
           {showSlashMenu && (
@@ -669,7 +672,7 @@ export default function InputArea() {
               <div className={styles.sendSplit}>
                 <button
                   onClick={handleSend}
-                  disabled={(!text.trim() && attachedFiles.length === 0 && quotedSelections.length === 0) || !isConnected}
+                  disabled={(!text.trim() && attachedFiles.length === 0 && quotedSelections.length === 0) || !isConnected || isImSession}
                   className={styles.sendSplitMain}
                 >
                   {t('chat.send')}

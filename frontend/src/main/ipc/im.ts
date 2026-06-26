@@ -2,7 +2,7 @@ import { ipcMain } from 'electron'
 import { getMainWindow } from '../window'
 import type { IMGatewayManager } from '../im/imGatewayManager'
 import type { IMStore } from '../im/imStore'
-import type { Platform, InstanceConfig } from '../im/types'
+import type { Platform, InstanceConfig, IMSettings } from '../im/types'
 
 export function registerImIpc(): void {
   const imStore = (global as any).__imStore as IMStore | undefined
@@ -27,22 +27,37 @@ export function registerImIpc(): void {
     return { ok: true }
   })
 
+  // ── Global settings ──
+
+  ipcMain.handle('im:get-settings', () => imStore.getSettings())
+
+  ipcMain.handle('im:set-settings', (_e, settings: Partial<IMSettings>) => {
+    imStore.setSettings(settings)
+    return { ok: true }
+  })
+
   // ── Channel lifecycle ──
 
   ipcMain.handle('im:start-channel', async (_e, platform: Platform, instanceId: string) => {
     const config = imStore.listInstances().find(
       (i) => i.platform === platform && i.instanceId === instanceId
     )
-    if (config) {
+    if (!config) return { ok: false, error: 'Config not found' }
+    try {
       await imGatewayManager.startChannel(config)
       return { ok: true }
+    } catch (err: any) {
+      return { ok: false, error: err?.message || String(err) }
     }
-    return { ok: false, error: 'Config not found' }
   })
 
   ipcMain.handle('im:stop-channel', async (_e, platform: Platform, instanceId: string) => {
-    await imGatewayManager.stopChannel(platform, instanceId)
-    return { ok: true }
+    try {
+      await imGatewayManager.stopChannel(platform, instanceId)
+      return { ok: true }
+    } catch (err: any) {
+      return { ok: false, error: err?.message || String(err) }
+    }
   })
 
   // ── Status & connectivity ──
@@ -50,9 +65,8 @@ export function registerImIpc(): void {
   ipcMain.handle('im:get-status', () => imGatewayManager.getStatus())
 
   ipcMain.handle('im:test-connectivity', async (_e, platform: Platform, instanceId: string) => {
-    // For Electron-managed platforms (wechat), check channel status
-    // For Rust-managed platforms, delegate to backend RPC
-    if (platform === 'wechat' || platform === 'popo') {
+    // Only WeChat is currently implemented in the Electron layer.
+    if (platform === 'wechat') {
       const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
       return {
         platform,
@@ -65,9 +79,35 @@ export function registerImIpc(): void {
         }],
       }
     }
-    // Delegate to Rust backend for Telegram/Feishu/etc
-    return { platform, testedAt: Date.now(), verdict: 'warn', checks: [] }
+    // Other platforms are not yet implemented in the backend.
+    return {
+      platform,
+      testedAt: Date.now(),
+      verdict: 'fail',
+      checks: [{
+        code: 'not_implemented',
+        level: 'fail',
+        message: `${platform} 接入尚未实现`,
+        suggestion: '当前仅支持微信扫码接入，其他平台即将支持',
+      }],
+    }
   })
+
+  // ── Send help message (test connection) ──
+
+  ipcMain.handle('im:send-help', async (_e, platform: Platform, instanceId: string) => {
+    try {
+      return await imGatewayManager.sendHelpMessage(platform, instanceId);
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  });
+
+  // ── Session bindings (for detecting IM sessions in the desktop sidebar) ──
+
+  ipcMain.handle('im:list-session-bindings', () => {
+    return imStore.listAllBindings();
+  });
 
   // ── WeChat QR flow ──
 

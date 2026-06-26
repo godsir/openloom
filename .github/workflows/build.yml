@@ -37,13 +37,14 @@ jobs:
       - name: Generate changelog
         shell: bash
         run: |
-          # Find latest stable tag ( vX.Y.Z without prerelease suffix )
-          STABLE_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | grep -v -- '-' | head -1)
-          if [ -z "$STABLE_TAG" ]; then
+          # 找最近的一次 release tag（正式或 beta），从其之后生成 changelog
+          LAST_TAG=$(git tag --list 'v*' --sort=-version:refname | head -1)
+          if [ -z "$LAST_TAG" ]; then
             RANGE="HEAD~30..HEAD"
           else
-            RANGE="${STABLE_TAG}..HEAD"
+            RANGE="${LAST_TAG}..HEAD"
           fi
+          echo "Last tag: $LAST_TAG"
           echo "Changelog range: $RANGE"
           COMMITS=$(git log "$RANGE" --pretty=format:'* %s' --no-merges)
           {

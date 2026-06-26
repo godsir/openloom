@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useIMStore, type Platform, type ConnectivityResult } from '../../stores/im'
+import { useLocale } from '../../i18n'
+import { IconCheck, IconAlertCircle, IconXCircle, IconInfo, IconX } from '../../utils/icons'
 import styles from './ImTab.module.css'
 
 interface Props {
@@ -9,6 +11,7 @@ interface Props {
 }
 
 export default function ImConnectivityTest({ platform, instanceId, onClose }: Props) {
+  const { t } = useLocale()
   const { testConnectivity } = useIMStore()
   const [result, setResult] = useState<ConnectivityResult | null>(null)
   const [running, setRunning] = useState(false)
@@ -28,32 +31,39 @@ export default function ImConnectivityTest({ platform, instanceId, onClose }: Pr
 
   const levelIcon = (level: string) => {
     switch (level) {
-      case 'pass': return '✓'
-      case 'warn': return '⚠'
-      case 'fail': return '✕'
-      default: return 'ℹ'
+      case 'pass': return <IconCheck size={13} />
+      case 'warn': return <IconAlertCircle size={13} />
+      case 'fail': return <IconXCircle size={13} />
+      default: return <IconInfo size={13} />
     }
   }
+
+  const verdictText = (v: string) =>
+    v === 'pass' ? t('im.verdictPass', '连接正常')
+      : v === 'warn' ? t('im.verdictWarn', '需要关注')
+        : t('im.verdictFail', '连接失败')
 
   return (
     <div className={styles.modalOverlay} onClick={onClose}>
       <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div className={styles.modalHeader}>
-          <h3>连接测试</h3>
-          <button className={styles.closeBtn} onClick={onClose}>✕</button>
+          <h3>{t('im.connectTestTitle', '连接测试')}</h3>
+          <button className={styles.closeBtn} onClick={onClose}><IconX size={16} /></button>
         </div>
         <div className={styles.modalBody}>
-          {running && <p className={styles.loading}>正在测试...</p>}
+          {running && <p className={styles.loading}>{t('im.testRunning', '正在测试...')}</p>}
           {result && (
             <>
               <div className={`${styles.verdictBanner} ${result.verdict === 'pass' ? styles.verdictPass : result.verdict === 'warn' ? styles.verdictWarn : styles.verdictFail}`}>
                 <span className={styles.verdictIcon}>
-                  {result.verdict === 'pass' ? '✓' : result.verdict === 'warn' ? '⚠' : '✕'}
+                  {result.verdict === 'pass'
+                    ? <IconCheck size={20} />
+                    : result.verdict === 'warn'
+                      ? <IconAlertCircle size={20} />
+                      : <IconXCircle size={20} />}
                 </span>
                 <div>
-                  <div className={styles.verdictText}>
-                    {result.verdict === 'pass' ? '连接正常' : result.verdict === 'warn' ? '需要关注' : '连接失败'}
-                  </div>
+                  <div className={styles.verdictText}>{verdictText(result.verdict)}</div>
                   <div className={styles.verdictTime}>{new Date(result.testedAt).toLocaleString()}</div>
                 </div>
               </div>
@@ -75,7 +85,7 @@ export default function ImConnectivityTest({ platform, instanceId, onClose }: Pr
           )}
         </div>
         <div className={styles.modalFooter}>
-          <button className={styles.closeBtn} onClick={onClose}>关闭</button>
+          <button className={styles.closeBtn} onClick={onClose}>{t('common.close')}</button>
         </div>
       </div>
     </div>

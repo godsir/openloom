@@ -248,7 +248,17 @@ export default function SettingsPage() {
         )}
 
         {tab === 'skills' && <SkillsTab />}
-        {tab === 'im' && <ImTab />}
+        {tab === 'im' && (
+          <>
+            <div className={styles.contentHeader}>
+              <h3 className={styles.sectionTitle}>{t('settings.im', 'IM 接入')}</h3>
+              <p className={styles.sectionDesc}>{t('settings.imDesc', '连接手机 IM 平台，让 Agent 在微信/飞书等渠道收发消息')}</p>
+            </div>
+            <div className={styles.contentBody}>
+              <ImTab />
+            </div>
+          </>
+        )}
         {tab === 'write' && (
           <>
             <div className={styles.contentHeader}>

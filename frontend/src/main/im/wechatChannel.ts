@@ -11,8 +11,10 @@ export interface WechatChannelOptions {
 }
 
 export interface WechatQrStartResult {
-  /** Base64 PNG data URL of the QR code, or an HTTPS URL to the QR image. */
+  /** Base64 PNG data URL of the QR code (empty when qrContent is used). */
   qrDataUrl: string;
+  /** Value to encode into a QR (rendered client-side); scanning it confirms login. */
+  qrContent: string;
   /** Opaque session key that must be passed to waitForScan(). */
   sessionKey: string;
 }
@@ -324,24 +326,16 @@ export class WechatChannel extends EventEmitter {
 
       activeLogins.set(sessionKey, login);
 
-      // Convert the HTTPS QR image URL to a data URL so the renderer can
-      // display it directly in an <img> tag without CORS issues.
-      let qrDataUrl = '';
-      try {
-        const imgRes = await fetch(qrResponse.qrcode_img_content);
-        if (imgRes.ok) {
-          const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
-          const contentType = imgRes.headers.get('content-type') || 'image/png';
-          const base64 = imgBuffer.toString('base64');
-          qrDataUrl = `data:${contentType};base64,${base64}`;
-        }
-      } catch {
-        // If the image fetch fails, return the raw URL as fallback
-        qrDataUrl = qrResponse.qrcode_img_content;
-      }
-
+      // qrcode_img_content is a JS-rendered SPA landing page (not an image),
+      // so fetching it yields HTML. Return the URL as qrContent and let the
+      // renderer render the QR via qrcode.react — scanning this URL triggers
+      // the WeChat confirm flow on the phone.
       console.log(`[WechatChannel:${this.instanceId}] QR code generated, sessionKey=${sessionKey.slice(0, 8)}...`);
-      return { qrDataUrl, sessionKey };
+      return {
+        qrDataUrl: '',
+        qrContent: qrResponse.qrcode_img_content,
+        sessionKey,
+      };
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`[WechatChannel:${this.instanceId}] startLogin failed:`, msg);

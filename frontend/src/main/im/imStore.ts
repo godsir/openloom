@@ -34,16 +34,24 @@ export class IMStore {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+    `);
 
+    // im_conversations: migrate old table (without instance_id) to new schema.
+    const cols = this.db.prepare('PRAGMA table_info(im_conversations)').all() as any[];
+    if (cols.length > 0 && !cols.some((c: any) => c.name === 'instance_id')) {
+      this.db.exec('DROP TABLE im_conversations');
+    }
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS im_conversations (
         id TEXT PRIMARY KEY,
         platform TEXT NOT NULL,
+        instance_id TEXT NOT NULL DEFAULT '',
         conversation_id TEXT NOT NULL,
         cowork_session_id TEXT,
         agent_id TEXT DEFAULT 'main',
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         last_active_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        UNIQUE(platform, conversation_id)
+        UNIQUE(instance_id, conversation_id)
       );
     `);
   }
@@ -121,6 +129,7 @@ export class IMStore {
       map[row.key] = row.value;
     }
     return {
+      globalEnabled: map['globalEnabled'] !== undefined ? map['globalEnabled'] === 'true' : DEFAULT_IM_SETTINGS.globalEnabled,
       defaultDmPolicy: (map['defaultDmPolicy'] as AccessMode) || DEFAULT_IM_SETTINGS.defaultDmPolicy,
       skillsEnabled: map['skillsEnabled'] !== undefined ? map['skillsEnabled'] === 'true' : DEFAULT_IM_SETTINGS.skillsEnabled,
       defaultAgentId: map['defaultAgentId'] || DEFAULT_IM_SETTINGS.defaultAgentId,
@@ -133,6 +142,7 @@ export class IMStore {
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`
     );
     const tx = this.db.transaction(() => {
+      if (settings.globalEnabled !== undefined) upsert.run({ key: 'globalEnabled', value: String(settings.globalEnabled) });
       if (settings.defaultDmPolicy !== undefined) upsert.run({ key: 'defaultDmPolicy', value: settings.defaultDmPolicy });
       if (settings.skillsEnabled !== undefined) upsert.run({ key: 'skillsEnabled', value: String(settings.skillsEnabled) });
       if (settings.defaultAgentId !== undefined) upsert.run({ key: 'defaultAgentId', value: settings.defaultAgentId });
@@ -140,21 +150,41 @@ export class IMStore {
     tx();
   }
 
-  getConversation(platform: Platform, conversationId: string): { coworkSessionId?: string } | null {
+  getConversation(instanceId: string, conversationId: string): { coworkSessionId?: string } | null {
     const row = this.db.prepare(
-      'SELECT cowork_session_id FROM im_conversations WHERE platform = ? AND conversation_id = ?'
-    ).get(platform, conversationId) as any;
+      'SELECT cowork_session_id FROM im_conversations WHERE instance_id = ? AND conversation_id = ?'
+    ).get(instanceId, conversationId) as any;
     return row ? { coworkSessionId: row.cowork_session_id } : null;
   }
 
-  upsertConversation(platform: Platform, conversationId: string, coworkSessionId: string): void {
-    const id = `${platform}:${conversationId}`;
+  /** List conversation ids bound to an instance, most recently active first. */
+  listConversations(instanceId: string): Array<{ conversationId: string }> {
+    const rows = this.db.prepare(
+      'SELECT conversation_id FROM im_conversations WHERE instance_id = ? ORDER BY last_active_at DESC'
+    ).all(instanceId) as Array<{ conversation_id: string }>;
+    return rows.map((r) => ({ conversationId: r.conversation_id }));
+  }
+
+  upsertConversation(platform: Platform, instanceId: string, conversationId: string, coworkSessionId: string): void {
+    const id = `${instanceId}:${conversationId}`;
     this.db.prepare(
-      `INSERT INTO im_conversations (id, platform, conversation_id, cowork_session_id, last_active_at)
-       VALUES (@id, @platform, @conversation_id, @cowork_session_id, unixepoch())
-       ON CONFLICT(platform, conversation_id) DO UPDATE SET
+      `INSERT INTO im_conversations (id, platform, instance_id, conversation_id, cowork_session_id, last_active_at)
+       VALUES (@id, @platform, @instance_id, @conversation_id, @cowork_session_id, unixepoch())
+       ON CONFLICT(instance_id, conversation_id) DO UPDATE SET
          cowork_session_id = excluded.cowork_session_id,
          last_active_at = unixepoch()`
-    ).run({ id, platform, conversation_id: conversationId, cowork_session_id: coworkSessionId });
+    ).run({ id, platform, instance_id: instanceId, conversation_id: conversationId, cowork_session_id: coworkSessionId });
+  }
+
+  listAllBindings(): Array<{ sessionId: string; platform: Platform; instanceId: string; conversationId: string }> {
+    const rows = this.db.prepare(
+      'SELECT cowork_session_id, platform, instance_id, conversation_id FROM im_conversations WHERE cowork_session_id IS NOT NULL'
+    ).all() as Array<{ cowork_session_id: string; platform: string; instance_id: string; conversation_id: string }>;
+    return rows.map(r => ({
+      sessionId: r.cowork_session_id,
+      platform: r.platform as Platform,
+      instanceId: r.instance_id,
+      conversationId: r.conversation_id,
+    }));
   }
 }

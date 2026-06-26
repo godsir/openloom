@@ -6,6 +6,7 @@ import {
 import { loomSubscribe, loomRpc } from './jsonrpc'
 import { streamBufferManager } from './stream-buffer'
 import { useStore } from '../stores'
+import { useIMStore } from '../stores/im'
 import { t } from '../i18n'
 
 async function waitForPort(maxWait = 10000): Promise<number> {
@@ -184,6 +185,13 @@ export async function bootstrapApp(): Promise<() => void> {
       const configs = await loomRpc<{ configs: unknown[] }>('agent.config.list')
       useStore.getState().setAgents(configs.configs as any[] || [])
     } catch { /* non-critical */ }
+    useIMStore.getState().loadSessionBindings()
+  })
+
+  // IM bridge created a session → refresh the sidebar + IM session bindings
+  const unsubImSession = window.loom.onIMSessionChanged(() => {
+    useStore.getState().loadSessions()
+    useIMStore.getState().loadSessionBindings()
   })
 
   // Connect — onopen triggers onReconnect which loads data
@@ -193,6 +201,7 @@ export async function bootstrapApp(): Promise<() => void> {
   return () => {
     unsub()
     unsubReconnect()
+    unsubImSession()
   }
 }
 

@@ -1,8 +1,10 @@
-import { useMemo } from 'react'
+import { useMemo, useEffect, useRef } from 'react'
 import { useStore } from '../../stores'
+import { useIMStore, PLATFORM_LABELS } from '../../stores/im'
 import type { StreamPhase } from '../../stores/streaming'
 import { IconMessageSquare, IconEdit, IconAlertCircle, IconDownload, IconSparkles, IconRotateCcw, IconBrain, IconEye, IconTerminal, IconCheck, IconChevronDown } from '../../utils/icons'
 import { useLocale } from '../../i18n'
+import PlatformIcon from '../shared/PlatformIcon'
 import styles from './AppShell.module.css'
 
 export default function DynamicIslandCenter() {
@@ -20,6 +22,7 @@ export default function DynamicIslandCenter() {
   const islandTransient = useStore(s => s.islandTransient)
   const islandExpanded = useStore(s => s.islandExpanded)
   const setIslandExpanded = useStore(s => s.setIslandExpanded)
+  const imSessionSources = useIMStore(s => s.imSessionSources)
 
   const isStreaming = streamingIds.size > 0
   const isDownloading = update.status === 'downloading'
@@ -46,6 +49,8 @@ export default function DynamicIslandCenter() {
   const activeStreamId = (currentSessionId && streamingIds.has(currentSessionId))
     ? currentSessionId
     : streamingIds.values().next().value
+  const imSource = imSessionSources[currentSessionId || '']
+  const streamImSource = activeStreamId ? imSessionSources[activeStreamId] : undefined
   const activity = activeStreamId ? streamingActivity[activeStreamId] : undefined
   const phase: StreamPhase = activity?.phase ?? 'generating'
 
@@ -56,6 +61,23 @@ export default function DynamicIslandCenter() {
     useStore.getState().setPort(newPort)
     useStore.getState().setEngineState('running')
   }
+
+  // IM channel connect/disconnect → transient island notification
+  const prevImConnectedRef = useRef<Record<string, boolean>>({})
+  useEffect(() => {
+    const unsub = (window as any).loom?.onIMChannelStatus?.((status: any) => {
+      const key = `${status.platform}:${status.instanceId}`
+      const prev = prevImConnectedRef.current[key]
+      const label = PLATFORM_LABELS[status.platform] ?? status.platform
+      if (status.connected && prev !== true) {
+        useStore.getState().setIslandTransient(t('island.imConnected', { platform: label }), 3000)
+      } else if (!status.connected && prev === true) {
+        useStore.getState().setIslandTransient(t('island.imDisconnected', { platform: label }), 3000)
+      }
+      prevImConnectedRef.current[key] = status.connected
+    })
+    return () => unsub?.()
+  }, [t])
 
   const phaseMeta: Record<StreamPhase, { icon: typeof IconBrain; title: string; sub?: string }> = {
     thinking: { icon: IconBrain, title: t('island.thinking'), sub: t('island.thinkingHint') },
@@ -89,6 +111,9 @@ export default function DynamicIslandCenter() {
               <span className={styles.dynamicPulse} />
               <PhaseIcon size={15} className={styles.dynamicIcon} />
               <span className={styles.expandedTitle}>{meta.title}</span>
+              {streamImSource && (
+                <PlatformIcon platform={streamImSource.platform} size={14} />
+              )}
             </div>
             <div className={styles.expandedDetail}>{meta.sub}</div>
             <div className={styles.expandedHint}>{t('island.streamingHint')}</div>
@@ -160,10 +185,15 @@ export default function DynamicIslandCenter() {
 
   return (
     <div className={styles.islandCenter}>
-      {/* Idle: mode toggle or settings title */}
+      {/* Idle: mode toggle or IM session or settings title */}
       <div className={styles.dynamicLayer} data-active={activeState === 'idle' ? 'true' : 'false'}>
         {appMode === 'settings' ? (
           <span className={styles.titlebarPageTitle}>{t('app.settings')}</span>
+        ) : imSource ? (
+          <div className={styles.layerRow}>
+            <PlatformIcon platform={imSource.platform} size={16} />
+            <span className={styles.dynamicTitle}>{PLATFORM_LABELS[imSource.platform]}</span>
+          </div>
         ) : (
           <div className={styles.modeToggle} data-active={appMode} role="radiogroup" aria-label={t('app.modeSwitch')}>
             <button
@@ -226,6 +256,9 @@ export default function DynamicIslandCenter() {
             <span className={styles.dynamicPulse} />
             <PhaseIcon size={13} className={styles.dynamicIcon} />
             <span className={styles.dynamicTitle}>{meta.title}</span>
+            {streamImSource && (
+              <PlatformIcon platform={streamImSource.platform} size={12} />
+            )}
           </div>
           <div className={styles.layerRow}>
             <span className={styles.dynamicSub}>{meta.sub}</span>

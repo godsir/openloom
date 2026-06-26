@@ -1,297 +1,113 @@
-.header {
-  padding: 20px 24px;
-  border-bottom: 1px solid #1e1e3a;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
+/* ═══════════════════════════════════════════════════════════
+   ImTab — IM 设置页专属样式
+   通用结构（分节、行、表单、卡片骨架、按钮、空状态）一律复用
+   shared/SettingsModal.module.css；本文件只保留 IM 特有部分：
+   平台选择器、实例卡片补充字段、弹窗、连接测试、扫码。
+   适配 openLoom CSS 变量主题系统（9 套主题自动切换）
+   ═══════════════════════════════════════════════════════════ */
 
-.title {
-  font-size: 18px;
-  font-weight: 700;
-  color: #e0e0f0;
-  margin: 0;
-}
-
-.subtitle {
-  font-size: 12px;
-  color: #666;
-  margin: 4px 0 0;
-}
-
-.globalToggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.toggleLabel {
-  font-size: 12px;
-  color: #aaa;
-}
-
-.toggleBtn {
-  width: 40px;
-  height: 22px;
-  border-radius: 11px;
-  border: none;
-  position: relative;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.toggleOn {
-  background: #6366f1;
-}
-
-.toggleOff {
-  background: #444;
-}
-
-.toggleKnob {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: white;
-  position: absolute;
-  top: 2px;
-  transition: left 0.2s;
-}
-
-.toggleOn .toggleKnob {
-  right: 2px;
-}
-
-.toggleOff .toggleKnob {
-  left: 2px;
-}
-
+/* ── Platform Tabs ── */
 .platformTabs {
   display: flex;
+  align-items: center;
   gap: 4px;
-  padding: 12px 24px;
-  border-bottom: 1px solid #1e1e3a;
-  overflow-x: auto;
+  padding: 4px 0 12px;
+  flex-wrap: wrap;
 }
 
 .platformTab {
-  padding: 6px 14px;
-  border-radius: 6px;
+  padding: 5px 12px;
+  border-radius: var(--r-full);
   background: transparent;
-  color: #888;
-  font-size: 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
-  border: 1px solid transparent;
-  transition: all 0.15s;
+  border: 1px solid var(--border);
+  transition: all var(--dur-fast) var(--ease-standard);
 }
 
 .platformTab:hover {
-  color: #aaa;
-  background: rgba(255,255,255,0.03);
+  color: var(--text-secondary);
+  border-color: var(--border-default);
 }
 
 .platformTabActive {
-  background: rgba(99,102,241,0.2);
-  color: #a5b4fc;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-color: var(--border-accent);
   font-weight: 600;
-  border: 1px solid rgba(99,102,241,0.3);
 }
 
-.content {
-  flex: 1;
-  padding: 20px 24px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.globalCard {
-  background: #14142b;
-  border: 1px solid #1e1e3a;
-  border-radius: 10px;
-  padding: 16px 20px;
-}
-
-.cardTitle {
-  font-size: 13px;
-  font-weight: 600;
-  color: #ccc;
-  margin: 0 0 12px;
-}
-
-.globalRow {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  color: #999;
-}
-
-.fieldLabel {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 11px;
-  color: #888;
-}
-
-.select {
-  background: #0a0a1a;
-  color: #ccc;
-  border: 1px solid #2a2a4a;
-  border-radius: 4px;
-  padding: 6px 10px;
-  font-size: 12px;
-}
-
-.input {
-  background: #0a0a1a;
-  color: #ccc;
-  border: 1px solid #2a2a4a;
-  border-radius: 6px;
-  padding: 8px 12px;
-  font-size: 12px;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.checkboxLabel {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #999;
-}
-
-.instanceCard {
-  background: #14142b;
-  border: 1px solid #2a2a4a;
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.instanceHeader {
-  padding: 14px 20px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  cursor: pointer;
-}
-
-.instanceInfo {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.instanceName {
-  font-size: 14px;
-  font-weight: 600;
-  color: #e0e0f0;
-}
-
-.statusBadge {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 10px;
-}
-
-.statusConnected {
-  background: rgba(34,197,94,0.12);
-  color: #22c55e;
-}
-
-.statusDisconnected {
-  background: rgba(100,100,100,0.08);
-  color: #888;
-}
-
+/* ── Instance card extras (header built on shared.mcpServerItem) ── */
 .accountId {
-  font-size: 11px;
-  color: #666;
-  font-family: monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .instanceActions {
   display: flex;
   align-items: center;
-  gap: 8px;
-}
-
-.moreBtn {
-  background: transparent;
-  border: none;
-  color: #666;
-  font-size: 16px;
-  cursor: pointer;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .instanceMeta {
-  padding: 0 20px 10px;
-  font-size: 11px;
-  color: #666;
-}
-
-.expandedConfig {
-  padding: 12px 20px 16px;
-  border-top: 1px solid #1e1e3a;
-}
-
-.configSection {
+  padding: 6px 0 0;
+  font-size: 10px;
+  color: var(--text-muted);
   display: flex;
-  flex-direction: column;
-  gap: 10px;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
-.addBtn {
-  border: 1px dashed #2a2a4a;
-  border-radius: 10px;
-  padding: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: #666;
-  cursor: pointer;
-  font-size: 13px;
-  background: transparent;
-  width: 100%;
-  transition: color 0.15s, border-color 0.15s;
-}
-
-.addBtn:hover {
-  color: #888;
-  border-color: #444;
-}
-
-.loading, .empty {
+.loading {
   text-align: center;
-  padding: 40px;
-  color: #666;
-  font-size: 13px;
+  padding: 24px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
-/* Modal */
+/* ═══════════════════════════════════════════════════════════
+   Modal (shared library has no generic modal)
+   ═══════════════════════════════════════════════════════════ */
+
 .modalOverlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.6);
+  background: var(--bg-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  animation: imFadeIn 0.15s var(--ease-standard);
 }
 
 .modal {
-  background: #0f0f23;
-  border: 1px solid #2a2a4a;
-  border-radius: 12px;
-  width: 480px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  width: 460px;
   max-width: 90vw;
   max-height: 80vh;
   overflow-y: auto;
+  box-shadow: var(--shadow-lg);
+  animation: imSlideUp 0.2s var(--ease-standard);
+}
+
+@keyframes imFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes imSlideUp {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .modalHeader {
@@ -299,210 +115,190 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid #1e1e3a;
+  border-bottom: 1px solid var(--border);
 }
 
 .modalHeader h3 {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
-  color: #e0e0f0;
+  color: var(--text);
   margin: 0;
-}
-
-.closeBtn {
-  background: transparent;
-  border: none;
-  color: #666;
-  font-size: 18px;
-  cursor: pointer;
 }
 
 .modalBody {
   padding: 20px;
 }
 
+.modalBodyCentered {
+  padding: 20px;
+  text-align: center;
+}
+
 .modalFooter {
   padding: 12px 20px;
-  border-top: 1px solid #1e1e3a;
+  border-top: 1px solid var(--border);
   display: flex;
   justify-content: flex-end;
 }
 
-/* Connectivity Test */
+.closeBtn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--r-sm);
+  transition: all var(--dur-fast) var(--ease-standard);
+}
+
+.closeBtn:hover {
+  color: var(--text);
+  background: var(--bg-active);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Connectivity Test
+   ═══════════════════════════════════════════════════════════ */
+
 .verdictBanner {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 16px;
-  border-radius: 8px;
-  margin-bottom: 16px;
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  margin-bottom: 14px;
 }
 
-.verdictPass { background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.2); }
-.verdictWarn { background: rgba(234,179,8,0.08); border: 1px solid rgba(234,179,8,0.2); }
-.verdictFail { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); }
+.verdictPass {
+  background: var(--green-light);
+  border: 1px solid rgba(var(--green-rgb), 0.2);
+}
 
-.verdictIcon { font-size: 22px; }
-.verdictPass .verdictIcon { color: #22c55e; }
-.verdictWarn .verdictIcon { color: #eab308; }
-.verdictFail .verdictIcon { color: #ef4444; }
+.verdictWarn {
+  background: var(--amber-light);
+  border: 1px solid rgba(var(--amber-rgb), 0.2);
+}
 
-.verdictText { font-weight: 700; font-size: 15px; }
-.verdictPass .verdictText { color: #22c55e; }
-.verdictWarn .verdictText { color: #eab308; }
-.verdictFail .verdictText { color: #ef4444; }
+.verdictFail {
+  background: var(--red-light);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
 
-.verdictTime { font-size: 11px; color: #666; }
+.verdictIcon { font-size: 20px; line-height: 1; }
+.verdictPass .verdictIcon { color: var(--green); }
+.verdictWarn .verdictIcon { color: var(--amber); }
+.verdictFail .verdictIcon { color: var(--red); }
 
-.checkList { display: flex; flex-direction: column; gap: 6px; }
+.verdictText { font-weight: 700; font-size: 14px; }
+.verdictPass .verdictText { color: var(--green); }
+.verdictWarn .verdictText { color: var(--amber); }
+.verdictFail .verdictText { color: var(--red); }
+
+.verdictTime { font-size: 10px; color: var(--text-muted); margin-top: 1px; }
+
+/* Check list */
+.checkList { display: flex; flex-direction: column; gap: 4px; }
 
 .checkItem {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  border-radius: 6px;
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
 }
 
-.checkPass { background: rgba(34,197,94,0.05); }
-.checkWarn { background: rgba(234,179,8,0.05); }
-.checkFail { background: rgba(239,68,68,0.05); }
+.checkPass { background: var(--green-light); }
+.checkWarn { background: var(--amber-light); }
+.checkFail { background: var(--red-light); }
 
-.checkIcon { font-size: 14px; }
-.checkPass .checkIcon { color: #22c55e; }
-.checkWarn .checkIcon { color: #eab308; }
-.checkFail .checkIcon { color: #ef4444; }
+.checkIcon { font-size: 13px; line-height: 1; }
+.checkPass .checkIcon { color: var(--green); }
+.checkWarn .checkIcon { color: var(--amber); }
+.checkFail .checkIcon { color: var(--red); }
 
-.checkContent { flex: 1; }
-.checkMessage { font-size: 12px; color: #ccc; }
-.checkSuggestion { font-size: 10px; color: #888; margin-top: 2px; }
+.checkContent { flex: 1; min-width: 0; }
+.checkMessage { font-size: 11px; color: var(--text-secondary); }
+.checkSuggestion { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
 
 .checkBadge {
   font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 4px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: var(--r-full);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
 }
 
-.badgePass { background: rgba(34,197,94,0.12); color: #22c55e; }
-.badgeWarn { background: rgba(234,179,8,0.12); color: #eab308; }
-.badgeFail { background: rgba(239,68,68,0.12); color: #ef4444; }
-.badgeInfo { background: rgba(99,102,241,0.12); color: #818cf8; }
+.badgePass { background: rgba(var(--green-rgb), 0.15); color: var(--green); }
+.badgeWarn { background: rgba(var(--amber-rgb), 0.15); color: var(--amber); }
+.badgeFail { background: rgba(239, 68, 68, 0.12); color: var(--red); }
+.badgeInfo { background: var(--accent-subtle); color: var(--accent); }
 
-/* Policy cards */
-.policyGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 8px;
-  margin-top: 8px;
-}
+/* ═══════════════════════════════════════════════════════════
+   WeChat QR Modal
+   ═══════════════════════════════════════════════════════════ */
 
-.policyCard {
-  padding: 10px;
-  border-radius: 8px;
-  border: 1px solid #2a2a4a;
-  background: transparent;
-  color: #aaa;
-  font-size: 12px;
-  cursor: pointer;
-  text-align: center;
-}
-
-.policyCard:hover { border-color: #444; }
-
-.policyActive {
-  border-color: #6366f1;
-  background: rgba(99,102,241,0.08);
-  color: #a5b4fc;
-  font-weight: 600;
-}
-
-/* Config actions */
-.configActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.discardBtn {
-  background: transparent;
-  border: 1px solid #3a3a5a;
-  color: #aaa;
-  border-radius: 6px;
-  padding: 6px 16px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.saveBtn {
-  background: #6366f1;
-  color: white;
-  border: none;
-  border-radius: 6px;
-  padding: 6px 20px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-/* QR */
 .qrImage {
   width: 200px;
   height: 200px;
-  border-radius: 8px;
-  border: 2px solid #2a2a4a;
+  border-radius: var(--r-lg);
+  border: 2px solid var(--border);
+  display: block;
+  margin: 0 auto;
 }
 
 .qrPlaceholder {
   width: 200px;
   height: 200px;
-  border-radius: 8px;
-  border: 2px dashed #2a2a4a;
+  border-radius: var(--r-lg);
+  border: 2px dashed var(--border-default);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   margin: 0 auto;
-  color: #666;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
-.qrStatus { font-size: 13px; color: #22c55e; margin-top: 12px; }
-.qrHint { font-size: 11px; color: #666; margin-top: 4px; }
+.qrStatus { font-size: 13px; color: var(--green); margin: 12px 0 0; }
+.qrHint { font-size: 11px; color: var(--text-muted); margin: 4px 0 0; }
 
 .refreshBtn {
   background: transparent;
-  color: #6366f1;
+  color: var(--accent);
   border: none;
   cursor: pointer;
   font-size: 12px;
+  font-family: inherit;
   margin-top: 8px;
+  transition: opacity var(--dur-fast);
 }
 
-.connectedMsg { padding: 40px 0; }
-.connectedIcon { font-size: 48px; color: #22c55e; }
+.refreshBtn:hover { opacity: 0.75; }
 
-.errorText { color: #ef4444; }
-
-/* Row layout */
-.row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+.connectedMsg {
+  padding: 32px 0;
+  text-align: center;
 }
 
-.sectionTitle {
-  font-size: 13px;
+.connectedIcon {
+  font-size: 44px;
+  color: var(--green);
+  display: block;
+  margin-bottom: 8px;
+}
+
+.connectedMsg p {
+  font-size: 14px;
   font-weight: 600;
-  color: #ccc;
-  margin: 0 0 8px;
+  color: var(--text);
+  margin: 0;
 }
 
-.actionBtn {
-  background: transparent;
-  border: 1px solid #3a3a5a;
-  color: #aaa;
-  border-radius: 6px;
-  padding: 5px 12px;
-  font-size: 11px;
-  cursor: pointer;
+.errorText {
+  color: var(--red);
+  font-size: 13px;
 }

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { InstanceConfig, Platform, IMGatewayStatus, IMMessage, ConnectivityResult, ChannelStatusEvent } from '../main/im/types'
+import type { InstanceConfig, Platform, IMGatewayStatus, IMMessage, ConnectivityResult, ChannelStatusEvent, IMSettings } from '../main/im/types'
 
 export interface LoomApi {
   getPlatform: () => Promise<string>
@@ -62,12 +62,16 @@ export interface LoomApi {
   imStopChannel: (platform: Platform, instanceId: string) => Promise<{ ok: boolean }>
   imGetStatus: () => Promise<IMGatewayStatus>
   imTestConnectivity: (platform: Platform, instanceId: string) => Promise<ConnectivityResult>
-  imWechatQrStart: (instanceId: string) => Promise<{ qrDataUrl: string; sessionKey: string }>
+  imSendHelp: (platform: Platform, instanceId: string) => Promise<{ ok: boolean; error?: string }>
+  imWechatQrStart: (instanceId: string) => Promise<{ qrDataUrl: string; qrContent: string; sessionKey: string }>
   imWechatQrWait: (instanceId: string, sessionKey: string) => Promise<{ connected: boolean; accountId?: string; message?: string }>
   imPopoQrStart: () => Promise<{ qrUrl: string; taskToken: string; timeoutMs: number }>
   imPopoQrPoll: (taskToken: string) => Promise<{ success: boolean; appKey?: string; appSecret?: string; aesKey?: string; message: string }>
+  imGetSettings: () => Promise<IMSettings>
+  imSetSettings: (settings: Partial<IMSettings>) => Promise<{ ok: boolean }>
   onIMMessage: (cb: (msg: IMMessage) => void) => () => void
   onIMChannelStatus: (cb: (status: ChannelStatusEvent) => void) => () => void
+  onIMSessionChanged: (cb: () => void) => () => void
 }
 
 interface PetMeta {
@@ -191,10 +195,14 @@ contextBridge.exposeInMainWorld('loom', {
   imStopChannel: (platform: Platform, instanceId: string) => ipcRenderer.invoke('im:stop-channel', platform, instanceId),
   imGetStatus: () => ipcRenderer.invoke('im:get-status'),
   imTestConnectivity: (platform: Platform, instanceId: string) => ipcRenderer.invoke('im:test-connectivity', platform, instanceId),
+  imSendHelp: (platform: Platform, instanceId: string) => ipcRenderer.invoke('im:send-help', platform, instanceId),
   imWechatQrStart: (instanceId: string) => ipcRenderer.invoke('im:wechat-qr-start', instanceId),
   imWechatQrWait: (instanceId: string, sessionKey: string) => ipcRenderer.invoke('im:wechat-qr-wait', instanceId, sessionKey),
   imPopoQrStart: () => ipcRenderer.invoke('im:popo-qr-start'),
   imPopoQrPoll: (taskToken: string) => ipcRenderer.invoke('im:popo-qr-poll', taskToken),
+  imGetSettings: () => ipcRenderer.invoke('im:get-settings'),
+  imSetSettings: (settings: Partial<IMSettings>) => ipcRenderer.invoke('im:set-settings', settings),
+  imListSessionBindings: () => ipcRenderer.invoke('im:list-session-bindings') as Promise<Array<{ sessionId: string; platform: Platform; instanceId: string; conversationId: string }>>,
   onIMMessage: (cb: (msg: IMMessage) => void) => {
     const handler = (_event: any, msg: any) => cb(msg)
     ipcRenderer.on('im:message', handler)
@@ -204,5 +212,10 @@ contextBridge.exposeInMainWorld('loom', {
     const handler = (_event: any, status: any) => cb(status)
     ipcRenderer.on('im:channel-status', handler)
     return () => ipcRenderer.removeListener('im:channel-status', handler)
+  },
+  onIMSessionChanged: (cb: () => void) => {
+    const handler = () => cb()
+    ipcRenderer.on('im:session-changed', handler)
+    return () => ipcRenderer.removeListener('im:session-changed', handler)
   },
 } satisfies LoomApi)

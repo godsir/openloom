@@ -16,6 +16,9 @@ export function createMainWindow(port: number): BrowserWindow {
   const width = Math.min(1440, Math.floor(screenWidth * 0.82))
   const height = Math.min(900, Math.floor(screenHeight * 0.88))
 
+  // 静默启动：开机自启 + startToTray 时窗口不自动弹出
+  const startSilent = process.argv.includes('--start-hidden') && getStoreKey('startToTray', false)
+
   mainWindow = new BrowserWindow({
     width,
     height,
@@ -36,7 +39,7 @@ export function createMainWindow(port: number): BrowserWindow {
   })
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow?.show()
+    if (!startSilent) mainWindow?.show()
   })
 
   // Restore saved zoom factor (default 1.0), overriding any stale Chromium zoom

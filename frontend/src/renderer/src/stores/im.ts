@@ -1,8 +1,11 @@
 import { create } from 'zustand';
 
-// Re-define Platform and types locally for the renderer process
-// (renderer can't import from main process -- creates a mirror)
+// Re-define types locally for the renderer process
+// (renderer can't import from main process — mirrors main/im/types.ts).
+// Keep these in sync with frontend/src/main/im/types.ts.
 export type Platform = 'telegram' | 'feishu' | 'wechat' | 'wecom' | 'dingtalk' | 'qq' | 'discord' | 'popo';
+
+export type AccessMode = 'open' | 'pairing' | 'allowlist' | 'disabled';
 
 export interface InstanceConfig {
   id: string;
@@ -11,7 +14,7 @@ export interface InstanceConfig {
   instanceName: string;
   enabled: boolean;
   configJson: Record<string, unknown>;
-  dmPolicy: 'open' | 'pairing' | 'allowlist' | 'disabled';
+  dmPolicy: AccessMode;
   allowFrom: string[];
   groupPolicy: 'open' | 'allowlist' | 'disabled';
   groupAllowFrom: string[];
@@ -21,7 +24,8 @@ export interface InstanceConfig {
 }
 
 export interface IMSettings {
-  defaultDmPolicy: 'open' | 'pairing' | 'allowlist' | 'disabled';
+  globalEnabled: boolean;
+  defaultDmPolicy: AccessMode;
   skillsEnabled: boolean;
   defaultAgentId: string;
 }
@@ -36,6 +40,14 @@ export interface ChannelStatus {
   botUsername?: string | null;
 }
 
+export interface ChannelStatusEvent {
+  platform: Platform;
+  instanceId: string;
+  connected: boolean;
+  accountId?: string;
+  error?: string;
+}
+
 export interface ConnectivityCheck {
   code: string;
   level: 'pass' | 'info' | 'warn' | 'fail';
@@ -48,6 +60,22 @@ export interface ConnectivityResult {
   testedAt: number;
   verdict: 'pass' | 'warn' | 'fail';
   checks: ConnectivityCheck[];
+}
+
+// Backend's IMGatewayStatus is nested by platform; we flatten it to a per-key map.
+interface IMGatewayStatusInstance {
+  instanceId: string;
+  instanceName: string;
+  connected: boolean;
+  startedAt: number | null;
+  lastError: string | null;
+  lastInboundAt: number | null;
+  lastOutboundAt: number | null;
+  botUsername?: string | null;
+  accountId?: string | null;
+}
+interface IMGatewayStatus {
+  [platform: string]: { instances: IMGatewayStatusInstance[] };
 }
 
 export const PLATFORM_LABELS: Record<Platform, string> = {
@@ -65,6 +93,39 @@ export const PLATFORM_ORDER: Platform[] = [
   'wechat', 'feishu', 'telegram', 'wecom', 'dingtalk', 'qq', 'discord', 'popo',
 ];
 
+/** Platforms that have a real backend implementation in the Electron layer. */
+export const IMPLEMENTED_PLATFORMS: Platform[] = ['wechat'];
+
+export function statusKey(platform: Platform, instanceId: string): string {
+  return `${platform}:${instanceId}`;
+}
+
+/** Flatten the backend's nested IMGatewayStatus into a per-key ChannelStatus map. */
+function flattenStatus(gw: IMGatewayStatus): Record<string, ChannelStatus> {
+  const out: Record<string, ChannelStatus> = {};
+  for (const [platform, group] of Object.entries(gw || {})) {
+    for (const inst of group.instances) {
+      out[statusKey(platform as Platform, inst.instanceId)] = {
+        connected: inst.connected,
+        startedAt: inst.startedAt,
+        lastError: inst.lastError,
+        lastInboundAt: inst.lastInboundAt,
+        lastOutboundAt: inst.lastOutboundAt,
+        accountId: inst.accountId,
+        botUsername: inst.botUsername,
+      };
+    }
+  }
+  return out;
+}
+
+const DEFAULT_SETTINGS: IMSettings = {
+  globalEnabled: true,
+  defaultDmPolicy: 'pairing',
+  skillsEnabled: true,
+  defaultAgentId: 'main',
+};
+
 interface IMState {
   instances: InstanceConfig[];
   settings: IMSettings;
@@ -72,37 +133,81 @@ interface IMState {
   selectedPlatform: Platform;
   loading: boolean;
   connectivityResults: Record<string, ConnectivityResult>;
+  imSessionSources: Record<string, { platform: Platform; conversationId: string }>;
 
   loadConfigs: () => Promise<void>;
+  loadSessionBindings: () => Promise<void>;
+  loadSettings: () => Promise<void>;
+  saveSettings: (settings: Partial<IMSettings>) => Promise<void>;
+  refreshStatus: () => Promise<void>;
   saveConfig: (config: InstanceConfig) => Promise<void>;
   deleteConfig: (platform: Platform, instanceId: string) => Promise<void>;
-  startChannel: (platform: Platform, instanceId: string) => Promise<void>;
-  stopChannel: (platform: Platform, instanceId: string) => Promise<void>;
+  startChannel: (platform: Platform, instanceId: string) => Promise<{ ok: boolean; error?: string }>;
+  stopChannel: (platform: Platform, instanceId: string) => Promise<{ ok: boolean; error?: string }>;
   testConnectivity: (platform: Platform, instanceId: string) => Promise<ConnectivityResult>;
-  wechatQrStart: (instanceId: string) => Promise<{ qrDataUrl: string; sessionKey: string }>;
+  sendHelp: (platform: Platform, instanceId: string) => Promise<{ ok: boolean; error?: string }>;
+  wechatQrStart: (instanceId: string) => Promise<{ qrDataUrl: string; qrContent: string; sessionKey: string }>;
   wechatQrWait: (instanceId: string, sessionKey: string) => Promise<{ connected: boolean; accountId?: string; message?: string }>;
   popoQrStart: () => Promise<{ qrUrl: string; taskToken: string; timeoutMs: number }>;
   popoQrPoll: (taskToken: string) => Promise<{ success: boolean; appKey?: string; appSecret?: string; aesKey?: string; message: string }>;
   setSelectedPlatform: (p: Platform) => void;
-  updateChannelStatus: (platform: Platform, instanceId: string, status: Partial<ChannelStatus>) => void;
+  /** Subscribe to backend channel-status/message events. Returns an unsubscribe. */
+  subscribeEvents: () => () => void;
 }
 
 export const useIMStore = create<IMState>((set, get) => ({
   instances: [],
-  settings: { defaultDmPolicy: 'pairing', skillsEnabled: true, defaultAgentId: 'main' },
+  settings: DEFAULT_SETTINGS,
   statuses: {},
   selectedPlatform: 'wechat',
   loading: false,
   connectivityResults: {},
+  imSessionSources: {},
 
   loadConfigs: async () => {
     set({ loading: true });
     try {
-      const instances = await (window as any).loom.imListConfigs();
-      set({ instances, loading: false });
+      const [instances, gwStatus] = await Promise.all([
+        (window as any).loom.imListConfigs(),
+        (window as any).loom.imGetStatus().catch(() => ({})),
+      ]);
+      set({
+        instances,
+        statuses: flattenStatus(gwStatus as IMGatewayStatus),
+        loading: false,
+      });
     } catch (err) {
       console.error('[IMStore] loadConfigs failed:', err);
       set({ loading: false });
+    }
+  },
+
+  loadSettings: async () => {
+    try {
+      const settings = await (window as any).loom.imGetSettings();
+      set({ settings: { ...DEFAULT_SETTINGS, ...settings } });
+    } catch (err) {
+      console.error('[IMStore] loadSettings failed:', err);
+    }
+  },
+
+  saveSettings: async (settings) => {
+    const prev = get().settings;
+    set({ settings: { ...prev, ...settings } });
+    try {
+      await (window as any).loom.imSetSettings(settings);
+    } catch (err) {
+      console.error('[IMStore] saveSettings failed:', err);
+      set({ settings: prev });
+    }
+  },
+
+  refreshStatus: async () => {
+    try {
+      const gwStatus = await (window as any).loom.imGetStatus();
+      set({ statuses: flattenStatus(gwStatus as IMGatewayStatus) });
+    } catch (err) {
+      console.error('[IMStore] refreshStatus failed:', err);
     }
   },
 
@@ -117,21 +222,33 @@ export const useIMStore = create<IMState>((set, get) => ({
   },
 
   startChannel: async (platform, instanceId) => {
-    await (window as any).loom.imStartChannel(platform, instanceId);
-    get().updateChannelStatus(platform, instanceId, { connected: true });
+    const res = await (window as any).loom.imStartChannel(platform, instanceId);
+    if (res?.ok) {
+      get().refreshStatus();
+      return { ok: true };
+    }
+    return { ok: false, error: res?.error || 'Failed to start channel' };
   },
 
   stopChannel: async (platform, instanceId) => {
-    await (window as any).loom.imStopChannel(platform, instanceId);
-    get().updateChannelStatus(platform, instanceId, { connected: false });
+    const res = await (window as any).loom.imStopChannel(platform, instanceId);
+    if (res?.ok) {
+      get().refreshStatus();
+      return { ok: true };
+    }
+    return { ok: false, error: res?.error || 'Failed to stop channel' };
   },
 
   testConnectivity: async (platform, instanceId) => {
     const result = await (window as any).loom.imTestConnectivity(platform, instanceId);
     set((s) => ({
-      connectivityResults: { ...s.connectivityResults, [`${platform}:${instanceId}`]: result },
+      connectivityResults: { ...s.connectivityResults, [statusKey(platform, instanceId)]: result },
     }));
     return result;
+  },
+
+  sendHelp: async (platform, instanceId) => {
+    return (window as any).loom.imSendHelp(platform, instanceId);
   },
 
   wechatQrStart: async (instanceId) => {
@@ -139,7 +256,12 @@ export const useIMStore = create<IMState>((set, get) => ({
   },
 
   wechatQrWait: async (instanceId, sessionKey) => {
-    return (window as any).loom.imWechatQrWait(instanceId, sessionKey);
+    const result = await (window as any).loom.imWechatQrWait(instanceId, sessionKey);
+    if (result?.connected) {
+      await get().loadConfigs();
+      get().refreshStatus();
+    }
+    return result;
   },
 
   popoQrStart: async () => {
@@ -152,10 +274,36 @@ export const useIMStore = create<IMState>((set, get) => ({
 
   setSelectedPlatform: (p) => set({ selectedPlatform: p }),
 
-  updateChannelStatus: (platform, instanceId, status) => {
-    const key = `${platform}:${instanceId}`;
-    set((s) => ({
-      statuses: { ...s.statuses, [key]: { ...s.statuses[key], ...status } },
-    }));
+  loadSessionBindings: async () => {
+    try {
+      const bindings: Array<{ sessionId: string; platform: Platform; instanceId: string; conversationId: string }> =
+        await (window as any).loom.imListSessionBindings();
+      const map: Record<string, { platform: Platform; conversationId: string }> = {};
+      for (const b of bindings) {
+        if (b.sessionId) {
+          map[b.sessionId] = { platform: b.platform, conversationId: b.conversationId };
+        }
+      }
+      set({ imSessionSources: map });
+    } catch (e) {
+      console.warn('[IM store] loadSessionBindings failed:', e);
+    }
+  },
+
+  subscribeEvents: () => {
+    const loom = (window as any).loom;
+    // Channel-status events fire on connect/disconnect/error; refresh full
+    // status (carries lastInboundAt/lastError) from the backend on each event.
+    const unsubStatus = loom?.onIMChannelStatus?.(() => {
+      get().refreshStatus();
+    });
+    // Inbound messages also refresh status so "last received" stays fresh.
+    const unsubMsg = loom?.onIMMessage?.(() => {
+      get().refreshStatus();
+    });
+    return () => {
+      unsubStatus?.();
+      unsubMsg?.();
+    };
   },
 }));

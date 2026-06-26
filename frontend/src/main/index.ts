@@ -12,6 +12,7 @@ import { homedir } from 'os'
 import { existsSync, mkdirSync } from 'fs'
 import Database from 'better-sqlite3'
 import { IMStore, IMGatewayManager } from './im'
+import { ImBridge } from './im/imBridge'
 
 // Windows tuning.
 if (process.platform === 'win32') {
@@ -73,6 +74,35 @@ app.whenReady().then(async () => {
     app.setLoginItemSettings({ openAtLogin: false })
   }
 
+  // IM — instant messaging integration (must init BEFORE registerIpcHandlers
+  // so IPC handlers can access __imStore / __imGatewayManager)
+  let imGatewayManager: IMGatewayManager | undefined
+  try {
+    const loomDir = join(homedir(), '.loom')
+    if (!existsSync(loomDir)) mkdirSync(loomDir, { recursive: true })
+    const imDb = new Database(join(loomDir, 'im.db'))
+    imDb.pragma('journal_mode = WAL')
+    imDb.pragma('busy_timeout = 3000')
+
+    const imStore = new IMStore(imDb)
+    imGatewayManager = new IMGatewayManager({
+      imStore,
+      onMessage: (msg) => {
+        // Forward IM message to renderer via IPC
+        getMainWindow()?.webContents.send('im:message', msg)
+      },
+    })
+
+    // Make available globally for IPC handlers
+    ;(global as any).__imStore = imStore
+    ;(global as any).__imGatewayManager = imGatewayManager
+    ;(global as any).__imDb = imDb
+
+    console.log('[IM] IM gateway manager initialized')
+  } catch (e) {
+    console.error('[IM] Failed to initialize IM:', e)
+  }
+
   registerIpcHandlers()
 
   try {
@@ -81,6 +111,24 @@ app.whenReady().then(async () => {
     console.error('Failed to start engine:', e)
     app.quit()
     return
+  }
+
+  // Connect IM bridge to the engine so IM messages reach the agent and replies
+  // are sent back through the IM channel.
+  const _imStore = (global as any).__imStore as IMStore | undefined
+  const _mgr = (global as any).__imGatewayManager as IMGatewayManager | undefined
+  if (_imStore && _mgr && port) {
+    try {
+      const imBridge = new ImBridge(_imStore, () => {
+        getMainWindow()?.webContents.send('im:session-changed')
+      })
+      imBridge.connect(port)
+      _mgr.setBridge(imBridge)
+      ;(global as any).__imBridge = imBridge
+      console.log('[IM] bridge connected to engine on port', port)
+    } catch (e: any) {
+      console.error('[IM] bridge init failed:', e?.message ?? e)
+    }
   }
 
   const win = createMainWindow(port)
@@ -95,36 +143,11 @@ app.whenReady().then(async () => {
   // Start 30-second config directory poll watcher for model config hot-reload
   startConfigWatcher()
 
-  // IM — instant messaging integration
-  try {
-    const loomDir = join(homedir(), '.loom')
-    if (!existsSync(loomDir)) mkdirSync(loomDir, { recursive: true })
-    const imDb = new Database(join(loomDir, 'im.db'))
-    imDb.pragma('journal_mode = WAL')
-    imDb.pragma('busy_timeout = 3000')
-
-    const imStore = new IMStore(imDb)
-    const imGatewayManager = new IMGatewayManager({
-      imStore,
-      onMessage: (msg) => {
-        // Forward IM message to renderer via IPC
-        win?.webContents.send('im:message', msg)
-      },
-    })
-
-    // Make available globally for IPC handlers
-    ;(global as any).__imStore = imStore
-    ;(global as any).__imGatewayManager = imGatewayManager
-    ;(global as any).__imDb = imDb
-
-    // Start all enabled IM channels
+  // Start all enabled IM channels (needs mainWindow to exist for event forwarding)
+  if (imGatewayManager) {
     imGatewayManager.startAllEnabled().catch(err => {
       console.error('[IM] Failed to start IM gateways:', err)
     })
-
-    console.log('[IM] IM gateway manager initialized')
-  } catch (e) {
-    console.error('[IM] Failed to initialize IM:', e)
   }
 
   // Auto-updater
@@ -146,6 +169,8 @@ app.on('before-quit', () => {
   try {
     const mgr = (global as any).__imGatewayManager as IMGatewayManager | undefined
     if (mgr) mgr.stopAll()
+    const bridge = (global as any).__imBridge as ImBridge | undefined
+    if (bridge) bridge.disconnect()
     const db = (global as any).__imDb as Database.Database | undefined
     if (db) db.close()
   } catch (e) {

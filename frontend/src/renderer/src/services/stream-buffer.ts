@@ -1,5 +1,6 @@
 import { useStore } from '../stores'
 import type { StreamingActivity } from '../stores/streaming'
+import { loomRpc } from './jsonrpc'
 import { renderMarkdown } from '../utils/markdown'
 import { sanitizeHtml } from '../utils/markdown-sanitizer'
 import { t } from '../i18n'
@@ -41,6 +42,8 @@ interface BufferState {
   _lastFlush: number
   _lastTextLen: number
   _lastThinkLen: number
+  /** True when the stream was auto-registered for an IM-originated session. */
+  imOrigin: boolean
 }
 
 class StreamBufferManager {
@@ -102,15 +105,46 @@ class StreamBufferManager {
         _lastFlush: 0,
         _lastTextLen: 0,
         _lastThinkLen: 0,
+        imOrigin: false,
       })
     }
     return this.buffers.get(sessionId)!
   }
 
+  private ensureStreamingForIM(sessionId: string): boolean {
+    const store = useStore.getState()
+    if (store.streamingSessionIds.has(sessionId)) return true
+    // IM sessions: chat.send was initiated by ImBridge (separate WS), so the
+    // renderer never called `startStream`. Auto-register if the session exists.
+    const msgs = store.messagesBySession.get(sessionId)
+    if (!msgs) return false
+    const buf = this.ensureBuffer(sessionId)
+    // Adopt an existing empty assistant placeholder if available, otherwise create one.
+    if (!buf.messageId) {
+      const empty = msgs.find(m => m.role === 'assistant' && m.blocks.length === 0)
+      if (empty) {
+        buf.messageId = empty.id
+      } else {
+        buf.messageId = crypto.randomUUID()
+        store.ensureSession(sessionId)
+        store.appendMessage(sessionId, {
+          id: buf.messageId,
+          role: 'assistant',
+          blocks: [],
+          timestamp: new Date().toISOString(),
+        })
+      }
+    }
+    store.addStreamingSession(sessionId)
+    store.setStreamingActivity(sessionId, { phase: 'generating' })
+    const buf2 = this.ensureBuffer(sessionId)
+    buf2.imOrigin = true
+    return true
+  }
+
   handleStreamDelta(sessionId: string, delta: string): void {
     // Ignore deltas arriving after stream has ended (late WebSocket frames)
-    if (!useStore.getState().streamingSessionIds.has(sessionId)) {
-      console.warn('[stream-buffer] Delta dropped — session not streaming:', sessionId, 'delta:', delta.slice(0, 40))
+    if (!this.ensureStreamingForIM(sessionId)) {
       return
     }
     const buf = this.ensureBuffer(sessionId)
@@ -195,7 +229,7 @@ class StreamBufferManager {
     sessionId: string,
     tool: { id: string; name: string; args: Record<string, unknown> },
   ): void {
-    if (!useStore.getState().streamingSessionIds.has(sessionId)) return
+    if (!this.ensureStreamingForIM(sessionId)) return
     const buf = this.ensureBuffer(sessionId)
     if (!buf.messageId) return
     console.log('[stream-buffer] Tool started:', tool.name, tool.id)
@@ -229,7 +263,7 @@ class StreamBufferManager {
     toolName?: string,
     details?: Record<string, unknown>,
   ): void {
-    if (!useStore.getState().streamingSessionIds.has(sessionId)) return
+    if (!this.ensureStreamingForIM(sessionId)) return
     const buf = this.ensureBuffer(sessionId)
     if (!buf.messageId) return
     const shell = buf.shellCalls.find((t) => t.id === toolId)
@@ -285,10 +319,87 @@ class StreamBufferManager {
       useStore.getState().setMessageUsage(sessionId, buf.messageId, { ...usage })
     }
     useStore.getState().removeStreamingSession(sessionId)
+    // If this was an IM-originated stream, the user message (sent via IM) and
+    // the final assistant response aren't in the renderer store — only the
+    // streamed blocks are. Sync the full history from the engine so the
+    // desktop ChatArea shows everything.
+    const wasIM = buf.imOrigin
     this.buffers.delete(sessionId)
+    // Fire and forget the sync — it updates messagesBySession asynchronously.
+    if (wasIM) {
+      this.syncIMSessionHistory(sessionId)
+    }
 
     // Auto-title: trigger if session has no title and feature is enabled
     this.maybeAutoTitle(sessionId)
+  }
+
+  private async syncIMSessionHistory(sessionId: string): Promise<void> {
+    try {
+      const result: any = await loomRpc('session.messages', { session_id: sessionId })
+      const allMsgs: any[] = result?.messages || []
+      if (allMsgs.length === 0) return
+
+      const store = useStore.getState()
+
+      // Minimal engine→renderer conversion — builds text-only blocks, enough
+      // for IM sessions where user messages are plain text and the assistant
+      // stream was already flushed.
+      const convertContent = (content: unknown): Array<{ type: string; [k: string]: unknown }> => {
+        if (typeof content === 'string') {
+          return [{ type: 'text', text: content }]
+        }
+        if (Array.isArray(content)) {
+          return content.map((p: any) => {
+            if (p?.type === 'text' || p?.type === 'text')
+              return { type: 'text', text: p.text ?? '' }
+            return { type: p?.type ?? 'unknown', ...p }
+          })
+        }
+        return [{ type: 'text', text: String(content ?? '') }]
+      }
+
+      const msgs = allMsgs
+        .filter((m: any) => {
+          const r = typeof m.role === 'string' ? m.role.toLowerCase() : ''
+          return r !== 'tool'
+        })
+        .map((m: any, i: number) => ({
+          id: `im-${sessionId}-${i}`,
+          role: (['user', 'assistant'].includes(m.role) ? m.role : 'system') as 'user' | 'assistant' | 'system',
+          blocks: convertContent(m.content),
+          timestamp: m.timestamp || new Date().toISOString(),
+          usage: m.usage ? {
+            prompt: m.usage.prompt_tokens || 0,
+            completion: m.usage.completion_tokens || 0,
+            model: m.usage.model || '',
+            contextWindow: m.usage.context_window || 0,
+            cached: m.usage.cached_tokens ?? 0,
+            cacheRead: m.usage.cache_read_tokens ?? 0,
+            cacheWrite: m.usage.cache_write_tokens ?? 0,
+          } : undefined,
+        }))
+
+      store.hydrateMessages(sessionId, msgs)
+
+      // Rebuild cumulative usage
+      store.clearSessionCumulative?.(sessionId)
+      for (const m of msgs) {
+        if (m.role === 'assistant' && m.usage) {
+          store.accumulateSessionUsage?.(sessionId, {
+            prompt: m.usage.prompt || 0,
+            completion: m.usage.completion || 0,
+            model: m.usage.model || '',
+            contextWindow: m.usage.contextWindow || 0,
+            cached: m.usage.cached || 0,
+            cacheRead: m.usage.cacheRead || 0,
+            cacheWrite: m.usage.cacheWrite || 0,
+          })
+        }
+      }
+    } catch (e) {
+      console.warn('[stream-buffer] syncIMSessionHistory failed:', e)
+    }
   }
 
   private async maybeAutoTitle(sessionId: string): Promise<void> {

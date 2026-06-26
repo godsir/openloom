@@ -19,6 +19,7 @@ export interface InstanceConfig {
 }
 
 export interface IMSettings {
+  globalEnabled: boolean;
   defaultDmPolicy: AccessMode;
   skillsEnabled: boolean;
   defaultAgentId: string;
@@ -58,6 +59,7 @@ export interface IMGatewayStatus {
 }
 
 export const DEFAULT_IM_SETTINGS: IMSettings = {
+  globalEnabled: true,
   defaultDmPolicy: 'pairing',
   skillsEnabled: true,
   defaultAgentId: 'main',

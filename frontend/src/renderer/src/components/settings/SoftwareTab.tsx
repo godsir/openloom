@@ -142,6 +142,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
   const sendShortcut = useStore((s) => s.sendShortcut)
   const [autoStart, setAutoStart] = useState(false)
   const [closeToTray, setCloseToTray] = useState(true)
+  const [startToTray, setStartToTray] = useState(false)
   const [autoTitle, setAutoTitle] = useState(true)
   const [uiFont, setUiFont] = useState('')
   const [codeFont, setCodeFont] = useState('')
@@ -196,6 +197,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
     Promise.all([
       window.loom.getPreference('autoStart', false),
       window.loom.getPreference('closeToTray', true),
+      window.loom.getPreference('startToTray', false),
       window.loom.getPreference('autoTitle', true),
       window.loom.getPreference('uiFont', ''),
       window.loom.getPreference('codeFont', ''),
@@ -206,9 +208,10 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
       window.loom.getPreference('skillExpandDefault', false),
       window.loom.getPreference('taskCompleteNotification', false),
       window.loom.getPlatform(),
-    ]).then(([as, ct, at, uf, cf, cc, dha, te, toe, se, tcn, plat]) => {
+    ]).then(([as, ct, st, at, uf, cf, cc, dha, te, toe, se, tcn, plat]) => {
       setAutoStart(as)
       setCloseToTray(ct)
+      setStartToTray(st)
       setAutoTitle(at)
       if (uf) document.documentElement.style.setProperty('--font', uf as string)
       if (cf) document.documentElement.style.setProperty('--font-mono', cf as string)
@@ -245,6 +248,12 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
     setAutoStart(val)
     await window.loom.setPreference('autoStart', val)
     useStore.getState().addToast({ type: 'success', message: val ? t('software.autoStartEnabled') : t('software.autoStartDisabled') })
+  }
+
+  const handleStartToTray = async (val: boolean) => {
+    setStartToTray(val)
+    await window.loom.setPreference('startToTray', val)
+    useStore.getState().addToast({ type: 'success', message: val ? t('software.startToTrayOnToast') : t('software.startToTrayOffToast') })
   }
 
   const handleCloseToTray = async (val: boolean) => {
@@ -513,6 +522,26 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                     onClick={() => handleCloseToTray(false)}
                   >
                     {t('software.quitApp')}
+                  </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>{t('software.startToTray')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.startToTrayDesc')}</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${startToTray ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleStartToTray(true)}
+                  >
+                    {t('software.silentToTray')}
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!startToTray ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleStartToTray(false)}
+                  >
+                    {t('software.showForeground')}
                   </button>
                 </div>
               </div>

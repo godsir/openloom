@@ -19,8 +19,9 @@ export const WriteSettingsSection: React.FC = () => {
   const handlePickWorkspace = async () => {
     try {
       const p = await (window as any).loom?.selectFolder?.();
+      console.log('[WriteSettings] selectFolder returned:', p);
       if (p) store.setWorkspaceRoot(p);
-    } catch {}
+    } catch (e) { console.log('[WriteSettings] handlePickWorkspace error:', e); }
   };
 
   return (

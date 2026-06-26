@@ -1,7 +1,28 @@
-import { useState, useEffect } from 'react'
-import { useIMStore, PLATFORM_LABELS, PLATFORM_ORDER, type Platform, type InstanceConfig } from '../../stores/im'
+import { useEffect } from 'react'
+import {
+  useIMStore,
+  PLATFORM_LABELS,
+  PLATFORM_ORDER,
+  IMPLEMENTED_PLATFORMS,
+  type InstanceConfig,
+  type AccessMode,
+} from '../../stores/im'
+import { useStore } from '../../stores'
 import { useLocale } from '../../i18n'
+import Select, { type SelectOption } from '../shared/Select'
+import ImInstanceCard from './ImInstanceCard'
+import shared from '../shared/SettingsModal.module.css'
 import styles from './ImTab.module.css'
+
+function useDmPolicyOptions(): SelectOption[] {
+  const { t } = useLocale()
+  return [
+    { value: 'pairing', label: t('im.pairing') },
+    { value: 'allowlist', label: t('im.allowlist') },
+    { value: 'open', label: t('im.open') },
+    { value: 'disabled', label: t('im.disabled') },
+  ]
+}
 
 function generateId(): string {
   return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
@@ -11,19 +32,27 @@ export default function ImTab() {
   const { t } = useLocale()
   const {
     instances, settings, selectedPlatform, loading,
-    loadConfigs, saveConfig, deleteConfig,
-    startChannel, stopChannel,
-    setSelectedPlatform,
+    loadConfigs, loadSettings, saveSettings, saveConfig,
+    setSelectedPlatform, subscribeEvents, stopChannel,
   } = useIMStore()
-
-  const [globalEnabled, setGlobalEnabled] = useState(true)
-  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const agents = useStore((s: any) => s.agents) ?? []
+  const addToast = useStore((s) => s.addToast)
+  const dmPolicyOptions = useDmPolicyOptions()
 
   useEffect(() => {
     loadConfigs()
+    loadSettings()
+    const unsub = subscribeEvents()
+    return unsub
   }, [])
 
-  const platformInstances = instances.filter(i => i.platform === selectedPlatform)
+  const platformInstances = instances.filter((i) => i.platform === selectedPlatform)
+  const isImplemented = IMPLEMENTED_PLATFORMS.includes(selectedPlatform)
+
+  const agentOptions: SelectOption[] =
+    agents.length > 0
+      ? agents.map((a: any) => ({ value: a.name, label: a.name }))
+      : [{ value: 'main', label: 'main' }]
 
   const handleAddInstance = async () => {
     const newConfig: InstanceConfig = {
@@ -37,33 +66,119 @@ export default function ImTab() {
       allowFrom: [],
       groupPolicy: 'disabled',
       groupAllowFrom: [],
+      agentId: settings.defaultAgentId,
       createdAt: Math.floor(Date.now() / 1000),
       updatedAt: Math.floor(Date.now() / 1000),
     }
     await saveConfig(newConfig)
+    addToast({ type: 'success', message: t('im.instanceAdded', '已添加实例') })
+  }
+
+  const handleToggleGlobal = async (checked: boolean) => {
+    await saveSettings({ globalEnabled: checked })
+    if (!checked) {
+      // Stop all running channels when the global switch turns off.
+      const running = instances.filter((i) => i.enabled)
+      await Promise.all(running.map((i) => stopChannel(i.platform, i.instanceId)))
+    }
+    addToast({
+      type: 'success',
+      message: checked
+        ? t('im.globalOnToast', '已开启 IM')
+        : t('im.globalOffToast', '已关闭 IM，所有通道已停止'),
+    })
   }
 
   return (
     <>
-      <div className={styles.header}>
-        <div>
-          <h3 className={styles.title}>{t('settings.im', 'IM 接入')}</h3>
-          <p className={styles.subtitle}>{t('settings.imDesc', '连接手机 IM 平台，让 Agent 在微信/飞书等渠道收发消息')}</p>
+      {/* Global settings */}
+      <div className={shared.aboutSection}>
+        <div className={shared.themeLabel}>{t('im.globalSettings')}</div>
+
+        <div className={shared.aboutRow}>
+          <div>
+            <span className={shared.aboutLabel}>{t('im.globalEnable')}</span>
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
+              {t('im.globalEnableHint', '全局 IM 总开关，关闭后停止所有通道')}
+            </p>
+          </div>
+          <div className={shared.mcpTransportToggle}>
+            <button
+              className={`${shared.mcpTransportBtn} ${settings.globalEnabled ? shared.mcpTransportActive : ''}`}
+              onClick={() => { if (!settings.globalEnabled) handleToggleGlobal(true) }}
+            >
+              {t('im.enable')}
+            </button>
+            <button
+              className={`${shared.mcpTransportBtn} ${!settings.globalEnabled ? shared.mcpTransportActive : ''}`}
+              onClick={() => { if (settings.globalEnabled) handleToggleGlobal(false) }}
+            >
+              {t('im.disable')}
+            </button>
+          </div>
         </div>
-        <div className={styles.globalToggle}>
-          <span className={styles.toggleLabel}>{t('im.globalEnable', '全局启停')}</span>
-          <button
-            className={`${styles.toggleBtn} ${globalEnabled ? styles.toggleOn : styles.toggleOff}`}
-            onClick={() => setGlobalEnabled(!globalEnabled)}
-          >
-            <span className={styles.toggleKnob} />
-          </button>
+
+        <div className={shared.aboutRow}>
+          <div>
+            <span className={shared.aboutLabel}>{t('im.defaultDmPolicy')}</span>
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('im.defaultDmPolicyHint')}</p>
+          </div>
+          <div style={{ width: 180 }}>
+            <Select
+              value={settings.defaultDmPolicy}
+              options={dmPolicyOptions}
+              onChange={(v) => saveSettings({ defaultDmPolicy: v as AccessMode })}
+              variant="form"
+            />
+          </div>
+        </div>
+
+        <div className={shared.aboutRow}>
+          <div>
+            <span className={shared.aboutLabel}>{t('im.skillsEnabled')}</span>
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
+              {t('im.skillsEnabledHint', '允许 Agent 在 IM 会话中调用 Skills')}
+            </p>
+          </div>
+          <div className={shared.mcpTransportToggle}>
+            <button
+              className={`${shared.mcpTransportBtn} ${settings.skillsEnabled ? shared.mcpTransportActive : ''}`}
+              onClick={() => { if (!settings.skillsEnabled) saveSettings({ skillsEnabled: true }) }}
+            >
+              {t('im.enable')}
+            </button>
+            <button
+              className={`${shared.mcpTransportBtn} ${!settings.skillsEnabled ? shared.mcpTransportActive : ''}`}
+              onClick={() => { if (settings.skillsEnabled) saveSettings({ skillsEnabled: false }) }}
+            >
+              {t('im.disable')}
+            </button>
+          </div>
+        </div>
+
+        <div className={shared.aboutRow}>
+          <div>
+            <span className={shared.aboutLabel}>{t('im.bindAgent')}</span>
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
+              {t('im.bindAgentHint', '新实例默认绑定的 Agent')}
+            </p>
+          </div>
+          <div style={{ width: 180 }}>
+            <Select
+              value={settings.defaultAgentId}
+              options={agentOptions}
+              onChange={(v) => saveSettings({ defaultAgentId: v })}
+              variant="form"
+            />
+          </div>
         </div>
       </div>
 
-      {/* Platform Tabs */}
+      <hr className={shared.sectionDivider} />
+
+      {/* Platform picker */}
       <div className={styles.platformTabs}>
-        {PLATFORM_ORDER.map(p => (
+        {PLATFORM_ORDER.map((p) => (
           <button
             key={p}
             className={`${styles.platformTab} ${selectedPlatform === p ? styles.platformTabActive : ''}`}
@@ -74,107 +189,28 @@ export default function ImTab() {
         ))}
       </div>
 
-      <div className={styles.content}>
-        {/* Global Settings Card */}
-        <div className={styles.globalCard}>
-          <h4 className={styles.cardTitle}>⚙ {t('im.globalSettings', '全局 IM 设置')}</h4>
-          <div className={styles.globalRow}>
-            <label className={styles.fieldLabel}>
-              <span>{t('im.defaultDmPolicy', '默认访问策略')}</span>
-              <select className={styles.select} value={settings.defaultDmPolicy} onChange={(e) => {
-                // Settings are read-only in this simple version
-              }}>
-                <option value="pairing">{t('im.pairing', '配对模式 (推荐)')}</option>
-                <option value="open">{t('im.open', '开放')}</option>
-                <option value="allowlist">{t('im.allowlist', '白名单')}</option>
-              </select>
-            </label>
-            <label className={styles.checkboxLabel}>
-              <input type="checkbox" checked={settings.skillsEnabled} readOnly />
-              <span>{t('im.skillsEnabled', '启用 Skills')}</span>
-            </label>
-            <label className={styles.fieldLabel}>
-              <span>{t('im.bindAgent', '绑定 Agent')}</span>
-              <select className={styles.select} value={settings.defaultAgentId}>
-                <option value="main">main (默认)</option>
-              </select>
-            </label>
-          </div>
+      {/* Instances */}
+      {!isImplemented ? (
+        <p className={shared.toolsEmpty}>
+          {t('im.notImplemented', `${PLATFORM_LABELS[selectedPlatform]} 接入尚未实现，暂仅支持微信`)}
+        </p>
+      ) : loading ? (
+        <p className={shared.toolsEmpty}>{t('common.loading')}</p>
+      ) : platformInstances.length === 0 ? (
+        <p className={shared.toolsEmpty}>{t('im.noInstances')}</p>
+      ) : (
+        <div className={shared.mcpServerList}>
+          {platformInstances.map((inst) => (
+            <ImInstanceCard key={inst.id} config={inst} />
+          ))}
         </div>
+      )}
 
-        {/* Instance Cards */}
-        {loading ? (
-          <div className={styles.loading}>{t('common.loading', '加载中...')}</div>
-        ) : platformInstances.length === 0 ? (
-          <div className={styles.empty}>
-            {t('im.noInstances', `暂无${PLATFORM_LABELS[selectedPlatform]}实例`)}
-          </div>
-        ) : (
-          platformInstances.map(inst => (
-            <div key={inst.id} className={styles.instanceCard}>
-              <div className={styles.instanceHeader} onClick={() => setExpandedId(expandedId === inst.id ? null : inst.id)}>
-                <div className={styles.instanceInfo}>
-                  <span className={styles.instanceName}>{inst.instanceName}</span>
-                  <span className={`${styles.statusBadge} ${inst.enabled ? styles.statusConnected : styles.statusDisconnected}`}>
-                    {inst.enabled ? '● 已连接' : '○ 未连接'}
-                  </span>
-                  {inst.configJson?.accountId && (
-                    <span className={styles.accountId}>{String(inst.configJson.accountId)}</span>
-                  )}
-                </div>
-                <div className={styles.instanceActions}>
-                  <button
-                    className={`${styles.toggleBtn} ${inst.enabled ? styles.toggleOn : styles.toggleOff}`}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (inst.enabled) {
-                        stopChannel(inst.platform, inst.instanceId)
-                        saveConfig({ ...inst, enabled: false, updatedAt: Math.floor(Date.now() / 1000) })
-                      } else {
-                        saveConfig({ ...inst, enabled: true, updatedAt: Math.floor(Date.now() / 1000) }).then(() => {
-                          startChannel(inst.platform, inst.instanceId)
-                        })
-                      }
-                    }}
-                  >
-                    <span className={styles.toggleKnob} />
-                  </button>
-                  <button className={styles.moreBtn} onClick={(e) => {
-                    e.stopPropagation()
-                    // More options menu (delete, etc.)
-                  }}>⋯</button>
-                </div>
-              </div>
-              {/* Simplified sub-info */}
-              <div className={styles.instanceMeta}>
-                <span>ID: {inst.instanceId}</span>
-              </div>
-              {/* Expanded config area — simplified for now, Task 15 will add full ImInstanceCard */}
-              {expandedId === inst.id && (
-                <div className={styles.expandedConfig}>
-                  <div className={styles.configSection}>
-                    <label className={styles.fieldLabel}>
-                      <span>{t('im.instanceName', '实例名称')}</span>
-                      <input
-                        className={styles.input}
-                        value={inst.instanceName}
-                        onChange={(e) => {
-                          saveConfig({ ...inst, instanceName: e.target.value, updatedAt: Math.floor(Date.now() / 1000) })
-                        }}
-                      />
-                    </label>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))
-        )}
-
-        {/* Add Instance Button */}
-        <button className={styles.addBtn} onClick={handleAddInstance}>
-          <span>+</span> {t('im.addInstance', '添加实例')}
+      {isImplemented && (
+        <button className={shared.mcpAddBtn} onClick={handleAddInstance}>
+          + {t('im.addInstance')}
         </button>
-      </div>
+      )}
     </>
   )
 }
