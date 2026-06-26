@@ -173,6 +173,18 @@ pub enum AccessMode {
     Open,
     Pairing,
     Allowlist,
+    Disabled,
+}
+
+impl std::fmt::Display for AccessMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AccessMode::Open => write!(f, "open"),
+            AccessMode::Pairing => write!(f, "pairing"),
+            AccessMode::Allowlist => write!(f, "allowlist"),
+            AccessMode::Disabled => write!(f, "disabled"),
+        }
+    }
 }
 
 #[async_trait]
