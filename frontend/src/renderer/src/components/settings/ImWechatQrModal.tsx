@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useIMStore } from '../../stores/im'
 import { useLocale } from '../../i18n'
-import { IconCheck, IconClock, IconRefresh, IconX } from '../../utils/icons'
+import { IconCheck, IconClock, IconRefresh, IconX, IconQrCode } from '../../utils/icons'
 import { QRCodeSVG } from 'qrcode.react'
 import styles from './ImTab.module.css'
 
@@ -12,7 +12,7 @@ interface Props {
   onConnected: (accountId: string) => void
 }
 
-const QR_TTL_SECONDS = 300 // 5 minutes — matches ACTIVE_LOGIN_TTL_MS in wechatChannel
+const QR_TTL_SECONDS = 300
 
 export default function ImWechatQrModal({ instanceId, instanceName, onClose, onConnected }: Props) {
   const { t } = useLocale()
@@ -65,7 +65,7 @@ export default function ImWechatQrModal({ instanceId, instanceName, onClose, onC
     } catch (err: any) {
       if (mountedRef.current) {
         setStatus('error')
-        setMessage(err.message || t('im.qrStartFail', '启动失败'))
+        setMessage(err.message || t('im.qrStartFail'))
       }
     }
   }
@@ -100,43 +100,70 @@ export default function ImWechatQrModal({ instanceId, instanceName, onClose, onC
     <div className={styles.modalOverlay} onClick={onClose}>
       <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div className={styles.modalHeader}>
-          <h3>{t('im.qrTitle', '微信扫码连接')} — {instanceName}</h3>
+          <h3>{t('im.qrTitle')} — {instanceName}</h3>
           <button className={styles.closeBtn} onClick={onClose}><IconX size={16} /></button>
         </div>
+
         <div className={styles.modalBodyCentered}>
-          {status === 'loading' && <p className={styles.loading}>{t('im.qrLoading', '正在生成二维码...')}</p>}
-          {status === 'error' && <p className={styles.errorText}>{message || t('im.qrStartFail', '启动失败')}</p>}
+          {/* Loading */}
+          {status === 'loading' && (
+            <p className={styles.loading}>{t('im.qrLoading')}</p>
+          )}
+
+          {/* Error */}
+          {status === 'error' && (
+            <p className={styles.errorText}>{message || t('im.qrStartFail')}</p>
+          )}
+
+          {/* QR waiting / expired */}
           {(status === 'waiting' || status === 'expired') && (
             <>
               {qrContent ? (
-                <div className={styles.qrImage} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fff' }}>
-                  <QRCodeSVG value={qrContent} size={196} bgColor="#ffffff" fgColor="#000000" level="M" />
+                <div className={styles.qrCard}>
+                  <QRCodeSVG value={qrContent} size={208} bgColor="#ffffff" fgColor="#000000" level="M" />
                 </div>
               ) : (
                 <div className={styles.qrPlaceholder}>
-                  <p>{t('im.qrLoadingHint', '二维码加载中...')}</p>
-                  <p className={styles.qrHint}>{t('im.qrHint', '请用手机微信扫描二维码')}</p>
+                  <IconQrCode size={32} style={{ opacity: 0.3 }} />
+                  <p>{t('im.qrLoadingHint')}</p>
                 </div>
               )}
-              <p className={styles.qrStatus} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, color: status === 'expired' ? 'var(--amber)' : undefined }}>
-                <IconClock size={14} />
+
+              <div className={`${styles.qrBadge} ${status === 'waiting' ? styles.qrBadgeScanning : styles.qrBadgeExpired}`}>
+                <IconClock size={12} />
                 {status === 'waiting' ? t('im.qrWaiting') : t('im.qrExpired')}
+              </div>
+
+              {status === 'waiting' && (
+                <>
+                  <div className={styles.qrCountdown}>{mm}:{ss}</div>
+                  <span className={styles.qrHintRow} style={{ marginTop: 2 }}>
+                    {t('im.qrValidMinutes')} · {t('im.countdown')}
+                  </span>
+                </>
+              )}
+
+              <p className={styles.qrHintRow} style={{ marginTop: 8 }}>
+                {t('im.qrHint')}
               </p>
-              <p className={styles.qrHint}>
-                {t('im.qrValidMinutes')} · {t('im.countdown', '剩余')} {mm}:{ss}
-              </p>
+
               {status === 'expired' && (
-                <button className={styles.refreshBtn} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }} onClick={startLogin}>
+                <button className={styles.refreshBtn} onClick={startLogin}>
                   <IconRefresh size={12} />
                   {t('im.qrRefresh')}
                 </button>
               )}
             </>
           )}
+
+          {/* Connected */}
           {status === 'connected' && (
-            <div className={styles.connectedMsg}>
-              <span className={styles.connectedIcon} style={{ display: 'flex', justifyContent: 'center' }}><IconCheck size={44} /></span>
-              <p>{t('im.qrConnected')}</p>
+            <div style={{ textAlign: 'center', padding: '20px 0' }}>
+              <div className={styles.qrConnectedIcon}>
+                <IconCheck size={32} />
+              </div>
+              <p className={styles.qrConnectedTitle}>{t('im.qrConnected')}</p>
+              <p className={styles.qrConnectedSub}>{instanceName}</p>
             </div>
           )}
         </div>

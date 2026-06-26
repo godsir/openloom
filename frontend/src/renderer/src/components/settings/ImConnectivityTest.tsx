@@ -26,66 +26,86 @@ export default function ImConnectivityTest({ platform, instanceId, onClose }: Pr
     }
   }
 
-  // Auto-run on mount
   useEffect(() => { runTest() }, [])
 
   const levelIcon = (level: string) => {
     switch (level) {
-      case 'pass': return <IconCheck size={13} />
-      case 'warn': return <IconAlertCircle size={13} />
-      case 'fail': return <IconXCircle size={13} />
-      default: return <IconInfo size={13} />
+      case 'pass': return <IconCheck size={14} />
+      case 'warn': return <IconAlertCircle size={14} />
+      case 'fail': return <IconXCircle size={14} />
+      default: return <IconInfo size={14} />
     }
   }
 
-  const verdictText = (v: string) =>
-    v === 'pass' ? t('im.verdictPass', '连接正常')
-      : v === 'warn' ? t('im.verdictWarn', '需要关注')
-        : t('im.verdictFail', '连接失败')
+  const verdictLabel = (v: string) =>
+    v === 'pass' ? t('im.verdictPass')
+    : v === 'warn' ? t('im.verdictWarn')
+    : t('im.verdictFail')
+
+  const verdictIcon = (v: string) => {
+    switch (v) {
+      case 'pass': return <IconCheck size={28} />
+      case 'warn': return <IconAlertCircle size={28} />
+      case 'fail': return <IconXCircle size={28} />
+      default: return <IconInfo size={28} />
+    }
+  }
+
+  const bigIconClass = result
+    ? result.verdict === 'pass' ? styles.verdictBigPass
+      : result.verdict === 'warn' ? styles.verdictBigWarn
+      : styles.verdictBigFail
+    : undefined
 
   return (
     <div className={styles.modalOverlay} onClick={onClose}>
       <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div className={styles.modalHeader}>
-          <h3>{t('im.connectTestTitle', '连接测试')}</h3>
+          <h3>{t('im.connectTestTitle')}</h3>
           <button className={styles.closeBtn} onClick={onClose}><IconX size={16} /></button>
         </div>
         <div className={styles.modalBody}>
-          {running && <p className={styles.loading}>{t('im.testRunning', '正在测试...')}</p>}
+          {running && <p className={styles.loading}>{t('im.testRunning')}</p>}
+
           {result && (
             <>
-              <div className={`${styles.verdictBanner} ${result.verdict === 'pass' ? styles.verdictPass : result.verdict === 'warn' ? styles.verdictWarn : styles.verdictFail}`}>
-                <span className={styles.verdictIcon}>
-                  {result.verdict === 'pass'
-                    ? <IconCheck size={20} />
-                    : result.verdict === 'warn'
-                      ? <IconAlertCircle size={20} />
-                      : <IconXCircle size={20} />}
-                </span>
-                <div>
-                  <div className={styles.verdictText}>{verdictText(result.verdict)}</div>
-                  <div className={styles.verdictTime}>{new Date(result.testedAt).toLocaleString()}</div>
+              {/* Big verdict */}
+              {bigIconClass && (
+                <div className={`${styles.verdictBigIcon} ${bigIconClass}`}>
+                  {verdictIcon(result.verdict)}
                 </div>
-              </div>
+              )}
+              <p className={styles.verdictBigTitle}>{verdictLabel(result.verdict)}</p>
+              <p className={styles.verdictBigTime}>{new Date(result.testedAt).toLocaleString()}</p>
+
+              {/* Check list */}
               <div className={styles.checkList}>
-                {result.checks.map((check, i) => (
-                  <div key={i} className={`${styles.checkItem} ${styles[`check${check.level.charAt(0).toUpperCase() + check.level.slice(1)}`]}`}>
-                    <span className={styles.checkIcon}>{levelIcon(check.level)}</span>
-                    <div className={styles.checkContent}>
-                      <div className={styles.checkMessage}>{check.message}</div>
-                      {check.suggestion && <div className={styles.checkSuggestion}>{check.suggestion}</div>}
+                {result.checks.map((check, i) => {
+                  const cls = check.level === 'pass' ? styles.checkPass
+                    : check.level === 'warn' ? styles.checkWarn
+                    : check.level === 'fail' ? styles.checkFail
+                    : styles.checkInfo
+                  const badgeCls = check.level === 'pass' ? styles.badgePass
+                    : check.level === 'warn' ? styles.badgeWarn
+                    : check.level === 'fail' ? styles.badgeFail
+                    : styles.badgeInfo
+                  return (
+                    <div key={i} className={`${styles.checkItem} ${cls}`}>
+                      <span className={styles.checkIcon}>{levelIcon(check.level)}</span>
+                      <div className={styles.checkContent}>
+                        <div className={styles.checkMessage}>{check.message}</div>
+                        {check.suggestion && <div className={styles.checkSuggestion}>{check.suggestion}</div>}
+                      </div>
+                      <span className={`${styles.checkBadge} ${badgeCls}`}>{check.level}</span>
                     </div>
-                    <span className={`${styles.checkBadge} ${styles[`badge${check.level.charAt(0).toUpperCase() + check.level.slice(1)}`]}`}>
-                      {check.level}
-                    </span>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </>
           )}
         </div>
         <div className={styles.modalFooter}>
-          <button className={styles.closeBtn} onClick={onClose}>{t('common.close')}</button>
+          <button className={styles.instanceBtn} onClick={onClose}>{t('common.close')}</button>
         </div>
       </div>
     </div>

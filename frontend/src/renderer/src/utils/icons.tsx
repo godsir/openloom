@@ -94,6 +94,7 @@ export {
   PenLine as IconPenLine,
   ScanSearch as IconScanSearch,
   ClipboardCheck as IconClipboardCheck,
+  QrCode as IconQrCode,
 } from 'lucide-react'
 
 export function IconStarFilled({ size = 16, className = '' }: { size?: number; className?: string }) {

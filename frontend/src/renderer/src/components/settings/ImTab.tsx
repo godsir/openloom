@@ -4,13 +4,16 @@ import {
   PLATFORM_LABELS,
   PLATFORM_ORDER,
   IMPLEMENTED_PLATFORMS,
+  statusKey,
   type InstanceConfig,
   type AccessMode,
 } from '../../stores/im'
 import { useStore } from '../../stores'
 import { useLocale } from '../../i18n'
 import Select, { type SelectOption } from '../shared/Select'
+import PlatformIcon from '../shared/PlatformIcon'
 import ImInstanceCard from './ImInstanceCard'
+import { IconPlus } from '../../utils/icons'
 import shared from '../shared/SettingsModal.module.css'
 import styles from './ImTab.module.css'
 
@@ -33,7 +36,7 @@ export default function ImTab() {
   const {
     instances, settings, selectedPlatform, loading,
     loadConfigs, loadSettings, saveSettings, saveConfig,
-    setSelectedPlatform, subscribeEvents, stopChannel,
+    setSelectedPlatform, subscribeEvents, stopChannel, statuses,
   } = useIMStore()
   const agents = useStore((s: any) => s.agents) ?? []
   const addToast = useStore((s) => s.addToast)
@@ -77,7 +80,6 @@ export default function ImTab() {
   const handleToggleGlobal = async (checked: boolean) => {
     await saveSettings({ globalEnabled: checked })
     if (!checked) {
-      // Stop all running channels when the global switch turns off.
       const running = instances.filter((i) => i.enabled)
       await Promise.all(running.map((i) => stopChannel(i.platform, i.instanceId)))
     }
@@ -89,94 +91,77 @@ export default function ImTab() {
     })
   }
 
+  /** Count live instances per platform (for the tab status dot). */
+  const liveCount: Record<string, number> = {}
+  for (const inst of instances) {
+    const key = statusKey(inst.platform, inst.instanceId)
+    if (statuses[key]?.connected) {
+      liveCount[inst.platform] = (liveCount[inst.platform] ?? 0) + 1
+    }
+  }
+
   return (
     <>
-      {/* Global settings */}
+      {/* ── Global Settings ── */}
       <div className={shared.aboutSection}>
         <div className={shared.themeLabel}>{t('im.globalSettings')}</div>
 
-        <div className={shared.aboutRow}>
-          <div>
-            <span className={shared.aboutLabel}>{t('im.globalEnable')}</span>
-            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
-              {t('im.globalEnableHint', '全局 IM 总开关，关闭后停止所有通道')}
-            </p>
+        <div className={styles.toggleRow}>
+          <div className={styles.toggleLabelGroup}>
+            <span className={styles.toggleLabel}>{t('im.globalEnable')}</span>
+            <span className={styles.toggleHint}>{t('im.globalEnableHint', '全局 IM 总开关，关闭后停止所有通道')}</span>
           </div>
-          <div className={shared.mcpTransportToggle}>
-            <button
-              className={`${shared.mcpTransportBtn} ${settings.globalEnabled ? shared.mcpTransportActive : ''}`}
-              onClick={() => { if (!settings.globalEnabled) handleToggleGlobal(true) }}
-            >
-              {t('im.enable')}
-            </button>
-            <button
-              className={`${shared.mcpTransportBtn} ${!settings.globalEnabled ? shared.mcpTransportActive : ''}`}
-              onClick={() => { if (settings.globalEnabled) handleToggleGlobal(false) }}
-            >
-              {t('im.disable')}
-            </button>
+          <div
+            className={styles.toggleSwitch}
+            data-on={settings.globalEnabled ? 'true' : 'false'}
+            onClick={() => handleToggleGlobal(!settings.globalEnabled)}
+            role="switch"
+            aria-checked={settings.globalEnabled}
+          >
+            <div className={styles.toggleKnob} />
           </div>
         </div>
 
         <div className={shared.aboutRow}>
           <div>
             <span className={shared.aboutLabel}>{t('im.defaultDmPolicy')}</span>
-            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('im.defaultDmPolicyHint')}</p>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: 0 }}>{t('im.defaultDmPolicyHint')}</p>
           </div>
           <div style={{ width: 180 }}>
-            <Select
-              value={settings.defaultDmPolicy}
-              options={dmPolicyOptions}
-              onChange={(v) => saveSettings({ defaultDmPolicy: v as AccessMode })}
-              variant="form"
-            />
+            <Select value={settings.defaultDmPolicy} options={dmPolicyOptions} onChange={(v) => saveSettings({ defaultDmPolicy: v as AccessMode })} variant="form" />
           </div>
         </div>
 
-        <div className={shared.aboutRow}>
-          <div>
-            <span className={shared.aboutLabel}>{t('im.skillsEnabled')}</span>
-            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
-              {t('im.skillsEnabledHint', '允许 Agent 在 IM 会话中调用 Skills')}
-            </p>
+        <div className={styles.toggleRow}>
+          <div className={styles.toggleLabelGroup}>
+            <span className={styles.toggleLabel}>{t('im.skillsEnabled')}</span>
+            <span className={styles.toggleHint}>{t('im.skillsEnabledHint', '允许 Agent 在 IM 会话中调用 Skills')}</span>
           </div>
-          <div className={shared.mcpTransportToggle}>
-            <button
-              className={`${shared.mcpTransportBtn} ${settings.skillsEnabled ? shared.mcpTransportActive : ''}`}
-              onClick={() => { if (!settings.skillsEnabled) saveSettings({ skillsEnabled: true }) }}
-            >
-              {t('im.enable')}
-            </button>
-            <button
-              className={`${shared.mcpTransportBtn} ${!settings.skillsEnabled ? shared.mcpTransportActive : ''}`}
-              onClick={() => { if (settings.skillsEnabled) saveSettings({ skillsEnabled: false }) }}
-            >
-              {t('im.disable')}
-            </button>
+          <div
+            className={styles.toggleSwitch}
+            data-on={settings.skillsEnabled ? 'true' : 'false'}
+            onClick={() => saveSettings({ skillsEnabled: !settings.skillsEnabled })}
+            role="switch"
+            aria-checked={settings.skillsEnabled}
+          >
+            <div className={styles.toggleKnob} />
           </div>
         </div>
 
         <div className={shared.aboutRow}>
           <div>
             <span className={shared.aboutLabel}>{t('im.bindAgent')}</span>
-            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
-              {t('im.bindAgentHint', '新实例默认绑定的 Agent')}
-            </p>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: 0 }}>{t('im.bindAgentHint', '新实例默认绑定的 Agent')}</p>
           </div>
           <div style={{ width: 180 }}>
-            <Select
-              value={settings.defaultAgentId}
-              options={agentOptions}
-              onChange={(v) => saveSettings({ defaultAgentId: v })}
-              variant="form"
-            />
+            <Select value={settings.defaultAgentId} options={agentOptions} onChange={(v) => saveSettings({ defaultAgentId: v })} variant="form" />
           </div>
         </div>
       </div>
 
       <hr className={shared.sectionDivider} />
 
-      {/* Platform picker */}
+      {/* ── Platform Picker ── */}
       <div className={styles.platformTabs}>
         {PLATFORM_ORDER.map((p) => (
           <button
@@ -184,20 +169,20 @@ export default function ImTab() {
             className={`${styles.platformTab} ${selectedPlatform === p ? styles.platformTabActive : ''}`}
             onClick={() => setSelectedPlatform(p)}
           >
-            {PLATFORM_LABELS[p]}
+            <PlatformIcon platform={p} size={14} />
+            <span>{PLATFORM_LABELS[p]}</span>
+            <span className={`${styles.tabDot} ${liveCount[p] ? styles.tabDotLive : styles.tabDotIdle}`} />
           </button>
         ))}
       </div>
 
-      {/* Instances */}
+      {/* ── Instances ── */}
       {!isImplemented ? (
-        <p className={shared.toolsEmpty}>
-          {t('im.notImplemented', `${PLATFORM_LABELS[selectedPlatform]} 接入尚未实现，暂仅支持微信`)}
-        </p>
+        <p className={styles.empty}>{t('im.notImplemented', `${PLATFORM_LABELS[selectedPlatform]} 接入尚未实现，暂仅支持微信`)}</p>
       ) : loading ? (
-        <p className={shared.toolsEmpty}>{t('common.loading')}</p>
+        <p className={styles.loading}>{t('common.loading')}</p>
       ) : platformInstances.length === 0 ? (
-        <p className={shared.toolsEmpty}>{t('im.noInstances')}</p>
+        <p className={styles.empty}>{t('im.noInstances')}</p>
       ) : (
         <div className={shared.mcpServerList}>
           {platformInstances.map((inst) => (
@@ -207,8 +192,9 @@ export default function ImTab() {
       )}
 
       {isImplemented && (
-        <button className={shared.mcpAddBtn} onClick={handleAddInstance}>
-          + {t('im.addInstance')}
+        <button className={styles.addBtn} onClick={handleAddInstance}>
+          <span className={styles.addBtnIcon}><IconPlus size={12} /></span>
+          {t('im.addInstance')}
         </button>
       )}
     </>
