@@ -79,3 +79,25 @@ export const PLATFORM_LABELS: Record<Platform, string> = {
 export const PLATFORM_ORDER: Platform[] = [
   'wechat', 'feishu', 'telegram', 'wecom', 'dingtalk', 'qq', 'discord', 'popo',
 ];
+
+export interface ChannelStatusEvent {
+  platform: Platform;
+  instanceId: string;
+  connected: boolean;
+  accountId?: string;
+  error?: string;
+}
+
+export interface ConnectivityResult {
+  platform: Platform;
+  testedAt: number;
+  verdict: 'pass' | 'warn' | 'fail';
+  checks: ConnectivityCheck[];
+}
+
+export interface ConnectivityCheck {
+  code: string;
+  level: 'pass' | 'info' | 'warn' | 'fail';
+  message: string;
+  suggestion?: string;
+}

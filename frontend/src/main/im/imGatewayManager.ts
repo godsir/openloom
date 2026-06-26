@@ -11,7 +11,7 @@ export interface IMGatewayManagerOptions {
 
 export class IMGatewayManager extends EventEmitter {
   private imStore: IMStore;
-  private channels: Map<string, WechatChannel> = new Map();
+  channels: Map<string, WechatChannel> = new Map();
   private onMessage?: (message: IMMessage) => void;
 
   constructor(options: IMGatewayManagerOptions) {
