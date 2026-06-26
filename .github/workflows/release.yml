@@ -13,6 +13,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -23,6 +25,29 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Generate changelog
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          # 找上一个正式版 tag（排除 beta/rc 等预发布标签）
+          LAST_TAG=$(git tag --list 'v*' --sort=-version:refname | grep -v 'beta\|rc\|alpha' | head -2 | tail -1)
+          if [ -z "$LAST_TAG" ]; then
+            RANGE="HEAD~30..HEAD"
+          else
+            RANGE="${LAST_TAG}..HEAD"
+          fi
+          echo "Current tag: $TAG"
+          echo "Last stable tag: $LAST_TAG"
+          echo "Changelog range: $RANGE"
+          COMMITS=$(git log "$RANGE" --pretty=format:'* %s' --no-merges)
+          {
+            echo "## 更新内容"
+            echo ""
+            echo "$COMMITS"
+          } > release-notes.md
+          echo "--- generated notes ---"
+          cat release-notes.md
 
       - name: Build backend
         run: cargo build -p loom-cli --release
@@ -35,3 +60,28 @@ jobs:
           npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Mark old beta pre-releases as archived
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const releases = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 20
+            });
+            const currentTag = context.ref.replace('refs/tags/', '');
+            for (const release of releases.data) {
+              if (release.tag_name === currentTag) continue;
+              if (release.prerelease && release.tag_name.includes('beta')) {
+                console.log(`Archiving old beta release: ${release.tag_name}`);
+                await github.rest.repos.updateRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: release.id,
+                  make_latest: false
+                });
+              }
+            }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
