@@ -872,7 +872,8 @@ async fn run_chat_demo(
     if let Ok(key) = std::env::var("ILINK_API_KEY")
         && !key.is_empty()
     {
-        let wx = loom_bridge::WechatAdapter::new(key);
+        // WeChat stub — the real channel runs in the Electron main process.
+        let wx = loom_bridge::WechatAdapter::new("default".into(), "WeChat".into());
         let mgr = bridge_manager.clone();
         let _handle = tokio::spawn(async move {
             let config = loom_bridge::InstanceConfig {
