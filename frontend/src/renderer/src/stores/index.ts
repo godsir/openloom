@@ -63,3 +63,5 @@ export const useStore = create<AppStore>()((...a) => ({
   ...createSelectionContextSlice(...a),
   ...createCompletionSlice(...a),
 }))
+
+export { useIMStore } from './im'
