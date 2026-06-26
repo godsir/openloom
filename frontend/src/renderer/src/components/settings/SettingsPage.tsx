@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useStore } from '../../stores'
-import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconBug, IconChevronUp, IconCommand, IconEdit, IconFileText } from '../../utils/icons'
+import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconBug, IconChevronUp, IconCommand, IconEdit, IconFileText, IconMessageSquare } from '../../utils/icons'
 import AgentConfigPanel from '../shared/AgentConfigPanel'
 import LoomMdSection from '../shared/LoomMdSection'
 import { loomRpc } from '../../services/jsonrpc'
@@ -17,9 +17,10 @@ import DevTestTab from './DevTestTab'
 import ShortcutsTab from './ShortcutsTab'
 import TokenTab from './TokenTab'
 import KgTab from './KgTab'
+import ImTab from './ImTab'
 import { WriteSettingsSection } from '../write/WriteSettingsSection'
 
-type Tab = 'software' | 'agent' | 'loom' | 'models' | 'workspace' | 'mcp' | 'skills' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'write' | 'about'
+type Tab = 'software' | 'agent' | 'loom' | 'models' | 'workspace' | 'mcp' | 'skills' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'write' | 'about' | 'im'
 
 function GlobalDefaultsSection() {
   const { t } = useLocale()
@@ -109,6 +110,7 @@ function useSettingsTabs() {
         { id: 'mcp' as Tab, label: t('settings.mcpLsp'), icon: <IconTerminal size={14} /> },
         { id: 'skills' as Tab, label: t('settings.skills'), icon: <IconSparkles size={14} /> },
         { id: 'write' as Tab, label: t('write.settings', '写作设置'), icon: <IconEdit size={14} /> },
+        { id: 'im' as Tab, label: t('settings.im', 'IM 接入'), icon: <IconMessageSquare size={14} /> },
       ],
     },
     {
@@ -246,6 +248,7 @@ export default function SettingsPage() {
         )}
 
         {tab === 'skills' && <SkillsTab />}
+        {tab === 'im' && <ImTab />}
         {tab === 'write' && (
           <>
             <div className={styles.contentHeader}>
