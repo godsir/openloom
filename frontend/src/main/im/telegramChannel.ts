@@ -151,6 +151,9 @@ export class TelegramChannel extends EventEmitter implements IChannel {
 
     this.abortController = new AbortController();
     this.pollPromise = this.pollLoop(this.abortController.signal);
+
+    // Emit connected now that polling is active (restore path)
+    this.emit('connected', { accountId: this.accountId || this.botUsername || '' });
   }
 
   private async pollLoop(abortSignal: AbortSignal): Promise<void> {

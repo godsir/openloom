@@ -477,6 +477,7 @@ export class FeishuChannel extends EventEmitter implements IChannel {
       this.appId = null;
       this.appSecret = null;
       this.botOpenId = null;
+      this.chatTypeMap.clear();
 
       this.emit('disconnected');
       console.log(`[FeishuChannel:${this.instanceId}] 已断开连接`);

@@ -211,12 +211,6 @@ export class IMGatewayManager extends EventEmitter {
       if (accountId && token && baseUrl) {
         ch.restoreConnection({ accountId, token, baseUrl });
         ch.startPolling();
-        this.emit('channel-status', {
-          platform: 'wechat' as Platform,
-          instanceId: config.instanceId,
-          connected: true,
-          accountId,
-        });
       }
     } else if (config.platform === 'telegram') {
       const token = creds.token as string | undefined;
@@ -240,38 +234,17 @@ export class IMGatewayManager extends EventEmitter {
         }
         ch.restoreConnection(creds);
         ch.startPolling();
-        this.emit('channel-status', {
-          platform: 'telegram' as Platform,
-          instanceId: config.instanceId,
-          connected: true,
-          accountId: creds.accountId as string | undefined || creds.botUsername as string | undefined,
-        });
       }
-    } else if (config.platform === 'popo') {
-      const appKey = creds.appKey as string | undefined;
-      const appSecret = creds.appSecret as string | undefined;
       const aesKey = creds.aesKey as string | undefined;
       if (appKey && appSecret && aesKey) {
         ch.restoreConnection(creds);
         ch.startPolling();
-        this.emit('channel-status', {
-          platform: 'popo' as Platform,
-          instanceId: config.instanceId,
-          connected: true,
-          accountId: creds.accountId as string | undefined,
-        });
       }
     } else if (config.platform === 'discord') {
       const token = creds.token as string | undefined;
       if (token) {
         ch.restoreConnection(creds);
         ch.startPolling();
-        this.emit('channel-status', {
-          platform: 'discord' as Platform,
-          instanceId: config.instanceId,
-          connected: true,
-          accountId: creds.accountId as string | undefined,
-        });
       }
     } else if (config.platform === 'qq') {
       const appId = creds.appId as string | undefined;
@@ -279,12 +252,6 @@ export class IMGatewayManager extends EventEmitter {
       if (appId && clientSecret) {
         ch.restoreConnection(creds);
         ch.startPolling();
-        this.emit('channel-status', {
-          platform: 'qq' as Platform,
-          instanceId: config.instanceId,
-          connected: true,
-          accountId: creds.accountId as string | undefined,
-        });
       }
     } else if (config.platform === 'feishu') {
       const appId = creds.appId as string | undefined;
@@ -292,12 +259,6 @@ export class IMGatewayManager extends EventEmitter {
       if (appId && appSecret) {
         ch.restoreConnection(creds);
         ch.startPolling();
-        this.emit('channel-status', {
-          platform: 'feishu' as Platform,
-          instanceId: config.instanceId,
-          connected: true,
-          accountId: creds.accountId as string | undefined,
-        });
       }
     } else if (config.platform === 'wecom') {
       const corpId = creds.corpId as string | undefined;
@@ -306,12 +267,6 @@ export class IMGatewayManager extends EventEmitter {
       if (corpId && secret && agentId) {
         ch.restoreConnection(creds);
         ch.startPolling();
-        this.emit('channel-status', {
-          platform: 'wecom' as Platform,
-          instanceId: config.instanceId,
-          connected: true,
-          accountId: creds.accountId as string | undefined,
-        });
       }
     } else if (config.platform === 'dingtalk') {
       const appKey = creds.appKey as string | undefined;
@@ -319,12 +274,6 @@ export class IMGatewayManager extends EventEmitter {
       if (appKey && appSecret) {
         ch.restoreConnection(creds);
         ch.startPolling();
-        this.emit('channel-status', {
-          platform: 'dingtalk' as Platform,
-          instanceId: config.instanceId,
-          connected: true,
-          accountId: creds.accountId as string | undefined,
-        });
       }
     }
     // Otherwise, the renderer will trigger the platform-specific login flow.
@@ -497,20 +446,25 @@ export class IMGatewayManager extends EventEmitter {
     if (!ch) throw new Error('POPO channel not found after start');
 
     console.log('[IMGatewayManager] POPO QR start');
-    const taskToken = `popo_${Date.now()}_${instanceId}`;
-    // 实际 QR URL 需要通过 POPO Open API 扫码接口获取，后续补充
+    // 生成唯一 taskToken，扫码后用于轮询换取凭据
+    const taskToken = `${instanceId}_${Date.now()}`;
+    const timeoutMs = 600_000; // 10 分钟
+    // 构建 POPO 扫码 H5 页面 URL（用户扫码后确认授权）
+    const qrUrl = `https://f2e.popo.netease.com/polymers/lobster-bot-h5/?pp_htb=1&pp_back_type=cross&taskToken=${encodeURIComponent(taskToken)}&timeout=${Date.now() + timeoutMs}`;
+
     return {
-      qrUrl: '',
+      qrUrl,
       taskToken,
-      timeoutMs: 600_000,
+      timeoutMs,
     };
   }
 
   async popoQrPoll(taskToken: string): Promise<{ success: boolean; appKey?: string; appSecret?: string; aesKey?: string; message: string }> {
     console.log(`[IMGatewayManager] POPO QR poll ${taskToken}`);
 
-    const parts = taskToken.split('_');
-    const instanceId = parts.slice(2).join('_') || parts[1] || taskToken;
+    // 从 taskToken 提取 instanceId（格式: instanceId_timestamp）
+    const lastUnderscore = taskToken.lastIndexOf('_');
+    const instanceId = lastUnderscore > 0 ? taskToken.slice(0, lastUnderscore) : taskToken;
     const key = this.channelKey('popo', instanceId);
     const ch = this.channels.get(key);
 
@@ -518,11 +472,45 @@ export class IMGatewayManager extends EventEmitter {
       return { success: false, message: 'POPO channel not found' };
     }
 
-    // TODO: 待接入 POPO Open API 扫码轮询后
-    // 成功后调用 ch.restoreConnection({ appKey, appSecret, aesKey }); ch.startPolling();
-    // 并持久化凭据到 imStore
+    try {
+      // 轮询 POPO Open API，检查用户是否已扫码确认
+      const url = `https://open.popo.netease.com/open-apis/no-auth/openclaw/v1/polling?taskToken=${encodeURIComponent(taskToken)}`;
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(10_000),
+      });
+      const body = await res.json();
+      const data = (body as any)?.data;
 
-    return { success: false, message: 'POPO QR polling not yet implemented' };
+      if (data?.status === 'CREATED' && data?.result) {
+        const { appKey, appSecret, aesKey } = data.result;
+        // 持久化凭据
+        const config = this.imStore.listInstances().find(i => i.platform === 'popo' && i.instanceId === instanceId);
+        if (config) {
+          this.imStore.upsertInstance({
+            ...config,
+            configJson: { ...config.configJson, appKey, appSecret, aesKey },
+            enabled: true,
+            updatedAt: Date.now(),
+          });
+        }
+        // 恢复连接并启动轮询
+        ch.restoreConnection({ appKey, appSecret, aesKey });
+        ch.startPolling();
+        this.emit('channel-status', { platform: 'popo' as Platform, instanceId, connected: true, accountId: appKey });
+
+        // 通知服务端扫码已完成（best-effort）
+        fetch(`https://open.popo.netease.com/open-apis/no-auth/openclaw/v1/completed?taskToken=${encodeURIComponent(taskToken)}`, { method: 'GET' })
+          .catch(() => { /* ignore */ });
+
+        return { success: true, appKey, appSecret, aesKey, message: 'connected' };
+      }
+
+      return { success: false, message: 'waiting' };
+    } catch {
+      return { success: false, message: 'waiting' };
+    }
   }
 
   // ── Telegram Token 登录 ──

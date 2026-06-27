@@ -65,148 +65,18 @@ export function registerImIpc(): void {
   ipcMain.handle('im:get-status', () => imGatewayManager.getStatus())
 
   ipcMain.handle('im:test-connectivity', async (_e, platform: Platform, instanceId: string) => {
-    // WeChat
-    if (platform === 'wechat') {
-      const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
-      return {
-        platform,
-        testedAt: Date.now(),
-        verdict: ch?.isConnected ? 'pass' : 'warn',
-        checks: [{
-          code: 'gateway_running',
-          level: ch?.isConnected ? 'pass' : 'warn',
-          message: ch?.isConnected ? 'Channel connected' : 'Channel not connected',
-        }],
-      }
-    }
-    // Telegram
-    if (platform === 'telegram') {
-      const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
-      const isConnected = ch?.isConnected ?? false
-      return {
-        platform,
-        testedAt: Date.now(),
-        verdict: isConnected ? 'pass' : 'warn',
-        checks: [{
-          code: 'gateway_running',
-          level: isConnected ? 'pass' : 'warn',
-          message: isConnected
-            ? `Channel connected${ch?.currentAccountId ? ` (${ch.currentAccountId})` : ''}`
-            : 'Channel not connected',
-        }],
-      }
-    }
-    // Discord
-    if (platform === 'discord') {
-      const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
-      const isConnected = ch?.isConnected ?? false
-      return {
-        platform,
-        testedAt: Date.now(),
-        verdict: isConnected ? 'pass' : 'warn',
-        checks: [{
-          code: 'gateway_running',
-          level: isConnected ? 'pass' : 'warn',
-          message: isConnected
-            ? `Channel connected${ch?.currentAccountId ? ` (${ch.currentAccountId})` : ''}`
-            : 'Channel not connected',
-        }],
-      }
-    }
-    // QQ
-    if (platform === 'qq') {
-      const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
-      const isConnected = ch?.isConnected ?? false
-      return {
-        platform,
-        testedAt: Date.now(),
-        verdict: isConnected ? 'pass' : 'warn',
-        checks: [{
-          code: 'gateway_running',
-          level: isConnected ? 'pass' : 'warn',
-          message: isConnected
-            ? `Channel connected${ch?.currentAccountId ? ` (${ch.currentAccountId})` : ''}`
-            : 'Channel not connected',
-        }],
-      }
-    }
-    // 飞书
-    if (platform === 'feishu') {
-      const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
-      const isConnected = ch?.isConnected ?? false
-      return {
-        platform,
-        testedAt: Date.now(),
-        verdict: isConnected ? 'pass' : 'warn',
-        checks: [{
-          code: 'gateway_running',
-          level: isConnected ? 'pass' : 'warn',
-          message: isConnected
-            ? `Channel connected${ch?.currentAccountId ? ` (${ch.currentAccountId})` : ''}`
-            : 'Channel not connected',
-        }],
-      }
-    }
-    // 企业微信
-    if (platform === 'wecom') {
-      const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
-      const isConnected = ch?.isConnected ?? false
-      return {
-        platform,
-        testedAt: Date.now(),
-        verdict: isConnected ? 'pass' : 'warn',
-        checks: [{
-          code: 'gateway_running',
-          level: isConnected ? 'pass' : 'warn',
-          message: isConnected
-            ? `Channel connected${ch?.currentAccountId ? ` (${ch.currentAccountId})` : ''}`
-            : 'Channel not connected',
-        }],
-      }
-    }
-    // 钉钉
-    if (platform === 'dingtalk') {
-      const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
-      const isConnected = ch?.isConnected ?? false
-      return {
-        platform,
-        testedAt: Date.now(),
-        verdict: isConnected ? 'pass' : 'warn',
-        checks: [{
-          code: 'gateway_running',
-          level: isConnected ? 'pass' : 'warn',
-          message: isConnected
-            ? `Channel connected${ch?.currentAccountId ? ` (${ch.currentAccountId})` : ''}`
-            : 'Channel not connected',
-        }],
-      }
-    }
-    // POPO
-    if (platform === 'popo') {
-      const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
-      const isConnected = ch?.isConnected ?? false
-      return {
-        platform,
-        testedAt: Date.now(),
-        verdict: isConnected ? 'pass' : 'warn',
-        checks: [{
-          code: 'gateway_running',
-          level: isConnected ? 'pass' : 'warn',
-          message: isConnected
-            ? `Channel connected${ch?.currentAccountId ? ` (${ch.currentAccountId})` : ''}`
-            : 'Channel not connected',
-        }],
-      }
-    }
-    // Unknown platform — should not reach here since all are now covered
+    const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
+    const isConnected = ch?.isConnected ?? false
+    const accountId = ch?.currentAccountId
+    const suffix = accountId ? ` (${accountId})` : ''
     return {
       platform,
       testedAt: Date.now(),
-      verdict: 'fail',
+      verdict: isConnected ? 'pass' : 'warn',
       checks: [{
-        code: 'not_implemented',
-        level: 'fail',
-        message: '尚未实现',
+        code: 'gateway_running',
+        level: isConnected ? 'pass' : 'warn',
+        message: isConnected ? `Channel connected${suffix}` : 'Channel not connected',
       }],
     }
   })

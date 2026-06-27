@@ -40,6 +40,7 @@ export class WecomChannel extends EventEmitter implements IChannel {
   private pollConsecutiveErrors: number = 0;
   /** Track conversationId -> chat_type for correct sendMessage routing */
   private conversationTypes: Map<string, 'direct' | 'group'> = new Map();
+  private connectedEmitted: boolean = false;
 
   constructor(options: ChannelOptions) {
     super();
@@ -140,6 +141,7 @@ export class WecomChannel extends EventEmitter implements IChannel {
       `[WecomChannel:${this.instanceId}] Connected: corpId=${corpId}, agentId=${agentId}`,
     );
 
+    this.connectedEmitted = true;
     this.emit('connected', { accountId: corpId });
   }
 
@@ -166,6 +168,12 @@ export class WecomChannel extends EventEmitter implements IChannel {
 
     this.abortController = new AbortController();
     this.pollPromise = this.pollLoop(this.abortController.signal);
+
+    // Emit connected if this is the restore path (connect() already emits)
+    if (!this.connectedEmitted) {
+      this.connectedEmitted = true;
+      this.emit('connected', { accountId: this.corpId || '' });
+    }
   }
 
   private async pollLoop(signal: AbortSignal): Promise<void> {
@@ -420,7 +428,6 @@ export class WecomChannel extends EventEmitter implements IChannel {
     }
 
     this.connected = true;
-    this.emit('connected', { accountId: corpId });
 
     console.log(
       `[WecomChannel:${this.instanceId}] Connection restored for corpId=${corpId}`,
@@ -469,6 +476,7 @@ export class WecomChannel extends EventEmitter implements IChannel {
       this.pollBackoffMs = POLL_BACKOFF_MIN_MS;
       this.pollConsecutiveErrors = 0;
       this.conversationTypes.clear();
+      this.connectedEmitted = false;
 
       this.emit('disconnected');
       console.log(`[WecomChannel:${this.instanceId}] Disconnected`);

@@ -267,7 +267,7 @@ export class DiscordChannel extends EventEmitter implements IChannel {
                 token,
                 intents: GATEWAY_INTENTS,
                 properties: {
-                  os: 'windows',
+                  os: process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux',
                   browser: 'openloom',
                   device: 'openloom',
                 },

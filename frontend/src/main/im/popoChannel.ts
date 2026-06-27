@@ -136,6 +136,9 @@ export class PopoChannel extends EventEmitter implements IChannel {
 
     this.abortController = new AbortController();
     this.pollPromise = this.pollLoop(this.abortController.signal);
+
+    // Emit connected now that polling is active
+    this.emit('connected', { accountId: this.accountId || '' });
   }
 
   private async pollLoop(abortSignal: AbortSignal): Promise<void> {

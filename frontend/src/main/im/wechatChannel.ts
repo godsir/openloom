@@ -300,6 +300,7 @@ export class WechatChannel extends EventEmitter implements IChannel {
   private abortController: AbortController | null = null;
   private pollPromise: Promise<void> | null = null;
   private pollingBuf: string | null = null;
+  private connectedEmitted: boolean = false;
 
   constructor(options: WechatChannelOptions) {
     super();
@@ -457,6 +458,7 @@ export class WechatChannel extends EventEmitter implements IChannel {
 
             console.log(`[WechatChannel:${this.instanceId}] Login confirmed! accountId=${accountId}`);
 
+            this.connectedEmitted = true;
             this.emit('connected', { accountId, baseUrl });
 
             return {
@@ -514,6 +516,12 @@ export class WechatChannel extends EventEmitter implements IChannel {
     this.pollingBuf = null;
 
     this.pollPromise = this.pollLoop(this.abortController.signal);
+
+    // Emit connected if this is the restore path (QR flow emits in waitForScan)
+    if (!this.connectedEmitted) {
+      this.connectedEmitted = true;
+      this.emit('connected', { accountId: this.accountId || '', baseUrl: this.baseUrl || '' });
+    }
   }
 
   private async pollLoop(abortSignal: AbortSignal): Promise<void> {
@@ -716,6 +724,7 @@ export class WechatChannel extends EventEmitter implements IChannel {
       this.token = null;
       this.baseUrl = null;
       this.pollingBuf = null;
+      this.connectedEmitted = false;
 
       this.emit('disconnected');
       console.log(`[WechatChannel:${this.instanceId}] Disconnected`);

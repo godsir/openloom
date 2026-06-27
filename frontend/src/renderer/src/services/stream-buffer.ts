@@ -93,6 +93,7 @@ class StreamBufferManager {
         messageId: null,
         textAcc: '',
         thinkingAcc: '',
+        imageAcc: [],
         moodAcc: { yuan: '', text: '' },
         skillCalls: [],
         shellCalls: [],

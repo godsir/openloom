@@ -211,15 +211,18 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
       useStore.getState().setMessageStopReason(sid, aiMsgId, chatResult.stop_reason)
     }
 
-    // Store stop_reason on the assistant message so ContinueButton can render.
-    // chat.send now returns stop_reason alongside the response text.
-    try {
-      const result: any = await loomRpc('session.last_stop_reason', { session_id: sid })
-      if (result && result.stop_reason) {
-        useStore.getState().setMessageStopReason(sid, aiMsgId, result.stop_reason)
+    // Fallback: if chat.send didn't return stop_reason, query via session.last_stop_reason.
+    // The backend populates stop_reason on the chat.send response; last_stop_reason exists
+    // as a recovery path for WS reconnects where the chat.send response was lost.
+    if (!chatResult || !chatResult.stop_reason) {
+      try {
+        const result: any = await loomRpc('session.last_stop_reason', { session_id: sid })
+        if (result && result.stop_reason) {
+          useStore.getState().setMessageStopReason(sid, aiMsgId, result.stop_reason)
+        }
+      } catch {
+        // last_stop_reason is best-effort; ignore failures
       }
-    } catch {
-      // last_stop_reason is best-effort; ignore failures
     }
   }
   catch (e: any) {
@@ -270,6 +273,9 @@ export async function sendContinuation(sessionId: string): Promise<void> {
       session_id: sessionId,
       content: '继续',
       skip_user_message: true,   // Don't persist "继续" in session history — invisible action
+      model: store.currentModel || undefined,
+      thinking_level: store.thinkingLevel || 'off',
+      permission_mode: store.permissionMode,
     })
 
     // Store stop_reason in case the continuation also truncates

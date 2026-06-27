@@ -84,6 +84,8 @@ export class DingTalkChannel extends EventEmitter implements IChannel {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private botUserId: string | null = null;
   private clientId: string;
+  /** Track conversationId -> chat_type for correct sendMessage routing */
+  private conversationTypes: Map<string, 'direct' | 'group'> = new Map();
 
   constructor(options: ChannelOptions) {
     super();
@@ -121,6 +123,9 @@ export class DingTalkChannel extends EventEmitter implements IChannel {
     }
     if (credentials.clientId) {
       this.clientId = credentials.clientId as string;
+    }
+    if (credentials.botUserId) {
+      this.botUserId = credentials.botUserId as string;
     }
     this.connected = true;
     console.log(`[DingTalkChannel:${this.instanceId}] Connection restored`);
@@ -175,6 +180,7 @@ export class DingTalkChannel extends EventEmitter implements IChannel {
       this.appSecret = appSecret;
       this.accessToken = data.accessToken;
       this.accountId = appKey;
+      this.botUserId = appKey;
       return { ok: true, accountId: appKey };
     } catch (e: any) {
       return { ok: false, error: e?.message || String(e) };
@@ -358,6 +364,11 @@ export class DingTalkChannel extends EventEmitter implements IChannel {
     const conversationId = event.conversationId || event.senderId;
     const messageId = event.msgId || randomUUID();
 
+    // Track conversation type for sendMessage routing
+    if (event.conversationId) {
+      this.conversationTypes.set(event.conversationId, chatType);
+    }
+
     return {
       messageId,
       conversationId,
@@ -393,6 +404,17 @@ export class DingTalkChannel extends EventEmitter implements IChannel {
   async sendMessage(conversationId: string, text: string): Promise<boolean> {
     if (!this.connected) {
       console.error(`[DingTalkChannel:${this.instanceId}] Cannot send: not connected`);
+      return false;
+    }
+
+    // DingTalk batchSend expects real userIds in the userIds array — not group IDs.
+    // If we detect this is a group conversation, log a warning and skip.
+    const chatType = this.conversationTypes.get(conversationId);
+    if (chatType === 'group') {
+      console.warn(
+        `[DingTalkChannel:${this.instanceId}] Group messaging via batchSend is not supported. ` +
+        `batchSend expects user IDs, not group IDs. Message to ${conversationId} skipped.`,
+      );
       return false;
     }
 
@@ -461,6 +483,7 @@ export class DingTalkChannel extends EventEmitter implements IChannel {
       this.appSecret = null;
       this.accessToken = null;
       this.botUserId = null;
+      this.conversationTypes.clear();
 
       this.emit('disconnected');
       console.log(`[DingTalkChannel:${this.instanceId}] Disconnected`);
