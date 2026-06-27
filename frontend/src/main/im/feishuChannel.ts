@@ -91,7 +91,8 @@ export class FeishuChannel extends EventEmitter implements IChannel {
   private pollPromise: Promise<void> | null = null;
   private ws: WebSocket | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private botOpenId: string | null = null;
+  /** 记录 conversationId 对应的 chat_type，用于 sendMessage 选择正确的 receive_id_type */
+  private chatTypeMap: Map<string, 'direct' | 'group'> = new Map();
 
   constructor(options: ChannelOptions) {
     super();
@@ -337,6 +338,10 @@ export class FeishuChannel extends EventEmitter implements IChannel {
         }, heartbeatInterval);
 
         console.log(`[FeishuChannel:${this.instanceId}] WebSocket 会话建立, heartbeat_interval=${heartbeatInterval}ms`);
+        // 会话建立即表示连接已就绪，通知上层
+        if (this.accountId) {
+          this.emit('connected', { accountId: this.accountId } as ConnectedInfo);
+        }
         break;
       }
       case 'event':
@@ -394,13 +399,16 @@ export class FeishuChannel extends EventEmitter implements IChannel {
     const senderId = sender.sender_id?.open_id || '';
     const conversationId = chatType === 'direct' ? senderId : message.chat_id;
 
+    // Record chat type for sendMessage routing
+    this.chatTypeMap.set(conversationId, chatType);
+
     return {
       messageId: message.message_id,
       conversationId,
       senderId,
       content,
       chatType,
-      timestamp: parseInt(message.create_time, 10) * 1000, // 飞书使用毫秒级时间戳字符串
+      timestamp: parseInt(message.create_time, 10), // 飞书 v2 create_time 已是毫秒
     };
   }
 
@@ -414,7 +422,10 @@ export class FeishuChannel extends EventEmitter implements IChannel {
 
     try {
       const token = await this.getTenantAccessToken();
-      const url = `${FEISHU_API_BASE}/im/v1/messages?receive_id_type=chat_id`;
+      // 根据 chatType 决定 receive_id_type：DM 用 open_id，群聊用 chat_id
+      const chatType = this.chatTypeMap.get(conversationId) || 'direct';
+      const receiveIdType = chatType === 'group' ? 'chat_id' : 'open_id';
+      const url = `${FEISHU_API_BASE}/im/v1/messages?receive_id_type=${receiveIdType}`;
       const body = JSON.stringify({
         receive_id: conversationId,
         msg_type: 'text',
