@@ -247,9 +247,7 @@ export class DingTalkChannel extends EventEmitter implements IChannel {
     abortSignal: AbortSignal,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
-      // 动态 import ws 模块（Electron 环境）
-      // 使用 require 避免类型检查问题
-      const WebSocket = require('ws');
+      const WebSocket = globalThis.WebSocket;
 
       const socket = new WebSocket(endpoint);
       this.ws = socket;
@@ -378,7 +376,7 @@ export class DingTalkChannel extends EventEmitter implements IChannel {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
       if (socket.readyState === 1 /* OPEN */) {
-        socket.ping();
+        try { socket.send(JSON.stringify({ type: 'ping' })); } catch { /* ignore */ }
       }
     }, HEARTBEAT_INTERVAL_MS);
   }
