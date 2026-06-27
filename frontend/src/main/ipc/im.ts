@@ -96,7 +96,109 @@ export function registerImIpc(): void {
         }],
       }
     }
-    // Other platforms — not yet implemented
+    // Discord
+    if (platform === 'discord') {
+      const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
+      const isConnected = ch?.isConnected ?? false
+      return {
+        platform,
+        testedAt: Date.now(),
+        verdict: isConnected ? 'pass' : 'warn',
+        checks: [{
+          code: 'gateway_running',
+          level: isConnected ? 'pass' : 'warn',
+          message: isConnected
+            ? `Channel connected${ch?.currentAccountId ? ` (${ch.currentAccountId})` : ''}`
+            : 'Channel not connected',
+        }],
+      }
+    }
+    // QQ
+    if (platform === 'qq') {
+      const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
+      const isConnected = ch?.isConnected ?? false
+      return {
+        platform,
+        testedAt: Date.now(),
+        verdict: isConnected ? 'pass' : 'warn',
+        checks: [{
+          code: 'gateway_running',
+          level: isConnected ? 'pass' : 'warn',
+          message: isConnected
+            ? `Channel connected${ch?.currentAccountId ? ` (${ch.currentAccountId})` : ''}`
+            : 'Channel not connected',
+        }],
+      }
+    }
+    // 飞书
+    if (platform === 'feishu') {
+      const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
+      const isConnected = ch?.isConnected ?? false
+      return {
+        platform,
+        testedAt: Date.now(),
+        verdict: isConnected ? 'pass' : 'warn',
+        checks: [{
+          code: 'gateway_running',
+          level: isConnected ? 'pass' : 'warn',
+          message: isConnected
+            ? `Channel connected${ch?.currentAccountId ? ` (${ch.currentAccountId})` : ''}`
+            : 'Channel not connected',
+        }],
+      }
+    }
+    // 企业微信
+    if (platform === 'wecom') {
+      const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
+      const isConnected = ch?.isConnected ?? false
+      return {
+        platform,
+        testedAt: Date.now(),
+        verdict: isConnected ? 'pass' : 'warn',
+        checks: [{
+          code: 'gateway_running',
+          level: isConnected ? 'pass' : 'warn',
+          message: isConnected
+            ? `Channel connected${ch?.currentAccountId ? ` (${ch.currentAccountId})` : ''}`
+            : 'Channel not connected',
+        }],
+      }
+    }
+    // 钉钉
+    if (platform === 'dingtalk') {
+      const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
+      const isConnected = ch?.isConnected ?? false
+      return {
+        platform,
+        testedAt: Date.now(),
+        verdict: isConnected ? 'pass' : 'warn',
+        checks: [{
+          code: 'gateway_running',
+          level: isConnected ? 'pass' : 'warn',
+          message: isConnected
+            ? `Channel connected${ch?.currentAccountId ? ` (${ch.currentAccountId})` : ''}`
+            : 'Channel not connected',
+        }],
+      }
+    }
+    // POPO
+    if (platform === 'popo') {
+      const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
+      const isConnected = ch?.isConnected ?? false
+      return {
+        platform,
+        testedAt: Date.now(),
+        verdict: isConnected ? 'pass' : 'warn',
+        checks: [{
+          code: 'gateway_running',
+          level: isConnected ? 'pass' : 'warn',
+          message: isConnected
+            ? `Channel connected${ch?.currentAccountId ? ` (${ch.currentAccountId})` : ''}`
+            : 'Channel not connected',
+        }],
+      }
+    }
+    // Unknown platform — should not reach here since all are now covered
     return {
       platform,
       testedAt: Date.now(),
@@ -104,8 +206,7 @@ export function registerImIpc(): void {
       checks: [{
         code: 'not_implemented',
         level: 'fail',
-        message: `${platform} 接入尚未实现`,
-        suggestion: '当前仅支持微信和 Telegram',
+        message: '尚未实现',
       }],
     }
   })
@@ -149,6 +250,56 @@ export function registerImIpc(): void {
   ipcMain.handle('im:telegram-login', async (_e, platform: Platform, instanceId: string, token: string) => {
     try {
       return await imGatewayManager.telegramLogin(platform, instanceId, token);
+    } catch (err: any) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  // ── Discord Token 登录 ──
+
+  ipcMain.handle('im:discord-login', async (_e, platform: Platform, instanceId: string, token: string) => {
+    try {
+      return await imGatewayManager.discordLogin(platform, instanceId, token);
+    } catch (err: any) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  // ── QQ OAuth 登录 ──
+
+  ipcMain.handle('im:qq-login', async (_e, platform: Platform, instanceId: string, appId: string, clientSecret: string) => {
+    try {
+      return await imGatewayManager.qqLogin(platform, instanceId, appId, clientSecret);
+    } catch (err: any) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  // ── 飞书 应用登录 ──
+
+  ipcMain.handle('im:feishu-login', async (_e, platform: Platform, instanceId: string, appId: string, appSecret: string) => {
+    try {
+      return await imGatewayManager.feishuLogin(platform, instanceId, appId, appSecret);
+    } catch (err: any) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  // ── 企业微信 应用登录 ──
+
+  ipcMain.handle('im:wecom-login', async (_e, platform: Platform, instanceId: string, corpId: string, secret: string, agentId: string) => {
+    try {
+      return await imGatewayManager.wecomLogin(platform, instanceId, corpId, secret, agentId);
+    } catch (err: any) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  // ── 钉钉 应用登录 ──
+
+  ipcMain.handle('im:dingtalk-login', async (_e, platform: Platform, instanceId: string, appKey: string, appSecret: string) => {
+    try {
+      return await imGatewayManager.dingtalkLogin(platform, instanceId, appKey, appSecret);
     } catch (err: any) {
       return { ok: false, error: err?.message || String(err) };
     }
