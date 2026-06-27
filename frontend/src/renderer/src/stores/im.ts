@@ -148,7 +148,7 @@ interface IMState {
   sendHelp: (platform: Platform, instanceId: string) => Promise<{ ok: boolean; error?: string }>;
   wechatQrStart: (instanceId: string) => Promise<{ qrDataUrl: string; qrContent: string; sessionKey: string }>;
   wechatQrWait: (instanceId: string, sessionKey: string) => Promise<{ connected: boolean; accountId?: string; message?: string }>;
-  popoQrStart: () => Promise<{ qrUrl: string; taskToken: string; timeoutMs: number }>;
+  popoQrStart: (instanceId: string) => Promise<{ qrUrl: string; taskToken: string; timeoutMs: number }>;
   popoQrPoll: (taskToken: string) => Promise<{ success: boolean; appKey?: string; appSecret?: string; aesKey?: string; message: string }>;
   telegramLogin: (platform: Platform, instanceId: string, token: string) => Promise<{ ok: boolean; error?: string }>;
   discordLogin: (platform: Platform, instanceId: string, token: string) => Promise<{ ok: boolean; error?: string }>;
@@ -270,8 +270,8 @@ export const useIMStore = create<IMState>((set, get) => ({
     return result;
   },
 
-  popoQrStart: async () => {
-    return (window as any).loom.imPopoQrStart();
+  popoQrStart: async (instanceId) => {
+    return (window as any).loom.imPopoQrStart(instanceId);
   },
 
   popoQrPoll: async (taskToken) => {
