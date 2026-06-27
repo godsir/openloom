@@ -52,6 +52,77 @@ export class IMGatewayManager extends EventEmitter {
   }
 
   /**
+   * Register standard IChannel event handlers and wire them to IM status,
+   * internal message pipeline, and engine bridge routing.
+   */
+  private registerChannelHandlers(
+    ch: IChannel,
+    config: InstanceConfig,
+    platform: Platform,
+    instanceId: string,
+    meta: ChannelStatusMeta,
+  ): void {
+    ch.on('message', (msg) => {
+      console.log(`[IMGatewayManager] ${platform} message from ${msg.senderId}`);
+      meta.lastInboundAt = Date.now();
+      const imMsg: IMMessage = {
+        platform,
+        messageId: msg.messageId,
+        conversationId: msg.conversationId,
+        senderId: msg.senderId,
+        senderName: msg.senderName,
+        groupName: msg.groupName,
+        content: msg.content,
+        chatType: msg.chatType,
+        timestamp: msg.timestamp,
+      };
+      if (this.onMessage) this.onMessage(imMsg);
+      this.emit('im-message', imMsg);
+      if (this.imBridge) {
+        this.imBridge
+          .handleMessage(imMsg, config, async (text) => {
+            const ok = await ch.sendMessage(imMsg.conversationId, text);
+            if (ok) {
+              meta.lastOutboundAt = Date.now();
+              this.emit('channel-status', { platform, instanceId, connected: true });
+            }
+          })
+          .catch((e) => console.error('[IMGatewayManager] bridge error:', e?.message ?? e));
+      }
+    });
+
+    ch.on('connected', (info) => {
+      console.log(`[IMGatewayManager] ${platform} connected, accountId: ${info.accountId}`);
+      this.emit('channel-status', {
+        platform,
+        instanceId,
+        connected: true,
+        accountId: info.accountId,
+      });
+    });
+
+    ch.on('error', (err) => {
+      console.error(`[IMGatewayManager] ${platform} error:`, err);
+      meta.lastError = err.message;
+      this.emit('channel-status', {
+        platform,
+        instanceId,
+        connected: false,
+        error: err.message,
+      });
+    });
+
+    ch.on('disconnected', () => {
+      console.log(`[IMGatewayManager] ${platform} disconnected: ${this.channelKey(platform, instanceId)}`);
+      this.emit('channel-status', {
+        platform,
+        instanceId,
+        connected: false,
+      });
+    });
+  }
+
+  /**
    * Start a channel for the given config.
    * Only WeChat is implemented in the Electron layer for now; other platforms
    * throw so the caller surfaces "not yet supported" instead of faking success.
@@ -85,65 +156,7 @@ export class IMGatewayManager extends EventEmitter {
     const meta = this.getStatusMeta(key);
     meta.startedAt = Date.now();
 
-    ch.on('message', (msg) => {
-      console.log(`[IMGatewayManager] WeChat message from ${msg.senderId}`);
-      meta.lastInboundAt = Date.now();
-      const imMsg = {
-        platform: 'wechat' as Platform,
-        messageId: msg.messageId,
-        conversationId: msg.conversationId,
-        senderId: msg.senderId,
-        senderName: msg.senderName,
-        groupName: msg.groupName,
-        content: msg.content,
-        chatType: msg.chatType,
-        timestamp: msg.timestamp,
-      };
-      if (this.onMessage) this.onMessage(imMsg);
-      this.emit('im-message', imMsg);
-      // Route to the agent engine and reply back through this channel.
-      if (this.imBridge) {
-        this.imBridge
-          .handleMessage(imMsg, config, async (text) => {
-            const ok = await ch.sendMessage(imMsg.conversationId, text);
-            if (ok) {
-              meta.lastOutboundAt = Date.now();
-              this.emit('channel-status', { platform: 'wechat' as Platform, instanceId: config.instanceId, connected: true });
-            }
-          })
-          .catch((e) => console.error('[IMGatewayManager] bridge error:', e?.message ?? e));
-      }
-    });
-
-    ch.on('connected', (info) => {
-      console.log(`[IMGatewayManager] WeChat connected, accountId: ${info.accountId}`);
-      this.emit('channel-status', {
-        platform: 'wechat' as Platform,
-        instanceId: config.instanceId,
-        connected: true,
-        accountId: info.accountId,
-      });
-    });
-
-    ch.on('error', (err) => {
-      console.error(`[IMGatewayManager] WeChat error:`, err);
-      meta.lastError = err.message;
-      this.emit('channel-status', {
-        platform: 'wechat' as Platform,
-        instanceId: config.instanceId,
-        connected: false,
-        error: err.message,
-      });
-    });
-
-    ch.on('disconnected', () => {
-      console.log(`[IMGatewayManager] WeChat disconnected: ${key}`);
-      this.emit('channel-status', {
-        platform: 'wechat' as Platform,
-        instanceId: config.instanceId,
-        connected: false,
-      });
-    });
+    this.registerChannelHandlers(ch, config, config.platform, config.instanceId, meta);
 
     this.channels.set(key, ch);
 
@@ -166,6 +179,21 @@ export class IMGatewayManager extends EventEmitter {
     } else if (config.platform === 'telegram') {
       const token = creds.token as string | undefined;
       if (token) {
+        try {
+          const tgCh = ch as TelegramChannel;
+          const verifyResult = await tgCh.verifyToken(token);
+          if (!verifyResult.ok) {
+            console.warn(`[IMGatewayManager] Telegram token invalid for ${key}, skipping restore`);
+            return;
+          }
+          // Update stored bot info in case it changed
+          if (verifyResult.accountId) {
+            const updatedConfig = { ...config, configJson: { ...config.configJson, accountId: verifyResult.accountId, botUsername: verifyResult.botUsername }, updatedAt: Date.now() };
+            this.imStore.upsertInstance(updatedConfig);
+          }
+        } catch (e) {
+          console.warn(`[IMGatewayManager] Telegram verifyToken failed for ${key}, will attempt polling anyway`);
+        }
         ch.restoreConnection(creds);
         ch.startPolling();
         this.emit('channel-status', {
@@ -285,14 +313,14 @@ export class IMGatewayManager extends EventEmitter {
       ch = this.channels.get(key);
     }
     if (!ch) throw new Error('WeChat channel not found after start');
-    return ch.startLogin();
+    return (ch as WechatChannel).startLogin();
   }
 
   async wechatQrWait(instanceId: string, sessionKey: string): Promise<{ connected: boolean; accountId?: string; message?: string }> {
     const key = this.channelKey('wechat', instanceId);
     const ch = this.channels.get(key);
     if (!ch) throw new Error('WeChat channel not found');
-    const result = await ch.waitForScan(sessionKey);
+    const result = await (ch as WechatChannel).waitForScan(sessionKey);
 
     // Persist credentials so the channel can be restored on restart, then
     // begin long-polling for incoming messages.
@@ -380,65 +408,7 @@ export class IMGatewayManager extends EventEmitter {
     const meta = this.getStatusMeta(key);
     meta.startedAt = Date.now();
 
-    ch.on('message', (msg) => {
-      console.log(`[IMGatewayManager] Telegram message from ${msg.senderId}`);
-      meta.lastInboundAt = Date.now();
-      const imMsg: IMMessage = {
-        platform: 'telegram' as Platform,
-        messageId: msg.messageId,
-        conversationId: msg.conversationId,
-        senderId: msg.senderId,
-        senderName: msg.senderName,
-        groupName: msg.groupName,
-        content: msg.content,
-        chatType: msg.chatType,
-        timestamp: msg.timestamp,
-      };
-      if (this.onMessage) this.onMessage(imMsg);
-      this.emit('im-message', imMsg);
-      // Route to agent engine
-      if (this.imBridge && config) {
-        this.imBridge
-          .handleMessage(imMsg, config, async (text) => {
-            const ok = await ch.sendMessage(imMsg.conversationId, text);
-            if (ok) {
-              meta.lastOutboundAt = Date.now();
-              this.emit('channel-status', { platform: 'telegram' as Platform, instanceId, connected: true });
-            }
-          })
-          .catch((e) => console.error('[IMGatewayManager] bridge error:', e?.message ?? e));
-      }
-    });
-
-    ch.on('connected', (info) => {
-      console.log(`[IMGatewayManager] Telegram connected, accountId: ${info.accountId}`);
-      this.emit('channel-status', {
-        platform: 'telegram' as Platform,
-        instanceId,
-        connected: true,
-        accountId: info.accountId,
-      });
-    });
-
-    ch.on('error', (err) => {
-      console.error(`[IMGatewayManager] Telegram error:`, err);
-      meta.lastError = err.message;
-      this.emit('channel-status', {
-        platform: 'telegram' as Platform,
-        instanceId,
-        connected: false,
-        error: err.message,
-      });
-    });
-
-    ch.on('disconnected', () => {
-      console.log(`[IMGatewayManager] Telegram disconnected: ${key}`);
-      this.emit('channel-status', {
-        platform: 'telegram' as Platform,
-        instanceId,
-        connected: false,
-      });
-    });
+    this.registerChannelHandlers(ch, config, platform, instanceId, meta);
 
     // 启动 channel
     this.channels.set(key, ch);

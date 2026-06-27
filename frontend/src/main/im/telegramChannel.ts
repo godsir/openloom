@@ -277,16 +277,28 @@ export class TelegramChannel extends EventEmitter implements IChannel {
 
   // ── HTTP helpers ──
 
-  private async apiGet(url: string, timeoutMs?: number): Promise<string> {
+  private async apiGet(url: string, timeoutMs?: number, abortSignal?: AbortSignal): Promise<string> {
     const controller = timeoutMs ? new AbortController() : undefined;
     const timer = controller && timeoutMs
       ? setTimeout(() => controller.abort(), timeoutMs)
       : undefined;
 
+    let signal: AbortSignal | undefined = controller?.signal;
+    let cleanup = (): void => {};
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        controller?.abort();
+      } else {
+        const onAbort = (): void => controller?.abort();
+        abortSignal.addEventListener('abort', onAbort, { once: true });
+        cleanup = (): void => abortSignal.removeEventListener('abort', onAbort);
+      }
+    }
+
     try {
       const res = await fetch(url, {
         method: 'GET',
-        ...(controller ? { signal: controller.signal } : {}),
+        ...(signal ? { signal } : {}),
       });
       if (timer) clearTimeout(timer);
       const text = await res.text();
@@ -297,6 +309,8 @@ export class TelegramChannel extends EventEmitter implements IChannel {
     } catch (err) {
       if (timer) clearTimeout(timer);
       throw err;
+    } finally {
+      cleanup();
     }
   }
 
