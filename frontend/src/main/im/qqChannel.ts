@@ -276,7 +276,7 @@ export class QQChannel extends EventEmitter implements IChannel {
           op: 2,
           d: {
             token: `QQBot ${token}`,
-            intents: 1 | 512, // GUILDS | GUILD_MESSAGES
+            intents: 512 | 4096 | 33554432, // GUILD_MESSAGES | DIRECT_MESSAGE | GROUP_AND_C2C_EVENT
             shard: [0, 1],
           },
         };
