@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
+import type { IChannel, ChannelMessage, ConnectedInfo, ChannelOptions } from './IChannel';
 
 // ---------------------------------------------------------------------------
 // Public interfaces (also exported for consumers)
@@ -276,7 +277,7 @@ async function pollQrStatus(apiBaseUrl: string, qrcode: string): Promise<QrStatu
  * package, but implemented directly on Node.js fetch so it works in
  * Electron without the OpenClaw plugin SDK.
  */
-export class WechatChannel extends EventEmitter {
+export class WechatChannel extends EventEmitter implements IChannel {
   private instanceId: string;
   private instanceName: string;
   private connected: boolean = false;
@@ -660,7 +661,14 @@ export class WechatChannel extends EventEmitter {
    * Restore connection from previously saved credentials (no QR flow).
    * Used when the app starts and credentials are already stored.
    */
-  restoreConnection(accountId: string, token: string, baseUrl: string): void {
+  restoreConnection(credentials: Record<string, unknown>): void {
+    const accountId = credentials.accountId as string;
+    const token = credentials.token as string;
+    const baseUrl = credentials.baseUrl as string;
+    if (!accountId || !token || !baseUrl) {
+      console.error(`[WechatChannel:${this.instanceId}] restoreConnection: missing credentials`);
+      return;
+    }
     this.accountId = accountId;
     this.token = token;
     this.baseUrl = baseUrl;

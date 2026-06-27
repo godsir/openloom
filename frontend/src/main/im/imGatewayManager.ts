@@ -141,7 +141,7 @@ export class IMGatewayManager extends EventEmitter {
     const token = config.configJson?.token as string | undefined;
     const baseUrl = config.configJson?.baseUrl as string | undefined;
     if (accountId && token && baseUrl) {
-      ch.restoreConnection(accountId, token, baseUrl);
+      ch.restoreConnection({ accountId, token, baseUrl });
       ch.startPolling();
       this.emit('channel-status', {
         platform: 'wechat' as Platform,
