@@ -67,6 +67,7 @@ export interface LoomApi {
   imWechatQrWait: (instanceId: string, sessionKey: string) => Promise<{ connected: boolean; accountId?: string; message?: string }>
   imPopoQrStart: () => Promise<{ qrUrl: string; taskToken: string; timeoutMs: number }>
   imPopoQrPoll: (taskToken: string) => Promise<{ success: boolean; appKey?: string; appSecret?: string; aesKey?: string; message: string }>
+  imTelegramLogin: (platform: Platform, instanceId: string, token: string) => Promise<{ ok: boolean; error?: string }>
   imGetSettings: () => Promise<IMSettings>
   imSetSettings: (settings: Partial<IMSettings>) => Promise<{ ok: boolean }>
   onIMMessage: (cb: (msg: IMMessage) => void) => () => void
@@ -200,6 +201,8 @@ contextBridge.exposeInMainWorld('loom', {
   imWechatQrWait: (instanceId: string, sessionKey: string) => ipcRenderer.invoke('im:wechat-qr-wait', instanceId, sessionKey),
   imPopoQrStart: () => ipcRenderer.invoke('im:popo-qr-start'),
   imPopoQrPoll: (taskToken: string) => ipcRenderer.invoke('im:popo-qr-poll', taskToken),
+  imTelegramLogin: (platform: Platform, instanceId: string, token: string) =>
+    ipcRenderer.invoke('im:telegram-login', platform, instanceId, token),
   imGetSettings: () => ipcRenderer.invoke('im:get-settings'),
   imSetSettings: (settings: Partial<IMSettings>) => ipcRenderer.invoke('im:set-settings', settings),
   imListSessionBindings: () => ipcRenderer.invoke('im:list-session-bindings') as Promise<Array<{ sessionId: string; platform: Platform; instanceId: string; conversationId: string }>>,
