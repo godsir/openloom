@@ -7,6 +7,8 @@ import type { IChannel, ChannelMessage, ConnectedInfo, ChannelOptions } from './
 
 const WECOM_API_BASE = 'https://qyapi.weixin.qq.com';
 const POLL_INTERVAL_MS = 5_000;
+const POLL_BACKOFF_MIN_MS = 1_000;
+const POLL_BACKOFF_MAX_MS = 30_000;
 
 // ---------------------------------------------------------------------------
 // WecomChannel
@@ -34,6 +36,8 @@ export class WecomChannel extends EventEmitter implements IChannel {
   private abortController: AbortController | null = null;
   private pollPromise: Promise<void> | null = null;
   private cursor: string | null = null;
+  private pollBackoffMs: number = POLL_BACKOFF_MIN_MS;
+  private pollConsecutiveErrors: number = 0;
 
   constructor(options: ChannelOptions) {
     super();
@@ -168,20 +172,29 @@ export class WecomChannel extends EventEmitter implements IChannel {
     while (!signal.aborted) {
       try {
         await this.pollOnce(signal);
+        // Reset backoff on success
+        this.pollBackoffMs = POLL_BACKOFF_MIN_MS;
+        this.pollConsecutiveErrors = 0;
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') {
           break;
         }
+        this.pollConsecutiveErrors++;
+        const delay = Math.min(
+          POLL_BACKOFF_MIN_MS * Math.pow(2, this.pollConsecutiveErrors - 1),
+          POLL_BACKOFF_MAX_MS,
+        );
         console.warn(
-          `[WecomChannel:${this.instanceId}] Poll error (will retry): ` +
+          `[WecomChannel:${this.instanceId}] Poll error (will retry in ${delay}ms, attempt ${this.pollConsecutiveErrors}): ` +
             `${err instanceof Error ? err.message : String(err)}`,
         );
+        this.pollBackoffMs = delay;
       }
 
-      // Wait POLL_INTERVAL_MS before the next poll
+      // Wait before the next poll (backoff on error, normal interval on success)
       if (!signal.aborted) {
         await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, POLL_INTERVAL_MS);
+          const timer = setTimeout(resolve, this.pollBackoffMs);
           const onAbort = (): void => {
             clearTimeout(timer);
             resolve();
@@ -295,14 +308,14 @@ export class WecomChannel extends EventEmitter implements IChannel {
         text: { content: text },
       };
 
-      const success = await this.sendMessageInternal(body);
+      const { success, errcode } = await this.sendMessageInternal(body);
 
-      // If token expired, refresh and retry once
-      if (!success) {
-        // Check if it was a token error by attempting refresh
+      // Only refresh token on actual token errors (errcode 42001 or 40014)
+      if (!success && (errcode === 42001 || errcode === 40014)) {
         try {
           await this.getAccessToken();
-          return await this.sendMessageInternal(body);
+          const retry = await this.sendMessageInternal(body);
+          return retry.success;
         } catch {
           return false;
         }
@@ -325,7 +338,7 @@ export class WecomChannel extends EventEmitter implements IChannel {
     msgtype: string;
     agentid: string;
     text: { content: string };
-  }): Promise<boolean> {
+  }): Promise<{ success: boolean; errcode: number }> {
     const url =
       `${WECOM_API_BASE}/cgi-bin/message/send?access_token=${encodeURIComponent(this.accessToken!)}`;
 
@@ -345,13 +358,13 @@ export class WecomChannel extends EventEmitter implements IChannel {
         'error',
         new Error(`sendMessage failed: ${data.errmsg} (errcode=${data.errcode})`),
       );
-      return false;
+      return { success: false, errcode: data.errcode };
     }
 
     console.log(
       `[WecomChannel:${this.instanceId}] Message sent to ${body.touser}`,
     );
-    return true;
+    return { success: true, errcode: 0 };
   }
 
   // -----------------------------------------------------------------------
@@ -435,6 +448,8 @@ export class WecomChannel extends EventEmitter implements IChannel {
       this.accountId = null;
       this.accessToken = null;
       this.cursor = null;
+      this.pollBackoffMs = POLL_BACKOFF_MIN_MS;
+      this.pollConsecutiveErrors = 0;
 
       this.emit('disconnected');
       console.log(`[WecomChannel:${this.instanceId}] Disconnected`);

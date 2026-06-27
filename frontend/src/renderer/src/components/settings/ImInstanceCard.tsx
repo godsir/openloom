@@ -41,7 +41,7 @@ interface Props { config: InstanceConfig }
 
 export default function ImInstanceCard({ config }: Props) {
   const { t } = useLocale()
-  const { saveConfig, deleteConfig, startChannel, stopChannel, statuses, sendHelp, telegramLogin } = useIMStore()
+  const { saveConfig, deleteConfig, startChannel, stopChannel, statuses, sendHelp, telegramLogin, discordLogin, qqLogin, feishuLogin, wecomLogin, dingtalkLogin } = useIMStore()
   const agents = useStore((s: any) => s.agents) ?? []
   const addToast = useStore((s) => s.addToast)
   const dmPolicyOptions = useDmPolicyOptions()
@@ -56,8 +56,15 @@ export default function ImInstanceCard({ config }: Props) {
   const [groupAllowDraft, setGroupAllowDraft] = useState(config.groupAllowFrom.join('\n'))
   const [tokenDraft, setTokenDraft] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
+  const [discordToken, setDiscordToken] = useState('');
+  const [qqAppId, setQqAppId] = useState(''); const [qqSecret, setQqSecret] = useState('');
+  const [feishuAppId, setFeishuAppId] = useState(''); const [feishuSecret, setFeishuSecret] = useState('');
+  const [wecomCorpId, setWecomCorpId] = useState(''); const [wecomSecret, setWecomSecret] = useState(''); const [wecomAgentId, setWecomAgentId] = useState('');
+  const [dtAppKey, setDtAppKey] = useState(''); const [dtSecret, setDtSecret] = useState('');
 
   const debounceRef = useRef<number | null>(null)
+  const configRef = useRef(config)
+  configRef.current = config
 
   useEffect(() => { setNameDraft(config.instanceName) }, [config.instanceName])
   useEffect(() => { setAllowDraft(config.allowFrom.join('\n')) }, [config.allowFrom])
@@ -75,7 +82,7 @@ export default function ImInstanceCard({ config }: Props) {
     if (nameDraft === config.instanceName) return
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = window.setTimeout(() => {
-      saveConfig({ ...config, instanceName: nameDraft, updatedAt: Math.floor(Date.now() / 1000) })
+      saveConfig({ ...configRef.current, instanceName: nameDraft, updatedAt: Math.floor(Date.now() / 1000) })
     }, 500)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
   }, [nameDraft])
@@ -143,6 +150,106 @@ export default function ImInstanceCard({ config }: Props) {
     }
   };
 
+  const handleDiscordLogin = async () => {
+    const trimmed = discordToken.trim();
+    if (!trimmed) {
+      addToast({ type: 'error', message: t('im.discordTokenEmpty', '请输入 Bot Token') });
+      return;
+    }
+    setLoginLoading(true);
+    try {
+      const res = await discordLogin(config.platform, config.instanceId, trimmed);
+      if (res.ok) {
+        addToast({ type: 'success', message: t('im.discordConnected', '已连接到 Discord') });
+        setDiscordToken('');
+      } else {
+        addToast({ type: 'error', message: `${t('im.discordLoginFail', '连接失败')}: ${res.error ?? ''}` });
+      }
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleQqLogin = async () => {
+    const id = qqAppId.trim(); const sec = qqSecret.trim();
+    if (!id || !sec) {
+      addToast({ type: 'error', message: t('im.qqCredEmpty', '请输入 App ID 和 Client Secret') });
+      return;
+    }
+    setLoginLoading(true);
+    try {
+      const res = await qqLogin(config.platform, config.instanceId, id, sec);
+      if (res.ok) {
+        addToast({ type: 'success', message: t('im.qqConnected', '已连接到 QQ') });
+        setQqAppId(''); setQqSecret('');
+      } else {
+        addToast({ type: 'error', message: `${t('im.qqLoginFail', '连接失败')}: ${res.error ?? ''}` });
+      }
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleFeishuLogin = async () => {
+    const id = feishuAppId.trim(); const sec = feishuSecret.trim();
+    if (!id || !sec) {
+      addToast({ type: 'error', message: t('im.feishuCredEmpty', '请输入 App ID 和 App Secret') });
+      return;
+    }
+    setLoginLoading(true);
+    try {
+      const res = await feishuLogin(config.platform, config.instanceId, id, sec);
+      if (res.ok) {
+        addToast({ type: 'success', message: t('im.feishuConnected', '已连接到飞书') });
+        setFeishuAppId(''); setFeishuSecret('');
+      } else {
+        addToast({ type: 'error', message: `${t('im.feishuLoginFail', '连接失败')}: ${res.error ?? ''}` });
+      }
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleWecomLogin = async () => {
+    const cid = wecomCorpId.trim(); const sec = wecomSecret.trim(); const aid = wecomAgentId.trim();
+    if (!cid || !sec || !aid) {
+      addToast({ type: 'error', message: t('im.wecomCredEmpty', '请填写所有必填字段') });
+      return;
+    }
+    setLoginLoading(true);
+    try {
+      const res = await wecomLogin(config.platform, config.instanceId, cid, sec, aid);
+      if (res.ok) {
+        addToast({ type: 'success', message: t('im.wecomConnected', '已连接到企业微信') });
+        setWecomCorpId(''); setWecomSecret(''); setWecomAgentId('');
+      } else {
+        addToast({ type: 'error', message: `${t('im.wecomLoginFail', '连接失败')}: ${res.error ?? ''}` });
+      }
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleDingtalkLogin = async () => {
+    const ak = dtAppKey.trim(); const sec = dtSecret.trim();
+    if (!ak || !sec) {
+      addToast({ type: 'error', message: t('im.dingtalkCredEmpty', '请输入 App Key 和 App Secret') });
+      return;
+    }
+    setLoginLoading(true);
+    try {
+      const res = await dingtalkLogin(config.platform, config.instanceId, ak, sec);
+      if (res.ok) {
+        addToast({ type: 'success', message: t('im.dingtalkConnected', '已连接到钉钉') });
+        setDtAppKey(''); setDtSecret('');
+      } else {
+        addToast({ type: 'error', message: `${t('im.dingtalkLoginFail', '连接失败')}: ${res.error ?? ''}` });
+      }
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
   return (
     <>
       <div className={styles.instanceCard}>
@@ -187,6 +294,153 @@ export default function ImInstanceCard({ config }: Props) {
                   {loginLoading ? '...' : t('im.telegramLogin', '连接')}
                 </button>
               </>
+            )}
+            {/* Discord Bot Token — 未连接时显示 */}
+            {config.platform === 'discord' && !connected && (
+              <>
+                <input
+                  className={styles.configInput}
+                  style={{ width: 120 }}
+                  type="password"
+                  value={discordToken}
+                  onChange={(e) => setDiscordToken(e.target.value)}
+                  placeholder={t('im.discordToken', 'Bot Token')}
+                  title={t('im.discordTokenHint', '在 Discord Developer Portal 创建 Bot')}
+                />
+                <button
+                  className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`}
+                  onClick={handleDiscordLogin}
+                  disabled={loginLoading}
+                >
+                  {loginLoading ? '...' : t('im.discordLogin', '连接')}
+                </button>
+              </>
+            )}
+            {/* QQ AppID + Secret — 未连接时显示 */}
+            {config.platform === 'qq' && !connected && (
+              <>
+                <input
+                  className={styles.configInput}
+                  style={{ width: 100, height: 26, fontSize: 10 }}
+                  type="text"
+                  value={qqAppId}
+                  onChange={(e) => setQqAppId(e.target.value)}
+                  placeholder={t('im.qqAppId', 'App ID')}
+                />
+                <input
+                  className={styles.configInput}
+                  style={{ width: 120 }}
+                  type="password"
+                  value={qqSecret}
+                  onChange={(e) => setQqSecret(e.target.value)}
+                  placeholder={t('im.qqClientSecret', 'Client Secret')}
+                />
+                <button
+                  className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`}
+                  onClick={handleQqLogin}
+                  disabled={loginLoading}
+                >
+                  {loginLoading ? '...' : t('im.qqLogin', '连接')}
+                </button>
+              </>
+            )}
+            {/* Feishu AppID + Secret — 未连接时显示 */}
+            {config.platform === 'feishu' && !connected && (
+              <>
+                <input
+                  className={styles.configInput}
+                  style={{ width: 100, height: 26, fontSize: 10 }}
+                  type="text"
+                  value={feishuAppId}
+                  onChange={(e) => setFeishuAppId(e.target.value)}
+                  placeholder={t('im.feishuAppId', 'App ID')}
+                />
+                <input
+                  className={styles.configInput}
+                  style={{ width: 120 }}
+                  type="password"
+                  value={feishuSecret}
+                  onChange={(e) => setFeishuSecret(e.target.value)}
+                  placeholder={t('im.feishuAppSecret', 'App Secret')}
+                />
+                <button
+                  className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`}
+                  onClick={handleFeishuLogin}
+                  disabled={loginLoading}
+                >
+                  {loginLoading ? '...' : t('im.feishuLogin', '连接')}
+                </button>
+              </>
+            )}
+            {/* WeCom CorpID + Secret + AgentID — 未连接时显示 */}
+            {config.platform === 'wecom' && !connected && (
+              <>
+                <input
+                  className={styles.configInput}
+                  style={{ width: 100, height: 26, fontSize: 10 }}
+                  type="text"
+                  value={wecomCorpId}
+                  onChange={(e) => setWecomCorpId(e.target.value)}
+                  placeholder={t('im.wecomCorpId', 'Corp ID')}
+                />
+                <input
+                  className={styles.configInput}
+                  style={{ width: 120 }}
+                  type="password"
+                  value={wecomSecret}
+                  onChange={(e) => setWecomSecret(e.target.value)}
+                  placeholder={t('im.wecomSecret', 'Secret')}
+                />
+                <input
+                  className={styles.configInput}
+                  style={{ width: 100, height: 26, fontSize: 10 }}
+                  type="text"
+                  value={wecomAgentId}
+                  onChange={(e) => setWecomAgentId(e.target.value)}
+                  placeholder={t('im.wecomAgentId', 'Agent ID')}
+                />
+                <button
+                  className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`}
+                  onClick={handleWecomLogin}
+                  disabled={loginLoading}
+                >
+                  {loginLoading ? '...' : t('im.wecomLogin', '连接')}
+                </button>
+              </>
+            )}
+            {/* DingTalk AppKey + Secret — 未连接时显示 */}
+            {config.platform === 'dingtalk' && !connected && (
+              <>
+                <input
+                  className={styles.configInput}
+                  style={{ width: 100, height: 26, fontSize: 10 }}
+                  type="text"
+                  value={dtAppKey}
+                  onChange={(e) => setDtAppKey(e.target.value)}
+                  placeholder={t('im.dingtalkAppKey', 'App Key')}
+                />
+                <input
+                  className={styles.configInput}
+                  style={{ width: 120 }}
+                  type="password"
+                  value={dtSecret}
+                  onChange={(e) => setDtSecret(e.target.value)}
+                  placeholder={t('im.dingtalkAppSecret', 'App Secret')}
+                />
+                <button
+                  className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`}
+                  onClick={handleDingtalkLogin}
+                  disabled={loginLoading}
+                >
+                  {loginLoading ? '...' : t('im.dingtalkLogin', '连接')}
+                </button>
+              </>
+            )}
+            {/* POPO QR — 未连接时显示 */}
+            {config.platform === 'popo' && !connected && (
+              <button className={styles.instanceBtn} onClick={() => setShowQr(true)}>
+                {t('im.scanConnect')}
+              </button>
             )}
             {/* start / stop */}
             <button
@@ -248,6 +502,24 @@ export default function ImInstanceCard({ config }: Props) {
             )}
             {config.platform === 'telegram' && (
               <p className={styles.empty} style={{ padding: 0, textAlign: 'left', fontSize: 10 }}>{t('im.telegramConfigHint', '在 @BotFather 使用 /newbot 创建 Bot，获取 Token 后粘贴到上方输入框')}</p>
+            )}
+            {config.platform === 'discord' && (
+              <p className={styles.empty} style={{ padding: 0, textAlign: 'left', fontSize: 10 }}>{t('im.discordConfigHint', '在 Discord Developer Portal 创建 Bot，获取 Token 后粘贴到上方输入框')}</p>
+            )}
+            {config.platform === 'qq' && (
+              <p className={styles.empty} style={{ padding: 0, textAlign: 'left', fontSize: 10 }}>{t('im.qqConfigHint', '在 QQ 开放平台创建应用，获取 App ID 和 Client Secret 后填写到上方输入框')}</p>
+            )}
+            {config.platform === 'feishu' && (
+              <p className={styles.empty} style={{ padding: 0, textAlign: 'left', fontSize: 10 }}>{t('im.feishuConfigHint', '在飞书开放平台创建应用，获取 App ID 和 App Secret 后填写到上方输入框')}</p>
+            )}
+            {config.platform === 'wecom' && (
+              <p className={styles.empty} style={{ padding: 0, textAlign: 'left', fontSize: 10 }}>{t('im.wecomConfigHint', '在企业微信管理后台获取 Corp ID、Secret 和 Agent ID，填写到上方输入框')}</p>
+            )}
+            {config.platform === 'dingtalk' && (
+              <p className={styles.empty} style={{ padding: 0, textAlign: 'left', fontSize: 10 }}>{t('im.dingtalkConfigHint', '在钉钉开放平台创建应用，获取 App Key 和 App Secret 后填写到上方输入框')}</p>
+            )}
+            {config.platform === 'popo' && (
+              <p className={styles.empty} style={{ padding: 0, textAlign: 'left', fontSize: 10 }}>{t('im.popoConfigHint', 'POPO 通过扫码连接，点击上方扫码按钮授权')}</p>
             )}
 
             <div className={styles.configActions}>

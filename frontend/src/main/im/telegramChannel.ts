@@ -229,7 +229,6 @@ export class TelegramChannel extends EventEmitter implements IChannel {
       const body = JSON.stringify({
         chat_id: conversationId,
         text,
-        parse_mode: 'Markdown',
       });
 
       const rawText = await this.apiPost(url, body, undefined, DEFAULT_API_TIMEOUT_MS);

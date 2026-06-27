@@ -117,7 +117,7 @@ interface ActiveLogin {
   currentApiBaseUrl: string;
 }
 
-const ACTIVE_LOGIN_TTL_MS = 5 * 60_000;
+const ACTIVE_LOGIN_TTL_MS = 480_000; // Aligned with LOGIN_TIMEOUT_MS
 const FIXED_BASE_URL = 'https://ilinkai.weixin.qq.com';
 const QR_LONG_POLL_TIMEOUT_MS = 35_000;
 const LOGIN_TIMEOUT_MS = 480_000;
@@ -142,6 +142,19 @@ function purgeExpiredLogins(): void {
 
 function ensureTrailingSlash(url: string): string {
   return url.endsWith('/') ? url : `${url}/`;
+}
+
+/** Redact sensitive data (token, etc.) from a string before logging. */
+function redactSensitive(raw: string, token?: string): string {
+  let out = raw;
+  if (token?.trim()) {
+    // Replace Bearer token value in Authorization headers and plain-text occurrences
+    const t = token.trim();
+    out = out.replaceAll(t, '***REDACTED***');
+    // Also catch URL-encoded token
+    out = out.replaceAll(encodeURIComponent(t), '***REDACTED***');
+  }
+  return out;
 }
 
 function buildHeaders(token?: string): Record<string, string> {
@@ -197,7 +210,7 @@ async function apiPost(
     if (timer !== undefined) clearTimeout(timer);
     const rawText = await res.text();
     if (!res.ok) {
-      throw new Error(`${endpoint} HTTP ${res.status}: ${rawText.slice(0, 200)}`);
+      throw new Error(`${endpoint} HTTP ${res.status}: ${redactSensitive(rawText.slice(0, 200), token)}`);
     }
     return rawText;
   } catch (err) {

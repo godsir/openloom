@@ -81,7 +81,10 @@ export default function ImTab() {
     await saveSettings({ globalEnabled: checked })
     if (!checked) {
       const running = instances.filter((i) => i.enabled)
-      await Promise.all(running.map((i) => stopChannel(i.platform, i.instanceId)))
+      for (const i of running) {
+        await stopChannel(i.platform, i.instanceId)
+        await saveConfig({ ...i, enabled: false, updatedAt: Math.floor(Date.now() / 1000) })
+      }
     }
     addToast({
       type: 'success',

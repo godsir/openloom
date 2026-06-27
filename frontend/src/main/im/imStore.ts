@@ -3,6 +3,15 @@ import type { Platform, InstanceConfig, IMSettings } from './types';
 import { DEFAULT_IM_SETTINGS } from './types';
 import type { AccessMode } from './types';
 
+/** Safe JSON.parse: returns fallback value on any parse error. */
+function safeJsonParse<T>(raw: string, fallback: T): T {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 export class IMStore {
   private db: Database.Database;
 
@@ -69,11 +78,11 @@ export class IMStore {
       instanceId: row.instance_id,
       instanceName: row.instance_name,
       enabled: row.enabled !== 0,
-      configJson: JSON.parse(row.config_json || '{}'),
+      configJson: safeJsonParse(row.config_json, {}),
       dmPolicy: row.dm_policy as AccessMode,
-      allowFrom: JSON.parse(row.allow_from || '[]'),
+      allowFrom: safeJsonParse(row.allow_from, []),
       groupPolicy: row.group_policy as 'open' | 'allowlist' | 'disabled',
-      groupAllowFrom: JSON.parse(row.group_allow_from || '[]'),
+      groupAllowFrom: safeJsonParse(row.group_allow_from, []),
       agentId: row.agent_id || undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
