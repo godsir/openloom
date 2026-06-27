@@ -94,7 +94,7 @@ export const PLATFORM_ORDER: Platform[] = [
 ];
 
 /** Platforms that have a real backend implementation in the Electron layer. */
-export const IMPLEMENTED_PLATFORMS: Platform[] = ['wechat', 'telegram'];
+export const IMPLEMENTED_PLATFORMS: Platform[] = ['wechat', 'telegram', 'discord', 'qq', 'feishu', 'wecom', 'dingtalk', 'popo'];
 
 export function statusKey(platform: Platform, instanceId: string): string {
   return `${platform}:${instanceId}`;
@@ -151,6 +151,11 @@ interface IMState {
   popoQrStart: () => Promise<{ qrUrl: string; taskToken: string; timeoutMs: number }>;
   popoQrPoll: (taskToken: string) => Promise<{ success: boolean; appKey?: string; appSecret?: string; aesKey?: string; message: string }>;
   telegramLogin: (platform: Platform, instanceId: string, token: string) => Promise<{ ok: boolean; error?: string }>;
+  discordLogin: (platform: Platform, instanceId: string, token: string) => Promise<{ ok: boolean; error?: string }>;
+  qqLogin: (platform: Platform, instanceId: string, appId: string, clientSecret: string) => Promise<{ ok: boolean; error?: string }>;
+  feishuLogin: (platform: Platform, instanceId: string, appId: string, appSecret: string) => Promise<{ ok: boolean; error?: string }>;
+  wecomLogin: (platform: Platform, instanceId: string, corpId: string, secret: string, agentId: string) => Promise<{ ok: boolean; error?: string }>;
+  dingtalkLogin: (platform: Platform, instanceId: string, appKey: string, appSecret: string) => Promise<{ ok: boolean; error?: string }>;
   setSelectedPlatform: (p: Platform) => void;
   /** Subscribe to backend channel-status/message events. Returns an unsubscribe. */
   subscribeEvents: () => () => void;
@@ -281,6 +286,12 @@ export const useIMStore = create<IMState>((set, get) => ({
     }
     return result;
   },
+
+  discordLogin: async (platform, instanceId, token) => { const r = await (window as any).loom.imDiscordLogin(platform, instanceId, token); if (r?.ok) { await get().loadConfigs(); get().refreshStatus(); } return r; },
+  qqLogin: async (platform, instanceId, appId, clientSecret) => { const r = await (window as any).loom.imQqLogin(platform, instanceId, appId, clientSecret); if (r?.ok) { await get().loadConfigs(); get().refreshStatus(); } return r; },
+  feishuLogin: async (platform, instanceId, appId, appSecret) => { const r = await (window as any).loom.imFeishuLogin(platform, instanceId, appId, appSecret); if (r?.ok) { await get().loadConfigs(); get().refreshStatus(); } return r; },
+  wecomLogin: async (platform, instanceId, corpId, secret, agentId) => { const r = await (window as any).loom.imWecomLogin(platform, instanceId, corpId, secret, agentId); if (r?.ok) { await get().loadConfigs(); get().refreshStatus(); } return r; },
+  dingtalkLogin: async (platform, instanceId, appKey, appSecret) => { const r = await (window as any).loom.imDingtalkLogin(platform, instanceId, appKey, appSecret); if (r?.ok) { await get().loadConfigs(); get().refreshStatus(); } return r; },
 
   setSelectedPlatform: (p) => set({ selectedPlatform: p }),
 
