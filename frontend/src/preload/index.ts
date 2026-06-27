@@ -68,6 +68,11 @@ export interface LoomApi {
   imPopoQrStart: () => Promise<{ qrUrl: string; taskToken: string; timeoutMs: number }>
   imPopoQrPoll: (taskToken: string) => Promise<{ success: boolean; appKey?: string; appSecret?: string; aesKey?: string; message: string }>
   imTelegramLogin: (platform: Platform, instanceId: string, token: string) => Promise<{ ok: boolean; error?: string }>
+  imDiscordLogin: (platform: Platform, instanceId: string, token: string) => Promise<{ ok: boolean; error?: string }>
+  imQqLogin: (platform: Platform, instanceId: string, appId: string, clientSecret: string) => Promise<{ ok: boolean; error?: string }>
+  imFeishuLogin: (platform: Platform, instanceId: string, appId: string, appSecret: string) => Promise<{ ok: boolean; error?: string }>
+  imWecomLogin: (platform: Platform, instanceId: string, corpId: string, secret: string, agentId: string) => Promise<{ ok: boolean; error?: string }>
+  imDingtalkLogin: (platform: Platform, instanceId: string, appKey: string, appSecret: string) => Promise<{ ok: boolean; error?: string }>
   imGetSettings: () => Promise<IMSettings>
   imSetSettings: (settings: Partial<IMSettings>) => Promise<{ ok: boolean }>
   onIMMessage: (cb: (msg: IMMessage) => void) => () => void
@@ -203,6 +208,16 @@ contextBridge.exposeInMainWorld('loom', {
   imPopoQrPoll: (taskToken: string) => ipcRenderer.invoke('im:popo-qr-poll', taskToken),
   imTelegramLogin: (platform: Platform, instanceId: string, token: string) =>
     ipcRenderer.invoke('im:telegram-login', platform, instanceId, token),
+  imDiscordLogin: (platform: Platform, instanceId: string, token: string) =>
+    ipcRenderer.invoke('im:discord-login', platform, instanceId, token),
+  imQqLogin: (platform: Platform, instanceId: string, appId: string, clientSecret: string) =>
+    ipcRenderer.invoke('im:qq-login', platform, instanceId, appId, clientSecret),
+  imFeishuLogin: (platform: Platform, instanceId: string, appId: string, appSecret: string) =>
+    ipcRenderer.invoke('im:feishu-login', platform, instanceId, appId, appSecret),
+  imWecomLogin: (platform: Platform, instanceId: string, corpId: string, secret: string, agentId: string) =>
+    ipcRenderer.invoke('im:wecom-login', platform, instanceId, corpId, secret, agentId),
+  imDingtalkLogin: (platform: Platform, instanceId: string, appKey: string, appSecret: string) =>
+    ipcRenderer.invoke('im:dingtalk-login', platform, instanceId, appKey, appSecret),
   imGetSettings: () => ipcRenderer.invoke('im:get-settings'),
   imSetSettings: (settings: Partial<IMSettings>) => ipcRenderer.invoke('im:set-settings', settings),
   imListSessionBindings: () => ipcRenderer.invoke('im:list-session-bindings') as Promise<Array<{ sessionId: string; platform: Platform; instanceId: string; conversationId: string }>>,
