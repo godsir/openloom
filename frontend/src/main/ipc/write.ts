@@ -145,7 +145,7 @@ code{background:#f4f4f4;padding:2px 4px;border-radius:2px;}</style></head><body>
     try {
       const html = wrapExportHtml(markdown, title);
       await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-      const pdfData = await win.webContents.printToPDFAsync({
+      const pdfData = await (win.webContents as any).printToPDF({
         printBackground: true,
         margins: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' },
       });
@@ -178,7 +178,7 @@ code{background:#f4f4f4;padding:2px 4px;border-radius:2px;}</style></head><body>
         title: title || 'Document',
         margins: { top: 1440, bottom: 1440, left: 1080, right: 1080 },
       });
-      fs.writeFileSync(result.filePath, Buffer.from(docxBuffer as ArrayBuffer));
+      fs.writeFileSync(result.filePath, Buffer.from(docxBuffer));
       return { ok: true, path: result.filePath };
     } catch (err: any) {
       return { ok: false, error: err.message };

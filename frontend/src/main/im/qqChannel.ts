@@ -151,6 +151,32 @@ export class QQChannel extends EventEmitter implements IChannel {
     }
   }
 
+  // ── 凭据验证 ──
+
+  /**
+   * 验证 appId 和 clientSecret 有效性。
+   * 由 IMGatewayManager 在 QQ 登录时调用。
+   */
+  async verifyCredentials(appId: string, clientSecret: string): Promise<{ ok: boolean; accountId?: string; error?: string }> {
+    try {
+      const rawText = await this.apiPost(
+        QQ_AUTH_URL,
+        JSON.stringify({ appId, clientSecret }),
+        false,
+      );
+      const data: QQAccessTokenResp = JSON.parse(rawText);
+      if (!data.access_token) {
+        return { ok: false, error: '获取 access_token 失败，请检查 appId 和 clientSecret' };
+      }
+      this.appId = appId;
+      this.clientSecret = clientSecret;
+      this.accessToken = data.access_token;
+      return { ok: true, accountId: appId };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  }
+
   // ── 消息接收（WebSocket 长连接） ──
 
   startPolling(): void {

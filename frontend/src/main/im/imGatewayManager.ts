@@ -553,7 +553,7 @@ export class IMGatewayManager extends EventEmitter {
     const meta = this.getStatusMeta(key);
     meta.startedAt = Date.now();
 
-    this.registerChannelHandlers(ch, config, platform, instanceId, meta);
+    this.registerChannelHandlers(ch, config!, platform, instanceId, meta);
 
     // 启动 channel
     this.channels.set(key, ch);
@@ -615,7 +615,7 @@ export class IMGatewayManager extends EventEmitter {
     const meta = this.getStatusMeta(key);
     meta.startedAt = Date.now();
 
-    this.registerChannelHandlers(ch, config, platform, instanceId, meta);
+    this.registerChannelHandlers(ch, config!, platform, instanceId, meta);
 
     this.channels.set(key, ch);
     ch.restoreConnection({
@@ -676,7 +676,7 @@ export class IMGatewayManager extends EventEmitter {
     const meta = this.getStatusMeta(key);
     meta.startedAt = Date.now();
 
-    this.registerChannelHandlers(ch, config, platform, instanceId, meta);
+    this.registerChannelHandlers(ch, config!, platform, instanceId, meta);
 
     this.channels.set(key, ch);
     ch.restoreConnection({
@@ -738,7 +738,7 @@ export class IMGatewayManager extends EventEmitter {
     const meta = this.getStatusMeta(key);
     meta.startedAt = Date.now();
 
-    this.registerChannelHandlers(ch, config, platform, instanceId, meta);
+    this.registerChannelHandlers(ch, config!, platform, instanceId, meta);
 
     this.channels.set(key, ch);
     ch.restoreConnection({
@@ -800,7 +800,7 @@ export class IMGatewayManager extends EventEmitter {
     const meta = this.getStatusMeta(key);
     meta.startedAt = Date.now();
 
-    this.registerChannelHandlers(ch, config, platform, instanceId, meta);
+    this.registerChannelHandlers(ch, config!, platform, instanceId, meta);
 
     this.channels.set(key, ch);
     ch.restoreConnection({
@@ -861,7 +861,7 @@ export class IMGatewayManager extends EventEmitter {
     const meta = this.getStatusMeta(key);
     meta.startedAt = Date.now();
 
-    this.registerChannelHandlers(ch, config, platform, instanceId, meta);
+    this.registerChannelHandlers(ch, config!, platform, instanceId, meta);
 
     this.channels.set(key, ch);
     ch.restoreConnection({

@@ -14,5 +14,6 @@ export { QQChannel } from './qqChannel';
 export { FeishuChannel } from './feishuChannel';
 export { WecomChannel } from './wecomChannel';
 export { DingTalkChannel } from './dingtalkChannel';
+export { PopoChannel } from './popoChannel';
 export { IMGatewayManager } from './imGatewayManager';
 export type { IMGatewayManagerOptions } from './imGatewayManager';

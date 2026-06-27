@@ -174,7 +174,7 @@ export class ImBridge {
       try {
         const created: any = await this.rpc('session.create', {})
         sessionId = created.session_id
-        this.imStore.upsertConversation(platform, config.instanceId, conversationId, sessionId)
+        this.imStore.upsertConversation(platform, config.instanceId, conversationId, sessionId!)
         this.onSessionCreated?.()
       } catch (e: any) {
         console.warn('[ImBridge] session.create failed:', e?.message)
@@ -193,9 +193,9 @@ export class ImBridge {
 
     try {
       const result: any = await this.rpc('chat.send', {
-        session_id: sessionId,
+        session_id: sessionId!,
         content,
-        permission_mode: this.getMode(sessionId),
+        permission_mode: this.getMode(sessionId!),
       })
       const responseText = (result?.response ?? '').toString().trim()
       if (responseText) {

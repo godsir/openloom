@@ -65,7 +65,7 @@ export interface LoomApi {
   imSendHelp: (platform: Platform, instanceId: string) => Promise<{ ok: boolean; error?: string }>
   imWechatQrStart: (instanceId: string) => Promise<{ qrDataUrl: string; qrContent: string; sessionKey: string }>
   imWechatQrWait: (instanceId: string, sessionKey: string) => Promise<{ connected: boolean; accountId?: string; message?: string }>
-  imPopoQrStart: () => Promise<{ qrUrl: string; taskToken: string; timeoutMs: number }>
+  imPopoQrStart: (instanceId: string) => Promise<{ qrUrl: string; taskToken: string; timeoutMs: number }>
   imPopoQrPoll: (taskToken: string) => Promise<{ success: boolean; appKey?: string; appSecret?: string; aesKey?: string; message: string }>
   imTelegramLogin: (platform: Platform, instanceId: string, token: string) => Promise<{ ok: boolean; error?: string }>
   imDiscordLogin: (platform: Platform, instanceId: string, token: string) => Promise<{ ok: boolean; error?: string }>
@@ -75,6 +75,7 @@ export interface LoomApi {
   imDingtalkLogin: (platform: Platform, instanceId: string, appKey: string, appSecret: string) => Promise<{ ok: boolean; error?: string }>
   imGetSettings: () => Promise<IMSettings>
   imSetSettings: (settings: Partial<IMSettings>) => Promise<{ ok: boolean }>
+  imListSessionBindings: () => Promise<Array<{ sessionId: string; platform: Platform; instanceId: string; conversationId: string }>>
   onIMMessage: (cb: (msg: IMMessage) => void) => () => void
   onIMChannelStatus: (cb: (status: ChannelStatusEvent) => void) => () => void
   onIMSessionChanged: (cb: () => void) => () => void
@@ -204,7 +205,7 @@ contextBridge.exposeInMainWorld('loom', {
   imSendHelp: (platform: Platform, instanceId: string) => ipcRenderer.invoke('im:send-help', platform, instanceId),
   imWechatQrStart: (instanceId: string) => ipcRenderer.invoke('im:wechat-qr-start', instanceId),
   imWechatQrWait: (instanceId: string, sessionKey: string) => ipcRenderer.invoke('im:wechat-qr-wait', instanceId, sessionKey),
-  imPopoQrStart: () => ipcRenderer.invoke('im:popo-qr-start'),
+  imPopoQrStart: (instanceId: string) => ipcRenderer.invoke('im:popo-qr-start', instanceId),
   imPopoQrPoll: (taskToken: string) => ipcRenderer.invoke('im:popo-qr-poll', taskToken),
   imTelegramLogin: (platform: Platform, instanceId: string, token: string) =>
     ipcRenderer.invoke('im:telegram-login', platform, instanceId, token),

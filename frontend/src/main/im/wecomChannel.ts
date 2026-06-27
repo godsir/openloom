@@ -97,7 +97,7 @@ export class WecomChannel extends EventEmitter implements IChannel {
    * Verify that corpId + secret are valid by calling gettoken.
    * Does not modify connection state.
    */
-  async verifyCredentials(corpId: string, secret: string): Promise<{ valid: boolean; message: string }> {
+  async verifyCredentials(corpId: string, secret: string): Promise<{ ok: boolean; accountId?: string; error?: string }> {
     // Temporarily set corpId/secret so getAccessToken can use them
     const prevCorpId = this.corpId;
     const prevSecret = this.secret;
@@ -105,10 +105,10 @@ export class WecomChannel extends EventEmitter implements IChannel {
       this.corpId = corpId;
       this.secret = secret;
       await this.getAccessToken();
-      return { valid: true, message: '验证成功，凭据有效。' };
+      return { ok: true, accountId: corpId };
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
-      return { valid: false, message: `验证失败: ${msg}` };
+      return { ok: false, error: `验证失败: ${msg}` };
     } finally {
       // Restore previous values — verifyCredentials is read-only
       this.corpId = prevCorpId;

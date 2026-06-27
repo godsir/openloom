@@ -239,7 +239,9 @@ export function registerImIpc(): void {
 
   // ── POPO QR flow ──
 
-  ipcMain.handle('im:popo-qr-start', () => imGatewayManager.popoQrStart())
+  ipcMain.handle('im:popo-qr-start', async (_e, instanceId: string) => {
+    return imGatewayManager.popoQrStart(instanceId)
+  })
 
   ipcMain.handle('im:popo-qr-poll', async (_e, taskToken: string) => {
     return imGatewayManager.popoQrPoll(taskToken)

@@ -70,9 +70,9 @@ export default function DynamicIslandCenter() {
       const prev = prevImConnectedRef.current[key]
       const label = PLATFORM_LABELS[status.platform] ?? status.platform
       if (status.connected && prev !== true) {
-        useStore.getState().setIslandTransient(t('island.imConnected', { platform: label }), 3000)
+        useStore.getState().showIslandTransient(t('island.imConnected', { platform: label }), 3000)
       } else if (!status.connected && prev === true) {
-        useStore.getState().setIslandTransient(t('island.imDisconnected', { platform: label }), 3000)
+        useStore.getState().showIslandTransient(t('island.imDisconnected', { platform: label }), 3000)
       }
       prevImConnectedRef.current[key] = status.connected
     })

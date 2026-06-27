@@ -80,7 +80,7 @@ export class DingTalkChannel extends EventEmitter implements IChannel {
   private accessToken: string | null = null;
   private abortController: AbortController | null = null;
   private pollPromise: Promise<void> | null = null;
-  private ws: import('ws').WebSocket | null = null;
+  private ws: any = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private botUserId: string | null = null;
   private clientId: string;
@@ -156,6 +156,31 @@ export class DingTalkChannel extends EventEmitter implements IChannel {
     return this.accessToken;
   }
 
+  // ── 凭据验证 ──
+
+  /**
+   * 验证 appKey 和 appSecret 有效性。
+   * 由 IMGatewayManager 在钉钉登录时调用。
+   */
+  async verifyCredentials(appKey: string, appSecret: string): Promise<{ ok: boolean; accountId?: string; error?: string }> {
+    try {
+      const url = `${DT_API_BASE}/v1.0/oauth2/accessToken`;
+      const body = JSON.stringify({ appKey, appSecret });
+      const rawText = await this.apiPost(url, body, undefined, DEFAULT_API_TIMEOUT_MS);
+      const data: DTAccessTokenResp = JSON.parse(rawText);
+      if (!data.accessToken) {
+        return { ok: false, error: '获取 accessToken 失败，请检查 appKey 和 appSecret' };
+      }
+      this.appKey = appKey;
+      this.appSecret = appSecret;
+      this.accessToken = data.accessToken;
+      this.accountId = appKey;
+      return { ok: true, accountId: appKey };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  }
+
   // ── 消息接收 ──
 
   startPolling(): void {
@@ -224,7 +249,7 @@ export class DingTalkChannel extends EventEmitter implements IChannel {
     return new Promise((resolve, reject) => {
       // 动态 import ws 模块（Electron 环境）
       // 使用 require 避免类型检查问题
-      const WebSocket = require('ws') as typeof import('ws');
+      const WebSocket = require('ws');
 
       const socket = new WebSocket(endpoint);
       this.ws = socket;
@@ -257,7 +282,7 @@ export class DingTalkChannel extends EventEmitter implements IChannel {
         resolve();
       });
 
-      socket.on('message', (data: import('ws').Data) => {
+      socket.on('message', (data: any) => {
         try {
           const raw = typeof data === 'string' ? data : data.toString();
           const event: DTEvent = JSON.parse(raw);
@@ -349,7 +374,7 @@ export class DingTalkChannel extends EventEmitter implements IChannel {
 
   // ── 心跳 ──
 
-  private startHeartbeat(socket: import('ws').WebSocket): void {
+  private startHeartbeat(socket: any): void {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
       if (socket.readyState === 1 /* OPEN */) {
