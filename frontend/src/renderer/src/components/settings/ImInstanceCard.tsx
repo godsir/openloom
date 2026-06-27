@@ -41,7 +41,7 @@ interface Props { config: InstanceConfig }
 
 export default function ImInstanceCard({ config }: Props) {
   const { t } = useLocale()
-  const { saveConfig, deleteConfig, startChannel, stopChannel, statuses, sendHelp } = useIMStore()
+  const { saveConfig, deleteConfig, startChannel, stopChannel, statuses, sendHelp, telegramLogin } = useIMStore()
   const agents = useStore((s: any) => s.agents) ?? []
   const addToast = useStore((s) => s.addToast)
   const dmPolicyOptions = useDmPolicyOptions()
@@ -54,6 +54,8 @@ export default function ImInstanceCard({ config }: Props) {
   const [nameDraft, setNameDraft] = useState(config.instanceName)
   const [allowDraft, setAllowDraft] = useState(config.allowFrom.join('\n'))
   const [groupAllowDraft, setGroupAllowDraft] = useState(config.groupAllowFrom.join('\n'))
+  const [tokenDraft, setTokenDraft] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
 
   const debounceRef = useRef<number | null>(null)
 
@@ -121,6 +123,26 @@ export default function ImInstanceCard({ config }: Props) {
     })
   }
 
+  const handleTelegramLogin = async () => {
+    const trimmed = tokenDraft.trim();
+    if (!trimmed) {
+      addToast({ type: 'error', message: t('im.telegramTokenEmpty', '请输入 Bot Token') });
+      return;
+    }
+    setLoginLoading(true);
+    try {
+      const res = await telegramLogin(config.platform, config.instanceId, trimmed);
+      if (res.ok) {
+        addToast({ type: 'success', message: t('im.telegramConnected', '已连接到 Telegram') });
+        setTokenDraft('');
+      } else {
+        addToast({ type: 'error', message: `${t('im.telegramLoginFail', '连接失败')}: ${res.error ?? ''}` });
+      }
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
   return (
     <>
       <div className={styles.instanceCard}>
@@ -144,6 +166,27 @@ export default function ImInstanceCard({ config }: Props) {
               <button className={styles.instanceBtn} onClick={() => setShowQr(true)}>
                 {t('im.scanConnect')}
               </button>
+            )}
+            {/* Telegram Token 输入 — 未连接时显示 */}
+            {config.platform === 'telegram' && !connected && (
+              <>
+                <input
+                  className={styles.configInput}
+                  style={{ width: 180, height: 26, fontSize: 10 }}
+                  type="password"
+                  value={tokenDraft}
+                  onChange={(e) => setTokenDraft(e.target.value)}
+                  placeholder={t('im.telegramToken', 'Bot Token')}
+                  title={t('im.telegramTokenHint', '在 @BotFather 创建 Bot 获取 Token')}
+                />
+                <button
+                  className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`}
+                  onClick={handleTelegramLogin}
+                  disabled={loginLoading}
+                >
+                  {loginLoading ? '...' : t('im.telegramLogin', '连接')}
+                </button>
+              </>
             )}
             {/* start / stop */}
             <button
@@ -202,6 +245,9 @@ export default function ImInstanceCard({ config }: Props) {
 
             {config.platform === 'wechat' && (
               <p className={styles.empty} style={{ padding: 0, textAlign: 'left', fontSize: 10 }}>{t('im.wechatConfigHint')}</p>
+            )}
+            {config.platform === 'telegram' && (
+              <p className={styles.empty} style={{ padding: 0, textAlign: 'left', fontSize: 10 }}>{t('im.telegramConfigHint', '在 @BotFather 使用 /newbot 创建 Bot，获取 Token 后粘贴到上方输入框')}</p>
             )}
 
             <div className={styles.configActions}>
