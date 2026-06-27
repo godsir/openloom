@@ -226,6 +226,8 @@ export class IMGatewayManager extends EventEmitter {
           const verifyResult = await tgCh.verifyToken(token);
           if (!verifyResult.ok) {
             console.warn(`[IMGatewayManager] Telegram token invalid for ${key}, skipping restore`);
+            this.channels.delete(key);
+            this.statusMeta.delete(key);
             return;
           }
           // Update stored bot info in case it changed
@@ -300,7 +302,8 @@ export class IMGatewayManager extends EventEmitter {
     } else if (config.platform === 'wecom') {
       const corpId = creds.corpId as string | undefined;
       const secret = creds.secret as string | undefined;
-      if (corpId && secret) {
+      const agentId = creds.agentId as string | undefined;
+      if (corpId && secret && agentId) {
         ch.restoreConnection(creds);
         ch.startPolling();
         this.emit('channel-status', {
@@ -331,6 +334,20 @@ export class IMGatewayManager extends EventEmitter {
     const key = this.channelKey(platform, instanceId);
     const ch = this.channels.get(key);
     if (ch) {
+      // Persist runtime state before disconnecting (e.g. Telegram lastUpdateId)
+      if (platform === 'telegram' && typeof (ch as any).getPersistState === 'function') {
+        const state = (ch as any).getPersistState() as Record<string, unknown>;
+        const config = this.imStore
+          .listInstances()
+          .find(i => i.platform === platform && i.instanceId === instanceId);
+        if (config) {
+          this.imStore.upsertInstance({
+            ...config,
+            configJson: { ...config.configJson, ...state },
+            updatedAt: Date.now(),
+          });
+        }
+      }
       await ch.disconnect();
       this.channels.delete(key);
       this.statusMeta.delete(key);
