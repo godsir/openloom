@@ -130,8 +130,7 @@ export class IMGatewayManager extends EventEmitter {
 
   /**
    * Start a channel for the given config.
-   * Only WeChat is implemented in the Electron layer for now; other platforms
-   * throw so the caller surfaces "not yet supported" instead of faking success.
+   * All 8 platforms are implemented. New platforms are added to the switch.
    */
   async startChannel(config: InstanceConfig): Promise<void> {
     const key = this.channelKey(config.platform, config.instanceId);
@@ -235,11 +234,6 @@ export class IMGatewayManager extends EventEmitter {
         ch.restoreConnection(creds);
         ch.startPolling();
       }
-      const aesKey = creds.aesKey as string | undefined;
-      if (appKey && appSecret && aesKey) {
-        ch.restoreConnection(creds);
-        ch.startPolling();
-      }
     } else if (config.platform === 'discord') {
       const token = creds.token as string | undefined;
       if (token) {
@@ -273,6 +267,14 @@ export class IMGatewayManager extends EventEmitter {
       const appSecret = creds.appSecret as string | undefined;
       if (appKey && appSecret) {
         ch.restoreConnection(creds);
+        ch.startPolling();
+      }
+    } else if (config.platform === 'popo') {
+      const appKey = creds.appKey as string | undefined;
+      const appSecret = creds.appSecret as string | undefined;
+      const aesKey = creds.aesKey as string | undefined;
+      if (appKey && appSecret && aesKey) {
+        ch.restoreConnection({ appKey, appSecret, aesKey });
         ch.startPolling();
       }
     }

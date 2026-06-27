@@ -87,6 +87,7 @@ export class FeishuChannel extends EventEmitter implements IChannel {
   private appSecret: string | null = null;
   private tenantAccessToken: string | null = null;
   private tokenExpireAt: number = 0;
+  private botOpenId: string | null = null;
   private abortController: AbortController | null = null;
   private pollPromise: Promise<void> | null = null;
   private ws: WebSocket | null = null;

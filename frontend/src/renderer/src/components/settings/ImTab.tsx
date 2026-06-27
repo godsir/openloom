@@ -181,7 +181,7 @@ export default function ImTab() {
 
       {/* ── Instances ── */}
       {!isImplemented ? (
-        <p className={styles.empty}>{t('im.notImplemented', `${PLATFORM_LABELS[selectedPlatform]} 接入尚未实现，暂仅支持微信`)}</p>
+        <p className={styles.empty}>{t('im.notImplemented')}</p>
       ) : loading ? (
         <p className={styles.loading}>{t('common.loading')}</p>
       ) : platformInstances.length === 0 ? (
