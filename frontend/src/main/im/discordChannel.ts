@@ -357,8 +357,8 @@ export class DiscordChannel extends EventEmitter implements IChannel {
     const content = d.content || '';
     const chatType: 'direct' | 'group' = d.guild_id ? 'group' : 'direct';
 
-    // direct 对话用发送者 ID 作为 conversationId，group 用频道 ID
-    const conversationId = chatType === 'direct' ? d.author.id : d.channel_id;
+    // 始终使用 channel_id 作为 conversationId（DM 和 guild 都适用）
+    const conversationId = d.channel_id;
 
     return {
       messageId: d.id,
