@@ -3,6 +3,11 @@ import { IMStore } from './imStore';
 import { WechatChannel } from './wechatChannel';
 import { TelegramChannel } from './telegramChannel';
 import { PopoChannel } from './popoChannel';
+import { DiscordChannel } from './discordChannel';
+import { QQChannel } from './qqChannel';
+import { FeishuChannel } from './feishuChannel';
+import { WecomChannel } from './wecomChannel';
+import { DingTalkChannel } from './dingtalkChannel';
 import type { IChannel } from './IChannel';
 import type { Platform, InstanceConfig, IMMessage, IMGatewayStatus } from './types';
 import type { ImBridge } from './imBridge';
@@ -156,6 +161,36 @@ export class IMGatewayManager extends EventEmitter {
           instanceName: config.instanceName,
         });
         break;
+      case 'discord':
+        ch = new DiscordChannel({
+          instanceId: config.instanceId,
+          instanceName: config.instanceName,
+        });
+        break;
+      case 'qq':
+        ch = new QQChannel({
+          instanceId: config.instanceId,
+          instanceName: config.instanceName,
+        });
+        break;
+      case 'feishu':
+        ch = new FeishuChannel({
+          instanceId: config.instanceId,
+          instanceName: config.instanceName,
+        });
+        break;
+      case 'wecom':
+        ch = new WecomChannel({
+          instanceId: config.instanceId,
+          instanceName: config.instanceName,
+        });
+        break;
+      case 'dingtalk':
+        ch = new DingTalkChannel({
+          instanceId: config.instanceId,
+          instanceName: config.instanceName,
+        });
+        break;
       default:
         throw new Error(`${config.platform} 接入尚未实现`);
     }
@@ -219,6 +254,70 @@ export class IMGatewayManager extends EventEmitter {
         ch.startPolling();
         this.emit('channel-status', {
           platform: 'popo' as Platform,
+          instanceId: config.instanceId,
+          connected: true,
+          accountId: creds.accountId as string | undefined,
+        });
+      }
+    } else if (config.platform === 'discord') {
+      const token = creds.token as string | undefined;
+      if (token) {
+        ch.restoreConnection(creds);
+        ch.startPolling();
+        this.emit('channel-status', {
+          platform: 'discord' as Platform,
+          instanceId: config.instanceId,
+          connected: true,
+          accountId: creds.accountId as string | undefined,
+        });
+      }
+    } else if (config.platform === 'qq') {
+      const appId = creds.appId as string | undefined;
+      const clientSecret = creds.clientSecret as string | undefined;
+      if (appId && clientSecret) {
+        ch.restoreConnection(creds);
+        ch.startPolling();
+        this.emit('channel-status', {
+          platform: 'qq' as Platform,
+          instanceId: config.instanceId,
+          connected: true,
+          accountId: creds.accountId as string | undefined,
+        });
+      }
+    } else if (config.platform === 'feishu') {
+      const appId = creds.appId as string | undefined;
+      const appSecret = creds.appSecret as string | undefined;
+      if (appId && appSecret) {
+        ch.restoreConnection(creds);
+        ch.startPolling();
+        this.emit('channel-status', {
+          platform: 'feishu' as Platform,
+          instanceId: config.instanceId,
+          connected: true,
+          accountId: creds.accountId as string | undefined,
+        });
+      }
+    } else if (config.platform === 'wecom') {
+      const corpId = creds.corpId as string | undefined;
+      const secret = creds.secret as string | undefined;
+      if (corpId && secret) {
+        ch.restoreConnection(creds);
+        ch.startPolling();
+        this.emit('channel-status', {
+          platform: 'wecom' as Platform,
+          instanceId: config.instanceId,
+          connected: true,
+          accountId: creds.accountId as string | undefined,
+        });
+      }
+    } else if (config.platform === 'dingtalk') {
+      const appKey = creds.appKey as string | undefined;
+      const appSecret = creds.appSecret as string | undefined;
+      if (appKey && appSecret) {
+        ch.restoreConnection(creds);
+        ch.startPolling();
+        this.emit('channel-status', {
+          platform: 'dingtalk' as Platform,
           instanceId: config.instanceId,
           connected: true,
           accountId: creds.accountId as string | undefined,
@@ -467,6 +566,313 @@ export class IMGatewayManager extends EventEmitter {
 
     this.emit('channel-status', {
       platform: 'telegram' as Platform,
+      instanceId,
+      connected: true,
+      accountId: verifyResult.accountId,
+    });
+
+    return { ok: true };
+  }
+
+  // ── Discord Token 登录 ──
+
+  async discordLogin(platform: Platform, instanceId: string, token: string): Promise<{ ok: boolean; error?: string }> {
+    const key = this.channelKey(platform, instanceId);
+
+    const existing = this.channels.get(key);
+    if (existing) {
+      await existing.disconnect();
+      this.channels.delete(key);
+    }
+
+    const ch = new DiscordChannel({
+      instanceId,
+      instanceName: instanceId,
+    });
+
+    const verifyResult = await ch.verifyToken(token);
+    if (!verifyResult.ok) {
+      return { ok: false, error: verifyResult.error };
+    }
+
+    const config = this.imStore.listInstances().find(
+      (i) => i.platform === platform && i.instanceId === instanceId
+    );
+    if (config) {
+      this.imStore.upsertInstance({
+        ...config,
+        configJson: {
+          ...config.configJson,
+          token,
+          accountId: verifyResult.accountId,
+          botUserId: verifyResult.botUserId,
+        },
+        enabled: true,
+        updatedAt: Date.now(),
+      });
+    }
+
+    const meta = this.getStatusMeta(key);
+    meta.startedAt = Date.now();
+
+    this.registerChannelHandlers(ch, config, platform, instanceId, meta);
+
+    this.channels.set(key, ch);
+    ch.restoreConnection({
+      token,
+      accountId: verifyResult.accountId,
+      botUserId: verifyResult.botUserId,
+    });
+    ch.startPolling();
+
+    this.emit('channel-status', {
+      platform: 'discord' as Platform,
+      instanceId,
+      connected: true,
+      accountId: verifyResult.accountId,
+    });
+
+    return { ok: true };
+  }
+
+  // ── QQ 登录 ──
+
+  async qqLogin(platform: Platform, instanceId: string, appId: string, clientSecret: string): Promise<{ ok: boolean; error?: string }> {
+    const key = this.channelKey(platform, instanceId);
+
+    const existing = this.channels.get(key);
+    if (existing) {
+      await existing.disconnect();
+      this.channels.delete(key);
+    }
+
+    const ch = new QQChannel({
+      instanceId,
+      instanceName: instanceId,
+    });
+
+    const verifyResult = await ch.verifyCredentials(appId, clientSecret);
+    if (!verifyResult.ok) {
+      return { ok: false, error: verifyResult.error };
+    }
+
+    const config = this.imStore.listInstances().find(
+      (i) => i.platform === platform && i.instanceId === instanceId
+    );
+    if (config) {
+      this.imStore.upsertInstance({
+        ...config,
+        configJson: {
+          ...config.configJson,
+          appId,
+          clientSecret,
+          accountId: verifyResult.accountId,
+        },
+        enabled: true,
+        updatedAt: Date.now(),
+      });
+    }
+
+    const meta = this.getStatusMeta(key);
+    meta.startedAt = Date.now();
+
+    this.registerChannelHandlers(ch, config, platform, instanceId, meta);
+
+    this.channels.set(key, ch);
+    ch.restoreConnection({
+      appId,
+      clientSecret,
+      accountId: verifyResult.accountId,
+    });
+    ch.startPolling();
+
+    this.emit('channel-status', {
+      platform: 'qq' as Platform,
+      instanceId,
+      connected: true,
+      accountId: verifyResult.accountId,
+    });
+
+    return { ok: true };
+  }
+
+  // ── 飞书登录 ──
+
+  async feishuLogin(platform: Platform, instanceId: string, appId: string, appSecret: string): Promise<{ ok: boolean; error?: string }> {
+    const key = this.channelKey(platform, instanceId);
+
+    const existing = this.channels.get(key);
+    if (existing) {
+      await existing.disconnect();
+      this.channels.delete(key);
+    }
+
+    const ch = new FeishuChannel({
+      instanceId,
+      instanceName: instanceId,
+    });
+
+    const verifyResult = await ch.verifyApp(appId, appSecret);
+    if (!verifyResult.ok) {
+      return { ok: false, error: verifyResult.error };
+    }
+
+    const config = this.imStore.listInstances().find(
+      (i) => i.platform === platform && i.instanceId === instanceId
+    );
+    if (config) {
+      this.imStore.upsertInstance({
+        ...config,
+        configJson: {
+          ...config.configJson,
+          appId,
+          appSecret,
+          accountId: verifyResult.accountId,
+          botOpenId: verifyResult.botOpenId,
+        },
+        enabled: true,
+        updatedAt: Date.now(),
+      });
+    }
+
+    const meta = this.getStatusMeta(key);
+    meta.startedAt = Date.now();
+
+    this.registerChannelHandlers(ch, config, platform, instanceId, meta);
+
+    this.channels.set(key, ch);
+    ch.restoreConnection({
+      appId,
+      appSecret,
+      accountId: verifyResult.accountId,
+      botOpenId: verifyResult.botOpenId,
+    });
+    ch.startPolling();
+
+    this.emit('channel-status', {
+      platform: 'feishu' as Platform,
+      instanceId,
+      connected: true,
+      accountId: verifyResult.accountId,
+    });
+
+    return { ok: true };
+  }
+
+  // ── 企业微信登录 ──
+
+  async wecomLogin(platform: Platform, instanceId: string, corpId: string, secret: string, agentId?: string): Promise<{ ok: boolean; error?: string }> {
+    const key = this.channelKey(platform, instanceId);
+
+    const existing = this.channels.get(key);
+    if (existing) {
+      await existing.disconnect();
+      this.channels.delete(key);
+    }
+
+    const ch = new WecomChannel({
+      instanceId,
+      instanceName: instanceId,
+    });
+
+    const verifyResult = await ch.verifyCredentials(corpId, secret);
+    if (!verifyResult.ok) {
+      return { ok: false, error: verifyResult.error };
+    }
+
+    const config = this.imStore.listInstances().find(
+      (i) => i.platform === platform && i.instanceId === instanceId
+    );
+    if (config) {
+      this.imStore.upsertInstance({
+        ...config,
+        configJson: {
+          ...config.configJson,
+          corpId,
+          secret,
+          agentId,
+        },
+        enabled: true,
+        updatedAt: Date.now(),
+      });
+    }
+
+    const meta = this.getStatusMeta(key);
+    meta.startedAt = Date.now();
+
+    this.registerChannelHandlers(ch, config, platform, instanceId, meta);
+
+    this.channels.set(key, ch);
+    ch.restoreConnection({
+      corpId,
+      secret,
+      agentId,
+    });
+    ch.startPolling();
+
+    this.emit('channel-status', {
+      platform: 'wecom' as Platform,
+      instanceId,
+      connected: true,
+      accountId: verifyResult.accountId,
+    });
+
+    return { ok: true };
+  }
+
+  // ── 钉钉登录 ──
+
+  async dingtalkLogin(platform: Platform, instanceId: string, appKey: string, appSecret: string): Promise<{ ok: boolean; error?: string }> {
+    const key = this.channelKey(platform, instanceId);
+
+    const existing = this.channels.get(key);
+    if (existing) {
+      await existing.disconnect();
+      this.channels.delete(key);
+    }
+
+    const ch = new DingTalkChannel({
+      instanceId,
+      instanceName: instanceId,
+    });
+
+    const verifyResult = await ch.verifyCredentials(appKey, appSecret);
+    if (!verifyResult.ok) {
+      return { ok: false, error: verifyResult.error };
+    }
+
+    const config = this.imStore.listInstances().find(
+      (i) => i.platform === platform && i.instanceId === instanceId
+    );
+    if (config) {
+      this.imStore.upsertInstance({
+        ...config,
+        configJson: {
+          ...config.configJson,
+          appKey,
+          appSecret,
+          accountId: verifyResult.accountId,
+        },
+        enabled: true,
+        updatedAt: Date.now(),
+      });
+    }
+
+    const meta = this.getStatusMeta(key);
+    meta.startedAt = Date.now();
+
+    this.registerChannelHandlers(ch, config, platform, instanceId, meta);
+
+    this.channels.set(key, ch);
+    ch.restoreConnection({
+      appKey,
+      appSecret,
+      accountId: verifyResult.accountId,
+    });
+    ch.startPolling();
+
+    this.emit('channel-status', {
+      platform: 'dingtalk' as Platform,
       instanceId,
       connected: true,
       accountId: verifyResult.accountId,
