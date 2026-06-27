@@ -94,7 +94,7 @@ export const PLATFORM_ORDER: Platform[] = [
 ];
 
 /** Platforms that have a real backend implementation in the Electron layer. */
-export const IMPLEMENTED_PLATFORMS: Platform[] = ['wechat'];
+export const IMPLEMENTED_PLATFORMS: Platform[] = ['wechat', 'telegram'];
 
 export function statusKey(platform: Platform, instanceId: string): string {
   return `${platform}:${instanceId}`;
@@ -150,6 +150,7 @@ interface IMState {
   wechatQrWait: (instanceId: string, sessionKey: string) => Promise<{ connected: boolean; accountId?: string; message?: string }>;
   popoQrStart: () => Promise<{ qrUrl: string; taskToken: string; timeoutMs: number }>;
   popoQrPoll: (taskToken: string) => Promise<{ success: boolean; appKey?: string; appSecret?: string; aesKey?: string; message: string }>;
+  telegramLogin: (platform: Platform, instanceId: string, token: string) => Promise<{ ok: boolean; error?: string }>;
   setSelectedPlatform: (p: Platform) => void;
   /** Subscribe to backend channel-status/message events. Returns an unsubscribe. */
   subscribeEvents: () => () => void;
@@ -270,6 +271,15 @@ export const useIMStore = create<IMState>((set, get) => ({
 
   popoQrPoll: async (taskToken) => {
     return (window as any).loom.imPopoQrPoll(taskToken);
+  },
+
+  telegramLogin: async (platform, instanceId, token) => {
+    const result = await (window as any).loom.imTelegramLogin(platform, instanceId, token);
+    if (result?.ok) {
+      await get().loadConfigs();
+      get().refreshStatus();
+    }
+    return result;
   },
 
   setSelectedPlatform: (p) => set({ selectedPlatform: p }),
