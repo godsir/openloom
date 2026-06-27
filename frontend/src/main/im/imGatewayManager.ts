@@ -1,6 +1,8 @@
 import { EventEmitter } from 'events';
 import { IMStore } from './imStore';
 import { WechatChannel } from './wechatChannel';
+import { TelegramChannel } from './telegramChannel';
+import type { IChannel } from './IChannel';
 import type { Platform, InstanceConfig, IMMessage, IMGatewayStatus } from './types';
 import type { ImBridge } from './imBridge';
 import { HELP_MESSAGE } from './imBridge';
@@ -20,7 +22,7 @@ interface ChannelStatusMeta {
 
 export class IMGatewayManager extends EventEmitter {
   private imStore: IMStore;
-  channels: Map<string, WechatChannel> = new Map();
+  channels: Map<string, IChannel> = new Map();
   private onMessage?: (message: IMMessage) => void;
   private statusMeta: Map<string, ChannelStatusMeta> = new Map();
   private imBridge?: ImBridge;
@@ -62,14 +64,23 @@ export class IMGatewayManager extends EventEmitter {
       return;
     }
 
-    if (config.platform !== 'wechat') {
-      throw new Error(`${config.platform} 接入尚未实现`);
+    let ch: IChannel;
+    switch (config.platform) {
+      case 'wechat':
+        ch = new WechatChannel({
+          instanceId: config.instanceId,
+          instanceName: config.instanceName,
+        });
+        break;
+      case 'telegram':
+        ch = new TelegramChannel({
+          instanceId: config.instanceId,
+          instanceName: config.instanceName,
+        });
+        break;
+      default:
+        throw new Error(`${config.platform} 接入尚未实现`);
     }
-
-    const ch = new WechatChannel({
-      instanceId: config.instanceId,
-      instanceName: config.instanceName,
-    });
 
     const meta = this.getStatusMeta(key);
     meta.startedAt = Date.now();
@@ -137,20 +148,35 @@ export class IMGatewayManager extends EventEmitter {
     this.channels.set(key, ch);
 
     // If we already have credentials from a previous session, restore + poll.
-    const accountId = config.configJson?.accountId as string | undefined;
-    const token = config.configJson?.token as string | undefined;
-    const baseUrl = config.configJson?.baseUrl as string | undefined;
-    if (accountId && token && baseUrl) {
-      ch.restoreConnection({ accountId, token, baseUrl });
-      ch.startPolling();
-      this.emit('channel-status', {
-        platform: 'wechat' as Platform,
-        instanceId: config.instanceId,
-        connected: true,
-        accountId,
-      });
+    const creds = config.configJson as Record<string, unknown>;
+    if (config.platform === 'wechat') {
+      const accountId = creds.accountId as string | undefined;
+      const token = creds.token as string | undefined;
+      const baseUrl = creds.baseUrl as string | undefined;
+      if (accountId && token && baseUrl) {
+        ch.restoreConnection({ accountId, token, baseUrl });
+        ch.startPolling();
+        this.emit('channel-status', {
+          platform: 'wechat' as Platform,
+          instanceId: config.instanceId,
+          connected: true,
+          accountId,
+        });
+      }
+    } else if (config.platform === 'telegram') {
+      const token = creds.token as string | undefined;
+      if (token) {
+        ch.restoreConnection(creds);
+        ch.startPolling();
+        this.emit('channel-status', {
+          platform: 'telegram' as Platform,
+          instanceId: config.instanceId,
+          connected: true,
+          accountId: creds.accountId as string | undefined || creds.botUsername as string | undefined,
+        });
+      }
     }
-    // Otherwise, the renderer will call wechatQrStart() to get a QR code.
+    // Otherwise, the renderer will trigger the platform-specific login flow.
   }
 
   async stopChannel(platform: Platform, instanceId: string): Promise<void> {
@@ -307,5 +333,129 @@ export class IMGatewayManager extends EventEmitter {
   async popoQrPoll(taskToken: string): Promise<{ success: boolean; appKey?: string; appSecret?: string; aesKey?: string; message: string }> {
     console.log(`[IMGatewayManager] POPO QR poll ${taskToken} (stub)`);
     return { success: false, message: 'POPO not yet implemented' };
+  }
+
+  // ── Telegram Token 登录 ──
+
+  async telegramLogin(platform: Platform, instanceId: string, token: string): Promise<{ ok: boolean; error?: string }> {
+    const key = this.channelKey(platform, instanceId);
+
+    // 如果已有 channel 在运行，先停掉
+    const existing = this.channels.get(key);
+    if (existing) {
+      await existing.disconnect();
+      this.channels.delete(key);
+    }
+
+    // 创建新 channel 并验证 token
+    const ch = new TelegramChannel({
+      instanceId,
+      instanceName: instanceId,
+    });
+
+    const verifyResult = await ch.verifyToken(token);
+    if (!verifyResult.ok) {
+      return { ok: false, error: verifyResult.error };
+    }
+
+    // 持久化凭据
+    const config = this.imStore.listInstances().find(
+      (i) => i.platform === platform && i.instanceId === instanceId
+    );
+    if (config) {
+      this.imStore.upsertInstance({
+        ...config,
+        configJson: {
+          ...config.configJson,
+          token,
+          accountId: verifyResult.accountId,
+          botUsername: verifyResult.botUsername,
+        },
+        enabled: true,
+        updatedAt: Date.now(),
+      });
+    }
+
+    // 注册事件
+    const meta = this.getStatusMeta(key);
+    meta.startedAt = Date.now();
+
+    ch.on('message', (msg) => {
+      console.log(`[IMGatewayManager] Telegram message from ${msg.senderId}`);
+      meta.lastInboundAt = Date.now();
+      const imMsg: IMMessage = {
+        platform: 'telegram' as Platform,
+        messageId: msg.messageId,
+        conversationId: msg.conversationId,
+        senderId: msg.senderId,
+        senderName: msg.senderName,
+        groupName: msg.groupName,
+        content: msg.content,
+        chatType: msg.chatType,
+        timestamp: msg.timestamp,
+      };
+      if (this.onMessage) this.onMessage(imMsg);
+      this.emit('im-message', imMsg);
+      // Route to agent engine
+      if (this.imBridge && config) {
+        this.imBridge
+          .handleMessage(imMsg, config, async (text) => {
+            const ok = await ch.sendMessage(imMsg.conversationId, text);
+            if (ok) {
+              meta.lastOutboundAt = Date.now();
+              this.emit('channel-status', { platform: 'telegram' as Platform, instanceId, connected: true });
+            }
+          })
+          .catch((e) => console.error('[IMGatewayManager] bridge error:', e?.message ?? e));
+      }
+    });
+
+    ch.on('connected', (info) => {
+      console.log(`[IMGatewayManager] Telegram connected, accountId: ${info.accountId}`);
+      this.emit('channel-status', {
+        platform: 'telegram' as Platform,
+        instanceId,
+        connected: true,
+        accountId: info.accountId,
+      });
+    });
+
+    ch.on('error', (err) => {
+      console.error(`[IMGatewayManager] Telegram error:`, err);
+      meta.lastError = err.message;
+      this.emit('channel-status', {
+        platform: 'telegram' as Platform,
+        instanceId,
+        connected: false,
+        error: err.message,
+      });
+    });
+
+    ch.on('disconnected', () => {
+      console.log(`[IMGatewayManager] Telegram disconnected: ${key}`);
+      this.emit('channel-status', {
+        platform: 'telegram' as Platform,
+        instanceId,
+        connected: false,
+      });
+    });
+
+    // 启动 channel
+    this.channels.set(key, ch);
+    ch.restoreConnection({
+      token,
+      accountId: verifyResult.accountId,
+      botUsername: verifyResult.botUsername,
+    });
+    ch.startPolling();
+
+    this.emit('channel-status', {
+      platform: 'telegram' as Platform,
+      instanceId,
+      connected: true,
+      accountId: verifyResult.accountId,
+    });
+
+    return { ok: true };
   }
 }
