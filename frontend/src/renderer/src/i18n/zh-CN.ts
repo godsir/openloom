@@ -1618,4 +1618,11 @@ export const zhCN: TranslationMap = {
   'im.helpSendFail': '发送失败',
   'im.sessionNoticeTitle': '此会话来自 {platform}',
   'im.sessionNoticeBody': '请在 {platform} 中继续对话',
+  'im.telegramToken': 'Bot Token',
+  'im.telegramTokenHint': '在 @BotFather 创建 Bot 获取 Token',
+  'im.telegramLogin': '连接',
+  'im.telegramConnected': '已连接到 Telegram',
+  'im.telegramLoginFail': '连接失败',
+  'im.telegramTokenEmpty': '请输入 Bot Token',
+  'im.telegramConfigHint': '在 @BotFather 使用 /newbot 创建 Bot，获取 Token 后粘贴到上方输入框',
 }

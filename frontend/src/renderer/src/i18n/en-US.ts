@@ -1618,4 +1618,11 @@ export const enUS: TranslationMap = {
   'im.helpSendFail': 'Send failed',
   'im.sessionNoticeTitle': 'This conversation is from {platform}',
   'im.sessionNoticeBody': 'Continue the conversation in {platform}',
+  'im.telegramToken': 'Bot Token',
+  'im.telegramTokenHint': 'Create a bot via @BotFather to get the token',
+  'im.telegramLogin': 'Connect',
+  'im.telegramConnected': 'Connected to Telegram',
+  'im.telegramLoginFail': 'Connection failed',
+  'im.telegramTokenEmpty': 'Please enter Bot Token',
+  'im.telegramConfigHint': 'Create a bot with /newbot on @BotFather, then paste the token above',
 }

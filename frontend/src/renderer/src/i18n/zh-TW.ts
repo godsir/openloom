@@ -1618,4 +1618,11 @@ export const zhTW: TranslationMap = {
   'im.helpSendFail': '發送失敗',
   'im.sessionNoticeTitle': '此會話來自 {platform}',
   'im.sessionNoticeBody': '請在 {platform} 中繼續對話',
+  'im.telegramToken': 'Bot Token',
+  'im.telegramTokenHint': '在 @BotFather 建立 Bot 取得 Token',
+  'im.telegramLogin': '連接',
+  'im.telegramConnected': '已連接到 Telegram',
+  'im.telegramLoginFail': '連接失敗',
+  'im.telegramTokenEmpty': '請輸入 Bot Token',
+  'im.telegramConfigHint': '在 @BotFather 使用 /newbot 建立 Bot，取得 Token 後貼到上方輸入框',
 }
