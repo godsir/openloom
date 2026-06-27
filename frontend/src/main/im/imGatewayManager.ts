@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { IMStore } from './imStore';
 import { WechatChannel } from './wechatChannel';
 import { TelegramChannel } from './telegramChannel';
+import { PopoChannel } from './popoChannel';
 import type { IChannel } from './IChannel';
 import type { Platform, InstanceConfig, IMMessage, IMGatewayStatus } from './types';
 import type { ImBridge } from './imBridge';
@@ -149,6 +150,12 @@ export class IMGatewayManager extends EventEmitter {
           instanceName: config.instanceName,
         });
         break;
+      case 'popo':
+        ch = new PopoChannel({
+          instanceId: config.instanceId,
+          instanceName: config.instanceName,
+        });
+        break;
       default:
         throw new Error(`${config.platform} 接入尚未实现`);
     }
@@ -201,6 +208,20 @@ export class IMGatewayManager extends EventEmitter {
           instanceId: config.instanceId,
           connected: true,
           accountId: creds.accountId as string | undefined || creds.botUsername as string | undefined,
+        });
+      }
+    } else if (config.platform === 'popo') {
+      const appKey = creds.appKey as string | undefined;
+      const appSecret = creds.appSecret as string | undefined;
+      const aesKey = creds.aesKey as string | undefined;
+      if (appKey && appSecret && aesKey) {
+        ch.restoreConnection(creds);
+        ch.startPolling();
+        this.emit('channel-status', {
+          platform: 'popo' as Platform,
+          instanceId: config.instanceId,
+          connected: true,
+          accountId: creds.accountId as string | undefined,
         });
       }
     }
@@ -346,11 +367,22 @@ export class IMGatewayManager extends EventEmitter {
     return result;
   }
 
-  // POPO QR flow (stub for now)
+  // POPO QR flow
 
-  popoQrStart(): { qrUrl: string; taskToken: string; timeoutMs: number } {
-    console.log('[IMGatewayManager] POPO QR start (stub)');
-    const taskToken = `popo_${Date.now()}`;
+  async popoQrStart(instanceId: string): Promise<{ qrUrl: string; taskToken: string; timeoutMs: number }> {
+    const key = this.channelKey('popo', instanceId);
+    let ch = this.channels.get(key);
+    if (!ch) {
+      const config = this.imStore.listInstances().find(i => i.platform === 'popo' && i.instanceId === instanceId);
+      if (!config) throw new Error(`No POPO config found for instance ${instanceId}`);
+      await this.startChannel(config);
+      ch = this.channels.get(key);
+    }
+    if (!ch) throw new Error('POPO channel not found after start');
+
+    console.log('[IMGatewayManager] POPO QR start');
+    const taskToken = `popo_${Date.now()}_${instanceId}`;
+    // 实际 QR URL 需要通过 POPO Open API 扫码接口获取，后续补充
     return {
       qrUrl: '',
       taskToken,
@@ -359,8 +391,22 @@ export class IMGatewayManager extends EventEmitter {
   }
 
   async popoQrPoll(taskToken: string): Promise<{ success: boolean; appKey?: string; appSecret?: string; aesKey?: string; message: string }> {
-    console.log(`[IMGatewayManager] POPO QR poll ${taskToken} (stub)`);
-    return { success: false, message: 'POPO not yet implemented' };
+    console.log(`[IMGatewayManager] POPO QR poll ${taskToken}`);
+
+    const parts = taskToken.split('_');
+    const instanceId = parts.slice(2).join('_') || parts[1] || taskToken;
+    const key = this.channelKey('popo', instanceId);
+    const ch = this.channels.get(key);
+
+    if (!ch) {
+      return { success: false, message: 'POPO channel not found' };
+    }
+
+    // TODO: 待接入 POPO Open API 扫码轮询后
+    // 成功后调用 ch.restoreConnection({ appKey, appSecret, aesKey }); ch.startPolling();
+    // 并持久化凭据到 imStore
+
+    return { success: false, message: 'POPO QR polling not yet implemented' };
   }
 
   // ── Telegram Token 登录 ──
