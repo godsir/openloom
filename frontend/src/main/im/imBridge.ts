@@ -3,7 +3,7 @@ import type { IMMessage, InstanceConfig } from './types'
 
 /** Help message sent on first contact (direct sendMessage — no token cost). */
 export const HELP_MESSAGE = [
-  '你好！我是 openLoom Agent，已连接到你的微信。',
+  '你好！我是 openLoom Agent，已成功连接。',
   '',
   '你可以直接发消息和我聊天，也可以使用以下斜杠命令：',
   '  • /new — 开始新会话（清除当前上下文）',
