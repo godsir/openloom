@@ -38,6 +38,8 @@ export class WecomChannel extends EventEmitter implements IChannel {
   private cursor: string | null = null;
   private pollBackoffMs: number = POLL_BACKOFF_MIN_MS;
   private pollConsecutiveErrors: number = 0;
+  /** Track conversationId -> chat_type for correct sendMessage routing */
+  private conversationTypes: Map<string, 'direct' | 'group'> = new Map();
 
   constructor(options: ChannelOptions) {
     super();
@@ -272,6 +274,9 @@ export class WecomChannel extends EventEmitter implements IChannel {
     const chatType: 'direct' | 'group' =
       msg.chat_type === 'group' ? 'group' : 'direct';
 
+    // Track conversation type for correct sendMessage routing
+    this.conversationTypes.set(msg.from_userid, chatType);
+
     return {
       messageId: msg.msgid,
       conversationId: msg.from_userid,
@@ -296,6 +301,18 @@ export class WecomChannel extends EventEmitter implements IChannel {
     if (!this.connected || !this.accessToken || !this.agentId) {
       console.error(
         `[WecomChannel:${this.instanceId}] Cannot send: not connected`,
+      );
+      return false;
+    }
+
+    // 企业微信 group messages require POST /cgi-bin/appchat/send with chatid,
+    // not the touser-based /cgi-bin/message/send endpoint. Log a warning and
+    // skip the attempt instead of sending with the wrong endpoint.
+    const chatType = this.conversationTypes.get(conversationId);
+    if (chatType === 'group') {
+      console.warn(
+        `[WecomChannel:${this.instanceId}] Group messaging not supported via /cgi-bin/message/send. ` +
+        `Use the /cgi-bin/appchat/send endpoint with chatid=${conversationId} instead. Message skipped.`,
       );
       return false;
     }
@@ -403,6 +420,7 @@ export class WecomChannel extends EventEmitter implements IChannel {
     }
 
     this.connected = true;
+    this.emit('connected', { accountId: corpId });
 
     console.log(
       `[WecomChannel:${this.instanceId}] Connection restored for corpId=${corpId}`,
@@ -450,6 +468,7 @@ export class WecomChannel extends EventEmitter implements IChannel {
       this.cursor = null;
       this.pollBackoffMs = POLL_BACKOFF_MIN_MS;
       this.pollConsecutiveErrors = 0;
+      this.conversationTypes.clear();
 
       this.emit('disconnected');
       console.log(`[WecomChannel:${this.instanceId}] Disconnected`);

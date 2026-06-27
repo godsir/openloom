@@ -113,6 +113,7 @@ export class TelegramChannel extends EventEmitter implements IChannel {
       this.lastUpdateId = credentials.lastUpdateId as number;
     }
     this.connected = true;
+    this.emit('connected', { accountId: this.accountId || '' });
     console.log(`[TelegramChannel:${this.instanceId}] Connection restored`);
   }
 
@@ -250,6 +251,15 @@ export class TelegramChannel extends EventEmitter implements IChannel {
   }
 
   // ── 连接管理 ──
+
+  /**
+   * Return persistable runtime state so IMGatewayManager can save it before
+   * disconnect. Currently exposes lastUpdateId so Telegram does not re-process
+   * already-handled updates on restart.
+   */
+  getPersistState(): Record<string, unknown> {
+    return { lastUpdateId: this.lastUpdateId };
+  }
 
   async disconnect(): Promise<void> {
     try {

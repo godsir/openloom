@@ -686,6 +686,7 @@ export class WechatChannel extends EventEmitter implements IChannel {
     this.token = token;
     this.baseUrl = baseUrl;
     this.connected = true;
+    this.emit('connected', { accountId, baseUrl });
     console.log(`[WechatChannel:${this.instanceId}] Connection restored for accountId=${accountId}`);
   }
 
