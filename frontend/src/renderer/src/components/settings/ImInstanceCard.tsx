@@ -11,6 +11,7 @@ import { useLocale } from '../../i18n'
 import Select, { type SelectOption } from '../shared/Select'
 import PlatformIcon from '../shared/PlatformIcon'
 import ImWechatQrModal from './ImWechatQrModal'
+import ImPopoQrModal from './ImPopoQrModal'
 import ImConnectivityTest from './ImConnectivityTest'
 import styles from './ImTab.module.css'
 
@@ -49,6 +50,7 @@ export default function ImInstanceCard({ config }: Props) {
 
   const [expanded, setExpanded] = useState(false)
   const [showQr, setShowQr] = useState(false)
+  const [showPopoQr, setShowPopoQr] = useState(false)
   const [showTest, setShowTest] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [nameDraft, setNameDraft] = useState(config.instanceName)
@@ -438,7 +440,7 @@ export default function ImInstanceCard({ config }: Props) {
             )}
             {/* POPO QR — 未连接时显示 */}
             {config.platform === 'popo' && !connected && (
-              <button className={styles.instanceBtn} onClick={() => setShowQr(true)}>
+              <button className={styles.instanceBtn} onClick={() => setShowPopoQr(true)}>
                 {t('im.scanConnect')}
               </button>
             )}
@@ -547,12 +549,20 @@ export default function ImInstanceCard({ config }: Props) {
         {expanded ? '收起配置 ▲' : '展开配置 ▼'}
       </div>
 
-      {showQr && (
+      {showQr && config.platform === 'wechat' && (
         <ImWechatQrModal
           instanceId={config.instanceId}
           instanceName={config.instanceName}
           onClose={() => setShowQr(false)}
           onConnected={() => {}}
+        />
+      )}
+      {showPopoQr && config.platform === 'popo' && (
+        <ImPopoQrModal
+          instanceId={config.instanceId}
+          instanceName={config.instanceName}
+          onClose={() => setShowPopoQr(false)}
+          onConnected={async () => { await startChannel(config.platform, config.instanceId); }}
         />
       )}
       {showTest && (
