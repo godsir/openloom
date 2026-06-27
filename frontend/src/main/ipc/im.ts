@@ -65,7 +65,7 @@ export function registerImIpc(): void {
   ipcMain.handle('im:get-status', () => imGatewayManager.getStatus())
 
   ipcMain.handle('im:test-connectivity', async (_e, platform: Platform, instanceId: string) => {
-    // Only WeChat is currently implemented in the Electron layer.
+    // WeChat
     if (platform === 'wechat') {
       const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
       return {
@@ -79,7 +79,24 @@ export function registerImIpc(): void {
         }],
       }
     }
-    // Other platforms are not yet implemented in the backend.
+    // Telegram
+    if (platform === 'telegram') {
+      const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
+      const isConnected = ch?.isConnected ?? false
+      return {
+        platform,
+        testedAt: Date.now(),
+        verdict: isConnected ? 'pass' : 'warn',
+        checks: [{
+          code: 'gateway_running',
+          level: isConnected ? 'pass' : 'warn',
+          message: isConnected
+            ? `Channel connected${ch?.currentAccountId ? ` (${ch.currentAccountId})` : ''}`
+            : 'Channel not connected',
+        }],
+      }
+    }
+    // Other platforms — not yet implemented
     return {
       platform,
       testedAt: Date.now(),
@@ -88,7 +105,7 @@ export function registerImIpc(): void {
         code: 'not_implemented',
         level: 'fail',
         message: `${platform} 接入尚未实现`,
-        suggestion: '当前仅支持微信扫码接入，其他平台即将支持',
+        suggestion: '当前仅支持微信和 Telegram',
       }],
     }
   })
@@ -126,6 +143,16 @@ export function registerImIpc(): void {
   ipcMain.handle('im:popo-qr-poll', async (_e, taskToken: string) => {
     return imGatewayManager.popoQrPoll(taskToken)
   })
+
+  // ── Telegram Token 登录 ──
+
+  ipcMain.handle('im:telegram-login', async (_e, platform: Platform, instanceId: string, token: string) => {
+    try {
+      return await imGatewayManager.telegramLogin(platform, instanceId, token);
+    } catch (err: any) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
 
   // ── Forward channel status events to renderer ──
 
