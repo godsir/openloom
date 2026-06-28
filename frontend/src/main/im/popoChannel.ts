@@ -5,24 +5,17 @@ import type { IChannel, ChannelMessage, ConnectedInfo, ChannelOptions } from './
 
 // ── POPO API 类型 ──
 
-interface PopoMessageItem {
-  msgId?: string;
-  message_id?: string;
-  chat_id?: string;
-  conversation_id?: string;
-  sender_id?: string;
-  from_user_id?: string;
-  content?: string;
-  text?: string;
-  chat_type?: string;
-  timestamp?: number;
-}
-
-interface PopoPollResponse {
-  code?: number;
+interface PopoWsMessage {
+  type?: string;
   data?: {
-    messages?: PopoMessageItem[];
-    has_more?: boolean;
+    msgId?: string;
+    chatId?: string;
+    senderId?: string;
+    senderName?: string;
+    groupName?: string;
+    content?: string;
+    chatType?: string;
+    timestamp?: number;
   };
 }
 
@@ -34,18 +27,18 @@ interface PopoSendResponse {
 // ── 常量 ──
 
 const POPO_BASE_URL = 'https://open.popo.netease.com';
-const POLL_INTERVAL_MS = 10_000;
+const POPO_WS_URL = 'wss://open.popo.netease.com/open-apis/ws';
 const DEFAULT_API_TIMEOUT_MS = 15_000;
+const RECONNECT_DELAY_MS = 5_000;
 
 // ── PopoChannel ──
 
 /**
- * PopoChannel — 基于 POPO Open API (HTTP 轮询) 实现 IChannel。
+ * PopoChannel — 基于 POPO Open API WebSocket 实现 IChannel。
  *
- * - QR 码登录由 IMGatewayManager.popoQrStart/popoQrPoll 处理
- * - 凭据恢复使用 appKey / appSecret / aesKey
- * - HTTP 轮询接收消息（每 10s）
- * - REST POST 发送消息
+ * - 凭据: appKey / appSecret / aesKey
+ * - WebSocket 长连接收发消息
+ * - 签名认证: SHA1(appSecret + nonce + curTime)
  */
 export class PopoChannel extends EventEmitter implements IChannel {
   private instanceId: string;
@@ -56,7 +49,9 @@ export class PopoChannel extends EventEmitter implements IChannel {
   private appSecret: string | null = null;
   private aesKey: string | null = null;
   private abortController: AbortController | null = null;
-  private pollPromise: Promise<void> | null = null;
+  private wsPromise: Promise<void> | null = null;
+  private ws: WebSocket | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: ChannelOptions) {
     super();
@@ -102,10 +97,6 @@ export class PopoChannel extends EventEmitter implements IChannel {
 
   // ── 凭据验证 ──
 
-  /**
-   * 验证凭据完整性 — 检查 appKey、appSecret、aesKey 是否全部存在。
-   * 由 IMGatewayManager 在恢复连接时调用。
-   */
   verifyCredentials(appKey: string, appSecret: string, aesKey: string): { ok: boolean; error?: string } {
     if (!appKey) {
       return { ok: false, error: '缺少 appKey' };
@@ -119,144 +110,253 @@ export class PopoChannel extends EventEmitter implements IChannel {
     return { ok: true };
   }
 
-  // ── 消息接收（HTTP 轮询） ──
+  // ── 消息接收（WebSocket） ──
 
   startPolling(): void {
     if (!this.connected || !this.appKey || !this.appSecret) {
       console.error(
-        `[PopoChannel:${this.instanceId}] Cannot start polling: not connected`,
+        `[PopoChannel:${this.instanceId}] Cannot start WS: not connected`,
       );
       return;
     }
 
-    if (this.pollPromise) {
-      console.warn(`[PopoChannel:${this.instanceId}] Polling already active`);
+    if (this.wsPromise) {
+      console.warn(`[PopoChannel:${this.instanceId}] WS already active`);
       return;
     }
 
     this.abortController = new AbortController();
-    this.pollPromise = this.pollLoop(this.abortController.signal);
-
-    // Emit connected now that polling is active
-    this.emit('connected', { accountId: this.accountId || '' });
+    this.wsPromise = this.wsLoop(this.abortController.signal);
   }
 
-  private async pollLoop(abortSignal: AbortSignal): Promise<void> {
+  private buildAuthQuery(): string {
+    const nonce = Math.random().toString(36).substring(2);
+    const curTime = String(Math.floor(Date.now() / 1000));
+    const checkSum = createHash('sha1')
+      .update(this.appSecret! + nonce + curTime, 'utf8')
+      .digest('hex');
+
+    const params = new URLSearchParams();
+    params.set('appKey', this.appKey!);
+    params.set('nonce', nonce);
+    params.set('curTime', curTime);
+    params.set('checkSum', checkSum);
+    return params.toString();
+  }
+
+  private async wsLoop(abortSignal: AbortSignal): Promise<void> {
     console.log(
-      `[PopoChannel:${this.instanceId}] Starting POPO polling loop (interval=${POLL_INTERVAL_MS}ms)`,
+      `[PopoChannel:${this.instanceId}] Starting POPO WebSocket loop`,
     );
 
     while (!abortSignal.aborted) {
       try {
-        const rawText = await this.apiGet(
-          `${POPO_BASE_URL}/open-apis/im/v1/messages`,
-          abortSignal,
-        );
-
-        const resp: PopoPollResponse = JSON.parse(rawText);
-
-        if (resp.code === 0 && resp.data?.messages) {
-          for (const msg of resp.data.messages) {
-            const channelMsg = this.convertMessage(msg);
-            if (channelMsg) {
-              this.emit('message', channelMsg);
-            }
-          }
+        await this.connectWs(abortSignal);
+        // 连接成功后保持，直到断开
+        if (!abortSignal.aborted) {
+          console.log(
+            `[PopoChannel:${this.instanceId}] WS disconnected, reconnecting in ${RECONNECT_DELAY_MS}ms...`,
+          );
+          await this.delay(RECONNECT_DELAY_MS, abortSignal);
         }
       } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') {
-          break;
-        }
+        if (abortSignal.aborted) break;
         console.warn(
-          `[PopoChannel:${this.instanceId}] Poll error (will retry): ${err instanceof Error ? err.message : String(err)}`,
+          `[PopoChannel:${this.instanceId}] WS error, will reconnect: ${err instanceof Error ? err.message : String(err)}`,
         );
+        await this.delay(RECONNECT_DELAY_MS, abortSignal);
       }
-
-      // 等待轮询间隔
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, POLL_INTERVAL_MS);
-        const onAbort = (): void => {
-          clearTimeout(timer);
-          resolve();
-        };
-        abortSignal.addEventListener('abort', onAbort, { once: true });
-      });
     }
 
-    console.log(`[PopoChannel:${this.instanceId}] Poll loop exited`);
+    console.log(`[PopoChannel:${this.instanceId}] WS loop exited`);
   }
 
-  private convertMessage(msg: PopoMessageItem): ChannelMessage | null {
-    const content = msg.content || msg.text || '';
+  private connectWs(abortSignal: AbortSignal): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const query = this.buildAuthQuery();
+      const url = `${POPO_WS_URL}?${query}`;
+
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(url);
+      } catch (e) {
+        resolve();
+        return;
+      }
+      this.ws = ws;
+
+      const cleanup = (): void => {
+        if (this.heartbeatTimer) {
+          clearInterval(this.heartbeatTimer);
+          this.heartbeatTimer = null;
+        }
+        this.ws = null;
+      };
+
+      ws.addEventListener('open', () => {
+        console.log(
+          `[PopoChannel:${this.instanceId}] WS opened`,
+        );
+
+        // 启动心跳
+        this.heartbeatTimer = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, 30_000);
+
+        this.connected = true;
+        this.emit('connected', {
+          accountId: this.accountId || this.appKey || '',
+        });
+      });
+
+      ws.addEventListener('message', (event) => {
+        try {
+          const msg: PopoWsMessage = JSON.parse(event.data as string);
+          if (msg.type === 'pong') return;
+
+          const channelMsg = this.convertMessage(msg);
+          if (channelMsg) {
+            this.emit('message', channelMsg);
+          }
+        } catch {
+          // 忽略解析失败的消息
+        }
+      });
+
+      ws.addEventListener('close', () => {
+        console.log(`[PopoChannel:${this.instanceId}] WS closed`);
+        cleanup();
+        resolve();
+      });
+
+      ws.addEventListener('error', (err) => {
+        console.error(`[PopoChannel:${this.instanceId}] WS error`);
+        cleanup();
+        resolve();
+      });
+
+      // 外部 abort 时主动关闭
+      const onAbort = (): void => {
+        ws.close();
+      };
+      abortSignal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  private convertMessage(msg: PopoWsMessage): ChannelMessage | null {
+    const d = msg.data;
+    if (!d) return null;
+
+    const content = d.content || '';
     if (!content) return null;
 
-    const senderId = msg.sender_id || msg.from_user_id || '';
+    const senderId = d.senderId || '';
     if (!senderId) return null;
 
     const chatType: 'direct' | 'group' =
-      msg.chat_type === 'group' ? 'group' : 'direct';
-
-    const conversationId = msg.chat_id || msg.conversation_id || senderId;
-    const messageId =
-      msg.msgId || msg.message_id || `${senderId}-${msg.timestamp || Date.now()}`;
+      d.chatType === 'group' ? 'group' : 'direct';
 
     return {
-      messageId,
-      conversationId,
+      messageId: d.msgId || `${senderId}-${d.timestamp || Date.now()}`,
+      conversationId: d.chatId || (chatType === 'direct' ? senderId : d.chatId || senderId),
       senderId,
+      senderName: d.senderName,
+      groupName: d.groupName,
       content,
       chatType,
-      timestamp: msg.timestamp || Date.now(),
+      timestamp: d.timestamp || Date.now(),
     };
   }
 
   // ── 消息发送 ──
 
   async sendMessage(conversationId: string, text: string): Promise<boolean> {
-    if (!this.connected || !this.appKey || !this.appSecret) {
+    if (!this.appKey || !this.appSecret) {
       console.error(
         `[PopoChannel:${this.instanceId}] Cannot send: not connected`,
       );
       return false;
     }
 
+    // 优先通过 WebSocket 发送
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(
+          JSON.stringify({
+            type: 'message',
+            data: {
+              chatId: conversationId,
+              content: text,
+              msgType: 'text',
+            },
+          }),
+        );
+        console.log(
+          `[PopoChannel:${this.instanceId}] Message sent via WS to ${conversationId}`,
+        );
+        return true;
+      } catch (e: any) {
+        console.error(
+          `[PopoChannel:${this.instanceId}] WS send failed:`,
+          e?.message,
+        );
+        // 回退到 HTTP POST
+      }
+    }
+
+    // HTTP POST 后备
     try {
+      const nonce = Math.random().toString(36).substring(2);
+      const curTime = String(Math.floor(Date.now() / 1000));
+      const checkSum = createHash('sha1')
+        .update(this.appSecret! + nonce + curTime, 'utf8')
+        .digest('hex');
+
       const body = JSON.stringify({
         receiver_id: conversationId,
         msg_type: 'text',
         content: JSON.stringify({ text }),
       });
 
-      const rawText = await this.apiPost(
-        `${POPO_BASE_URL}/open-apis/im/v1/messages`,
+      const res = await fetch(`${POPO_BASE_URL}/open-apis/im/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          AppKey: this.appKey!,
+          Nonce: nonce,
+          CurTime: curTime,
+          CheckSum: checkSum,
+        },
         body,
-      );
+        signal: AbortSignal.timeout(DEFAULT_API_TIMEOUT_MS),
+      });
+
+      const rawText = await res.text();
+      if (!res.ok) {
+        console.error(
+          `[PopoChannel:${this.instanceId}] HTTP send failed: HTTP ${res.status}`,
+        );
+        return false;
+      }
 
       const resp: PopoSendResponse = JSON.parse(rawText);
-
       if (resp.code !== 0) {
         console.error(
           `[PopoChannel:${this.instanceId}] sendMessage failed: ${resp.message || 'unknown'}`,
-        );
-        this.emit(
-          'error',
-          new Error(`sendMessage failed: ${resp.message || 'unknown'}`),
         );
         return false;
       }
 
       console.log(
-        `[PopoChannel:${this.instanceId}] Message sent to ${conversationId}`,
+        `[PopoChannel:${this.instanceId}] Message sent via HTTP to ${conversationId}`,
       );
       return true;
     } catch (e: any) {
       console.error(
         `[PopoChannel:${this.instanceId}] sendMessage failed:`,
         e?.message,
-      );
-      this.emit(
-        'error',
-        new Error(`sendMessage failed: ${e?.message || String(e)}`),
       );
       return false;
     }
@@ -271,13 +371,23 @@ export class PopoChannel extends EventEmitter implements IChannel {
         this.abortController = null;
       }
 
-      if (this.pollPromise) {
+      if (this.heartbeatTimer) {
+        clearInterval(this.heartbeatTimer);
+        this.heartbeatTimer = null;
+      }
+
+      if (this.ws) {
+        this.ws.close();
+        this.ws = null;
+      }
+
+      if (this.wsPromise) {
         try {
-          await this.pollPromise;
+          await this.wsPromise;
         } catch {
           /* ignore shutdown errors */
         }
-        this.pollPromise = null;
+        this.wsPromise = null;
       }
 
       this.connected = false;
@@ -296,118 +406,16 @@ export class PopoChannel extends EventEmitter implements IChannel {
     }
   }
 
-  // ── HTTP helpers ──
+  // ── 工具方法 ──
 
-  /**
-   * 构建 POPO Open API 签名认证请求头。
-   * 采用 NetEase Open API 通用签名规范：SHA1(appSecret + nonce + curTime)
-   */
-  private buildAuthHeaders(): Record<string, string> {
-    const nonce = Math.random().toString(36).substring(2);
-    const curTime = String(Math.floor(Date.now() / 1000));
-    const checkSum = createHash('sha1')
-      .update(this.appSecret! + nonce + curTime, 'utf8')
-      .digest('hex');
-
-    return {
-      'Content-Type': 'application/json',
-      AppKey: this.appKey!,
-      Nonce: nonce,
-      CurTime: curTime,
-      CheckSum: checkSum,
-    };
-  }
-
-  private async apiGet(
-    url: string,
-    abortSignal?: AbortSignal,
-    timeoutMs: number = DEFAULT_API_TIMEOUT_MS,
-  ): Promise<string> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-    let cleanup = (): void => {};
-    if (abortSignal) {
-      if (abortSignal.aborted) {
-        controller.abort();
-      } else {
-        const onAbort = (): void => controller.abort();
-        abortSignal.addEventListener('abort', onAbort, { once: true });
-        cleanup = (): void =>
-          abortSignal.removeEventListener('abort', onAbort);
-      }
-    }
-
-    try {
-      const headers = this.buildAuthHeaders();
-      // GET 请求不需要 Content-Type，仅保留认证头
-      const getHeaders: Record<string, string> = {};
-      for (const key of Object.keys(headers)) {
-        if (key !== 'Content-Type') {
-          getHeaders[key] = headers[key as keyof typeof headers];
-        }
-      }
-
-      const res = await fetch(url, {
-        method: 'GET',
-        headers: getHeaders,
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      const text = await res.text();
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
-      }
-      return text;
-    } catch (err) {
-      clearTimeout(timer);
-      throw err;
-    } finally {
-      cleanup();
-    }
-  }
-
-  private async apiPost(
-    url: string,
-    body: string,
-    timeoutMs: number = DEFAULT_API_TIMEOUT_MS,
-    abortSignal?: AbortSignal,
-  ): Promise<string> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-    let cleanup = (): void => {};
-    if (abortSignal) {
-      if (abortSignal.aborted) {
-        controller.abort();
-      } else {
-        const onAbort = (): void => controller.abort();
-        abortSignal.addEventListener('abort', onAbort, { once: true });
-        cleanup = (): void =>
-          abortSignal.removeEventListener('abort', onAbort);
-      }
-    }
-
-    try {
-      const headers = this.buildAuthHeaders();
-
-      const res = await fetch(url, {
-        method: 'POST',
-        headers,
-        body,
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      const text = await res.text();
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
-      }
-      return text;
-    } catch (err) {
-      clearTimeout(timer);
-      throw err;
-    } finally {
-      cleanup();
-    }
+  private delay(ms: number, abortSignal: AbortSignal): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      const onAbort = (): void => {
+        clearTimeout(timer);
+        resolve();
+      };
+      abortSignal.addEventListener('abort', onAbort, { once: true });
+    });
   }
 }
