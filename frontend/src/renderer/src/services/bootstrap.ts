@@ -194,6 +194,33 @@ export async function bootstrapApp(): Promise<() => void> {
     useIMStore.getState().loadSessionBindings()
   })
 
+  // IM bridge forwards engine streaming events → Dynamic Island reacts
+  const unsubImStream = window.loom.onIMStreamEvent((data: { method: string; params: Record<string, unknown> }) => {
+    const p = data.params
+    const sessionId = (p?.session_id as string) || ''
+    if (!sessionId) return
+
+    switch (data.method) {
+      case 'chat.stream_delta':
+        streamBufferManager.handleStreamDelta(sessionId, (p?.delta as string) || '')
+        break
+      case 'chat.stream_end':
+        streamBufferManager.handleStreamEnd(sessionId)
+        break
+      case 'tool.started':
+        streamBufferManager.handleToolStarted(sessionId, p as any)
+        break
+      case 'tool.completed':
+        streamBufferManager.handleToolCompleted(
+          sessionId,
+          (p?.id as string) || '',
+          p?.result as string | undefined,
+          p?.name as string | undefined,
+        )
+        break
+    }
+  })
+
   // Connect — onopen triggers onReconnect which loads data
   await connectWebSocket(port)
   useStore.getState().setEngineState('running')
@@ -202,6 +229,7 @@ export async function bootstrapApp(): Promise<() => void> {
     unsub()
     unsubReconnect()
     unsubImSession()
+    unsubImStream()
   }
 }
 

@@ -121,6 +121,8 @@ app.whenReady().then(async () => {
     try {
       const imBridge = new ImBridge(_imStore, () => {
         getMainWindow()?.webContents.send('im:session-changed')
+      }, (method, params) => {
+        getMainWindow()?.webContents.send('im:stream-event', { method, params })
       })
       imBridge.connect(port)
       _mgr.setBridge(imBridge)

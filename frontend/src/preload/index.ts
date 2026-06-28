@@ -80,6 +80,7 @@ export interface LoomApi {
   onIMMessage: (cb: (msg: IMMessage) => void) => () => void
   onIMChannelStatus: (cb: (status: ChannelStatusEvent) => void) => () => void
   onIMSessionChanged: (cb: () => void) => () => void
+  onIMStreamEvent: (cb: (event: { method: string; params: Record<string, unknown> }) => void) => () => void
 }
 
 interface PetMeta {
@@ -239,5 +240,10 @@ contextBridge.exposeInMainWorld('loom', {
     const handler = () => cb()
     ipcRenderer.on('im:session-changed', handler)
     return () => ipcRenderer.removeListener('im:session-changed', handler)
+  },
+  onIMStreamEvent: (cb) => {
+    const handler = (_event: any, data: any) => cb(data)
+    ipcRenderer.on('im:stream-event', handler)
+    return () => ipcRenderer.removeListener('im:stream-event', handler)
   },
 } satisfies LoomApi)

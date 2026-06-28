@@ -220,6 +220,8 @@ class StreamBufferManager {
       }
       return
     } else {
+      // 模型从思考切换到正常文本输出，清除 thinking 标记
+      buf.inThinking = false
       buf.textAcc += delta
     }
 

@@ -41,6 +41,7 @@ const MODE_ALIASES: Record<string, string> = {
 export class ImBridge {
   private imStore: IMStore
   private onSessionCreated?: () => void
+  private onStreamNotification?: (method: string, params: Record<string, unknown>) => void
   private ws: WebSocket | null = null
   private port: number | null = null
   private nextId = 1
@@ -48,9 +49,10 @@ export class ImBridge {
   /** Per-engine-session IM state (currently just the permission mode). */
   private convState = new Map<string, { permissionMode: string }>()
 
-  constructor(imStore: IMStore, onSessionCreated?: () => void) {
+  constructor(imStore: IMStore, onSessionCreated?: () => void, onStreamNotification?: (method: string, params: Record<string, unknown>) => void) {
     this.imStore = imStore
     this.onSessionCreated = onSessionCreated
+    this.onStreamNotification = onStreamNotification
   }
 
   connect(port: number): void {
@@ -105,7 +107,11 @@ export class ImBridge {
         if (msg.error) entry.reject(new Error(msg.error?.message ?? 'RPC error'))
         else entry.resolve(msg.result)
       }
-      // chat.* streaming notifications are ignored — we wait for the full response.
+      // chat.* streaming notifications — forwarded to renderer so
+      // Dynamic Island / pet / sidebar can react in real time.
+      if (msg.method && msg.params) {
+        this.onStreamNotification?.(msg.method, msg.params)
+      }
     })
   }
 
