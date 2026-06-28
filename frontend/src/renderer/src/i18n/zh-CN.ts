@@ -94,6 +94,7 @@ export const zhCN: TranslationMap = {
   'island.retry': '重试',
   'island.imConnected': '{platform} 已连接',
   'island.imDisconnected': '{platform} 已断开',
+  'island.imMessageReceived': '{platform} 收到一条消息',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': '会话',
@@ -1559,6 +1560,9 @@ export const zhCN: TranslationMap = {
   'im.addInstance': '添加实例',
   'im.scanConnect': '扫码连接',
   'im.connectTest': '连接测试',
+  'im.connection': '连接凭据',
+  'im.or': '或',
+  'im.popoQr': 'QR 扫码连接',
   'im.saveConfig': '保存',
   'im.discardConfig': '丢弃',
   'im.instanceName': '实例名称',
@@ -1593,7 +1597,8 @@ export const zhCN: TranslationMap = {
   'im.stopFail': '停止失败',
   'im.saved': '已保存',
   'im.deleted': '已删除',
-  'im.deleteConfirm': '确定删除？',
+  'im.deleteConfirmTitle': '删除 IM 实例',
+  'im.deleteConfirmMessage': '确定删除实例「{name}」？此操作无法撤销。',
   'im.allowFrom': '私聊白名单',
   'im.groupAllowFrom': '群聊白名单',
   'im.allowFromHint': '每行一个 ID，留空表示禁用',

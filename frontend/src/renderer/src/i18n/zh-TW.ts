@@ -94,6 +94,7 @@ export const zhTW: TranslationMap = {
   'island.retry': '重試',
   'island.imConnected': '{platform} 已連接',
   'island.imDisconnected': '{platform} 已斷開',
+  'island.imMessageReceived': '{platform} 收到一條訊息',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': '對話',
@@ -1559,6 +1560,9 @@ export const zhTW: TranslationMap = {
   'im.addInstance': '新增實例',
   'im.scanConnect': '掃碼連接',
   'im.connectTest': '連接測試',
+  'im.connection': '連接憑據',
+  'im.or': '或',
+  'im.popoQr': 'QR 掃碼連接',
   'im.saveConfig': '儲存',
   'im.discardConfig': '丟棄',
   'im.instanceName': '實例名稱',
@@ -1593,7 +1597,8 @@ export const zhTW: TranslationMap = {
   'im.stopFail': '停止失敗',
   'im.saved': '已儲存',
   'im.deleted': '已刪除',
-  'im.deleteConfirm': '確定刪除？',
+  'im.deleteConfirmTitle': '刪除 IM 實例',
+  'im.deleteConfirmMessage': '確定刪除實例「{name}」？此操作無法復原。',
   'im.allowFrom': '私聊白名單',
   'im.groupAllowFrom': '群聊白名單',
   'im.allowFromHint': '每行一個 ID，留空表示禁用',

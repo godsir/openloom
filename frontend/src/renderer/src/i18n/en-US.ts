@@ -94,6 +94,7 @@ export const enUS: TranslationMap = {
   'island.retry': 'Retry',
   'island.imConnected': '{platform} connected',
   'island.imDisconnected': '{platform} disconnected',
+  'island.imMessageReceived': '{platform} · new message',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': 'Sessions',
@@ -1559,6 +1560,9 @@ export const enUS: TranslationMap = {
   'im.addInstance': 'Add Instance',
   'im.scanConnect': 'Scan to Connect',
   'im.connectTest': 'Test Connection',
+  'im.connection': 'Credentials',
+  'im.or': 'or',
+  'im.popoQr': 'Scan QR',
   'im.saveConfig': 'Save',
   'im.discardConfig': 'Discard',
   'im.instanceName': 'Instance Name',
@@ -1593,7 +1597,8 @@ export const enUS: TranslationMap = {
   'im.stopFail': 'Failed to stop',
   'im.saved': 'Saved',
   'im.deleted': 'Deleted',
-  'im.deleteConfirm': 'Delete this instance?',
+  'im.deleteConfirmTitle': 'Delete IM Instance',
+  'im.deleteConfirmMessage': 'Delete instance "{name}"? This cannot be undone.',
   'im.allowFrom': 'DM allowlist',
   'im.groupAllowFrom': 'Group allowlist',
   'im.allowFromHint': 'One ID per line; empty means disabled',

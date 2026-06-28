@@ -1,6 +1,6 @@
 import { useMemo, useEffect, useRef } from 'react'
 import { useStore } from '../../stores'
-import { useIMStore, PLATFORM_LABELS } from '../../stores/im'
+import { useIMStore, PLATFORM_LABELS, type Platform } from '../../stores/im'
 import type { StreamPhase } from '../../stores/streaming'
 import { IconMessageSquare, IconEdit, IconAlertCircle, IconDownload, IconSparkles, IconRotateCcw, IconBrain, IconEye, IconTerminal, IconCheck, IconChevronDown } from '../../utils/icons'
 import { useLocale } from '../../i18n'
@@ -75,6 +75,24 @@ export default function DynamicIslandCenter() {
         useStore.getState().showIslandTransient(t('island.imDisconnected', { platform: label }), 3000)
       }
       prevImConnectedRef.current[key] = status.connected
+    })
+    return () => unsub?.()
+  }, [t])
+
+  // IM inbound message → transient island notification ("{渠道图标} {渠道名} 收到一条消息")
+  // - agent 流式回复中不打断灵动岛 streaming 显示
+  // - 同一会话 3 秒节流，避免群聊刷屏
+  const lastInboundRef = useRef<Record<string, number>>({})
+  useEffect(() => {
+    const unsub = (window as any).loom?.onIMMessage?.((msg: any) => {
+      if (!msg) return
+      if (useStore.getState().streamingSessionIds.size > 0) return
+      const convKey = `${msg.platform}:${msg.conversationId}`
+      const now = Date.now()
+      if (now - (lastInboundRef.current[convKey] || 0) < 3000) return
+      lastInboundRef.current[convKey] = now
+      const label = PLATFORM_LABELS[msg.platform as keyof typeof PLATFORM_LABELS] ?? msg.platform
+      useStore.getState().showIslandTransient(t('island.imMessageReceived', { platform: label }), 3500, msg.platform)
     })
     return () => unsub?.()
   }, [t])
@@ -244,7 +262,11 @@ export default function DynamicIslandCenter() {
       {/* Transient feedback (复制成功等) */}
       <div className={styles.dynamicLayer} data-active={activeState === 'transient' ? 'true' : 'false'}>
         <div className={styles.layerRow}>
-          <IconCheck size={13} className={styles.dynamicIconCheck} />
+          {islandTransient?.platform ? (
+            <PlatformIcon platform={islandTransient.platform as Platform} size={13} />
+          ) : (
+            <IconCheck size={13} className={styles.dynamicIconCheck} />
+          )}
           <span className={styles.dynamicTitle}>{islandTransient?.text}</span>
         </div>
       </div>

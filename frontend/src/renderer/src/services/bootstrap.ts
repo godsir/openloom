@@ -21,6 +21,43 @@ async function waitForPort(maxWait = 10000): Promise<number> {
 
 let _streaming = false
 
+/**
+ * 处理 chat.token_usage 通知：累计 session usage、记录 token 统计、
+ * 并把 token 消耗写到当前流式 assistant 消息上（消息底部显示）。
+ * 普通 ws 与 IM stream-event 共用此逻辑。
+ */
+function handleTokenUsage(sessionId: string, p: any) {
+  if (!p) return
+  const usage = {
+    prompt: (p.prompt_tokens as number) || 0,
+    completion: (p.completion_tokens as number) || 0,
+    model: (p.model as string) || '',
+    contextWindow: (p.context_window as number) || 0,
+    cached: (p.cached_tokens as number) || 0,
+    cacheRead: (p.cache_read_tokens as number) || 0,
+    cacheWrite: (p.cache_write_tokens as number) || 0,
+  }
+  useStore.getState().setSessionUsage(sessionId, usage)
+  // Accumulate into session cumulative for the context ring
+  useStore.getState().accumulateSessionUsage(sessionId, usage)
+  // Also aggregate into token stats
+  useStore.getState().recordUsage({
+    session_id: sessionId,
+    model: usage.model,
+    prompt: usage.prompt,
+    completion: usage.completion,
+    cached: (p.cached_tokens as number) || 0,
+    latency_ms: (p.latency_ms as number) || 0,
+    context_window: usage.contextWindow,
+  })
+  // Also stash on the streaming assistant message so closing/reopening
+  // the session can rehydrate the ring from history.
+  const buf = streamBufferManager.snapshot(sessionId)
+  if (buf?.messageId) {
+    useStore.getState().setMessageUsage(sessionId, buf.messageId, usage)
+  }
+}
+
 export async function bootstrapApp(): Promise<() => void> {
   const port = await waitForPort()
   useStore.getState().setPort(port)
@@ -63,36 +100,7 @@ export async function bootstrapApp(): Promise<() => void> {
         })
         break
       case 'chat.token_usage':
-        if (p) {
-          const usage = {
-            prompt: (p.prompt_tokens as number) || 0,
-            completion: (p.completion_tokens as number) || 0,
-            model: (p.model as string) || '',
-            contextWindow: (p.context_window as number) || 0,
-            cached: (p.cached_tokens as number) || 0,
-            cacheRead: (p.cache_read_tokens as number) || 0,
-            cacheWrite: (p.cache_write_tokens as number) || 0,
-          }
-          useStore.getState().setSessionUsage(sessionId, usage)
-          // Accumulate into session cumulative for the context ring
-          useStore.getState().accumulateSessionUsage(sessionId, usage)
-          // Also aggregate into token stats
-          useStore.getState().recordUsage({
-            session_id: sessionId,
-            model: usage.model,
-            prompt: usage.prompt,
-            completion: usage.completion,
-            cached: (p.cached_tokens as number) || 0,
-            latency_ms: (p.latency_ms as number) || 0,
-            context_window: usage.contextWindow,
-          })
-          // Also stash on the streaming assistant message so closing/reopening
-          // the session can rehydrate the ring from history.
-          const buf = streamBufferManager.snapshot(sessionId)
-          if (buf?.messageId) {
-            useStore.getState().setMessageUsage(sessionId, buf.messageId, usage)
-          }
-        }
+        handleTokenUsage(sessionId, p)
         break
       case 'tool.started':
         streamBufferManager.handleToolStarted(sessionId, p as any)
@@ -206,6 +214,9 @@ export async function bootstrapApp(): Promise<() => void> {
         break
       case 'chat.stream_end':
         streamBufferManager.handleStreamEnd(sessionId)
+        break
+      case 'chat.token_usage':
+        handleTokenUsage(sessionId, p)
         break
       case 'tool.started':
         streamBufferManager.handleToolStarted(sessionId, p as any)

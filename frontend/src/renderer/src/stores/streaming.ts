@@ -18,13 +18,13 @@ export interface StreamingSlice {
   streamingActivity: Record<string, StreamingActivity>
   inlineErrors: Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null }>
   /** 灵动岛瞬态反馈（复制成功等），短暂显示后自动清除 */
-  islandTransient: { text: string; timer: ReturnType<typeof setTimeout> | null } | null
+  islandTransient: { text: string; platform?: string; timer: ReturnType<typeof setTimeout> | null } | null
   addStreamingSession: (id: string) => void
   removeStreamingSession: (id: string) => void
   setStreamingActivity: (id: string, activity: StreamingActivity | null) => void
   setInlineError: (sessionId: string, text: string) => void
   clearInlineError: (sessionId: string) => void
-  showIslandTransient: (text: string, duration?: number) => void
+  showIslandTransient: (text: string, duration?: number, platform?: string) => void
   clearIslandTransient: () => void
 }
 
@@ -86,11 +86,11 @@ export const createStreamingSlice: StateCreator<StreamingSlice> = (set, get) => 
     set({ inlineErrors: next })
   },
 
-  showIslandTransient: (text, duration = 1500) => {
+  showIslandTransient: (text, duration = 1500, platform) => {
     const prev = get().islandTransient
     if (prev?.timer) clearTimeout(prev.timer)
     const timer = setTimeout(() => get().clearIslandTransient(), duration)
-    set({ islandTransient: { text, timer } })
+    set({ islandTransient: { text, platform, timer } })
   },
 
   clearIslandTransient: () => {

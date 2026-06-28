@@ -271,6 +271,22 @@
   color: var(--red, #ef4444);
 }
 
+/* expand hint on the right of the stats row (sits under the action buttons) */
+.expandHint {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  padding: 0 2px;
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.expandHint:hover {
+  color: var(--text-secondary);
+}
+
 /* ── Expanded Config Panel ── */
 .configPanel {
   margin-top: 12px;
@@ -279,6 +295,30 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* credential section (shown at top of expanded panel when disconnected) */
+.credSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.credSectionLabel {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+}
+
+.credRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .configGrid {

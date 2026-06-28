@@ -52,7 +52,6 @@ export default function ImInstanceCard({ config }: Props) {
   const [showQr, setShowQr] = useState(false)
   const [showPopoQr, setShowPopoQr] = useState(false)
   const [showTest, setShowTest] = useState(false)
-  const [confirmDelete, setConfirmDelete] = useState(false)
   const [nameDraft, setNameDraft] = useState(config.instanceName)
   const [allowDraft, setAllowDraft] = useState(config.allowFrom.join('\n'))
   const [groupAllowDraft, setGroupAllowDraft] = useState(config.groupAllowFrom.join('\n'))
@@ -121,6 +120,12 @@ export default function ImInstanceCard({ config }: Props) {
   }
 
   const handleDelete = async () => {
+    const ok = await useStore.getState().showConfirm(
+      t('im.deleteConfirmTitle'),
+      t('im.deleteConfirmMessage', { name: config.instanceName }),
+      true,
+    )
+    if (!ok) return
     await deleteConfig(config.platform, config.instanceId)
     addToast({ type: 'success', message: t('im.deleted') })
   }
@@ -275,7 +280,7 @@ export default function ImInstanceCard({ config }: Props) {
 
   return (
     <>
-      <div className={styles.instanceCard}>
+      <div className={styles.instanceCard} onClick={() => setExpanded(!expanded)} style={{ cursor: 'pointer' }}>
         {/* ── Top row: identity + actions ── */}
         <div className={styles.instanceCardTop}>
           <div className={styles.instanceIdentity}>
@@ -286,219 +291,12 @@ export default function ImInstanceCard({ config }: Props) {
               {accountId && <span className={styles.instanceAccount}>{accountId}</span>}
             </div>
           </div>
-          <div className={styles.instanceActions}>
+          <div className={styles.instanceActions} onClick={(e) => e.stopPropagation()}>
             {/* connect test */}
             <button className={styles.instanceBtn} onClick={() => setShowTest(true)} title={t('im.connectTest')}>
               {t('im.connectTest')}
             </button>
-            {/* QR button — wechat only, when disconnected */}
-            {config.platform === 'wechat' && !connected && (
-              <button className={styles.instanceBtn} onClick={() => setShowQr(true)}>
-                {t('im.scanConnect')}
-              </button>
-            )}
-            {/* Telegram Token 输入 — 未连接时显示 */}
-            {config.platform === 'telegram' && !connected && (
-              <>
-                <input
-                  className={styles.configInput}
-                  style={{ width: 180, height: 26, fontSize: 10 }}
-                  type="password"
-                  value={tokenDraft}
-                  onChange={(e) => setTokenDraft(e.target.value)}
-                  placeholder={t('im.telegramToken', 'Bot Token')}
-                  title={t('im.telegramTokenHint', '在 @BotFather 创建 Bot 获取 Token')}
-                />
-                <button
-                  className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`}
-                  onClick={handleTelegramLogin}
-                  disabled={loginLoading}
-                >
-                  {loginLoading ? '...' : t('im.telegramLogin', '连接')}
-                </button>
-              </>
-            )}
-            {/* Discord Bot Token — 未连接时显示 */}
-            {config.platform === 'discord' && !connected && (
-              <>
-                <input
-                  className={styles.configInput}
-                  style={{ width: 120 }}
-                  type="password"
-                  value={discordToken}
-                  onChange={(e) => setDiscordToken(e.target.value)}
-                  placeholder={t('im.discordToken', 'Bot Token')}
-                  title={t('im.discordTokenHint', '在 Discord Developer Portal 创建 Bot')}
-                />
-                <button
-                  className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`}
-                  onClick={handleDiscordLogin}
-                  disabled={loginLoading}
-                >
-                  {loginLoading ? '...' : t('im.discordLogin', '连接')}
-                </button>
-              </>
-            )}
-            {/* QQ AppID + Secret — 未连接时显示 */}
-            {config.platform === 'qq' && !connected && (
-              <>
-                <input
-                  className={styles.configInput}
-                  style={{ width: 100, height: 26, fontSize: 10 }}
-                  type="text"
-                  value={qqAppId}
-                  onChange={(e) => setQqAppId(e.target.value)}
-                  placeholder={t('im.qqAppId', 'App ID')}
-                />
-                <input
-                  className={styles.configInput}
-                  style={{ width: 120 }}
-                  type="password"
-                  value={qqSecret}
-                  onChange={(e) => setQqSecret(e.target.value)}
-                  placeholder={t('im.qqClientSecret', 'Client Secret')}
-                />
-                <button
-                  className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`}
-                  onClick={handleQqLogin}
-                  disabled={loginLoading}
-                >
-                  {loginLoading ? '...' : t('im.qqLogin', '连接')}
-                </button>
-              </>
-            )}
-            {/* Feishu AppID + Secret — 未连接时显示 */}
-            {config.platform === 'feishu' && !connected && (
-              <>
-                <input
-                  className={styles.configInput}
-                  style={{ width: 100, height: 26, fontSize: 10 }}
-                  type="text"
-                  value={feishuAppId}
-                  onChange={(e) => setFeishuAppId(e.target.value)}
-                  placeholder={t('im.feishuAppId', 'App ID')}
-                />
-                <input
-                  className={styles.configInput}
-                  style={{ width: 120 }}
-                  type="password"
-                  value={feishuSecret}
-                  onChange={(e) => setFeishuSecret(e.target.value)}
-                  placeholder={t('im.feishuAppSecret', 'App Secret')}
-                />
-                <button
-                  className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`}
-                  onClick={handleFeishuLogin}
-                  disabled={loginLoading}
-                >
-                  {loginLoading ? '...' : t('im.feishuLogin', '连接')}
-                </button>
-              </>
-            )}
-            {/* WeCom CorpID + Secret + AgentID — 未连接时显示 */}
-            {config.platform === 'wecom' && !connected && (
-              <>
-                <input
-                  className={styles.configInput}
-                  style={{ width: 100, height: 26, fontSize: 10 }}
-                  type="text"
-                  value={wecomCorpId}
-                  onChange={(e) => setWecomCorpId(e.target.value)}
-                  placeholder={t('im.wecomCorpId', 'Corp ID')}
-                />
-                <input
-                  className={styles.configInput}
-                  style={{ width: 120 }}
-                  type="password"
-                  value={wecomSecret}
-                  onChange={(e) => setWecomSecret(e.target.value)}
-                  placeholder={t('im.wecomSecret', 'Secret')}
-                />
-                <input
-                  className={styles.configInput}
-                  style={{ width: 100, height: 26, fontSize: 10 }}
-                  type="text"
-                  value={wecomAgentId}
-                  onChange={(e) => setWecomAgentId(e.target.value)}
-                  placeholder={t('im.wecomAgentId', 'Agent ID')}
-                />
-                <button
-                  className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`}
-                  onClick={handleWecomLogin}
-                  disabled={loginLoading}
-                >
-                  {loginLoading ? '...' : t('im.wecomLogin', '连接')}
-                </button>
-              </>
-            )}
-            {/* DingTalk AppKey + Secret — 未连接时显示 */}
-            {config.platform === 'dingtalk' && !connected && (
-              <>
-                <input
-                  className={styles.configInput}
-                  style={{ width: 100, height: 26, fontSize: 10 }}
-                  type="text"
-                  value={dtAppKey}
-                  onChange={(e) => setDtAppKey(e.target.value)}
-                  placeholder={t('im.dingtalkAppKey', 'App Key')}
-                />
-                <input
-                  className={styles.configInput}
-                  style={{ width: 120 }}
-                  type="password"
-                  value={dtSecret}
-                  onChange={(e) => setDtSecret(e.target.value)}
-                  placeholder={t('im.dingtalkAppSecret', 'App Secret')}
-                />
-                <button
-                  className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`}
-                  onClick={handleDingtalkLogin}
-                  disabled={loginLoading}
-                >
-                  {loginLoading ? '...' : t('im.dingtalkLogin', '连接')}
-                </button>
-              </>
-            )}
-            {/* POPO 手动凭据 + QR — 未连接时显示 */}
-            {config.platform === 'popo' && !connected && (
-              <>
-                <input
-                  className={styles.configInput}
-                  style={{ width: 90, height: 26, fontSize: 10 }}
-                  type="text"
-                  value={popoAppKey}
-                  onChange={(e) => setPopoAppKey(e.target.value)}
-                  placeholder="App Key"
-                />
-                <input
-                  className={styles.configInput}
-                  style={{ width: 90 }}
-                  type="password"
-                  value={popoAppSecret}
-                  onChange={(e) => setPopoAppSecret(e.target.value)}
-                  placeholder="App Secret"
-                />
-                <input
-                  className={styles.configInput}
-                  style={{ width: 90 }}
-                  type="password"
-                  value={popoAesKey}
-                  onChange={(e) => setPopoAesKey(e.target.value)}
-                  placeholder="AES Key"
-                />
-                <button
-                  className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`}
-                  onClick={handlePopoLogin}
-                  disabled={loginLoading}
-                >
-                  {loginLoading ? '...' : t('im.popoLogin', '连接')}
-                </button>
-                <span style={{ fontSize: 9, color: 'var(--text-muted)', margin: '0 2px' }}>or</span>
-                <button className={styles.instanceBtn} onClick={() => setShowPopoQr(true)}>
-                  QR
-                </button>
-              </>
-            )}
+            {/* credentials + QR moved into the expanded config panel */}
             {/* start / stop */}
             <button
               className={`${styles.instanceBtn} ${connected ? styles.instanceBtnDanger : styles.instanceBtnPrimary}`}
@@ -522,11 +320,92 @@ export default function ImInstanceCard({ config }: Props) {
           {status?.lastError && (
             <span className={styles.statError}>{status.lastError}</span>
           )}
+          <span
+            className={styles.expandHint}
+            onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
+          >
+            {expanded ? '收起配置 ▲' : '展开配置 ▼'}
+          </span>
         </div>
 
         {/* ── Expanded config ── */}
         {expanded && (
-          <div className={styles.configPanel}>
+          <div className={styles.configPanel} onClick={(e) => e.stopPropagation()}>
+            {/* 连接凭据 — 未连接时显示在配置区顶部 */}
+            {!connected && (
+              <div className={styles.credSection}>
+                <div className={styles.credSectionLabel}>{t('im.connection', '连接凭据')}</div>
+
+                {config.platform === 'wechat' && (
+                  <button className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`} onClick={() => setShowQr(true)}>
+                    {t('im.scanConnect')}
+                  </button>
+                )}
+
+                {config.platform === 'telegram' && (
+                  <div className={styles.credRow}>
+                    <input className={styles.configInput} style={{ flex: 1, minWidth: 0 }} type="password" value={tokenDraft} onChange={(e) => setTokenDraft(e.target.value)} placeholder={t('im.telegramToken', 'Bot Token')} title={t('im.telegramTokenHint', '在 @BotFather 创建 Bot 获取 Token')} />
+                    <button className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`} onClick={handleTelegramLogin} disabled={loginLoading}>{loginLoading ? '...' : t('im.telegramLogin', '连接')}</button>
+                  </div>
+                )}
+
+                {config.platform === 'discord' && (
+                  <div className={styles.credRow}>
+                    <input className={styles.configInput} style={{ flex: 1, minWidth: 0 }} type="password" value={discordToken} onChange={(e) => setDiscordToken(e.target.value)} placeholder={t('im.discordToken', 'Bot Token')} title={t('im.discordTokenHint', '在 Discord Developer Portal 创建 Bot')} />
+                    <button className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`} onClick={handleDiscordLogin} disabled={loginLoading}>{loginLoading ? '...' : t('im.discordLogin', '连接')}</button>
+                  </div>
+                )}
+
+                {config.platform === 'qq' && (
+                  <div className={styles.credRow}>
+                    <input className={styles.configInput} style={{ flex: 1, minWidth: 0 }} type="text" value={qqAppId} onChange={(e) => setQqAppId(e.target.value)} placeholder={t('im.qqAppId', 'App ID')} />
+                    <input className={styles.configInput} style={{ flex: 1, minWidth: 0 }} type="password" value={qqSecret} onChange={(e) => setQqSecret(e.target.value)} placeholder={t('im.qqClientSecret', 'Client Secret')} />
+                    <button className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`} onClick={handleQqLogin} disabled={loginLoading}>{loginLoading ? '...' : t('im.qqLogin', '连接')}</button>
+                  </div>
+                )}
+
+                {config.platform === 'feishu' && (
+                  <div className={styles.credRow}>
+                    <input className={styles.configInput} style={{ flex: 1, minWidth: 0 }} type="text" value={feishuAppId} onChange={(e) => setFeishuAppId(e.target.value)} placeholder={t('im.feishuAppId', 'App ID')} />
+                    <input className={styles.configInput} style={{ flex: 1, minWidth: 0 }} type="password" value={feishuSecret} onChange={(e) => setFeishuSecret(e.target.value)} placeholder={t('im.feishuAppSecret', 'App Secret')} />
+                    <button className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`} onClick={handleFeishuLogin} disabled={loginLoading}>{loginLoading ? '...' : t('im.feishuLogin', '连接')}</button>
+                  </div>
+                )}
+
+                {config.platform === 'wecom' && (
+                  <div className={styles.credRow}>
+                    <input className={styles.configInput} style={{ flex: 1, minWidth: 0 }} type="text" value={wecomCorpId} onChange={(e) => setWecomCorpId(e.target.value)} placeholder={t('im.wecomCorpId', 'Corp ID')} />
+                    <input className={styles.configInput} style={{ flex: 1, minWidth: 0 }} type="password" value={wecomSecret} onChange={(e) => setWecomSecret(e.target.value)} placeholder={t('im.wecomSecret', 'Secret')} />
+                    <input className={styles.configInput} style={{ flex: 1, minWidth: 0 }} type="text" value={wecomAgentId} onChange={(e) => setWecomAgentId(e.target.value)} placeholder={t('im.wecomAgentId', 'Agent ID')} />
+                    <button className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`} onClick={handleWecomLogin} disabled={loginLoading}>{loginLoading ? '...' : t('im.wecomLogin', '连接')}</button>
+                  </div>
+                )}
+
+                {config.platform === 'dingtalk' && (
+                  <div className={styles.credRow}>
+                    <input className={styles.configInput} style={{ flex: 1, minWidth: 0 }} type="text" value={dtAppKey} onChange={(e) => setDtAppKey(e.target.value)} placeholder={t('im.dingtalkAppKey', 'App Key')} />
+                    <input className={styles.configInput} style={{ flex: 1, minWidth: 0 }} type="password" value={dtSecret} onChange={(e) => setDtSecret(e.target.value)} placeholder={t('im.dingtalkAppSecret', 'App Secret')} />
+                    <button className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`} onClick={handleDingtalkLogin} disabled={loginLoading}>{loginLoading ? '...' : t('im.dingtalkLogin', '连接')}</button>
+                  </div>
+                )}
+
+                {config.platform === 'popo' && (
+                  <>
+                    <div className={styles.credRow}>
+                      <input className={styles.configInput} style={{ flex: 1, minWidth: 0 }} type="text" value={popoAppKey} onChange={(e) => setPopoAppKey(e.target.value)} placeholder="App Key" />
+                      <input className={styles.configInput} style={{ flex: 1, minWidth: 0 }} type="password" value={popoAppSecret} onChange={(e) => setPopoAppSecret(e.target.value)} placeholder="App Secret" />
+                      <input className={styles.configInput} style={{ flex: 1, minWidth: 0 }} type="password" value={popoAesKey} onChange={(e) => setPopoAesKey(e.target.value)} placeholder="AES Key" />
+                      <button className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`} onClick={handlePopoLogin} disabled={loginLoading}>{loginLoading ? '...' : t('im.popoLogin', '连接')}</button>
+                    </div>
+                    <div className={styles.credRow}>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{t('im.or', '或')}</span>
+                      <button className={styles.instanceBtn} onClick={() => setShowPopoQr(true)}>{t('im.popoQr', 'QR 扫码连接')}</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             <div className={styles.configGrid}>
               <div className={styles.configField}>
                 <label className={styles.configLabel}>{t('im.instanceName')}</label>
@@ -580,28 +459,11 @@ export default function ImInstanceCard({ config }: Props) {
             )}
 
             <div className={styles.configActions}>
-              {confirmDelete ? (
-                <>
-                  <button className={styles.instanceBtn} onClick={() => setConfirmDelete(false)}>{t('common.cancel')}</button>
-                  <button className={`${styles.instanceBtn} ${styles.instanceBtnDanger}`} onClick={handleDelete}>{t('common.delete')}</button>
-                </>
-              ) : (
-                <>
-                  <button className={styles.instanceBtn} onClick={() => setConfirmDelete(true)}>{t('common.delete')}</button>
-                  <button className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`} onClick={handleSave}>{t('im.saveConfig')}</button>
-                </>
-              )}
+              <button className={`${styles.instanceBtn} ${styles.instanceBtnDanger}`} onClick={handleDelete}>{t('common.delete')}</button>
+              <button className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`} onClick={handleSave}>{t('im.saveConfig')}</button>
             </div>
           </div>
         )}
-      </div>
-
-      {/* expand toggle (invisible click area on stats row) */}
-      <div
-        onClick={() => setExpanded(!expanded)}
-        style={{ cursor: 'pointer', fontSize: 10, color: 'var(--text-muted)', textAlign: 'center', padding: '2px 0 0', userSelect: 'none' }}
-      >
-        {expanded ? '收起配置 ▲' : '展开配置 ▼'}
       </div>
 
       {showQr && config.platform === 'wechat' && (
