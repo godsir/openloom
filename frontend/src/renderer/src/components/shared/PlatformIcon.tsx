@@ -8,6 +8,7 @@ import feishuPng from '../../../../asset/feishu.png'
 import dingdingPng from '../../../../asset/dingding.png'
 import discordSvg from '../../../../asset/discord.svg'
 import qqPng from '../../../../asset/qq.png'
+import wecomPng from '../../../../asset/wecom.png'
 
 const ASSET_IMAGES: Partial<Record<Platform, string>> = {
   popo: popoPng,
@@ -15,6 +16,7 @@ const ASSET_IMAGES: Partial<Record<Platform, string>> = {
   dingtalk: dingdingPng,
   discord: discordSvg,
   qq: qqPng,
+  wecom: wecomPng,
 }
 
 /** simple-icons 仍用于微信 / Telegram（没有本地图片） */
@@ -24,9 +26,7 @@ const BRAND_ICONS: Partial<Record<Platform, { path: string; hex: string }>> = {
 }
 
 /** 无本地图片也无 simple-icons 的平台 —— 彩色圆 + 通用 message 图标兜底 */
-const FALLBACK_COLORS: Record<string, string> = {
-  wecom: '#07C160',
-}
+const FALLBACK_COLORS: Record<string, string> = {}
 
 interface Props {
   platform: Platform
