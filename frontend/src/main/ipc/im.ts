@@ -65,10 +65,92 @@ export function registerImIpc(): void {
   ipcMain.handle('im:get-status', () => imGatewayManager.getStatus())
 
   ipcMain.handle('im:test-connectivity', async (_e, platform: Platform, instanceId: string) => {
+    const config = imStore.listInstances().find(
+      (i) => i.platform === platform && i.instanceId === instanceId
+    )
     const ch = imGatewayManager.channels?.get(`${platform}:${instanceId}`)
     const isConnected = ch?.isConnected ?? false
     const accountId = ch?.currentAccountId
     const suffix = accountId ? ` (${accountId})` : ''
+
+    // If channel is already connected, report success immediately.
+    if (isConnected) {
+      return {
+        platform,
+        testedAt: Date.now(),
+        verdict: 'pass',
+        checks: [{
+          code: 'gateway_running',
+          level: 'pass',
+          message: `Channel connected${suffix}`,
+        }],
+      }
+    }
+
+    // Channel not connected — attempt a real credential validation.
+    // For Telegram: call getMe to verify the saved token.
+    if (platform === 'telegram') {
+      const token = (config?.configJson as Record<string, unknown> | undefined)?.token as string | undefined
+      if (!token) {
+        return {
+          platform,
+          testedAt: Date.now(),
+          verdict: 'warn',
+          checks: [{
+            code: 'no_token',
+            level: 'warn',
+            message: '未配置 Bot Token，请先登录',
+          }],
+        }
+      }
+      try {
+        const resp = await fetch(`https://api.telegram.org/bot${token}/getMe`, {
+          signal: AbortSignal.timeout(15_000),
+        })
+        const body = await resp.json() as any
+        if (body.ok && body.result) {
+          const username = body.result.username || `bot_${body.result.id}`
+          // Token valid — auto-start the channel if it isn't running.
+          if (config && !isConnected) {
+            try { await imGatewayManager.startChannel(config) } catch { /* best-effort */ }
+          }
+          return {
+            platform,
+            testedAt: Date.now(),
+            verdict: 'pass',
+            checks: [{
+              code: 'token_valid',
+              level: 'pass',
+              message: `Bot @${username} 验证通过`,
+            }],
+          }
+        } else {
+          return {
+            platform,
+            testedAt: Date.now(),
+            verdict: 'fail',
+            checks: [{
+              code: 'token_invalid',
+              level: 'fail',
+              message: `Token 验证失败: ${body.description || 'unknown error'}`,
+            }],
+          }
+        }
+      } catch (e: any) {
+        return {
+          platform,
+          testedAt: Date.now(),
+          verdict: 'fail',
+          checks: [{
+            code: 'network_error',
+            level: 'fail',
+            message: `网络错误: ${e?.message || String(e)}`,
+          }],
+        }
+      }
+    }
+
+    // Generic fallback for other platforms.
     return {
       platform,
       testedAt: Date.now(),

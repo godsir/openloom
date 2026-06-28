@@ -109,9 +109,16 @@ export default function ImInstanceCard({ config }: Props) {
   }
 
   const handleSave = async () => {
+    // Merge tokenDraft into configJson so "Save" persists credentials too.
+    // This prevents the bug where user enters token but clicks Save instead of Connect.
+    const updatedConfigJson = { ...config.configJson } as Record<string, unknown>
+    if (tokenDraft && tokenDraft.trim()) {
+      updatedConfigJson.token = tokenDraft.trim()
+    }
     await saveConfig({
       ...config,
       instanceName: nameDraft,
+      configJson: updatedConfigJson,
       allowFrom: allowDraft.split('\n').map(s => s.trim()).filter(Boolean),
       groupAllowFrom: groupAllowDraft.split('\n').map(s => s.trim()).filter(Boolean),
       updatedAt: Math.floor(Date.now() / 1000),

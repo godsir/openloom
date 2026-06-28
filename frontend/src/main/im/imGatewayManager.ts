@@ -199,11 +199,11 @@ export class IMGatewayManager extends EventEmitter {
 
     this.registerChannelHandlers(ch, config, config.platform, config.instanceId, meta);
 
-    this.channels.set(key, ch);
-
     // If we already have credentials from a previous session, restore + poll.
     const creds = config.configJson as Record<string, unknown>;
     if (config.platform === 'wechat') {
+      // WeChat: add to map first (QR login may happen later)
+      this.channels.set(key, ch);
       const accountId = creds.accountId as string | undefined;
       const token = creds.token as string | undefined;
       const baseUrl = creds.baseUrl as string | undefined;
@@ -213,34 +213,39 @@ export class IMGatewayManager extends EventEmitter {
       }
     } else if (config.platform === 'telegram') {
       const token = creds.token as string | undefined;
-      if (token) {
-        try {
-          const tgCh = ch as TelegramChannel;
-          const verifyResult = await tgCh.verifyToken(token);
-          if (!verifyResult.ok) {
-            console.warn(`[IMGatewayManager] Telegram token invalid for ${key}, skipping restore`);
-            this.channels.delete(key);
-            this.statusMeta.delete(key);
-            return;
-          }
-          // Update stored bot info in case it changed
-          if (verifyResult.accountId) {
-            const updatedConfig = { ...config, configJson: { ...config.configJson, accountId: verifyResult.accountId, botUsername: verifyResult.botUsername }, updatedAt: Date.now() };
-            this.imStore.upsertInstance(updatedConfig);
-          }
-        } catch (e) {
-          console.warn(`[IMGatewayManager] Telegram verifyToken failed for ${key}, will attempt polling anyway`);
-        }
-        ch.restoreConnection(creds);
-        ch.startPolling();
+      if (!token) {
+        console.warn(`[IMGatewayManager] Telegram ${key} has no token, skipping (user must login via token first)`);
+        // Don't add to map — prevents "already running" blocking future login
+        return;
       }
+      // Verify token before adding to map
+      try {
+        const tgCh = ch as TelegramChannel;
+        const verifyResult = await tgCh.verifyToken(token);
+        if (!verifyResult.ok) {
+          console.warn(`[IMGatewayManager] Telegram token invalid for ${key}: ${verifyResult.error}`);
+          return;
+        }
+        // Update stored bot info in case it changed
+        if (verifyResult.accountId) {
+          const updatedConfig = { ...config, configJson: { ...config.configJson, accountId: verifyResult.accountId, botUsername: verifyResult.botUsername }, updatedAt: Date.now() };
+          this.imStore.upsertInstance(updatedConfig);
+        }
+      } catch (e) {
+        console.warn(`[IMGatewayManager] Telegram verifyToken failed for ${key}, will attempt polling anyway:`, e);
+      }
+      this.channels.set(key, ch);
+      ch.restoreConnection(creds);
+      ch.startPolling();
     } else if (config.platform === 'discord') {
+      this.channels.set(key, ch);
       const token = creds.token as string | undefined;
       if (token) {
         ch.restoreConnection(creds);
         ch.startPolling();
       }
     } else if (config.platform === 'qq') {
+      this.channels.set(key, ch);
       const appId = creds.appId as string | undefined;
       const clientSecret = creds.clientSecret as string | undefined;
       if (appId && clientSecret) {
@@ -248,6 +253,7 @@ export class IMGatewayManager extends EventEmitter {
         ch.startPolling();
       }
     } else if (config.platform === 'feishu') {
+      this.channels.set(key, ch);
       const appId = creds.appId as string | undefined;
       const appSecret = creds.appSecret as string | undefined;
       if (appId && appSecret) {
@@ -255,6 +261,7 @@ export class IMGatewayManager extends EventEmitter {
         ch.startPolling();
       }
     } else if (config.platform === 'wecom') {
+      this.channels.set(key, ch);
       const corpId = creds.corpId as string | undefined;
       const secret = creds.secret as string | undefined;
       const agentId = creds.agentId as string | undefined;
@@ -263,6 +270,7 @@ export class IMGatewayManager extends EventEmitter {
         ch.startPolling();
       }
     } else if (config.platform === 'dingtalk') {
+      this.channels.set(key, ch);
       const appKey = creds.appKey as string | undefined;
       const appSecret = creds.appSecret as string | undefined;
       if (appKey && appSecret) {
@@ -270,6 +278,7 @@ export class IMGatewayManager extends EventEmitter {
         ch.startPolling();
       }
     } else if (config.platform === 'popo') {
+      this.channels.set(key, ch);
       const appKey = creds.appKey as string | undefined;
       const appSecret = creds.appSecret as string | undefined;
       const aesKey = creds.aesKey as string | undefined;
@@ -277,6 +286,9 @@ export class IMGatewayManager extends EventEmitter {
         ch.restoreConnection({ appKey, appSecret, aesKey });
         ch.startPolling();
       }
+    } else {
+      // Unknown platform — add to map so UI can show it
+      this.channels.set(key, ch);
     }
     // Otherwise, the renderer will trigger the platform-specific login flow.
   }
