@@ -42,7 +42,7 @@ interface Props { config: InstanceConfig }
 
 export default function ImInstanceCard({ config }: Props) {
   const { t } = useLocale()
-  const { saveConfig, deleteConfig, startChannel, stopChannel, statuses, sendHelp, telegramLogin, discordLogin, qqLogin, feishuLogin, wecomLogin, dingtalkLogin } = useIMStore()
+  const { saveConfig, deleteConfig, startChannel, stopChannel, statuses, sendHelp, telegramLogin, discordLogin, qqLogin, feishuLogin, wecomLogin, dingtalkLogin, popoLogin } = useIMStore()
   const agents = useStore((s: any) => s.agents) ?? []
   const addToast = useStore((s) => s.addToast)
   const dmPolicyOptions = useDmPolicyOptions()
@@ -63,6 +63,7 @@ export default function ImInstanceCard({ config }: Props) {
   const [feishuAppId, setFeishuAppId] = useState(''); const [feishuSecret, setFeishuSecret] = useState('');
   const [wecomCorpId, setWecomCorpId] = useState(''); const [wecomSecret, setWecomSecret] = useState(''); const [wecomAgentId, setWecomAgentId] = useState('');
   const [dtAppKey, setDtAppKey] = useState(''); const [dtSecret, setDtSecret] = useState('');
+  const [popoAppKey, setPopoAppKey] = useState(''); const [popoAppSecret, setPopoAppSecret] = useState(''); const [popoAesKey, setPopoAesKey] = useState('');
 
   const debounceRef = useRef<number | null>(null)
   const configRef = useRef(config)
@@ -246,6 +247,26 @@ export default function ImInstanceCard({ config }: Props) {
         setDtAppKey(''); setDtSecret('');
       } else {
         addToast({ type: 'error', message: `${t('im.dingtalkLoginFail', '连接失败')}: ${res.error ?? ''}` });
+      }
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handlePopoLogin = async () => {
+    const ak = popoAppKey.trim(); const sec = popoAppSecret.trim(); const aes = popoAesKey.trim();
+    if (!ak || !sec || !aes) {
+      addToast({ type: 'error', message: t('im.popoCredEmpty', '请填写所有凭据字段') });
+      return;
+    }
+    setLoginLoading(true);
+    try {
+      const res = await popoLogin(config.platform, config.instanceId, ak, sec, aes);
+      if (res.ok) {
+        addToast({ type: 'success', message: t('im.popoConnected', '已连接到 POPO') });
+        setPopoAppKey(''); setPopoAppSecret(''); setPopoAesKey('');
+      } else {
+        addToast({ type: 'error', message: `${t('im.popoLoginFail', '连接失败')}: ${res.error ?? ''}` });
       }
     } finally {
       setLoginLoading(false);
@@ -438,11 +459,45 @@ export default function ImInstanceCard({ config }: Props) {
                 </button>
               </>
             )}
-            {/* POPO QR — 未连接时显示 */}
+            {/* POPO 手动凭据 + QR — 未连接时显示 */}
             {config.platform === 'popo' && !connected && (
-              <button className={styles.instanceBtn} onClick={() => setShowPopoQr(true)}>
-                {t('im.scanConnect')}
-              </button>
+              <>
+                <input
+                  className={styles.configInput}
+                  style={{ width: 90, height: 26, fontSize: 10 }}
+                  type="text"
+                  value={popoAppKey}
+                  onChange={(e) => setPopoAppKey(e.target.value)}
+                  placeholder="App Key"
+                />
+                <input
+                  className={styles.configInput}
+                  style={{ width: 90 }}
+                  type="password"
+                  value={popoAppSecret}
+                  onChange={(e) => setPopoAppSecret(e.target.value)}
+                  placeholder="App Secret"
+                />
+                <input
+                  className={styles.configInput}
+                  style={{ width: 90 }}
+                  type="password"
+                  value={popoAesKey}
+                  onChange={(e) => setPopoAesKey(e.target.value)}
+                  placeholder="AES Key"
+                />
+                <button
+                  className={`${styles.instanceBtn} ${styles.instanceBtnPrimary}`}
+                  onClick={handlePopoLogin}
+                  disabled={loginLoading}
+                >
+                  {loginLoading ? '...' : t('im.popoLogin', '连接')}
+                </button>
+                <span style={{ fontSize: 9, color: 'var(--text-muted)', margin: '0 2px' }}>or</span>
+                <button className={styles.instanceBtn} onClick={() => setShowPopoQr(true)}>
+                  QR
+                </button>
+              </>
             )}
             {/* start / stop */}
             <button
@@ -521,7 +576,7 @@ export default function ImInstanceCard({ config }: Props) {
               <p className={styles.empty} style={{ padding: 0, textAlign: 'left', fontSize: 10 }}>{t('im.dingtalkConfigHint', '在钉钉开放平台创建应用，获取 App Key 和 App Secret 后填写到上方输入框')}</p>
             )}
             {config.platform === 'popo' && (
-              <p className={styles.empty} style={{ padding: 0, textAlign: 'left', fontSize: 10 }}>{t('im.popoConfigHint', 'POPO 通过扫码连接，点击上方扫码按钮授权')}</p>
+              <p className={styles.empty} style={{ padding: 0, textAlign: 'left', fontSize: 10 }}>{t('im.popoConfigHint', '填入 App Key / App Secret / AES Key 后点连接，或点击 QR 扫码授权')}</p>
             )}
 
             <div className={styles.configActions}>

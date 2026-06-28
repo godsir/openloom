@@ -177,6 +177,16 @@ export function registerImIpc(): void {
     }
   });
 
+  // ── POPO 手动凭据登录 ──
+
+  ipcMain.handle('im:popo-login', async (_e, platform: Platform, instanceId: string, appKey: string, appSecret: string, aesKey: string) => {
+    try {
+      return await imGatewayManager.popoLogin(platform, instanceId, appKey, appSecret, aesKey);
+    } catch (err: any) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
   // ── Forward channel status events to renderer ──
 
   imGatewayManager.on('channel-status', (status) => {

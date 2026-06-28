@@ -515,7 +515,29 @@ export class IMGatewayManager extends EventEmitter {
     }
   }
 
-  // ── Telegram Token 登录 ──
+  // ── POPO 手动凭据登录 ──
+
+  async popoLogin(platform: Platform, instanceId: string, appKey: string, appSecret: string, aesKey: string): Promise<{ ok: boolean; error?: string }> {
+    const key = this.channelKey('popo', instanceId);
+    const existing = this.channels.get(key);
+    if (existing) { await existing.disconnect(); this.channels.delete(key); }
+
+    const ch = new PopoChannel({ instanceId, instanceName: instanceId });
+    const vr = await ch.verifyCredentials(appKey, appSecret, aesKey);
+    if (!vr.ok) return { ok: false, error: vr.error };
+
+    const config = this.imStore.listInstances().find(i => i.platform === platform && i.instanceId === instanceId);
+    if (config) {
+      this.imStore.upsertInstance({ ...config, configJson: { ...config.configJson, appKey, appSecret, aesKey }, enabled: true, updatedAt: Date.now() });
+    }
+    const meta = this.getStatusMeta(key); meta.startedAt = Date.now();
+    this.registerChannelHandlers(ch, config!, platform, instanceId, meta);
+    this.channels.set(key, ch);
+    ch.restoreConnection({ appKey, appSecret, aesKey });
+    ch.startPolling();
+    this.emit('channel-status', { platform, instanceId, connected: true, accountId: appKey });
+    return { ok: true };
+  }
 
   async telegramLogin(platform: Platform, instanceId: string, token: string): Promise<{ ok: boolean; error?: string }> {
     const key = this.channelKey(platform, instanceId);

@@ -73,6 +73,7 @@ export interface LoomApi {
   imFeishuLogin: (platform: Platform, instanceId: string, appId: string, appSecret: string) => Promise<{ ok: boolean; error?: string }>
   imWecomLogin: (platform: Platform, instanceId: string, corpId: string, secret: string, agentId: string) => Promise<{ ok: boolean; error?: string }>
   imDingtalkLogin: (platform: Platform, instanceId: string, appKey: string, appSecret: string) => Promise<{ ok: boolean; error?: string }>
+  imPopoLogin: (platform: Platform, instanceId: string, appKey: string, appSecret: string, aesKey: string) => Promise<{ ok: boolean; error?: string }>
   imGetSettings: () => Promise<IMSettings>
   imSetSettings: (settings: Partial<IMSettings>) => Promise<{ ok: boolean }>
   imListSessionBindings: () => Promise<Array<{ sessionId: string; platform: Platform; instanceId: string; conversationId: string }>>
@@ -219,6 +220,8 @@ contextBridge.exposeInMainWorld('loom', {
     ipcRenderer.invoke('im:wecom-login', platform, instanceId, corpId, secret, agentId),
   imDingtalkLogin: (platform: Platform, instanceId: string, appKey: string, appSecret: string) =>
     ipcRenderer.invoke('im:dingtalk-login', platform, instanceId, appKey, appSecret),
+  imPopoLogin: (platform: Platform, instanceId: string, appKey: string, appSecret: string, aesKey: string) =>
+    ipcRenderer.invoke('im:popo-login', platform, instanceId, appKey, appSecret, aesKey),
   imGetSettings: () => ipcRenderer.invoke('im:get-settings'),
   imSetSettings: (settings: Partial<IMSettings>) => ipcRenderer.invoke('im:set-settings', settings),
   imListSessionBindings: () => ipcRenderer.invoke('im:list-session-bindings') as Promise<Array<{ sessionId: string; platform: Platform; instanceId: string; conversationId: string }>>,

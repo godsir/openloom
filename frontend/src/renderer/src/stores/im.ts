@@ -156,6 +156,7 @@ interface IMState {
   feishuLogin: (platform: Platform, instanceId: string, appId: string, appSecret: string) => Promise<{ ok: boolean; error?: string }>;
   wecomLogin: (platform: Platform, instanceId: string, corpId: string, secret: string, agentId: string) => Promise<{ ok: boolean; error?: string }>;
   dingtalkLogin: (platform: Platform, instanceId: string, appKey: string, appSecret: string) => Promise<{ ok: boolean; error?: string }>;
+  popoLogin: (platform: Platform, instanceId: string, appKey: string, appSecret: string, aesKey: string) => Promise<{ ok: boolean; error?: string }>;
   setSelectedPlatform: (p: Platform) => void;
   /** Subscribe to backend channel-status/message events. Returns an unsubscribe. */
   subscribeEvents: () => () => void;
@@ -292,6 +293,7 @@ export const useIMStore = create<IMState>((set, get) => ({
   feishuLogin: async (platform, instanceId, appId, appSecret) => { const r = await (window as any).loom.imFeishuLogin(platform, instanceId, appId, appSecret); if (r?.ok) { await get().loadConfigs(); get().refreshStatus(); } return r; },
   wecomLogin: async (platform, instanceId, corpId, secret, agentId) => { const r = await (window as any).loom.imWecomLogin(platform, instanceId, corpId, secret, agentId); if (r?.ok) { await get().loadConfigs(); get().refreshStatus(); } return r; },
   dingtalkLogin: async (platform, instanceId, appKey, appSecret) => { const r = await (window as any).loom.imDingtalkLogin(platform, instanceId, appKey, appSecret); if (r?.ok) { await get().loadConfigs(); get().refreshStatus(); } return r; },
+  popoLogin: async (platform, instanceId, appKey, appSecret, aesKey) => { const r = await (window as any).loom.imPopoLogin(platform, instanceId, appKey, appSecret, aesKey); if (r?.ok) { await get().loadConfigs(); get().refreshStatus(); } return r; },
 
   setSelectedPlatform: (p) => set({ selectedPlatform: p }),
 
