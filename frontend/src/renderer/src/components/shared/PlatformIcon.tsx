@@ -3,11 +3,11 @@ import type { Platform } from '../stores/im'
 import { MessageSquare as IconMessageSquare } from 'lucide-react'
 
 // 本地资产图片路径（构建时会由 Vite 处理）
-import popoPng from '../../asset/popo.png'
-import feishuPng from '../../asset/feishu.png'
-import dingdingPng from '../../asset/dingding.png'
-import discordSvg from '../../asset/discord.svg'
-import qqPng from '../../asset/qq.png'
+import popoPng from '../../../../asset/popo.png'
+import feishuPng from '../../../../asset/feishu.png'
+import dingdingPng from '../../../../asset/dingding.png'
+import discordSvg from '../../../../asset/discord.svg'
+import qqPng from '../../../../asset/qq.png'
 
 const ASSET_IMAGES: Partial<Record<Platform, string>> = {
   popo: popoPng,
