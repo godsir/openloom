@@ -106,14 +106,14 @@ export class PopoChannel extends EventEmitter implements IChannel {
    * 验证凭据完整性 — 检查 appKey、appSecret、aesKey 是否全部存在。
    * 由 IMGatewayManager 在恢复连接时调用。
    */
-  verifyCredentials(): { ok: boolean; error?: string } {
-    if (!this.appKey) {
+  verifyCredentials(appKey: string, appSecret: string, aesKey: string): { ok: boolean; error?: string } {
+    if (!appKey) {
       return { ok: false, error: '缺少 appKey' };
     }
-    if (!this.appSecret) {
+    if (!appSecret) {
       return { ok: false, error: '缺少 appSecret' };
     }
-    if (!this.aesKey) {
+    if (!aesKey) {
       return { ok: false, error: '缺少 aesKey' };
     }
     return { ok: true };

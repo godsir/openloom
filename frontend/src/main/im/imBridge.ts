@@ -305,7 +305,7 @@ export class ImBridge {
           const r: any = await this.rpc('model.list', {})
           const models: any[] = r?.models || []
           const active = r?.activeModel || ''
-          const lines = models.map((m) => `${m.name === active ? '▶ ' : '  '}${m.name}（${m.model}）`)
+          const lines = models.map((m) => `${m.name === active ? '▶ ' : '  '}${m.name}（${m.model}）${m.backend_label ? ` [${m.backend_label}]` : ''}`)
           await reply(`可用模型：\n${lines.join('\n') || '（无）'}\n当前：${active || '（未设置）'}\n切换：/model <名称>`)
         } catch (e: any) {
           await reply(`❌ 获取模型列表失败: ${e?.message ?? e}`)

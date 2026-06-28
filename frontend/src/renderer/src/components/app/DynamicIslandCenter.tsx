@@ -54,7 +54,7 @@ export default function DynamicIslandCenter() {
   const activity = activeStreamId ? streamingActivity[activeStreamId] : undefined
   const phase: StreamPhase = activity?.phase ?? 'generating'
 
-  const pct = Math.round(update.progress * 100)
+  const pct = Math.round(update.progress)
 
   const handleRestart = async () => {
     const newPort = await window.loom.restartEngine()

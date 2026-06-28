@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { useStore } from '../../stores'
 import type { SessionSummary } from '../../stores/session'
+import { useIMStore } from '../../stores/im'
+import PlatformIcon from '../shared/PlatformIcon'
 import { rpc } from '../../services/rpc-toast'
 import ContextMenu, { ContextMenuItem } from '../shared/ContextMenu'
 import { IconPin, IconPinOff } from '../../utils/icons'
@@ -19,6 +21,7 @@ export default function SessionItem({ session }: { session: SessionSummary }) {
   const selectedSessionIds = useStore(s => s.selectedSessionIds)
   const streamingIds = useStore(s => s.streamingSessionIds)
   const sid = session.path || ''
+  const imSource = useIMStore(s => sid ? s.imSessionSources[sid] : undefined)
   const isActive = sid === currentId
   const isStreaming = sid ? streamingIds.has(sid) : false
   const isPinned = useStore(s => sid ? s.pinnedIds.has(sid) : false)
@@ -79,6 +82,7 @@ export default function SessionItem({ session }: { session: SessionSummary }) {
         <div className={styles.content}>
           <div className={styles.title}>
             {isStreaming && <span className={styles.streamingDot} />}
+            {imSource && <PlatformIcon platform={imSource.platform} size={14} />}
             {session.title || session.firstMessage?.slice(0, 40) || i18nT('sidebar.sessionDefault', { id: sid.slice(0, 8) })}
           </div>
           {(session.modified || session.messageCount > 0) && (
