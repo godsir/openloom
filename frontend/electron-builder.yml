@@ -1,6 +1,5 @@
 appId: com.openloom.app
 productName: openLoom
-artifactName: ${productName}.Setup.${version}.${ext}
 directories:
   output: dist
   buildResources: resources
@@ -15,18 +14,7 @@ extraResources:
   - from: ../resources/builtin
     to: builtin
 win:
-  target: nsis
   icon: src/asset/icon.ico
-  artifactName: ${productName}.Setup.${version}.${ext}
-nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
-  include: installer.nsh
-  installerLanguages:
-    - zh-CN
-    - zh-TW
-    - en-US
-  displayLanguageSelector: true
 publish:
   provider: github
   owner: godsir

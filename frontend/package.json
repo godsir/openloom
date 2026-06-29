@@ -1,6 +1,6 @@
 {
   "name": "openloom-desktop",
-  "version": "0.3.23",
+  "version": "0.4.1",
   "description": "openLoom — local-first private AI assistant",
   "main": "./out/main/index.js",
   "scripts": {
@@ -8,6 +8,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "package": "electron-vite build && electron-builder",
+    "package:installer": "electron-vite build && scripts\\build-installer.bat",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:e2e": "playwright test"

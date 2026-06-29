@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Windows>
+  <VerticalLayout>
+    <VerticalLayout bkcolor="#FF0B0F14">
+      <Control height="90" />
+      <Slider name="slrProgress" padding="30,0,30,0" height="4" mouse="false" foreimage="form\fg.png" bkimage="form\bg.png" thumbsize="0,0" bkcolor="#FF161E28" />
+      <HorizontalLayout height="24" padding="30,10,0,0">
+        <Label font="0" name="progress_tip" width="120" textcolor="#FFCCCCCC" text="正在安装" valign="center" />
+        <Control />
+        <Label font="0" name="progress_pos" width="60" textalign="right" textcolor="#FF22D3EE" valign="center" />
+      </HorizontalLayout>
+      <Control />
+    </VerticalLayout>
+  </VerticalLayout>
+</Windows>

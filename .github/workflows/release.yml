@@ -56,10 +56,16 @@ jobs:
         working-directory: frontend
         run: |
           npm ci
-          npm run build
-          npx electron-builder --win --publish always
+          npm run package:installer
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            frontend/dist/*.exe
+            frontend/dist/*.yml
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Mark old beta pre-releases as archived
         uses: actions/github-script@v7

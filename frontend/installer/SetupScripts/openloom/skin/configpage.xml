@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<VerticalLayout>
+  <VerticalLayout bkcolor="#FF0B0F14">
+    <!-- Logo + 产品名 -->
+    <HorizontalLayout height="58" padding="40,18,40,6">
+      <Control width="40" height="40" bkimage="logo.png" />
+      <Control width="12" />
+      <VerticalLayout>
+        <Label font="6" textcolor="#FFFFFFFF" text="openLoom" height="20" valign="center" />
+        <Label name="lblSubtitle" font="0" textcolor="#99FFFFFF" text="本地优先的私有 AI 助手" height="16" valign="center" />
+      </VerticalLayout>
+      <Control />
+    </HorizontalLayout>
+
+    <!-- 安装位置 -->
+    <VerticalLayout padding="40,6,40,0">
+      <Label name="lblInstallLocation" font="0" textcolor="#99FFFFFF" text="安装位置" height="16" />
+      <HorizontalLayout height="30">
+        <RichEdit name="editDir" text="" textcolor="0xFFCCCCCC" inset="8,6,2,2" bkcolor="#FF161E28" bordervisible="true" bordersize="1" bordercolor="0xFF1A2535" focusbordercolor="0xFF22D3EE" autohscroll="false" wantreturn="false" wantctrlreturn="false" multiline="false" />
+        <Control width="8" />
+        <Button name="btnSelectDir" width="70" height="30" font="0" textcolor="#FF0B0F14" text="浏览" bkcolor="#FF22D3EE" />
+      </HorizontalLayout>
+      <HorizontalLayout height="22" padding="0,4,0,0">
+        <Label font="0" name="space_required" textcolor="#FF808080" width="150" valign="center" />
+        <Label font="0" name="local_space" textcolor="#FF808080" width="150" valign="center" />
+        <Control />
+      </HorizontalLayout>
+    </VerticalLayout>
+
+    <!-- 三个复选框 -->
+    <VerticalLayout padding="40,12,40,0">
+      <CheckBox name="chkAddPath" height="26" font="0" text="将 loom CLI 添加到系统 PATH" textcolor="#FFCCCCCC" selected="true" valign="center" align="left" textpadding="24,0,0,0" normalimage="file='public\CheckBox\check_no.png' dest='0,4,16,18'" normalhotimage="file='public\CheckBox\check_no.png' dest='0,4,16,18'" selectedimage="file='public\CheckBox\check_yes.png' dest='0,4,16,18'" selectedhotimage="file='public\CheckBox\check_yes.png' dest='0,4,16,18'" />
+      <CheckBox name="chkDesktop" height="26" font="0" text="创建桌面快捷方式" textcolor="#FFCCCCCC" selected="true" valign="center" align="left" textpadding="24,0,0,0" normalimage="file='public\CheckBox\check_no.png' dest='0,4,16,18'" normalhotimage="file='public\CheckBox\check_no.png' dest='0,4,16,18'" selectedimage="file='public\CheckBox\check_yes.png' dest='0,4,16,18'" selectedhotimage="file='public\CheckBox\check_yes.png' dest='0,4,16,18'" />
+      <CheckBox name="chkAutoStart" height="26" font="0" text="开机自启" textcolor="#FFCCCCCC" selected="false" valign="center" align="left" textpadding="24,0,0,0" normalimage="file='public\CheckBox\check_no.png' dest='0,4,16,18'" normalhotimage="file='public\CheckBox\check_no.png' dest='0,4,16,18'" selectedimage="file='public\CheckBox\check_yes.png' dest='0,4,16,18'" selectedhotimage="file='public\CheckBox\check_yes.png' dest='0,4,16,18'" />
+    </VerticalLayout>
+
+    <!-- 安装按钮 -->
+    <VerticalLayout padding="40,16,40,16">
+      <Button name="btnInstall" height="40" font="6" textcolor="#FF0B0F14" text="安装" bkcolor="#FF22D3EE" />
+      <Control />
+    </VerticalLayout>
+  </VerticalLayout>
+</VerticalLayout>

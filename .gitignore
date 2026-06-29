@@ -37,3 +37,8 @@ CLAUDE.md
 node_modules/
 dist/
 .tmp-bajins/
+frontend/installer/FilesToInstall/
+frontend/installer/NSIS/
+frontend/installer/7z.dll
+frontend/installer/7z.exe
+frontend/installer/OriginPlugin/
