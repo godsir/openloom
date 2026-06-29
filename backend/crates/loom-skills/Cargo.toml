@@ -1,6 +1,6 @@
 ﻿[package]
 name = "loom-skills"
-version = "0.3.22"
+version = "0.4.1"
 edition = "2024"
 description = "Skill loading for openLoom v2 �?Claude Code / OpenClaw compatible SKILL.md parser"
 
