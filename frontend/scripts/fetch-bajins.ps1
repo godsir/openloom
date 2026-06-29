@@ -1,5 +1,17 @@
 $ErrorActionPreference = 'Stop'
-$installerDir = Join-Path $PSScriptRoot '..\installer'
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$installerDir = Join-Path $scriptDir '..\installer'
+
+# Check if toolchain already cached in installer
+$nsisDir = Join-Path $installerDir 'NSIS'
+$sevenZip = Join-Path $installerDir '7z.exe'
+$originPlugin = Join-Path $installerDir 'OriginPlugin'
+
+if ((Test-Path $nsisDir) -and (Test-Path $sevenZip) -and (Test-Path $originPlugin)) {
+    Write-Host "bajins toolchain already cached, skipping download."
+    exit 0
+}
+
 $url = 'https://github.com/bajins/NSIS_SetupSkin/archive/refs/heads/master.zip'
 $zip = Join-Path $env:TEMP 'nsis-setupskin.zip'
 $extractDir = Join-Path $env:TEMP 'nsis-setupskin'
@@ -19,4 +31,4 @@ Copy-Item (Join-Path $src 'OriginPlugin') $installerDir -Recurse -Force
 
 Remove-Item $zip -Force
 Remove-Item $extractDir -Recurse -Force
-Write-Host "bajins toolchain fetched."
+Write-Host "bajins toolchain fetched and cached."
