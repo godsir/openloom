@@ -4,6 +4,7 @@ import { renderMarkdown } from '../../utils/markdown'
 import { sanitizeHtml } from '../../utils/markdown-sanitizer'
 import { renderMermaidDiagram } from '../../utils/mermaid-renderer'
 import { useStore } from '../../stores'
+import { useLocale } from '../../i18n'
 
 const IMAGE_EXT = /\.(png|jpg|jpeg|gif|webp|svg|bmp|ico)(\?.*)?$/i
 
@@ -13,6 +14,7 @@ export default function TextBlock({ block }: { block: ContentBlock }) {
   const displayHtml = html || sanitizeHtml(renderMarkdown(source))
   const containerRef = useRef<HTMLDivElement>(null)
   const openLightbox = useStore(s => s.openLightbox)
+  const { t } = useLocale()
 
   const handleClick = useCallback((e: MouseEvent) => {
     const target = e.target as HTMLElement
@@ -23,6 +25,22 @@ export default function TextBlock({ block }: { block: ContentBlock }) {
       e.preventDefault()
       const filePath = (openBtn as HTMLElement).getAttribute('data-file-path')
       if (filePath) window.loom.openFile(filePath)
+      return
+    }
+
+    // Code block "copy" button
+    const copyBtn = target.closest('.copy-code-btn')
+    if (copyBtn) {
+      e.preventDefault()
+      const wrapper = (copyBtn as HTMLElement).closest('.code-block-wrapper')
+      const codeEl = wrapper?.querySelector('code')
+      const text = codeEl?.textContent || ''
+      navigator.clipboard.writeText(text).then(() => {
+        const btn = copyBtn as HTMLElement
+        const original = btn.textContent
+        btn.textContent = t('common.copied', '已复制')
+        setTimeout(() => { btn.textContent = original }, 1500)
+      })
       return
     }
 
@@ -49,7 +67,7 @@ export default function TextBlock({ block }: { block: ContentBlock }) {
         return
       }
     }
-  }, [openLightbox])
+  }, [openLightbox, t])
 
   useEffect(() => {
     const el = containerRef.current

@@ -13,6 +13,7 @@ import PlatformIcon from '../shared/PlatformIcon'
 import ImWechatQrModal from './ImWechatQrModal'
 import ImPopoQrModal from './ImPopoQrModal'
 import ImConnectivityTest from './ImConnectivityTest'
+import ImPlatformGuide from './ImPlatformGuide'
 import styles from './ImTab.module.css'
 
 function useDmPolicyOptions(): SelectOption[] {
@@ -410,6 +411,7 @@ export default function ImInstanceCard({ config }: Props) {
                     </div>
                   </>
                 )}
+                <ImPlatformGuide platform={config.platform} />
               </div>
             )}
 

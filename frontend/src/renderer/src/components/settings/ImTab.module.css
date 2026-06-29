@@ -767,3 +767,61 @@
 .badgeWarn { background: rgba(var(--amber-rgb, 245 158 11), 0.15); color: var(--amber); }
 .badgeFail { background: rgba(239,68,68,0.12); color: var(--red, #ef4444); }
 .badgeInfo { background: var(--accent-subtle); color: var(--accent); }
+
+/* ═══════════════════════════════════════════════════════════
+   Platform Access Guide (折叠式接入教程)
+   ═══════════════════════════════════════════════════════════ */
+
+.guideWrap {
+  margin-top: 4px;
+}
+
+.guideBody {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.guideStep {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.guideMust {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--amber, #f59e0b);
+  font-weight: 500;
+}
+
+.guideLink {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 10px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  text-decoration: none;
+  transition: all var(--dur-fast) var(--ease-standard);
+}
+
+.guideLink:hover {
+  border-color: var(--border-default);
+  color: var(--text);
+}

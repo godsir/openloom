@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import type { ContentBlock } from '../../stores/chat'
+import { useLocale } from '../../i18n'
 import { IconZap, IconCheck, IconLoader, IconXCircle, IconChevronRight, IconChevronDown } from '../../utils/icons'
 import styles from './ToolGroupBlock.module.css'
 
@@ -14,8 +15,19 @@ function toolStatusIcon(s: string) {
   return <IconXCircle size={10} className={styles.iconZap} />
 }
 
+function fmtElapsed(ms: number): string {
+  if (!ms || ms < 0) return ''
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+const RESULT_COLLAPSE_THRESHOLD = 500
+
 export default function ToolGroupBlock({ block }: { block: ContentBlock }) {
+  const { t } = useLocale()
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set())
+  const [copiedId, setCopiedId] = useState<string | null>(null)
   const tools = (block.tools as ToolCall[]) || []
   const collapsed = block.collapsed as boolean | undefined
   const prevCollapsed = useRef(collapsed)
@@ -24,7 +36,7 @@ export default function ToolGroupBlock({ block }: { block: ContentBlock }) {
   useEffect(() => {
     if (!collapsed && prevCollapsed.current !== false) {
       // Tools just became active — expand the first running one
-      const running = tools.find(t => t.status === 'running')
+      const running = tools.find(tc => tc.status === 'running')
       if (running) setExpandedId(running.id)
     }
     if (collapsed) {
@@ -32,6 +44,23 @@ export default function ToolGroupBlock({ block }: { block: ContentBlock }) {
     }
     prevCollapsed.current = collapsed
   }, [collapsed, tools])
+
+  const copyResult = (tool: ToolCall) => {
+    if (!tool.result) return
+    navigator.clipboard.writeText(tool.result).then(() => {
+      setCopiedId(tool.id)
+      setTimeout(() => setCopiedId(prev => (prev === tool.id ? null : prev)), 1500)
+    })
+  }
+
+  const toggleResult = (id: string) => {
+    setExpandedResults(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   return (
     <div className={styles.block}>
@@ -43,6 +72,9 @@ export default function ToolGroupBlock({ block }: { block: ContentBlock }) {
           >
             <IconZap size={10} className={styles.iconZap} />
             <span className={styles.toolName}>{tool.name}</span>
+            {tool.elapsed > 0 && (
+              <span className={styles.elapsed}>{fmtElapsed(tool.elapsed)}</span>
+            )}
             <span className={styles.statusIcon}>{toolStatusIcon(tool.status)}</span>
             {expandedId !== tool.id
               ? <IconChevronRight size={9} className={styles.chevron} />
@@ -56,9 +88,31 @@ export default function ToolGroupBlock({ block }: { block: ContentBlock }) {
                 </pre>
               )}
               {tool.result && (
-                <pre className={styles.result}>
-                  {tool.result}
-                </pre>
+                <div className={styles.resultWrap}>
+                  <div className={styles.resultBar}>
+                    <button
+                      type="button"
+                      className={styles.resultBtn}
+                      onClick={() => copyResult(tool)}
+                    >
+                      {copiedId === tool.id ? t('common.copied', '已复制') : t('common.copy', '复制')}
+                    </button>
+                    {tool.result.length > RESULT_COLLAPSE_THRESHOLD && (
+                      <button
+                        type="button"
+                        className={styles.resultBtn}
+                        onClick={() => toggleResult(tool.id)}
+                      >
+                        {expandedResults.has(tool.id)
+                          ? t('common.collapse', '收起')
+                          : t('common.expand', '展开')}
+                      </button>
+                    )}
+                  </div>
+                  <pre className={`${styles.result} ${expandedResults.has(tool.id) ? styles.resultExpanded : ''}`}>
+                    {tool.result}
+                  </pre>
+                </div>
               )}
             </div>
           )}

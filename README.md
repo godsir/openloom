@@ -18,10 +18,10 @@ backend/crates/                   13 个 crate，Rust 2024 + Tokio
 ├── loom-mcp          ← MCP 客户端（stdio + HTTP/SSE，resources/prompts 协议）
 ├── loom-lsp          ← LSP 客户端（30+ 语言，二进制检测、一键安装/卸载、安装进度、诊断面板）
 ├── loom-skills       ← Skills 解析（Claude Code + OpenClaw SKILL.md 兼容）
-└── loom-bridge       ← 外部消息平台接入（Telegram + WeChat iLink）
+└── loom-bridge       ← 外部消息平台接入（ChannelAdapter 抽象，Telegram / 飞书 / 微信适配器）
 
 frontend/                        Electron 38 + React 19
-├── src/main/         ← 主进程（窗口管理、引擎生命周期、自动更新、系统托盘、桌宠）
+├── src/main/         ← 主进程（窗口管理、引擎生命周期、自动更新、系统托盘、桌宠、IM 接入）
 ├── src/preload/      ← IPC 桥接（27 个 contextBridge API）
 └── src/renderer/     ← 渲染进程（TypeScript + Tailwind CSS 4 + Vite 6 + Zustand 5）
      ├── components/app/      ← 应用壳（顶栏、侧边栏、状态栏）
@@ -106,7 +106,7 @@ $env:DEEPSEEK_API_KEY = "sk-xxx"
 ### loom mcp
 
 ```powershell
-loom mcp add --name my-server --transport http --url http://localhost:3000
+loom mcp add my-server --transport http --url http://localhost:3000
 loom mcp list
 ```
 
@@ -193,10 +193,11 @@ loom kg stats
 
 ### Bridge 外部接入
 
-- `ChannelAdapter` trait 统一抽象
-- Telegram Bot API（环境变量 TELEGRAM_BOT_TOKEN）
-- WeChat iLink 桥接（环境变量 ILINK_API_KEY）
-- SQLite 持久化桥接会话和消息
+- `ChannelAdapter` trait 统一抽象，后端 loom-bridge 实现 Telegram / 飞书 / 微信适配器
+- 桌面客户端 IM（`frontend/src/main/im/`）完整实现 8 个平台：微信、Telegram、POPO、Discord、QQ、飞书、企业微信、钉钉
+- 微信 / POPO 扫码连接，其余平台填凭据（Token / AppID+Secret 等）一键连接，设置页内置接入教程引导
+- SQLite 持久化实例配置与收发消息时间（`im_instances` 表，凭据存 configJson）
+- 会话级 Agent 绑定，IM 消息路由到对应 Agent
 
 ### 自动更新
 
@@ -250,27 +251,29 @@ loom kg stats
 | 分类 | 方法数 | 说明 |
 |------|--------|------|
 | System | 1 | health |
-| Chat | 2 | send、stop |
-| Agent | 10 | list、status、kill、config CRUD、generate、optimize |
-| Session | 9 | list、create、switch、messages、rename、delete、bind_agent 等 |
-| Model | 11 | list、switch、config CRUD、save_key、check_key、discover |
+| Agent | 3 | list、status、kill |
+| Chat | 4 | send、stop、compact、session.last_stop_reason |
+| Session | 10 | list、create、switch、messages、delete_message、rename、auto_title、delete、bind_agent、set_memory_enabled |
 | Workspace | 3 | get、set_session、set_default |
+| Model | 5 | list、switch、save_key、check_key、discover |
 | Skills | 5 | list、get、import、delete、reload |
-| Clawhub | 3 | list、install、uninstall（技能市场） |
-| MCP | 13 | list_tools、connect、disconnect、resources、prompts、health、config CRUD |
-| LSP | 13 | diagnostics、completion、hover、definition、references、symbols、check、install、uninstall、all_diagnostics |
-| Tools | 2 | list、respond（工具权限响应） |
-| Stats | 3 | token_summary、token_history、reset |
-| Config | 10 | vision、auxiliary、sandbox、defaults 等 get/set |
+| MCP | 10 | list_servers/tools/resources、read_resource、list_resource_templates、list_prompts、get_prompt、connect、disconnect、server_health |
+| Bridge | 9 | list_configs、set_config、delete_config、start/stop_channel、start/stop_all、get_status、test_connectivity |
+| LSP | 16 | list_servers、diagnostics、completion、hover、definition、references、symbols、shutdown、shutdown_all、supported_languages、check、install、uninstall、install_status、all_diagnostics、start |
+| Tools | 2 | list、respond |
+| Config | 10 | get/set · vision、auxiliary、fim、sandbox、defaults |
+| LoomMd | 2 | read、save |
 | Cognitions | 4 | list、snapshots、subjects、delete |
+| Stats | 3 | token_summary、token_history、reset |
+| Memory | 11 | promote、quality、health、persona、patterns、consolidate、forget、promote_to_layer、pipeline_status、layer_stats、vector_search |
+| KG | 7 | search、stats、neighbors、walk、list、edges_between、prune |
 | Completion | 1 | FIM 代码补全 |
-| Cron | 7 | 定时任务 CRUD + history |
-| Goal | 2 | 目标管理 |
-| KG | 9 | search、stats、neighbors、walk、list、edges_between、node/edge delete、prune |
-| Memory | 11 | promote、quality、health、persona、patterns、consolidate、forget 等 |
-| Plan | 5 | 计划 CRUD + execute |
-| Todo | 2 | 待办 CRUD |
-| VFS | 6 | 虚拟文件系统（list、read、write、delete、rename、mkdir） |
+| Cron | 9 | detect、list、create、update、delete、pause、resume、history、run_now |
+| Plan | 5 | create、get、list、update、delete |
+| Todo | 3 | list、update_status、clear |
+| Goal | 2 | set、status |
+| VFS | 8 | read_file、write_file、list_directory、create_directory、rename、delete、watch_file、unwatch_file |
+| Write | 3 | index_workspace、search_workspace、reindex_file |
 
 推送事件：`chat.stream_delta`、`chat.stream_end`、`chat.token_usage`、`tool.started`、`tool.completed`、`agent.state_changed`、`agent.subagent_spawned`、`agent.subagent_completed`、`agent.subagent_errored`
 

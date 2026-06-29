@@ -1,12 +1,12 @@
 .block {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(var(--accent-rgb), 0.02);
+  border: 1px solid var(--border);
   border-radius: var(--r-md);
   overflow: hidden;
 }
 
 .row {
-  border-top: 1px solid rgba(255, 255, 255, 0.03);
+  border-top: 1px solid var(--border);
 }
 
 .row:first-child {
@@ -25,11 +25,11 @@
   background: none;
   border: none;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--dur-fast) var(--ease-standard);
 }
 
 .toggle:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(var(--accent-rgb), 0.05);
 }
 
 .iconZap {
@@ -39,7 +39,13 @@
 
 .toolName {
   font-weight: 500;
-  color: var(--text-light);
+  color: var(--text-light, var(--text-secondary));
+}
+
+.elapsed {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
 }
 
 .statusIcon {
@@ -61,18 +67,52 @@
   overflow-x: auto;
   font-size: 10px;
   color: var(--text-muted);
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
   margin-bottom: 6px;
 }
 
-.result {
+.resultWrap {
   background: var(--bg);
   border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.resultBar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.resultBtn {
+  font-size: 10px;
+  font-family: inherit;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--r-sm);
+  transition: all var(--dur-fast) var(--ease-standard);
+}
+
+.resultBtn:hover {
+  color: var(--text);
+  background: rgba(var(--accent-rgb), 0.08);
+}
+
+.result {
   padding: 8px;
   overflow-x: auto;
   font-size: 11px;
-  color: var(--text-light);
-  font-family: ui-monospace, monospace;
+  color: var(--text-light, var(--text-secondary));
+  font-family: var(--font-mono);
   max-height: 144px;
   overflow-y: auto;
+  margin: 0;
+}
+
+.resultExpanded {
+  max-height: none;
 }

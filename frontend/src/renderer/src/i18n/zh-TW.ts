@@ -1675,4 +1675,37 @@ export const zhTW: TranslationMap = {
   'im.popoLoginFail': '連接失敗',
   'im.popoCredEmpty': '請填寫所有憑證欄位',
   'im.desktopLocked': 'IM 會話，請在 IM App 中對話',
+  'im.guideTitle': '接入教學',
+  'im.guideOpen': '打開開放平台',
+  'im.telegram.guide': `在 Telegram 中搜尋並開啟 @BotFather 對話
+發送 /newbot，依提示設定機器人名稱與使用者名稱（使用者名稱須以 bot 結尾）
+建立成功後 BotFather 會回傳一段 Bot Token
+將 Token 貼到上方輸入框，點擊"連接"`,
+  'im.discord.guide': `開啟 Discord Developer Portal，點擊 New Application 建立應用
+進入應用的 Bot 頁面，點擊 Reset Token 建立並複製 Bot Token
+!必做：開啟 Message Content Intent，否則機器人收不到訊息內容
+將 Token 貼到上方輸入框，點擊"連接"`,
+  'im.qq.guide': `開啟 QQ 開放平台 (q.qq.com)，郵箱註冊並完成實名認證
+進入"機器人"標籤，點擊"建立機器人"
+在"開發管理"頁面取得 AppID 與 ClientSecret（首次查看需掃碼驗證）
+!必做：在"沙箱配置"加入測試 QQ 號並掃碼加好友；正式環境需在"開發設定"開啟 C2C 私聊與群 @ 訊息權限
+將 AppID 和 ClientSecret 填入上方輸入框，點擊"連接"`,
+  'im.feishu.guide': `開啟飛書開放平台，建立企業自建應用
+在"憑證與基礎資訊"取得 App ID 與 App Secret
+!必做：在"應用功能"中啟用"機器人"能力
+!必做：在"事件與回調"選擇"長連接"模式，加入事件 im.message.receive_v1
+!必做：在"權限管理"開通 im:message 權限（接收與發送訊息）
+完成配置後建立版本並發布（開發期可用測試版本）
+將 App ID 和 App Secret 填入上方輸入框，點擊"連接"`,
+  'im.wecom.guide': `登入企業微信管理後台，進入"應用管理"建立自建應用
+在"我的企業"頁面取得 Corp ID（企業 ID）
+在應用詳情頁取得 Agent ID 與 Secret（應用 Secret）
+!注意：Secret 必須是自建應用的 Secret，不是通訊錄同步的 Secret
+將 Corp ID、Secret、Agent ID 填入上方輸入框，點擊"連接"（主動拉取訊息，無需配置回調 URL）`,
+  'im.dingtalk.guide': `開啟釘釘開放平台開發者後台，建立企業內部應用
+在"基礎資訊"取得 App Key 與 App Secret
+!必做：在"應用功能 - 機器人"中開啟機器人，訊息接收模式選擇"Stream 模式"
+!必做：在"事件訂閱"中勾選機器人訊息相關事件
+發布應用（至少發布測試版本）機器人才能生效
+將 App Key 和 App Secret 填入上方輸入框，點擊"連接"`,
 }

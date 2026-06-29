@@ -21,6 +21,12 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  include: installer.nsh
+  installerLanguages:
+    - zh-CN
+    - zh-TW
+    - en-US
+  displayLanguageSelector: true
 publish:
   provider: github
   owner: godsir

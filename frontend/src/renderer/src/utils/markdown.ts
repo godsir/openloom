@@ -1,6 +1,7 @@
 // Markdown rendering pipeline — to be wired fully in Task 4.3.
 // For now, provides the basic markdown-it renderer.
 import MarkdownIt from 'markdown-it'
+import hljs from 'highlight.js'
 import katex from 'katex'
 import { t } from '../i18n'
 
@@ -108,12 +109,22 @@ function mermaidPlugin(md: MarkdownIt) {
     const fpMatch = info.match(FILE_PATH_RE)
     const filePath = fpMatch ? fpMatch[1] : ''
     const lang = filePath ? info.replace(fpMatch[0], '').trim() : info
-    const escaped = md.utils.escapeHtml(token.content)
+    const code = token.content
     const dataAttrs = filePath
       ? ` data-file-path="${md.utils.escapeHtml(filePath)}"`
       : ''
 
-    return `<div class="code-block-wrapper"${dataAttrs}><pre><code${lang ? ` class="language-${md.utils.escapeHtml(lang)}"` : ''}>${escaped}</code></pre></div>`
+    // Syntax highlighting via highlight.js; falls back to escaped plain text
+    // when the language is unknown or absent.
+    let highlighted: string
+    if (lang && hljs.getLanguage(lang)) {
+      highlighted = hljs.highlight(code, { language: lang }).value
+    } else {
+      highlighted = md.utils.escapeHtml(code)
+    }
+
+    const langLabel = lang ? md.utils.escapeHtml(lang) : ''
+    return `<div class="code-block-wrapper"${dataAttrs}><div class="code-block-header"><span class="code-block-lang">${langLabel}</span><button class="copy-code-btn" type="button">${t('common.copy', '复制')}</button></div><pre><code class="hljs${lang ? ` language-${md.utils.escapeHtml(lang)}` : ''}">${highlighted}</code></pre></div>`
   }
 }
 

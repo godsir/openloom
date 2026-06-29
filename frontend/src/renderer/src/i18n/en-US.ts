@@ -1675,4 +1675,37 @@ export const enUS: TranslationMap = {
   'im.popoLoginFail': 'Connection failed',
   'im.popoCredEmpty': 'Please fill all credential fields',
   'im.desktopLocked': 'IM session, please chat in the IM app',
+  'im.guideTitle': 'Setup Guide',
+  'im.guideOpen': 'Open Platform',
+  'im.telegram.guide': `Open @BotFather in Telegram
+Send /newbot and follow the prompts to set a name and username (username must end with "bot")
+BotFather returns a Bot Token once created
+Paste the token above and click "Connect"`,
+  'im.discord.guide': `Open Discord Developer Portal and click New Application
+Go to the Bot page and click Reset Token to create and copy the Bot Token
+!Required: enable Message Content Intent, or the bot cannot read message content
+Paste the token above and click "Connect"`,
+  'im.qq.guide': `Open QQ Open Platform (q.qq.com), register with email and complete real-name verification
+Go to the "Robot" tab and click "Create Robot"
+Get AppID and ClientSecret on the "Development Management" page (first view requires QR scan)
+!Required: add test QQ accounts in "Sandbox Config" and add the bot as a friend; in production, enable C2C and group-@message permissions in "Development Settings"
+Fill in App ID and Client Secret above and click "Connect"`,
+  'im.feishu.guide': `Open Feishu Open Platform and create a custom app
+Get App ID and App Secret under "Credentials & Basic Info"
+!Required: enable the "Bot" capability under "App Features"
+!Required: under "Events & Callbacks", choose "Long Connection" mode and add event im.message.receive_v1
+!Required: grant the im:message permission under "Permission Management"
+Create and publish a version after config (test version is fine for development)
+Fill in App ID and App Secret above and click "Connect"`,
+  'im.wecom.guide': `Sign in to WeCom Admin Console and create a custom app under "App Management"
+Get Corp ID on the "My Company" page
+Get Agent ID and Secret (app secret) on the app detail page
+!Note: the Secret must be the custom app Secret, not the Contacts Sync Secret
+Fill in Corp ID, Secret and Agent ID above and click "Connect" (messages are pulled, no callback URL needed)`,
+  'im.dingtalk.guide': `Open DingTalk Developer Console and create an internal app
+Get App Key and App Secret under "Basic Info"
+!Required: enable the bot under "App Features - Bot" and set message mode to "Stream Mode"
+!Required: subscribe to bot message events under "Event Subscription"
+Publish the app (at least a test version) for the bot to work
+Fill in App Key and App Secret above and click "Connect"`,
 }

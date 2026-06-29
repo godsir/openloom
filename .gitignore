@@ -36,3 +36,4 @@ CLAUDE.md
 # Node / Electron
 node_modules/
 dist/
+.tmp-bajins/

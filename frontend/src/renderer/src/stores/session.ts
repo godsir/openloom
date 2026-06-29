@@ -468,19 +468,19 @@ export function parseContentParts(content: any, sessionId: string, port: number)
       const tr = part.tool_result
       // Pair use_skill tool_call with its tool_result: capture result content
       if (pendingSkillBlock && pendingSkillCallId && tr.tool_call_id === pendingSkillCallId) {
-        const content = tr.content
+        const content = tr.result ?? tr.content
         pendingSkillBlock.result = typeof content === 'string' ? content : (content != null ? JSON.stringify(content) : '')
         blocks.push(pendingSkillBlock)
         pendingSkillBlock = null
         pendingSkillCallId = null
       } else {
         // Pair non-skill tool_call (shell, file, etc.) with its tool_result
-        const content = tr.content
+        const content = tr.result ?? tr.content
         const resultText = typeof content === 'string' ? content : (content != null ? JSON.stringify(content) : '')
         // Find the last shell block without a result and attach it
         let paired = false
         for (let j = blocks.length - 1; j >= 0; j--) {
-          if (blocks[j].type === 'shell' && !blocks[j].result) {
+          if (blocks[j].type === 'shell' && blocks[j].result === undefined) {
             blocks[j].result = resultText
             paired = true
             break
@@ -561,17 +561,17 @@ export function parseContentParts(content: any, sessionId: string, port: number)
       // Pair use_skill tool_call with its tool_result: capture result content
       const toolCallId = part.tool_call_id || ''
       if (pendingSkillBlock && pendingSkillCallId && toolCallId === pendingSkillCallId) {
-        const content = part.content
+        const content = part.result ?? part.content
         pendingSkillBlock.result = typeof content === 'string' ? content : (content != null ? JSON.stringify(content) : '')
         blocks.push(pendingSkillBlock)
         pendingSkillBlock = null
         pendingSkillCallId = null
       } else {
         // Pair non-skill tool_call (shell, file, etc.) with its tool_result
-        const content = part.content
+        const content = part.result ?? part.content
         const resultText = typeof content === 'string' ? content : (content != null ? JSON.stringify(content) : '')
         for (let j = blocks.length - 1; j >= 0; j--) {
-          if (blocks[j].type === 'shell' && !blocks[j].result) {
+          if (blocks[j].type === 'shell' && blocks[j].result === undefined) {
             blocks[j].result = resultText
             break
           }

@@ -1675,4 +1675,37 @@ export const zhCN: TranslationMap = {
   'im.popoLoginFail': '连接失败',
   'im.popoCredEmpty': '请填写所有凭据字段',
   'im.desktopLocked': 'IM 会话，请在微信中对话',
+  'im.guideTitle': '接入教程',
+  'im.guideOpen': '打开开放平台',
+  'im.telegram.guide': `在 Telegram 中搜索并打开 @BotFather 对话
+发送 /newbot，按提示设置机器人名称与用户名（用户名须以 bot 结尾）
+创建成功后 BotFather 会返回一段 Bot Token
+将 Token 粘贴到上方输入框，点击"连接"`,
+  'im.discord.guide': `打开 Discord Developer Portal，点击 New Application 创建应用
+进入应用的 Bot 页面，点击 Reset Token 创建并复制 Bot Token
+!必做：开启 Message Content Intent，否则机器人收不到消息内容
+将 Token 粘贴到上方输入框，点击"连接"`,
+  'im.qq.guide': `打开 QQ 开放平台 (q.qq.com)，邮箱注册并完成实名认证
+进入"机器人"标签，点击"创建机器人"
+在"开发管理"页面获取 AppID 与 ClientSecret（首次查看需扫码验证）
+!必做：在"沙箱配置"添加测试 QQ 号并扫码加好友；正式环境需在"开发设置"开启 C2C 私聊与群 @ 消息权限
+将 AppID 和 ClientSecret 填入上方输入框，点击"连接"`,
+  'im.feishu.guide': `打开飞书开放平台，创建企业自建应用
+在"凭证与基础信息"获取 App ID 与 App Secret
+!必做：在"应用功能"中启用"机器人"能力
+!必做：在"事件与回调"选择"长连接"模式，添加事件 im.message.receive_v1
+!必做：在"权限管理"开通 im:message 权限（接收与发送消息）
+完成配置后创建版本并发布（开发期可用测试版本）
+将 App ID 和 App Secret 填入上方输入框，点击"连接"`,
+  'im.wecom.guide': `登录企业微信管理后台，进入"应用管理"创建自建应用
+在"我的企业"页面获取 Corp ID（企业 ID）
+在应用详情页获取 Agent ID 与 Secret（应用 Secret）
+!注意：Secret 必须是自建应用的 Secret，不是通讯录同步的 Secret
+将 Corp ID、Secret、Agent ID 填入上方输入框，点击"连接"（主动拉取消息，无需配置回调 URL）`,
+  'im.dingtalk.guide': `打开钉钉开放平台开发者后台，创建企业内部应用
+在"基础信息"获取 App Key 与 App Secret
+!必做：在"应用功能 - 机器人"中开启机器人，消息接收模式选择"Stream 模式"
+!必做：在"事件订阅"中勾选机器人消息相关事件
+发布应用（至少发布测试版本）机器人才能生效
+将 App Key 和 App Secret 填入上方输入框，点击"连接"`,
 }

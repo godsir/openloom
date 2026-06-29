@@ -31,6 +31,8 @@ export class IMGatewayManager extends EventEmitter {
   channels: Map<string, IChannel> = new Map();
   private onMessage?: (message: IMMessage) => void;
   private statusMeta: Map<string, ChannelStatusMeta> = new Map();
+  /** Debounce timers for persisting lastInboundAt/lastOutboundAt to configJson. */
+  private persistTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private imBridge?: ImBridge;
 
   constructor(options: IMGatewayManagerOptions) {
@@ -71,6 +73,7 @@ export class IMGatewayManager extends EventEmitter {
     ch.on('message', (msg) => {
       console.log(`[IMGatewayManager] ${platform} message from ${msg.senderId}`);
       meta.lastInboundAt = Date.now();
+      this.schedulePersistMeta(platform, instanceId);
       const imMsg: IMMessage = {
         platform,
         messageId: msg.messageId,
@@ -90,6 +93,7 @@ export class IMGatewayManager extends EventEmitter {
             const ok = await ch.sendMessage(imMsg.conversationId, text);
             if (ok) {
               meta.lastOutboundAt = Date.now();
+              this.schedulePersistMeta(platform, instanceId);
               this.emit('channel-status', { platform, instanceId, connected: true });
             }
           })
@@ -196,6 +200,10 @@ export class IMGatewayManager extends EventEmitter {
 
     const meta = this.getStatusMeta(key);
     meta.startedAt = Date.now();
+    // Restore last inbound/outbound timestamps from persisted config so the
+    // stats row survives app restarts.
+    meta.lastInboundAt = (config.configJson.lastInboundAt as number | null) ?? null;
+    meta.lastOutboundAt = (config.configJson.lastOutboundAt as number | null) ?? null;
 
     this.registerChannelHandlers(ch, config, config.platform, config.instanceId, meta);
 
@@ -311,6 +319,10 @@ export class IMGatewayManager extends EventEmitter {
           });
         }
       }
+      // Flush any pending inbound/outbound timestamps before the channel goes away.
+      const pTimer = this.persistTimers.get(key);
+      if (pTimer) { clearTimeout(pTimer); this.persistTimers.delete(key); }
+      this.persistMetaNow(platform, instanceId);
       await ch.disconnect();
       this.channels.delete(key);
       this.statusMeta.delete(key);
@@ -373,9 +385,48 @@ export class IMGatewayManager extends EventEmitter {
 
   stopAll(): void {
     for (const [key, ch] of this.channels) {
+      const [platform, instanceId] = key.split(':') as [Platform, string];
+      const timer = this.persistTimers.get(key);
+      if (timer) { clearTimeout(timer); this.persistTimers.delete(key); }
+      this.persistMetaNow(platform, instanceId);
       ch.disconnect().catch(() => {});
     }
     this.channels.clear();
+  }
+
+  /**
+   * Debounced persistence of lastInboundAt/lastOutboundAt to the instance's
+   * configJson, so the IM stats row survives app restarts. Coalesces rapid
+   * bursts of messages into a single write.
+   */
+  private schedulePersistMeta(platform: Platform, instanceId: string): void {
+    const key = this.channelKey(platform, instanceId);
+    const existing = this.persistTimers.get(key);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.persistTimers.delete(key);
+      this.persistMetaNow(platform, instanceId);
+    }, 2000);
+    this.persistTimers.set(key, timer);
+  }
+
+  private persistMetaNow(platform: Platform, instanceId: string): void {
+    const key = this.channelKey(platform, instanceId);
+    const meta = this.statusMeta.get(key);
+    if (!meta) return;
+    const config = this.imStore
+      .listInstances()
+      .find((i) => i.platform === platform && i.instanceId === instanceId);
+    if (!config) return;
+    this.imStore.upsertInstance({
+      ...config,
+      configJson: {
+        ...config.configJson,
+        lastInboundAt: meta.lastInboundAt,
+        lastOutboundAt: meta.lastOutboundAt,
+      },
+      updatedAt: Date.now(),
+    });
   }
 
   getStatus(): IMGatewayStatus {
@@ -543,6 +594,10 @@ export class IMGatewayManager extends EventEmitter {
       this.imStore.upsertInstance({ ...config, configJson: { ...config.configJson, appKey, appSecret, aesKey }, enabled: true, updatedAt: Date.now() });
     }
     const meta = this.getStatusMeta(key); meta.startedAt = Date.now();
+    if (config) {
+      meta.lastInboundAt = (config.configJson.lastInboundAt as number | null) ?? null;
+      meta.lastOutboundAt = (config.configJson.lastOutboundAt as number | null) ?? null;
+    }
     this.registerChannelHandlers(ch, config!, platform, instanceId, meta);
     this.channels.set(key, ch);
     ch.restoreConnection({ appKey, appSecret, aesKey });
@@ -593,6 +648,10 @@ export class IMGatewayManager extends EventEmitter {
     // 注册事件
     const meta = this.getStatusMeta(key);
     meta.startedAt = Date.now();
+    if (config) {
+      meta.lastInboundAt = (config.configJson.lastInboundAt as number | null) ?? null;
+      meta.lastOutboundAt = (config.configJson.lastOutboundAt as number | null) ?? null;
+    }
 
     this.registerChannelHandlers(ch, config!, platform, instanceId, meta);
 
@@ -655,6 +714,10 @@ export class IMGatewayManager extends EventEmitter {
 
     const meta = this.getStatusMeta(key);
     meta.startedAt = Date.now();
+    if (config) {
+      meta.lastInboundAt = (config.configJson.lastInboundAt as number | null) ?? null;
+      meta.lastOutboundAt = (config.configJson.lastOutboundAt as number | null) ?? null;
+    }
 
     this.registerChannelHandlers(ch, config!, platform, instanceId, meta);
 
@@ -716,6 +779,10 @@ export class IMGatewayManager extends EventEmitter {
 
     const meta = this.getStatusMeta(key);
     meta.startedAt = Date.now();
+    if (config) {
+      meta.lastInboundAt = (config.configJson.lastInboundAt as number | null) ?? null;
+      meta.lastOutboundAt = (config.configJson.lastOutboundAt as number | null) ?? null;
+    }
 
     this.registerChannelHandlers(ch, config!, platform, instanceId, meta);
 
@@ -778,6 +845,10 @@ export class IMGatewayManager extends EventEmitter {
 
     const meta = this.getStatusMeta(key);
     meta.startedAt = Date.now();
+    if (config) {
+      meta.lastInboundAt = (config.configJson.lastInboundAt as number | null) ?? null;
+      meta.lastOutboundAt = (config.configJson.lastOutboundAt as number | null) ?? null;
+    }
 
     this.registerChannelHandlers(ch, config!, platform, instanceId, meta);
 
@@ -840,6 +911,10 @@ export class IMGatewayManager extends EventEmitter {
 
     const meta = this.getStatusMeta(key);
     meta.startedAt = Date.now();
+    if (config) {
+      meta.lastInboundAt = (config.configJson.lastInboundAt as number | null) ?? null;
+      meta.lastOutboundAt = (config.configJson.lastOutboundAt as number | null) ?? null;
+    }
 
     this.registerChannelHandlers(ch, config!, platform, instanceId, meta);
 
@@ -901,6 +976,10 @@ export class IMGatewayManager extends EventEmitter {
 
     const meta = this.getStatusMeta(key);
     meta.startedAt = Date.now();
+    if (config) {
+      meta.lastInboundAt = (config.configJson.lastInboundAt as number | null) ?? null;
+      meta.lastOutboundAt = (config.configJson.lastOutboundAt as number | null) ?? null;
+    }
 
     this.registerChannelHandlers(ch, config!, platform, instanceId, meta);
 

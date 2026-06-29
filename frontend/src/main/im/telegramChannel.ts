@@ -125,7 +125,7 @@ export class TelegramChannel extends EventEmitter implements IChannel {
    */
   async verifyToken(token: string): Promise<{ ok: boolean; botUsername?: string; accountId?: string; error?: string }> {
     try {
-      const resp = await this.apiGet(`${TG_BASE_URL}/bot${token}/getMe`);
+      const resp = await this.apiGet(`${TG_BASE_URL}/bot${token}/getMe`, DEFAULT_API_TIMEOUT_MS);
       const data: TgGetMeResp = JSON.parse(resp);
       if (!data.ok || !data.result) {
         return { ok: false, error: data.description || 'Token 验证失败' };
@@ -133,7 +133,22 @@ export class TelegramChannel extends EventEmitter implements IChannel {
       const username = data.result.username || `bot_${data.result.id}`;
       return { ok: true, botUsername: username, accountId: String(data.result.id) };
     } catch (e: any) {
-      return { ok: false, error: e?.message || String(e) };
+      const msg = e?.message || String(e);
+      // apiGet throws "HTTP <status>: <body>" on non-2xx responses
+      const m = /^HTTP (\d+):([\s\S]*)$/.exec(msg);
+      if (m) {
+        const status = m[1];
+        let desc = m[2].trim();
+        try {
+          const parsed = JSON.parse(m[2]);
+          if (parsed && typeof parsed.description === 'string') desc = parsed.description;
+        } catch { /* non-JSON body, keep raw text */ }
+        if (status === '401') return { ok: false, error: `Token 无效或已失效（${desc}）` };
+        if (status === '404') return { ok: false, error: `Token 格式有误（${desc}）` };
+        return { ok: false, error: `Telegram 接口返回错误（HTTP ${status}：${desc}）` };
+      }
+      if (e?.name === 'AbortError') return { ok: false, error: '连接超时，请检查网络后重试' };
+      return { ok: false, error: `网络错误：${msg}` };
     }
   }
 
