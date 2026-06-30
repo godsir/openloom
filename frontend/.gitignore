@@ -2,3 +2,4 @@ node_modules/
 out/
 dist/
 *.tsbuildinfo
+app.7z.tmp

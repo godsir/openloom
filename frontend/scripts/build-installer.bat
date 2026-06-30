@@ -11,7 +11,7 @@ if not exist installer\NSIS\Plugins mkdir installer\NSIS\Plugins
 copy /y resources\x86-unicode\EnVar.dll installer\NSIS\Plugins\EnVar.dll >nul
 
 echo [2/5] electron-builder packing win-unpacked...
-call npx electron-builder --win --dir
+call node_modules\.bin\electron-builder.cmd --win --dir
 if errorlevel 1 exit /b 1
 
 echo [3/5] copy win-unpacked to FilesToInstall...
@@ -21,7 +21,8 @@ xcopy /e /i /y "dist\win-unpacked\*" "installer\FilesToInstall\"
 
 echo [4/5] nsNiuniuSkin packing installer...
 cd installer\SetupScripts\openloom
-call build.bat
+call .\build.bat
+if errorlevel 1 ( cd /d "%~dp0\.." & exit /b 1 )
 cd /d "%~dp0\.."
 
 echo [5/5] generate latest.yml...

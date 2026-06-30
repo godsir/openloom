@@ -853,7 +853,7 @@ async fn run_agent_turn_inner(
                     match vision_result {
                         Ok(Ok(vresult)) => {
                             vision_usage = Some(vresult.usage);
-                            messages.push(Message {
+                            messages.insert(messages.len().saturating_sub(1), Message {
                                 role: loom_types::Role::System,
                                 content: vec![ContentPart::Text {
                                     text: vresult.context,
@@ -865,7 +865,7 @@ async fn run_agent_turn_inner(
                         }
                         Ok(Err(e)) => {
                             tracing::warn!(error = %e, "vision auxiliary failed");
-                            messages.push(Message {
+                            messages.insert(messages.len().saturating_sub(1), Message {
                                     role: loom_types::Role::System,
                                     content: vec![ContentPart::Text {
                                         text: format!(
@@ -879,7 +879,7 @@ async fn run_agent_turn_inner(
                         }
                         Err(_) => {
                             tracing::warn!("vision auxiliary timed out after 300s");
-                            messages.push(Message {
+                            messages.insert(messages.len().saturating_sub(1), Message {
                                     role: loom_types::Role::System,
                                     content: vec![ContentPart::Text {
                                         text: "<vision-context>\n[图像分析超时：辅助视觉模型 300s 内无响应。请明确告诉用户你没看到图片，建议检查视觉模型配置。]\n</vision-context>".into(),
@@ -1742,7 +1742,7 @@ async fn run_agent_turn_streaming_inner(
                                     .await;
                             }
                             vision_usage = Some(vresult.usage);
-                            messages.push(Message {
+                            messages.insert(messages.len().saturating_sub(1), Message {
                                 role: loom_types::Role::System,
                                 content: vec![ContentPart::Text {
                                     text: vresult.context,
@@ -1754,7 +1754,7 @@ async fn run_agent_turn_streaming_inner(
                         }
                         Ok(Err(e)) => {
                             tracing::warn!(error = %e, "vision auxiliary failed");
-                            messages.push(Message {
+                            messages.insert(messages.len().saturating_sub(1), Message {
                                     role: loom_types::Role::System,
                                     content: vec![ContentPart::Text {
                                         text: format!(
@@ -1768,7 +1768,7 @@ async fn run_agent_turn_streaming_inner(
                         }
                         Err(_) => {
                             tracing::warn!("vision auxiliary timed out after 300s");
-                            messages.push(Message {
+                            messages.insert(messages.len().saturating_sub(1), Message {
                                     role: loom_types::Role::System,
                                     content: vec![ContentPart::Text {
                                         text: "<vision-context>\n[图像分析超时：辅助视觉模型 300s 内无响应。请明确告诉用户你没看到图片，建议检查视觉模型配置。]\n</vision-context>".into(),
