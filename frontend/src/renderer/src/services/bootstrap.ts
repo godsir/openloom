@@ -210,7 +210,8 @@ export async function bootstrapApp(): Promise<() => void> {
 
     switch (data.method) {
       case 'chat.stream_delta':
-        streamBufferManager.handleStreamDelta(sessionId, (p?.delta as string) || '')
+        // Only handle IM-originated sessions; regular chats arrive via loomSubscribe.
+        streamBufferManager.handleStreamDeltaIM(sessionId, (p?.delta as string) || '')
         break
       case 'chat.stream_end':
         streamBufferManager.handleStreamEnd(sessionId)

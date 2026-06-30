@@ -48,6 +48,9 @@ interface BufferState {
 
 class StreamBufferManager {
   private buffers = new Map<string, BufferState>()
+  /** Sessions whose deltas arrived via main WebSocket (loomSubscribe).
+   *  Duplicate deltas forwarded by ImBridge will be skipped. */
+  private wsStreamSessions = new Set<string>()
 
   /** Register an existing assistant placeholder message for streaming updates.
    *  Resets any stale state from a previous stream on the same session. */
@@ -148,6 +151,18 @@ class StreamBufferManager {
     if (!this.ensureStreamingForIM(sessionId)) {
       return
     }
+    this.wsStreamSessions.add(sessionId)  // mark as handled by main WS
+    this._doHandleStreamDelta(sessionId, delta)
+  }
+
+  /** IM bridge variant — skip if main WS already handled this session. */
+  handleStreamDeltaIM(sessionId: string, delta: string): void {
+    if (this.wsStreamSessions.has(sessionId)) return  // already handled by main WS
+    if (!this.ensureStreamingForIM(sessionId)) return
+    this._doHandleStreamDelta(sessionId, delta)
+  }
+
+  private _doHandleStreamDelta(sessionId: string, delta: string): void {
     const buf = this.ensureBuffer(sessionId)
     // Defensive: if buffer has no messageId, stream wasn't properly started
     if (!buf.messageId) return
@@ -328,6 +343,7 @@ class StreamBufferManager {
     // desktop ChatArea shows everything.
     const wasIM = buf.imOrigin
     this.buffers.delete(sessionId)
+    this.wsStreamSessions.delete(sessionId)
     // Fire and forget the sync — it updates messagesBySession asynchronously.
     if (wasIM) {
       this.syncIMSessionHistory(sessionId)
