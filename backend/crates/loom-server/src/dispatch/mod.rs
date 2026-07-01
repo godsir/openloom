@@ -15,6 +15,7 @@ mod lsp;
 mod mcp;
 mod model;
 mod plan;
+mod process;
 pub mod session;
 mod skills;
 mod system;
@@ -99,6 +100,9 @@ pub async fn dispatch_method(
         return result;
     }
     if let Some(result) = cron::handle(state, method, &p).await {
+        return result;
+    }
+    if let Some(result) = process::handle(state, method, &p).await {
         return result;
     }
     if let Some(result) = plan::handle(state, method, &p).await {
