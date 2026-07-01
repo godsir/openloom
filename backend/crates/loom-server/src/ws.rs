@@ -1,34 +1,107 @@
 //! WebSocket handler — JSON-RPC 2.0 over WebSocket with bidirectional messaging.
 //! Parses incoming requests, routes to dispatch, sends responses and notifications.
 
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::AppState;
 use crate::dispatch;
 use axum::extract::ws::{Message, WebSocket};
-use axum::extract::{State, WebSocketUpgrade};
+use axum::extract::{Query, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
 use loom_core::AgentEvent;
 use loom_types::{JsonRpcRequest, JsonRpcResponse};
 use tokio::sync::broadcast;
 
+/// Per-connection ring buffer that retains events for replay after disconnect.
+pub struct ConnectionEventLog {
+    events: VecDeque<(u64, String)>, // (seq, JSON notification)
+    capacity: usize,
+    pub next_seq: u64,
+    disconnected_at: Option<Instant>,
+}
+
+impl ConnectionEventLog {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            events: VecDeque::with_capacity(capacity),
+            capacity,
+            next_seq: 1,
+            disconnected_at: None,
+        }
+    }
+
+    /// Push an event, assign a seq, trim if over capacity.
+    pub fn push(&mut self, json: String) -> u64 {
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        self.events.push_back((seq, json));
+        while self.events.len() > self.capacity {
+            self.events.pop_front();
+        }
+        seq
+    }
+
+    /// Return all events with seq > after_seq, in order.
+    pub fn replay_from(&self, after_seq: u64) -> Vec<&(u64, String)> {
+        self.events.iter().filter(|(s, _)| *s > after_seq).collect()
+    }
+
+    pub fn mark_disconnected(&mut self) {
+        self.disconnected_at = Some(Instant::now());
+    }
+
+    #[allow(dead_code)]
+    pub fn is_stale(&self, ttl: std::time::Duration) -> bool {
+        self.disconnected_at
+            .map(|t| t.elapsed() > ttl)
+            .unwrap_or(false)
+    }
+}
+
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     // Reject new WebSocket connections during shutdown
     if state.shutdown_token.is_cancelled() {
         return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+    let from_seq: Option<u64> = params.get("seq").and_then(|s| s.parse().ok());
+    ws.on_upgrade(move |socket| handle_socket(socket, state, from_seq))
 }
 
-async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
+async fn handle_socket(socket: WebSocket, state: Arc<AppState>, from_seq: Option<u64>) {
     tracing::info!("WebSocket connected");
 
     let mut event_rx = state.orchestrator.event_bus().subscribe();
+    let event_log = state.event_log.clone();
     let (mut ws_tx, mut ws_rx) = socket.split();
+
+    // If reconnecting with a seq, replay missed events first
+    {
+        let log = event_log.lock().await;
+        if let Some(seq) = from_seq {
+            let replay = log.replay_from(seq);
+            if !replay.is_empty() {
+                for (_s, json) in &replay {
+                    let _ = ws_tx.send(Message::Text(json.clone())).await;
+                }
+            }
+            // Send replay_done marker
+            let from = seq.saturating_add(1);
+            let to = log.next_seq.saturating_sub(1);
+            let done = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "ws.replay_done",
+                "params": { "from_seq": from, "to_seq": to }
+            });
+            let _ = ws_tx.send(Message::Text(done.to_string())).await;
+        }
+    }
 
     // Channel for sending responses back through the WebSocket
     let (resp_tx, mut resp_rx) = tokio::sync::mpsc::channel::<String>(64);
@@ -78,7 +151,10 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                             }
                         }
                     }
-                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(Message::Close(_))) | None => {
+                        event_log.lock().await.mark_disconnected();
+                        break;
+                    }
                     Some(Err(e)) => {
                         tracing::debug!("WS error: {}", e);
                         break;
@@ -96,11 +172,16 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     Ok(ref e) => {
                         let method = agent_event_method(e);
                         let params = agent_event_params(e);
+                        let mut log = event_log.lock().await;
+                        let seq = log.next_seq;
                         if let Ok(json) = serde_json::to_string(&serde_json::json!({
                             "jsonrpc": "2.0",
                             "method": method,
                             "params": params,
+                            "seq": seq,
                         })) {
+                            log.push(json.clone());
+                            drop(log);
                             let _ = ws_tx.send(Message::Text(json)).await;
                         }
                     }

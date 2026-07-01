@@ -20,7 +20,7 @@ mod ws;
 
 pub use credential::{load_credentials, persist_credentials, save_key};
 pub use dispatch::SessionStore;
-pub use ws::ws_handler;
+pub use ws::{ws_handler, ConnectionEventLog};
 
 /// Shared application state passed to all route handlers.
 pub struct AppState {
@@ -37,6 +37,8 @@ pub struct AppState {
     pub key_store: Arc<sync::RwLock<HashMap<String, String>>>,
     /// Write-mode workspace RAG index (BM25 keyword retrieval).
     pub write_index: Arc<RwLock<Option<dispatch::write_rag::WorkspaceIndex>>>,
+    /// Global event log for WS replay. Shared across connections.
+    pub event_log: Arc<tokio::sync::Mutex<ConnectionEventLog>>,
 }
 
 impl AppState {
@@ -55,6 +57,7 @@ impl AppState {
             shutdown_token,
             key_store,
             write_index: Arc::new(RwLock::new(None)),
+            event_log: Arc::new(tokio::sync::Mutex::new(ConnectionEventLog::new(2000))),
         }
     }
 }
