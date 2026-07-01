@@ -14,10 +14,25 @@ export function updateLastMessageTime(): void {
 }
 
 let ws: WebSocket | null = null
-let retryDelay = 1000
 let retryCount = 0
-const MAX_RETRY_DELAY = 30000
-const MAX_RETRIES = 20
+
+// Fast reconnect: 200ms base with 30% jitter, max 5s between attempts,
+// no limit on retries (process runs in background, frontend just needs to reconnect).
+const INITIAL_DELAY = 200
+const MAX_DELAY = 5000
+const JITTER = 0.3
+
+// Heartbeat: detect half-open connections faster than TCP timeout (~30s on Windows).
+const HEARTBEAT_INTERVAL = 15000   // check every 15s
+const HEARTBEAT_TIMEOUT = 5000     // no message for 5s → suspect stall
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+
+function reconnectDelay(retryCount: number): number {
+  const base = Math.min(INITIAL_DELAY * Math.pow(2, retryCount), MAX_DELAY)
+  const jitter = base * JITTER * (Math.random() * 2 - 1)
+  return Math.max(100, base + jitter)
+}
+
 const onReconnectCallbacks: Array<ReconnectCallback> = []
 const onOpenCallbacks: Array<() => void> = []
 
@@ -83,10 +98,27 @@ export function connectWebSocket(port: number): Promise<void> {
     connectResolvers.push(resolve)
 
     ws!.onopen = () => {
-      retryDelay = 1000
       retryCount = 0
       setWsStateFn?.('connected')
       setReconnectAttemptFn?.(0)
+      // Start heartbeat to detect half-open connections
+      if (heartbeatTimer) clearInterval(heartbeatTimer)
+      let missedChecks = 0
+      heartbeatTimer = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          const now = Date.now()
+          if (now - lastMessageTime > HEARTBEAT_TIMEOUT) {
+            missedChecks++
+            if (missedChecks >= 2) {
+              console.warn('[ws] heartbeat lost — forcing reconnect')
+              ws!.close()
+              return
+            }
+          } else {
+            missedChecks = 0
+          }
+        }
+      }, HEARTBEAT_INTERVAL)
       // Flush queued RPC sends first
       for (const cb of onOpenCallbacks) cb()
       for (const cb of [...onReconnectCallbacks]) cb()
@@ -99,16 +131,10 @@ export function connectWebSocket(port: number): Promise<void> {
 
     ws!.onclose = () => {
       retryCount++
-      if (retryCount <= MAX_RETRIES) {
-        setWsStateFn?.('reconnecting')
-        setReconnectAttemptFn?.(retryCount)
-        setTimeout(() => connectWebSocket(port), retryDelay)
-        retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY)
-      } else {
-        setWsStateFn?.('disconnected')
-        // Unblock any awaiters so their bootstrap can finish and clean up.
-        resolveAllPending()
-      }
+      setWsStateFn?.('reconnecting')
+      setReconnectAttemptFn?.(retryCount)
+      const delay = reconnectDelay(retryCount)
+      setTimeout(() => connectWebSocket(port), delay)
     }
 
     ws!.onerror = () => {
@@ -133,6 +159,10 @@ export function getWs(): WebSocket | null {
 }
 
 export function disconnectWebSocket(): void {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer)
+    heartbeatTimer = null
+  }
   if (ws) {
     ws.onclose = null
     ws.close()
