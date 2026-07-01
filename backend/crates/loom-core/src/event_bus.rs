@@ -121,6 +121,17 @@ pub enum AgentEvent {
         job_id: String,
         action: String,
     },
+    /// Background process emitted a line on stdout or stderr.
+    ProcessOutput {
+        pid: String,
+        data: String,
+        stream: String,
+    },
+    /// Background process exited.
+    ProcessExited {
+        pid: String,
+        exit_code: i32,
+    },
 }
 
 /// A lightweight event bus using tokio broadcast.

@@ -139,6 +139,8 @@ fn agent_event_method(event: &AgentEvent) -> &'static str {
         AgentEvent::CronJobCompleted { .. } => "cron.job_completed",
         AgentEvent::CronJobFailed { .. } => "cron.job_failed",
         AgentEvent::CronJobChanged { .. } => "cron.job_changed",
+        AgentEvent::ProcessOutput { .. } => "process.output",
+        AgentEvent::ProcessExited { .. } => "process.exited",
     }
 }
 
@@ -243,6 +245,12 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
         }
         AgentEvent::CronJobChanged { job_id, action } => {
             json!({ "job_id": job_id, "action": action })
+        }
+        AgentEvent::ProcessOutput { pid, data, stream } => {
+            json!({ "pid": pid, "data": data, "stream": stream })
+        }
+        AgentEvent::ProcessExited { pid, exit_code } => {
+            json!({ "pid": pid, "exit_code": exit_code })
         }
         _ => json!({}),
     }
