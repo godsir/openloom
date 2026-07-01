@@ -3522,15 +3522,9 @@ impl Orchestrator {
         // STABLE PREFIX — changes rarely, maximises KV-cache reuse
         // ═══════════════════════════════════════════════════════════════════
 
-        // 1. Agent persona — the agent's core identity, placed first for maximum effect
-        if !agent_config.persona.is_empty() {
-            stable_prompt.push_str(&agent_config.persona);
-        }
-        // 2. System instructions — Loom.md 是共享纪律基座（类似 CLAUDE.md），
+        // 1. System instructions — Loom.md 是共享纪律基座（类似 CLAUDE.md），
         // 对所有 agent 始终加载：workspace 级 > 全局 > 硬编码默认。
-        // agent 专属的 system_prompt_override 追加在 Loom.md 之后，作为该 agent 的
-        // 特定补充。这样自定义 agent 也会遵守 Loom.md 纪律，而非用 override 把
-        // Loom.md 整个顶掉（此前 override 非空时 Loom.md 永远不会被读取）。
+        // 放在最前面作为"平台层规则"，后续由 Agent persona 覆盖身份声明。
         let ws_path = workspace_path.as_ref().map(|s| std::path::Path::new(s.as_str()));
         let base = if let Some(loom_md) = load_loom_md(ws_path, &self.data_dir) {
             loom_md
@@ -3538,11 +3532,19 @@ impl Orchestrator {
             self.build_system_prompt().await
         };
         if !base.is_empty() {
+            stable_prompt.push_str(&base);
+        }
+        // 2. Agent persona — 身份声明放在 Loom.md 之后，作为该 agent 的
+        // 核心身份覆盖。LLM 通常遵从靠后的指令（recency bias），因此 agent
+        // 的 persona 会覆盖 Loom.md 的通用平台身份声明。
+        if !agent_config.persona.is_empty() {
             if !stable_prompt.is_empty() {
                 stable_prompt.push_str("\n\n");
             }
-            stable_prompt.push_str(&base);
+            stable_prompt.push_str(&agent_config.persona);
         }
+        // 3. agent 专属的 system_prompt_override — 追加在 persona 之后，
+        // 作为该 agent 的特定行为规则补充。
         if let Some(ref override_prompt) = agent_config.system_prompt_override
             && !override_prompt.is_empty()
         {

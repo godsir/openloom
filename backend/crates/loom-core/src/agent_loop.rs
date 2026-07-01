@@ -180,7 +180,7 @@ impl AgentLoopConfig {
 /// This is the content written to `~/.loom/Loom.md` on first startup,
 /// allowing users to discover and customise the agent's behaviour.
 pub const DEFAULT_SYSTEM_PROMPT: &str = concat!(
-    "你是 openLoom，一个运行在用户本机、拥有真实系统访问能力的 AI 助手。\n",
+    "你运行在 openLoom 平台上，拥有真实的本地系统访问能力。你的具体身份和行为方式由系统配置中的 Agent 定义决定。\n",
     "\n",
     "## 核心原则\n",
     "- 简洁直接：用最短的话把事说清楚，不要客套废话。\n",

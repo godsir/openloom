@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -27,6 +27,7 @@ struct ManagedProcess {
     child: Arc<Mutex<Option<Child>>>,
     stdin_tx: Option<mpsc::UnboundedSender<String>>,
     started_at: Instant,
+    started_at_ms: i64,
     last_active: Instant,
     exit_code: Option<i32>,
 }
@@ -185,6 +186,10 @@ impl ProcessManager {
         });
 
         let now = Instant::now();
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
         let mut procs = self.processes.write().await;
         procs.insert(
             pid.clone(),
@@ -194,6 +199,7 @@ impl ProcessManager {
                 child: child_arc,
                 stdin_tx: Some(stdin_tx),
                 started_at: now,
+                started_at_ms: now_ms,
                 last_active: now,
                 exit_code: None,
             },
@@ -243,6 +249,7 @@ impl ProcessManager {
                 name: e.name.clone(),
                 running: e.exit_code.is_none(),
                 exit_code: e.exit_code,
+                started_at_ms: e.started_at_ms,
             })
             .collect()
     }
@@ -268,4 +275,6 @@ pub struct ProcessInfo {
     pub name: String,
     pub running: bool,
     pub exit_code: Option<i32>,
+    /// Unix timestamp in milliseconds when the process was started.
+    pub started_at_ms: i64,
 }
