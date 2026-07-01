@@ -157,6 +157,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, from_seq: Option
                     }
                     Some(Err(e)) => {
                         tracing::debug!("WS error: {}", e);
+                        event_log.lock().await.mark_disconnected();
                         break;
                     }
                     _ => {} // ignore binary/ping/pong

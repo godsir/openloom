@@ -16,11 +16,12 @@ export function updateLastMessageTime(): void {
 let ws: WebSocket | null = null
 let retryCount = 0
 
-// Fast reconnect: 200ms base with 30% jitter, max 5s between attempts,
-// no limit on retries (process runs in background, frontend just needs to reconnect).
+// Fast reconnect: 200ms base with 30% jitter, max 5s between attempts.
+// After ~100 retries (~5 min), resolve pending awaiters so the UI doesn't hang forever.
 const INITIAL_DELAY = 200
 const MAX_DELAY = 5000
 const JITTER = 0.3
+const RETRY_GIVE_UP = 100  // ~5 min of retries → stop and let user manually reconnect
 
 // Heartbeat: detect half-open connections faster than TCP timeout (~30s on Windows).
 const HEARTBEAT_INTERVAL = 15000   // check every 15s
@@ -131,10 +132,15 @@ export function connectWebSocket(port: number): Promise<void> {
 
     ws!.onclose = () => {
       retryCount++
-      setWsStateFn?.('reconnecting')
-      setReconnectAttemptFn?.(retryCount)
-      const delay = reconnectDelay(retryCount)
-      setTimeout(() => connectWebSocket(port), delay)
+      if (retryCount <= RETRY_GIVE_UP) {
+        setWsStateFn?.('reconnecting')
+        setReconnectAttemptFn?.(retryCount)
+        const delay = reconnectDelay(retryCount)
+        setTimeout(() => connectWebSocket(port), delay)
+      } else {
+        setWsStateFn?.('disconnected')
+        resolveAllPending()
+      }
     }
 
     ws!.onerror = () => {

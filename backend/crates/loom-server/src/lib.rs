@@ -148,6 +148,9 @@ pub async fn serve(
     // Phase 3: Start background forgetting loop (hourly check, 7-day interval gate).
     state.orchestrator.spawn_forgetting_loop();
 
+    // Spawn background process GC — cleans up exited processes every 5 minutes.
+    state.orchestrator.spawn_process_gc_loop();
+
     // Initialise and start the cron scheduler (user-defined periodic tasks).
     if let Err(e) = state.orchestrator.init_cron_scheduler().await {
         tracing::warn!(error = %e, "failed to initialise cron scheduler — periodic tasks disabled");

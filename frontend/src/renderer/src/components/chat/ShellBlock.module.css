@@ -90,3 +90,16 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
 }
+
+.stderrLine {
+  color: var(--danger, #e74c3c);
+}
+
+.systemLine {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.stdoutLine {
+  color: var(--text-secondary);
+}

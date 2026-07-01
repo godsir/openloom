@@ -10,6 +10,7 @@ import TextBlock from './TextBlock'
 import FileBlock from './FileBlock'
 import SubagentCard from './SubagentCard'
 import VisionProcessingBlock from './VisionProcessingBlock'
+import ProcessOutputBlock from './ProcessOutputBlock'
 import MessageFooterActions from './MessageFooterActions'
 import ContinueButton from './ContinueButton'
 import TypingIndicator from '../shared/TypingIndicator'
@@ -78,6 +79,9 @@ const AssistantMessage = memo(function AssistantMessage({
               case 'vision_processing':
                 base = `vision:${i}`
                 break
+              case 'process_output':
+                base = `proc:${(block.pid as string) ?? i}`
+                break
               case 'image':
                 base = `image:${i}`
                 break
@@ -93,6 +97,8 @@ const AssistantMessage = memo(function AssistantMessage({
             switch (block.type) {
               case 'vision_processing':
                 return <VisionProcessingBlock key={key} block={block} />
+              case 'process_output':
+                return <ProcessOutputBlock key={key} block={block} />
               case 'thinking':
                 return <ThinkingBlock key={key} block={block} />
               case 'skill':

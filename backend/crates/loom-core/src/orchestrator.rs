@@ -5555,6 +5555,19 @@ impl Orchestrator {
         &self.process_manager
     }
 
+    /// Spawn a background GC task that periodically cleans up exited processes
+    /// older than 10 minutes. Keeps the process registry from growing unbounded.
+    pub fn spawn_process_gc_loop(&self) {
+        let pm = self.process_manager.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                pm.gc(tokio::time::Duration::from_secs(600)).await;
+            }
+        });
+    }
+
     /// Get a clone of the pending permissions map for "ask" mode tool approval.
     pub async fn pending_permissions(
         &self,
