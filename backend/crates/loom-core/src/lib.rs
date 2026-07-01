@@ -11,6 +11,7 @@ pub mod builtin_tools;
 pub mod event_bus;
 pub mod orchestrator;
 pub mod plan_prompts;
+pub mod process_manager;
 pub mod slash_router;
 pub mod todo_context;
 pub mod tool_context;
@@ -24,6 +25,7 @@ pub use event_bus::{AgentEvent, EventBus};
 pub use orchestrator::{
     MemoryStore, Orchestrator, PipelineScheduler, adapt_behavior,
 };
+pub use process_manager::{ProcessInfo, ProcessManager};
 pub use loom_types::{
     BehaviorProfile, ForgettingReport, MemoryHealth, PipelineStage, QualityEvaluation,
 };
