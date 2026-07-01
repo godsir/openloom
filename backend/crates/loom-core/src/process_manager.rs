@@ -20,15 +20,16 @@ use crate::event_bus::{AgentEvent, EventBus};
 const MAX_LINE_BYTES: usize = 8192;
 
 /// A managed background process.
-#[allow(dead_code)]
 struct ManagedProcess {
     id: String,
     name: String,
     child: Arc<Mutex<Option<Child>>>,
     stdin_tx: Option<mpsc::UnboundedSender<String>>,
+    #[allow(dead_code)]
     started_at: Instant,
     started_at_ms: i64,
-    last_active: Instant,
+    /// Time when the process exited (set by exit waiter or kill).
+    exited_at: Option<Instant>,
     exit_code: Option<i32>,
 }
 
@@ -182,6 +183,7 @@ impl ProcessManager {
             let mut procs = processes.write().await;
             if let Some(entry) = procs.get_mut(&pid_clone) {
                 entry.exit_code = Some(code);
+                entry.exited_at = Some(Instant::now());
             }
         });
 
@@ -200,7 +202,7 @@ impl ProcessManager {
                 stdin_tx: Some(stdin_tx),
                 started_at: now,
                 started_at_ms: now_ms,
-                last_active: now,
+                exited_at: None,
                 exit_code: None,
             },
         );
@@ -209,18 +211,25 @@ impl ProcessManager {
         Ok((pid, proc_name))
     }
 
-    /// Kill a managed process by ID.
+    /// Kill a managed process by ID. Returns true if the process was found
+    /// and killed (or was already exiting), false if the pid is unknown.
     pub async fn kill(&self, pid: &str) -> Result<bool> {
         let mut procs = self.processes.write().await;
         if let Some(entry) = procs.get_mut(pid) {
+            // Already exited — nothing to kill.
+            if entry.exit_code.is_some() {
+                return Ok(true);
+            }
             let mut guard = entry.child.lock().await;
             if let Some(ref mut child) = *guard {
                 let _ = child.start_kill();
-                drop(guard);
-                entry.exit_code = Some(-1);
-                info!(%pid, "process killed");
-                return Ok(true);
             }
+            // Even if the exit waiter already took the child, mark it as killed.
+            drop(guard);
+            entry.exit_code = Some(-1);
+            entry.exited_at = Some(Instant::now());
+            info!(%pid, "process killed");
+            return Ok(true);
         }
         Ok(false)
     }
@@ -254,13 +263,14 @@ impl ProcessManager {
             .collect()
     }
 
-    /// Remove exited processes older than `max_age`. Called periodically.
+    /// Remove exited processes whose exit time is older than `max_age`.
+    /// Running processes are never removed.
     pub async fn gc(&self, max_age: Duration) {
         let mut procs = self.processes.write().await;
         let now = Instant::now();
         procs.retain(|_pid, entry| {
-            if entry.exit_code.is_some() {
-                now.duration_since(entry.started_at) < max_age
+            if let Some(exited_at) = entry.exited_at {
+                now.duration_since(exited_at) < max_age
             } else {
                 true // keep running processes
             }
