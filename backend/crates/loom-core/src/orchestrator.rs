@@ -907,9 +907,9 @@ impl Orchestrator {
                 .expect("Failed to open todo store"),
         );
 
-        // Create event bus and ProcessManager for background process lifecycle.
-        let event_bus = EventBus::new(256);
-        let process_manager = Arc::new(ProcessManager::new(event_bus));
+        // Create ProcessManager sharing the same EventBus as the AgentPool,
+        // so ws.rs receives both agent and process events from a single channel.
+        let process_manager = Arc::new(ProcessManager::new(pool.event_bus().clone()));
 
         Self {
             pool,
