@@ -2,6 +2,17 @@ import { handleWsMessage } from './jsonrpc'
 
 type ReconnectCallback = () => void
 
+let lastSeq = 0
+let lastMessageTime = Date.now()
+
+export function setLastSeq(seq: number): void {
+  lastSeq = seq
+}
+
+export function updateLastMessageTime(): void {
+  lastMessageTime = Date.now()
+}
+
 let ws: WebSocket | null = null
 let retryDelay = 1000
 let retryCount = 0
@@ -62,7 +73,10 @@ export function connectWebSocket(port: number): Promise<void> {
     ws = null
   }
 
-  const url = `ws://127.0.0.1:${port}/ws`
+  let url = `ws://127.0.0.1:${port}/ws`
+  if (lastSeq > 0) {
+    url += `?seq=${lastSeq}`
+  }
   ws = new WebSocket(url)
 
   return new Promise<void>((resolve) => {

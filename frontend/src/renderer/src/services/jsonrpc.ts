@@ -1,4 +1,4 @@
-import { getWs, onWsConnected } from './websocket'
+import { getWs, onWsConnected, setLastSeq, updateLastMessageTime } from './websocket'
 import type { JsonRpcRequest, JsonRpcResponse } from '../types/bindings'
 
 let nextId = 1
@@ -99,6 +99,12 @@ export function loomSubscribe(handler: NotificationHandler): () => void {
 export function handleWsMessage(data: string): void {
   try {
     const msg = JSON.parse(data)
+
+    // Track sequence number for reconnection
+    if (typeof msg.seq === 'number') {
+      setLastSeq(msg.seq)
+    }
+    updateLastMessageTime()
 
     if ('id' in msg && msg.id != null) {
       const entry = pending.get(msg.id)

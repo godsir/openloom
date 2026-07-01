@@ -198,6 +198,9 @@ export async function bootstrapApp(): Promise<() => void> {
           (p?.exit_code as number) ?? -1,
         )
         break
+      case 'ws.replay_done':
+        console.log('[ws] event replay complete:', p)
+        break
     }
   })
 
@@ -259,6 +262,9 @@ export async function bootstrapApp(): Promise<() => void> {
           (p?.pid as string) || '',
           (p?.exit_code as number) ?? -1,
         )
+        break
+      case 'ws.replay_done':
+        // replay_done is internal WS protocol, not relevant for IM
         break
     }
   })
