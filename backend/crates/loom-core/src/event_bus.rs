@@ -152,6 +152,11 @@ impl EventBus {
         let _ = self.tx.send(event);
     }
 
+    /// Get a clone of the underlying broadcast sender.
+    pub fn sender(&self) -> tokio::sync::broadcast::Sender<AgentEvent> {
+        self.tx.clone()
+    }
+
     /// Subscribe to receive events.
     pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<AgentEvent> {
         self.tx.subscribe()

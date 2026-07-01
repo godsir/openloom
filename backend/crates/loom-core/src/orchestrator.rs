@@ -251,6 +251,7 @@ use crate::agent_loop::{
 };
 use crate::agent_pool::{AgentPool, AgentSummary};
 use crate::event_bus::{AgentEvent, EventBus};
+use crate::process_manager::ProcessManager;
 use crate::slash_router::SlashRouter;
 use crate::tool_registry::{AgentTool, SpawnAgentTool, SpawnContext, ToolRegistry};
 use loom_cron::CronScheduler;
@@ -312,6 +313,8 @@ pub struct Orchestrator {
     /// compaction, heartbeat, token-usage, and other infrastructure events.
     #[allow(dead_code)] // CompactionPerformed emitter removed in T12; field retained for future events
     engine_events: tokio::sync::broadcast::Sender<EngineEvent>,
+    /// Background process manager for long-lived child processes.
+    process_manager: Arc<ProcessManager>,
     /// Last stop_reason per session — for frontend reconnect queries.
     last_stop_reasons: RwLock<HashMap<String, StopReason>>,
     /// Todo store backed by session.db (thread_todos table).
@@ -904,6 +907,10 @@ impl Orchestrator {
                 .expect("Failed to open todo store"),
         );
 
+        // Create event bus and ProcessManager for background process lifecycle.
+        let event_bus = EventBus::new(256);
+        let process_manager = Arc::new(ProcessManager::new(event_bus));
+
         Self {
             pool,
             tool_registry: Arc::new(RwLock::new(registry)),
@@ -941,6 +948,7 @@ impl Orchestrator {
                 let (tx, _) = tokio::sync::broadcast::channel(256);
                 tx
             },
+            process_manager,
             last_stop_reasons: RwLock::new(HashMap::new()),
             todo_store,
             session_todos: RwLock::new(HashMap::new()),
@@ -5526,6 +5534,11 @@ impl Orchestrator {
 
     pub fn event_bus(&self) -> &EventBus {
         self.pool.event_bus()
+    }
+
+    /// Get a reference to the background ProcessManager.
+    pub fn process_manager(&self) -> &Arc<ProcessManager> {
+        &self.process_manager
     }
 
     /// Get a clone of the pending permissions map for "ask" mode tool approval.
