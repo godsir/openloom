@@ -29,7 +29,7 @@ impl AgentTool for ShellTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "shell".into(),
-            description: "Execute a shell command and return its output. Supports PowerShell syntax on Windows (Get-ChildItem, $env:PATH, etc.) and bash syntax on Unix. Use for: listing files, reading file contents, searching with grep/Select-String, checking git status, running build commands. Default timeout is 60 seconds. Avoid destructive operations.".into(),
+            description: "执行 Shell 命令并等待返回结果。默认超时 60 秒，最大 300 秒。适用：列文件、读内容、搜索、git、构建等短命令。\n\n⚠ 预计运行超过 60 秒的命令（如游戏服务、长时间构建、守护进程）请用 process_spawn 代替，shell 的超时上限无法满足长任务。".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -2235,7 +2235,7 @@ impl AgentTool for ProcessSpawnTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "process_spawn".into(),
-            description: "启动一个后台进程并立即返回。进程独立于 WebSocket 连接运行，stdout/stderr 会作为流式事件推送。适合运行长时间命令。".into(),
+            description: "启动后台长时间进程并立即返回 pid。进程独立于连接存活，stdout/stderr 作为流式事件推送。适合：游戏服务、长时间构建、守护进程、需要运行超过 60 秒的任何命令。\n\n用法：spawn 后可用 process_list 查看状态，process_stdin 发送输入，process_kill 终止。如进程已在运行，加 --force 杀掉旧实例重新接入。".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -2437,6 +2437,77 @@ impl AgentTool for ProcessListTool {
             is_error: false,
             structured_content: Some(serde_json::json!({ "processes": procs })),
         })
+    }
+
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
+
+// ── process_wait ────────────────────────────────────────────────────────────
+
+pub struct ProcessWaitTool {
+    pub process_manager: Arc<crate::process_manager::ProcessManager>,
+}
+
+#[async_trait]
+impl AgentTool for ProcessWaitTool {
+    fn tool_name(&self) -> &str { "process_wait" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "process_wait".into(),
+            description: "阻塞等待后台进程结束并返回完整输出 + exit code。比 process_list 轮询更省 token。\n\n典型用法：process_spawn 启动长时间命令后，process_wait 等待完成拿到结果。超时默认 600s（10分钟），可自定义。".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "string", "description": "进程 ID（由 process_spawn 返回）" },
+                    "timeout": { "type": "integer", "description": "超时秒数（默认 600，最大 3600）" }
+                },
+                "required": ["pid"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let pid = arguments["pid"].as_str().unwrap_or("");
+        if pid.is_empty() {
+            return Ok(ToolResult {
+                content: "pid is required".into(),
+                is_error: true,
+                structured_content: None,
+            });
+        }
+        let timeout_secs = arguments["timeout"].as_u64().unwrap_or(600).min(3600);
+
+        match self.process_manager.wait(pid, timeout_secs, 256 * 1024).await {
+            Ok(result) => {
+                let summary = format!(
+                    "进程 {} 已退出 (exit_code={})\n\n输出:\n{}",
+                    pid, result.exit_code,
+                    if result.truncated { format!("{}\n\n[输出已截断]", result.output) } else { result.output.clone() }
+                );
+                Ok(ToolResult {
+                    content: summary,
+                    is_error: result.exit_code != 0,
+                    structured_content: Some(serde_json::json!({
+                        "pid": pid,
+                        "exit_code": result.exit_code,
+                        "output": result.output,
+                        "truncated": result.truncated,
+                    })),
+                })
+            }
+            Err(e) => Ok(ToolResult {
+                content: format!("process_wait 失败: {}", e),
+                is_error: true,
+                structured_content: None,
+            }),
+        }
     }
 
     fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }

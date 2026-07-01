@@ -26,6 +26,15 @@ use crate::event_bus::EventBus;
 use crate::tool_context::ToolContext;
 use crate::tool_registry::ToolRegistry;
 
+/// Checkpoint / progress tracking for long-running agent turns.
+/// Recorded each iteration so auto-continue can tell the LLM what's been done.
+#[derive(Debug, Clone, Default)]
+pub struct ProgressCheckpoint {
+    pub completed_steps: Vec<String>,
+    pub tool_calls_executed: usize,
+    pub files_touched: Vec<String>,
+}
+
 /// The result of one agent turn.
 #[derive(Debug, Clone)]
 pub struct TurnResult {
@@ -52,9 +61,11 @@ pub struct TurnResult {
     pub vision_usage: Option<crate::vision::VisionUsage>,
     /// Why the turn stopped — used by frontend to show/hide Continue button.
     pub stop_reason: StopReason,
+    pub progress: ProgressCheckpoint,
 }
 
 /// Configuration for the agent loop.
+#[derive(Clone)]
 pub struct AgentLoopConfig {
     /// System prompt injected at the start of every turn.
     pub system_prompt: String,
@@ -154,6 +165,7 @@ pub struct AgentLoopConfig {
     /// stable prefix but before dynamic_context. Each entry becomes a separate
     /// System message. Empty vec (default) disables injection.
     pub few_shots: Vec<String>,
+    pub progress_checkpoint: Option<ProgressCheckpoint>,
 }
 
 impl AgentLoopConfig {
@@ -271,6 +283,7 @@ impl Default for AgentLoopConfig {
             continuation_note: None,
             steering_queue: None,
             few_shots: Vec::new(),
+            progress_checkpoint: None,
         }
     }
 }
@@ -1009,6 +1022,7 @@ async fn run_agent_turn_inner(
                 },
                 tool_messages,
                 vision_usage: None,
+                progress: ProgressCheckpoint::default(),
                 stop_reason: StopReason::BudgetExhausted,
             });
         }
@@ -1026,6 +1040,11 @@ async fn run_agent_turn_inner(
                 if config.compaction_config.enabled {
                     safety_truncation_count += 1;
                     let before = total_tokens;
+                    // LLM semantic compression first
+                    if config.compaction_config.use_llm_summarization {
+                        llm_compress_large_outputs(&mut messages, &config.compaction_config, client).await;
+                    }
+                    // Character truncation as safety net
                     messages = loom_context::mid_turn_safety_truncate(
                         &messages,
                         config.compaction_config.max_tool_output_chars,
@@ -1070,7 +1089,8 @@ async fn run_agent_turn_inner(
                         },
                         tool_messages,
                         vision_usage: None,
-                        stop_reason: StopReason::BudgetExhausted,
+                        progress: ProgressCheckpoint::default(),
+                stop_reason: StopReason::BudgetExhausted,
                     });
                 }
             } else {
@@ -1108,7 +1128,8 @@ async fn run_agent_turn_inner(
                     },
                     tool_messages,
                     vision_usage: None,
-                    stop_reason: StopReason::BudgetExhausted,
+                    progress: ProgressCheckpoint::default(),
+                stop_reason: StopReason::BudgetExhausted,
                 });
             }
         }
@@ -1134,6 +1155,7 @@ async fn run_agent_turn_inner(
                 },
                 tool_messages,
                 vision_usage: None,
+                progress: ProgressCheckpoint::default(),
                 stop_reason: StopReason::UserCancelled,
             });
         }
@@ -1431,6 +1453,7 @@ async fn run_agent_turn_inner(
             kv_cache_hit: client.last_cache_hit(),
             tool_messages,
             vision_usage: vision_usage.clone(),
+            progress: ProgressCheckpoint::default(),
             stop_reason: StopReason::Completed,
         });
     }
@@ -1455,6 +1478,7 @@ async fn run_agent_turn_inner(
         kv_cache_hit: client.last_cache_hit(),
         tool_messages,
         vision_usage: vision_usage.clone(),
+        progress: ProgressCheckpoint::default(),
         stop_reason: StopReason::MaxIterations,
     })
 }
@@ -1817,6 +1841,7 @@ async fn run_agent_turn_streaming_inner(
     let mut total_cache_read = 0usize;
     let mut total_cache_write = 0usize;
     let mut final_text = String::new();
+    let mut progress = ProgressCheckpoint::default();
     let mut content_parts: Vec<ContentPart> = Vec::new();
     let mut captured_thinking = String::new();
     let mut captured_images: Vec<(String, String)> = Vec::new();
@@ -1904,6 +1929,7 @@ async fn run_agent_turn_streaming_inner(
                 },
                 tool_messages,
                 vision_usage: None,
+                progress: ProgressCheckpoint::default(),
                 stop_reason: StopReason::BudgetExhausted,
             });
         }
@@ -1961,7 +1987,8 @@ async fn run_agent_turn_streaming_inner(
                         },
                         tool_messages,
                         vision_usage: None,
-                        stop_reason: StopReason::BudgetExhausted,
+                        progress: ProgressCheckpoint::default(),
+                stop_reason: StopReason::BudgetExhausted,
                     });
                 }
             } else {
@@ -1998,7 +2025,8 @@ async fn run_agent_turn_streaming_inner(
                     },
                     tool_messages,
                     vision_usage: None,
-                    stop_reason: StopReason::BudgetExhausted,
+                    progress: ProgressCheckpoint::default(),
+                stop_reason: StopReason::BudgetExhausted,
                 });
             }
         }
@@ -2026,6 +2054,7 @@ async fn run_agent_turn_streaming_inner(
                 },
                 tool_messages,
                 vision_usage: None,
+                progress: ProgressCheckpoint::default(),
                 stop_reason: StopReason::UserCancelled,
             });
         }
@@ -2118,7 +2147,8 @@ async fn run_agent_turn_streaming_inner(
                             },
                             tool_messages,
                             vision_usage: None,
-                            stop_reason: StopReason::UserCancelled,
+                            progress: ProgressCheckpoint::default(),
+                stop_reason: StopReason::UserCancelled,
                         });
                     }
                     delta = stream_rx.recv() => {
@@ -2492,6 +2522,10 @@ async fn run_agent_turn_streaming_inner(
                 tokio::spawn(async move { while progress_rx.recv().await.is_some() {} });
 
                 info!(tool_name = %tc_name, tool_args = %tc_args, "executing tool (streaming)");
+                // Capture file path before arguments is moved into execute
+                let maybe_file_path: Option<String> = if matches!(tc_name.as_str(), "file_write" | "file_edit") {
+                    arguments.get("file_path").or(arguments.get("path")).and_then(|v| v.as_str()).map(|s| s.to_string())
+                } else { None };
                 match registry
                     .execute(tc_name, arguments, progress_tx, &tool_context)
                     .await
@@ -2515,6 +2549,17 @@ async fn run_agent_turn_streaming_inner(
                         let tool_msg = Message::tool(tc_id, tc_name, &content);
                         messages.push(tool_msg.clone());
                         tool_messages.push(tool_msg);
+
+                        // Record progress for auto-continue checkpoint
+                        let step_summary = content.chars().take(150).collect::<String>();
+                        progress.completed_steps.push(format!("{} -> {}", tc_name, step_summary));
+                        if progress.completed_steps.len() > 50 { progress.completed_steps.remove(0); }
+                        progress.tool_calls_executed += 1;
+                        // Track file writes/edits
+                        if let Some(ref path) = maybe_file_path {
+                            if !progress.files_touched.contains(path) { progress.files_touched.push(path.clone()); }
+                        }
+
                         let _ = delta_tx
                             .send(StreamDelta::ToolResult {
                                 call_id: tc_id.clone(),
@@ -2630,6 +2675,7 @@ async fn run_agent_turn_streaming_inner(
         cache_write_tokens: total_cache_write,
         kv_cache_hit: client.last_cache_hit(),
         tool_messages,
+        progress,
         vision_usage: vision_usage.clone(),
     })
 }
@@ -2746,6 +2792,73 @@ fn is_transient_error(msg: &str) -> bool {
         || lower.contains("eof")
         || lower.contains("try again")
         || lower.contains("temporarily unavailable")
+}
+
+/// LLM semantic compression for large tool outputs.
+/// Falls back to None on failure — caller should apply char-level truncation.
+pub(crate) async fn llm_compress_tool_output(
+    tool_name: &str,
+    output: &str,
+    cfg: &CompactionConfig,
+    client: &dyn CloudClient,
+) -> Option<String> {
+    use loom_types::CompletionRequest;
+    if output.len() <= cfg.semantic_compress_min_chars || cfg.semantic_compress_min_chars == 0 {
+        return None;
+    }
+    let prompt = format!(
+        "请将以下工具 `{tool_name}` 的输出压缩到约 {target} 字符以内。\
+         必须保留：所有错误消息(error/warning/failed)、文件路径、IP 地址和端口号、\
+         数值结果、代码片段、JSON 结构。不要编造任何信息。\n\n原始输出:\n{output}",
+        target = cfg.semantic_compress_target_chars,
+    );
+    let request = CompletionRequest { prompt, max_tokens: 512, temperature: 0.0, ..Default::default() };
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(cfg.summarization_timeout_ms),
+        client.complete(request),
+    ).await {
+        Ok(Ok(resp)) if !resp.text.is_empty() => {
+            tracing::info!(tool_name, before = output.len(), after = resp.text.len(), "tool output semantically compressed");
+            Some(resp.text)
+        }
+        Ok(Ok(_)) => { tracing::warn!(tool_name, "LLM compression returned empty"); None }
+        Ok(Err(e)) => { tracing::warn!(tool_name, error = %e, "LLM compression failed"); None }
+        Err(_) => { tracing::warn!(tool_name, "LLM compression timed out"); None }
+    }
+}
+
+/// Iterate messages and LLM-compress oversized tool outputs. Falls back to char truncation.
+async fn llm_compress_large_outputs(
+    messages: &mut [Message],
+    cfg: &CompactionConfig,
+    client: &dyn CloudClient,
+) {
+    if cfg.semantic_compress_min_chars == 0 || !cfg.use_llm_summarization { return; }
+    let mut compressed = 0usize;
+    for msg in messages.iter_mut() {
+        let is_file_read = msg.content.iter().any(|p| matches!(p, ContentPart::ToolResult { name, .. } if name == "file_read"));
+        if is_file_read { continue; }
+        for part in &mut msg.content {
+            match part {
+                ContentPart::ToolResult { result, name, .. } => {
+                    if result.len() <= cfg.semantic_compress_min_chars { continue; }
+                    if let Some(c) = llm_compress_tool_output(name, result, cfg, client).await {
+                        *result = c; compressed += 1;
+                    }
+                }
+                ContentPart::Text { text } => {
+                    if text.len() <= cfg.semantic_compress_min_chars { continue; }
+                    if let Some(c) = llm_compress_tool_output("unknown", text, cfg, client).await {
+                        *text = c; compressed += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if compressed > 0 {
+        tracing::info!(compressed, "LLM semantic compression applied");
+    }
 }
 
 #[cfg(test)]

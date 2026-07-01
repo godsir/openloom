@@ -924,6 +924,9 @@ impl Orchestrator {
         let _ = registry.register(Arc::new(crate::builtin_tools::ProcessListTool {
             process_manager: process_manager.clone(),
         }));
+        let _ = registry.register(Arc::new(crate::builtin_tools::ProcessWaitTool {
+            process_manager: process_manager.clone(),
+        }));
 
         Self {
             pool,
@@ -947,7 +950,7 @@ impl Orchestrator {
             key_store: Arc::new(RwLock::new(HashMap::new())),
             pending_permissions: Arc::new(RwLock::new(HashMap::new())),
             data_dir,
-            default_max_iterations: Arc::new(RwLock::new(30)),
+            default_max_iterations: Arc::new(RwLock::new(100)),
             default_max_prompt_budget: Arc::new(RwLock::new(0)),
             sandbox_config,
             extraction_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
@@ -1133,6 +1136,8 @@ impl Orchestrator {
             agent_pool: self.pool.clone(),
             loop_config: self.loop_config.clone(),
             event_bus: self.pool.event_bus().clone(),
+            subagent_max_iterations: 20,
+            max_retries: 2,
         });
         let _ = self
             .tool_registry
@@ -1205,19 +1210,36 @@ impl Orchestrator {
 
     /// Build a continuation note to inject into the next turn's system prompt,
     /// telling the LLM how to resume after the previous turn was interrupted or truncated.
-    fn continuation_note_for(reason: Option<StopReason>) -> Option<String> {
-        match reason {
+    fn continuation_note_for(
+        reason: Option<StopReason>,
+        progress: Option<&crate::agent_loop::ProgressCheckpoint>,
+    ) -> Option<String> {
+        let base = match reason {
             Some(StopReason::UserCancelled) => {
-                Some("上轮任务被用户中断。用户的接下来消息是反馈或补充，请继续执行未完成的工作，不要从头开始。".into())
+                "上轮任务被用户中断。用户的接下来消息是反馈或补充，请继续执行未完成的工作，不要从头开始。"
             }
             Some(StopReason::BudgetExhausted) => {
-                Some("上轮任务因token预算耗尽而暂停。请从上次中断的地方继续执行，不要重复已完成的操作。".into())
+                "上轮任务因token预算耗尽而自动暂停。请从上次中断的地方继续执行，不要重复已完成的操作。"
             }
             Some(StopReason::MaxIterations) => {
-                Some("上轮任务因达到最大迭代次数而暂停。请从上次中断的地方继续执行，不要重复已完成的操作。".into())
+                "上轮任务因达到最大迭代次数而自动暂停。请从上次中断的地方继续执行，不要重复已完成的操作。"
             }
-            _ => None,
+            _ => return None,
+        };
+        let mut note = base.to_string();
+        if let Some(p) = progress {
+            if !p.completed_steps.is_empty() {
+                note.push_str("\n\n## 已完成的操作:\n");
+                for step in &p.completed_steps {
+                    note.push_str(&format!("- {}\n", step));
+                }
+                if !p.files_touched.is_empty() {
+                    note.push_str(&format!("\n已修改文件: {}\n", p.files_touched.join(", ")));
+                }
+                note.push_str("\n请从上次中断处继续，不要重复以上已完成的操作。");
+            }
         }
+        Some(note)
     }
 
     /// Set the API key store shared with the server layer.
@@ -4193,7 +4215,7 @@ impl Orchestrator {
             },
             // Inject continuation note when the previous turn was interrupted or
             // truncated — tells the LLM to keep going rather than starting fresh.
-            continuation_note: Self::continuation_note_for(self.get_last_stop_reason(session_id).await),
+            continuation_note: Self::continuation_note_for(self.get_last_stop_reason(session_id).await, None),
             summary,
             temperature: agent_config.temperature.unwrap_or(0.0),
             max_iterations: agent_config.max_iterations.unwrap_or(default_max_iters),
@@ -4580,12 +4602,15 @@ impl Orchestrator {
         let disallowed = agent_config.disallowed_tools.clone();
         let cancel = self.pool.cancel_token(&agent_id).await?;
 
+        // Clone delta_tx for auto-continue rounds — first turn consumes the original
+        let ac_delta_tx = delta_tx.clone();
+
         // Always run the full agent path — the intent classifier was an
         // over-optimization that caused workspace/skills/persona/KG to be
         // silently dropped in direct-reply mode.
         let needs_tools = true;
 
-        let result = if !needs_tools {
+        let mut result = if !needs_tools {
             // Direct reply — single completion, no tools at all.
             // Use a minimal system prompt: no persona, no skill catalog, no KG.
             let slim_history: Vec<Message> = history.iter().rev().take(4).rev().cloned().collect();
@@ -4633,10 +4658,155 @@ impl Orchestrator {
             .await
         };
 
-        // Wait for forwarder to finish flushing
+        // Wait for forwarder to finish flushing — AFTER auto-continue so all rounds share the channel
         drop(client);
         drop(registry);
+
+        // ── Auto-continue: BudgetExhausted / MaxIterations → auto-restart ──
+        let mut auto_round = 0usize;
+        while auto_round < agent_config.auto_continue_max_rounds
+            && agent_config.auto_continue
+        {
+            let stop = match &result {
+                Ok(t) => match t.stop_reason {
+                    StopReason::BudgetExhausted | StopReason::MaxIterations => false,
+                    _ => true,
+                },
+                Err(_) => true,
+            };
+            if stop { break; }
+
+            auto_round += 1;
+            let prev = result.as_ref().unwrap();
+
+            self.force_summarize_session(session_id).await;
+
+            let cont_note = Self::continuation_note_for(
+                Some(prev.stop_reason),
+                Some(&prev.progress),
+            );
+
+            let mut cont_config = loop_config.clone();
+            cont_config.continuation_note = cont_note;
+            cont_config.progress_checkpoint = Some(prev.progress.clone());
+
+            // Re-acquire client (was dropped above)
+            let ac = self.cloud_client.read().await.clone();
+            let reg2 = self.tool_registry.read().await;
+
+            let next = if let Some(ref client2) = ac {
+                run_agent_turn_streaming_with_images(
+                    client2.as_ref(),
+                    &reg2,
+                    &history,
+                    "继续",
+                    &[],
+                    &cont_config,
+                    ac_delta_tx.clone(),
+                    &allowed,
+                    &disallowed,
+                    &cancel,
+                )
+                .await
+            } else {
+                Err(anyhow::anyhow!("No model configured for auto-continue"))
+            };
+
+            drop(reg2);
+
+            result = match (result, next) {
+                (Ok(mut first), Ok(second)) => {
+                    first.response.push_str("\n\n");
+                    first.response.push_str(&second.response);
+                    first.content_parts.extend(second.content_parts);
+                    first.tool_calls_made += second.tool_calls_made;
+                    first.iterations += second.iterations;
+                    first.prompt_tokens += second.prompt_tokens;
+                    first.completion_tokens += second.completion_tokens;
+                    first.cache_read_tokens += second.cache_read_tokens;
+                    first.cache_write_tokens += second.cache_write_tokens;
+                    first.tool_messages.extend(second.tool_messages);
+                    first.stop_reason = second.stop_reason;
+                    first.progress = second.progress;
+                    Ok(first)
+                }
+                (Err(e), _) | (_, Err(e)) => Err(e),
+            };
+        }
+
         let _ = forward_handle.await;
+
+        // ── Auto-continue: BudgetExhausted / MaxIterations → auto-restart ──
+        let mut auto_round = 0usize;
+        while auto_round < agent_config.auto_continue_max_rounds
+            && agent_config.auto_continue
+        {
+            let stop = match &result {
+                Ok(t) => match t.stop_reason {
+                    StopReason::BudgetExhausted | StopReason::MaxIterations => false,
+                    _ => true,
+                },
+                Err(_) => true,
+            };
+            if stop { break; }
+
+            auto_round += 1;
+            let prev = result.as_ref().unwrap();
+
+            self.force_summarize_session(session_id).await;
+
+            let cont_note = Self::continuation_note_for(
+                Some(prev.stop_reason),
+                Some(&prev.progress),
+            );
+
+            // Re-acquire client and registry (were dropped after first turn)
+            let ac = self.cloud_client.read().await.clone();
+            let reg2 = self.tool_registry.read().await;
+
+            let next = if let Some(ref client2) = ac {
+                let mut cont_config = loop_config.clone();
+                cont_config.continuation_note = cont_note;
+                cont_config.progress_checkpoint = Some(prev.progress.clone());
+
+                run_agent_turn_streaming_with_images(
+                    client2.as_ref(),
+                    &reg2,
+                    &history,
+                    "继续",
+                    &[],
+                    &cont_config,
+                    ac_delta_tx.clone(),
+                    &allowed,
+                    &disallowed,
+                    &cancel,
+                )
+                .await
+            } else {
+                Err(anyhow::anyhow!("No model configured for auto-continue"))
+            };
+
+            drop(reg2);
+
+            result = match (result, next) {
+                (Ok(mut first), Ok(second)) => {
+                    first.response.push_str("\n\n");
+                    first.response.push_str(&second.response);
+                    first.content_parts.extend(second.content_parts);
+                    first.tool_calls_made += second.tool_calls_made;
+                    first.iterations += second.iterations;
+                    first.prompt_tokens += second.prompt_tokens;
+                    first.completion_tokens += second.completion_tokens;
+                    first.cache_read_tokens += second.cache_read_tokens;
+                    first.cache_write_tokens += second.cache_write_tokens;
+                    first.tool_messages.extend(second.tool_messages);
+                    first.stop_reason = second.stop_reason;
+                    first.progress = second.progress;
+                    Ok(first)
+                }
+                (Err(e), _) | (_, Err(e)) => Err(e),
+            };
+        }
 
         if let Ok(ref turn) = result {
             self.last_stop_reasons.write().await.insert(session_id.to_string(), turn.stop_reason);
@@ -5219,7 +5389,7 @@ impl Orchestrator {
             let todos = self.list_todos(session_id).await.unwrap_or_default();
             build_todo_continuation_instruction(&todos)
         };
-        let continuation_note = Self::continuation_note_for(self.get_last_stop_reason(session_id).await);
+        let continuation_note = Self::continuation_note_for(self.get_last_stop_reason(session_id).await, None);
 
         let config = AgentLoopConfig {
             system_prompt: stable_prompt,
@@ -5247,7 +5417,7 @@ impl Orchestrator {
             cc_dispatch: agent_config.cc_dispatch,
             event_bus: Some(self.pool.event_bus().clone()),
             pending_permissions: Some(self.pending_permissions.clone()),
-            max_iterations: default_max_iters,
+            max_iterations: agent_config.max_iterations.unwrap_or(default_max_iters),
             // Bump output budget when skills are active.
             max_tokens: if effective_selected_skills.is_empty() {
                 4096

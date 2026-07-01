@@ -103,3 +103,95 @@
 .stdoutLine {
   color: var(--text-secondary);
 }
+
+/* ── ClawClaw structured output ──────────────────────────────────────── */
+
+.clawOutput {
+  padding: 10px 12px;
+  font-size: 12px;
+  font-family: var(--font-mono, 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace);
+  color: var(--text-secondary);
+  background: var(--bg-code, var(--bg));
+  border-top: 1px solid var(--border);
+  max-height: 480px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.clawLine {
+  padding: 8px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.clawHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.clawSpeaker {
+  font-weight: 600;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.clawState {
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 1px 6px;
+  background: var(--bg-hover, rgba(128,128,128,0.08));
+  border-radius: 3px;
+}
+
+.clawMsg {
+  color: var(--text-primary, #e0e0e0);
+  line-height: 1.6;
+  padding: 2px 0;
+  font-size: 12px;
+}
+
+.clawNext {
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.clawTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.clawTag {
+  font-size: 9px;
+  padding: 1px 6px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.85;
+}
+
+.clawExit {
+  font-size: 10px;
+  color: var(--danger, #e74c3c);
+  margin-top: 2px;
+}
+
+.clawRaw {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

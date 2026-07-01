@@ -276,6 +276,119 @@ impl ProcessManager {
             }
         });
     }
+
+    /// Block until a managed process exits, collecting all stdout/stderr output.
+    /// Returns (exit_code, output, truncated) — truncated=true if output exceeded max_bytes.
+    /// `timeout_secs`: max wait time, 0 = no limit.
+    pub async fn wait(
+        &self,
+        pid: &str,
+        timeout_secs: u64,
+        max_output_bytes: usize,
+    ) -> Result<ProcessWaitResult> {
+        let pid = pid.to_string();
+        let mut output = String::new();
+        let mut truncated = false;
+
+        // Subscribe to ProcessOutput and ProcessExited events for this pid
+        let mut rx = self.event_bus.subscribe();
+        let pid_for_events = pid.clone();
+
+        let start = Instant::now();
+        let deadline = if timeout_secs > 0 {
+            Some(start + Duration::from_secs(timeout_secs))
+        } else {
+            None
+        };
+
+        loop {
+            // Check if already exited
+            {
+                let procs = self.processes.read().await;
+                if let Some(entry) = procs.get(&pid) {
+                    if let Some(code) = entry.exit_code {
+                        return Ok(ProcessWaitResult {
+                            exit_code: code,
+                            output,
+                            truncated,
+                        });
+                    }
+                } else {
+                    // PID not found (already GC'd or never existed)
+                    return Ok(ProcessWaitResult {
+                        exit_code: -2,
+                        output,
+                        truncated,
+                    });
+                }
+            }
+
+            // Compute remaining timeout
+            let remaining = deadline.map(|d| {
+                let r = d.saturating_duration_since(Instant::now());
+                r
+            });
+
+            let event = if let Some(r) = remaining {
+                if r.is_zero() {
+                    return Ok(ProcessWaitResult {
+                        exit_code: -1,
+                        output: format!("{output}\n[process_wait timed out after {timeout_secs}s]"),
+                        truncated: true,
+                    });
+                }
+                match tokio::time::timeout(r, rx.recv()).await {
+                    Ok(Ok(ev)) => ev,
+                    Ok(Err(_)) => return Err(anyhow::anyhow!("event bus closed")),
+                    Err(_) => {
+                        // timeout
+                        return Ok(ProcessWaitResult {
+                            exit_code: -1,
+                            output: format!("{output}\n[process_wait timed out after {timeout_secs}s]"),
+                            truncated: true,
+                        });
+                    }
+                }
+            } else {
+                match rx.recv().await {
+                    Ok(ev) => ev,
+                    Err(_) => return Err(anyhow::anyhow!("event bus closed")),
+                }
+            };
+
+            match event {
+                AgentEvent::ProcessOutput { pid: ev_pid, data, .. } if ev_pid == pid_for_events => {
+                    if output.len() + data.len() + 1 > max_output_bytes {
+                        if !truncated {
+                            output.push_str("\n[output truncated — max size reached]\n");
+                            truncated = true;
+                        }
+                    } else {
+                        if !output.is_empty() {
+                            output.push('\n');
+                        }
+                        output.push_str(&data);
+                    }
+                }
+                AgentEvent::ProcessExited { pid: ev_pid, exit_code } if ev_pid == pid_for_events => {
+                    return Ok(ProcessWaitResult {
+                        exit_code,
+                        output,
+                        truncated,
+                    });
+                }
+                _ => {} // ignore unrelated events
+            }
+        }
+    }
+}
+
+/// Result of waiting for a background process to finish.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProcessWaitResult {
+    pub exit_code: i32,
+    pub output: String,
+    pub truncated: bool,
 }
 
 /// Public-facing process metadata.

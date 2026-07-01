@@ -315,6 +315,10 @@ impl<'a> AgentConfigStore<'a> {
                     is_primary: row.get::<_, i64>(13).unwrap_or(0) != 0,
                     memory_enabled: row.get::<_, i64>(14).unwrap_or(0) != 0,
                     cc_dispatch: false,
+                    max_subagent_iterations: None,
+                    max_subagent_retries: None,
+                    auto_continue: true,
+                    auto_continue_max_rounds: 10,
                 })
             })
             .ok();
@@ -349,6 +353,10 @@ impl<'a> AgentConfigStore<'a> {
                 is_primary: row.get::<_, i64>(13).unwrap_or(0) != 0,
                 memory_enabled: row.get::<_, i64>(14).unwrap_or(0) != 0,
                 cc_dispatch: false,
+                max_subagent_iterations: None,
+                max_subagent_retries: None,
+                auto_continue: true,
+                auto_continue_max_rounds: 10,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)

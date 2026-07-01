@@ -26,6 +26,10 @@ pub struct CompactionConfig {
     pub summarization_timeout_ms: u64,
     /// Max output tokens for the summarization LLM call.
     pub summary_max_tokens: usize,
+    /// Tool output char threshold for LLM semantic compression (0 = disable). Default 8000.
+    pub semantic_compress_min_chars: usize,
+    /// Target char count for compressed output. Default 2000.
+    pub semantic_compress_target_chars: usize,
 }
 
 impl Default for CompactionConfig {
@@ -40,6 +44,8 @@ impl Default for CompactionConfig {
             summarization_model: None,
             summarization_timeout_ms: 60000,
             summary_max_tokens: 1024,
+            semantic_compress_min_chars: 8000,
+            semantic_compress_target_chars: 2000,
         }
     }
 }

@@ -20,7 +20,7 @@ pub struct AgentPrefs {
 }
 
 fn default_max_iterations() -> usize {
-    20
+    100
 }
 fn default_timeout_secs() -> u64 {
     300
@@ -280,7 +280,17 @@ pub struct AgentConfig {
     /// If true, use Claude Code-style dispatch.
     #[serde(default = "default_true")]
     pub cc_dispatch: bool,
+    #[serde(default)]
+    pub max_subagent_iterations: Option<usize>,
+    #[serde(default)]
+    pub max_subagent_retries: Option<usize>,
+    #[serde(default = "default_true")]
+    pub auto_continue: bool,
+    #[serde(default = "default_auto_continue_max_rounds")]
+    pub auto_continue_max_rounds: usize,
 }
+
+fn default_auto_continue_max_rounds() -> usize { 10 }
 
 fn default_max_subagents() -> usize {
     5
@@ -309,6 +319,10 @@ impl Default for AgentConfig {
             is_primary: false,
             memory_enabled: false,
             cc_dispatch: true,
+            max_subagent_iterations: None,
+            max_subagent_retries: None,
+            auto_continue: true,
+            auto_continue_max_rounds: default_auto_continue_max_rounds(),
         }
     }
 }

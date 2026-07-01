@@ -370,6 +370,23 @@ function escapeHtml(s: string): string {
 }
 
 /**
+ * Parse process_wait text output into ProcessLine[] for ProcessOutputBlock rendering.
+ * process_wait returns "进程 xxx 已退出 (exit_code=0)\n\n输出:\nline1\nline2\n..."
+ * Each non-empty line after "输出:" becomes a stdout process line.
+ */
+function parseProcessWaitOutput(text: string, pid: string): { stream: string; text: string }[] {
+  const lines: { stream: string; text: string }[] = []
+  // Find the output section
+  const outputIdx = text.indexOf('输出:\n')  // "输出:\n"
+  const body = outputIdx >= 0 ? text.slice(outputIdx + 4) : text
+  for (const line of body.split('\n')) {
+    const t = line.trim()
+    if (t) lines.push({ stream: 'stdout', text: t })
+  }
+  return lines
+}
+
+/**
  * Parse the role field from backend Message.
  * Rust's Role enum may serialize as a lowercase string ("user", "assistant", "system", "tool")
  * or as a tagged enum object like {"User": {}}.
@@ -483,6 +500,15 @@ export function parseContentParts(content: any, sessionId: string, port: number)
           if (blocks[j].type === 'shell' && blocks[j].result === undefined) {
             blocks[j].result = resultText
             paired = true
+            // process_wait result → process_output block for structured rendering on reload
+            if (blocks[j].toolName === 'process_wait') {
+              const procPid = (blocks[j].args?.pid as string) || '?'
+              const lines = parseProcessWaitOutput(resultText, procPid)
+              if (lines.length > 0) {
+                blocks.splice(j, 1)
+                blocks.push({ type: 'process_output', pid: procPid, lines, sealed: true })
+              }
+            }
             break
           }
         }
@@ -490,14 +516,23 @@ export function parseContentParts(content: any, sessionId: string, port: number)
         if (!paired) {
           const toolName = tr.name || 'unknown'
           if (toolName !== 'request_tools') {
-            blocks.push({
-              type: 'shell',
-              toolName,
-              status: 'done',
-              args: {},
-              result: resultText,
-              sealed: true,
-            })
+            // process_wait standalone result → process_output block
+            if (toolName === 'process_wait') {
+              const procPid = '?'
+              const lines = parseProcessWaitOutput(resultText, procPid)
+              if (lines.length > 0) {
+                blocks.push({ type: 'process_output', pid: procPid, lines, sealed: true })
+              }
+            } else {
+              blocks.push({
+                type: 'shell',
+                toolName,
+                status: 'done',
+                args: {},
+                result: resultText,
+                sealed: true,
+              })
+            }
           }
         }
       }

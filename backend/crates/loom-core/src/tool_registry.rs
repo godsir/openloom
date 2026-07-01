@@ -246,6 +246,8 @@ pub struct SpawnContext {
     pub agent_pool: Arc<crate::agent_pool::AgentPool>,
     pub loop_config: Arc<RwLock<crate::agent_loop::AgentLoopConfig>>,
     pub event_bus: crate::event_bus::EventBus,
+    pub subagent_max_iterations: usize,
+    pub max_retries: usize,
 }
 
 /// The spawn_agent tool allows an agent to delegate a subtask to a child agent.
@@ -306,7 +308,7 @@ impl AgentTool for SpawnAgentTool {
                 "You are a sub-agent. Task: {}\n\nInstructions:\n{}",
                 description, prompt
             ),
-            max_iterations: config.max_iterations.min(5),
+            max_iterations: self.context.subagent_max_iterations.min(config.max_iterations),
             max_tokens: config.max_tokens,
             temperature: config.temperature,
             lazy_tools: config.lazy_tools,
@@ -342,6 +344,7 @@ impl AgentTool for SpawnAgentTool {
             continuation_note: None,
             steering_queue: None,
             few_shots: Vec::new(),
+            progress_checkpoint: None,
             skill_tool_allowlist: None,
         };
         drop(config);
@@ -396,17 +399,38 @@ impl AgentTool for SpawnAgentTool {
         };
         let registry = self.context.tool_registry.read().await;
 
-        let result = crate::agent_loop::run_agent_turn_with_cancel(
-            client.as_ref(),
-            &registry,
-            &[],
-            prompt,
-            &sub_config,
-            &None,
-            &None,
-            &cancel,
-        )
-        .await;
+        let mut max_retries = self.context.max_retries;
+        let mut errors: Vec<String> = Vec::new();
+
+        let result = 'retry: loop {
+            let result = crate::agent_loop::run_agent_turn_with_cancel(
+                client.as_ref(),
+                &registry,
+                &[],
+                prompt,
+                &sub_config,
+                &None,
+                &None,
+                &cancel,
+            )
+            .await;
+
+            match result {
+                Ok(turn) => break 'retry Ok(turn),
+                Err(e) if max_retries > 0 => {
+                    let err_msg = e.to_string();
+                    tracing::warn!(%description, attempt = self.context.max_retries - max_retries + 1, error = %err_msg, "sub-agent failed, retrying...");
+                    errors.push(err_msg);
+                    max_retries -= 1;
+                    tokio::time::sleep(std::time::Duration::from_secs(2u64.pow((self.context.max_retries - max_retries) as u32))).await;
+                    continue 'retry;
+                }
+                Err(e) => {
+                    errors.push(e.to_string());
+                    break 'retry Err(e);
+                }
+            }
+        };
 
         drop(registry);
         drop(client);
@@ -420,10 +444,20 @@ impl AgentTool for SpawnAgentTool {
                     .await;
                 let _ = self.context.agent_pool.remove(&child_id).await;
                 tracing::info!(%description, tokens = turn.prompt_tokens + turn.completion_tokens, "sub-agent done");
+
+                let sub_result = serde_json::json!({
+                    "success": true,
+                    "description": description,
+                    "output": turn.response,
+                    "errors": Vec::<String>::new(),
+                    "iterations": turn.iterations,
+                    "retries": self.context.max_retries - max_retries,
+                });
+
                 Ok(ToolResult {
-                    content: turn.response,
+                    content: serde_json::to_string_pretty(&sub_result).unwrap_or_else(|_| turn.response),
                     is_error: false,
-                    structured_content: None,
+                    structured_content: Some(sub_result),
                 })
             }
             Err(e) => {
@@ -439,10 +473,20 @@ impl AgentTool for SpawnAgentTool {
                     )
                     .await;
                 let _ = self.context.agent_pool.remove(&child_id).await;
+
+                let sub_result = serde_json::json!({
+                    "success": false,
+                    "description": description,
+                    "output": "",
+                    "errors": errors,
+                    "iterations": 0,
+                    "retries": errors.len().saturating_sub(1),
+                });
+
                 Ok(ToolResult {
-                    content: format!("Sub-agent error: {}", e),
+                    content: serde_json::to_string_pretty(&sub_result).unwrap_or_else(|_| format!("Sub-agent error: {}", e)),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(sub_result),
                 })
             }
         }
