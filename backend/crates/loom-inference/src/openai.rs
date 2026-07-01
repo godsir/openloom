@@ -510,10 +510,13 @@ impl CloudClient for OpenAIClient {
                             if let Some(u) = val.get("usage").filter(|u| u.is_object()) {
                                 let _ = tx
                                     .send(format!(
-                                        "\x00USAGE:{}:{}:{}",
+                                        "\x00USAGE:{}:{}:{}:{}",
                                         u["prompt_tokens"].as_u64().unwrap_or(0),
                                         u["completion_tokens"].as_u64().unwrap_or(0),
                                         u["prompt_tokens_details"]["cached_tokens"]
+                                            .as_u64()
+                                            .unwrap_or(0),
+                                        u["prompt_tokens_details"]["cache_creation_input_tokens"]
                                             .as_u64()
                                             .unwrap_or(0),
                                     ))
@@ -676,7 +679,10 @@ impl CloudClient for OpenAIClient {
                                             u["prompt_tokens_details"]["cached_tokens"]
                                                 .as_u64()
                                                 .unwrap_or(0),
-                                        cache_write_tokens: 0,
+                                        cache_write_tokens:
+                                            u["prompt_tokens_details"]["cache_creation_input_tokens"]
+                                                .as_u64()
+                                                .unwrap_or(0),
                                     })
                                     .await
                                     .is_err()

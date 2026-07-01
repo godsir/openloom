@@ -1502,7 +1502,7 @@ impl MemoryStore for LoomMemoryStore {
         };
 
         let mut stmt = conn.prepare(
-            "SELECT TRIM(model) as model, SUM(prompt_tokens) as p, SUM(completion_tokens) as c, SUM(cached_tokens) as ca, SUM(cached_read_tokens) as cr, SUM(cached_write_tokens) as cw, COUNT(*) as r, COALESCE(AVG(latency_ms), 0) as l, COALESCE(AVG(CAST(prompt_tokens AS REAL) / NULLIF(context_window, 0)), 0) as cu FROM token_usage WHERE created_at >= ?1 AND created_at <= ?2 GROUP BY TRIM(model) ORDER BY r DESC",
+            "SELECT TRIM(model) as model, SUM(prompt_tokens) as p, SUM(completion_tokens) as c, SUM(cached_tokens) as ca, SUM(cached_read_tokens) as cr, SUM(cached_write_tokens) as cw, COUNT(*) as r, COALESCE(AVG(latency_ms), 0) as l, COALESCE(AVG(CASE WHEN context_window > 0 THEN CAST(prompt_tokens AS REAL) / context_window ELSE CAST(prompt_tokens AS REAL) / 100000.0 END), 0) as cu FROM token_usage WHERE created_at >= ?1 AND created_at <= ?2 GROUP BY TRIM(model) ORDER BY r DESC",
         )?;
         let by_model: Vec<serde_json::Value> = stmt
             .query_map(rusqlite::params![from, to], |row| {

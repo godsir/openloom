@@ -330,10 +330,13 @@ impl InferenceEngine {
                             if let Some(u) = val.get("usage").filter(|u| u.is_object()) {
                                 let _ = token_tx
                                     .send(format!(
-                                        "\x00USAGE:{}:{}:{}",
+                                        "\x00USAGE:{}:{}:{}:{}",
                                         u["prompt_tokens"].as_u64().unwrap_or(0),
                                         u["completion_tokens"].as_u64().unwrap_or(0),
                                         u["prompt_tokens_details"]["cached_tokens"]
+                                            .as_u64()
+                                            .unwrap_or(0),
+                                        u["prompt_tokens_details"]["cache_creation_input_tokens"]
                                             .as_u64()
                                             .unwrap_or(0),
                                     ))
@@ -665,7 +668,10 @@ impl CloudClient for InferenceEngine {
                                             u["prompt_tokens_details"]["cached_tokens"]
                                                 .as_u64()
                                                 .unwrap_or(0),
-                                        cache_write_tokens: 0,
+                                        cache_write_tokens:
+                                            u["prompt_tokens_details"]["cache_creation_input_tokens"]
+                                                .as_u64()
+                                                .unwrap_or(0),
                                     })
                                     .await
                                     .is_err()
@@ -745,12 +751,12 @@ pub trait CloudClient: Send + Sync {
                     StreamDelta::Reasoning(stripped.to_string())
                 } else if let Some(stripped) = token.strip_prefix("\x00USAGE:") {
                     let parts: Vec<&str> = stripped.split(':').collect();
-                    if parts.len() == 3 {
+                    if parts.len() >= 3 {
                         StreamDelta::Usage {
                             prompt_tokens: parts[0].parse().unwrap_or(0),
                             completion_tokens: parts[1].parse().unwrap_or(0),
                             cache_read_tokens: parts[2].parse().unwrap_or(0),
-                            cache_write_tokens: 0,
+                            cache_write_tokens: parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0),
                         }
                     } else {
                         continue;

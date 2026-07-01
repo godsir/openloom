@@ -100,12 +100,18 @@ pub struct ModelCapabilities {
 }
 
 fn default_context_size() -> usize {
-    4096
+    // Modern models universally exceed 64 K; 100 K is a reasonable fallback that
+    // won't silently disable summarisation / mid-turn compaction for users who
+    // haven't explicitly set a context_size in their model config.
+    100_000
 }
 
 impl ModelConfig {
     pub fn effective_max_output(&self) -> usize {
-        self.max_output_tokens.unwrap_or(self.context_size / 2)
+        self.max_output_tokens.unwrap_or_else(|| {
+            // Clamp to 16 K so the fallback doesn't exceed most providers' output cap.
+            self.context_size.min(16_384) / 2
+        })
     }
 }
 

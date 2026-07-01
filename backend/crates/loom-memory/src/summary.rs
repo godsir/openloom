@@ -53,16 +53,25 @@ impl SummaryEngine {
     }
 
     /// Token-based trigger: summarize when current window occupancy reaches
-    /// `threshold_pct` of `context_window`. Returns false when context_window is 0 (unknown).
+    /// `threshold_pct` of `context_window`.
+    ///
+    /// When context_window is 0 (unknown / not configured), use a reasonable
+    /// fallback of 100 K so summarization still triggers rather than being
+    /// silently disabled.
     pub fn should_summarize_by_tokens(
         current_tokens: usize,
         context_window: usize,
         threshold_pct: f32,
     ) -> bool {
-        if context_window == 0 {
-            return false;
-        }
-        (current_tokens as f32) >= (context_window as f32 * threshold_pct)
+        let effective_cw = if context_window > 0 {
+            context_window
+        } else {
+            // Fallback: most current models have ≥100 K context windows.
+            // Using 100 K ensures the 80 % trigger fires at 80 K tokens
+            // when the model's context size is unknown.
+            100_000
+        };
+        (current_tokens as f32) >= (effective_cw as f32 * threshold_pct)
     }
 
     /// Build the prompt string for summarization (initial or incremental).
@@ -212,7 +221,10 @@ mod tests {
     fn test_should_summarize_by_tokens() {
         assert!(SummaryEngine::should_summarize_by_tokens(81_000, 100_000, 0.8));
         assert!(!SummaryEngine::should_summarize_by_tokens(79_000, 100_000, 0.8));
-        assert!(!SummaryEngine::should_summarize_by_tokens(81_000, 0, 0.8));
+        // context_window=0 now falls back to 100_000 — 81 K ≥ 80 K → true.
+        assert!(SummaryEngine::should_summarize_by_tokens(81_000, 0, 0.8));
+        // Below the fallback threshold: 70 K < 80 K → false.
+        assert!(!SummaryEngine::should_summarize_by_tokens(70_000, 0, 0.8));
     }
 
     #[test]

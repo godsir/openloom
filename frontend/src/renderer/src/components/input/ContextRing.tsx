@@ -2,7 +2,9 @@ import { useStore } from '../../stores'
 import { useLocale } from '../../i18n'
 import styles from './ContextRing.module.css'
 
-const DEFAULT_MAX_TOKENS = 200_000
+// Must match backend fallback: summary.rs should_summarize_by_tokens (100_000),
+// model_config.rs default_context_size (100_000), and agent_loop effective_context_window (100_000).
+const DEFAULT_MAX_TOKENS = 100_000
 
 function fmt(n: number): string {
   return n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
@@ -28,7 +30,9 @@ function calcTurnCost(
   cacheReadPrice: number,
   cacheWritePrice: number,
 ): number {
-  const promptNonCache = Math.max(prompt - cacheRead, 0)
+  // prompt includes all input tokens (uncached + cache_read + cache_write).
+  // Deduct both cache tiers to avoid double-charging cache_write tokens.
+  const promptNonCache = Math.max(prompt - cacheRead - cacheWrite, 0)
   return (
     promptNonCache * inputPrice +
     cacheRead * cacheReadPrice +
@@ -70,8 +74,15 @@ export default function ContextRing() {
 
   if (!usage) return null
   const { prompt, completion } = usage
-  const total = prompt + completion
-  if (total === 0) return null
+  // The context window fills from INPUT tokens (system prefix + history + user message).
+  // Completion tokens consume a separate output budget and aren't added to the context
+  // until the next turn — evaluating prompt / context_window gives the real occupancy.
+  const input = prompt
+  const output = completion
+  // Don't hide the entire ring when only output tokens are reported (edge case:
+  // inline USAGE deltas or local models may only report completion tokens).
+  // When both are 0 there's nothing to display.
+  if (input === 0 && output === 0) return null
 
   // Scale: backend-reported window for the model that produced this usage,
   // else the current session model's configured context_size, else 200k.
@@ -80,7 +91,7 @@ export default function ContextRing() {
     models.find((m) => m.name === (usage.model || currentModel))?.context_size ||
     DEFAULT_MAX_TOKENS
 
-  const pct = Math.min((total / scale) * 100, 100)
+  const pct = Math.min((input / scale) * 100, 100)
   const RADIUS = 13
   const circ = 2 * Math.PI * RADIUS
   const offset = circ * (1 - pct / 100)
@@ -95,7 +106,7 @@ export default function ContextRing() {
 
   const cacheRead = usage.cacheRead || 0
   const cacheWrite = usage.cacheWrite || 0
-  const promptNonCache = Math.max(prompt - cacheRead, 0)
+  const promptNonCache = Math.max(prompt - cacheRead - cacheWrite, 0)
 
   const turnCost = calcTurnCost(prompt, completion, cacheRead, cacheWrite, inputPrice, outputPrice, cacheReadPrice, cacheWritePrice)
   const hasPrice = inputPrice > 0 || outputPrice > 0
@@ -140,7 +151,7 @@ export default function ContextRing() {
         <hr className={styles.tooltipDivider} />
         <div className={styles.tooltipRow}>
           <span>{t('input.totalTokens')}</span>
-          <span className={styles.tooltipVal}>{fmt(total)} / {fmtScale(scale)}</span>
+          <span className={styles.tooltipVal}>{fmt(input + output)} / {fmtScale(scale)}</span>
         </div>
         {hasPrice && (
           <div className={styles.tooltipRow}>

@@ -2145,10 +2145,9 @@ impl Orchestrator {
                     .get("cached_write")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0) as f64;
-                // prompt = cache-hit + cache-miss; split so cached tokens
-                // are NOT double-charged (previously: prompt * input_price PLUS
-                // cached_read * cache_read_price — cached tokens paid twice).
-                let cache_miss = (prompt - cached_read).max(0.0);
+                // prompt = cache-hit + cache-miss + cache-write; deduct both
+                // cache tiers to avoid double-charging cache_write tokens.
+                let cache_miss = (prompt - cached_read - cached_write).max(0.0);
                 let cache_hit_cost = cached_read * cache_read_price / 1_000_000.0;
                 let cache_write_cost = cached_write * cache_write_price / 1_000_000.0;
                 let input_cost = cache_miss * input_price / 1_000_000.0;
@@ -4070,8 +4069,28 @@ impl Orchestrator {
 
         let bpe = loom_context::bpe();
         let history_tokens: usize = history.iter().map(|m| loom_context::message_tokens(m, bpe)).sum();
+        // ── Include stable prefix in the occupancy estimate ──
+        // The stable prefix (system prompt + persona + summary + KG + tool catalog)
+        // is sent on every turn and can consume 10 K–80 K+ tokens.  Without this
+        // correction the summarisation check underestimates real window occupancy
+        // and fires too late (or never).
+        let prefix_estimate: usize = {
+            // Agent persona (base identity)
+            let persona = agent_config.persona.len().saturating_sub(2).max(0) / 4;
+            // System prompt override
+            let overr = agent_config.system_prompt_override.as_deref().unwrap_or("").len() / 4;
+            // User profile
+            let userp = user_persona.len() / 4;
+            // Current summary (if any)
+            let sum = existing_summary.as_deref().unwrap_or("").len() / 4;
+            // Char-based estimate is intentionally coarse — it only governs
+            // whether summarisation fires, and being slightly wrong just means
+            // we trigger a few turns earlier/later.
+            persona + overr + userp + sum + 4096 // base system prompt ≈ 4 K
+        };
+        let total_occupancy = history_tokens + prefix_estimate;
         let should = loom_memory::SummaryEngine::should_summarize_by_tokens(
-            history_tokens,
+            total_occupancy,
             context_window,
             self.compaction_config.trigger_threshold_pct,
         );
@@ -4079,7 +4098,11 @@ impl Orchestrator {
         let (summary, new_at_count) = if should {
             tracing::info!(session_id, history_tokens, context_window, "summarization triggered (80% token threshold)");
             let total_msgs = history.len();
-            let recent_count = ((context_window as f32 * self.compaction_config.keep_recent_tokens_pct) as usize)
+            // Use the same effective context window as the trigger check so
+            // context_window=0 doesn't collapse recent_count to 0 (which would
+            // send the entire history to the summariser, exceeding its context).
+            let effective_cw = context_window.max(100_000);
+            let recent_count = ((effective_cw as f32 * self.compaction_config.keep_recent_tokens_pct) as usize)
                 .min(total_msgs);
             let recent_boundary = total_msgs.saturating_sub(recent_count);
             let prompt = loom_memory::SummaryEngine::build_prompt_segmented(
@@ -4266,6 +4289,7 @@ impl Orchestrator {
             // prompt-only and completion-only states.
             let mut partial_prompt: u64 = 0;
             let mut partial_cache_read: u64 = 0;
+            let mut partial_cache_write: u64 = 0;
             let mut usage_pending = false;
 
             while let Some(delta) = delta_rx.recv().await {
@@ -4349,13 +4373,15 @@ impl Orchestrator {
                         // OpenAI / local engines send complete usage in a single delta.
                         let (p_tokens, c_tokens, cr_tokens, cw_tokens) = if prompt_tokens > 0
                             && completion_tokens == 0
-                        {
+                                                {
                             // Anthropic message_start — store partial, don't publish yet
                             partial_prompt = prompt_tokens;
                             partial_cache_read = cache_read_tokens;
+                            partial_cache_write = cache_write_tokens;
                             usage_pending = true;
                             tracing::debug!(
                                 prompt = prompt_tokens,
+                                cache_write = cache_write_tokens,
                                 "[token-stats] partial usage (message_start), waiting for message_delta"
                             );
                             continue;
@@ -4366,7 +4392,7 @@ impl Orchestrator {
                                 partial_prompt,
                                 completion_tokens,
                                 partial_cache_read,
-                                cache_write_tokens,
+                                partial_cache_write,
                             );
                             tracing::debug!(
                                 prompt = partial_prompt,
@@ -4989,8 +5015,17 @@ impl Orchestrator {
 
         let bpe = loom_context::bpe();
         let history_tokens: usize = history.iter().map(|m| loom_context::message_tokens(m, bpe)).sum();
+        // ── Include stable prefix in the occupancy estimate ──
+        let prefix_estimate: usize = {
+            let persona = agent_config.persona.len().saturating_sub(2).max(0) / 4;
+            let overr = agent_config.system_prompt_override.as_deref().unwrap_or("").len() / 4;
+            let userp = user_persona.len() / 4;
+            let sum = existing_summary.as_deref().unwrap_or("").len() / 4;
+            persona + overr + userp + sum + 4096
+        };
+        let total_occupancy = history_tokens + prefix_estimate;
         let should_summarize = loom_memory::SummaryEngine::should_summarize_by_tokens(
-            history_tokens,
+            total_occupancy,
             context_window,
             self.compaction_config.trigger_threshold_pct,
         );
@@ -4998,7 +5033,11 @@ impl Orchestrator {
         // Phase 2: call LLM for summary if needed (no lock held)
         let (summary, new_at_count) = if should_summarize {
             let total_msgs = history.len();
-            let recent_count = ((context_window as f32 * self.compaction_config.keep_recent_tokens_pct) as usize)
+            // Use the same effective context window as the trigger check so
+            // context_window=0 doesn't collapse recent_count to 0 (which would
+            // send the entire history to the summariser, exceeding its context).
+            let effective_cw = context_window.max(100_000);
+            let recent_count = ((effective_cw as f32 * self.compaction_config.keep_recent_tokens_pct) as usize)
                 .min(total_msgs);
             let recent_boundary = total_msgs.saturating_sub(recent_count);
             let prompt = loom_memory::SummaryEngine::build_prompt_segmented(

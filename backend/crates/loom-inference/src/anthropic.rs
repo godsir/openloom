@@ -642,14 +642,14 @@ impl CloudClient for AnthropicClient {
                             },
                             Some("message_delta") => {
                                 let u = &val["usage"];
+                                // message_delta.usage only contains output_tokens;
+                                // cache_creation_input_tokens lives in message_start.message.usage.
                                 let _ = tx
                                     .send(StreamDelta::Usage {
                                         prompt_tokens: 0,
                                         completion_tokens: u["output_tokens"].as_u64().unwrap_or(0),
                                         cache_read_tokens: 0,
-                                        cache_write_tokens: u["cache_creation_input_tokens"]
-                                            .as_u64()
-                                            .unwrap_or(0),
+                                        cache_write_tokens: 0,
                                     })
                                     .await;
                             }
@@ -662,7 +662,9 @@ impl CloudClient for AnthropicClient {
                                         cache_read_tokens: u["cache_read_input_tokens"]
                                             .as_u64()
                                             .unwrap_or(0),
-                                        cache_write_tokens: 0,
+                                        cache_write_tokens: u["cache_creation_input_tokens"]
+                                            .as_u64()
+                                            .unwrap_or(0),
                                     })
                                     .await;
                             }

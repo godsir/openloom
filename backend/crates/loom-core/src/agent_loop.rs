@@ -156,6 +156,26 @@ pub struct AgentLoopConfig {
     pub few_shots: Vec<String>,
 }
 
+impl AgentLoopConfig {
+    /// Effective context window in tokens.
+    ///
+    /// When the model's `context_size` is unknown we fall back to 100 K which
+    /// matches modern model defaults — this avoids silently disabling
+    /// summarisation / mid-turn compaction.
+    pub fn effective_context_window(&self) -> usize {
+        self.context_window
+            .filter(|w| *w > 0)
+            .or_else(|| {
+                self.model_configs
+                    .iter()
+                    .find(|c| Some(c.name.as_str()) == self.active_model_name.as_deref())
+                    .map(|c| c.context_size)
+                    .filter(|s| *s > 0)
+            })
+            .unwrap_or(100_000)
+    }
+}
+
 /// Default system prompt that ships with openLoom.
 /// This is the content written to `~/.loom/Loom.md` on first startup,
 /// allowing users to discover and customise the agent's behaviour.
@@ -704,7 +724,7 @@ async fn run_agent_turn_inner(
         tools.retain(|t| allowed_set.contains(t.name.as_str()));
     }
     let keep_recent_pct = 0.25_f32;
-    let cw = config.context_window.unwrap_or(8192);
+    let cw = config.effective_context_window();
     let history_budget = (cw as f32 * keep_recent_pct) as usize;
     let assembler = ContextAssembler::new(&config.system_prompt, history_budget);
     let opts = AssembleOptions {
@@ -1000,7 +1020,7 @@ async fn run_agent_turn_inner(
             let total_tokens: usize = messages.iter()
                 .map(|m| loom_context::message_tokens(m, bpe))
                 .sum();
-            let cw = config.context_window.unwrap_or(config.max_prompt_budget.max(8192));
+            let cw = config.effective_context_window().max(config.max_prompt_budget);
             let ceiling = (cw as f32 * 0.9) as usize;
             if total_tokens > ceiling {
                 if config.compaction_config.enabled {
@@ -1528,7 +1548,7 @@ async fn run_agent_turn_streaming_inner(
         all_tools.clone()
     };
     let keep_recent_pct = 0.25_f32;
-    let cw = config.context_window.unwrap_or(8192);
+    let cw = config.effective_context_window();
     let history_budget = (cw as f32 * keep_recent_pct) as usize;
     let assembler = ContextAssembler::new(&config.system_prompt, history_budget);
     let opts = AssembleOptions {
@@ -1893,7 +1913,7 @@ async fn run_agent_turn_streaming_inner(
             let total_tokens: usize = messages.iter()
                 .map(|m| loom_context::message_tokens(m, bpe))
                 .sum();
-            let cw = config.context_window.unwrap_or(config.max_prompt_budget.max(8192));
+            let cw = config.effective_context_window().max(config.max_prompt_budget);
             let ceiling = (cw as f32 * 0.9) as usize;
             if total_tokens > ceiling {
                 if config.compaction_config.enabled {

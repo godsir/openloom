@@ -70,7 +70,7 @@ export const createModelSlice: StateCreator<ModelSlice> = (set, get) => ({
     const outputPrice = m?.output_price || 0
     const cacheReadPrice = m?.cache_read_price || 0
     const cacheWritePrice = m?.cache_write_price || 0
-    const promptNonCache = Math.max(0, usage.prompt - usage.cacheRead)
+    const promptNonCache = Math.max(0, usage.prompt - usage.cacheRead - usage.cacheWrite)
     const turnCost =
       (promptNonCache * inputPrice +
        usage.cacheRead * cacheReadPrice +
