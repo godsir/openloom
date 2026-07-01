@@ -911,6 +911,20 @@ impl Orchestrator {
         // so ws.rs receives both agent and process events from a single channel.
         let process_manager = Arc::new(ProcessManager::new(pool.event_bus().clone()));
 
+        // Register process management tools — spawn/kill/stdin/list background processes
+        let _ = registry.register(Arc::new(crate::builtin_tools::ProcessSpawnTool {
+            process_manager: process_manager.clone(),
+        }));
+        let _ = registry.register(Arc::new(crate::builtin_tools::ProcessKillTool {
+            process_manager: process_manager.clone(),
+        }));
+        let _ = registry.register(Arc::new(crate::builtin_tools::ProcessStdinTool {
+            process_manager: process_manager.clone(),
+        }));
+        let _ = registry.register(Arc::new(crate::builtin_tools::ProcessListTool {
+            process_manager: process_manager.clone(),
+        }));
+
         Self {
             pool,
             tool_registry: Arc::new(RwLock::new(registry)),

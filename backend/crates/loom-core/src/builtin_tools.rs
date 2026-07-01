@@ -2219,3 +2219,225 @@ impl AgentTool for TodoListTool {
         ToolProvenance::Builtin
     }
 }
+
+// ============================================================================
+// Process Spawn
+// ============================================================================
+
+pub struct ProcessSpawnTool {
+    pub process_manager: Arc<crate::process_manager::ProcessManager>,
+}
+
+#[async_trait]
+impl AgentTool for ProcessSpawnTool {
+    fn tool_name(&self) -> &str { "process_spawn" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "process_spawn".into(),
+            description: "启动一个后台进程并立即返回。进程独立于 WebSocket 连接运行，stdout/stderr 会作为流式事件推送。适合运行长时间命令。".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "description": "要执行的命令" },
+                    "cwd": { "type": "string", "description": "工作目录" },
+                    "env": { "type": "object", "description": "环境变量" },
+                    "name": { "type": "string", "description": "友好名称，默认为命令名" }
+                },
+                "required": ["command"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let command = arguments["command"].as_str().unwrap_or("");
+        if command.is_empty() {
+            return Ok(ToolResult { content: "command required".into(), is_error: true, structured_content: None });
+        }
+        let cwd = arguments["cwd"].as_str();
+        let name = arguments["name"].as_str();
+        let env: Option<std::collections::HashMap<String, String>> = arguments["env"]
+            .as_object()
+            .map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect());
+
+        match self.process_manager.spawn(command, cwd, env.as_ref(), name).await {
+            Ok((pid, name)) => Ok(ToolResult {
+                content: format!("进程已启动: pid={}, name={}", pid, name),
+                is_error: false,
+                structured_content: Some(serde_json::json!({ "pid": pid, "name": name })),
+            }),
+            Err(e) => Ok(ToolResult {
+                content: format!("启动失败: {}", e),
+                is_error: true,
+                structured_content: Some(serde_json::json!({ "pid": null, "error": e.to_string() })),
+            }),
+        }
+    }
+
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
+
+// ============================================================================
+// Process Kill
+// ============================================================================
+
+pub struct ProcessKillTool {
+    pub process_manager: Arc<crate::process_manager::ProcessManager>,
+}
+
+#[async_trait]
+impl AgentTool for ProcessKillTool {
+    fn tool_name(&self) -> &str { "process_kill" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "process_kill".into(),
+            description: "终止指定 pid 的后台进程。".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "string", "description": "进程 ID" }
+                },
+                "required": ["pid"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let pid = arguments["pid"].as_str().unwrap_or("");
+        if pid.is_empty() {
+            return Ok(ToolResult { content: "pid required".into(), is_error: true, structured_content: None });
+        }
+        match self.process_manager.kill(pid).await {
+            Ok(true) => Ok(ToolResult {
+                content: format!("进程 {} 已终止", pid),
+                is_error: false,
+                structured_content: Some(serde_json::json!({ "killed": true })),
+            }),
+            Ok(false) => Ok(ToolResult {
+                content: format!("进程 {} 未找到或已退出", pid),
+                is_error: true,
+                structured_content: Some(serde_json::json!({ "killed": false })),
+            }),
+            Err(e) => Ok(ToolResult {
+                content: format!("终止失败: {}", e),
+                is_error: true,
+                structured_content: None,
+            }),
+        }
+    }
+
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
+
+// ============================================================================
+// Process Stdin
+// ============================================================================
+
+pub struct ProcessStdinTool {
+    pub process_manager: Arc<crate::process_manager::ProcessManager>,
+}
+
+#[async_trait]
+impl AgentTool for ProcessStdinTool {
+    fn tool_name(&self) -> &str { "process_stdin" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "process_stdin".into(),
+            description: "向后台进程的 stdin 写入一行文本。".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "string", "description": "进程 ID" },
+                    "input": { "type": "string", "description": "要写入的文本" }
+                },
+                "required": ["pid", "input"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let pid = arguments["pid"].as_str().unwrap_or("");
+        let input = arguments["input"].as_str().unwrap_or("");
+        if pid.is_empty() || input.is_empty() {
+            return Ok(ToolResult { content: "pid and input required".into(), is_error: true, structured_content: None });
+        }
+        match self.process_manager.stdin_write(pid, input).await {
+            Ok(true) => Ok(ToolResult {
+                content: "已发送".into(),
+                is_error: false,
+                structured_content: Some(serde_json::json!({ "ok": true })),
+            }),
+            Ok(false) => Ok(ToolResult {
+                content: format!("进程 {} 未找到或已退出", pid),
+                is_error: true,
+                structured_content: Some(serde_json::json!({ "ok": false, "error": "process not found" })),
+            }),
+            Err(e) => Ok(ToolResult {
+                content: format!("写入失败: {}", e),
+                is_error: true,
+                structured_content: None,
+            }),
+        }
+    }
+
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
+
+// ============================================================================
+// Process List
+// ============================================================================
+
+pub struct ProcessListTool {
+    pub process_manager: Arc<crate::process_manager::ProcessManager>,
+}
+
+#[async_trait]
+impl AgentTool for ProcessListTool {
+    fn tool_name(&self) -> &str { "process_list" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "process_list".into(),
+            description: "列出所有当前存活的后台进程。".into(),
+            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
+            tags: vec![],
+        }
+    }
+
+    async fn execute(
+        &self,
+        _arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let procs = self.process_manager.list().await;
+        let json = serde_json::to_string_pretty(&procs).unwrap_or_else(|_| "[]".into());
+        Ok(ToolResult {
+            content: format!("{} 个进程:\n{}", procs.len(), json),
+            is_error: false,
+            structured_content: Some(serde_json::json!({ "processes": procs })),
+        })
+    }
+
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
