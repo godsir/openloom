@@ -183,6 +183,21 @@ export async function bootstrapApp(): Promise<() => void> {
         // checkbox changes synced by the backend.
         useStore.getState().loadTodos(sessionId).catch(() => {})
         break
+      case 'process.output':
+        streamBufferManager.handleProcessOutput(
+          sessionId,
+          (p?.pid as string) || '',
+          (p?.data as string) || '',
+          (p?.stream as string) || 'stdout',
+        )
+        break
+      case 'process.exited':
+        streamBufferManager.handleProcessExited(
+          sessionId,
+          (p?.pid as string) || '',
+          (p?.exit_code as number) ?? -1,
+        )
+        break
     }
   })
 
@@ -228,6 +243,21 @@ export async function bootstrapApp(): Promise<() => void> {
           (p?.id as string) || '',
           p?.result as string | undefined,
           p?.name as string | undefined,
+        )
+        break
+      case 'process.output':
+        streamBufferManager.handleProcessOutput(
+          sessionId,
+          (p?.pid as string) || '',
+          (p?.data as string) || '',
+          (p?.stream as string) || 'stdout',
+        )
+        break
+      case 'process.exited':
+        streamBufferManager.handleProcessExited(
+          sessionId,
+          (p?.pid as string) || '',
+          (p?.exit_code as number) ?? -1,
         )
         break
     }

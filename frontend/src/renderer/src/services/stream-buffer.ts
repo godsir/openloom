@@ -12,6 +12,10 @@ interface BufferState {
   textAcc: string
   thinkingAcc: string
   imageAcc: Array<{ mimeType: string; data: string }>
+  processAcc: Array<{
+    pid: string
+    lines: Array<{ stream: string; text: string }>
+  }>
   moodAcc: { yuan: string; text: string }
   skillCalls: Array<{
     id: string
@@ -97,6 +101,7 @@ class StreamBufferManager {
         textAcc: '',
         thinkingAcc: '',
         imageAcc: [],
+        processAcc: [],
         moodAcc: { yuan: '', text: '' },
         skillCalls: [],
         shellCalls: [],
@@ -160,6 +165,61 @@ class StreamBufferManager {
     if (this.wsStreamSessions.has(sessionId)) return  // already handled by main WS
     if (!this.ensureStreamingForIM(sessionId)) return
     this._doHandleStreamDelta(sessionId, delta)
+  }
+
+  handleProcessOutput(sessionId: string, pid: string, data: string, stream: string): void {
+    const store = useStore.getState()
+    const sid = sessionId || store.currentSessionId || 'default'
+
+    store.ensureSession(sid)
+    const buf = this.ensureBuffer(sid)
+    if (!buf.messageId) {
+      buf.messageId = crypto.randomUUID()
+      store.appendMessage(sid, {
+        id: buf.messageId,
+        role: 'assistant',
+        blocks: [],
+        timestamp: new Date().toISOString(),
+      })
+      store.addStreamingSession(sid)
+    }
+
+    let procEntry = buf.processAcc.find(p => p.pid === pid)
+    if (!procEntry) {
+      procEntry = { pid, lines: [] }
+      buf.processAcc.push(procEntry)
+    }
+    procEntry.lines.push({ stream, text: data })
+
+    // Cap at 500 lines per process to prevent unbounded memory
+    if (procEntry.lines.length > 500) {
+      procEntry.lines = procEntry.lines.slice(-500)
+    }
+
+    this.scheduleFlush(buf, sid)
+  }
+
+  handleProcessExited(sessionId: string, pid: string, exitCode: number): void {
+    const sid = sessionId || useStore.getState().currentSessionId || 'default'
+    const buf = this.ensureBuffer(sid)
+    if (!buf.messageId) {
+      buf.messageId = crypto.randomUUID()
+      useStore.getState().ensureSession(sid)
+      useStore.getState().appendMessage(sid, {
+        id: buf.messageId,
+        role: 'assistant',
+        blocks: [],
+        timestamp: new Date().toISOString(),
+      })
+      useStore.getState().addStreamingSession(sid)
+    }
+    let procEntry = buf.processAcc.find(p => p.pid === pid)
+    if (!procEntry) {
+      procEntry = { pid, lines: [] }
+      buf.processAcc.push(procEntry)
+    }
+    procEntry.lines.push({ stream: 'system', text: `[进程已退出, code=${exitCode}]` })
+    this.scheduleFlush(buf, sid)
   }
 
   private _doHandleStreamDelta(sessionId: string, delta: string): void {
@@ -575,6 +635,17 @@ class StreamBufferManager {
         result: sc.result,
         sealed: sc.status === 'done',
       })
+    }
+
+    for (const proc of buf.processAcc) {
+      if (proc.lines.length > 0) {
+        blocks.push({
+          type: 'process_output',
+          pid: proc.pid,
+          lines: proc.lines.map(l => ({ stream: l.stream, text: l.text })),
+          sealed: false,
+        })
+      }
     }
 
     if (buf.textAcc) {
