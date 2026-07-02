@@ -2455,12 +2455,12 @@ impl AgentTool for ProcessWaitTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "process_wait".into(),
-            description: "阻塞等待后台进程结束并返回完整输出 + exit code。比 process_list 轮询更省 token。\n\n典型用法：process_spawn 启动长时间命令后，process_wait 等待完成拿到结果。超时默认 600s（10分钟），可自定义。".into(),
+            description: "阻塞等待后台进程结束并返回完整输出 + exit code。默认超时 30s。用于循环读取长进程输出，不要用大超时。每轮读完后若有 speech_your_turn 立即 ccl do 回应，然后再 wait 下一轮。".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "pid": { "type": "string", "description": "进程 ID（由 process_spawn 返回）" },
-                    "timeout": { "type": "integer", "description": "超时秒数（默认 600，最大 3600）" }
+                    "timeout": { "type": "integer", "description": "超时秒数（默认 30，最大 3600）。用短超时 + 循环来持续读取输出" }
                 },
                 "required": ["pid"]
             }),
