@@ -33,6 +33,9 @@ pub struct ToolContext {
     pub todo_store: Option<Arc<TodoStore>>,
     /// Event bus for publishing events (e.g. TodosReplaced after todo_write).
     pub event_bus: Option<EventBus>,
+    /// Cancel token for the current agent turn — tools should check this during
+    /// long operations and return early when cancelled.
+    pub cancel_token: Option<tokio_util::sync::CancellationToken>,
 }
 
 impl ToolContext {
@@ -45,6 +48,7 @@ impl ToolContext {
             session_id: None,
             todo_store: None,
             event_bus: None,
+            cancel_token: None,
         }
     }
 
@@ -57,6 +61,7 @@ impl ToolContext {
             session_id: None,
             todo_store: None,
             event_bus: None,
+            cancel_token: None,
         }
     }
 
@@ -72,6 +77,7 @@ impl ToolContext {
             session_id: None,
             todo_store: None,
             event_bus: None,
+            cancel_token: None,
         }
     }
 

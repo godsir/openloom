@@ -2483,8 +2483,9 @@ impl AgentTool for ProcessWaitTool {
             });
         }
         let timeout_secs = arguments["timeout"].as_u64().unwrap_or(600).min(3600);
+        let cancel = _context.cancel_token.clone();
 
-        match self.process_manager.wait(pid, timeout_secs, 256 * 1024).await {
+        match self.process_manager.wait(pid, timeout_secs, 256 * 1024, cancel).await {
             Ok(result) => {
                 let summary = format!(
                     "进程 {} 已退出 (exit_code={})\n\n输出:\n{}",

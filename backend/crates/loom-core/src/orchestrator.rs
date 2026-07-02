@@ -6454,6 +6454,7 @@ impl PromptExecutor for CronPromptExecutor {
                     session_id: None,
                     todo_store: None,
                     event_bus: None,
+                    cancel_token: None,
                 };
 
                 // Execute each tool call with permission check.

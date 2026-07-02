@@ -948,6 +948,7 @@ async fn run_agent_turn_inner(
         session_id: Some(config.session_id.clone()),
         todo_store: config.todo_store.clone(),
         event_bus: config.event_bus.clone(),
+        cancel_token: Some(cancel.clone()),
     };
 
     // ── Prefix digest: compute SHA256 fingerprint of stable prefix ──
@@ -1855,6 +1856,7 @@ async fn run_agent_turn_streaming_inner(
         session_id: Some(config.session_id.clone()),
         todo_store: config.todo_store.clone(),
         event_bus: config.event_bus.clone(),
+        cancel_token: Some(cancel.clone()),
     };
 
     // ── Prefix digest (streaming): compute SHA256 fingerprint of stable prefix ──

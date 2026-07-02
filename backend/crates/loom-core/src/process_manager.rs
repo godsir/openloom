@@ -295,6 +295,7 @@ impl ProcessManager {
         pid: &str,
         timeout_secs: u64,
         max_output_bytes: usize,
+        cancel: Option<tokio_util::sync::CancellationToken>,
     ) -> Result<ProcessWaitResult> {
         let pid = pid.to_string();
         let mut output = String::new();
@@ -312,6 +313,12 @@ impl ProcessManager {
         };
 
         loop {
+            // Check cancel token
+            if let Some(ref ct) = cancel {
+                if ct.is_cancelled() {
+                    return Ok(ProcessWaitResult { exit_code: -1, output, truncated: false });
+                }
+            }
             // Check if already exited
             {
                 let procs = self.processes.read().await;
