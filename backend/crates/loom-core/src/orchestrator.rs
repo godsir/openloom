@@ -4677,7 +4677,10 @@ impl Orchestrator {
             if stop { break; }
 
             auto_round += 1;
-            let prev = result.as_ref().unwrap();
+            let prev = match &result {
+                Ok(t) => t,
+                Err(_) => break,
+            };
 
             self.force_summarize_session(session_id).await;
 
@@ -4751,7 +4754,10 @@ impl Orchestrator {
             if stop { break; }
 
             auto_round += 1;
-            let prev = result.as_ref().unwrap();
+            let prev = match &result {
+                Ok(t) => t,
+                Err(_) => break,
+            };
 
             self.force_summarize_session(session_id).await;
 

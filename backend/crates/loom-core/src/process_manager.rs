@@ -28,9 +28,10 @@ struct ManagedProcess {
     #[allow(dead_code)]
     started_at: Instant,
     started_at_ms: i64,
-    /// Time when the process exited (set by exit waiter or kill).
     exited_at: Option<Instant>,
     exit_code: Option<i32>,
+    /// Buffered output lines for non-blocking process_read.
+    output_buffer: Arc<Mutex<Vec<String>>>,
 }
 
 /// Manages background child processes that survive WebSocket disconnects.
@@ -154,6 +155,7 @@ impl ProcessManager {
         // Wrap the child in Arc<Mutex<Option<Child>>> so the exit waiter and
         // kill() can both access it.
         let child_arc: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(Some(child)));
+        let output_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
         // ── exit waiter ──
         let processes = self.processes.clone();
@@ -204,6 +206,7 @@ impl ProcessManager {
                 started_at_ms: now_ms,
                 exited_at: None,
                 exit_code: None,
+                output_buffer: Arc::new(Mutex::new(Vec::new())),
             },
         );
 
@@ -398,6 +401,16 @@ pub struct ProcessInfo {
     pub name: String,
     pub running: bool,
     pub exit_code: Option<i32>,
-    /// Unix timestamp in milliseconds when the process was started.
     pub started_at_ms: i64,
+}
+
+/// Result of a non-blocking process_read.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProcessReadResult {
+    pub pid: String,
+    pub name: String,
+    pub running: bool,
+    pub exit_code: Option<i32>,
+    /// Lines of output accumulated since the last read for this pid, newest first.
+    pub new_lines: Vec<String>,
 }
