@@ -2455,7 +2455,7 @@ impl AgentTool for ProcessWaitTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "process_wait".into(),
-            description: "阻塞等待后台进程结束并返回完整输出 + exit code。默认超时 30s。用于循环读取长进程输出，不要用大超时。每轮读完后若有 speech_your_turn 立即 ccl do 回应，然后再 wait 下一轮。".into(),
+            description: "阻塞等待后台进程输出。收到输出后若 300ms 无新输出会立即返回（进程在等输入），否则等到进程退出或超时。默认超时 30s。用于循环读取长进程输出：每轮读完后若有 speech_your_turn 立即 ccl do 回应，然后再 wait 下一轮。返回 exit_code=-1 表示进程仍在运行。".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -2482,22 +2482,35 @@ impl AgentTool for ProcessWaitTool {
                 structured_content: None,
             });
         }
-        let timeout_secs = arguments["timeout"].as_u64().unwrap_or(600).min(3600);
+        let timeout_secs = arguments["timeout"].as_u64().unwrap_or(30).min(3600);
         let cancel = _context.cancel_token.clone();
 
         match self.process_manager.wait(pid, timeout_secs, 256 * 1024, cancel).await {
             Ok(result) => {
-                let summary = format!(
-                    "进程 {} 已退出 (exit_code={})\n\n输出:\n{}",
-                    pid, result.exit_code,
-                    if result.truncated { format!("{}\n\n[输出已截断]", result.output) } else { result.output.clone() }
-                );
+                let output_text = if result.truncated {
+                    format!("{}\n\n[输出已截断]", result.output)
+                } else {
+                    result.output.clone()
+                };
+                // exit_code semantics:
+                //   >= 0 → process exited with this code
+                //   -1   → still running (idle-return: output received then process
+                //          went quiet, or overall timeout reached — process alive)
+                //   -2   → PID not found (already GC'd / never existed)
+                let summary = if result.exit_code >= 0 {
+                    format!("进程 {} 已退出 (exit_code={})\n\n输出:\n{}", pid, result.exit_code, output_text)
+                } else if result.exit_code == -2 {
+                    format!("进程 {} 未找到（可能已退出并被清理）\n\n输出:\n{}", pid, output_text)
+                } else {
+                    format!("进程 {} 仍在运行，当前输出:\n{}", pid, output_text)
+                };
                 Ok(ToolResult {
                     content: summary,
-                    is_error: result.exit_code != 0,
+                    is_error: result.exit_code > 0,
                     structured_content: Some(serde_json::json!({
                         "pid": pid,
                         "exit_code": result.exit_code,
+                        "running": result.exit_code < 0,
                         "output": result.output,
                         "truncated": result.truncated,
                     })),

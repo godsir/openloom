@@ -1366,10 +1366,37 @@ async fn run_agent_turn_inner(
                 // Drain progress updates in background to avoid SendError in tool implementations
                 tokio::spawn(async move { while progress_rx.recv().await.is_some() {} });
 
-                match registry
-                    .execute(&tc.name, tc.arguments.clone(), progress_tx, &tool_context)
-                    .await
-                {
+                // Wrap tool execution with cancel check — if user clicks stop
+                // while a tool is running, we break out immediately.
+                let tc_name_owned = tc.name.clone();
+                let tool_exec_result = tokio::select! {
+                    result = registry.execute(&tc.name, tc.arguments.clone(), progress_tx, &tool_context) => result,
+                    _ = cancel.cancelled() => {
+                        tracing::info!("tool execution cancelled by user: {}", tc_name_owned);
+                        return Ok(TurnResult {
+                            response: "[已中断]".into(),
+                            thinking: String::new(),
+                            tool_calls_made,
+                            iterations: iteration,
+                            prompt_tokens: total_prompt,
+                            completion_tokens: total_completion,
+                            cached_tokens: 0,
+                            cache_read_tokens: 0,
+                            cache_write_tokens: 0,
+                            kv_cache_hit: None,
+                            content_parts: {
+                                let mut parts = build_toolcall_parts(&tool_messages);
+                                parts.push(ContentPart::Text { text: "[已中断]".into() });
+                                parts
+                            },
+                            tool_messages,
+                            vision_usage: None,
+                            progress: ProgressCheckpoint::default(),
+                            stop_reason: StopReason::UserCancelled,
+                        });
+                    }
+                };
+                match tool_exec_result {
                     Ok(result) => {
                         tool_calls_made += 1;
                         let content = if result.is_error {
@@ -2499,8 +2526,13 @@ async fn run_agent_turn_streaming_inner(
                                 "tool arguments JSON truncated (token limit)"
                             );
                             let err_content = format!(
-                                "Output truncated by token limit（{} bytes，JSON 不完整）。请把大内容拆成多次 write 调用，每次不超过 8KB。",
-                                tc_args.len()
+                                "ERROR: Tool call '{}' 的参数 JSON 被截断（{} bytes），无法解析。\n\
+                                 原因：输出内容超过了模型的 max_tokens 限制。\n\
+                                 解决方案：\n\
+                                 1. 如果是 file_write/write_file：将内容拆成多次调用，每次不超过 8KB\n\
+                                 2. 如果是 use_skill：技能内容已在系统提示中加载，无需重复调用\n\
+                                 3. 如果是其他工具：减少参数中的内容量，或分步执行",
+                                tc_name, tc_args.len()
                             );
                             messages.push(Message::tool(tc_id, tc_name, &err_content));
                             tool_messages.push(messages.last().unwrap().clone());
@@ -2528,10 +2560,42 @@ async fn run_agent_turn_streaming_inner(
                 let maybe_file_path: Option<String> = if matches!(tc_name.as_str(), "file_write" | "file_edit") {
                     arguments.get("file_path").or(arguments.get("path")).and_then(|v| v.as_str()).map(|s| s.to_string())
                 } else { None };
-                match registry
-                    .execute(tc_name, arguments, progress_tx, &tool_context)
-                    .await
-                {
+                // Clone tc_name for use after tokio::select! (which moves it)
+                let tc_name_for_log = tc_name.clone();
+                // Wrap tool execution with cancel check — if user clicks stop
+                // while a tool is running, we break out immediately.
+                let tool_exec_result = tokio::select! {
+                    result = registry.execute(tc_name, arguments, progress_tx, &tool_context) => result,
+                    _ = cancel.cancelled() => {
+                        tracing::info!("tool execution cancelled by user: {}", tc_name_for_log);
+                        let _ = delta_tx.send(StreamDelta::Text("[已中断]".into())).await;
+                        drop(delta_tx);
+                        return Ok(TurnResult {
+                            response: "[已中断]".into(),
+                            thinking: String::new(),
+                            tool_calls_made,
+                            iterations: iteration,
+                            prompt_tokens: total_prompt,
+                            completion_tokens: total_completion,
+                            cached_tokens: 0,
+                            cache_read_tokens: 0,
+                            cache_write_tokens: 0,
+                            kv_cache_hit: None,
+                            content_parts: {
+                                let mut parts = build_toolcall_parts(&tool_messages);
+                                parts.push(ContentPart::Text { text: "[已中断]".into() });
+                                parts
+                            },
+                            tool_messages,
+                            vision_usage: None,
+                            progress: ProgressCheckpoint::default(),
+                            stop_reason: StopReason::UserCancelled,
+                        });
+                    }
+                };
+                // Restore tc_name for subsequent use
+                let tc_name = tc_name_for_log;
+                match tool_exec_result {
                     Ok(result) => {
                         tool_calls_made += 1;
                         let success = !result.is_error;
@@ -2548,7 +2612,7 @@ async fn run_agent_turn_streaming_inner(
                             tracing::warn!(tool_name = %tc_name, error = %content, "tool failed (streaming)");
                         }
 
-                        let tool_msg = Message::tool(tc_id, tc_name, &content);
+                        let tool_msg = Message::tool(tc_id.clone(), tc_name.clone(), &content);
                         messages.push(tool_msg.clone());
                         tool_messages.push(tool_msg);
 
@@ -2578,7 +2642,7 @@ async fn run_agent_turn_streaming_inner(
                         // Skip pushing malformed tool messages with empty IDs —
                         // they cause 400 errors with providers that validate tool_call_id
                         if !tc_id.is_empty() && !tc_name.is_empty() {
-                            let tool_msg = Message::tool(tc_id, tc_name, &err_msg);
+                            let tool_msg = Message::tool(tc_id.clone(), tc_name.clone(), &err_msg);
                             messages.push(tool_msg.clone());
                             tool_messages.push(tool_msg);
                         }
@@ -2607,7 +2671,7 @@ async fn run_agent_turn_streaming_inner(
                         "STORM BREAKER: You have called the tool `{}` with identical arguments {} times consecutively. You appear to be stuck in a loop. STOP calling this tool and produce a final response instead.",
                         tc_name, count
                     );
-                    messages.push(Message::tool(tc_id, tc_name, &storm_msg));
+                    messages.push(Message::tool(tc_id.clone(), tc_name.clone(), &storm_msg));
                     tool_messages.push(messages.last().unwrap().clone());
                     let _ = delta_tx
                         .send(StreamDelta::ToolResult {

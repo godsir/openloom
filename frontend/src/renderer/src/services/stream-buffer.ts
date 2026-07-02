@@ -153,6 +153,11 @@ class StreamBufferManager {
   }
 
   handleStreamDelta(sessionId: string, delta: string): void {
+    // Handle cancellation marker — treat as stream end
+    if (delta === '[已中断]') {
+      this.handleStreamEnd(sessionId)
+      return
+    }
     // Ignore deltas arriving after stream has ended (late WebSocket frames)
     if (!this.ensureStreamingForIM(sessionId)) {
       return
@@ -164,6 +169,11 @@ class StreamBufferManager {
   /** IM bridge variant — skip if main WS already handled this session. */
   handleStreamDeltaIM(sessionId: string, delta: string): void {
     if (this.wsStreamSessions.has(sessionId)) return  // already handled by main WS
+    // Handle cancellation marker — treat as stream end
+    if (delta === '[已中断]') {
+      this.handleStreamEnd(sessionId)
+      return
+    }
     if (!this.ensureStreamingForIM(sessionId)) return
     this._doHandleStreamDelta(sessionId, delta)
   }

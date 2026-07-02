@@ -48,6 +48,13 @@ export class ImBridge {
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>()
   /** Per-engine-session IM state (currently just the permission mode). */
   private convState = new Map<string, { permissionMode: string }>()
+  /**
+   * Per-session stream listeners — used by handleMessage to accumulate text
+   * deltas and push incremental chunks to the IM channel (paragraph by
+   * paragraph) instead of waiting for the entire response to finish.
+   * Keyed by engine session id.
+   */
+  private streamListeners = new Map<string, (delta: string) => void>()
 
   constructor(imStore: IMStore, onSessionCreated?: () => void, onStreamNotification?: (method: string, params: Record<string, unknown>) => void) {
     this.imStore = imStore
@@ -110,6 +117,14 @@ export class ImBridge {
       // chat.* streaming notifications — forwarded to renderer so
       // Dynamic Island / pet / sidebar can react in real time.
       if (msg.method && msg.params) {
+        // Route text deltas to the per-session listener (incremental IM push).
+        if (msg.method === 'chat.stream_delta') {
+          const sid = msg.params?.session_id as string | undefined
+          const delta = msg.params?.delta as string | undefined
+          if (sid && delta != null) {
+            this.streamListeners.get(sid)?.(delta)
+          }
+        }
         this.onStreamNotification?.(msg.method, msg.params)
       }
     })
@@ -197,16 +212,69 @@ export class ImBridge {
       // fall through: send the user's opening line to the agent too
     }
 
+    // Declared before try so the catch block can clean it up on error.
+    let flushTimer: ReturnType<typeof setTimeout> | null = null
+
     try {
-      const result: any = await this.rpc('chat.send', {
-        session_id: sessionId!,
-        content,
-        permission_mode: this.getMode(sessionId!),
-      })
-      const responseText = (result?.response ?? '').toString().trim()
-      if (responseText) {
-        await reply(responseText)
+      // ── Incremental IM push (debounce-based) ──
+      // Accumulate streamed text and push ONE message each time the agent
+      // pauses for DEBOUNCE_MS (a natural break — thinking, calling a tool).
+      // This keeps related content together (titles, dividers, paragraphs
+      // stay in one message) instead of splitting on every \n\n and flooding
+      // the IM channel with tiny fragments.
+      let accumulated = ''
+      let pushedLen = 0
+      const DEBOUNCE_MS = 800
+      // Serialize reply calls so chunks arrive in order.
+      let flushChain: Promise<void> = Promise.resolve()
+
+      const isResponseDelta = (d: string) => !d.startsWith('\x02')
+
+      const pushNow = (): Promise<void> =>
+        flushChain = flushChain.then(async () => {
+          const chunk = accumulated
+          accumulated = ''
+          pushedLen += chunk.length
+          if (chunk.trim()) await reply(chunk)
+        })
+
+      const onDelta = (delta: string) => {
+        if (!isResponseDelta(delta)) return
+        accumulated += delta
+        // Reset the debounce timer on every delta — only fire when the agent
+        // goes quiet for DEBOUNCE_MS (natural pause in generation).
+        if (flushTimer) clearTimeout(flushTimer)
+        flushTimer = setTimeout(() => {
+          flushTimer = null
+          void pushNow()
+        }, DEBOUNCE_MS)
       }
+      this.streamListeners.set(sessionId!, onDelta)
+
+      let result: any
+      try {
+        result = await this.rpc('chat.send', {
+          session_id: sessionId!,
+          content,
+          permission_mode: this.getMode(sessionId!),
+        })
+      } finally {
+        this.streamListeners.delete(sessionId!)
+      }
+
+      // Cancel any pending debounce flush and wait for in-flight pushes.
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
+      await flushChain
+
+      // Authoritative full response — use it to compute the unpushed remainder
+      // (robust against any delta-vs-response mismatch), then push it as the
+      // final message.
+      const fullText = (result?.response ?? '').toString()
+      accumulated = fullText
+        ? fullText.slice(Math.min(pushedLen, fullText.length))
+        : accumulated
+      await pushNow()
+
       if (isFirstContact) {
         // Auto-title the new session so the desktop sidebar shows something
         // meaningful instead of an empty name. Non-critical, fire-and-forget.
@@ -215,6 +283,9 @@ export class ImBridge {
           .catch(() => { /* ignore */ })
       }
     } catch (e: any) {
+      // Make sure the listener + pending debounce timer are cleaned up on error.
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
+      this.streamListeners.delete(sessionId!)
       console.error('[ImBridge] chat.send failed:', e?.message)
       await reply(`❌ 处理失败: ${e?.message ?? e}`)
     }

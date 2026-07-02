@@ -154,6 +154,7 @@ impl MemoryStore for LoomMemoryStore {
         cached_write_tokens: usize,
         context_window: usize,
         tool_msgs_json: &[String],
+        skip_user: bool,
     ) -> Result<i64> {
         // Write messages to session db
         let now = chrono::Utc::now().to_rfc3339();
@@ -174,26 +175,35 @@ impl MemoryStore for LoomMemoryStore {
                 rusqlite::params![session_id],
                 |r| r.get(0),
             )?;
-            conn.execute(
-                "INSERT INTO message_history (session_id, seq, role, content, timestamp) VALUES (?1, ?2, 'user', ?3, ?4)",
-                rusqlite::params![session_id, seq, user_msg, now],
-            )?;
+            // When skip_user is true, the user message was already persisted
+            // at the start of the turn (via save_interrupted_turn). Only
+            // insert assistant + tool messages here, using seq for assistant
+            // and seq+1+i for tools.
+            let (assistant_seq, tool_base_seq, count_increment) = if skip_user {
+                (seq, seq + 1, 1_i64)
+            } else {
+                conn.execute(
+                    "INSERT INTO message_history (session_id, seq, role, content, timestamp) VALUES (?1, ?2, 'user', ?3, ?4)",
+                    rusqlite::params![session_id, seq, user_msg, now],
+                )?;
+                (seq + 1, seq + 2, 2_i64)
+            };
             conn.execute(
                 "INSERT INTO message_history (session_id, seq, role, content, timestamp, metadata) VALUES (?1, ?2, 'assistant', ?3, ?4, ?5)",
-                rusqlite::params![session_id, seq + 1, assistant_msg, now, usage_meta],
+                rusqlite::params![session_id, assistant_seq, assistant_msg, now, usage_meta],
             )?;
             // Persist tool messages
             let mut tool_count: i64 = 0;
             for (i, tool_json) in tool_msgs_json.iter().enumerate() {
                 conn.execute(
                     "INSERT INTO message_history (session_id, seq, role, content, timestamp) VALUES (?1, ?2, 'tool', ?3, ?4)",
-                    rusqlite::params![session_id, seq + 2 + i as i64, tool_json, now],
+                    rusqlite::params![session_id, tool_base_seq + i as i64, tool_json, now],
                 )?;
                 tool_count += 1;
             }
             conn.execute(
                 "UPDATE sessions SET message_count = message_count + ?1, updated_at = datetime('now') WHERE id = ?2",
-                rusqlite::params![2 + tool_count, session_id],
+                rusqlite::params![count_increment + tool_count, session_id],
             )?;
         }
         // Write event to memory db
@@ -239,6 +249,62 @@ impl MemoryStore for LoomMemoryStore {
             conn.execute(
                 "UPDATE sessions SET message_count = message_count + 1, updated_at = datetime('now') WHERE id = ?1",
                 rusqlite::params![session_id],
+            )?;
+        }
+        Ok(())
+    }
+
+    async fn append_message(
+        &self,
+        session_id: &str,
+        role: &str,
+        content_json: &str,
+        metadata_json: Option<&str>,
+    ) -> Result<i64> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let sess = self.session_db.lock().expect("lock poisoned");
+        let conn = sess.conn();
+        let seq: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM message_history WHERE session_id = ?1",
+            rusqlite::params![session_id],
+            |r| r.get(0),
+        )?;
+        if let Some(meta) = metadata_json {
+            conn.execute(
+                "INSERT INTO message_history (session_id, seq, role, content, timestamp, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![session_id, seq, role, content_json, now, meta],
+            )?;
+        } else {
+            conn.execute(
+                "INSERT INTO message_history (session_id, seq, role, content, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![session_id, seq, role, content_json, now],
+            )?;
+        }
+        conn.execute(
+            "UPDATE sessions SET message_count = message_count + 1, updated_at = datetime('now') WHERE id = ?1",
+            rusqlite::params![session_id],
+        )?;
+        Ok(seq)
+    }
+
+    async fn update_message(
+        &self,
+        session_id: &str,
+        seq: i64,
+        content_json: &str,
+        metadata_json: Option<&str>,
+    ) -> Result<()> {
+        let sess = self.session_db.lock().expect("lock poisoned");
+        let conn = sess.conn();
+        if let Some(meta) = metadata_json {
+            conn.execute(
+                "UPDATE message_history SET content = ?1, metadata = ?2 WHERE session_id = ?3 AND seq = ?4",
+                rusqlite::params![content_json, meta, session_id, seq],
+            )?;
+        } else {
+            conn.execute(
+                "UPDATE message_history SET content = ?1 WHERE session_id = ?2 AND seq = ?3",
+                rusqlite::params![content_json, session_id, seq],
             )?;
         }
         Ok(())

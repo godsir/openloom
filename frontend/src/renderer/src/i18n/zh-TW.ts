@@ -146,7 +146,7 @@ export const zhTW: TranslationMap = {
   'chat.placeholderEnter': '輸入訊息，Enter 傳送 · Ctrl+Enter 換行',
   'chat.placeholderCtrlEnter': '輸入訊息，Ctrl+Enter 傳送 · Enter 換行',
   'chat.send': '傳送',
-  'chat.interruptSend': '打斷並傳送',
+  'chat.interruptSend': '插話',
   'chat.stop': '停止',
   'chat.stopped': '已停止生成',
   'chat.empty': '傳送訊息开始對話',

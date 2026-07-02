@@ -30,7 +30,18 @@ struct ManagedProcess {
     started_at_ms: i64,
     exited_at: Option<Instant>,
     exit_code: Option<i32>,
+    /// Accumulated stdout/stderr lines — never lost between process_wait calls.
+    /// This mirrors Claude Code's Monitor persistent buffer: events arriving
+    /// while the agent is busy (LLM call, ccl do) are captured here and drained
+    /// by the next process_wait, instead of being dropped.
+    output_buffer: Arc<Mutex<Vec<String>>>,
+    /// Read cursor — index of the next unread line in output_buffer.
+    /// Advanced by process_wait; shared across calls so nothing is re-read.
+    read_cursor: usize,
 }
+
+/// Cap on buffered output lines to bound memory for long-running processes.
+const MAX_BUFFERED_LINES: usize = 10_000;
 
 /// Manages background child processes that survive WebSocket disconnects.
 pub struct ProcessManager {
@@ -92,6 +103,8 @@ impl ProcessManager {
         let stdout = child.stdout.take();
         let event_bus = self.event_bus.clone();
         let pid_clone = pid.clone();
+        let output_buffer = Arc::new(Mutex::new(Vec::<String>::new()));
+        let stdout_buffer = output_buffer.clone();
 
         if let Some(stdout) = stdout {
             tokio::spawn(async move {
@@ -102,6 +115,16 @@ impl ProcessManager {
                     } else {
                         line
                     };
+                    // Buffer the line so process_wait can drain it even if it
+                    // arrives while no subscriber is listening (e.g. during an
+                    // LLM call between process_wait calls).
+                    {
+                        let mut buf = stdout_buffer.lock().await;
+                        if buf.len() >= MAX_BUFFERED_LINES {
+                            buf.remove(0);
+                        }
+                        buf.push(data.clone());
+                    }
                     event_bus.publish(AgentEvent::ProcessOutput {
                         pid: pid_clone.clone(),
                         data,
@@ -115,6 +138,7 @@ impl ProcessManager {
         let stderr = child.stderr.take();
         let event_bus = self.event_bus.clone();
         let pid_clone = pid.clone();
+        let stderr_buffer = output_buffer.clone();
 
         if let Some(stderr) = stderr {
             tokio::spawn(async move {
@@ -125,6 +149,13 @@ impl ProcessManager {
                     } else {
                         line
                     };
+                    {
+                        let mut buf = stderr_buffer.lock().await;
+                        if buf.len() >= MAX_BUFFERED_LINES {
+                            buf.remove(0);
+                        }
+                        buf.push(data.clone());
+                    }
                     event_bus.publish(AgentEvent::ProcessOutput {
                         pid: pid_clone.clone(),
                         data,
@@ -203,6 +234,8 @@ impl ProcessManager {
                 started_at_ms: now_ms,
                 exited_at: None,
                 exit_code: None,
+                output_buffer,
+                read_cursor: 0,
             },
         );
 
@@ -312,6 +345,14 @@ impl ProcessManager {
             None
         };
 
+        // Idle-return: once we've received output, if no new output arrives
+        // within this window, return the accumulated output immediately.
+        // This lets the agent react to interactive processes (e.g. ccl emitting
+        // `speech_your_turn` then waiting for input) without blocking the full
+        // timeout — the game's speech timer would otherwise expire first.
+        let idle_window = Duration::from_millis(300);
+        let mut last_output_at: Option<Instant> = None;
+
         loop {
             // Check cancel token
             if let Some(ref ct) = cancel {
@@ -319,10 +360,42 @@ impl ProcessManager {
                     return Ok(ProcessWaitResult { exit_code: -1, output, truncated: false });
                 }
             }
-            // Check if already exited
+            // Drain buffered output + check exit status in one lock.
+            // Draining the buffer here is the KEY fix: events that arrived
+            // between process_wait calls (while the agent was doing an LLM
+            // call or ccl do) are captured in output_buffer and never lost.
+            // This mirrors Claude Code's Monitor persistent-listen behaviour.
             {
-                let procs = self.processes.read().await;
-                if let Some(entry) = procs.get(&pid) {
+                let mut procs = self.processes.write().await;
+                if let Some(entry) = procs.get_mut(&pid) {
+                    // Drain any unread buffered lines.
+                    let new_lines: Vec<String> = {
+                        let buf = entry.output_buffer.lock().await;
+                        let cursor = entry.read_cursor.min(buf.len());
+                        buf[cursor..].to_vec()
+                    };
+                    if !new_lines.is_empty() {
+                        entry.read_cursor += new_lines.len();
+                        // Cap read_cursor so it doesn't grow unbounded if the
+                        // buffer was trimmed (oldest lines dropped).
+                        let buf_len = entry.output_buffer.lock().await.len();
+                        entry.read_cursor = entry.read_cursor.min(buf_len);
+                        for line in &new_lines {
+                            if output.len() + line.len() + 1 > max_output_bytes {
+                                if !truncated {
+                                    output.push_str("\n[output truncated — max size reached]\n");
+                                    truncated = true;
+                                }
+                                break;
+                            }
+                            if !output.is_empty() {
+                                output.push('\n');
+                            }
+                            output.push_str(line);
+                        }
+                        last_output_at = Some(Instant::now());
+                    }
+                    // Check exit status after draining.
                     if let Some(code) = entry.exit_code {
                         return Ok(ProcessWaitResult {
                             exit_code: code,
@@ -340,13 +413,41 @@ impl ProcessManager {
                 }
             }
 
-            // Compute remaining timeout
-            let remaining = deadline.map(|d| {
-                let r = d.saturating_duration_since(Instant::now());
-                r
-            });
+            // Idle-return check: if we have output and the process has been
+            // quiet for idle_window, it's likely waiting for input — return
+            // so the caller (agent) can act on the output.
+            if let Some(lo) = last_output_at {
+                if lo.elapsed() >= idle_window && !output.is_empty() {
+                    return Ok(ProcessWaitResult {
+                        exit_code: -1,
+                        output,
+                        truncated,
+                    });
+                }
+            }
 
-            let event = if let Some(r) = remaining {
+            // Compute the wait duration for this iteration:
+            //  - If we have output (idle-return armed), cap at idle_window so we
+            //    wake up to check the idle timer even with no events.
+            //  - No output yet: cap at no_output_window (3s) so the caller gets
+            //    a quick "no new output" result instead of blocking the full
+            //    timeout. This lets an agent detect an idle/ended process (e.g.
+            //    ClawClaw game over with no more events) and decide to stop,
+            //    rather than looping for 30s × N iterations.
+            let no_output_window = Duration::from_secs(3);
+            let overall_remaining = deadline.map(|d| d.saturating_duration_since(Instant::now()));
+            let wait_dur = if last_output_at.is_some() {
+                let since = last_output_at.unwrap().elapsed();
+                if since >= idle_window {
+                    continue; // idle timer already expired — loop back to return above
+                }
+                let idle_left = idle_window - since;
+                if let Some(r) = overall_remaining {
+                    r.min(idle_left)
+                } else {
+                    idle_left
+                }
+            } else if let Some(r) = overall_remaining {
                 if r.is_zero() {
                     return Ok(ProcessWaitResult {
                         exit_code: -1,
@@ -354,40 +455,94 @@ impl ProcessManager {
                         truncated: true,
                     });
                 }
-                match tokio::time::timeout(r, rx.recv()).await {
-                    Ok(Ok(ev)) => ev,
-                    Ok(Err(_)) => return Err(anyhow::anyhow!("event bus closed")),
-                    Err(_) => {
-                        // timeout
-                        return Ok(ProcessWaitResult {
-                            exit_code: -1,
-                            output: format!("{output}\n[process_wait timed out after {timeout_secs}s]"),
-                            truncated: true,
-                        });
+                r.min(no_output_window)
+            } else {
+                no_output_window
+            };
+
+            // Use select! so cancel is observed immediately even while
+            // blocked waiting for the next event (the loop-top cancel check
+            // alone isn't enough — we can be stuck in timeout(rx.recv()) for
+            // up to wait_dur). This makes chat.stop responsive during games.
+            let recv_future = rx.recv();
+            tokio::pin!(recv_future);
+            let event_result = if let Some(ref ct) = cancel {
+                tokio::select! {
+                    biased;
+                    _ = ct.cancelled() => {
+                        return Ok(ProcessWaitResult { exit_code: -1, output, truncated: false });
                     }
+                    r = &mut recv_future => match r {
+                        Ok(ev) => Some(ev),
+                        Err(_) => return Err(anyhow::anyhow!("event bus closed")),
+                    },
                 }
             } else {
-                match rx.recv().await {
-                    Ok(ev) => ev,
-                    Err(_) => return Err(anyhow::anyhow!("event bus closed")),
+                match tokio::time::timeout(wait_dur, &mut recv_future).await {
+                    Ok(Ok(ev)) => Some(ev),
+                    Ok(Err(_)) => return Err(anyhow::anyhow!("event bus closed")),
+                    Err(_) => None, // timed out — loop back to re-check idle/deadline
                 }
             };
 
-            match event {
-                AgentEvent::ProcessOutput { pid: ev_pid, data, .. } if ev_pid == pid_for_events => {
-                    if output.len() + data.len() + 1 > max_output_bytes {
-                        if !truncated {
-                            output.push_str("\n[output truncated — max size reached]\n");
-                            truncated = true;
-                        }
+            let Some(event) = event_result else {
+                // This iteration's wait timed out with no cancel.
+                if last_output_at.is_some() {
+                    // Had output — loop back, the idle-return check at the top
+                    // (output + 300ms quiet) will fire and return the output.
+                    continue;
+                }
+                // No output at all in this call. The no_output_window (3s)
+                // elapsed — return now so the caller knows the process is idle
+                // (no new output) instead of blocking the full timeout. This
+                // lets an agent detect an ended/idle process and decide to stop.
+                // If the overall deadline also expired, label it as a timeout.
+                let is_overall_timeout = overall_remaining.map_or(false, |r| r.is_zero());
+                return Ok(ProcessWaitResult {
+                    exit_code: -1,
+                    output: if is_overall_timeout {
+                        format!("{output}\n[process_wait timed out after {timeout_secs}s]")
                     } else {
-                        if !output.is_empty() {
-                            output.push('\n');
-                        }
-                        output.push_str(&data);
-                    }
+                        format!("{output}\n[no new output — process still running]")
+                    },
+                    truncated: is_overall_timeout,
+                });
+            };
+
+            match event {
+                AgentEvent::ProcessOutput { pid: ev_pid, .. } if ev_pid == pid_for_events => {
+                    // The event is just a wake signal — the actual data lives
+                    // in output_buffer. Drain it at the top of the next loop
+                    // iteration to avoid duplicating this line (which is both
+                    // in the event and the buffer). Just mark that output is
+                    // fresh so the idle-return timer resets.
+                    last_output_at = Some(Instant::now());
+                    continue;
                 }
                 AgentEvent::ProcessExited { pid: ev_pid, exit_code } if ev_pid == pid_for_events => {
+                    // Drain any final buffered output before returning.
+                    let mut procs = self.processes.write().await;
+                    if let Some(entry) = procs.get_mut(&pid) {
+                        let new_lines: Vec<String> = {
+                            let buf = entry.output_buffer.lock().await;
+                            let cursor = entry.read_cursor.min(buf.len());
+                            buf[cursor..].to_vec()
+                        };
+                        entry.read_cursor += new_lines.len();
+                        for line in &new_lines {
+                            if output.len() + line.len() + 1 > max_output_bytes {
+                                if !truncated {
+                                    output.push_str("\n[output truncated — max size reached]\n");
+                                    truncated = true;
+                                }
+                                break;
+                            }
+                            if !output.is_empty() {
+                                output.push('\n');
+                            }
+                            output.push_str(line);
+                        }
+                    }
                     return Ok(ProcessWaitResult {
                         exit_code,
                         output,

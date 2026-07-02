@@ -317,6 +317,12 @@ pub struct Orchestrator {
     process_manager: Arc<ProcessManager>,
     /// Last stop_reason per session — for frontend reconnect queries.
     last_stop_reasons: RwLock<HashMap<String, StopReason>>,
+    /// Per-session processing lock — ensures a new chat.send waits for the
+    /// previous turn (including interrupted-turn history save) to fully finish
+    /// before reading history and starting. Prevents the "interrupt+send starts
+    /// a fresh task" race where the new run reads history before the old run
+    /// has persisted the interrupted turn's tool calls/results.
+    session_processing_locks: RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// Todo store backed by session.db (thread_todos table).
     todo_store: Arc<TodoStore>,
     /// In-memory todo cache per session, refreshed on read/write.
@@ -342,8 +348,31 @@ pub trait MemoryStore: Send + Sync {
         context_window: usize,
         // JSON-serialised content of each tool message (tool calls + results).
         tool_msgs_json: &[String],
+        // If true, the user message was already persisted at the start of the
+        // turn (via save_interrupted_turn) — skip inserting it again to avoid
+        // duplicates. Only assistant + tool messages are saved.
+        skip_user: bool,
     ) -> Result<i64>;
     async fn save_interrupted_turn(&self, session_id: &str, user_msg: &str) -> Result<()>;
+    /// Append a single message (role + JSON content) to the session's history
+    /// with the next seq. Returns the assigned seq. Used for real-time
+    /// incremental saves during long tasks (tool results as they arrive).
+    async fn append_message(
+        &self,
+        session_id: &str,
+        role: &str,
+        content_json: &str,
+        metadata_json: Option<&str>,
+    ) -> Result<i64>;
+    /// Update an existing message's content (and optionally metadata) by seq.
+    /// Used to keep the assistant message's text current as it streams in.
+    async fn update_message(
+        &self,
+        session_id: &str,
+        seq: i64,
+        content_json: &str,
+        metadata_json: Option<&str>,
+    ) -> Result<()>;
     async fn load_history(&self, session_id: &str, limit: usize) -> Result<Vec<Message>>;
     async fn delete_message(&self, session_id: &str, index: usize) -> Result<()>;
     async fn extract_cognitions(&self, session_id: &str, text: &str) -> Result<Vec<String>>;
@@ -956,6 +985,7 @@ impl Orchestrator {
             default_max_iterations: Arc::new(RwLock::new(100)),
             default_max_prompt_budget: Arc::new(RwLock::new(0)),
             sandbox_config,
+            session_processing_locks: RwLock::new(HashMap::new()),
             extraction_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
             consolidation_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
             extraction_count: Arc::new(AtomicU64::new(0)),
@@ -3869,6 +3899,37 @@ impl Orchestrator {
             "[orchestrator] process_message_with_config ENTER"
         );
 
+        // Acquire per-session processing lock — ensures the previous turn
+        // (including an interrupted turn's history save) fully completes before
+        // this turn reads history and starts. Without this, an interrupt+send
+        // races: chat.stop cancels the agent but the old run() is still saving
+        // the interrupted turn's tool calls/results to history when the new
+        // chat.send reads it → new run loses context (feels like a fresh task).
+        //
+        // The lock has a 15s timeout: if the previous turn is stuck (cancel
+        // didn't propagate fast enough to an in-flight LLM call or process_wait),
+        // we proceed anyway rather than deadlocking the whole session. The
+        // history may be incomplete in that edge case, but the user can at
+        // least continue interacting.
+        let session_lock = {
+            let mut locks = self.session_processing_locks.write().await;
+            locks
+                .entry(session_id.to_string())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .clone()
+        };
+        let lock_guard = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            session_lock.lock(),
+        )
+        .await;
+        if lock_guard.is_err() {
+            tracing::warn!(
+                session_id,
+                "session processing lock timed out after 15s — previous turn may still be running; proceeding without lock to avoid deadlock"
+            );
+        }
+
         // Lazy-refresh persona from memory store at the START of each turn.
         // This captures all async extraction results from the previous turn
         // (which now runs in a non-blocking tokio::spawn task).
@@ -3883,6 +3944,34 @@ impl Orchestrator {
             {
                 *self.persona_context.write().await = persona;
             }
+        }
+
+        // Persist the user message to the DB IMMEDIATELY — before the agent
+        // loop runs. Previously the user message was only saved via save_turn
+        // AFTER the turn completed (or was interrupted), so if the agent loop
+        // hung or crashed the user's message was lost forever. Now we save it
+        // up front; save_turn later uses skip_user=true to avoid duplicating it.
+        //
+        // NOTE: we only persist to the DB here — we do NOT call add_to_history
+        // yet. The agent loop reads session_histories to build the LLM message
+        // list and appends the user message itself (agent_loop.rs build_user_message).
+        // Adding it here too would make the LLM see the user message twice.
+        // The in-memory history is updated after the agent loop returns.
+        if !skip_user_message {
+            let user_msg_full = build_user_message(user_message, &attached_images);
+            let mut user_parts = user_msg_full.content.clone();
+            if let Err(e) = self.convert_images_to_refs(session_id, &mut user_parts).await {
+                tracing::warn!(session_id, error = %e, "failed to convert user images to file refs (early persist)");
+            }
+            let user_content_json = serde_json::to_string(&user_parts)
+                .unwrap_or_else(|_| user_message.to_string());
+            let mem = self.memory_store.read().await;
+            if let Some(ref store) = *mem {
+                if let Err(e) = store.save_interrupted_turn(session_id, &user_content_json).await {
+                    tracing::warn!(session_id, error = %e, "failed to persist user message at turn start");
+                }
+            }
+            drop(mem);
         }
 
         // Read shared contexts BEFORE pool.spawn to avoid any lock interaction
@@ -4332,6 +4421,31 @@ impl Orchestrator {
             let mut announced_tools: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
             let mut delta_seq: u64 = 0;
+
+            // ── Real-time incremental save ──
+            // Insert an empty assistant placeholder now (seq assigned by DB),
+            // then update it as text streams in and append tool messages as
+            // they complete. This way a long task's history is durable even
+            // if the process crashes mid-turn — not just at stream_end.
+            let assistant_seq: Option<i64> = {
+                let mem = memory_store.read().await;
+                if let Some(ref store) = *mem {
+                    match store
+                        .append_message(&forward_session_id, "assistant", "[]", None)
+                        .await
+                    {
+                        Ok(seq) => Some(seq),
+                        Err(e) => {
+                            tracing::warn!(session_id = %forward_session_id, error = %e, "failed to insert assistant placeholder for incremental save");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            };
+            let incremental_save = assistant_seq.is_some();
+            let mut last_save = std::time::Instant::now();
             // Anthropic sends Usage split across message_start (input_tokens only) and
             // message_delta (output_tokens only).  Accumulate partials until we have a
             // complete picture, otherwise the front-end ContextRing flashes between
@@ -4352,6 +4466,24 @@ impl Orchestrator {
                             session_id: forward_session_id.clone(),
                             delta: t,
                         });
+                        // Periodically persist the accumulating assistant text
+                        // (every 1s) so a crash mid-stream doesn't lose it.
+                        if let Some(seq) = assistant_seq {
+                            if last_save.elapsed() >= std::time::Duration::from_secs(1) {
+                                last_save = std::time::Instant::now();
+                                let snapshot = full_text.clone();
+                                let mem = memory_store.read().await;
+                                if let Some(ref store) = *mem {
+                                    let content_json = serde_json::to_string(
+                                        &[loom_types::ContentPart::Text { text: snapshot.clone() }],
+                                    )
+                                    .unwrap_or_else(|_| format!("[{{\"text\":{}}}]", serde_json::Value::String(snapshot)));
+                                    let _ = store
+                                        .update_message(&forward_session_id, seq, &content_json, None)
+                                        .await;
+                                }
+                            }
+                        }
                     }
                     StreamDelta::Reasoning(t) => {
                         event_bus.publish(AgentEvent::StreamDelta {
@@ -4400,6 +4532,37 @@ impl Orchestrator {
                             result: result.clone(),
                             structured_content,
                         });
+                        // Persist this tool result to the DB immediately — tool
+                        // results are the bulk of a long task's history (game
+                        // events, process output, etc.) and must survive a
+                        // mid-turn crash, not just stream_end.
+                        if incremental_save {
+                            let result_text = result.clone().unwrap_or_default();
+                            let tool_msg = loom_types::Message {
+                                role: loom_types::Role::Tool,
+                                content: vec![loom_types::ContentPart::Text {
+                                    text: format!(
+                                        "{{\"tool\":\"{}\",\"success\":{},\"result\":{}}}",
+                                        tool_name,
+                                        success,
+                                        serde_json::Value::String(result_text)
+                                    ),
+                                }],
+                                timestamp: chrono::Utc::now(),
+                                usage: None,
+                            };
+                            let tool_json = serde_json::to_string(&tool_msg.content)
+                                .unwrap_or_default();
+                            let mem = memory_store.read().await;
+                            if let Some(ref store) = *mem {
+                                if let Err(e) = store
+                                    .append_message(&forward_session_id, "tool", &tool_json, None)
+                                    .await
+                                {
+                                    tracing::warn!(session_id = %forward_session_id, error = %e, "failed to persist tool result incrementally");
+                                }
+                            }
+                        }
                         if let Some(r) = result {
                             tool_result_contents.insert(call_id, r);
                         }
@@ -4572,12 +4735,32 @@ impl Orchestrator {
                     structured_content: None,
                 });
             }
+            // Final flush: update the assistant placeholder with the complete
+            // text so the DB has the full response, not just the last periodic
+            // snapshot. This runs when delta_rx closes (stream finished).
+            if let Some(seq) = assistant_seq {
+                let content_json = serde_json::to_string(
+                    &[loom_types::ContentPart::Text { text: full_text.clone() }],
+                )
+                .unwrap_or_else(|_| format!("[{{\"text\":{}}}]", serde_json::Value::String(full_text.clone())));
+                let mem = memory_store.read().await;
+                if let Some(ref store) = *mem {
+                    if let Err(e) = store
+                        .update_message(&forward_session_id, seq, &content_json, None)
+                        .await
+                    {
+                        tracing::warn!(session_id = %forward_session_id, error = %e, "failed to finalize assistant message in incremental save");
+                    }
+                }
+            }
+
             // Send StreamEnd when channel closes
             event_bus.publish(AgentEvent::StreamEnd {
                 agent_id: forward_agent_id.clone(),
                 session_id: forward_session_id.clone(),
                 full_response: full_text,
             });
+            incremental_save
         });
 
         // Run the agent turn with streaming
@@ -4740,7 +4923,7 @@ impl Orchestrator {
             };
         }
 
-        let _ = forward_handle.await;
+        let incremental_save_done: bool = forward_handle.await.unwrap_or(false);
 
         if let Ok(ref turn) = result {
             self.last_stop_reasons.write().await.insert(session_id.to_string(), turn.stop_reason);
@@ -4769,6 +4952,9 @@ impl Orchestrator {
                 let _ = self
                     .convert_images_to_refs(session_id, &mut user_parts)
                     .await;
+                // Add user message to in-memory history now (the agent loop
+                // didn't — it only built a local messages Vec). The DB copy was
+                // already persisted at the start of the turn.
                 if !skip_user_message {
                     self.add_to_history(
                         session_id,
@@ -4817,17 +5003,21 @@ impl Orchestrator {
 
                 // Persist to memory store — use save_turn so both user +
                 // assistant content is durable across restarts.
+                // Skip if forward_handle already saved incrementally (user at
+                // turn start + assistant placeholder + tool results as they
+                // arrived) — calling save_turn again would duplicate rows.
                 let mem = self.memory_store.read().await;
                 if let Some(ref store) = *mem {
-                    let user_content_json =
-                        serde_json::to_string(&user_parts).unwrap_or_else(|_| user_msg.clone());
-                    let tool_json: Vec<String> = turn
-                        .tool_messages
-                        .iter()
-                        .map(|m| serde_json::to_string(&m.content).unwrap_or_default())
-                        .collect();
-                    if let Err(e) = store
-                        .save_turn(
+                    if !incremental_save_done {
+                        let user_content_json =
+                            serde_json::to_string(&user_parts).unwrap_or_else(|_| user_msg.clone());
+                        let tool_json: Vec<String> = turn
+                            .tool_messages
+                            .iter()
+                            .map(|m| serde_json::to_string(&m.content).unwrap_or_default())
+                            .collect();
+                        if let Err(e) = store
+                            .save_turn(
                             session_id,
                             &user_content_json,
                             &content_json,
@@ -4838,11 +5028,13 @@ impl Orchestrator {
                             turn.cache_write_tokens,
                             0, // context_window recorded via record_token_usage
                             &tool_json,
+                            !skip_user_message,
                         )
                         .await
                     {
                         tracing::warn!(session_id, error = %e, "failed to persist interrupted turn");
                     }
+                    } // end if !incremental_save_done
                 }
             } else {
                 // Convert images to file refs before caching / persisting
@@ -4854,17 +5046,20 @@ impl Orchestrator {
                 {
                     tracing::warn!(session_id, error = %e, "failed to convert user images to file refs");
                 }
-
-                self.add_to_history(
-                    session_id,
-                    Message {
-                        role: Role::User,
-                        content: user_parts.clone(),
-                        timestamp: user_msg_full.timestamp,
-                        usage: user_msg_full.usage,
-                    },
-                )
-                .await;
+                // Add user message to in-memory history (the agent loop didn't).
+                // The DB copy was already persisted at the start of the turn.
+                if !skip_user_message {
+                    self.add_to_history(
+                        session_id,
+                        Message {
+                            role: Role::User,
+                            content: user_parts.clone(),
+                            timestamp: user_msg_full.timestamp,
+                            usage: user_msg_full.usage,
+                        },
+                    )
+                    .await;
+                }
 
                 let mut assistant_parts = if turn.content_parts.is_empty() {
                     vec![ContentPart::Text {
@@ -4901,27 +5096,35 @@ impl Orchestrator {
                 // Persist to memory store
                 let mem = self.memory_store.read().await;
                 if let Some(ref store) = *mem {
-                    let user_content_json =
-                        serde_json::to_string(&user_parts).unwrap_or_else(|_| user_msg.clone());
-                    let tool_json: Vec<String> = turn
-                        .tool_messages
-                        .iter()
-                        .map(|m| serde_json::to_string(&m.content).unwrap_or_default())
-                        .collect();
-                    let event_id = store
-                        .save_turn(
-                            session_id,
-                            &user_content_json,
-                            &content_json,
-                            turn.tool_calls_made,
-                            turn.prompt_tokens,
-                            turn.completion_tokens,
-                            turn.cache_read_tokens,
-                            turn.cache_write_tokens,
-                            0, // context_window recorded via record_token_usage
-                            &tool_json,
-                        )
-                        .await?;
+                    // Skip save_turn if forward_handle already saved
+                    // incrementally (user at start + assistant placeholder
+                    // updated as text streamed + tool results as they arrived).
+                    let event_id = if !incremental_save_done {
+                        let user_content_json =
+                            serde_json::to_string(&user_parts).unwrap_or_else(|_| user_msg.clone());
+                        let tool_json: Vec<String> = turn
+                            .tool_messages
+                            .iter()
+                            .map(|m| serde_json::to_string(&m.content).unwrap_or_default())
+                            .collect();
+                        store
+                            .save_turn(
+                                session_id,
+                                &user_content_json,
+                                &content_json,
+                                turn.tool_calls_made,
+                                turn.prompt_tokens,
+                                turn.completion_tokens,
+                                turn.cache_read_tokens,
+                                turn.cache_write_tokens,
+                                0, // context_window recorded via record_token_usage
+                                &tool_json,
+                                !skip_user_message,
+                            )
+                            .await?
+                    } else {
+                        0i64
+                    };
 
                     // ── Memory quality logging ──
                     // Record injected entities, duration, and referenced entities for feedback loop
@@ -5496,6 +5699,7 @@ impl Orchestrator {
                             turn.cache_write_tokens,
                             0, // context_window recorded via record_token_usage
                             &tool_json,
+                            false,
                         )
                         .await
                     {
@@ -5578,6 +5782,7 @@ impl Orchestrator {
                             turn.cache_write_tokens,
                             0, // context_window recorded via record_token_usage
                             &tool_json,
+                            false,
                         )
                         .await?;
 

@@ -146,7 +146,7 @@ export const enUS: TranslationMap = {
   'chat.placeholderEnter': 'Type a message, Enter to send · Ctrl+Enter to newline',
   'chat.placeholderCtrlEnter': 'Type a message, Ctrl+Enter to send · Enter to newline',
   'chat.send': 'Send',
-  'chat.interruptSend': 'Interrupt & Send',
+  'chat.interruptSend': 'Interrupt',
   'chat.stop': 'Stop',
   'chat.stopped': 'Generation stopped',
   'chat.empty': 'Send a message to start',

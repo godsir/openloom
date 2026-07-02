@@ -387,6 +387,10 @@ export default function InputArea() {
     // 清 streaming 标志
     useStore.getState().removeStreamingSession(sessionId)
     streamBufferManager.clear(sessionId)
+    // 打断阶段（stop + wait + clear）已完成，清掉 interruptingRef
+    // 让用户可以再次打断发送；后续 sendMessage 的 streaming 期间由
+    // sendingRef + prevStreamingRef effect 守护，与正常 send 一致
+    interruptingRef.current = false
     try {
       const sid = sessionId || await createSession()
       if (!sid) {
@@ -401,7 +405,6 @@ export default function InputArea() {
       setText(contentToSend)
       setAttachedFiles(filesToSend)
     } finally {
-      interruptingRef.current = false
       sendingRef.current = false
     }
   }
