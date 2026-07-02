@@ -4944,6 +4944,12 @@ impl Orchestrator {
             };
         }
 
+        // Close the delta channel so forward_handle's delta_rx.recv() returns
+        // None, which triggers StreamEnd → WS notification → frontend unblocks.
+        // Without this drop, the sender clone survives here, the receiver never
+        // sees end-of-stream, and forward_handle.await hangs forever.
+        drop(ac_delta_tx);
+
         let incremental_save_done: bool = forward_handle.await.unwrap_or(false);
 
         if let Ok(ref turn) = result {

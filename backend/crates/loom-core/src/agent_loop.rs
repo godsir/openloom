@@ -2063,10 +2063,13 @@ async fn run_agent_turn_streaming_inner(
         // Check for user interruption before each iteration
         if cancel.is_cancelled() {
             tracing::info!("agent turn cancelled by user at iteration {}", iteration);
-            let _ = delta_tx.send(StreamDelta::Text("[已中断]".into())).await;
+            let interrupted = "[已中断]";
+            let partial = &final_text;
+            let response = if partial.is_empty() { interrupted.to_string() } else { format!("{}\n\n{}", partial, interrupted) };
+            let _ = delta_tx.send(StreamDelta::Text(response.clone())).await;
             drop(delta_tx);
             return Ok(TurnResult {
-                response: "[已中断]".into(),
+                response,
                 thinking: String::new(),
                 tool_calls_made,
                 iterations: iteration,
@@ -2078,7 +2081,10 @@ async fn run_agent_turn_streaming_inner(
                 kv_cache_hit: None,
                 content_parts: {
                     let mut parts = build_toolcall_parts(&tool_messages);
-                    parts.push(ContentPart::Text { text: "[已中断]".into() });
+                    if !final_text.is_empty() {
+                        parts.push(ContentPart::Text { text: final_text });
+                    }
+                    parts.push(ContentPart::Text { text: interrupted.into() });
                     parts
                 },
                 tool_messages,
@@ -2155,11 +2161,16 @@ async fn run_agent_turn_streaming_inner(
                     _ = cancel.cancelled() => {
                         tracing::info!("agent turn cancelled during LLM stream");
                         drop(stream_rx);
-                        // stream_fut is a pinned future that doesn't need explicit drop
-                        let _ = delta_tx.send(StreamDelta::Text("[已中断]".into())).await;
+                        // Keep the partial text that was already received; append
+                        // the interruption marker so the user sees what was
+                        // generated before stopping and the next turn has
+                        // continuous context.
+                        let interrupted = "[已中断]";
+                        let response = if attempt_text.is_empty() { interrupted.to_string() } else { format!("{}\n\n{}", attempt_text, interrupted) };
+                        let _ = delta_tx.send(StreamDelta::Text(response.clone())).await;
                         drop(delta_tx);
                         return Ok(TurnResult {
-                            response: "[已中断]".into(),
+                            response,
                             thinking: attempt_thinking,
                             tool_calls_made,
                             iterations: iteration,
@@ -2171,7 +2182,10 @@ async fn run_agent_turn_streaming_inner(
                             kv_cache_hit: None,
                             content_parts: {
                                 let mut parts = build_toolcall_parts(&tool_messages);
-                                parts.push(ContentPart::Text { text: "[已中断]".into() });
+                                if !attempt_text.is_empty() {
+                                    parts.push(ContentPart::Text { text: attempt_text });
+                                }
+                                parts.push(ContentPart::Text { text: interrupted.into() });
                                 parts
                             },
                             tool_messages,
@@ -2568,10 +2582,12 @@ async fn run_agent_turn_streaming_inner(
                     result = registry.execute(tc_name, arguments, progress_tx, &tool_context) => result,
                     _ = cancel.cancelled() => {
                         tracing::info!("tool execution cancelled by user: {}", tc_name_for_log);
-                        let _ = delta_tx.send(StreamDelta::Text("[已中断]".into())).await;
+                        let interrupted = "[已中断]";
+                        let response = if this_text.is_empty() { interrupted.to_string() } else { format!("{}\n\n{}", this_text, interrupted) };
+                        let _ = delta_tx.send(StreamDelta::Text(response.clone())).await;
                         drop(delta_tx);
                         return Ok(TurnResult {
-                            response: "[已中断]".into(),
+                            response,
                             thinking: String::new(),
                             tool_calls_made,
                             iterations: iteration,
@@ -2583,7 +2599,10 @@ async fn run_agent_turn_streaming_inner(
                             kv_cache_hit: None,
                             content_parts: {
                                 let mut parts = build_toolcall_parts(&tool_messages);
-                                parts.push(ContentPart::Text { text: "[已中断]".into() });
+                                if !this_text.is_empty() {
+                                    parts.push(ContentPart::Text { text: this_text });
+                                }
+                                parts.push(ContentPart::Text { text: interrupted.into() });
                                 parts
                             },
                             tool_messages,
