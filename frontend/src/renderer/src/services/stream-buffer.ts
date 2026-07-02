@@ -1,5 +1,6 @@
 import { useStore } from '../stores'
 import type { StreamingActivity } from '../stores/streaming'
+import { parseContentParts } from '../stores/session'
 import { loomRpc } from './jsonrpc'
 import { renderMarkdown } from '../utils/markdown'
 import { sanitizeHtml } from '../utils/markdown-sanitizer'
@@ -147,8 +148,6 @@ class StreamBufferManager {
     }
     store.addStreamingSession(sessionId)
     store.setStreamingActivity(sessionId, { phase: 'generating' })
-    const buf2 = this.ensureBuffer(sessionId)
-    buf2.imOrigin = true
     return true
   }
 
@@ -175,6 +174,9 @@ class StreamBufferManager {
       return
     }
     if (!this.ensureStreamingForIM(sessionId)) return
+    // Mark IM origin so handleStreamEnd triggers syncIMSessionHistory
+    // for IM sessions (which need history reload from DB).
+    this.ensureBuffer(sessionId).imOrigin = true
     this._doHandleStreamDelta(sessionId, delta)
   }
 
@@ -433,22 +435,10 @@ class StreamBufferManager {
 
       const store = useStore.getState()
 
-      // Minimal engine→renderer conversion — builds text-only blocks, enough
-      // for IM sessions where user messages are plain text and the assistant
-      // stream was already flushed.
-      const convertContent = (content: unknown): Array<{ type: string; [k: string]: unknown }> => {
-        if (typeof content === 'string') {
-          return [{ type: 'text', text: content }]
-        }
-        if (Array.isArray(content)) {
-          return content.map((p: any) => {
-            if (p?.type === 'text' || p?.type === 'text')
-              return { type: 'text', text: p.text ?? '' }
-            return { type: p?.type ?? 'unknown', ...p }
-          })
-        }
-        return [{ type: 'text', text: String(content ?? '') }]
-      }
+      // Use parseContentParts for consistent block format (same as session store).
+      // Previously used a local convertContent that produced { type, text } blocks
+      // missing the html/source fields TextBlock expects — causing blank messages.
+      const port = store.port
 
       const msgs = allMsgs
         .filter((m: any) => {
@@ -458,7 +448,7 @@ class StreamBufferManager {
         .map((m: any, i: number) => ({
           id: `im-${sessionId}-${i}`,
           role: (['user', 'assistant'].includes(m.role) ? m.role : 'system') as 'user' | 'assistant' | 'system',
-          blocks: convertContent(m.content),
+          blocks: parseContentParts(m.content, sessionId, port),
           timestamp: m.timestamp || new Date().toISOString(),
           usage: m.usage ? {
             prompt: m.usage.prompt_tokens || 0,
