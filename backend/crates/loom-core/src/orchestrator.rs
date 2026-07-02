@@ -315,6 +315,8 @@ pub struct Orchestrator {
     engine_events: tokio::sync::broadcast::Sender<EngineEvent>,
     /// Background process manager for long-lived child processes.
     process_manager: Arc<ProcessManager>,
+    /// Background monitor manager for long-lived shell + WebSocket monitors.
+    monitor_manager: Arc<crate::monitor_manager::MonitorManager>,
     /// Last stop_reason per session — for frontend reconnect queries.
     last_stop_reasons: RwLock<HashMap<String, StopReason>>,
     /// Per-session processing lock — ensures a new chat.send waits for the
@@ -940,6 +942,13 @@ impl Orchestrator {
         // so ws.rs receives both agent and process events from a single channel.
         let process_manager = Arc::new(ProcessManager::new(pool.event_bus().clone()));
 
+        // Create MonitorManager wrapping ProcessManager — provides shell + WS
+        // monitoring with 200ms batching and rate limiting.
+        let monitor_manager = Arc::new(crate::monitor_manager::MonitorManager::new(
+            pool.event_bus().clone(),
+            process_manager.clone(),
+        ));
+
         // Register process management tools — spawn/kill/stdin/list background processes
         let _ = registry.register(Arc::new(crate::builtin_tools::ProcessSpawnTool {
             process_manager: process_manager.clone(),
@@ -958,6 +967,17 @@ impl Orchestrator {
         }));
         let _ = registry.register(Arc::new(crate::builtin_tools::ProcessPeekTool {
             process_manager: process_manager.clone(),
+        }));
+
+        // Register monitor tools — start/list/kill shell + WebSocket monitors
+        let _ = registry.register(Arc::new(crate::builtin_tools::MonitorTool {
+            monitor_manager: monitor_manager.clone(),
+        }));
+        let _ = registry.register(Arc::new(crate::builtin_tools::MonitorListTool {
+            monitor_manager: monitor_manager.clone(),
+        }));
+        let _ = registry.register(Arc::new(crate::builtin_tools::MonitorKillTool {
+            monitor_manager: monitor_manager.clone(),
         }));
 
         Self {
@@ -999,6 +1019,7 @@ impl Orchestrator {
                 tx
             },
             process_manager,
+            monitor_manager,
             last_stop_reasons: RwLock::new(HashMap::new()),
             todo_store,
             session_todos: RwLock::new(HashMap::new()),
@@ -5864,6 +5885,11 @@ impl Orchestrator {
         &self.process_manager
     }
 
+    /// Get a reference to the MonitorManager.
+    pub fn monitor_manager(&self) -> &Arc<crate::monitor_manager::MonitorManager> {
+        &self.monitor_manager
+    }
+
     /// Spawn a background GC task that periodically cleans up exited processes
     /// older than 10 minutes. Keeps the process registry from growing unbounded.
     pub fn spawn_process_gc_loop(&self) {
@@ -5873,6 +5899,19 @@ impl Orchestrator {
             loop {
                 interval.tick().await;
                 pm.gc(tokio::time::Duration::from_secs(600)).await;
+            }
+        });
+    }
+
+    /// Spawn a background GC task that periodically cleans up exited monitors
+    /// older than 10 minutes.
+    pub fn spawn_monitor_gc_loop(&self) {
+        let mm = self.monitor_manager.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                mm.gc(std::time::Duration::from_secs(600)).await;
             }
         });
     }
