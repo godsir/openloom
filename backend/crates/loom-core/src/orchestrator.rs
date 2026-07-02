@@ -4563,13 +4563,10 @@ impl Orchestrator {
                             let result_text = result.clone().unwrap_or_default();
                             let tool_msg = loom_types::Message {
                                 role: loom_types::Role::Tool,
-                                content: vec![loom_types::ContentPart::Text {
-                                    text: format!(
-                                        "{{\"tool\":\"{}\",\"success\":{},\"result\":{}}}",
-                                        tool_name,
-                                        success,
-                                        serde_json::Value::String(result_text)
-                                    ),
+                                content: vec![loom_types::ContentPart::ToolResult {
+                                    tool_call_id: call_id.clone(),
+                                    name: tool_name.clone(),
+                                    result: result_text,
                                 }],
                                 timestamp: chrono::Utc::now(),
                                 usage: None,
@@ -4783,7 +4780,8 @@ impl Orchestrator {
                 session_id: forward_session_id.clone(),
                 full_response: full_text,
             });
-            incremental_save
+            // Return assistant seq so we can fix the text-only placeholder
+            if incremental_save { assistant_seq } else { None }
         });
 
         // Run the agent turn with streaming
@@ -4952,7 +4950,7 @@ impl Orchestrator {
         // sees end-of-stream, and forward_handle.await hangs forever.
         drop(ac_delta_tx);
 
-        let incremental_save_done: bool = forward_handle.await.unwrap_or(false);
+        let incremental_save_done: Option<i64> = forward_handle.await.ok().flatten();
 
         if let Ok(ref turn) = result {
             self.last_stop_reasons.write().await.insert(session_id.to_string(), turn.stop_reason);
@@ -5037,7 +5035,7 @@ impl Orchestrator {
                 // arrived) — calling save_turn again would duplicate rows.
                 let mem = self.memory_store.read().await;
                 if let Some(ref store) = *mem {
-                    if !incremental_save_done {
+                    if incremental_save_done.is_none() {
                         let user_content_json =
                             serde_json::to_string(&user_parts).unwrap_or_else(|_| user_msg.clone());
                         let tool_json: Vec<String> = turn
@@ -5128,7 +5126,7 @@ impl Orchestrator {
                     // Skip save_turn if forward_handle already saved
                     // incrementally (user at start + assistant placeholder
                     // updated as text streamed + tool results as they arrived).
-                    let event_id = if !incremental_save_done {
+                    let event_id = if incremental_save_done.is_none() {
                         let user_content_json =
                             serde_json::to_string(&user_parts).unwrap_or_else(|_| user_msg.clone());
                         let tool_json: Vec<String> = turn
@@ -5152,6 +5150,17 @@ impl Orchestrator {
                             )
                             .await?
                     } else {
+                        // Incremental save was active: tool results were
+                        // persisted as they arrived, but the assistant
+                        // placeholder only has a Text snapshot (full_text).
+                        // Update it with the full structured content_parts
+                        // (Thinking, Text, Image blocks) so reload from DB
+                        // after restart shows proper UI blocks, not raw JSON.
+                        if let Some(seq) = incremental_save_done {
+                            let _ = store
+                                .update_message(session_id, seq, &content_json, None)
+                                .await;
+                        }
                         0i64
                     };
 
