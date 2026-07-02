@@ -338,6 +338,50 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
         AgentEvent::ProcessExited { pid, exit_code } => {
             json!({ "pid": pid, "exit_code": exit_code })
         }
+        AgentEvent::MonitorStarted {
+            monitor_id,
+            name,
+            source,
+            persistent,
+            started_at_ms,
+        } => {
+            json!({
+                "monitor_id": monitor_id,
+                "name": name,
+                "source": source,
+                "persistent": persistent,
+                "started_at_ms": started_at_ms,
+            })
+        }
+        AgentEvent::MonitorOutput {
+            monitor_id,
+            data,
+            stream,
+        } => {
+            json!({
+                "monitor_id": monitor_id,
+                "data": data,
+                "stream": stream,
+            })
+        }
+        AgentEvent::MonitorExited {
+            monitor_id,
+            exit_code,
+        } => {
+            json!({
+                "monitor_id": monitor_id,
+                "exit_code": exit_code,
+            })
+        }
+        AgentEvent::MonitorError {
+            monitor_id,
+            error,
+        } => {
+            json!({
+                "monitor_id": monitor_id,
+                "error": error,
+            })
+        }
         _ => json!({}),
     }
 }
