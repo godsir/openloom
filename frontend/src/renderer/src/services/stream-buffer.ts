@@ -15,6 +15,7 @@ interface BufferState {
   processAcc: Array<{
     pid: string
     lines: Array<{ stream: string; text: string }>
+    exited: boolean
   }>
   moodAcc: { yuan: string; text: string }
   skillCalls: Array<{

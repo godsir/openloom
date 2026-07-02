@@ -927,6 +927,9 @@ impl Orchestrator {
         let _ = registry.register(Arc::new(crate::builtin_tools::ProcessWaitTool {
             process_manager: process_manager.clone(),
         }));
+        let _ = registry.register(Arc::new(crate::builtin_tools::ProcessPeekTool {
+            process_manager: process_manager.clone(),
+        }));
 
         Self {
             pool,

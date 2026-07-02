@@ -2512,3 +2512,54 @@ impl AgentTool for ProcessWaitTool {
 
     fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
 }
+
+// ── process_peek ────────────────────────────────────────────────────────────
+pub struct ProcessPeekTool {
+    pub process_manager: Arc<crate::process_manager::ProcessManager>,
+}
+
+#[async_trait]
+impl AgentTool for ProcessPeekTool {
+    fn tool_name(&self) -> &str { "process_peek" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "process_peek".into(),
+            description: "非阻塞查询后台进程状态。立即返回 running/exit_code，不阻塞 agent loop。每轮用它检查长任务是否完成，而不是阻塞等待。".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "string", "description": "进程 ID" }
+                },
+                "required": ["pid"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let pid = arguments["pid"].as_str().unwrap_or("");
+        if pid.is_empty() {
+            return Ok(ToolResult { content: "pid is required".into(), is_error: true, structured_content: None });
+        }
+        match self.process_manager.peek(pid).await {
+            Some(r) => Ok(ToolResult {
+                content: format!("进程 {} ({}) running={} exit_code={:?}", r.name, r.pid, r.running, r.exit_code),
+                is_error: false,
+                structured_content: Some(serde_json::json!({ "pid": r.pid, "name": r.name, "running": r.running, "exit_code": r.exit_code })),
+            }),
+            None => Ok(ToolResult {
+                content: format!("进程 {} 未找到", pid),
+                is_error: true,
+                structured_content: None,
+            }),
+        }
+    }
+
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
