@@ -446,7 +446,52 @@ export function parseContentParts(content: any, sessionId: string, port: number)
       const t = part.text
       // Handle both { text: "string" } and { text: { text: "string" } }
       const text = typeof t === 'string' ? t : (t?.text || t?.content || '')
-      blocks.push({ type: 'text', html: sanitizeHtml(renderMarkdown(text)), source: text })
+
+      // Legacy compatibility: old incremental-save format stored tool results
+      // as ContentPart::Text wrapping a JSON string like
+      //   {"tool":"shell","success":true,"result":"..."}
+      // Parse these back into proper shell/skill blocks so historical
+      // sessions don't render as raw JSON.
+      const legacyMatch = text.match(/^\{"tool":"([^"]+)","success":(true|false),"result":(.*)\}$/s)
+      if (legacyMatch) {
+        try {
+          const toolName = legacyMatch[1]
+          const success = legacyMatch[2] === 'true'
+          const resultRaw = legacyMatch[3]
+          // result may be a JSON string (already escaped) or plain text
+          let resultText: string
+          try {
+            const parsed = JSON.parse(resultRaw)
+            resultText = typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2)
+          } catch {
+            resultText = resultRaw
+          }
+          if (toolName === 'use_skill') {
+            // Skill blocks get special rendering
+            blocks.push({
+              type: 'skill',
+              name: 'unknown',
+              status: success ? 'done' : 'done',
+              result: resultText,
+              sealed: true,
+            })
+          } else {
+            blocks.push({
+              type: 'shell',
+              toolName,
+              status: success ? 'done' : 'done',
+              args: { command: '' },
+              result: resultText,
+              sealed: true,
+            })
+          }
+        } catch {
+          // Fallback: render as plain text if parsing fails
+          blocks.push({ type: 'text', html: sanitizeHtml(renderMarkdown(text)), source: text })
+        }
+      } else {
+        blocks.push({ type: 'text', html: sanitizeHtml(renderMarkdown(text)), source: text })
+      }
     } else if ('tool_call' in part) {
       const tc = part.tool_call
       // arguments may be a JSON string (OpenAI format) or already an object (serde Value)
