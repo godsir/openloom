@@ -142,6 +142,15 @@
   background: var(--danger-hover, #dc2626);
 }
 
+.interruptSend {
+  background: var(--warning, #f59e0b) !important;
+  color: #fff !important;
+}
+
+.interruptSend:hover {
+  background: var(--warning-hover, #d97706) !important;
+}
+
 /* ── 发送 Split Button ── */
 .sendSplit {
   position: relative;

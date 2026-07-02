@@ -146,6 +146,7 @@ export const zhCN: TranslationMap = {
   'chat.placeholderEnter': '输入消息，Enter 发送 · Ctrl+Enter 换行',
   'chat.placeholderCtrlEnter': '输入消息，Ctrl+Enter 发送 · Enter 换行',
   'chat.send': '发送',
+  'chat.interruptSend': '打断并发送',
   'chat.stop': '停止',
   'chat.stopped': '已停止生成',
   'chat.empty': '发送消息开始对话',

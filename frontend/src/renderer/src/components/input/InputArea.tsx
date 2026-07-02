@@ -350,30 +350,38 @@ export default function InputArea() {
 
   const handleStop = async () => {
     if (!sessionId) return
-    // Optimistically clear streaming state immediately so UI unlocks
-    useStore.getState().removeStreamingSession(sessionId)
-    streamBufferManager.clear(sessionId)
+    // 不清除 UI，让 handleInterruptSend 或 handleSend 之后统一清
     sendingRef.current = false
-    // Replace any empty assistant placeholder so "思考中" doesn't linger
-    const store = useStore.getState()
-    const msgs = store.messagesBySession.get(sessionId)
-    if (msgs) {
-      const updated = msgs.map(m => {
-        if (m.role === 'assistant' && m.blocks.length === 0) {
-          return { ...m, blocks: [{ type: 'text', html: `<em>${t('chat.stopped')}</em>`, source: '' }] as any }
-        }
-        return m
-      })
-      if (updated.some((m, i) => m !== msgs[i])) {
-        const next = new Map(store.messagesBySession)
-        next.set(sessionId, updated)
-        useStore.setState({ messagesBySession: next })
-      }
-    }
     try {
       await loomRpc('chat.stop', { session_id: sessionId })
     } catch {
-      // Already cleaned up above
+      // ignore
+    }
+  }
+
+  const handleInterruptSend = async () => {
+    // 先停再发
+    if (!sessionId) return
+    sendingRef.current = true
+    try {
+      await loomRpc('chat.stop', { session_id: sessionId })
+    } catch { /* ignore */ }
+    // 短暂等待后端清理
+    await new Promise(r => setTimeout(r, 300))
+    // 清 streaming 标志
+    useStore.getState().removeStreamingSession(sessionId)
+    streamBufferManager.clear(sessionId)
+    // 发新消息
+    const filesToSend = attachedFiles
+    const selectionsToSend = [...useStore.getState().quotedSelections]
+    setAttachedFiles([])
+    useStore.getState().clearQuotedSelections()
+    try {
+      const sid = sessionId || await createSession()
+      if (!sid) return
+      await sendMessage({ sessionId: sid, content: text, attachedFiles: filesToSend, skills: selectedSkills.length > 0 ? selectedSkills : undefined, quotedSelections: selectionsToSend })
+    } finally {
+      sendingRef.current = false
     }
   }
 
@@ -381,7 +389,12 @@ export default function InputArea() {
     const content = text.trim()
     const { quotedSelections } = useStore.getState()
     const hasContent = content || attachedFiles.length > 0 || quotedSelections.length > 0
-    if (!hasContent || sendingRef.current || (sessionId && useStore.getState().streamingSessionIds.has(sessionId))) return
+    if (!hasContent || sendingRef.current) return
+    // 如果有正在跑的 streaming，先停后发
+    if (sessionId && useStore.getState().streamingSessionIds.has(sessionId)) {
+      handleInterruptSend()
+      return
+    }
     sendingRef.current = true
     setText('')
     const filesToSend = attachedFiles
@@ -661,56 +674,62 @@ export default function InputArea() {
             <div className={styles.spacer} />
             <div className={styles.toolbarDivider} />
             <ContextRing />
-            {streaming ? (
+            <div className={styles.sendSplit}>
               <button
-                onClick={handleStop}
-                className={`${styles.sendBtn} ${styles.stopBtn}`}
+                onClick={handleSend}
+                disabled={
+                  (!text.trim() && attachedFiles.length === 0 && quotedSelections.length === 0 && !streaming)
+                  || !isConnected
+                  || isImSession
+                }
+                className={`${styles.sendSplitMain} ${streaming ? styles.interruptSend : ''}`}
+                title={streaming ? t('chat.interruptSend') : t('chat.send')}
               >
-                {t('chat.stop')}
+                {streaming ? t('chat.interruptSend') : t('chat.send')}
               </button>
-            ) : (
-              <div className={styles.sendSplit}>
+              {streaming && (
                 <button
-                  onClick={handleSend}
-                  disabled={(!text.trim() && attachedFiles.length === 0 && quotedSelections.length === 0) || !isConnected || isImSession}
-                  className={styles.sendSplitMain}
+                  onClick={handleStop}
+                  className={`${styles.sendBtn} ${styles.stopBtn}`}
+                  title={t('chat.stop')}
                 >
-                  {t('chat.send')}
+                  {t('chat.stop')}
                 </button>
-                <button
-                  className={styles.sendSplitCaret}
-                  title={t('input.sendShortcut')}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    const btn = e.currentTarget
-                    const rect = btn.getBoundingClientRect()
-                    // Toggle dropdown via a data attribute on the button
-                    const open = btn.dataset.open === '1'
-                    btn.dataset.open = open ? '0' : '1'
-                  }}
-                >
-                  <svg width="8" height="5" viewBox="0 0 8 5"><path d="M0 0l4 5 4-5z" fill="currentColor"/></svg>
-                </button>
-                <div className={styles.sendShortcutMenu} onMouseDown={(e) => e.preventDefault()}>
-                  {(['enter', 'ctrl+enter', 'shift+enter'] as SendShortcut[]).map(k => (
-                    <div
-                      key={k}
-                      className={`${styles.sendShortcutItem} ${sendShortcut === k ? styles.sendShortcutItemActive : ''}`}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        useStore.getState().setSendShortcut(k)
-                        // Close the dropdown
-                        const caret = (e.currentTarget.closest(`.${styles.sendSplit}`) as HTMLElement)?.querySelector(`.${styles.sendSplitCaret}`) as HTMLElement | null
-                        if (caret) { caret.dataset.open = '0'; caret.blur() }
-                      }}
-                    >
-                      {k === 'enter' ? '↵ Enter' : k === 'ctrl+enter' ? '⌃ Ctrl+Enter' : '⇧ Shift+Enter'}
-                      {sendShortcut === k && <IconCheck size={11} style={{ marginLeft: 'auto' }} />}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+              )}
+              {!streaming && (
+                <>
+                  <button
+                    className={styles.sendSplitCaret}
+                    title={t('input.sendShortcut')}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const btn = e.currentTarget
+                      const open = btn.dataset.open === '1'
+                      btn.dataset.open = open ? '0' : '1'
+                    }}
+                  >
+                    <svg width="8" height="5" viewBox="0 0 8 5"><path d="M0 0l4 5 4-5z" fill="currentColor"/></svg>
+                  </button>
+                  <div className={styles.sendShortcutMenu} onMouseDown={(e) => e.preventDefault()}>
+                    {(['enter', 'ctrl+enter', 'shift+enter'] as SendShortcut[]).map(k => (
+                      <div
+                        key={k}
+                        className={`${styles.sendShortcutItem} ${sendShortcut === k ? styles.sendShortcutItemActive : ''}`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          useStore.getState().setSendShortcut(k)
+                          const caret = (e.currentTarget.closest(`.${styles.sendSplit}`) as HTMLElement)?.querySelector(`.${styles.sendSplitCaret}`) as HTMLElement | null
+                          if (caret) { caret.dataset.open = '0'; caret.blur() }
+                        }}
+                      >
+                        {k === 'enter' ? '↵ Enter' : k === 'ctrl+enter' ? '⌃ Ctrl+Enter' : '⇧ Shift+Enter'}
+                        {sendShortcut === k && <IconCheck size={11} style={{ marginLeft: 'auto' }} />}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>
