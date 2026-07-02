@@ -187,7 +187,7 @@ class StreamBufferManager {
 
     let procEntry = buf.processAcc.find(p => p.pid === pid)
     if (!procEntry) {
-      procEntry = { pid, lines: [] }
+      procEntry = { pid, lines: [], exited: false }
       buf.processAcc.push(procEntry)
     }
     procEntry.lines.push({ stream, text: data })
@@ -216,10 +216,11 @@ class StreamBufferManager {
     }
     let procEntry = buf.processAcc.find(p => p.pid === pid)
     if (!procEntry) {
-      procEntry = { pid, lines: [] }
+      procEntry = { pid, lines: [], exited: false }
       buf.processAcc.push(procEntry)
     }
     procEntry.lines.push({ stream: 'system', text: `[进程已退出, code=${exitCode}]` })
+    procEntry.exited = true
     this.scheduleFlush(buf, sid)
   }
 
@@ -644,7 +645,7 @@ class StreamBufferManager {
           type: 'process_output',
           pid: proc.pid,
           lines: proc.lines.map(l => ({ stream: l.stream, text: l.text })),
-          sealed: false,
+          sealed: proc.exited,
         })
       }
     }
