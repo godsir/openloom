@@ -133,22 +133,30 @@
 }
 
 .stopBtn {
-  background: var(--danger, #ef4444);
-  animation: pulse-stop 1.5s ease-in-out infinite;
-  will-change: opacity;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 14px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
 }
 
 .stopBtn:hover {
-  background: var(--danger-hover, #dc2626);
+  color: var(--text);
+  background: var(--bg-active);
+  border-color: rgba(var(--accent-rgb), 0.25);
 }
 
 .interruptSend {
-  background: var(--warning, #f59e0b) !important;
-  color: #fff !important;
-}
-
-.interruptSend:hover {
-  background: var(--warning-hover, #d97706) !important;
+  box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.25);
 }
 
 /* ── 发送 Split Button ── */
@@ -234,11 +242,6 @@
 }
 .sendShortcutItemActive {
   color: var(--accent);
-}
-
-@keyframes pulse-stop {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
 }
 
 .dragOver .composer {

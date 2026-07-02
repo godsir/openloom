@@ -348,21 +348,37 @@ export default function InputArea() {
     }
   }, [sessionId, isMemoryEnabled, setSessionMemoryEnabledAction])
 
+  const interruptingRef = useRef(false)
+
   const handleStop = async () => {
     if (!sessionId) return
-    // 不清除 UI，让 handleInterruptSend 或 handleSend 之后统一清
+    interruptingRef.current = true
     sendingRef.current = false
     try {
       await loomRpc('chat.stop', { session_id: sessionId })
     } catch {
       // ignore
     }
+    // 清除前端 streaming 状态，关闭打断/发送按钮
+    useStore.getState().removeStreamingSession(sessionId)
+    streamBufferManager.clear(sessionId)
+    interruptingRef.current = false
   }
 
   const handleInterruptSend = async () => {
     // 先停再发
-    if (!sessionId) return
+    if (!sessionId || interruptingRef.current) return
+    interruptingRef.current = true
     sendingRef.current = true
+    // 快照本次要发的内容，避免异步期间状态被改动
+    const contentToSend = text
+    const filesToSend = attachedFiles
+    const selectionsToSend = [...useStore.getState().quotedSelections]
+    const skillsToSend = selectedSkills.length > 0 ? selectedSkills : undefined
+    // 立即清空输入框（与 handleSend 行为一致）
+    setText('')
+    setAttachedFiles([])
+    useStore.getState().clearQuotedSelections()
     try {
       await loomRpc('chat.stop', { session_id: sessionId })
     } catch { /* ignore */ }
@@ -371,16 +387,21 @@ export default function InputArea() {
     // 清 streaming 标志
     useStore.getState().removeStreamingSession(sessionId)
     streamBufferManager.clear(sessionId)
-    // 发新消息
-    const filesToSend = attachedFiles
-    const selectionsToSend = [...useStore.getState().quotedSelections]
-    setAttachedFiles([])
-    useStore.getState().clearQuotedSelections()
     try {
       const sid = sessionId || await createSession()
-      if (!sid) return
-      await sendMessage({ sessionId: sid, content: text, attachedFiles: filesToSend, skills: selectedSkills.length > 0 ? selectedSkills : undefined, quotedSelections: selectionsToSend })
+      if (!sid) {
+        // 恢复输入内容
+        setText(contentToSend)
+        setAttachedFiles(filesToSend)
+        return
+      }
+      await sendMessage({ sessionId: sid, content: contentToSend, attachedFiles: filesToSend, skills: skillsToSend, quotedSelections: selectionsToSend })
+    } catch {
+      // 发送失败：恢复输入内容，避免用户丢失
+      setText(contentToSend)
+      setAttachedFiles(filesToSend)
     } finally {
+      interruptingRef.current = false
       sendingRef.current = false
     }
   }
@@ -389,12 +410,16 @@ export default function InputArea() {
     const content = text.trim()
     const { quotedSelections } = useStore.getState()
     const hasContent = content || attachedFiles.length > 0 || quotedSelections.length > 0
-    if (!hasContent || sendingRef.current) return
-    // 如果有正在跑的 streaming，先停后发
+    if (!hasContent) return
+    // 如果有正在跑的 streaming，先停后发（不受 sendingRef 阻塞——
+    // 原始 handleSend 的 sendingRef 在整个 streaming 期间为 true，
+    // 这里必须绕过它才能触发打断发送）
     if (sessionId && useStore.getState().streamingSessionIds.has(sessionId)) {
+      if (interruptingRef.current) return
       handleInterruptSend()
       return
     }
+    if (sendingRef.current || interruptingRef.current) return
     sendingRef.current = true
     setText('')
     const filesToSend = attachedFiles
