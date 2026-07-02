@@ -979,6 +979,8 @@ impl Orchestrator {
         let _ = registry.register(Arc::new(crate::builtin_tools::MonitorKillTool {
             monitor_manager: monitor_manager.clone(),
         }));
+        // Claude Code alias: skills reference "Monitor" (capital M)
+        let _ = registry.register_alias("Monitor", "monitor");
 
         Self {
             pool,

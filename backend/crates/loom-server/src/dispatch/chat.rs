@@ -1,8 +1,10 @@
 //! Chat dispatch handlers — chat.send / chat.stop
 
 use base64::Engine;
+use loom_core::AgentEvent;
 use loom_types::{ContentPart, ErrorCode, JsonRpcError};
 use serde_json::{Value, json};
+use tokio::sync::broadcast::error::RecvError;
 
 use super::err;
 use crate::AppState;
@@ -133,20 +135,105 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let result = state
+    let mut result = state
         .orchestrator
         .process_message_with_config(
             &combined_content,
             session_id,
             &agent_config,
             thinking_budget,
-            attached_images,
-            selected_skills,
+            attached_images.clone(),
+            selected_skills.clone(),
             permission_mode,
             skip_user_message,
         )
         .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+
+    // ── Post-turn monitor bridge ─────────────────────────────────────────
+    // After a turn completes, if persistent monitors (e.g. ClawClaw game
+    // stream) are running, subscribe to MonitorOutput events and start
+    // new auto-continue turns for each batch. This mirrors Claude Code's
+    // Monitor behaviour — the agent stays in the loop and reacts to
+    // game events in real time.
+    {
+        let mgr = state.orchestrator.monitor_manager();
+        let mut monitor_rx = state.orchestrator.event_bus().subscribe();
+        let mut monitor_round: u32 = 0;
+        let max_monitor_rounds: u32 = 60;
+
+        loop {
+            if monitor_round >= max_monitor_rounds {
+                break;
+            }
+
+            let has_persistent = mgr.list().await.iter().any(|m| m.running && m.persistent);
+            if !has_persistent {
+                break;
+            }
+
+            let event = tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                    // Timeout: recheck if monitors are alive
+                    if !mgr.list().await.iter().any(|m| m.running && m.persistent) {
+                        break;
+                    }
+                    continue;
+                }
+                e = monitor_rx.recv() => e,
+            };
+
+            let data = match event {
+                Ok(AgentEvent::MonitorOutput { monitor_id: _, data, .. }) => data,
+                Ok(AgentEvent::MonitorExited { .. }) => {
+                    if !mgr.list().await.iter().any(|m| m.running && m.persistent) {
+                        break;
+                    }
+                    continue;
+                }
+                Err(RecvError::Lagged(n)) => {
+                    tracing::warn!(skipped = n, "monitor bridge: event lag");
+                    monitor_rx = state.orchestrator.event_bus().subscribe();
+                    continue;
+                }
+                Err(RecvError::Closed) => break,
+                _ => continue,
+            };
+
+            monitor_round += 1;
+            tracing::info!(session_id, round = monitor_round, len = data.len(), "monitor bridge: new turn");
+
+            // Use auto-continue so the agent treats this as a continuation
+            // of the previous conversation, not a fresh user message.
+            let mut ac = agent_config.clone();
+            ac.auto_continue = true;
+            ac.auto_continue_max_rounds = 2;
+
+            match state
+                .orchestrator
+                .process_message_with_config(
+                    &format!("[monitor output]\n{}", data),
+                    session_id,
+                    &ac,
+                    thinking_budget,
+                    vec![],
+                    selected_skills.clone(),
+                    permission_mode,
+                    true, // skip_user_message — output is from monitor, not user
+                )
+                .await
+            {
+                Ok(t) => {
+                    result = t;
+                }
+                Err(e) => {
+                    tracing::warn!(session_id, round = monitor_round, error = %e, "monitor bridge: turn failed");
+                    break;
+                }
+            }
+        }
+    }
+
     if !skip_user_message {
         state
             .sessions
