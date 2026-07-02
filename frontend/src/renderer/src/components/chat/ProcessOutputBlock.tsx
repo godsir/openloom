@@ -56,21 +56,19 @@ function ClawLine({ obj }: { obj: any }) {
         </div>
       )}
 
-      {/* Messages — primary content */}
+      {/* Messages */}
       {msgs.map((m, i) => (
         <div key={i} className={styles.clawMsg}>
-          {m}
+          {typeof m === 'string' ? m : JSON.stringify(m)}
         </div>
       ))}
-
-      {/* Next step — highlighted call to action */}
-      {nextStep && <div className={styles.clawNext}>{nextStep}</div>}
-
-      {/* Events — pill tags */}
+      {/* Next step */}
+      {nextStep && <div className={styles.clawNext}>{typeof nextStep === 'string' ? nextStep : JSON.stringify(nextStep)}</div>}
+      {/* Events */}
       {events.length > 0 && (
         <div className={styles.clawTags}>
           {events.map((e, i) => (
-            <span key={i} className={styles.clawTag}>{e}</span>
+            <span key={i} className={styles.clawTag}>{typeof e === 'string' ? e : JSON.stringify(e)}</span>
           ))}
         </div>
       )}
@@ -141,7 +139,7 @@ export default function ProcessOutputBlock({ block }: {
             {parsedLines.map((l, i) =>
               l.parsed
                 ? <ClawLine key={i} obj={l.parsed} />
-                : <div key={i} className={styles.stdoutLine}>{l.text}</div>
+                : <div key={i} className={styles.stdoutLine}>{typeof l.text === 'string' ? l.text : JSON.stringify(l.text)}</div>
             )}
           </div>
         </div>
