@@ -9,6 +9,7 @@ pub mod agent_loop;
 pub mod agent_pool;
 pub mod builtin_tools;
 pub mod event_bus;
+pub mod monitor_manager;
 pub mod orchestrator;
 pub mod plan_prompts;
 pub mod process_manager;
@@ -26,6 +27,7 @@ pub use orchestrator::{
     MemoryStore, Orchestrator, PipelineScheduler, adapt_behavior,
 };
 pub use process_manager::{ProcessInfo, ProcessManager};
+pub use monitor_manager::{MonitorInfo, MonitorManager, MonitorWsConfig};
 pub use loom_types::{
     BehaviorProfile, ForgettingReport, MemoryHealth, PipelineStage, QualityEvaluation,
 };

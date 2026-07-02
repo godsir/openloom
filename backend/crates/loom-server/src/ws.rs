@@ -223,6 +223,10 @@ fn agent_event_method(event: &AgentEvent) -> &'static str {
         AgentEvent::CronJobChanged { .. } => "cron.job_changed",
         AgentEvent::ProcessOutput { .. } => "process.output",
         AgentEvent::ProcessExited { .. } => "process.exited",
+        AgentEvent::MonitorStarted { .. } => "monitor.started",
+        AgentEvent::MonitorOutput { .. } => "monitor.output",
+        AgentEvent::MonitorExited { .. } => "monitor.exited",
+        AgentEvent::MonitorError { .. } => "monitor.error",
     }
 }
 
