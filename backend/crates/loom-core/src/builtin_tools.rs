@@ -3,6 +3,7 @@
 //! These provide essential capabilities without needing MCP servers:
 //! shell, file_list, file_read, file_write, file_edit, content_search.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::Result;
@@ -2569,6 +2570,279 @@ impl AgentTool for ProcessPeekTool {
             }),
             None => Ok(ToolResult {
                 content: format!("进程 {} 未找到", pid),
+                is_error: true,
+                structured_content: None,
+            }),
+        }
+    }
+
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
+
+// ============================================================================
+// Monitor — unified background task monitoring (shell + WebSocket)
+// ============================================================================
+
+pub struct MonitorTool {
+    pub monitor_manager: Arc<crate::monitor_manager::MonitorManager>,
+}
+
+#[async_trait]
+impl AgentTool for MonitorTool {
+    fn tool_name(&self) -> &str { "monitor" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "monitor".into(),
+            description: concat!(
+                "启动后台监控任务，持续推送输出到聊天。支持 shell 命令和 WebSocket 端点两种事件源。\n",
+                "Shell 模式：stdout/stderr 的每一行作为一个事件；进程退出时监控结束。\n",
+                "WebSocket 模式：每个文本帧作为一个事件；连接关闭时监控结束。\n",
+                "stdout 行（或 WS 帧）在 200ms 窗口内合并为一条通知。\n",
+                "用 list=true 列出所有活跃监控，用 kill=true 终止指定监控。"
+            ).into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "description": "Shell 命令。与 ws 二选一" },
+                    "description": { "type": "string", "description": "人类可读的监控描述" },
+                    "ws": {
+                        "type": "object",
+                        "description": "WebSocket 端点。与 command 二选一",
+                        "properties": {
+                            "url": { "type": "string", "description": "WebSocket URL" },
+                            "protocols": { "type": "array", "items": { "type": "string" } }
+                        },
+                        "required": ["url"]
+                    },
+                    "cwd": { "type": "string", "description": "工作目录（仅 shell 模式）" },
+                    "env": { "type": "object", "description": "环境变量（仅 shell 模式）" },
+                    "timeout_ms": { "type": "integer", "description": "超时毫秒，默认 300000 (5min)，最大 3600000 (1h)" },
+                    "persistent": { "type": "boolean", "description": "session 级常驻。为 true 时需显式调用 kill=true 终止" },
+                    "monitor_id": { "type": "string", "description": "指定 kill 的目标 monitor_id" },
+                    "kill": { "type": "boolean", "description": "终止指定 monitor_id 的监控" },
+                    "list": { "type": "boolean", "description": "列出所有活跃监控" }
+                },
+                "required": ["description"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
+        // Mode: list
+        if arguments["list"].as_bool().unwrap_or(false) {
+            let monitors = self.monitor_manager.list().await;
+            if monitors.is_empty() {
+                return Ok(ToolResult {
+                    content: "没有活跃的监控任务。".into(),
+                    is_error: false,
+                    structured_content: Some(serde_json::json!({ "monitors": [] })),
+                });
+            }
+            let json = serde_json::to_string_pretty(&monitors).unwrap_or_else(|_| "[]".into());
+            return Ok(ToolResult {
+                content: format!("{} 个监控:\n{}", monitors.len(), json),
+                is_error: false,
+                structured_content: Some(serde_json::json!({ "monitors": monitors })),
+            });
+        }
+
+        // Mode: kill
+        if arguments["kill"].as_bool().unwrap_or(false) {
+            let mid = arguments["monitor_id"].as_str().unwrap_or("");
+            if mid.is_empty() {
+                return Ok(ToolResult {
+                    content: "kill=true 需要提供 monitor_id".into(),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+            return match self.monitor_manager.kill(mid).await {
+                Ok(true) => Ok(ToolResult {
+                    content: format!("监控 {} 已终止", mid),
+                    is_error: false,
+                    structured_content: Some(serde_json::json!({ "killed": true, "monitor_id": mid })),
+                }),
+                Ok(false) => Ok(ToolResult {
+                    content: format!("监控 {} 未找到或已退出", mid),
+                    is_error: true,
+                    structured_content: Some(serde_json::json!({ "killed": false, "monitor_id": mid })),
+                }),
+                Err(e) => Ok(ToolResult {
+                    content: format!("终止失败: {}", e),
+                    is_error: true,
+                    structured_content: None,
+                }),
+            };
+        }
+
+        // Mode: start
+        let command = arguments["command"].as_str();
+        let description = arguments["description"].as_str().unwrap_or("monitor");
+        let cwd = arguments["cwd"].as_str();
+        let ws_config = arguments["ws"].as_object().map(|obj| {
+            crate::monitor_manager::MonitorWsConfig {
+                url: obj["url"].as_str().unwrap_or("").to_string(),
+                protocols: obj["protocols"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default(),
+            }
+        });
+
+        // Validate: ws URL must not be empty if provided
+        if let Some(ref ws_cfg) = ws_config {
+            if ws_cfg.url.is_empty() {
+                return Ok(ToolResult {
+                    content: "ws.url is required when ws is provided".into(),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        }
+
+        let timeout_ms = arguments["timeout_ms"].as_u64().unwrap_or(300_000).min(3_600_000);
+        let persistent = arguments["persistent"].as_bool().unwrap_or(false);
+
+        let env: Option<HashMap<String, String>> = arguments["env"]
+            .as_object()
+            .map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect());
+
+        let cancel = if persistent {
+            None // persistent monitors ignore agent cancel token
+        } else {
+            _context.cancel_token.clone()
+        };
+
+        match self
+            .monitor_manager
+            .spawn(command, ws_config, cwd, env.as_ref(), description, timeout_ms, persistent, cancel)
+            .await
+        {
+            Ok(info) => Ok(ToolResult {
+                content: format!(
+                    "监控已启动: id={}, source={}, persistent={}",
+                    info.id, info.source, info.persistent
+                ),
+                is_error: false,
+                structured_content: Some(serde_json::to_value(&info).unwrap_or_default()),
+            }),
+            Err(e) => Ok(ToolResult {
+                content: format!("启动监控失败: {}", e),
+                is_error: true,
+                structured_content: None,
+            }),
+        }
+    }
+
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
+
+// ── monitor_list ─────────────────────────────────────────────────────────────
+/// Alias tool for "monitor" that always runs in list mode.
+pub struct MonitorListTool {
+    pub monitor_manager: Arc<crate::monitor_manager::MonitorManager>,
+}
+
+#[async_trait]
+impl AgentTool for MonitorListTool {
+    fn tool_name(&self) -> &str { "monitor_list" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "monitor_list".into(),
+            description: "列出所有活跃的后台监控任务。等同于 monitor 工具的 list 模式。".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+            tags: vec![],
+        }
+    }
+
+    async fn execute(
+        &self,
+        _arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let monitors = self.monitor_manager.list().await;
+        if monitors.is_empty() {
+            return Ok(ToolResult {
+                content: "没有活跃的监控任务。".into(),
+                is_error: false,
+                structured_content: Some(serde_json::json!({ "monitors": [] })),
+            });
+        }
+        let json = serde_json::to_string_pretty(&monitors).unwrap_or_else(|_| "[]".into());
+        Ok(ToolResult {
+            content: format!("{} 个监控:\n{}", monitors.len(), json),
+            is_error: false,
+            structured_content: Some(serde_json::json!({ "monitors": monitors })),
+        })
+    }
+
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
+
+// ── monitor_kill ─────────────────────────────────────────────────────────────
+/// Alias tool for "monitor" that always runs in kill mode.
+pub struct MonitorKillTool {
+    pub monitor_manager: Arc<crate::monitor_manager::MonitorManager>,
+}
+
+#[async_trait]
+impl AgentTool for MonitorKillTool {
+    fn tool_name(&self) -> &str { "monitor_kill" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "monitor_kill".into(),
+            description: "终止指定的后台监控任务。等同于 monitor 工具的 kill 模式。需要提供 monitor_id。".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "monitor_id": { "type": "string", "description": "要终止的监控 ID" }
+                },
+                "required": ["monitor_id"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let mid = arguments["monitor_id"].as_str().unwrap_or("");
+        if mid.is_empty() {
+            return Ok(ToolResult {
+                content: "monitor_id is required".into(),
+                is_error: true,
+                structured_content: None,
+            });
+        }
+        match self.monitor_manager.kill(mid).await {
+            Ok(true) => Ok(ToolResult {
+                content: format!("监控 {} 已终止", mid),
+                is_error: false,
+                structured_content: Some(serde_json::json!({ "killed": true, "monitor_id": mid })),
+            }),
+            Ok(false) => Ok(ToolResult {
+                content: format!("监控 {} 未找到或已退出", mid),
+                is_error: true,
+                structured_content: Some(serde_json::json!({ "killed": false, "monitor_id": mid })),
+            }),
+            Err(e) => Ok(ToolResult {
+                content: format!("终止失败: {}", e),
                 is_error: true,
                 structured_content: None,
             }),
