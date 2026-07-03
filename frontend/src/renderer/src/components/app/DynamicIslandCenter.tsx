@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useRef } from 'react'
+import { useMemo, useEffect, useRef, useState } from 'react'
 import { useStore } from '../../stores'
 import { useIMStore, PLATFORM_LABELS, type Platform } from '../../stores/im'
 import type { StreamPhase } from '../../stores/streaming'
@@ -53,6 +53,24 @@ export default function DynamicIslandCenter() {
   const streamImSource = activeStreamId ? imSessionSources[activeStreamId] : undefined
   const activity = activeStreamId ? streamingActivity[activeStreamId] : undefined
   const phase: StreamPhase = activity?.phase ?? 'generating'
+
+  // Per-session token usage for the actively streaming session
+  const usageBySession = useStore(s => s.usageBySession)
+  const currentModel = useStore(s => s.currentModel)
+  const streamUsage = activeStreamId ? usageBySession.get(activeStreamId) : undefined
+
+  // Streaming duration — how long the current turn has been running
+  const streamStartRef = useRef(Date.now())
+  const [streamDuration, setStreamDuration] = useState(0)
+  useEffect(() => {
+    if (isStreaming) {
+      streamStartRef.current = Date.now()
+      const iv = setInterval(() => setStreamDuration(Math.floor((Date.now() - streamStartRef.current) / 1000)), 1000)
+      return () => clearInterval(iv)
+    } else {
+      setStreamDuration(0)
+    }
+  }, [isStreaming])
 
   const pct = Math.round(update.progress)
 
@@ -144,8 +162,34 @@ export default function DynamicIslandCenter() {
                 <PlatformIcon platform={streamImSource.platform} size={14} />
               )}
             </div>
-            <div className={styles.expandedDetail}>{meta.sub}</div>
-            <div className={styles.expandedHint}>{t('island.streamingHint')}</div>
+            {/* Phase-specific real content */}
+            <div className={styles.expandedDetail}>
+              {phase === 'thinking' && (
+                <span>{t('island.thinkingHint')}</span>
+              )}
+              {phase === 'vision' && activity?.visionTotal != null && (
+                <span>{t('island.visionProgress', { done: activity.visionDone ?? 0, total: activity.visionTotal })}</span>
+              )}
+              {(phase === 'skill' || phase === 'tool') && activity?.detail && (
+                <span>{activity.detail}</span>
+              )}
+            </div>
+            {/* Token & model info — always visible during streaming */}
+            <div className={styles.expandedHint}>
+              {streamUsage ? (
+                <span>
+                  {streamUsage.model || currentModel}
+                  {' · '}
+                  {streamUsage.prompt + streamUsage.completion >= 1000
+                    ? `${((streamUsage.prompt + streamUsage.completion) / 1000).toFixed(1)}k`
+                    : `${streamUsage.prompt + streamUsage.completion}`} tokens
+                </span>
+              ) : (
+                <span>{currentModel || t('island.streamingHint')}</span>
+              )}
+              {' · '}
+              <span>{Math.floor(streamDuration / 60)}:{(streamDuration % 60).toString().padStart(2, '0')}</span>
+            </div>
           </div>
         )}
 
