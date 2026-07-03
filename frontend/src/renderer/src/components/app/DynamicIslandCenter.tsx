@@ -56,6 +56,17 @@ export default function DynamicIslandCenter() {
 
   const pct = Math.round(update.progress)
 
+  // Auto-collapse expanded island when streaming ends — avoid leaving
+  // the detail card open after the agent finishes replying.
+  const wasStreamingRef = useRef(isStreaming)
+  useEffect(() => {
+    if (wasStreamingRef.current && !isStreaming && islandExpanded) {
+      const t = setTimeout(() => setIslandExpanded(false), 1000)
+      return () => clearTimeout(t)
+    }
+    wasStreamingRef.current = isStreaming
+  }, [isStreaming, islandExpanded, setIslandExpanded])
+
   const handleRestart = async () => {
     const newPort = await window.loom.restartEngine()
     useStore.getState().setPort(newPort)
@@ -271,9 +282,9 @@ export default function DynamicIslandCenter() {
         </div>
       </div>
 
-      {/* Streaming — 按 phase 流转 */}
+      {/* Streaming — phase transitions without remount */}
       <div className={styles.dynamicLayer} data-active={activeState === 'streaming' ? 'true' : 'false'}>
-        <div className={styles.phaseContent} key={phase}>
+        <div className={styles.phaseContent} data-phase={phase}>
           <div className={styles.layerRow}>
             <span className={styles.dynamicPulse} />
             <PhaseIcon size={13} className={styles.dynamicIcon} />
