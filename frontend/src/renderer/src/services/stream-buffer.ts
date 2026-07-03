@@ -182,7 +182,11 @@ class StreamBufferManager {
 
   handleProcessOutput(sessionId: string, pid: string, data: string, stream: string): void {
     const store = useStore.getState()
+    // Only render for sessions that already have a streaming buffer or
+    // an explicit session_id match. Never auto-create a new buffer from
+    // process/monitor side-channel events — that would leak streaming state.
     const sid = sessionId || store.currentSessionId || 'default'
+    if (!this.buffers.has(sid) && !sessionId) return
 
     store.ensureSession(sid)
     const buf = this.ensureBuffer(sid)
@@ -194,7 +198,6 @@ class StreamBufferManager {
         blocks: [],
         timestamp: new Date().toISOString(),
       })
-      store.addStreamingSession(sid)
     }
 
     let procEntry = buf.processAcc.find(p => p.pid === pid)
@@ -213,7 +216,11 @@ class StreamBufferManager {
   }
 
   handleProcessExited(sessionId: string, pid: string, exitCode: number): void {
+    // Same guard as handleProcessOutput: don't auto-create buffers from
+    // process/monitor events that lack an explicit session_id.
     const sid = sessionId || useStore.getState().currentSessionId || 'default'
+    if (!this.buffers.has(sid) && !sessionId) return
+
     const buf = this.ensureBuffer(sid)
     if (!buf.messageId) {
       buf.messageId = crypto.randomUUID()
@@ -224,7 +231,6 @@ class StreamBufferManager {
         blocks: [],
         timestamp: new Date().toISOString(),
       })
-      useStore.getState().addStreamingSession(sid)
     }
     let procEntry = buf.processAcc.find(p => p.pid === pid)
     if (!procEntry) {

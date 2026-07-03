@@ -69,10 +69,15 @@ export async function bootstrapApp(): Promise<() => void> {
 
   const unsub = loomSubscribe((method, params) => {
     const p = params as Record<string, unknown> | undefined
+    // Only stream/tool/token events carry session_id and safely fall back
+    // to currentSessionId. Process/monitor events are session-agnostic and
+    // must not pollute the active session — they only render when an
+    // explicit session_id is present.
+    const fallbackOk = method.startsWith('chat.') || method.startsWith('tool.') || method.startsWith('agent.')
     const sessionId =
       (p?.session_id as string) ||
-      useStore.getState().currentSessionId ||
-      'default'
+      (fallbackOk ? useStore.getState().currentSessionId : '') ||
+      (fallbackOk ? 'default' : '')
 
     switch (method) {
       case 'chat.stream_delta': {
