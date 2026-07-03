@@ -707,7 +707,12 @@ class StreamBufferManager {
     }
     const runningTool = buf.shellCalls.find(s => s.status === 'running')
     if (runningTool) {
-      return { phase: 'tool', detail: runningTool.name }
+      // Show the actual operation, not just the tool name.
+      // e.g. "shell: npm run build" or "file_read: config.toml"
+      const args = runningTool.args
+      const cmd = (args?.command as string) || (args?.path as string) || (args?.pattern as string) || ''
+      const label = cmd ? `${runningTool.name}: ${String(cmd).slice(0, 60)}` : runningTool.name
+      return { phase: 'tool', detail: label }
     }
     return { phase: 'generating' }
   }
