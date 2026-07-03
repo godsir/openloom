@@ -37,7 +37,7 @@ async fn handle_spawn(state: &AppState, p: &Value) -> Result<Value, JsonRpcError
         });
 
     let pm = state.orchestrator.process_manager();
-    match pm.spawn(command, cwd, env.as_ref(), name).await {
+    match pm.spawn(command, cwd, env.as_ref(), name, "").await {
         Ok((pid, name)) => Ok(json!({ "pid": pid, "name": name })),
         Err(e) => Err(err(ErrorCode::InternalError, &e.to_string())),
     }

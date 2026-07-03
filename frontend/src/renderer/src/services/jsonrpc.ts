@@ -68,8 +68,11 @@ export function loomRpc<T = unknown>(method: string, params?: Record<string, unk
     return doSend<T>(method, params ?? {})
   }
 
-  // If it's connecting, queue the send
-  if (socket && socket.readyState === WebSocket.CONNECTING) {
+  // If it's connecting or closing (heartbeat-triggered reconnect), queue the send
+  // so it retries once the socket reopens. CLOSING state 2 is treated same as
+  // CONNECTING state 0 — the onWsConnected callback will flush the queue after
+  // the new socket opens.
+  if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.CLOSING)) {
     return new Promise<T>((resolve, reject) => {
       sendQueue.push(() => {
         doSend<T>(method, params ?? {}).then(resolve, reject)

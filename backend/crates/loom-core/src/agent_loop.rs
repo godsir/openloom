@@ -442,6 +442,15 @@ fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
         "memory_search",
         "todo_write",
         "todo_list",
+        "process_spawn",
+        "process_wait",
+        "process_peek",
+        "process_kill",
+        "monitor",
+        "monitor_wait",
+        "monitor_peek",
+        "monitor_list",
+        "monitor_kill",
     ];
     for name in builtins {
         if !matched.iter().any(|t| t.name == *name)

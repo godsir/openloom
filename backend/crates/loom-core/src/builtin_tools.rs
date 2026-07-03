@@ -2267,7 +2267,7 @@ impl AgentTool for ProcessSpawnTool {
             .as_object()
             .map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect());
 
-        match self.process_manager.spawn(command, cwd, env.as_ref(), name).await {
+        match self.process_manager.spawn(command, cwd, env.as_ref(), name, _context.session_id.as_deref().unwrap_or("")).await {
             Ok((pid, name)) => Ok(ToolResult {
                 content: format!("进程已启动: pid={}, name={}", pid, name),
                 is_error: false,
@@ -2599,6 +2599,7 @@ impl AgentTool for MonitorTool {
                 "Shell 模式：stdout/stderr 的每一行作为一个事件；进程退出时监控结束。\n",
                 "WebSocket 模式：每个文本帧作为一个事件；连接关闭时监控结束。\n",
                 "stdout 行（或 WS 帧）在 200ms 窗口内合并为一条通知。\n",
+                "启动后立即返回 monitor_id，然后用 monitor_wait 循环读取输出、monitor_peek 非阻塞查状态、monitor_kill 终止。",
                 "用 list=true 列出所有活跃监控，用 kill=true 终止指定监控。"
             ).into(),
             input_schema: serde_json::json!({
@@ -2714,6 +2715,8 @@ impl AgentTool for MonitorTool {
             .as_object()
             .map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect());
 
+        let session_id = _context.session_id.as_deref().unwrap_or("");
+
         let cancel = if persistent {
             None // persistent monitors ignore agent cancel token
         } else {
@@ -2722,13 +2725,13 @@ impl AgentTool for MonitorTool {
 
         match self
             .monitor_manager
-            .spawn(command, ws_config, cwd, env.as_ref(), description, timeout_ms, persistent, cancel)
+            .spawn(command, ws_config, cwd, env.as_ref(), description, timeout_ms, persistent, session_id, cancel)
             .await
         {
             Ok(info) => Ok(ToolResult {
                 content: format!(
-                    "监控已启动: id={}, source={}, persistent={}",
-                    info.id, info.source, info.persistent
+                    "监控已启动: id={}\n\n重要：必须立即调用 monitor_wait({}) 循环读取此监控的输出并做出反应。监控是后台异步运行的，不调 monitor_wait 就收不到任何输出。如果只是定时检查状态则用 monitor_peek({})。",
+                    info.id, info.id, info.id
                 ),
                 is_error: false,
                 structured_content: Some(serde_json::to_value(&info).unwrap_or_default()),
@@ -2843,6 +2846,152 @@ impl AgentTool for MonitorKillTool {
             }),
             Err(e) => Ok(ToolResult {
                 content: format!("终止失败: {}", e),
+                is_error: true,
+                structured_content: None,
+            }),
+        }
+    }
+
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
+
+// ── monitor_wait ─────────────────────────────────────────────────────────────
+
+pub struct MonitorWaitTool {
+    pub monitor_manager: Arc<crate::monitor_manager::MonitorManager>,
+}
+
+#[async_trait]
+impl AgentTool for MonitorWaitTool {
+    fn tool_name(&self) -> &str { "monitor_wait" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "monitor_wait".into(),
+            description: "阻塞等待 Monitor 输出。收到输出后若 300ms 无新输出会立即返回（monitor 在等输入），否则等到 monitor 退出或超时。默认超时 30s。用于循环读取长时间监控的输出：每轮读完后立即思考并回应，然后再 wait 下一轮。返回 exit_code=-1 表示监控仍在运行。".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "monitor_id": { "type": "string", "description": "Monitor ID（由 monitor 工具返回）" },
+                    "timeout": { "type": "integer", "description": "超时秒数（默认 30，最大 3600）。用短超时 + 循环来持续读取输出" }
+                },
+                "required": ["monitor_id"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let monitor_id = arguments["monitor_id"].as_str().unwrap_or("");
+        if monitor_id.is_empty() {
+            return Ok(ToolResult {
+                content: "monitor_id is required".into(),
+                is_error: true,
+                structured_content: None,
+            });
+        }
+        let timeout_secs = arguments["timeout"].as_u64().unwrap_or(30).min(3600);
+        let cancel = _context.cancel_token.clone();
+
+        match self.monitor_manager.wait(monitor_id, timeout_secs, 256 * 1024, cancel).await {
+            Ok(result) => {
+                let output_text = if result.truncated {
+                    format!("{}\n\n[输出已截断]", result.output)
+                } else {
+                    result.output.clone()
+                };
+                let summary = if result.exit_code >= 0 {
+                    format!("Monitor {} 已退出 (exit_code={})\n\n输出:\n{}", monitor_id, result.exit_code, output_text)
+                } else if result.exit_code == -2 {
+                    format!("Monitor {} 未找到（可能已退出并被清理）\n\n输出:\n{}", monitor_id, output_text)
+                } else {
+                    format!("Monitor {} 仍在运行，当前输出:\n{}", monitor_id, output_text)
+                };
+                Ok(ToolResult {
+                    content: summary,
+                    is_error: result.exit_code > 0,
+                    structured_content: Some(serde_json::json!({
+                        "monitor_id": monitor_id,
+                        "exit_code": result.exit_code,
+                        "running": result.running,
+                        "output": result.output,
+                        "truncated": result.truncated,
+                    })),
+                })
+            }
+            Err(e) => Ok(ToolResult {
+                content: format!("monitor_wait 失败: {}", e),
+                is_error: true,
+                structured_content: None,
+            }),
+        }
+    }
+
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
+
+// ── monitor_peek ─────────────────────────────────────────────────────────────
+
+pub struct MonitorPeekTool {
+    pub monitor_manager: Arc<crate::monitor_manager::MonitorManager>,
+}
+
+#[async_trait]
+impl AgentTool for MonitorPeekTool {
+    fn tool_name(&self) -> &str { "monitor_peek" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "monitor_peek".into(),
+            description: "非阻塞查询 Monitor 状态。立即返回 running/exit_code 和当前已缓存的输出，不阻塞 agent loop。用于快速检查长监控是否完成，而不是阻塞等待。".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "monitor_id": { "type": "string", "description": "Monitor ID（由 monitor 工具返回）" }
+                },
+                "required": ["monitor_id"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let monitor_id = arguments["monitor_id"].as_str().unwrap_or("");
+        if monitor_id.is_empty() {
+            return Ok(ToolResult {
+                content: "monitor_id is required".into(),
+                is_error: true,
+                structured_content: None,
+            });
+        }
+        match self.monitor_manager.peek(monitor_id).await {
+            Some(result) => {
+                let status = if result.running { "running" } else { "exited" };
+                Ok(ToolResult {
+                    content: format!("Monitor {} ({}) status={} exit_code={:?}\n\n当前输出:\n{}",
+                        result.name, result.monitor_id, status, result.exit_code, result.output),
+                    is_error: false,
+                    structured_content: Some(serde_json::json!({
+                        "monitor_id": result.monitor_id,
+                        "name": result.name,
+                        "running": result.running,
+                        "exit_code": result.exit_code,
+                        "output": result.output,
+                    })),
+                })
+            }
+            None => Ok(ToolResult {
+                content: format!("Monitor {} 未找到", monitor_id),
                 is_error: true,
                 structured_content: None,
             }),

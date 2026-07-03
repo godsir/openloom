@@ -55,6 +55,7 @@ pub struct MonitorInfo {
     pub persistent: bool,
     pub exit_code: Option<i32>,
     pub started_at_ms: i64,
+    pub session_id: String,
 }
 
 #[derive(Clone)]
@@ -81,8 +82,12 @@ struct MonitorInstance {
     exit_code: Option<i32>,
 
     /// Ring buffer for output lines.
-    #[allow(dead_code)]
     output_buffer: Arc<Mutex<Vec<String>>>,
+    /// Read cursor — index of the next unread line in output_buffer.
+    read_cursor: usize,
+
+    /// Session this monitor belongs to.
+    session_id: String,
 
     /// Handle to the background batching task.
     #[allow(dead_code)]
@@ -120,6 +125,7 @@ impl MonitorManager {
         description: &str,
         timeout_ms: u64,
         persistent: bool,
+        session_id: &str,
         cancel: Option<CancellationToken>,
     ) -> Result<MonitorInfo> {
         let id = uuid::Uuid::now_v7().to_string();
@@ -136,7 +142,7 @@ impl MonitorManager {
             (Some(cmd), None) => {
                 let (pid, _name) = self
                     .process_manager
-                    .spawn(cmd, cwd, env, Some(description))
+                    .spawn(cmd, cwd, env, Some(description), session_id)
                     .await
                     .context("failed to spawn shell monitor")?;
                 (MonitorSource::Shell { pid: pid.clone() }, "shell".to_string())
@@ -165,6 +171,8 @@ impl MonitorManager {
             exited_at: None,
             exit_code: None,
             output_buffer: output_buffer.clone(),
+            read_cursor: 0,
+            session_id: session_id.to_string(),
             handle: None,
             cancel_token: cancel_token.clone(),
         };
@@ -176,6 +184,7 @@ impl MonitorManager {
             source: source_str.clone(),
             persistent,
             started_at_ms: now_ms,
+            session_id: session_id.to_string(),
         });
 
         // Fix 1: insert instance and drop the write lock immediately, so the
@@ -195,6 +204,7 @@ impl MonitorManager {
                     timeout_ms,
                     output_buffer,
                     self.monitors.clone(),
+                    session_id.to_string(),
                 )
                 .await;
             }
@@ -207,6 +217,7 @@ impl MonitorManager {
                     timeout_ms,
                     output_buffer,
                     self.monitors.clone(),
+                    session_id.to_string(),
                 )
                 .await;
             }
@@ -220,6 +231,7 @@ impl MonitorManager {
             persistent,
             exit_code: None,
             started_at_ms: now_ms,
+            session_id: session_id.to_string(),
         })
     }
 
@@ -238,11 +250,13 @@ impl MonitorManager {
         timeout_ms: u64,
         output_buffer: Arc<Mutex<Vec<String>>>,
         monitors: Arc<RwLock<HashMap<String, MonitorInstance>>>,
+        session_id: String,
     ) {
         let event_bus = self.event_bus.clone();
         let process_manager = self.process_manager.clone();
         let mid = monitor_id.to_string();
         let pid_owned = pid.to_string();
+        let sid = session_id.clone();
 
         let deadline = if timeout_ms > 0 {
             Some(Instant::now() + Duration::from_millis(timeout_ms))
@@ -276,12 +290,13 @@ impl MonitorManager {
                         // monitors don't leave orphan processes.
                         let _ = process_manager.kill(&pid_owned).await;
                         if !batch.is_empty() {
-                            flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "stdout").await;
+                            flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "stdout", &sid).await;
                         }
                         // Fix 4: send MonitorExited so observers know the monitor stopped.
                         let _ = event_bus.sender().send(AgentEvent::MonitorExited {
                             monitor_id: mid.clone(),
                             exit_code: -1,
+                            session_id: sid.clone(),
                         });
                         // Fix 2: update MonitorInstance so list() / gc() see correct state.
                         mark_monitor_exited(&monitors, &mid, -1).await;
@@ -289,7 +304,7 @@ impl MonitorManager {
                     }
                     event = tokio::time::timeout(wait_dur, rx.recv()) => {
                         match event {
-                            Ok(Ok(AgentEvent::ProcessOutput { pid: ev_pid, data, stream }))
+                            Ok(Ok(AgentEvent::ProcessOutput { pid: ev_pid, data, stream, .. }))
                                 if ev_pid == pid_owned =>
                             {
                                 // Fix 3: window-based rate-limit counting.
@@ -312,6 +327,7 @@ impl MonitorManager {
                                         let _ = event_bus.sender().send(AgentEvent::MonitorError {
                                             monitor_id: mid.clone(),
                                             error: "rate-limited: too many events, monitor stopped".into(),
+                                            session_id: sid.clone(),
                                         });
                                         mark_monitor_exited(&monitors, &mid, -1).await;
                                         return;
@@ -321,6 +337,7 @@ impl MonitorManager {
                                             monitor_id: mid.clone(),
                                             data: "[rate-limited: suppressing excess events]".into(),
                                             stream: stream.clone(),
+                                            session_id: sid.clone(),
                                         });
                                         append_to_buffer(&output_buffer, "[rate-limited: suppressing excess events]").await;
                                     }
@@ -329,18 +346,19 @@ impl MonitorManager {
 
                                 batch.push(data);
                                 if batch.len() >= 50 {
-                                    flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "stdout").await;
+                                    flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "stdout", &sid).await;
                                 }
                             }
-                            Ok(Ok(AgentEvent::ProcessExited { pid: ev_pid, exit_code }))
+                            Ok(Ok(AgentEvent::ProcessExited { pid: ev_pid, exit_code, .. }))
                                 if ev_pid == pid_owned =>
                             {
                                 if !batch.is_empty() {
-                                    flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "stdout").await;
+                                    flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "stdout", &sid).await;
                                 }
                                 let _ = event_bus.sender().send(AgentEvent::MonitorExited {
                                     monitor_id: mid.clone(),
                                     exit_code,
+                                    session_id: sid.clone(),
                                 });
                                 // Fix 2: update MonitorInstance on normal exit.
                                 mark_monitor_exited(&monitors, &mid, exit_code).await;
@@ -355,12 +373,13 @@ impl MonitorManager {
                                     && !peek.running
                                 {
                                     if !batch.is_empty() {
-                                        flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "stdout").await;
+                                        flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "stdout", &sid).await;
                                     }
                                     let ec = peek.exit_code.unwrap_or(-1);
                                     let _ = event_bus.sender().send(AgentEvent::MonitorExited {
                                         monitor_id: mid.clone(),
                                         exit_code: ec,
+                                        session_id: sid.clone(),
                                     });
                                     mark_monitor_exited(&monitors, &mid, ec).await;
                                     return;
@@ -374,7 +393,7 @@ impl MonitorManager {
                             Err(_) => {
                                 // Timeout — flush batch and check idle/deadline.
                                 if !batch.is_empty() {
-                                    flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "stdout").await;
+                                    flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "stdout", &sid).await;
                                 }
                                 // Fix 3: also reset rate-limit window on timeout
                                 // so the counter doesn't stay stale during idle.
@@ -396,6 +415,7 @@ impl MonitorManager {
                                         monitor_id: mid.clone(),
                                         data: "[idle — waiting for input]".into(),
                                         stream: "stdout".into(),
+                                        session_id: sid.clone(),
                                     });
                                     last_batch_at = None;
                                 }
@@ -408,6 +428,7 @@ impl MonitorManager {
                                     let _ = event_bus.sender().send(AgentEvent::MonitorExited {
                                         monitor_id: mid.clone(),
                                         exit_code: -1,
+                                        session_id: sid.clone(),
                                     });
                                     mark_monitor_exited(&monitors, &mid, -1).await;
                                     return;
@@ -438,11 +459,13 @@ impl MonitorManager {
         timeout_ms: u64,
         output_buffer: Arc<Mutex<Vec<String>>>,
         monitors: Arc<RwLock<HashMap<String, MonitorInstance>>>,
+        session_id: String,
     ) {
         let event_bus = self.event_bus.clone();
         let mid = monitor_id.to_string();
         let ws_url = url.to_string();
         let protocols_owned = protocols.to_vec();
+        let sid = session_id.clone();
 
         tokio::spawn(async move {
             let deadline = if timeout_ms > 0 {
@@ -467,6 +490,7 @@ impl MonitorManager {
                         let _ = event_bus.sender().send(AgentEvent::MonitorError {
                             monitor_id: mid.clone(),
                             error: format!("WebSocket request build failed: {}", e),
+                            session_id: sid.clone(),
                         });
                         mark_monitor_exited(&monitors, &mid, -1).await;
                         return;
@@ -481,6 +505,7 @@ impl MonitorManager {
                     let _ = event_bus.sender().send(AgentEvent::MonitorError {
                         monitor_id: mid.clone(),
                         error: format!("WebSocket connect failed: {}", e),
+                        session_id: sid.clone(),
                     });
                     mark_monitor_exited(&monitors, &mid, -1).await;
                     return;
@@ -531,13 +556,14 @@ impl MonitorManager {
                     _ = cancel.cancelled() => {
                         if !batch.is_empty() {
                             // Fix 8: use "ws" stream for WS batcher.
-                            flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "ws").await;
+                            flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "ws", &sid).await;
                         }
                         let _ = ws_sink.send(tungstenite::Message::Close(None)).await;
                         // Fix 4: send MonitorExited on cancel.
                         let _ = event_bus.sender().send(AgentEvent::MonitorExited {
                             monitor_id: mid.clone(),
                             exit_code: -1,
+                            session_id: sid.clone(),
                         });
                         // Fix 2: update MonitorInstance.
                         mark_monitor_exited(&monitors, &mid, -1).await;
@@ -545,7 +571,7 @@ impl MonitorManager {
                     }
                     _ = tokio::time::sleep(batch_deadline) => {
                         if !batch.is_empty() {
-                            flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "ws").await;
+                            flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "ws", &sid).await;
                         }
                         // Fix 3: rate-limit window reset in timeout path.
                         if rate_window_start.elapsed() >= Duration::from_secs(1) {
@@ -566,6 +592,7 @@ impl MonitorManager {
                                 monitor_id: mid.clone(),
                                 data: "[idle — no new frames]".into(),
                                 stream: "ws".into(),
+                                session_id: sid.clone(),
                             });
                             last_batch_at = None;
                         }
@@ -577,6 +604,7 @@ impl MonitorManager {
                             let _ = event_bus.sender().send(AgentEvent::MonitorExited {
                                 monitor_id: mid.clone(),
                                 exit_code: -1,
+                                session_id: sid.clone(),
                             });
                             mark_monitor_exited(&monitors, &mid, -1).await;
                             return;
@@ -603,6 +631,7 @@ impl MonitorManager {
                                         let _ = event_bus.sender().send(AgentEvent::MonitorError {
                                             monitor_id: mid.clone(),
                                             error: "rate-limited: too many WebSocket frames, monitor stopped".into(),
+                                            session_id: sid.clone(),
                                         });
                                         let _ = ws_sink.send(tungstenite::Message::Close(None)).await;
                                         mark_monitor_exited(&monitors, &mid, -1).await;
@@ -613,6 +642,7 @@ impl MonitorManager {
                                             monitor_id: mid.clone(),
                                             data: "[rate-limited: suppressing excess events]".into(),
                                             stream: "ws".into(),
+                                            session_id: sid.clone(),
                                         });
                                         append_to_buffer(&output_buffer, "[rate-limited: suppressing excess events]").await;
                                     }
@@ -621,23 +651,24 @@ impl MonitorManager {
 
                                 batch.push(text);
                                 if batch.len() >= 50 {
-                                    flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "ws").await;
+                                    flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "ws", &sid).await;
                                 }
                             }
                             Some(tungstenite::Message::Binary(data)) => {
                                 let line = format!("[binary frame, {} bytes]", data.len());
                                 batch.push(line);
                                 if batch.len() >= 50 {
-                                    flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "ws").await;
+                                    flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "ws", &sid).await;
                                 }
                             }
                             Some(tungstenite::Message::Close(_)) => {
                                 if !batch.is_empty() {
-                                    flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "ws").await;
+                                    flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "ws", &sid).await;
                                 }
                                 let _ = event_bus.sender().send(AgentEvent::MonitorExited {
                                     monitor_id: mid.clone(),
                                     exit_code: -1,
+                                    session_id: sid.clone(),
                                 });
                                 // Fix 2: update MonitorInstance.
                                 mark_monitor_exited(&monitors, &mid, -1).await;
@@ -649,11 +680,12 @@ impl MonitorManager {
                             None => {
                                 // mpsc channel closed — WS reader task exited.
                                 if !batch.is_empty() {
-                                    flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "ws").await;
+                                    flush_batch(&event_bus, &mid, &mut batch, &mut last_batch_at, &output_buffer, "ws", &sid).await;
                                 }
                                 let _ = event_bus.sender().send(AgentEvent::MonitorExited {
                                     monitor_id: mid.clone(),
                                     exit_code: -1,
+                                    session_id: sid.clone(),
                                 });
                                 // Fix 2: update MonitorInstance.
                                 mark_monitor_exited(&monitors, &mid, -1).await;
@@ -707,6 +739,7 @@ impl MonitorManager {
                 persistent: m.persistent,
                 exit_code: m.exit_code,
                 started_at_ms: m.started_at_ms,
+                session_id: m.session_id.clone(),
             })
             .collect()
     }
@@ -723,6 +756,310 @@ impl MonitorManager {
             }
         });
     }
+
+    /// Non-blocking status check — returns immediately without waiting.
+    /// Includes a snapshot of the current buffered output so the agent can
+    /// decide whether to call monitor_wait for more.
+    pub async fn peek(&self, monitor_id: &str) -> Option<MonitorPeekResult> {
+        let monitors = self.monitors.read().await;
+        let m = monitors.get(monitor_id)?;
+        // Snapshot metadata under the read lock, then drop it before acquiring
+        // the output_buffer lock so we don't deadlock (output_buffer writers
+        // don't hold the monitors lock).
+        let output_buffer = m.output_buffer.clone();
+        let read_cursor = m.read_cursor;
+        let id = m.id.clone();
+        let name = m.name.clone();
+        let running = m.exit_code.is_none();
+        let exit_code = m.exit_code;
+        drop(monitors);
+
+        let output = {
+            let buf = output_buffer.lock().await;
+            let cursor = read_cursor.min(buf.len());
+            buf[cursor..].join("\n")
+        };
+
+        Some(MonitorPeekResult {
+            monitor_id: id,
+            name,
+            running,
+            exit_code,
+            output,
+        })
+    }
+
+    /// Block until a monitor exits, collecting all buffered output.
+    /// Returns (exit_code, output, truncated, running) — truncated=true if output exceeded max_bytes.
+    /// `timeout_secs`: max wait time, 0 = no limit.
+    /// `cancel`: optional cancellation token for user interruption.
+    pub async fn wait(
+        &self,
+        monitor_id: &str,
+        timeout_secs: u64,
+        max_output_bytes: usize,
+        cancel: Option<tokio_util::sync::CancellationToken>,
+    ) -> Result<MonitorWaitResult> {
+        let mid = monitor_id.to_string();
+        let mut output = String::new();
+        let mut truncated = false;
+
+        // Subscribe to MonitorOutput and MonitorExited events for this monitor
+        let mut rx = self.event_bus.subscribe();
+
+        let start = Instant::now();
+        let deadline = if timeout_secs > 0 {
+            Some(start + Duration::from_secs(timeout_secs))
+        } else {
+            None
+        };
+
+        let idle_window = Duration::from_millis(300);
+        let mut last_output_at: Option<Instant> = None;
+
+        // Drain any existing buffered output first
+        {
+            let mut monitors = self.monitors.write().await;
+            if let Some(entry) = monitors.get_mut(&mid) {
+                let new_lines: Vec<String> = {
+                    let buf = entry.output_buffer.lock().await;
+                    let cursor = entry.read_cursor.min(buf.len());
+                    buf[cursor..].to_vec()
+                };
+                if !new_lines.is_empty() {
+                    entry.read_cursor += new_lines.len();
+                    let buf_len = entry.output_buffer.lock().await.len();
+                    entry.read_cursor = entry.read_cursor.min(buf_len);
+                    for line in &new_lines {
+                        if output.len() + line.len() + 1 > max_output_bytes {
+                            if !truncated {
+                                output.push_str("[output truncated — max size reached]\n");
+                                truncated = true;
+                            }
+                            break;
+                        }
+                        if !output.is_empty() {
+                            output.push('\n');
+                        }
+                        output.push_str(line);
+                    }
+                    last_output_at = Some(Instant::now());
+                }
+                // Check exit status after draining
+                if let Some(code) = entry.exit_code {
+                    return Ok(MonitorWaitResult {
+                        exit_code: code,
+                        output,
+                        truncated,
+                        running: false,
+                    });
+                }
+            } else {
+                // Monitor not found
+                return Ok(MonitorWaitResult {
+                    exit_code: -2,
+                    output,
+                    truncated,
+                    running: false,
+                });
+            }
+        }
+
+        loop {
+            // Check cancel token
+            if let Some(ref ct) = cancel {
+                if ct.is_cancelled() {
+                    return Ok(MonitorWaitResult { exit_code: -1, output, truncated, running: true });
+                }
+            }
+
+            // Drain buffered output + check exit status
+            {
+                let mut monitors = self.monitors.write().await;
+                if let Some(entry) = monitors.get_mut(&mid) {
+                    let new_lines: Vec<String> = {
+                        let buf = entry.output_buffer.lock().await;
+                        let cursor = entry.read_cursor.min(buf.len());
+                        buf[cursor..].to_vec()
+                    };
+                    if !new_lines.is_empty() {
+                        entry.read_cursor += new_lines.len();
+                        let buf_len = entry.output_buffer.lock().await.len();
+                        entry.read_cursor = entry.read_cursor.min(buf_len);
+                        for line in &new_lines {
+                            if output.len() + line.len() + 1 > max_output_bytes {
+                                if !truncated {
+                                    output.push_str("[output truncated — max size reached]\n");
+                                    truncated = true;
+                                }
+                                break;
+                            }
+                            if !output.is_empty() {
+                                output.push('\n');
+                            }
+                            output.push_str(line);
+                        }
+                        last_output_at = Some(Instant::now());
+                    }
+                    if let Some(code) = entry.exit_code {
+                        return Ok(MonitorWaitResult {
+                            exit_code: code,
+                            output,
+                            truncated,
+                            running: false,
+                        });
+                    }
+                } else {
+                    return Ok(MonitorWaitResult {
+                        exit_code: -2,
+                        output,
+                        truncated,
+                        running: false,
+                    });
+                }
+            }
+
+            // Idle-return: have output and been quiet → likely waiting for input
+            if let Some(lo) = last_output_at {
+                if lo.elapsed() >= idle_window && !output.is_empty() {
+                    return Ok(MonitorWaitResult {
+                        exit_code: -1,
+                        output,
+                        truncated,
+                        running: true,
+                    });
+                }
+            }
+
+            // Compute wait duration
+            let no_output_window = Duration::from_secs(3);
+            let overall_remaining = deadline.map(|d| d.saturating_duration_since(Instant::now()));
+            let wait_dur = if last_output_at.is_some() {
+                let since = last_output_at.unwrap().elapsed();
+                if since >= idle_window {
+                    continue;
+                }
+                let idle_left = idle_window - since;
+                if let Some(r) = overall_remaining {
+                    r.min(idle_left)
+                } else {
+                    idle_left
+                }
+            } else if let Some(r) = overall_remaining {
+                if r.is_zero() {
+                    return Ok(MonitorWaitResult {
+                        exit_code: -1,
+                        output: format!("{output}\n[monitor_wait timed out after {timeout_secs}s]"),
+                        truncated: true,
+                        running: true,
+                    });
+                }
+                r.min(no_output_window)
+            } else {
+                no_output_window
+            };
+
+            // Wait for next event or timeout
+            let recv_future = rx.recv();
+            tokio::pin!(recv_future);
+            let event_result = if let Some(ref ct) = cancel {
+                tokio::select! {
+                    biased;
+                    _ = ct.cancelled() => {
+                        return Ok(MonitorWaitResult { exit_code: -1, output, truncated, running: true });
+                    }
+                    r = &mut recv_future => match r {
+                        Ok(ev) => Some(ev),
+                        Err(_) => return Err(anyhow::anyhow!("event bus closed")),
+                    },
+                }
+            } else {
+                match tokio::time::timeout(wait_dur, &mut recv_future).await {
+                    Ok(Ok(ev)) => Some(ev),
+                    Ok(Err(_)) => return Err(anyhow::anyhow!("event bus closed")),
+                    Err(_) => None,
+                }
+            };
+
+            let Some(event) = event_result else {
+                if last_output_at.is_some() {
+                    continue;
+                }
+                let is_overall_timeout = overall_remaining.map_or(false, |r| r.is_zero());
+                return Ok(MonitorWaitResult {
+                    exit_code: -1,
+                    output: if is_overall_timeout {
+                        format!("{output}\n[monitor_wait timed out after {timeout_secs}s]")
+                    } else {
+                        format!("{output}\n[no new output — monitor still running]")
+                    },
+                    truncated: is_overall_timeout,
+                    running: true,
+                });
+            };
+
+            match event {
+                AgentEvent::MonitorOutput { monitor_id: ev_mid, .. } if ev_mid == mid => {
+                    last_output_at = Some(Instant::now());
+                    continue;
+                }
+                AgentEvent::MonitorExited { monitor_id: ev_mid, exit_code, .. } if ev_mid == mid => {
+                    // Drain any final buffered output
+                    let mut monitors = self.monitors.write().await;
+                    if let Some(entry) = monitors.get_mut(&mid) {
+                        let new_lines: Vec<String> = {
+                            let buf = entry.output_buffer.lock().await;
+                            let cursor = entry.read_cursor.min(buf.len());
+                            buf[cursor..].to_vec()
+                        };
+                        entry.read_cursor += new_lines.len();
+                        for line in &new_lines {
+                            if output.len() + line.len() + 1 > max_output_bytes {
+                                if !truncated {
+                                    output.push_str("[output truncated — max size reached]\n");
+                                    truncated = true;
+                                }
+                                break;
+                            }
+                            if !output.is_empty() {
+                                output.push('\n');
+                            }
+                            output.push_str(line);
+                        }
+                    }
+                    return Ok(MonitorWaitResult {
+                        exit_code,
+                        output,
+                        truncated,
+                        running: false,
+                    });
+                }
+                _ => {} // ignore unrelated events
+            }
+        }
+    }
+}
+
+// ── Result types ─────────────────────────────────────────────────────────────
+
+/// Result of waiting for a monitor to exit.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MonitorWaitResult {
+    pub exit_code: i32,
+    pub output: String,
+    pub truncated: bool,
+    /// True if the monitor is still running after this wait call.
+    pub running: bool,
+}
+
+/// Non-blocking peek — returns monitor status immediately with current output.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MonitorPeekResult {
+    pub monitor_id: String,
+    pub name: String,
+    pub running: bool,
+    pub exit_code: Option<i32>,
+    pub output: String,
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -738,6 +1075,7 @@ async fn flush_batch(
     last_batch_at: &mut Option<Instant>,
     output_buffer: &Arc<Mutex<Vec<String>>>,
     stream: &str,
+    session_id: &str,
 ) {
     let data = batch.join("\n");
     batch.clear();
@@ -749,6 +1087,7 @@ async fn flush_batch(
         monitor_id: monitor_id.to_string(),
         data,
         stream: stream.to_string(),
+        session_id: session_id.to_string(),
     });
 }
 

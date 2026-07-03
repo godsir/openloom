@@ -69,16 +69,13 @@ export async function bootstrapApp(): Promise<() => void> {
 
   const unsub = loomSubscribe((method, params) => {
     const p = params as Record<string, unknown> | undefined
-    // Process/monitor events may be emitted from background sessions
-    // (e.g. persistent game stream) and must not pollute the active
-    // session's streaming state. They only render when an explicit
-    // session_id is present in the notification.
-    // All other events safely fall back to currentSessionId.
-    const noFallback = method === 'process.output' || method === 'process.exited'
-      || method === 'monitor.output' || method === 'monitor.exited'
+    // Process/monitor events are emitted from background sessions
+    // (e.g. persistent game stream). The session_id in the params
+    // tells us which session they belong to. For all other events,
+    // fall back to currentSessionId.
     const sessionId =
       (p?.session_id as string) ||
-      (noFallback ? '' : useStore.getState().currentSessionId || 'default')
+      useStore.getState().currentSessionId || 'default'
 
     switch (method) {
       case 'chat.stream_delta': {
@@ -204,6 +201,13 @@ export async function bootstrapApp(): Promise<() => void> {
           (p?.exit_code as number) ?? -1,
         )
         break
+      case 'monitor.started':
+        // Monitor started — mark session as streaming so the Dynamic Island reacts
+        if (sessionId) {
+          useStore.getState().addStreamingSession(sessionId)
+          useStore.getState().setStreamingActivity(sessionId, { phase: 'tool', detail: 'monitor' })
+        }
+        break
       case 'monitor.output':
         streamBufferManager.handleProcessOutput(
           sessionId,
@@ -219,6 +223,19 @@ export async function bootstrapApp(): Promise<() => void> {
           (p?.exit_code as number) ?? -1,
         )
         break
+      case 'monitor.error': {
+        // Monitor error — show inline error notification in the chat
+        const errMsg = (p?.error as string) || 'Monitor error'
+        const mid = (p?.monitor_id as string) || ''
+        streamBufferManager.handleProcessOutput(
+          sessionId,
+          mid,
+          `[Monitor 错误] ${errMsg}`,
+          'stderr',
+        )
+        streamBufferManager.handleProcessExited(sessionId, mid, -1)
+        break
+      }
       case 'ws.replay_done':
         console.log('[ws] event replay complete:', p)
         break
@@ -284,6 +301,12 @@ export async function bootstrapApp(): Promise<() => void> {
           (p?.exit_code as number) ?? -1,
         )
         break
+      case 'monitor.started':
+        if (sessionId) {
+          useStore.getState().addStreamingSession(sessionId)
+          useStore.getState().setStreamingActivity(sessionId, { phase: 'tool', detail: 'monitor' })
+        }
+        break
       case 'monitor.output':
         streamBufferManager.handleProcessOutput(
           sessionId,
@@ -299,6 +322,18 @@ export async function bootstrapApp(): Promise<() => void> {
           (p?.exit_code as number) ?? -1,
         )
         break
+      case 'monitor.error': {
+        const errMsg = (p?.error as string) || 'Monitor error'
+        const mid = (p?.monitor_id as string) || ''
+        streamBufferManager.handleProcessOutput(
+          sessionId,
+          mid,
+          `[Monitor 错误] ${errMsg}`,
+          'stderr',
+        )
+        streamBufferManager.handleProcessExited(sessionId, mid, -1)
+        break
+      }
       case 'ws.replay_done':
         // replay_done is internal WS protocol, not relevant for IM
         break

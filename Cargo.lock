@@ -1674,8 +1674,10 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-tungstenite",
  "tokio-util",
  "tracing",
+ "tungstenite",
  "uuid",
 ]
 

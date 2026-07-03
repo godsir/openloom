@@ -38,6 +38,9 @@ struct ManagedProcess {
     /// Read cursor — index of the next unread line in output_buffer.
     /// Advanced by process_wait; shared across calls so nothing is re-read.
     read_cursor: usize,
+    /// Session this process belongs to.
+    #[allow(dead_code)]
+    session_id: String,
 }
 
 /// Cap on buffered output lines to bound memory for long-running processes.
@@ -66,9 +69,11 @@ impl ProcessManager {
         cwd: Option<&str>,
         env: Option<&HashMap<String, String>>,
         name: Option<&str>,
+        session_id: &str,
     ) -> Result<(String, String)> {
         let pid = Uuid::new_v4().to_string();
         let proc_name = name.unwrap_or(command).to_string();
+        let sid = session_id.to_string();
 
         // Build the command — use shell on all platforms
         let mut cmd = if cfg!(windows) {
@@ -107,6 +112,7 @@ impl ProcessManager {
         let stdout_buffer = output_buffer.clone();
 
         if let Some(stdout) = stdout {
+            let sid_stdout = sid.clone();
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
@@ -129,6 +135,7 @@ impl ProcessManager {
                         pid: pid_clone.clone(),
                         data,
                         stream: "stdout".into(),
+                        session_id: sid_stdout.clone(),
                     });
                 }
             });
@@ -141,6 +148,7 @@ impl ProcessManager {
         let stderr_buffer = output_buffer.clone();
 
         if let Some(stderr) = stderr {
+            let sid_stderr = sid.clone();
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
@@ -160,6 +168,7 @@ impl ProcessManager {
                         pid: pid_clone.clone(),
                         data,
                         stream: "stderr".into(),
+                        session_id: sid_stderr.clone(),
                     });
                 }
             });
@@ -190,6 +199,7 @@ impl ProcessManager {
         let event_bus = self.event_bus.clone();
         let pid_clone = pid.clone();
         let child_for_wait = child_arc.clone();
+        let sid_exit = sid.clone();
 
         tokio::spawn(async move {
             // Take the child out of the mutex so we can wait on it.
@@ -207,6 +217,7 @@ impl ProcessManager {
             event_bus.publish(AgentEvent::ProcessExited {
                 pid: pid_clone.clone(),
                 exit_code: code,
+                session_id: sid_exit.clone(),
             });
 
             // Clean up from the registry (don't remove immediately — keep exit_code)
@@ -236,6 +247,7 @@ impl ProcessManager {
                 exit_code: None,
                 output_buffer,
                 read_cursor: 0,
+                session_id: sid.clone(),
             },
         );
 
@@ -519,7 +531,7 @@ impl ProcessManager {
                     last_output_at = Some(Instant::now());
                     continue;
                 }
-                AgentEvent::ProcessExited { pid: ev_pid, exit_code } if ev_pid == pid_for_events => {
+                AgentEvent::ProcessExited { pid: ev_pid, exit_code, .. } if ev_pid == pid_for_events => {
                     // Drain any final buffered output before returning.
                     let mut procs = self.processes.write().await;
                     if let Some(entry) = procs.get_mut(&pid) {

@@ -126,11 +126,13 @@ pub enum AgentEvent {
         pid: String,
         data: String,
         stream: String,
+        session_id: String,
     },
     /// Background process exited.
     ProcessExited {
         pid: String,
         exit_code: i32,
+        session_id: String,
     },
     /// Monitor 已启动
     MonitorStarted {
@@ -139,22 +141,26 @@ pub enum AgentEvent {
         source: String,
         persistent: bool,
         started_at_ms: i64,
+        session_id: String,
     },
     /// Monitor 输出行（200ms 批处理合并后的结果）
     MonitorOutput {
         monitor_id: String,
         data: String,
         stream: String,
+        session_id: String,
     },
     /// Monitor 已退出（进程结束 / WS 断开）
     MonitorExited {
         monitor_id: String,
         exit_code: i32,
+        session_id: String,
     },
     /// Monitor 错误（启动失败、限流停止等）
     MonitorError {
         monitor_id: String,
         error: String,
+        session_id: String,
     },
 }
 

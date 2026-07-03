@@ -969,7 +969,7 @@ impl Orchestrator {
             process_manager: process_manager.clone(),
         }));
 
-        // Register monitor tools — start/list/kill shell + WebSocket monitors
+        // Register monitor tools — start/list/kill/wait/peek shell + WebSocket monitors
         let _ = registry.register(Arc::new(crate::builtin_tools::MonitorTool {
             monitor_manager: monitor_manager.clone(),
         }));
@@ -977,6 +977,12 @@ impl Orchestrator {
             monitor_manager: monitor_manager.clone(),
         }));
         let _ = registry.register(Arc::new(crate::builtin_tools::MonitorKillTool {
+            monitor_manager: monitor_manager.clone(),
+        }));
+        let _ = registry.register(Arc::new(crate::builtin_tools::MonitorWaitTool {
+            monitor_manager: monitor_manager.clone(),
+        }));
+        let _ = registry.register(Arc::new(crate::builtin_tools::MonitorPeekTool {
             monitor_manager: monitor_manager.clone(),
         }));
         // Claude Code alias: skills reference "Monitor" (capital M)

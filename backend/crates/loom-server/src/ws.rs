@@ -332,11 +332,11 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
         AgentEvent::CronJobChanged { job_id, action } => {
             json!({ "job_id": job_id, "action": action })
         }
-        AgentEvent::ProcessOutput { pid, data, stream } => {
-            json!({ "pid": pid, "data": data, "stream": stream })
+        AgentEvent::ProcessOutput { pid, data, stream, session_id } => {
+            json!({ "pid": pid, "data": data, "stream": stream, "session_id": session_id })
         }
-        AgentEvent::ProcessExited { pid, exit_code } => {
-            json!({ "pid": pid, "exit_code": exit_code })
+        AgentEvent::ProcessExited { pid, exit_code, session_id } => {
+            json!({ "pid": pid, "exit_code": exit_code, "session_id": session_id })
         }
         AgentEvent::MonitorStarted {
             monitor_id,
@@ -344,6 +344,7 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
             source,
             persistent,
             started_at_ms,
+            session_id,
         } => {
             json!({
                 "monitor_id": monitor_id,
@@ -351,35 +352,42 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
                 "source": source,
                 "persistent": persistent,
                 "started_at_ms": started_at_ms,
+                "session_id": session_id,
             })
         }
         AgentEvent::MonitorOutput {
             monitor_id,
             data,
             stream,
+            session_id,
         } => {
             json!({
                 "monitor_id": monitor_id,
                 "data": data,
                 "stream": stream,
+                "session_id": session_id,
             })
         }
         AgentEvent::MonitorExited {
             monitor_id,
             exit_code,
+            session_id,
         } => {
             json!({
                 "monitor_id": monitor_id,
                 "exit_code": exit_code,
+                "session_id": session_id,
             })
         }
         AgentEvent::MonitorError {
             monitor_id,
             error,
+            session_id,
         } => {
             json!({
                 "monitor_id": monitor_id,
                 "error": error,
+                "session_id": session_id,
             })
         }
         _ => json!({}),
