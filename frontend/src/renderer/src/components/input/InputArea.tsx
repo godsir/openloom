@@ -506,6 +506,7 @@ export default function InputArea() {
   }, [streaming])
 
   const isConnected = wsState === 'connected'
+  const isDisconnected = wsState === 'disconnected'
   const placeholder = !isConnected
     ? t('app.connecting')
     : !sessionId
@@ -586,7 +587,7 @@ export default function InputArea() {
             onPaste={handlePaste}
             placeholder={isImSession ? t('im.desktopLocked', 'IM 会话，请在微信中对话') : placeholder}
             rows={2}
-            disabled={!isConnected || isImSession}
+            disabled={isDisconnected || isImSession}
             className={styles.textarea}
           />
           {showSlashMenu && (

@@ -1,4 +1,4 @@
-import { getWs, onWsConnected, setLastSeq, updateLastMessageTime } from './websocket'
+import { getWs, onWsConnected, setLastSeq } from './websocket'
 import type { JsonRpcRequest, JsonRpcResponse } from '../types/bindings'
 
 let nextId = 1
@@ -109,7 +109,6 @@ export function handleWsMessage(data: string): void {
     if (typeof msg.seq === 'number') {
       setLastSeq(msg.seq)
     }
-    updateLastMessageTime()
 
     if ('id' in msg && msg.id != null) {
       const entry = pending.get(msg.id)

@@ -3,18 +3,14 @@ import { handleWsMessage } from './jsonrpc'
 type ReconnectCallback = () => void
 
 let lastSeq = 0
-let lastMessageTime = Date.now()
 
 export function setLastSeq(seq: number): void {
   lastSeq = seq
 }
 
-export function updateLastMessageTime(): void {
-  lastMessageTime = Date.now()
-}
-
 let ws: WebSocket | null = null
 let retryCount = 0
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
 // Fast reconnect: 200ms base with 30% jitter, max 5s between attempts.
 // After ~100 retries (~5 min), resolve pending awaiters so the UI doesn't hang forever.
@@ -22,11 +18,6 @@ const INITIAL_DELAY = 200
 const MAX_DELAY = 5000
 const JITTER = 0.3
 const RETRY_GIVE_UP = 100  // ~5 min of retries → stop and let user manually reconnect
-
-// Heartbeat: detect half-open connections faster than TCP timeout (~30s on Windows).
-const HEARTBEAT_INTERVAL = 15000   // check every 15s
-const HEARTBEAT_TIMEOUT = 5000     // no message for 5s → suspect stall
-let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 
 function reconnectDelay(retryCount: number): number {
   const base = Math.min(INITIAL_DELAY * Math.pow(2, retryCount), MAX_DELAY)
@@ -80,6 +71,10 @@ export function connectWebSocket(port: number): Promise<void> {
   }
 
   // CLOSING / CLOSED — drop the stale reference and build a new socket.
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
   if (ws) {
     ws.onopen = null
     ws.onmessage = null
@@ -102,24 +97,6 @@ export function connectWebSocket(port: number): Promise<void> {
       retryCount = 0
       setWsStateFn?.('connected')
       setReconnectAttemptFn?.(0)
-      // Start heartbeat to detect half-open connections
-      if (heartbeatTimer) clearInterval(heartbeatTimer)
-      let missedChecks = 0
-      heartbeatTimer = setInterval(() => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          const now = Date.now()
-          if (now - lastMessageTime > HEARTBEAT_TIMEOUT) {
-            missedChecks++
-            if (missedChecks >= 2) {
-              console.warn('[ws] heartbeat lost — forcing reconnect')
-              ws!.close()
-              return
-            }
-          } else {
-            missedChecks = 0
-          }
-        }
-      }, HEARTBEAT_INTERVAL)
       // Flush queued RPC sends first
       for (const cb of onOpenCallbacks) cb()
       for (const cb of [...onReconnectCallbacks]) cb()
@@ -136,7 +113,10 @@ export function connectWebSocket(port: number): Promise<void> {
         setWsStateFn?.('reconnecting')
         setReconnectAttemptFn?.(retryCount)
         const delay = reconnectDelay(retryCount)
-        setTimeout(() => connectWebSocket(port), delay)
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null
+          connectWebSocket(port)
+        }, delay)
       } else {
         setWsStateFn?.('disconnected')
         resolveAllPending()
@@ -165,9 +145,9 @@ export function getWs(): WebSocket | null {
 }
 
 export function disconnectWebSocket(): void {
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer)
-    heartbeatTimer = null
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
   }
   if (ws) {
     ws.onclose = null
