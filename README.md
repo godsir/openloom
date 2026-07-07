@@ -298,6 +298,21 @@ loom kg stats
 
 ## 开发
 
+### 推送与版本号
+
+每次推送 `main` 分支时，使用 `scripts/push.sh` 替代 `git push`，脚本会自动统一 `Cargo.toml` 和 `frontend/package.json` 的版本号，并将 patch 版本 +1（如 `0.4.2` → `0.4.3`），然后提交并推送。
+
+```powershell
+# 推送 main 分支（自动 bump 版本号）
+bash scripts/push.sh
+
+# 带额外参数
+bash scripts/push.sh --force
+bash scripts/push.sh -u origin main
+```
+
+### 编译与检查
+
 ```powershell
 # 全量类型检查
 cargo check --workspace
