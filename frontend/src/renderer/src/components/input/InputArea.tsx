@@ -31,6 +31,9 @@ export default function InputArea() {
   const { t } = useLocale()
   const [text, setText] = useState('')
 
+  // IME 组合输入期间跳过 React state 更新，避免打断浏览器原生成词过程导致吞字
+  const composingRef = useRef(false)
+
   // 点击外部关闭发送快捷键下拉
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -160,6 +163,20 @@ export default function InputArea() {
 
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value
+    // IME 组合输入期间不更新 React state，避免打断浏览器原生成词过程
+    if (composingRef.current) {
+      // 仍然需要检测 slash 命令触发
+      const cursorPos = e.target.selectionStart ?? value.length
+      const query = getSlashQuery(value, cursorPos)
+      if (query !== null) {
+        setSlashQuery(query)
+        setShowSlashMenu(true)
+      } else {
+        setShowSlashMenu(false)
+        setSlashQuery('')
+      }
+      return
+    }
     setText(value)
     const cursorPos = e.target.selectionStart ?? value.length
     const query = getSlashQuery(value, cursorPos)
@@ -583,6 +600,13 @@ export default function InputArea() {
             ref={textareaRef}
             value={text}
             onChange={handleTextChange}
+            onCompositionStart={() => { composingRef.current = true }}
+            onCompositionEnd={(e) => {
+              composingRef.current = false
+              // 组合结束后将最终文本同步回 React state
+              const value = (e.target as HTMLTextAreaElement).value
+              setText(value)
+            }}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder={isImSession ? t('im.desktopLocked', 'IM 会话，请在微信中对话') : placeholder}
