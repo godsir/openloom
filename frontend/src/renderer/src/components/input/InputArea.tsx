@@ -159,14 +159,9 @@ export default function InputArea() {
   }), [createSession, compactSession, t])
 
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const value = e.target.value
-    // IME 组合输入期间不更新 React state（浏览器原生管理 textarea 值），
-    // 避免 setText → re-render → 写回 value 打断 IME 成词过程导致吞字。
-    // nativeEvent.isComposing 是浏览器原生 API，比 compositionStart/End 事件对更可靠。
-    if ((e.nativeEvent as InputEvent).isComposing) return
-    setText(value)
-    const cursorPos = e.target.selectionStart ?? value.length
-    const query = getSlashQuery(value, cursorPos)
+    setText(e.target.value)
+    const cursorPos = e.target.selectionStart ?? e.target.value.length
+    const query = getSlashQuery(e.target.value, cursorPos)
     if (query !== null) {
       setSlashQuery(query)
       setShowSlashMenu(true)
@@ -491,6 +486,16 @@ export default function InputArea() {
 
   const streaming = useStore(s => sessionId ? s.streamingSessionIds.has(sessionId) : false)
 
+  // 非受控 textarea：React re-render 时不再向 DOM 写入 value，
+  // 光标/焦点不再被 wsState 等状态变化干扰。程序化改文本时靠
+  // 此 effect 同步到 DOM（onChange 时 DOM 已有正确值，跳过）。
+  useEffect(() => {
+    const el = textareaRef.current
+    if (el && el.value !== text) {
+      el.value = text
+    }
+  }, [text])
+
   // Auto-resize textarea
   useEffect(() => {
     const el = textareaRef.current
@@ -585,7 +590,7 @@ export default function InputArea() {
           <div className={styles.textareaWrap}>
           <textarea
             ref={textareaRef}
-            value={text}
+            defaultValue={text}
             onChange={handleTextChange}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
