@@ -32,11 +32,11 @@ new_ver="${major}.${minor}.$((patch + 1))"
 echo "统一后新版本: $new_ver"
 
 # --- 写入 Cargo.toml ---
-sed -i "0,/version = \"$cargo_ver\"/s/version = \"$cargo_ver\"/version = \"$new_ver\"/" "$CARGO_TOML"
+sed -i "s/version = \"$cargo_ver\"/version = \"$new_ver\"/" "$CARGO_TOML"
 echo "  Cargo.toml: $cargo_ver -> $new_ver"
 
 # --- 写入 frontend/package.json ---
-sed -i "0/\"version\": \"$pkg_ver\"/s/\"version\": \"$pkg_ver\"/\"version\": \"$new_ver\"/" "$PKG_JSON"
+sed -i "s/\"version\": \"$pkg_ver\"/\"version\": \"$new_ver\"/" "$PKG_JSON"
 echo "  package.json: $pkg_ver -> $new_ver"
 
 # --- 提交版本变更 ---
