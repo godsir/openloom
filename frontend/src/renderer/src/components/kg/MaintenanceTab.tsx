@@ -174,7 +174,7 @@ export default function MaintenanceTab() {
 
   // Forgetting params
   const [forgetImportance, setForgetImportance] = useState(0.3)
-  const [forgetMaxAge, setForgetMaxAge] = useState(60)
+  const [forgetMaxAge, setForgetMaxAge] = useState(7)
   const [forgetting, setForgetting] = useState(false)
 
   // Consolidation

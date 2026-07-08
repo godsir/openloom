@@ -928,7 +928,7 @@ impl<'a> GraphStore<'a> {
         let stale_ids: Vec<i64> = {
             let mut stmt = self.conn.prepare(
                 "SELECT id FROM kg_nodes
-                 WHERE access_count = 0
+                 WHERE access_count <= 2
                    AND last_updated < ?1
                    AND confidence < 0.5
                    AND entity_type != 'Person'

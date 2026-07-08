@@ -1766,7 +1766,9 @@ impl MemoryStore for LoomMemoryStore {
     async fn run_consolidation_cycle(&self) -> Result<String> {
         let mem = self.memory_db.lock().expect("lock poisoned");
         let consolidator = loom_memory::MemoryConsolidator::new(mem.conn());
-        let report = consolidator.run_cycle()?;
+        // Run dedup-based consolidation (merge duplicate kg_nodes, cognitions,
+        // promote session-scoped nodes to episodic).
+        let report = consolidator.run_consolidation_cycle()?;
         let json = serde_json::to_string(&report)
             .unwrap_or_else(|_| r#"{"summary":"serialisation error"}"#.into());
         tracing::info!(summary = %report.summary, "consolidation cycle completed");
