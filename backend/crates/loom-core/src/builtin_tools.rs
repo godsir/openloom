@@ -2499,11 +2499,11 @@ impl AgentTool for ProcessWaitTool {
                 //          went quiet, or overall timeout reached — process alive)
                 //   -2   → PID not found (already GC'd / never existed)
                 let summary = if result.exit_code >= 0 {
-                    format!("进程 {} 已退出 (exit_code={})\n\n输出:\n{}", pid, result.exit_code, output_text)
+                    format!("进程 {} 已退出 (exit_code={})\n\n输出:\n{}\n\n进程已结束，无需再调用 process_wait。", pid, result.exit_code, output_text)
                 } else if result.exit_code == -2 {
                     format!("进程 {} 未找到（可能已退出并被清理）\n\n输出:\n{}", pid, output_text)
                 } else {
-                    format!("进程 {} 仍在运行，当前输出:\n{}", pid, output_text)
+                    format!("进程 {} 仍在运行，当前输出:\n{}\n\n【重要】进程尚未退出（exit_code=-1）。你必须立即再次调用 process_wait({}) 继续等待后续输出。进程还在运行，停止会导致数据丢失。", pid, output_text, pid)
                 };
                 Ok(ToolResult {
                     content: summary,
@@ -2563,11 +2563,18 @@ impl AgentTool for ProcessPeekTool {
             return Ok(ToolResult { content: "pid is required".into(), is_error: true, structured_content: None });
         }
         match self.process_manager.peek(pid).await {
-            Some(r) => Ok(ToolResult {
-                content: format!("进程 {} ({}) running={} exit_code={:?}", r.name, r.pid, r.running, r.exit_code),
-                is_error: false,
-                structured_content: Some(serde_json::json!({ "pid": r.pid, "name": r.name, "running": r.running, "exit_code": r.exit_code })),
-            }),
+            Some(r) => {
+                let guidance = if r.running {
+                    format!("。\n\n【提示】进程仍在运行。用 process_wait({}) 阻塞等待后续输出，或继续用 process_peek 定时检查。", r.pid)
+                } else {
+                    format!("。进程已结束。")
+                };
+                Ok(ToolResult {
+                    content: format!("进程 {} ({}) running={} exit_code={:?}{}", r.name, r.pid, r.running, r.exit_code, guidance),
+                    is_error: false,
+                    structured_content: Some(serde_json::json!({ "pid": r.pid, "name": r.name, "running": r.running, "exit_code": r.exit_code })),
+                })
+            },
             None => Ok(ToolResult {
                 content: format!("进程 {} 未找到", pid),
                 is_error: true,
@@ -2730,8 +2737,8 @@ impl AgentTool for MonitorTool {
         {
             Ok(info) => Ok(ToolResult {
                 content: format!(
-                    "监控已启动: id={}\n\n重要：必须立即调用 monitor_wait({}) 循环读取此监控的输出并做出反应。监控是后台异步运行的，不调 monitor_wait 就收不到任何输出。如果只是定时检查状态则用 monitor_peek({})。",
-                    info.id, info.id, info.id
+                    "监控已启动: id={0}\n\n【关键】必须立即进入循环监控模式：反复调用 monitor_wait({0}) 读取输出 → 思考分析 → 再次 monitor_wait({0})，直到监控退出（exit_code>=0）或任务完成。监控是后台异步运行的，不持续调用 monitor_wait 就收不到后续输出，会导致数据丢失。不要在一次等待后就停止 —— 必须持续循环直到监控结束。如果只是定时检查状态则用 monitor_peek({0})。",
+                    info.id
                 ),
                 is_error: false,
                 structured_content: Some(serde_json::to_value(&info).unwrap_or_default()),
@@ -2906,11 +2913,11 @@ impl AgentTool for MonitorWaitTool {
                     result.output.clone()
                 };
                 let summary = if result.exit_code >= 0 {
-                    format!("Monitor {} 已退出 (exit_code={})\n\n输出:\n{}", monitor_id, result.exit_code, output_text)
+                    format!("Monitor {} 已退出 (exit_code={})\n\n输出:\n{}\n\n监控已结束，无需再调用 monitor_wait。", monitor_id, result.exit_code, output_text)
                 } else if result.exit_code == -2 {
                     format!("Monitor {} 未找到（可能已退出并被清理）\n\n输出:\n{}", monitor_id, output_text)
                 } else {
-                    format!("Monitor {} 仍在运行，当前输出:\n{}", monitor_id, output_text)
+                    format!("Monitor {} 仍在运行，当前输出:\n{}\n\n【重要】监控任务尚未结束（exit_code=-1）。你必须立即再次调用 monitor_wait({}) 继续读取后续输出并做出反应。在此停止会导致监控数据丢失。", monitor_id, output_text, monitor_id)
                 };
                 Ok(ToolResult {
                     content: summary,
@@ -2977,9 +2984,14 @@ impl AgentTool for MonitorPeekTool {
         match self.monitor_manager.peek(monitor_id).await {
             Some(result) => {
                 let status = if result.running { "running" } else { "exited" };
+                let guidance = if result.running {
+                    format!("\n\n【提示】监控 {} 仍在运行。用 monitor_wait({}) 阻塞等待后续输出，或继续用 monitor_peek 定时检查。", result.monitor_id, result.monitor_id)
+                } else {
+                    String::new()
+                };
                 Ok(ToolResult {
-                    content: format!("Monitor {} ({}) status={} exit_code={:?}\n\n当前输出:\n{}",
-                        result.name, result.monitor_id, status, result.exit_code, result.output),
+                    content: format!("Monitor {} ({}) status={} exit_code={:?}\n\n当前输出:\n{}{}",
+                        result.name, result.monitor_id, status, result.exit_code, result.output, guidance),
                     is_error: false,
                     structured_content: Some(serde_json::json!({
                         "monitor_id": result.monitor_id,
