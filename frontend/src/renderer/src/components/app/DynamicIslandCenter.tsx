@@ -271,22 +271,14 @@ export default function DynamicIslandCenter() {
           <div className={styles.modeToggle} data-active={appMode} role="radiogroup" aria-label={t('app.modeSwitch')}>
             <button
               className={`${styles.modeToggleOption} ${appMode === 'chat' ? styles.modeToggleOptionActive : ''}`}
-              onClick={() => {
-                if (appMode === 'chat') return
-                setAppMode('chat')
-                if (!sidebarOpen) toggleSidebar()
-              }}
+              onClick={(e) => { e.stopPropagation(); if (appMode === 'chat') return; setAppMode('chat'); if (!sidebarOpen) toggleSidebar() }}
             >
               <IconMessageSquare size={13} />
               <span>{t('app.chat')}</span>
             </button>
             <button
               className={`${styles.modeToggleOption} ${appMode === 'write' ? styles.modeToggleOptionActive : ''}`}
-              onClick={() => {
-                if (appMode === 'write') return
-                setAppMode('write')
-                if (sidebarOpen) toggleSidebar()
-              }}
+              onClick={(e) => { e.stopPropagation(); if (appMode === 'write') return; setAppMode('write'); if (sidebarOpen) toggleSidebar() }}
             >
               <IconEdit size={13} />
               <span>{t('app.write')}</span>
@@ -365,7 +357,7 @@ export default function DynamicIslandCenter() {
         <div className={styles.layerRow}>
           <button
             className={styles.islandActionBtn}
-            onClick={() => useStore.getState().installUpdate()}
+            onClick={(e) => { e.stopPropagation(); useStore.getState().installUpdate() }}
           >
             <IconRotateCcw size={12} />
             {t('island.restartInstall')}
@@ -382,7 +374,7 @@ export default function DynamicIslandCenter() {
         <div className={styles.layerRow}>
           <button
             className={styles.islandActionBtn}
-            onClick={() => useStore.getState().downloadUpdate()}
+            onClick={(e) => { e.stopPropagation(); useStore.getState().downloadUpdate() }}
           >
             {t('island.retry')}
           </button>
@@ -398,14 +390,14 @@ export default function DynamicIslandCenter() {
         <div className={styles.layerRow}>
           <button
             className={styles.islandActionBtn}
-            onClick={() => useStore.setState({ updateModalOpen: true })}
+            onClick={(e) => { e.stopPropagation(); useStore.setState({ updateModalOpen: true }) }}
           >
             {t('app.updateNow')}
           </button>
           <button
             className={styles.islandDismissBtn}
             title={t('common.dismiss')}
-            onClick={() => useStore.getState().dismissUpdate()}
+            onClick={(e) => { e.stopPropagation(); useStore.getState().dismissUpdate() }}
           >
             ✕
           </button>
@@ -419,7 +411,7 @@ export default function DynamicIslandCenter() {
           <span className={styles.dynamicTitle}>{t('app.engineStopped')}</span>
         </div>
         <div className={styles.layerRow}>
-          <button className={styles.islandActionBtn} onClick={handleRestart}>
+          <button className={styles.islandActionBtn} onClick={(e) => { e.stopPropagation(); handleRestart() }}>
             <IconRotateCcw size={12} />
             {t('app.restartEngine')}
           </button>

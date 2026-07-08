@@ -107,7 +107,7 @@ export default function AppShell({ children }: { children?: ReactNode }) {
           {appMode === 'settings' ? (
             <>
               <button
-                onClick={() => setAppMode(prevModeRef.current)}
+                onClick={(e) => { e.stopPropagation(); setAppMode(prevModeRef.current) }}
                 className={`${styles.toggleBtn} ${styles.islandLeftBtn}`}
                 title={t('common.back')}
               >
@@ -118,7 +118,8 @@ export default function AppShell({ children }: { children?: ReactNode }) {
           ) : (
             <>
               <button
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation()
                   if (appMode === 'write') {
                     toggleWriteFileSidebar()
                   } else {
@@ -135,7 +136,8 @@ export default function AppShell({ children }: { children?: ReactNode }) {
               </button>
               <DynamicIslandCenter />
               <button
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation()
                   prevModeRef.current = appMode === 'write' ? 'write' : 'chat'
                   setAppMode('settings')
                 }}
