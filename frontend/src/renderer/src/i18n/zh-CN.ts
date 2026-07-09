@@ -1087,6 +1087,7 @@ export const zhCN: TranslationMap = {
   'bt.webSearchMaxResults': '最大结果数',
   'bt.searxngUrl': 'SearXNG 地址',
   'bt.webSearchApiKey': 'API Key',
+  'bt.httpProxy': 'HTTP 代理',
   'bt.webFetchMaxChars': '最大字符数',
   'bt.processWaitMaxTimeout': '超时上限 (秒)',
   'bt.monitorDefaultTimeout': '默认超时 (秒)',

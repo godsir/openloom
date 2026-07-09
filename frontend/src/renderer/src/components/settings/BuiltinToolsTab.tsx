@@ -13,6 +13,7 @@ interface ToolPrefs {
   web_search_max_results: number
   searxng_url?: string | null
   web_search_api_key?: string | null
+  http_proxy?: string | null
   web_fetch_max_chars: number
   process_wait_max_timeout_secs: number
   monitor_default_timeout_ms: number
@@ -77,6 +78,7 @@ function buildTools(): ToolDef[] {
       { key: 'searxng_url', inline: true, labelKey: 'bt.searxngUrl', type: 'text', placeholder: 'https://searx.example.com', visibleWhen: { key: 'web_search_engine', values: ['searxng'] }, inlineFor: ['searxng'] },
       { key: 'web_search_api_key', inline: true, labelKey: 'bt.webSearchApiKey', type: 'text', placeholder: 'api-key...', visibleWhen: { key: 'web_search_engine', values: ['brave', 'google', 'bing', 'tavily', 'serper'] }, inlineFor: ['brave', 'google', 'bing', 'tavily', 'serper'] },
       { key: 'web_search_max_results', labelKey: 'bt.webSearchMaxResults', type: 'slider', min: 1, max: 10 },
+      { key: 'http_proxy', labelKey: 'bt.httpProxy', type: 'text', placeholder: 'http://127.0.0.1:7890' },
     ]},
     { name: 'web_fetch', descKey: 'bt.web_fetch', category: 'web', configs: [
       { key: 'web_fetch_max_chars', labelKey: 'bt.webFetchMaxChars', type: 'slider', min: 1000, max: 20000, step: 500, unit: 'chars' },

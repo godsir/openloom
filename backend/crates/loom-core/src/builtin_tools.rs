@@ -1768,10 +1768,7 @@ impl AgentTool for WebSearchTool {
             });
         }
 
-        let client = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (compatible; openLoom/1.0; +https://github.com/godsir/openloom)")
-            .timeout(std::time::Duration::from_secs(15))
-            .build()?;
+        let client = loom_inference::engine::build_http_client_with_ua();
 
         use loom_types::config::tool_prefs::ToolSearchEngine;
         let results = match prefs.web_search_engine {

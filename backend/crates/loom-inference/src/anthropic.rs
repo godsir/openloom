@@ -43,10 +43,7 @@ pub struct AnthropicClient {
 
 impl AnthropicClient {
     pub fn new(api_key: String, model: String, base_url: String) -> Self {
-        let http = HttpClient::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .build()
-            .unwrap_or_default();
+        let http = crate::engine::build_http_client();
         // Normalize base_url: strip any /v1 suffix so we don't double it when appending /v1/messages.
         // e.g. "https://api.deepseek.com/v1" -> "https://api.deepseek.com"
         let base_url = base_url.trim().trim_end_matches('/').to_string();

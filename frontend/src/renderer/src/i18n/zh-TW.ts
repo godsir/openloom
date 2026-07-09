@@ -1087,6 +1087,7 @@ export const zhTW: TranslationMap = {
   'bt.webSearchMaxResults': '最大結果數',
   'bt.searxngUrl': 'SearXNG 位址',
   'bt.webSearchApiKey': 'API Key',
+  'bt.httpProxy': 'HTTP 代理',
   'bt.webFetchMaxChars': '最大字元數',
   'bt.processWaitMaxTimeout': '逾時上限 (秒)',
   'bt.monitorDefaultTimeout': '預設逾時 (秒)',

@@ -50,6 +50,11 @@ pub struct ToolPrefsConfig {
     #[serde(default)]
     pub web_search_api_key: Option<String>,
 
+    // --- network ---
+    /// HTTP/HTTPS 代理地址（覆盖环境变量 HTTP_PROXY/HTTPS_PROXY）
+    #[serde(default)]
+    pub http_proxy: Option<String>,
+
     // --- web_fetch ---
     #[serde(default = "default_web_fetch_max_chars")]
     pub web_fetch_max_chars: usize,
@@ -95,6 +100,7 @@ impl Default for ToolPrefsConfig {
             web_search_max_results: default_web_search_max_results(),
             searxng_url: None,
             web_search_api_key: None,
+            http_proxy: None,
             web_fetch_max_chars: default_web_fetch_max_chars(),
             process_wait_max_timeout_secs: default_process_wait_max_timeout(),
             monitor_default_timeout_ms: default_monitor_timeout_ms(),

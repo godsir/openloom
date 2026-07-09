@@ -1087,6 +1087,7 @@ export const enUS: TranslationMap = {
   'bt.webSearchMaxResults': 'Max results',
   'bt.searxngUrl': 'SearXNG URL',
   'bt.webSearchApiKey': 'API Key',
+  'bt.httpProxy': 'HTTP Proxy',
   'bt.webFetchMaxChars': 'Max characters',
   'bt.processWaitMaxTimeout': 'Max timeout (s)',
   'bt.monitorDefaultTimeout': 'Default timeout (s)',

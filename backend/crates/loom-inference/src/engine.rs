@@ -12,6 +12,77 @@ use loom_types::{
 use reqwest::Client as HttpClient;
 use tokio::sync::mpsc;
 
+pub fn build_http_client_with_ua() -> HttpClient {
+    let mut builder = HttpClient::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .user_agent("Mozilla/5.0 (compatible; openLoom/1.0; +https://github.com/godsir/openloom)");
+
+    let proxy_url = std::env::var("HTTPS_PROXY")
+        .or_else(|_| std::env::var("https_proxy"))
+        .or_else(|_| std::env::var("HTTP_PROXY"))
+        .or_else(|_| std::env::var("http_proxy"))
+        .ok()
+        .filter(|s| !s.is_empty());
+
+    if let Some(url) = proxy_url {
+        if let Ok(proxy) = reqwest::Proxy::all(&url) {
+            builder = builder.proxy(proxy);
+        }
+    }
+
+    builder.build().unwrap_or_default()
+}
+
+/// 构建 HTTP 客户端（无 UA，给 API 调用用），支持 set_tool_prefs 覆盖
+pub fn build_http_client_with_prefs(tool_prefs: Option<&loom_types::config::tool_prefs::ToolPrefsConfig>) -> HttpClient {
+    let mut builder = HttpClient::builder()
+        .connect_timeout(std::time::Duration::from_secs(10));
+
+    // 优先用用户显式配置，其次环境变量
+    let proxy_url = tool_prefs
+        .and_then(|p| p.http_proxy.as_deref())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            std::env::var("HTTPS_PROXY")
+                .or_else(|_| std::env::var("https_proxy"))
+                .or_else(|_| std::env::var("HTTP_PROXY"))
+                .or_else(|_| std::env::var("http_proxy"))
+                .ok()
+                .filter(|s| !s.is_empty())
+        });
+
+    if let Some(url) = proxy_url {
+        if let Ok(proxy) = reqwest::Proxy::all(&url) {
+            builder = builder.proxy(proxy);
+        }
+    }
+
+    builder.build().unwrap_or_default()
+}
+
+/// 构建统一 HTTP 客户端（无 UA，给 API 调用用的最简版）
+pub fn build_http_client() -> HttpClient {
+    let mut builder = HttpClient::builder()
+        .connect_timeout(std::time::Duration::from_secs(10));
+
+    // 读取 HTTPS_PROXY（优先）或 HTTP_PROXY
+    let proxy_url = std::env::var("HTTPS_PROXY")
+        .or_else(|_| std::env::var("https_proxy"))
+        .or_else(|_| std::env::var("HTTP_PROXY"))
+        .or_else(|_| std::env::var("http_proxy"))
+        .ok()
+        .filter(|s| !s.is_empty());
+
+    if let Some(url) = proxy_url {
+        if let Ok(proxy) = reqwest::Proxy::all(&url) {
+            builder = builder.proxy(proxy);
+        }
+    }
+
+    builder.build().unwrap_or_default()
+}
+
 /// Local inference engine backed by an OpenAI-compatible HTTP endpoint.
 ///
 /// Connects to LM Studio (default `http://localhost:1234/v1`) or Ollama
@@ -95,10 +166,7 @@ impl InferenceEngine {
 
     /// Build an engine pointed at a known endpoint (no load trigger).
     pub fn new(base_url: String, model: String) -> Self {
-        let http = HttpClient::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .build()
-            .unwrap_or_default();
+        let http = build_http_client();
         Self {
             base_url,
             model,

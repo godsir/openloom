@@ -26,10 +26,7 @@ pub struct OpenAIClient {
 
 impl OpenAIClient {
     pub fn new(api_key: String, model: String, base_url: String, _is_local: bool) -> Self {
-        let http = HttpClient::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .build()
-            .unwrap_or_default();
+        let http = crate::engine::build_http_client();
         Self {
             api_key,
             model,

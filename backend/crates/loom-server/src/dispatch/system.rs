@@ -406,6 +406,9 @@ async fn handle_config_set_tool_prefs(state: &AppState, p: &Value) -> Result<Val
     if let Some(v) = p.get("web_search_api_key").and_then(|v| v.as_str()) {
         config.web_search_api_key = if v.is_empty() { None } else { Some(v.to_string()) };
     }
+    if let Some(v) = p.get("http_proxy").and_then(|v| v.as_str()) {
+        config.http_proxy = if v.is_empty() { None } else { Some(v.to_string()) };
+    }
     if let Some(v) = p.get("web_fetch_max_chars").and_then(|v| v.as_u64()) { config.web_fetch_max_chars = v as usize; }
     if let Some(v) = p.get("process_wait_max_timeout_secs").and_then(|v| v.as_u64()) { config.process_wait_max_timeout_secs = v; }
     if let Some(v) = p.get("monitor_default_timeout_ms").and_then(|v| v.as_u64()) { config.monitor_default_timeout_ms = v; }
