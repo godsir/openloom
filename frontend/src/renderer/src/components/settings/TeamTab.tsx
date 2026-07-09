@@ -21,10 +21,10 @@ type TeamMember =
   | { name: string; source: string }
 
 const genSteps = [
-  { key: 'analyze', label: '分析团队目标与策略' },
-  { key: 'design', label: '设计成员角色分工' },
-  { key: 'persona', label: '生成成员人格描述' },
-  { key: 'done', label: '生成完成' },
+  { key: 'analyze', label: (name: string) => `分析「${name}」整体目标与策略方向` },
+  { key: 'design', label: (_name: string) => '匹配策略类型，确定专家角色结构' },
+  { key: 'persona', label: (_name: string) => '为每位专家撰写专业背景与人设', subLabel: '正在深入刻画...' },
+  { key: 'done', label: (_name: string) => '生成完成' },
 ]
 
 export default function TeamTab() {
@@ -193,11 +193,14 @@ export default function TeamTab() {
     setGenerating(true)
     setGenStepIdx(0)
     setGenError('')
-    let current = 0
+    let tick = 0
+
+    // Animate through first 2 steps while RPC runs (analyze → design)
     stepTimerRef.current = setInterval(() => {
-      current++
-      if (current < genSteps.length - 1) setGenStepIdx(current)
-    }, 1200)
+      tick++
+      if (tick === 1) setGenStepIdx(1)     // → design
+      else if (tick === 2) setGenStepIdx(2) // → persona (spinner stays here until reveal)
+    }, 1500)
 
     try {
       const result = await loomRpc<TeamMember[]>('team.config.generate_members', {
@@ -207,15 +210,26 @@ export default function TeamTab() {
         captain_model: captainModelDraft || null,
       })
       if (stepTimerRef.current) { clearInterval(stepTimerRef.current); stepTimerRef.current = null }
-      setGenStepIdx(genSteps.length - 1)
-      await new Promise((r) => setTimeout(r, 600))
-      if (Array.isArray(result)) {
-        setMembersDraft(result)
-        useStore.getState().addToast({
-          type: 'success',
-          message: t('team.membersGenerated', { count: result.length }),
-        })
+
+      // RPC returned — force to persona step, then reveal members one by one
+      setGenStepIdx(2)           // "为每位专家撰写专业背景与人设"
+      await new Promise((r) => setTimeout(r, 400))
+
+      if (Array.isArray(result) && result.length > 0) {
+        // Reveal members one at a time — this IS the persona step coming to life
+        for (let i = 0; i < result.length; i++) {
+          setMembersDraft((prev) => [...prev, result[i]])
+          await new Promise((r) => setTimeout(r, 700))
+        }
       }
+
+      // All revealed — done
+      setGenStepIdx(3)           // "生成完成"
+      await new Promise((r) => setTimeout(r, 500))
+      useStore.getState().addToast({
+        type: 'success',
+        message: t('team.membersGenerated', { count: result.length }),
+      })
     } catch (e: any) {
       if (stepTimerRef.current) { clearInterval(stepTimerRef.current); stepTimerRef.current = null }
       setGenError(e.message || String(e))
@@ -422,7 +436,7 @@ export default function TeamTab() {
                       )}
                     </div>
                     <span style={{ fontSize: 11, color: done || active ? 'var(--text)' : 'var(--text-muted)', fontWeight: active ? 500 : 400, transition: 'color 0.3s ease' }}>
-                      {done ? step.label.replace('中', '') : step.label}
+                      {step.label(nameDraft.trim() || '')}
                     </span>
                   </div>
                 )
