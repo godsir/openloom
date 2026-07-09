@@ -1183,6 +1183,10 @@ export const zhTW: TranslationMap = {
   'team.deleted': '專家團已刪除',
   'team.deleteConfirmTitle': '刪除專家團',
   'team.deleteConfirmMsg': '確定刪除專家團 "{name}"？',
+  'team.aiGenerateMembers': 'AI 生成成員',
+  'team.generating': '團長正在生成成員...',
+  'team.membersGenerated': '已生成 {count} 個成員',
+  'team.generateFailed': '成員生成失敗: {reason}',
 
   // ── Model Config ─────────────────────────────────────────────────
   'modelPanel.customProvider': '自訂供应商',

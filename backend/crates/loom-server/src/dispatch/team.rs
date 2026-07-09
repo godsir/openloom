@@ -19,6 +19,7 @@ pub async fn handle(
         "team.config.create" => Some(handle_team_config_create(state, p).await),
         "team.config.update" => Some(handle_team_config_update(state, p).await),
         "team.config.delete" => Some(handle_team_config_delete(state, p).await),
+        "team.config.generate_members" => Some(handle_team_generate_members(state, p).await),
         _ => None,
     }
 }
@@ -71,4 +72,23 @@ async fn handle_team_config_delete(state: &AppState, p: &Value) -> Result<Value,
     state.orchestrator.team_config_delete(id).await
         .map_err(|e| err(ErrorCode::InvalidRequest, &e.to_string()))?;
     Ok(json!({ "ok": true }))
+}
+
+async fn handle_team_generate_members(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let description = p.get("description").and_then(|v| v.as_str()).unwrap_or("");
+    let strategy = p.get("strategy").and_then(|v| v.as_str()).unwrap_or("synthesize");
+    let captain_model = p.get("captain_model").and_then(|v| v.as_str());
+
+    if name.trim().is_empty() && description.trim().is_empty() {
+        return Err(err(ErrorCode::InvalidRequest, "name or description required"));
+    }
+
+    let members = state
+        .orchestrator
+        .team_members_generate(name.trim(), description.trim(), strategy, captain_model)
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+
+    Ok(serde_json::to_value(members).unwrap_or(json!([])))
 }

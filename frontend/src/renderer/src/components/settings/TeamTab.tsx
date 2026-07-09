@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
 import Select from '../shared/Select'
 import { useLocale } from '../../i18n'
+import { IconSparkles, IconCheck, IconLoader } from '../../utils/icons'
 import styles from '../shared/ConfigPanel.module.css'
 
 interface TeamConfig {
@@ -18,6 +19,13 @@ interface TeamConfig {
 type TeamMember =
   | { name: string; source: { persona: string; model?: string; temperature?: number } }
   | { name: string; source: string }
+
+const genSteps = [
+  { key: 'analyze', label: '分析团队目标与策略' },
+  { key: 'design', label: '设计成员角色分工' },
+  { key: 'persona', label: '生成成员人格描述' },
+  { key: 'done', label: '生成完成' },
+]
 
 export default function TeamTab() {
   const { t } = useLocale()
@@ -41,6 +49,12 @@ export default function TeamTab() {
   const [customPersona, setCustomPersona] = useState('')
   const [customModel, setCustomModel] = useState('')
 
+  // AI generate state
+  const [generating, setGenerating] = useState(false)
+  const [genStepIdx, setGenStepIdx] = useState(-1)
+  const [genError, setGenError] = useState('')
+  const stepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   const refresh = async () => {
     try {
       const r = await loomRpc<{ teams: TeamConfig[] }>('team.config.list')
@@ -53,6 +67,13 @@ export default function TeamTab() {
 
   useEffect(() => {
     refresh()
+  }, [])
+
+  // Cleanup step timer on unmount
+  useEffect(() => {
+    return () => {
+      if (stepTimerRef.current) clearInterval(stepTimerRef.current)
+    }
   }, [])
 
   const modelOpts = useMemo(
@@ -112,6 +133,13 @@ export default function TeamTab() {
     setCustomName('')
     setCustomPersona('')
     setCustomModel('')
+    setGenerating(false)
+    setGenStepIdx(-1)
+    setGenError('')
+    if (stepTimerRef.current) {
+      clearInterval(stepTimerRef.current)
+      stepTimerRef.current = null
+    }
   }
 
   const startEdit = (team: TeamConfig) => {
@@ -162,6 +190,60 @@ export default function TeamTab() {
     }
   }
 
+  // --- AI Generate Members ---
+  const handleGenerateMembers = async () => {
+    setGenerating(true)
+    setGenStepIdx(0)
+    setGenError('')
+
+    // Animate steps
+    let current = 0
+    stepTimerRef.current = setInterval(() => {
+      current++
+      if (current < genSteps.length - 1) {
+        setGenStepIdx(current)
+      }
+    }, 1200)
+
+    try {
+      const result = await loomRpc<TeamMember[]>('team.config.generate_members', {
+        name: nameDraft.trim(),
+        description: descDraft.trim(),
+        strategy: strategyDraft,
+        captain_model: captainModelDraft || null,
+      })
+
+      if (stepTimerRef.current) {
+        clearInterval(stepTimerRef.current)
+        stepTimerRef.current = null
+      }
+      setGenStepIdx(genSteps.length - 1)
+
+      // Brief delay so user sees the "done" step
+      await new Promise((r) => setTimeout(r, 600))
+
+      if (Array.isArray(result)) {
+        setMembersDraft(result)
+        useStore.getState().addToast({
+          type: 'success',
+          message: t('team.membersGenerated', { count: result.length }),
+        })
+      }
+    } catch (e: any) {
+      if (stepTimerRef.current) {
+        clearInterval(stepTimerRef.current)
+        stepTimerRef.current = null
+      }
+      setGenError(e.message || String(e))
+      useStore.getState().addToast({
+        type: 'error',
+        message: t('team.generateFailed', { reason: e.message || String(e) }),
+      })
+    }
+    setGenerating(false)
+  }
+
+  // --- Member management ---
   const addAgentMember = () => {
     if (!agentSelect) return
     setMembersDraft((prev) => [...prev, { name: agentSelect, source: agentSelect }])
@@ -255,7 +337,115 @@ export default function TeamTab() {
           {t('team.members')} ({membersDraft.length})
         </label>
 
-        {membersDraft.length > 0 && (
+        {/* AI Generate progress */}
+        {generating && genStepIdx >= 0 && (
+          <div
+            style={{
+              marginTop: 4,
+              padding: '12px 14px',
+              borderRadius: 'var(--r-md)',
+              border: '1px solid rgba(99,102,241,0.20)',
+              background: 'rgba(99,102,241,0.06)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <IconSparkles size={12} style={{ color: 'rgba(168,130,255,0.9)' }} />
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(168,130,255,0.9)' }}>
+                {t('team.generating')}
+              </span>
+            </div>
+
+            {/* Step indicators */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {genSteps.map((step, idx) => {
+                const isDone = idx < genStepIdx
+                const isActive = idx === genStepIdx
+                const isPending = idx > genStepIdx
+
+                return (
+                  <div
+                    key={step.key}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      padding: '4px 0',
+                      opacity: isPending ? 0.35 : 1,
+                      transition: 'opacity 0.3s ease',
+                    }}
+                  >
+                    {/* Step indicator dot */}
+                    <div
+                      style={{
+                        width: 18,
+                        height: 18,
+                        borderRadius: '50%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                        border: isDone
+                          ? '1px solid var(--green)'
+                          : isActive
+                            ? '1px solid rgba(99,102,241,0.40)'
+                            : '1px solid var(--border)',
+                        background: isDone
+                          ? 'rgba(74,222,128,0.12)'
+                          : isActive
+                            ? 'rgba(99,102,241,0.12)'
+                            : 'transparent',
+                        transition: 'all 0.4s ease',
+                      }}
+                    >
+                      {isDone ? (
+                        <IconCheck size={10} style={{ color: 'var(--green)' }} />
+                      ) : isActive ? (
+                        <IconLoader
+                          size={10}
+                          style={{ color: 'rgba(99,102,241,0.9)', animation: 'spin 1s linear infinite' }}
+                        />
+                      ) : (
+                        <span style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1 }}>
+                          {idx + 1}
+                        </span>
+                      )}
+                    </div>
+                    {/* Step label */}
+                    <span
+                      style={{
+                        fontSize: 11,
+                        color: isDone ? 'var(--text)' : isActive ? 'var(--text)' : 'var(--text-muted)',
+                        fontWeight: isActive ? 500 : 400,
+                        transition: 'color 0.3s ease',
+                      }}
+                    >
+                      {isDone ? step.label.replace('中', '') : step.label}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Error */}
+            {genError && (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: '6px 10px',
+                  borderRadius: 'var(--r-sm)',
+                  background: 'rgba(239,68,68,0.10)',
+                  fontSize: 11,
+                  color: 'var(--red)',
+                }}
+              >
+                {genError}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Existing members list */}
+        {membersDraft.length > 0 && !generating && (
           <div className={styles.list}>
             {membersDraft.map((m, idx) => (
               <div key={idx} className={styles.modelItem}>
@@ -274,13 +464,19 @@ export default function TeamTab() {
         )}
 
         {/* Add member controls */}
-        {addMode === null && (
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+        {!generating && addMode === null && (
+          <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
             <button onClick={() => setAddMode('agent')} className={styles.addBtn}>
               {t('team.addFromAgent')}
             </button>
             <button onClick={() => setAddMode('custom')} className={styles.addBtn}>
               {t('team.addCustom')}
+            </button>
+            <button
+              onClick={handleGenerateMembers}
+              className={styles.aiCreateBtn}
+            >
+              <IconSparkles size={12} /> {t('team.aiGenerateMembers')}
             </button>
           </div>
         )}

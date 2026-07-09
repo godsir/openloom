@@ -2585,6 +2585,156 @@ impl Orchestrator {
         Ok(())
     }
 
+    /// AI 生成团队成员：根据团队名称、描述和策略，由团长角色的 LLM 自动设计合适的成员。
+    pub async fn team_members_generate(
+        &self,
+        name: &str,
+        description: &str,
+        strategy: &str,
+        captain_model: Option<&str>,
+    ) -> Result<Vec<loom_types::config::team::TeamMember>> {
+        let existing_agents = self.agent_config_list().await;
+        let agent_names: Vec<String> = existing_agents.iter().map(|a| a.name.clone()).collect();
+        let names_hint = if agent_names.is_empty() {
+            "(none)".to_string()
+        } else {
+            agent_names.join(", ")
+        };
+
+        let strategy_label = match strategy {
+            "debate" => "辩论模式：成员互相质疑后综合结论",
+            _ => "合成模式：各成员并行回答后团长综合结论",
+        };
+
+        let captain_hint = match captain_model {
+            Some(m) => format!("团长使用模型: {}", m),
+            None => "团长使用默认模型".to_string(),
+        };
+
+        let system_prompt = format!(
+            r#"你是"{name}"团队的团长。根据团队目标，设计合适的专家成员列表。
+
+团队名称：{name}
+团队描述：{description}
+协作策略：{strategy_label}
+{captain_hint}
+
+已有 Agent 名称（可以引用这些 Agent 作为成员，也可以设计新成员）：{names_hint}
+
+你需要输出一个 JSON 数组，每个成员包含：
+- name (string, 必填): 成员名称，简洁有描述性，2-15 个字符
+- source (object 或 string, 必填):
+  - 如果是已有 Agent：直接用 agent 名称字符串，如 "code-reviewer"
+  - 如果是新成员：用对象 {{ "persona": "人格描述", "model": null }}
+- persona (string, 仅新成员需要): 自然语言的人格描述，用第二人称"你是..."开头
+
+要求：
+- 生成 3-6 个成员
+- 优先引用已有 Agent（如果名称合适的话）
+- 成员角色应有差异性，覆盖不同视角
+- 策略为辩论模式时，应设计有对立视角的成员
+- 只输出 JSON 数组，放在 ```json 代码块中，不要包含任何其他解释
+
+示例输出：
+```json
+[
+  {{ "name": "代码架构师", "source": {{ "persona": "你是资深软件架构师，擅长系统设计和代码评审...", "model": null }} }},
+  {{ "name": "code-reviewer", "source": "code-reviewer" }}
+]
+```"#,
+        );
+
+        let request = CompletionRequest {
+            messages: vec![
+                Message {
+                    role: Role::System,
+                    content: vec![ContentPart::Text {
+                        text: system_prompt,
+                    }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+                Message {
+                    role: Role::User,
+                    content: vec![ContentPart::Text {
+                        text: format!(
+                            "请为团队「{}」设计合适的成员列表。",
+                            name
+                        ),
+                    }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+            ],
+            tools: vec![],
+            tool_choice: None,
+            prompt: String::new(),
+            max_tokens: 2048,
+            temperature: 0.7,
+            top_p: 1.0,
+            stop: vec![],
+            stream: true,
+            thinking_budget: None,
+        };
+
+        let client = self
+            .build_auxiliary_client("entity")
+            .await
+            .or_else(|| self.cloud_client.try_read().ok().and_then(|g| g.clone()))
+            .ok_or_else(|| anyhow::anyhow!("没有可用的模型。请先在设置中配置一个模型。"))?;
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
+        let handle = tokio::spawn(async move {
+            let mut text = String::new();
+            while let Some(token) = rx.recv().await {
+                text.push_str(&token);
+            }
+            text
+        });
+
+        if let Err(e) = client.complete_stream(request, tx).await {
+            handle.abort();
+            anyhow::bail!("模型调用失败: {}. 请确认模型服务正常运行。", e);
+        }
+
+        let raw = handle.await.unwrap_or_default().trim().to_string();
+
+        if raw.is_empty() {
+            anyhow::bail!("AI 返回了空响应，请重试。");
+        }
+
+        let json_str = if let Some(start) = raw.find("```json") {
+            let content = &raw[start + 7..];
+            if let Some(end) = content.find("```") {
+                &content[..end]
+            } else {
+                content
+            }
+        } else if let Some(start) = raw.find('[') {
+            &raw[start..]
+        } else {
+            anyhow::bail!(
+                "AI 返回的内容中没有找到 JSON 数组。原始响应: {}",
+                &raw[..raw.len().min(500)]
+            )
+        };
+
+        let members: Vec<loom_types::config::team::TeamMember> =
+            serde_json::from_str(json_str.trim()).map_err(|e| {
+                anyhow::anyhow!(
+                    "AI 生成的成员 JSON 解析失败: {}\nJSON: {}",
+                    e,
+                    &json_str[..json_str.len().min(300)]
+                )
+            })?;
+
+        if members.is_empty() {
+            anyhow::bail!("AI 未生成任何成员。请尝试更详细地描述团队目标。");
+        }
+
+        Ok(members)
+    }
+
     pub async fn process_message_with_team(
         &self,
         user_message: &str,

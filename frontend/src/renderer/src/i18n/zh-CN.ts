@@ -1193,6 +1193,10 @@ export const zhCN: TranslationMap = {
   'team.deleted': '专家团已删除',
   'team.deleteConfirmTitle': '删除专家团',
   'team.deleteConfirmMsg': '确定删除专家团 "{name}"？',
+  'team.aiGenerateMembers': 'AI 生成成员',
+  'team.generating': '团长正在生成成员...',
+  'team.membersGenerated': '已生成 {count} 个成员',
+  'team.generateFailed': '成员生成失败: {reason}',
 
   // ── Model Config ─────────────────────────────────────────────────
   'modelPanel.customProvider': '自定义供应商',

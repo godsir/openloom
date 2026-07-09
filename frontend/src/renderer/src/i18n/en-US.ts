@@ -1193,6 +1193,10 @@ export const enUS: TranslationMap = {
   'team.deleted': 'Team deleted',
   'team.deleteConfirmTitle': 'Delete Team',
   'team.deleteConfirmMsg': 'Delete team "{name}"?',
+  'team.aiGenerateMembers': 'AI Generate Members',
+  'team.generating': 'Captain is generating members...',
+  'team.membersGenerated': 'Generated {count} members',
+  'team.generateFailed': 'Member generation failed: {reason}',
 
   // ── Model Config ─────────────────────────────────────────────────
   'modelPanel.customProvider': 'Custom Provider',
