@@ -64,9 +64,11 @@ function buildTools(): ToolDef[] {
       { key: 'web_search_engine', labelKey: 'bt.webSearchEngine', type: 'select', options: [
         { value: 'duckduckgo_lite', label: 'DuckDuckGo' },
         { value: 'brave', label: 'Brave Search' },
-        { value: 'searxng', label: 'SearXNG' },
         { value: 'google', label: 'Google' },
         { value: 'bing', label: 'Bing' },
+        { value: 'tavily', label: 'Tavily' },
+        { value: 'serper', label: 'Serper' },
+        { value: 'searxng', label: 'SearXNG' },
       ]},
       { key: 'searxng_url', labelKey: 'bt.searxngUrl', type: 'text', placeholder: 'https://searx.example.com', visibleWhen: { key: 'web_search_engine', values: ['searxng'] } },
       { key: 'web_search_api_key', labelKey: 'bt.webSearchApiKey', type: 'text', placeholder: 'sk-...', visibleWhen: { key: 'web_search_engine', values: ['brave', 'google', 'bing'] } },

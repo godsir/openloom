@@ -1640,6 +1640,24 @@ impl AgentTool for WebSearchTool {
                     }),
                 }
             }
+            ToolSearchEngine::Tavily => {
+                match &prefs.web_search_api_key {
+                    Some(key) if !key.is_empty() => search_tavily(&client, query, max_results, key).await,
+                    _ => return Ok(ToolResult {
+                        content: "Tavily 搜索需要 API key，请在设置中配置 web_search_api_key".into(),
+                        is_error: true, structured_content: None,
+                    }),
+                }
+            }
+            ToolSearchEngine::Serper => {
+                match &prefs.web_search_api_key {
+                    Some(key) if !key.is_empty() => search_serper(&client, query, max_results, key).await,
+                    _ => return Ok(ToolResult {
+                        content: "Serper 搜索需要 API key，请在设置中配置 web_search_api_key".into(),
+                        is_error: true, structured_content: None,
+                    }),
+                }
+            }
         };
 
         match results {
@@ -1780,6 +1798,60 @@ async fn search_bing(
             r["name"].as_str()?.to_string(),
             r["snippet"].as_str().unwrap_or("").to_string(),
             r["url"].as_str()?.to_string(),
+        ))).collect();
+    Ok(items)
+}
+
+async fn search_tavily(
+    client: &reqwest::Client, query: &str, max_results: usize, api_key: &str,
+) -> Result<Vec<(String, String, String)>, String> {
+    let body = serde_json::json!({
+        "api_key": api_key,
+        "query": query,
+        "max_results": max_results.min(20),
+        "search_depth": "basic",
+        "include_answer": false,
+    });
+    let resp = client.post("https://api.tavily.com/search")
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send().await.map_err(|e| format!("Tavily 请求失败: {}", e))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| format!("{}", e))?;
+    if !status.is_success() { return Err(format!("Tavily HTTP {}: {}", status.as_u16(), text.chars().take(200).collect::<String>())); }
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("Tavily JSON 解析失败: {}", e))?;
+    let items: Vec<_> = v["results"].as_array().unwrap_or(&vec![])
+        .iter().take(max_results)
+        .filter_map(|r| Some((
+            r["title"].as_str()?.to_string(),
+            r["content"].as_str().unwrap_or("").to_string(),
+            r["url"].as_str()?.to_string(),
+        ))).collect();
+    Ok(items)
+}
+
+async fn search_serper(
+    client: &reqwest::Client, query: &str, max_results: usize, api_key: &str,
+) -> Result<Vec<(String, String, String)>, String> {
+    let body = serde_json::json!({
+        "q": query,
+        "num": max_results.min(10),
+    });
+    let resp = client.post("https://google.serper.dev/search")
+        .header("X-API-KEY", api_key)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send().await.map_err(|e| format!("Serper 请求失败: {}", e))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| format!("{}", e))?;
+    if !status.is_success() { return Err(format!("Serper HTTP {}: {}", status.as_u16(), text.chars().take(200).collect::<String>())); }
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("Serper JSON 解析失败: {}", e))?;
+    let items: Vec<_> = v["organic"].as_array().unwrap_or(&vec![])
+        .iter().take(max_results)
+        .filter_map(|r| Some((
+            r["title"].as_str()?.to_string(),
+            r["snippet"].as_str().unwrap_or("").to_string(),
+            r["link"].as_str()?.to_string(),
         ))).collect();
     Ok(items)
 }

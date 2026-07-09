@@ -15,6 +15,8 @@ pub enum ToolSearchEngine {
     SearXNG,
     Google,
     Bing,
+    Tavily,
+    Serper,
 }
 
 impl Default for ToolSearchEngine {
