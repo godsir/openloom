@@ -6,9 +6,9 @@ use anyhow::Result;
 use loom_core::MemoryStore;
 use loom_memory::{
     AgentConfigStore, CognitionStore, GraphStore, McpConfigStore, McpServerRow, ModelConfigStore,
-    NewEvent, RichPersonaProvider, config_db::ConfigDb, memory_db::MemoryDb, session_db::SessionDb,
+    NewEvent, RichPersonaProvider, TeamConfigStore, config_db::ConfigDb, memory_db::MemoryDb, session_db::SessionDb,
 };
-use loom_types::{AgentConfig, Message, ModelConfig, PersonaProvider};
+use loom_types::{AgentConfig, Message, ModelConfig, PersonaProvider, TeamConfig};
 
 pub struct LoomMemoryStore {
     pub config_db: std::sync::Mutex<ConfigDb>,
@@ -789,6 +789,27 @@ impl MemoryStore for LoomMemoryStore {
     async fn delete_agent_config(&self, name: &str) -> Result<()> {
         let store = self.config_db.lock().expect("lock poisoned");
         AgentConfigStore::new(store.conn()).delete(name)
+    }
+
+    // Team config CRUD
+    async fn save_team_config(&self, config: &TeamConfig) -> Result<()> {
+        let store = self.config_db.lock().expect("lock poisoned");
+        TeamConfigStore::new(store.conn()).save_team_config(config)
+    }
+
+    async fn get_team_config(&self, id: &str) -> Result<Option<TeamConfig>> {
+        let store = self.config_db.lock().expect("lock poisoned");
+        TeamConfigStore::new(store.conn()).get_team_config(id)
+    }
+
+    async fn list_team_configs(&self) -> Result<Vec<TeamConfig>> {
+        let store = self.config_db.lock().expect("lock poisoned");
+        TeamConfigStore::new(store.conn()).list_team_configs()
+    }
+
+    async fn delete_team_config(&self, id: &str) -> Result<()> {
+        let store = self.config_db.lock().expect("lock poisoned");
+        TeamConfigStore::new(store.conn()).delete_team_config(id)
     }
 
     async fn save_session_agent_name(

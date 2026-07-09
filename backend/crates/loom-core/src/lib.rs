@@ -12,6 +12,7 @@ pub mod event_bus;
 pub mod monitor_manager;
 pub mod orchestrator;
 pub mod plan_prompts;
+pub mod team_orchestrator;
 pub mod process_manager;
 pub mod slash_router;
 pub mod todo_context;

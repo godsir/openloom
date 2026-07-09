@@ -173,6 +173,31 @@ pub enum AgentEvent {
         error: String,
         session_id: String,
     },
+    /// 团队启动
+    TeamStarted {
+        team_id: String,
+        team_name: String,
+        captain_id: AgentId,
+        member_ids: Vec<AgentId>,
+    },
+    /// 团队成员完成一轮
+    TeamMemberDone {
+        team_id: String,
+        member_id: AgentId,
+        member_name: String,
+        round: usize,
+    },
+    /// 团队一轮完成
+    TeamRoundComplete {
+        team_id: String,
+        round: usize,
+    },
+    /// 团队执行完毕
+    TeamCompleted {
+        team_id: String,
+        session_id: String,
+        summary: String,
+    },
 }
 
 /// A lightweight event bus using tokio broadcast.

@@ -271,6 +271,7 @@ pub struct Orchestrator {
     persona_context: Arc<RwLock<String>>,
     memory_store: Arc<RwLock<Option<Box<dyn crate::MemoryStore>>>>,
     agent_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::AgentConfig>>>,
+    team_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::TeamConfig>>>,
     model_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::ModelConfig>>>,
     active_model_name: Arc<RwLock<Option<String>>>,
     /// Serialises concurrent model-switch calls so `model.switch` and
@@ -409,6 +410,11 @@ pub trait MemoryStore: Send + Sync {
     async fn get_agent_config(&self, name: &str) -> Result<Option<loom_types::AgentConfig>>;
     async fn list_agent_configs(&self) -> Result<Vec<loom_types::AgentConfig>>;
     async fn delete_agent_config(&self, name: &str) -> Result<()>;
+    // Team config CRUD
+    async fn save_team_config(&self, config: &loom_types::TeamConfig) -> Result<()>;
+    async fn get_team_config(&self, id: &str) -> Result<Option<loom_types::TeamConfig>>;
+    async fn list_team_configs(&self) -> Result<Vec<loom_types::TeamConfig>>;
+    async fn delete_team_config(&self, id: &str) -> Result<()>;
     // Session-agent binding
     async fn save_session_agent_name(
         &self,
@@ -1021,6 +1027,7 @@ impl Orchestrator {
                 "default".to_string(),
                 loom_types::AgentConfig::default(),
             )]))),
+            team_configs: Arc::new(RwLock::new(std::collections::HashMap::new())),
             model_configs,
             active_model_name,
             model_switch_lock: tokio::sync::Mutex::new(()),
@@ -2502,6 +2509,161 @@ impl Orchestrator {
             s.delete_agent_config(name).await?;
         }
         Ok(())
+    }
+
+    // === Team Config ===
+
+    /// Load all team configs from the memory store into the in-memory cache.
+    pub async fn load_team_configs(&self) -> Result<()> {
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            let configs = s.list_team_configs().await?;
+            let mut cache = self.team_configs.write().await;
+            for cfg in configs {
+                cache.insert(cfg.id.clone(), cfg);
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn team_config_list(&self) -> Vec<loom_types::TeamConfig> {
+        self.team_configs.read().await.values().cloned().collect()
+    }
+
+    pub async fn team_config_get(&self, id: &str) -> Result<loom_types::TeamConfig> {
+        {
+            let cache = self.team_configs.read().await;
+            if let Some(cfg) = cache.get(id).cloned() {
+                return Ok(cfg);
+            }
+        }
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store
+            && let Some(cfg) = s.get_team_config(id).await?
+        {
+            self.team_configs.write().await.insert(id.to_string(), cfg.clone());
+            return Ok(cfg);
+        }
+        anyhow::bail!("team config '{}' not found", id)
+    }
+
+    pub async fn team_config_create(&self, config: loom_types::TeamConfig) -> Result<()> {
+        let id = config.id.clone();
+        {
+            let cache = self.team_configs.read().await;
+            if cache.contains_key(&id) {
+                anyhow::bail!("team config '{}' already exists", id);
+            }
+        }
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            if s.get_team_config(&id).await?.is_some() {
+                anyhow::bail!("team config '{}' already exists", id);
+            }
+            s.save_team_config(&config).await?;
+        }
+        self.team_configs.write().await.insert(id, config);
+        Ok(())
+    }
+
+    pub async fn team_config_update(&self, config: loom_types::TeamConfig) -> Result<()> {
+        let id = config.id.clone();
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            s.save_team_config(&config).await?;
+        }
+        self.team_configs.write().await.insert(id, config);
+        Ok(())
+    }
+
+    pub async fn team_config_delete(&self, id: &str) -> Result<()> {
+        self.team_configs.write().await.remove(id);
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            s.delete_team_config(id).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn process_message_with_team(
+        &self,
+        user_message: &str,
+        session_id: &str,
+        team_config_id: &str,
+        thinking_budget: Option<usize>,
+        attached_images: Vec<ContentPart>,
+        selected_skills: Vec<String>,
+        permission_mode: &str,
+        skip_user_message: bool,
+    ) -> Result<TurnResult> {
+        let team = self.team_config_get(team_config_id).await?;
+        let existing_agents = self.agent_config_list().await;
+        let member_configs = crate::team_orchestrator::resolve_member_configs(&team, &existing_agents);
+
+        if member_configs.is_empty() {
+            anyhow::bail!("team '{}' has no valid members", team.name);
+        }
+
+        for (config_name, config) in &member_configs {
+            if config_name.starts_with("__team_") {
+                if self.agent_config_get(config_name).await.is_err() {
+                    let _ = self.agent_config_create(config.clone()).await;
+                }
+            }
+        }
+
+        let member_info: Vec<(String, String, Option<String>)> = member_configs
+            .iter()
+            .map(|(name, cfg)| (name.clone(), cfg.persona.clone(), cfg.model.clone()))
+            .collect();
+        let captain_system_prompt =
+            crate::team_orchestrator::build_captain_system_prompt(&team, &member_info);
+
+        let default_model = self.active_model_name().await;
+        let captain_config = crate::team_orchestrator::build_captain_config(
+            &team,
+            captain_system_prompt,
+            default_model,
+        );
+
+        let member_ids: Vec<loom_types::AgentId> = member_configs
+            .iter()
+            .map(|_| loom_types::AgentId::new())
+            .collect();
+        self.pool.event_bus().publish(crate::event_bus::AgentEvent::TeamStarted {
+            team_id: team.id.clone(),
+            team_name: team.name.clone(),
+            captain_id: loom_types::AgentId::new(),
+            member_ids: member_ids.clone(),
+        });
+
+        let result = self
+            .process_message_with_config(
+                user_message,
+                session_id,
+                &captain_config,
+                thinking_budget,
+                attached_images,
+                selected_skills,
+                permission_mode,
+                skip_user_message,
+            )
+            .await;
+
+        for (config_name, _) in &member_configs {
+            if config_name.starts_with("__team_") {
+                let _ = self.agent_config_delete(config_name).await;
+            }
+        }
+
+        let summary = result.as_ref().map(|r| r.response.clone()).unwrap_or_default();
+        self.pool.event_bus().publish(crate::event_bus::AgentEvent::TeamCompleted {
+            team_id: team.id.clone(),
+            session_id: session_id.to_string(),
+            summary: summary.clone(),
+        });
+
+        result
     }
 
     /// Resolve the agent config for a session (falls back to "default").

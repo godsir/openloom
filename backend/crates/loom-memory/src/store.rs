@@ -743,7 +743,7 @@ impl<'a> TeamConfigStore<'a> {
     }
 
     /// 保存团队配置（INSERT OR REPLACE 语义）
-    pub async fn save_team_config(&self, config: &loom_types::TeamConfig) -> Result<()> {
+    pub fn save_team_config(&self, config: &loom_types::TeamConfig) -> Result<()> {
         let config_json = serde_json::to_string(config)?;
         self.conn.execute(
             "INSERT OR REPLACE INTO team_configs (id, name, config_json, updated_at)
@@ -754,7 +754,7 @@ impl<'a> TeamConfigStore<'a> {
     }
 
     /// 获取单个团队配置
-    pub async fn get_team_config(&self, id: &str) -> Result<Option<loom_types::TeamConfig>> {
+    pub fn get_team_config(&self, id: &str) -> Result<Option<loom_types::TeamConfig>> {
         let mut stmt = self.conn.prepare(
             "SELECT config_json FROM team_configs WHERE id = ?1",
         )?;
@@ -768,7 +768,7 @@ impl<'a> TeamConfigStore<'a> {
     }
 
     /// 列出所有团队配置
-    pub async fn list_team_configs(&self) -> Result<Vec<loom_types::TeamConfig>> {
+    pub fn list_team_configs(&self) -> Result<Vec<loom_types::TeamConfig>> {
         let mut stmt = self.conn.prepare(
             "SELECT config_json FROM team_configs ORDER BY name",
         )?;
@@ -781,7 +781,7 @@ impl<'a> TeamConfigStore<'a> {
     }
 
     /// 删除团队配置
-    pub async fn delete_team_config(&self, id: &str) -> Result<()> {
+    pub fn delete_team_config(&self, id: &str) -> Result<()> {
         self.conn.execute("DELETE FROM team_configs WHERE id = ?1", params![id])?;
         Ok(())
     }

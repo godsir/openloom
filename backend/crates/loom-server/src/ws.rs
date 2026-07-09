@@ -229,6 +229,10 @@ fn agent_event_method(event: &AgentEvent) -> &'static str {
         AgentEvent::MonitorError { .. } => "monitor.error",
         AgentEvent::PushNotification { .. } => "push_notification",
         AgentEvent::ReviewFindings { .. } => "review_findings",
+        AgentEvent::TeamStarted { .. } => "team.started",
+        AgentEvent::TeamMemberDone { .. } => "team.member_done",
+        AgentEvent::TeamRoundComplete { .. } => "team.round_complete",
+        AgentEvent::TeamCompleted { .. } => "team.completed",
     }
 }
 

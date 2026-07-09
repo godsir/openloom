@@ -267,6 +267,9 @@ async fn main() -> anyhow::Result<()> {
                     if let Err(e) = orchestrator.load_agent_configs().await {
                         eprintln!("[server] load agent configs failed: {}", e);
                     }
+                    if let Err(e) = orchestrator.load_team_configs().await {
+                        eprintln!("[server] load team configs failed: {}", e);
+                    }
                     // load_model_configs calls try_build_cloud_client which needs the key_store.
                     if let Err(e) = orchestrator.load_model_configs().await {
                         eprintln!("[server] load model configs failed: {}", e);
