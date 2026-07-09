@@ -2626,19 +2626,30 @@ impl Orchestrator {
 - source (object 或 string, 必填):
   - 如果是已有 Agent：直接用 agent 名称字符串，如 "code-reviewer"
   - 如果是新成员：用对象 {{ "persona": "人格描述", "model": null }}
-- persona (string, 仅新成员需要): 自然语言的人格描述，用第二人称"你是..."开头
+- persona (string, 仅新成员需要): 详细的人格描述，80-200 字，用第二人称"你是..."开头。
+
+persona 必须包含以下内容：
+1. 核心身份定位（一句话概括角色）
+2. 专业领域和擅长技能（2-3 项）
+3. 工作风格和思考方式
+4. 协作中的具体职责
+5. 输出要求（格式、详细程度等）
 
 要求：
-- 生成 3-6 个成员
+- 生成 3-5 个成员
 - 优先引用已有 Agent（如果名称合适的话）
 - 成员角色应有差异性，覆盖不同视角
 - 策略为辩论模式时，应设计有对立视角的成员
+- persona 必须充实详细，不能敷衍
 - 只输出 JSON 数组，放在 ```json 代码块中，不要包含任何其他解释
+
+示例 persona：
+"你是资深安全审计专家，专注于代码漏洞检测和渗透测试。你擅长静态代码分析、OWASP Top 10 漏洞识别、以及依赖链安全检查。你的工作风格严谨缜密，会逐层剖析每个潜在风险点。在协作中，你负责对所有代码变更进行安全审查，标记高中低风险等级。输出时使用结构化格式，明确列出漏洞类型、影响范围和修复建议。"
 
 示例输出：
 ```json
 [
-  {{ "name": "代码架构师", "source": {{ "persona": "你是资深软件架构师，擅长系统设计和代码评审...", "model": null }} }},
+  {{ "name": "代码架构师", "source": {{ "persona": "你是资深软件架构师，专注于系统设计和技术选型。你擅长微服务架构、DDD 领域驱动设计、以及大规模分布式系统的性能优化。你的思考方式是从全局出发...", "model": null }} }},
   {{ "name": "code-reviewer", "source": "code-reviewer" }}
 ]
 ```"#,
@@ -2658,7 +2669,7 @@ impl Orchestrator {
                     role: Role::User,
                     content: vec![ContentPart::Text {
                         text: format!(
-                            "请为团队「{}」设计合适的成员列表。",
+                            "请为团队「{}」设计合适的成员列表。每个自定义成员的 persona 请写得详细充实，至少 80 字。",
                             name
                         ),
                     }],
@@ -2669,7 +2680,7 @@ impl Orchestrator {
             tools: vec![],
             tool_choice: None,
             prompt: String::new(),
-            max_tokens: 2048,
+            max_tokens: 4096,
             temperature: 0.7,
             top_p: 1.0,
             stop: vec![],
