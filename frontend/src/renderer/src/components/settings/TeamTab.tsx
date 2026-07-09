@@ -450,8 +450,8 @@ export default function TeamTab() {
           </div>
         )}
 
-        {/* Members list with expand */}
-        {membersDraft.length > 0 && !generating && (
+        {/* Members list with expand — show during generate reveal AND after generation */}
+        {membersDraft.length > 0 && (
           <div className={styles.list}>
             {membersDraft.map((m, idx) => {
               const isExpanded = expandedMemberIdx === idx
