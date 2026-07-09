@@ -10,7 +10,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use loom_memory::TodoItem;
 use loom_types::{ToolDefinition, ToolProgress};
+use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::RwLock;
 
 use crate::tool_context::ToolContext;
 use crate::tool_registry::{AgentTool, ToolProvenance, ToolResult};
@@ -19,7 +21,9 @@ use crate::tool_registry::{AgentTool, ToolProvenance, ToolResult};
 // Shell
 // ============================================================================
 
-pub struct ShellTool;
+pub struct ShellTool {
+    pub tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>>,
+}
 
 #[async_trait]
 impl AgentTool for ShellTool {
@@ -68,7 +72,11 @@ impl AgentTool for ShellTool {
                     .as_ref()
                     .map(|ws| Path::new(ws).to_path_buf())
             });
-        let timeout_secs = arguments["timeout"].as_u64().unwrap_or(60).min(300);
+        let prefs = self.tool_prefs.read().await;
+        let timeout_secs = arguments["timeout"]
+            .as_u64()
+            .unwrap_or(prefs.shell_default_timeout_secs)
+            .min(prefs.shell_max_timeout_secs);
 
         // Resolve actual working directory once, used for both sandbox check and shell execution
         let default_cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
@@ -175,8 +183,13 @@ impl AgentTool for ShellTool {
                 if content.is_empty() {
                     content = "[ok] Command executed on local machine — no errors.".to_string();
                 }
-                if content.len() > 65536 {
-                    content = format!("{}...\n[truncated at 64KB]", truncate_utf8(&content, 65536));
+                let max_bytes = prefs.file_read_max_output_kb * 1024;
+                if content.len() > max_bytes {
+                    content = format!(
+                        "{}...\n[truncated at {}KB]",
+                        truncate_utf8(&content, max_bytes),
+                        max_bytes / 1024
+                    );
                 }
                 Ok(ToolResult {
                     content,
@@ -408,7 +421,9 @@ fn format_size(bytes: u64) -> String {
 // FileRead
 // ============================================================================
 
-pub struct FileReadTool;
+pub struct FileReadTool {
+    pub tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>>,
+}
 
 #[async_trait]
 impl AgentTool for FileReadTool {
@@ -440,6 +455,10 @@ impl AgentTool for FileReadTool {
         _progress: UnboundedSender<ToolProgress>,
         context: &ToolContext,
     ) -> Result<ToolResult> {
+        let prefs = self.tool_prefs.read().await;
+        let max_output_bytes = prefs.file_read_max_output_kb * 1024;
+        drop(prefs); // release lock before I/O
+
         let path_str = arguments["path"].as_str().unwrap_or("");
         let max_lines = arguments["max_lines"].as_u64().unwrap_or(500) as usize;
         let path = context.resolve_path(path_str);
@@ -485,8 +504,12 @@ impl AgentTool for FileReadTool {
                     result.push('\n');
                 }
                 result.push_str(&lines.join("\n"));
-                if result.len() > 65536 {
-                    result = format!("{}...\n[truncated at 64KB]", truncate_utf8(&result, 65536));
+                if result.len() > max_output_bytes {
+                    result = format!(
+                        "{}...\n[truncated at {}KB]",
+                        truncate_utf8(&result, max_output_bytes),
+                        max_output_bytes / 1024
+                    );
                 }
                 Ok(ToolResult {
                     content: result,
@@ -1524,7 +1547,9 @@ impl AgentTool for MemorySearchTool {
 // WebSearch — DuckDuckGo Lite search (no API key needed)
 // ============================================================================
 
-pub struct WebSearchTool;
+pub struct WebSearchTool {
+    pub tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>>,
+}
 
 #[async_trait]
 impl AgentTool for WebSearchTool {
@@ -1556,8 +1581,29 @@ impl AgentTool for WebSearchTool {
         _progress: UnboundedSender<ToolProgress>,
         _context: &ToolContext,
     ) -> Result<ToolResult> {
+        let prefs = self.tool_prefs.read().await;
+
+        // Engine gate — only DuckDuckGoLite is implemented for now
+        use loom_types::config::tool_prefs::ToolSearchEngine;
+        match prefs.web_search_engine {
+            ToolSearchEngine::DuckDuckGoLite => {}
+            _ => {
+                return Ok(ToolResult {
+                    content: format!(
+                        "搜索引擎 {:?} 暂未实现，当前仅支持 DuckDuckGo",
+                        prefs.web_search_engine
+                    ),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        }
+
         let query = arguments["query"].as_str().unwrap_or("");
-        let max_results = arguments["max_results"].as_u64().unwrap_or(5).min(10) as usize;
+        let max_results = arguments["max_results"]
+            .as_u64()
+            .unwrap_or(prefs.web_search_max_results as u64)
+            .min(20) as usize;
 
         if query.is_empty() {
             return Ok(ToolResult {
@@ -1720,7 +1766,9 @@ where
 // WebFetch — fetch and extract text from a URL
 // ============================================================================
 
-pub struct WebFetchTool;
+pub struct WebFetchTool {
+    pub tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>>,
+}
 
 #[async_trait]
 impl AgentTool for WebFetchTool {
@@ -1752,8 +1800,12 @@ impl AgentTool for WebFetchTool {
         _progress: UnboundedSender<ToolProgress>,
         _context: &ToolContext,
     ) -> Result<ToolResult> {
+        let prefs = self.tool_prefs.read().await;
         let url = arguments["url"].as_str().unwrap_or("");
-        let max_chars = arguments["max_chars"].as_u64().unwrap_or(5000).min(20000) as usize;
+        let max_chars = arguments["max_chars"]
+            .as_u64()
+            .unwrap_or(prefs.web_fetch_max_chars as u64)
+            .min(100000) as usize;
 
         if url.is_empty() {
             return Ok(ToolResult {
@@ -1830,8 +1882,6 @@ fn extract_text(html: &str) -> String {
 // ScheduleReminder — AI 自行判断何时调用，无需硬编码正则
 // v2: 存储 AI 提示词而非 shell 命令，触发时由 AI 执行
 // ============================================================================
-
-use std::sync::Arc;
 
 pub struct ScheduleReminder {
     pub cron: Arc<tokio::sync::RwLock<Option<Arc<loom_cron::CronScheduler>>>>,
@@ -2447,6 +2497,7 @@ impl AgentTool for ProcessListTool {
 
 pub struct ProcessWaitTool {
     pub process_manager: Arc<crate::process_manager::ProcessManager>,
+    pub tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>>,
 }
 
 #[async_trait]
@@ -2483,7 +2534,11 @@ impl AgentTool for ProcessWaitTool {
                 structured_content: None,
             });
         }
-        let timeout_secs = arguments["timeout"].as_u64().unwrap_or(30).min(3600);
+        let prefs = self.tool_prefs.read().await;
+        let timeout_secs = arguments["timeout"]
+            .as_u64()
+            .unwrap_or(30)
+            .min(prefs.process_wait_max_timeout_secs);
         let cancel = _context.cancel_token.clone();
 
         match self.process_manager.wait(pid, timeout_secs, 256 * 1024, cancel).await {
@@ -2592,6 +2647,7 @@ impl AgentTool for ProcessPeekTool {
 
 pub struct MonitorTool {
     pub monitor_manager: Arc<crate::monitor_manager::MonitorManager>,
+    pub tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>>,
 }
 
 #[async_trait]
@@ -2715,7 +2771,11 @@ impl AgentTool for MonitorTool {
             }
         }
 
-        let timeout_ms = arguments["timeout_ms"].as_u64().unwrap_or(300_000).min(3_600_000);
+        let prefs = self.tool_prefs.read().await;
+        let timeout_ms = arguments["timeout_ms"]
+            .as_u64()
+            .unwrap_or(prefs.monitor_default_timeout_ms)
+            .min(3_600_000);
         let persistent = arguments["persistent"].as_bool().unwrap_or(false);
 
         let env: Option<HashMap<String, String>> = arguments["env"]

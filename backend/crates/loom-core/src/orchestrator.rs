@@ -858,9 +858,15 @@ impl Orchestrator {
         data_dir: PathBuf,
     ) -> Self {
         let mut registry = ToolRegistry::new();
-        let _ = registry.register(Arc::new(crate::builtin_tools::ShellTool));
+        let tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>> =
+            Arc::new(RwLock::new(loom_types::config::tool_prefs::ToolPrefsConfig::default()));
+        let _ = registry.register(Arc::new(crate::builtin_tools::ShellTool {
+            tool_prefs: tool_prefs.clone(),
+        }));
         let _ = registry.register(Arc::new(crate::builtin_tools::FileListTool));
-        let _ = registry.register(Arc::new(crate::builtin_tools::FileReadTool));
+        let _ = registry.register(Arc::new(crate::builtin_tools::FileReadTool {
+            tool_prefs: tool_prefs.clone(),
+        }));
         let _ = registry.register(Arc::new(crate::builtin_tools::FileWriteTool));
         let _ = registry.register(Arc::new(crate::builtin_tools::FileEditTool));
         let _ = registry.register(Arc::new(crate::builtin_tools::ContentSearchTool));
@@ -874,8 +880,12 @@ impl Orchestrator {
         let _ = registry.register(Arc::new(crate::builtin_tools::UseSkillTool {
             skill_state: skill_state.clone(),
         }));
-        let _ = registry.register(Arc::new(crate::builtin_tools::WebSearchTool));
-        let _ = registry.register(Arc::new(crate::builtin_tools::WebFetchTool));
+        let _ = registry.register(Arc::new(crate::builtin_tools::WebSearchTool {
+            tool_prefs: tool_prefs.clone(),
+        }));
+        let _ = registry.register(Arc::new(crate::builtin_tools::WebFetchTool {
+            tool_prefs: tool_prefs.clone(),
+        }));
 
         // System-level info and diagnostics tools.
         // These hold clones of the orchestrator's shared state so they report
@@ -890,8 +900,6 @@ impl Orchestrator {
         let active_model_name: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
         let sandbox_config: Arc<RwLock<loom_types::config::SandboxConfig>> =
             Arc::new(RwLock::new(loom_types::config::SandboxConfig::default()));
-        let tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>> =
-            Arc::new(RwLock::new(loom_types::config::tool_prefs::ToolPrefsConfig::default()));
 
         let _ = registry.register(Arc::new(crate::builtin_tools::SystemInfoTool {
             active_model_name: active_model_name.clone(),
@@ -968,6 +976,7 @@ impl Orchestrator {
         }));
         let _ = registry.register(Arc::new(crate::builtin_tools::ProcessWaitTool {
             process_manager: process_manager.clone(),
+            tool_prefs: tool_prefs.clone(),
         }));
         let _ = registry.register(Arc::new(crate::builtin_tools::ProcessPeekTool {
             process_manager: process_manager.clone(),
@@ -976,6 +985,7 @@ impl Orchestrator {
         // Register monitor tools — start/list/kill/wait/peek shell + WebSocket monitors
         let _ = registry.register(Arc::new(crate::builtin_tools::MonitorTool {
             monitor_manager: monitor_manager.clone(),
+            tool_prefs: tool_prefs.clone(),
         }));
         let _ = registry.register(Arc::new(crate::builtin_tools::MonitorListTool {
             monitor_manager: monitor_manager.clone(),
