@@ -267,6 +267,16 @@
   border-color: var(--accent);
 }
 
+/* 条件字段跟随在 select/slider 同行 */
+.configInline {
+  margin-top: -6px;
+  padding-left: 0;
+}
+.configInline .configText,
+.configInline .configInput {
+  width: 100%;
+}
+
 .configRange {
   font-size: 10px;
   color: var(--text-muted);

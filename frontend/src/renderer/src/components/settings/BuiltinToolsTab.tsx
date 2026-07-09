@@ -146,9 +146,33 @@ function renderTool(
             return cfg.visibleWhen.values.includes(depVal)
           }).map(cfg => {
             const rawVal = getPref(cfg.key)
-            const numVal = typeof rawVal === 'number' ? rawVal : 0
             const strVal = typeof rawVal === 'string' ? rawVal : ''
             const displayVal = cfg.msToSec && typeof rawVal === 'number' ? Math.round(rawVal / 1000) : rawVal
+            // 条件字段（SearXNG URL / API Key）跟随在 select 同行，不独立占一块
+            if (cfg.visibleWhen) {
+              return (
+                <div key={cfg.key} className={styles.configInline}>
+                  {cfg.type === 'text' ? (
+                    <input
+                      type="text"
+                      className={styles.configText}
+                      value={strVal}
+                      placeholder={cfg.placeholder}
+                      onChange={e => setPref(cfg.key, e.target.value)}
+                    />
+                  ) : (
+                    <input
+                      type="number"
+                      className={styles.configInput}
+                      value={displayVal}
+                      min={cfg.min}
+                      max={cfg.max}
+                      onChange={e => { const v = Number(e.target.value); if (!isNaN(v)) setPref(cfg.key, v) }}
+                    />
+                  )}
+                </div>
+              )
+            }
             return (
               <div key={cfg.key} className={styles.configField}>
                 <div className={styles.configLabelRow}>
