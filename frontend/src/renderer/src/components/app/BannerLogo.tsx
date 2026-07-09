@@ -100,9 +100,9 @@ export const BannerLogo: React.FC<{ className?: string }> = ({ className }) => {
           fill="none"
           opacity="0.6"
         />
-        {/* M */}
+        {/* M — two verticals + upward V dipper */}
         <path
-          d="M40 -36 v72 l18 -28 l18 28 v-72"
+          d="M40 -36 v72 l20 -65 l20 65 v-72"
           stroke="url(#titleGrad)"
           strokeWidth="7"
           strokeLinecap="round"
