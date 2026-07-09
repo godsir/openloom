@@ -70,7 +70,7 @@ export const BannerLogo: React.FC<{ className?: string }> = ({ className }) => {
         <path
           d="M-115 -36 v72 h30"
           stroke="url(#titleGrad)"
-          strokeWidth="3.2"
+          strokeWidth="7"
           strokeLinecap="round"
           strokeLinejoin="round"
           fill="none"
@@ -79,7 +79,7 @@ export const BannerLogo: React.FC<{ className?: string }> = ({ className }) => {
         <path
           d="M-65 -6 a26 26 0 1 1 0 12"
           stroke="url(#titleGrad)"
-          strokeWidth="3.2"
+          strokeWidth="7"
           strokeLinecap="round"
           fill="none"
         />
@@ -87,7 +87,7 @@ export const BannerLogo: React.FC<{ className?: string }> = ({ className }) => {
         <path
           d="M-13 -6 a26 26 0 1 1 0 12"
           stroke="url(#titleGrad)"
-          strokeWidth="3.2"
+          strokeWidth="7"
           strokeLinecap="round"
           fill="none"
         />
@@ -95,7 +95,7 @@ export const BannerLogo: React.FC<{ className?: string }> = ({ className }) => {
         <path
           d="M-39 6 q13 -8 26 -8 q13 0 26 8"
           stroke="var(--accent, #22D3EE)"
-          strokeWidth="2.2"
+          strokeWidth="3"
           strokeLinecap="round"
           fill="none"
           opacity="0.6"
@@ -104,7 +104,7 @@ export const BannerLogo: React.FC<{ className?: string }> = ({ className }) => {
         <path
           d="M40 -36 v72 l18 -28 l18 28 v-72"
           stroke="url(#titleGrad)"
-          strokeWidth="3.2"
+          strokeWidth="7"
           strokeLinecap="round"
           strokeLinejoin="round"
           fill="none"
