@@ -102,7 +102,7 @@ export const BannerLogo: React.FC<{ className?: string }> = ({ className }) => {
         />
         {/* M — O right edge at x≈37, 21px gap → M starts at x=58 */}
         <path
-          d="M58 36 v-72 l20 72 l20 -72 v72"
+          d="M79 36 v-72 l20 72 l20 -72 v72"
           stroke="url(#titleGrad)"
           strokeWidth="7"
           strokeLinecap="round"
