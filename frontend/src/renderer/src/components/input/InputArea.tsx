@@ -7,7 +7,7 @@ import { sendMessage } from '../../services/sendMessage'
 import { useLocale } from '../../i18n'
 import ContextRing from './ContextRing'
 import ModelSelector from './ModelSelector'
-import AgentSelector from './AgentSelector'
+import EntitySelector from './EntitySelector'
 import ThinkingLevelButton from './ThinkingLevelButton'
 import PermissionModeButton from './PermissionModeButton'
 import AttachedFiles from './AttachedFiles'
@@ -743,7 +743,7 @@ export default function InputArea() {
             <PermissionModeButton />
             <ThinkingLevelButton />
             <ModelSelector />
-            <AgentSelector />
+            <EntitySelector />
             <div className={styles.spacer} />
             <div className={styles.toolbarDivider} />
             <ContextRing />

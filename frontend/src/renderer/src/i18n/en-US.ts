@@ -259,6 +259,13 @@ export const enUS: TranslationMap = {
   'input.permissionTitle': 'Permission: {mode}',
   'input.thinkingTitle': 'Thinking: {level}',
 
+  // ── Entity Selector ──────────────────────────────────────────────
+  'entity.agentTab': 'Agent',
+  'entity.teamTab': 'Teams',
+  'entity.noAgents': 'No agent configs',
+  'entity.noTeams': 'No team configs',
+  'entity.manageInSettings': 'Manage in Settings',
+
   // ── Git ──────────────────────────────────────────────────────────
   'git.branchUnavailable': 'No Git detected',
   'git.searchBranches': 'Search branches...',
@@ -1027,6 +1034,9 @@ export const enUS: TranslationMap = {
   'settings.software': 'General',
   'settings.agentConfig': 'Agent Configuration',
   'settings.agentConfigDesc': 'Manage agent roles and behaviors',
+  'settings.team': 'Teams',
+  'settings.teamConfig': 'Team Configuration',
+  'settings.teamConfigDesc': 'Manage multi-agent collaboration teams',
   'settings.workspaceDesc': 'Default working directory for file operations',
   'settings.mcpLspDesc': 'External tool protocols and language servers',
   'settings.petDesc': 'Desktop avatar companion settings',

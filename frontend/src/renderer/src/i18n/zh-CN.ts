@@ -259,6 +259,13 @@ export const zhCN: TranslationMap = {
   'input.permissionTitle': '权限: {mode}',
   'input.thinkingTitle': '思考: {level}',
 
+  // ── Entity Selector ──────────────────────────────────────────────
+  'entity.agentTab': 'Agent',
+  'entity.teamTab': '专家团',
+  'entity.noAgents': '暂无 Agent 配置',
+  'entity.noTeams': '暂无专家团配置',
+  'entity.manageInSettings': '在设置中管理',
+
   // ── Git ──────────────────────────────────────────────────────────
   'git.branchUnavailable': '未检测到 Git',
   'git.searchBranches': '搜索分支...',
@@ -1027,6 +1034,9 @@ export const zhCN: TranslationMap = {
   'settings.software': '通用',
   'settings.agentConfig': '智能体配置',
   'settings.agentConfigDesc': '管理智能体角色和行为',
+  'settings.team': '专家团',
+  'settings.teamConfig': '专家团配置',
+  'settings.teamConfigDesc': '管理多 Agent 协作团队',
   'settings.workspaceDesc': '配置文件操作的默认工作目录',
   'settings.mcpLspDesc': '外部工具协议和语言服务器',
   'settings.petDesc': '桌面形象伙伴设置',

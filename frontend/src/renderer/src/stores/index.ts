@@ -3,6 +3,7 @@ import { createConnectionSlice, ConnectionSlice } from './connection'
 import { createUiSlice, UiSlice } from './ui'
 import { createModelSlice, ModelSlice } from './model'
 import { createAgentSlice, AgentSlice } from './agent'
+import { createTeamSlice, TeamSlice } from './team'
 import { createSessionSlice, SessionSlice } from './session'
 import { createChatSlice, ChatSlice } from './chat'
 import { createStreamingSlice, StreamingSlice } from './streaming'
@@ -24,6 +25,7 @@ export type AppStore = ConnectionSlice &
   UiSlice &
   ModelSlice &
   AgentSlice &
+  TeamSlice &
   SessionSlice &
   ChatSlice &
   StreamingSlice &
@@ -46,6 +48,7 @@ export const useStore = create<AppStore>()((...a) => ({
   ...createUiSlice(...a),
   ...createModelSlice(...a),
   ...createAgentSlice(...a),
+  ...createTeamSlice(...a),
   ...createSessionSlice(...a),
   ...createChatSlice(...a),
   ...createStreamingSlice(...a),
