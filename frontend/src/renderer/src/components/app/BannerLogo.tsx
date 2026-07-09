@@ -75,17 +75,17 @@ export const BannerLogo: React.FC<{ className?: string }> = ({ className }) => {
           strokeLinejoin="round"
           fill="none"
         />
-        {/* First O (left half of infinity) */}
+        {/* First O (left half of infinity) — radius 34 */}
         <path
-          d="M-60 -6 a26 26 0 1 1 0 12"
+          d="M-68 -6 a34 34 0 1 1 0 16"
           stroke="url(#titleGrad)"
           strokeWidth="7"
           strokeLinecap="round"
           fill="none"
         />
-        {/* Second O (right half of infinity)  */}
+        {/* Second O (right half of infinity) — radius 34 */}
         <path
-          d="M-8 -6 a26 26 0 1 1 0 12"
+          d="M0 -6 a34 34 0 1 1 0 16"
           stroke="url(#titleGrad)"
           strokeWidth="7"
           strokeLinecap="round"
@@ -93,16 +93,16 @@ export const BannerLogo: React.FC<{ className?: string }> = ({ className }) => {
         />
         {/* Infinity bridge between the two O's */}
         <path
-          d="M-34 6 q13 -8 26 -8 q13 0 26 8"
+          d="M-34 10 q17 -10 34 -10 q17 0 34 10"
           stroke="var(--accent, #22D3EE)"
           strokeWidth="3"
           strokeLinecap="round"
           fill="none"
           opacity="0.6"
         />
-        {/* M — O right edge ~x=21, 15px gap → M starts at x=36 */}
+        {/* M — O right edge at x≈37, 21px gap → M starts at x=58 */}
         <path
-          d="M36 36 v-72 l20 72 l20 -72 v72"
+          d="M58 36 v-72 l20 72 l20 -72 v72"
           stroke="url(#titleGrad)"
           strokeWidth="7"
           strokeLinecap="round"
