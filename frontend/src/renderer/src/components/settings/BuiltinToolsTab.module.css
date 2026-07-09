@@ -1,40 +1,166 @@
-.list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+/* 分组手风琴 */
+.group {
+  margin-bottom: 4px;
 }
 
-.toolItem {
+.groupHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 8px;
+  transition: background 0.15s;
+}
+.groupHeader:hover {
+  background: var(--bg-active);
+}
+
+.groupIcon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.groupLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex: 1;
+}
+
+.groupCount {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-active);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.groupChevron {
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+.groupChevronOpen {
+  transform: rotate(180deg);
+}
+
+.groupBody {
+  padding: 2px 0 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 搜索框 */
+.searchWrap {
+  position: relative;
+  margin-bottom: 12px;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  padding: 8px 12px 8px 32px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  overflow: hidden;
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.searchInput:focus {
+  border-color: var(--accent);
+}
+.searchInput::placeholder {
+  color: var(--text-muted);
+}
+
+.noResults {
+  text-align: center;
+  padding: 24px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* 工具卡片 */
+.toolItem {
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.toolItem + .toolItem {
+  margin-top: 1px;
 }
 
 .toolHeader {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
+  gap: 10px;
+  padding: 8px 12px;
   cursor: pointer;
   user-select: none;
-  transition: background 0.15s;
+  border-radius: 6px;
+  transition: background 0.12s;
 }
 .toolHeader:hover {
   background: var(--bg-active);
 }
 
+.configDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.configDotActive {
+  background: var(--accent);
+  box-shadow: 0 0 4px var(--accent-glow);
+}
+.configDotNone {
+  background: var(--text-muted);
+  opacity: 0.3;
+}
+
 .toolName {
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--text);
+  flex-shrink: 0;
 }
 
 .toolDesc {
   font-size: 12px;
   color: var(--text-muted);
-  margin-left: 12px;
   flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toolBadge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.toolBadgeConfig {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+.toolBadgeDefault {
+  background: var(--bg-active);
+  color: var(--text-muted);
 }
 
 .toolChevron {
@@ -46,51 +172,88 @@
   transform: rotate(180deg);
 }
 
+/* 配置抽屉 */
 .toolBody {
-  padding: 0 16px 16px;
+  padding: 8px 12px 14px 28px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .noConfig {
   font-size: 12px;
   color: var(--text-muted);
-  padding: 4px 0;
+  font-style: italic;
 }
 
-.configRow {
+.configField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.configLabelRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
 }
 
 .configLabel {
   font-size: 12px;
   color: var(--text-secondary);
-  min-width: 100px;
+  font-weight: 500;
 }
 
-.configValue {
+.configCurrent {
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+.configControl {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+}
+
+.configSlider {
+  flex: 1;
+  -webkit-appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  outline: none;
+}
+.configSlider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 4px var(--accent-glow);
 }
 
 .configInput {
-  width: 80px;
-  padding: 4px 8px;
+  width: 64px;
+  padding: 4px 6px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg-input);
   color: var(--text);
-  font-size: 13px;
+  font-size: 12px;
+  font-family: var(--font-mono);
   text-align: center;
+  outline: none;
+}
+.configInput:focus {
+  border-color: var(--accent);
 }
 
 .configRange {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-muted);
-  min-width: 60px;
+  text-align: right;
 }
