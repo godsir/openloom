@@ -1,0 +1,96 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.toolItem {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.toolHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+.toolHeader:hover {
+  background: var(--bg-active);
+}
+
+.toolName {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.toolDesc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: 12px;
+  flex: 1;
+}
+
+.toolChevron {
+  color: var(--text-muted);
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+.toolChevronOpen {
+  transform: rotate(180deg);
+}
+
+.toolBody {
+  padding: 0 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.noConfig {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.configRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.configLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 100px;
+}
+
+.configValue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.configInput {
+  width: 80px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 13px;
+  text-align: center;
+}
+
+.configRange {
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 60px;
+}
