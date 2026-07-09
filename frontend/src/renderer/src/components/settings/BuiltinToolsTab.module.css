@@ -252,6 +252,21 @@
   border-color: var(--accent);
 }
 
+.configText {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  outline: none;
+}
+.configText:focus {
+  border-color: var(--accent);
+}
+
 .configRange {
   font-size: 10px;
   color: var(--text-muted);

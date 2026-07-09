@@ -11,6 +11,8 @@ interface ToolPrefs {
   file_read_max_output_kb: number
   web_search_engine: string
   web_search_max_results: number
+  searxng_url?: string | null
+  web_search_api_key?: string | null
   web_fetch_max_chars: number
   process_wait_max_timeout_secs: number
   monitor_default_timeout_ms: number
@@ -19,13 +21,15 @@ interface ToolPrefs {
 interface ConfigDef {
   key: string
   labelKey: string
-  type: 'slider' | 'select'
+  type: 'slider' | 'select' | 'text'
   min?: number
   max?: number
   step?: number
   unit?: string
   options?: { value: string; label: string }[]
   msToSec?: boolean
+  placeholder?: string
+  visibleWhen?: { key: string; values: string[] }
 }
 
 interface ToolDef {
@@ -61,7 +65,11 @@ function buildTools(): ToolDef[] {
         { value: 'duckduckgo_lite', label: 'DuckDuckGo' },
         { value: 'brave', label: 'Brave Search' },
         { value: 'searxng', label: 'SearXNG' },
+        { value: 'google', label: 'Google' },
+        { value: 'bing', label: 'Bing' },
       ]},
+      { key: 'searxng_url', labelKey: 'bt.searxngUrl', type: 'text', placeholder: 'https://searx.example.com', visibleWhen: { key: 'web_search_engine', values: ['searxng'] } },
+      { key: 'web_search_api_key', labelKey: 'bt.webSearchApiKey', type: 'text', placeholder: 'sk-...', visibleWhen: { key: 'web_search_engine', values: ['brave', 'google', 'bing'] } },
       { key: 'web_search_max_results', labelKey: 'bt.webSearchMaxResults', type: 'slider', min: 1, max: 10 },
     ]},
     { name: 'web_fetch', descKey: 'bt.web_fetch', category: 'web', configs: [
@@ -108,7 +116,7 @@ function renderTool(
   t: (k: string) => string,
   expandedTools: Set<string>,
   toggleTool: (name: string) => void,
-  getPref: (key: string) => number,
+  getPref: (key: string) => number | string,
   setPref: (key: string, val: string | number) => Promise<void>,
 ) {
   const open = expandedTools.has(tool.name)
@@ -130,9 +138,15 @@ function renderTool(
           {!hasConfig && (
             <span className={styles.noConfig}>{t('bt.noConfig')}</span>
           )}
-          {tool.configs?.map(cfg => {
+          {tool.configs?.filter(cfg => {
+            if (!cfg.visibleWhen) return true
+            const depVal = String(getPref(cfg.visibleWhen.key))
+            return cfg.visibleWhen.values.includes(depVal)
+          }).map(cfg => {
             const rawVal = getPref(cfg.key)
-            const displayVal = cfg.msToSec ? Math.round(rawVal / 1000) : rawVal
+            const numVal = typeof rawVal === 'number' ? rawVal : 0
+            const strVal = typeof rawVal === 'string' ? rawVal : ''
+            const displayVal = cfg.msToSec && typeof rawVal === 'number' ? Math.round(rawVal / 1000) : rawVal
             return (
               <div key={cfg.key} className={styles.configField}>
                 <div className={styles.configLabelRow}>
@@ -148,6 +162,14 @@ function renderTool(
                       options={cfg.options?.map(o => ({ value: o.value, label: o.label })) || []}
                       onChange={(v) => setPref(cfg.key, v)}
                       variant="form"
+                    />
+                  ) : cfg.type === 'text' ? (
+                    <input
+                      type="text"
+                      className={styles.configText}
+                      value={strVal}
+                      placeholder={cfg.placeholder}
+                      onChange={e => setPref(cfg.key, e.target.value)}
                     />
                   ) : (
                     <>
@@ -223,7 +245,7 @@ export default function BuiltinToolsTab() {
     })
   }
 
-  const getPref = (key: string): number => {
+  const getPref = (key: string): number | string => {
     if (!prefs) return 0
     return (prefs as any)[key] ?? 0
   }
@@ -234,6 +256,8 @@ export default function BuiltinToolsTab() {
     const cfg = allConfigs.find(c => c.key === key)
     if (cfg?.msToSec && typeof val === 'number') {
       (next as any)[key] = val * 1000
+    } else if (cfg?.type === 'text' && typeof val === 'string') {
+      (next as any)[key] = val || null
     } else {
       (next as any)[key] = val
     }

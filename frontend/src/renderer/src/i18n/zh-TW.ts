@@ -1082,6 +1082,8 @@ export const zhTW: TranslationMap = {
   'bt.fileReadMaxKb': '輸出截斷 (KB)',
   'bt.webSearchEngine': '搜尋引擎',
   'bt.webSearchMaxResults': '最大結果數',
+  'bt.searxngUrl': 'SearXNG 位址',
+  'bt.webSearchApiKey': 'API Key',
   'bt.webFetchMaxChars': '最大字元數',
   'bt.processWaitMaxTimeout': '逾時上限 (秒)',
   'bt.monitorDefaultTimeout': '預設逾時 (秒)',

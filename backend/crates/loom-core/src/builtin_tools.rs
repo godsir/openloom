@@ -1544,7 +1544,7 @@ impl AgentTool for MemorySearchTool {
 }
 
 // ============================================================================
-// WebSearch — DuckDuckGo Lite search (no API key needed)
+// WebSearch — multi-engine web search (DDG Lite / Brave / SearXNG / Google / Bing)
 // ============================================================================
 
 pub struct WebSearchTool {
@@ -1562,7 +1562,7 @@ impl AgentTool for WebSearchTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "web_search".into(),
-            description: "Search the web using DuckDuckGo. Returns titles, URLs, and snippets for the given query. Use for finding current information, documentation, or answers.".into(),
+            description: "Search the web. Supports DuckDuckGo (no key), Brave, SearXNG (self-hosted), Google, Bing. Use for finding current information, documentation, or answers.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1582,23 +1582,6 @@ impl AgentTool for WebSearchTool {
         _context: &ToolContext,
     ) -> Result<ToolResult> {
         let prefs = self.tool_prefs.read().await;
-
-        // Engine gate — only DuckDuckGoLite is implemented for now
-        use loom_types::config::tool_prefs::ToolSearchEngine;
-        match prefs.web_search_engine {
-            ToolSearchEngine::DuckDuckGoLite => {}
-            _ => {
-                return Ok(ToolResult {
-                    content: format!(
-                        "搜索引擎 {:?} 暂未实现，当前仅支持 DuckDuckGo",
-                        prefs.web_search_engine
-                    ),
-                    is_error: true,
-                    structured_content: None,
-                });
-            }
-        }
-
         let query = arguments["query"].as_str().unwrap_or("");
         let max_results = arguments["max_results"]
             .as_u64()
@@ -1618,76 +1601,187 @@ impl AgentTool for WebSearchTool {
             .timeout(std::time::Duration::from_secs(15))
             .build()?;
 
-        // ── Multi-backend search with fallback ───────────────────────
-        // Try DuckDuckGo Lite first (no API key, plain HTML).
-        // On failure (HTTP error / empty results), fall back to DDG HTML.
-        let url = format!("https://lite.duckduckgo.com/lite/?q={}", urlencoding(query));
-
-        let html = match retry_with_backoff(|| async {
-            let resp = client.get(&url).send().await?;
-            let status = resp.status();
-            let text = resp.text().await?;
-            if !status.is_success() {
-                anyhow::bail!("DDG Lite returned HTTP {}", status.as_u16());
+        use loom_types::config::tool_prefs::ToolSearchEngine;
+        let results = match prefs.web_search_engine {
+            ToolSearchEngine::DuckDuckGoLite => search_ddg(&client, query, max_results).await,
+            ToolSearchEngine::Brave => {
+                match &prefs.web_search_api_key {
+                    Some(key) if !key.is_empty() => search_brave(&client, query, max_results, key).await,
+                    _ => return Ok(ToolResult {
+                        content: "Brave Search 需要 API key，请在设置中配置 web_search_api_key".into(),
+                        is_error: true, structured_content: None,
+                    }),
+                }
             }
-            Ok(text)
-        }, 2).await
-        {
-            Ok(html) => html,
-            Err(e) => {
-                tracing::warn!(%query, error = %e, "DDG Lite failed after retries; trying DDG HTML fallback");
-                // Fallback: DuckDuckGo HTML (non-Lite, may include JS but still parseable)
-                let html_url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding(query));
-                match retry_with_backoff(|| async {
-                    let resp = client.get(&html_url).send().await?;
-                    let status = resp.status();
-                    let text = resp.text().await?;
-                    if !status.is_success() {
-                        anyhow::bail!("DDG HTML returned HTTP {}", status.as_u16());
-                    }
-                    Ok(text)
-                }, 1).await
-                {
-                    Ok(html) => html,
-                    Err(e2) => {
-                        tracing::warn!(%query, error = %e2, "DDG HTML fallback also failed");
-                        return Ok(ToolResult {
-                            content: format!("搜索 '{}' 失败：搜索服务暂时不可用，请稍后重试。", query),
-                            is_error: true,
-                            structured_content: None,
-                        });
-                    }
+            ToolSearchEngine::SearXNG => {
+                match &prefs.searxng_url {
+                    Some(url) if !url.is_empty() => search_searxng(&client, query, max_results, url).await,
+                    _ => return Ok(ToolResult {
+                        content: "SearXNG 需要实例地址，请在设置中配置 searxng_url".into(),
+                        is_error: true, structured_content: None,
+                    }),
+                }
+            }
+            ToolSearchEngine::Google => {
+                match &prefs.web_search_api_key {
+                    Some(key) if !key.is_empty() => search_google(&client, query, max_results, key).await,
+                    _ => return Ok(ToolResult {
+                        content: "Google 搜索需要 API key，请在设置中配置 web_search_api_key".into(),
+                        is_error: true, structured_content: None,
+                    }),
+                }
+            }
+            ToolSearchEngine::Bing => {
+                match &prefs.web_search_api_key {
+                    Some(key) if !key.is_empty() => search_bing(&client, query, max_results, key).await,
+                    _ => return Ok(ToolResult {
+                        content: "Bing 搜索需要 API key，请在设置中配置 web_search_api_key".into(),
+                        is_error: true, structured_content: None,
+                    }),
                 }
             }
         };
 
-        let results = parse_ddg_lite(&html, max_results);
-        if results.is_empty() {
-            Ok(ToolResult {
+        match results {
+            Ok(items) if items.is_empty() => Ok(ToolResult {
                 content: format!("No results found for '{}'.", query),
-                is_error: false,
-                structured_content: None,
-            })
-        } else {
-            let out = results
-                .iter()
-                .enumerate()
-                .map(|(i, (title, snippet, link))| {
-                    format!("{}. {}\n   {}\n   {}", i + 1, title, snippet, link)
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            Ok(ToolResult {
-                content: out,
-                is_error: false,
-                structured_content: None,
-            })
+                is_error: false, structured_content: None,
+            }),
+            Ok(items) => {
+                let out = items.iter().enumerate()
+                    .map(|(i, (title, snippet, link))| format!("{}. {}\n   {}\n   {}", i + 1, title, snippet, link))
+                    .collect::<Vec<_>>().join("\n\n");
+                Ok(ToolResult { content: out, is_error: false, structured_content: None })
+            }
+            Err(e) => Ok(ToolResult {
+                content: format!("搜索 '{}' 失败: {}", query, e),
+                is_error: true, structured_content: None,
+            }),
         }
     }
 
     fn provenance(&self) -> ToolProvenance {
         ToolProvenance::Builtin
     }
+}
+
+// ── search backends ───────────────────────────────────────────────────────
+
+async fn search_ddg(
+    client: &reqwest::Client, query: &str, max_results: usize,
+) -> Result<Vec<(String, String, String)>, String> {
+    let url = format!("https://lite.duckduckgo.com/lite/?q={}", urlencoding(query));
+    let html = match retry_with_backoff(|| async {
+        let resp = client.get(&url).send().await.map_err(|e| anyhow::anyhow!("{}", e))?;
+        let status = resp.status();
+        let text = resp.text().await.map_err(|e| anyhow::anyhow!("{}", e))?;
+        if !status.is_success() { anyhow::bail!("DDG Lite HTTP {}", status.as_u16()); }
+        Ok(text)
+    }, 2).await {
+        Ok(h) => h,
+        Err(_) => {
+            let html_url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding(query));
+            match retry_with_backoff(|| async {
+                let resp = client.get(&html_url).send().await.map_err(|e| anyhow::anyhow!("{}", e))?;
+                let status = resp.status();
+                let text = resp.text().await.map_err(|e| anyhow::anyhow!("{}", e))?;
+                if !status.is_success() { anyhow::bail!("DDG HTML HTTP {}", status.as_u16()); }
+                Ok(text)
+            }, 1).await {
+                Ok(h) => h,
+                Err(_) => return Err("DDG 搜索服务暂时不可用".into()),
+            }
+        }
+    };
+    Ok(parse_ddg_lite(&html, max_results))
+}
+
+async fn search_brave(
+    client: &reqwest::Client, query: &str, max_results: usize, api_key: &str,
+) -> Result<Vec<(String, String, String)>, String> {
+    let url = format!("https://api.search.brave.com/res/v1/web/search?q={}&count={}", urlencoding(query), max_results.min(20));
+    let resp = client.get(&url)
+        .header("Accept", "application/json")
+        .header("Accept-Encoding", "gzip")
+        .header("X-Subscription-Token", api_key)
+        .send().await.map_err(|e| format!("Brave 请求失败: {}", e))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("{}", e))?;
+    if !status.is_success() { return Err(format!("Brave HTTP {}: {}", status.as_u16(), body.chars().take(200).collect::<String>())); }
+    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("Brave JSON 解析失败: {}", e))?;
+    let items: Vec<_> = v["web"]["results"].as_array().unwrap_or(&vec![])
+        .iter().take(max_results)
+        .filter_map(|r| Some((
+            r["title"].as_str()?.to_string(),
+            r["description"].as_str().unwrap_or("").to_string(),
+            r["url"].as_str()?.to_string(),
+        ))).collect();
+    Ok(items)
+}
+
+async fn search_searxng(
+    client: &reqwest::Client, query: &str, max_results: usize, base_url: &str,
+) -> Result<Vec<(String, String, String)>, String> {
+    let base = base_url.trim_end_matches('/');
+    let url = format!("{}/search?format=json&q={}", base, urlencoding(query));
+    let resp = client.get(&url).send().await.map_err(|e| format!("SearXNG 请求失败: {}", e))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("{}", e))?;
+    if !status.is_success() { return Err(format!("SearXNG HTTP {}: {}", status.as_u16(), body.chars().take(200).collect::<String>())); }
+    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("SearXNG JSON 解析失败: {}", e))?;
+    let items: Vec<_> = v["results"].as_array().unwrap_or(&vec![])
+        .iter().take(max_results)
+        .filter_map(|r| Some((
+            r["title"].as_str()?.to_string(),
+            r["content"].as_str().unwrap_or("").to_string(),
+            r["url"].as_str()?.to_string(),
+        ))).collect();
+    Ok(items)
+}
+
+async fn search_google(
+    client: &reqwest::Client, query: &str, max_results: usize, api_key: &str,
+) -> Result<Vec<(String, String, String)>, String> {
+    // Uses Google Custom Search JSON API v1 with a default CX for web search
+    let cx = "c7e6a7373e0a44649"; // openLoom default programmable search engine
+    let url = format!(
+        "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}&num={}",
+        api_key, cx, urlencoding(query), max_results.min(10)
+    );
+    let resp = client.get(&url).send().await.map_err(|e| format!("Google 请求失败: {}", e))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("{}", e))?;
+    if !status.is_success() { return Err(format!("Google HTTP {}: {}", status.as_u16(), body.chars().take(200).collect::<String>())); }
+    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("Google JSON 解析失败: {}", e))?;
+    let items: Vec<_> = v["items"].as_array().unwrap_or(&vec![])
+        .iter().take(max_results)
+        .filter_map(|r| Some((
+            r["title"].as_str()?.to_string(),
+            r["snippet"].as_str().unwrap_or("").to_string(),
+            r["link"].as_str()?.to_string(),
+        ))).collect();
+    Ok(items)
+}
+
+async fn search_bing(
+    client: &reqwest::Client, query: &str, max_results: usize, api_key: &str,
+) -> Result<Vec<(String, String, String)>, String> {
+    let url = format!("https://api.bing.microsoft.com/v7.0/search?q={}&count={}&mkt=zh-CN", urlencoding(query), max_results.min(50));
+    let resp = client.get(&url)
+        .header("Ocp-Apim-Subscription-Key", api_key)
+        .send().await.map_err(|e| format!("Bing 请求失败: {}", e))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("{}", e))?;
+    if !status.is_success() { return Err(format!("Bing HTTP {}: {}", status.as_u16(), body.chars().take(200).collect::<String>())); }
+    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("Bing JSON 解析失败: {}", e))?;
+    let items: Vec<_> = v["webPages"]["value"].as_array().unwrap_or(&vec![])
+        .iter().take(max_results)
+        .filter_map(|r| Some((
+            r["name"].as_str()?.to_string(),
+            r["snippet"].as_str().unwrap_or("").to_string(),
+            r["url"].as_str()?.to_string(),
+        ))).collect();
+    Ok(items)
 }
 
 fn parse_ddg_lite(html: &str, max_results: usize) -> Vec<(String, String, String)> {

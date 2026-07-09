@@ -1082,6 +1082,8 @@ export const enUS: TranslationMap = {
   'bt.fileReadMaxKb': 'Output truncation (KB)',
   'bt.webSearchEngine': 'Search engine',
   'bt.webSearchMaxResults': 'Max results',
+  'bt.searxngUrl': 'SearXNG URL',
+  'bt.webSearchApiKey': 'API Key',
   'bt.webFetchMaxChars': 'Max characters',
   'bt.processWaitMaxTimeout': 'Max timeout (s)',
   'bt.monitorDefaultTimeout': 'Default timeout (s)',
