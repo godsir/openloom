@@ -1187,6 +1187,14 @@ export const zhTW: TranslationMap = {
   'team.generating': '團長正在生成成員...',
   'team.membersGenerated': '已生成 {count} 個成員',
   'team.generateFailed': '成員生成失敗: {reason}',
+  'team.captain': '團長配置',
+  'team.captainDesc': '團長負責匯總各成員輸出並綜合結論',
+  'team.captainLabel': '團長',
+  'team.captainDefaultModel': '預設模型',
+  'team.memberType': '類型',
+  'team.memberName': '名稱',
+  'team.refAgent': '引用 Agent: {agent}',
+  'team.refAgentName': 'Agent',
 
   // ── Model Config ─────────────────────────────────────────────────
   'modelPanel.customProvider': '自訂供应商',

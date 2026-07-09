@@ -4,7 +4,7 @@ import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
 import Select from '../shared/Select'
 import { useLocale } from '../../i18n'
-import { IconSparkles, IconCheck, IconLoader } from '../../utils/icons'
+import { IconSparkles, IconCheck, IconLoader, IconChevronDown } from '../../utils/icons'
 import styles from '../shared/ConfigPanel.module.css'
 
 interface TeamConfig {
@@ -41,6 +41,7 @@ export default function TeamTab() {
   const [captainModelDraft, setCaptainModelDraft] = useState('')
   const [membersDraft, setMembersDraft] = useState<TeamMember[]>([])
   const [loading, setLoading] = useState(true)
+  const [expandedMemberIdx, setExpandedMemberIdx] = useState<number | null>(null)
 
   // Member add controls
   const [addMode, setAddMode] = useState<'agent' | 'custom' | null>(null)
@@ -48,6 +49,12 @@ export default function TeamTab() {
   const [customName, setCustomName] = useState('')
   const [customPersona, setCustomPersona] = useState('')
   const [customModel, setCustomModel] = useState('')
+
+  // Member inline edit
+  const [editMemberIdx, setEditMemberIdx] = useState<number | null>(null)
+  const [editMemberName, setEditMemberName] = useState('')
+  const [editMemberPersona, setEditMemberPersona] = useState('')
+  const [editMemberModel, setEditMemberModel] = useState('')
 
   // AI generate state
   const [generating, setGenerating] = useState(false)
@@ -60,16 +67,13 @@ export default function TeamTab() {
       const r = await loomRpc<{ teams: TeamConfig[] }>('team.config.list')
       useStore.getState().setTeams(r.teams || [])
     } catch {
-      /* rpc handles toast */
+      /* nothing */
     }
     setLoading(false)
   }
 
-  useEffect(() => {
-    refresh()
-  }, [])
+  useEffect(() => { refresh() }, [])
 
-  // Cleanup step timer on unmount
   useEffect(() => {
     return () => {
       if (stepTimerRef.current) clearInterval(stepTimerRef.current)
@@ -107,6 +111,8 @@ export default function TeamTab() {
   const strategyLabel = (s: string) =>
     s === 'debate' ? t('team.strategyDebate') : t('team.strategySynthesize')
 
+  const captainModelLabel = (m?: string) => m || t('team.captainDefaultModel')
+
   const buildPayload = () => ({
     name: nameDraft.trim(),
     description: descDraft.trim(),
@@ -136,6 +142,8 @@ export default function TeamTab() {
     setGenerating(false)
     setGenStepIdx(-1)
     setGenError('')
+    setExpandedMemberIdx(null)
+    setEditMemberIdx(null)
     if (stepTimerRef.current) {
       clearInterval(stepTimerRef.current)
       stepTimerRef.current = null
@@ -157,24 +165,16 @@ export default function TeamTab() {
       await rpc('team.config.create', buildPayload(), t('team.created'))
       await refresh()
       resetForm()
-    } catch {
-      /* done */
-    }
+    } catch { /* done */ }
   }
 
   const handleUpdate = async () => {
     if (!editingId || !valid) return
     try {
-      await rpc(
-        'team.config.update',
-        { ...buildPayload(), id: editingId },
-        t('team.updated'),
-      )
+      await rpc('team.config.update', { ...buildPayload(), id: editingId }, t('team.updated'))
       await refresh()
       resetForm()
-    } catch {
-      /* done */
-    }
+    } catch { /* done */ }
   }
 
   const handleDelete = async (id: string, name: string) => {
@@ -185,9 +185,7 @@ export default function TeamTab() {
     try {
       await rpc('team.config.delete', { id }, t('team.deleted'))
       await refresh()
-    } catch {
-      /* done */
-    }
+    } catch { /* done */ }
   }
 
   // --- AI Generate Members ---
@@ -195,14 +193,10 @@ export default function TeamTab() {
     setGenerating(true)
     setGenStepIdx(0)
     setGenError('')
-
-    // Animate steps
     let current = 0
     stepTimerRef.current = setInterval(() => {
       current++
-      if (current < genSteps.length - 1) {
-        setGenStepIdx(current)
-      }
+      if (current < genSteps.length - 1) setGenStepIdx(current)
     }, 1200)
 
     try {
@@ -212,16 +206,9 @@ export default function TeamTab() {
         strategy: strategyDraft,
         captain_model: captainModelDraft || null,
       })
-
-      if (stepTimerRef.current) {
-        clearInterval(stepTimerRef.current)
-        stepTimerRef.current = null
-      }
+      if (stepTimerRef.current) { clearInterval(stepTimerRef.current); stepTimerRef.current = null }
       setGenStepIdx(genSteps.length - 1)
-
-      // Brief delay so user sees the "done" step
       await new Promise((r) => setTimeout(r, 600))
-
       if (Array.isArray(result)) {
         setMembersDraft(result)
         useStore.getState().addToast({
@@ -230,10 +217,7 @@ export default function TeamTab() {
         })
       }
     } catch (e: any) {
-      if (stepTimerRef.current) {
-        clearInterval(stepTimerRef.current)
-        stepTimerRef.current = null
-      }
+      if (stepTimerRef.current) { clearInterval(stepTimerRef.current); stepTimerRef.current = null }
       setGenError(e.message || String(e))
       useStore.getState().addToast({
         type: 'error',
@@ -255,13 +239,7 @@ export default function TeamTab() {
     if (!customName.trim() || !customPersona.trim()) return
     setMembersDraft((prev) => [
       ...prev,
-      {
-        name: customName.trim(),
-        source: {
-          persona: customPersona.trim(),
-          model: customModel || undefined,
-        },
-      },
+      { name: customName.trim(), source: { persona: customPersona.trim(), model: customModel || undefined } },
     ])
     setCustomName('')
     setCustomPersona('')
@@ -271,6 +249,53 @@ export default function TeamTab() {
 
   const removeMember = (idx: number) => {
     setMembersDraft((prev) => prev.filter((_, i) => i !== idx))
+    if (expandedMemberIdx === idx) setExpandedMemberIdx(null)
+    if (editMemberIdx === idx) setEditMemberIdx(null)
+  }
+
+  const startEditMember = (idx: number, m: TeamMember) => {
+    setEditMemberIdx(idx)
+    setEditMemberName(m.name)
+    if (typeof m.source === 'object') {
+      setEditMemberPersona(m.source.persona || '')
+      setEditMemberModel(m.source.model || '')
+    } else {
+      setEditMemberPersona('')
+      setEditMemberModel('')
+    }
+  }
+
+  const saveEditMember = () => {
+    if (editMemberIdx === null) return
+    setMembersDraft((prev) => {
+      const next = [...prev]
+      const m = next[editMemberIdx]
+      if (!m) return prev
+      const newName = editMemberName.trim()
+      if (!newName) return prev
+      if (typeof m.source === 'string') {
+        next[editMemberIdx] = { name: newName, source: m.source }
+      } else {
+        next[editMemberIdx] = {
+          name: newName,
+          source: {
+            persona: editMemberPersona.trim(),
+            model: editMemberModel || undefined,
+          },
+        }
+      }
+      return next
+    })
+    setEditMemberIdx(null)
+  }
+
+  const cancelEditMember = () => {
+    setEditMemberIdx(null)
+  }
+
+  const toggleMemberExpand = (idx: number) => {
+    setExpandedMemberIdx((prev) => (prev === idx ? null : idx))
+    if (editMemberIdx !== null && editMemberIdx !== idx) setEditMemberIdx(null)
   }
 
   const memberCount = (m: TeamMember[]) => m.length
@@ -278,10 +303,14 @@ export default function TeamTab() {
   const memberTypeLabel = (m: TeamMember) =>
     typeof m.source === 'string' ? t('team.fromAgent') : t('team.customMember')
 
-  const memberSourceName = (m: TeamMember) => {
-    if (typeof m.source === 'string') return m.source
-    const p = m.source.persona || ''
-    return p.length > 40 ? p.slice(0, 40) + '...' : p
+  const memberPersona = (m: TeamMember) => {
+    if (typeof m.source === 'string') return t('team.refAgent', { agent: m.source })
+    return m.source.persona || ''
+  }
+
+  const memberModel = (m: TeamMember) => {
+    if (typeof m.source === 'string') return ''
+    return m.source.model || ''
   }
 
   const isEditing = editingId !== null
@@ -321,14 +350,22 @@ export default function TeamTab() {
         />
       </div>
 
-      {/* Captain model */}
+      {/* Captain */}
       <div className={styles.formRow}>
-        <label className={styles.formLabel}>{t('team.captainModel')}</label>
-        <Select
-          value={captainModelDraft}
-          options={modelOpts}
-          onChange={setCaptainModelDraft}
-        />
+        <label className={styles.formLabel}>{t('team.captain')}</label>
+        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 6px' }}>
+          {t('team.captainDesc')}
+        </p>
+        <div style={{ padding: '10px 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
+          <div className={styles.formRow} style={{ marginBottom: 0 }}>
+            <label className={styles.formLabel}>{t('team.captainModel')}</label>
+            <Select
+              value={captainModelDraft}
+              options={modelOpts}
+              onChange={setCaptainModelDraft}
+            />
+          </div>
+        </div>
       </div>
 
       {/* Members */}
@@ -354,112 +391,191 @@ export default function TeamTab() {
                 {t('team.generating')}
               </span>
             </div>
-
-            {/* Step indicators */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {genSteps.map((step, idx) => {
-                const isDone = idx < genStepIdx
-                const isActive = idx === genStepIdx
-                const isPending = idx > genStepIdx
-
+                const done = idx < genStepIdx
+                const active = idx === genStepIdx
+                const pending = idx > genStepIdx
                 return (
                   <div
                     key={step.key}
                     style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 10,
-                      padding: '4px 0',
-                      opacity: isPending ? 0.35 : 1,
-                      transition: 'opacity 0.3s ease',
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0',
+                      opacity: pending ? 0.35 : 1, transition: 'opacity 0.3s ease',
                     }}
                   >
-                    {/* Step indicator dot */}
                     <div
                       style={{
-                        width: 18,
-                        height: 18,
-                        borderRadius: '50%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                        border: isDone
-                          ? '1px solid var(--green)'
-                          : isActive
-                            ? '1px solid rgba(99,102,241,0.40)'
-                            : '1px solid var(--border)',
-                        background: isDone
-                          ? 'rgba(74,222,128,0.12)'
-                          : isActive
-                            ? 'rgba(99,102,241,0.12)'
-                            : 'transparent',
+                        width: 18, height: 18, borderRadius: '50%', display: 'flex',
+                        alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                        border: done ? '1px solid var(--green)' : active ? '1px solid rgba(99,102,241,0.40)' : '1px solid var(--border)',
+                        background: done ? 'rgba(74,222,128,0.12)' : active ? 'rgba(99,102,241,0.12)' : 'transparent',
                         transition: 'all 0.4s ease',
                       }}
                     >
-                      {isDone ? (
+                      {done ? (
                         <IconCheck size={10} style={{ color: 'var(--green)' }} />
-                      ) : isActive ? (
-                        <IconLoader
-                          size={10}
-                          style={{ color: 'rgba(99,102,241,0.9)', animation: 'spin 1s linear infinite' }}
-                        />
+                      ) : active ? (
+                        <IconLoader size={10} style={{ color: 'rgba(99,102,241,0.9)', animation: 'spin 1s linear infinite' }} />
                       ) : (
-                        <span style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1 }}>
-                          {idx + 1}
-                        </span>
+                        <span style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1 }}>{idx + 1}</span>
                       )}
                     </div>
-                    {/* Step label */}
-                    <span
-                      style={{
-                        fontSize: 11,
-                        color: isDone ? 'var(--text)' : isActive ? 'var(--text)' : 'var(--text-muted)',
-                        fontWeight: isActive ? 500 : 400,
-                        transition: 'color 0.3s ease',
-                      }}
-                    >
-                      {isDone ? step.label.replace('中', '') : step.label}
+                    <span style={{ fontSize: 11, color: done || active ? 'var(--text)' : 'var(--text-muted)', fontWeight: active ? 500 : 400, transition: 'color 0.3s ease' }}>
+                      {done ? step.label.replace('中', '') : step.label}
                     </span>
                   </div>
                 )
               })}
             </div>
-
-            {/* Error */}
             {genError && (
-              <div
-                style={{
-                  marginTop: 8,
-                  padding: '6px 10px',
-                  borderRadius: 'var(--r-sm)',
-                  background: 'rgba(239,68,68,0.10)',
-                  fontSize: 11,
-                  color: 'var(--red)',
-                }}
-              >
+              <div style={{ marginTop: 8, padding: '6px 10px', borderRadius: 'var(--r-sm)', background: 'rgba(239,68,68,0.10)', fontSize: 11, color: 'var(--red)' }}>
                 {genError}
               </div>
             )}
           </div>
         )}
 
-        {/* Existing members list */}
+        {/* Members list with expand */}
         {membersDraft.length > 0 && !generating && (
           <div className={styles.list}>
-            {membersDraft.map((m, idx) => (
-              <div key={idx} className={styles.modelItem}>
-                <div className={styles.modelInfo}>
-                  <span className={styles.modelName}>{m.name}</span>
-                  <span className={styles.modelId}>
-                    {memberTypeLabel(m)} {memberSourceName(m) && `| ${memberSourceName(m)}`}
-                  </span>
+            {membersDraft.map((m, idx) => {
+              const isExpanded = expandedMemberIdx === idx
+              const isEditingMember = editMemberIdx === idx
+              const isAgentRef = typeof m.source === 'string'
+
+              return (
+                <div key={idx}>
+                  {/* Member row */}
+                  <div
+                    className={styles.modelItem}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => toggleMemberExpand(idx)}
+                  >
+                    <div className={styles.modelInfo}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ display: 'flex', transition: 'transform 0.2s ease', transform: isExpanded ? 'rotate(180deg)' : undefined }}>
+                          <IconChevronDown size={10} style={{ color: 'var(--text-muted)' }} />
+                        </span>
+                        <span className={styles.modelName}>{m.name}</span>
+                      </div>
+                      <span className={styles.modelId}>{memberTypeLabel(m)}</span>
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); removeMember(idx) }}
+                      className={styles.deleteBtn}
+                    >
+                      {t('common.delete')}
+                    </button>
+                  </div>
+
+                  {/* Expanded detail */}
+                  {isExpanded && !isEditingMember && (
+                    <div
+                      style={{
+                        padding: '10px 14px 10px 28px',
+                        marginTop: -1,
+                        border: '1px solid var(--border)',
+                        borderTop: 'none',
+                        borderRadius: '0 0 var(--r-md) var(--r-md)',
+                        background: 'var(--bg-card)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', minWidth: 40 }}>{t('team.memberType')}</span>
+                          <span style={{ fontSize: 11, color: 'var(--text)' }}>{memberTypeLabel(m)}</span>
+                        </div>
+                        {isAgentRef ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', minWidth: 40 }}>{t('team.refAgentName')}</span>
+                            <span style={{ fontSize: 11, color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>{typeof m.source === 'string' ? m.source : ''}</span>
+                          </div>
+                        ) : (
+                          <>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                              <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', minWidth: 40, marginTop: 2 }}>Persona</span>
+                              <span style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.5 }}>{memberPersona(m)}</span>
+                            </div>
+                            {memberModel(m) && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', minWidth: 40 }}>{t('team.memberModel')}</span>
+                                <span style={{ fontSize: 11, color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>{memberModel(m)}</span>
+                              </div>
+                            )}
+                          </>
+                        )}
+                        <div style={{ marginTop: 4 }}>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); startEditMember(idx, m) }}
+                            className={styles.editBtn}
+                          >
+                            {t('common.edit')}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Inline member edit */}
+                  {isExpanded && isEditingMember && (
+                    <div
+                      style={{
+                        padding: '10px 14px 10px 14px',
+                        marginTop: -1,
+                        border: '1px solid var(--border-accent)',
+                        borderTop: 'none',
+                        borderRadius: '0 0 var(--r-md) var(--r-md)',
+                        background: 'var(--bg-surface)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
+                      }}
+                    >
+                      <div className={styles.formRow}>
+                        <label className={styles.formLabel}>{t('team.memberName')}</label>
+                        <input
+                          value={editMemberName}
+                          onChange={(e) => setEditMemberName(e.target.value)}
+                          className={styles.formInput}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </div>
+                      {!isAgentRef && (
+                        <>
+                          <div className={styles.formRow}>
+                            <label className={styles.formLabel}>Persona</label>
+                            <textarea
+                              value={editMemberPersona}
+                              onChange={(e) => setEditMemberPersona(e.target.value)}
+                              className={styles.formTextarea}
+                              style={{ minHeight: 80 }}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          </div>
+                          <div className={styles.formRow}>
+                            <label className={styles.formLabel}>{t('team.memberModel')}</label>
+                            <Select
+                              value={editMemberModel}
+                              options={modelOpts}
+                              onChange={setEditMemberModel}
+                            />
+                          </div>
+                        </>
+                      )}
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                        <button onClick={(e) => { e.stopPropagation(); cancelEditMember() }} className={styles.cancelBtn}>
+                          {t('common.cancel')}
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); saveEditMember() }} className={styles.submitBtn}>
+                          {t('common.save')}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <button onClick={() => removeMember(idx)} className={styles.deleteBtn}>
-                  {t('common.delete')}
-                </button>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
 
@@ -472,10 +588,7 @@ export default function TeamTab() {
             <button onClick={() => setAddMode('custom')} className={styles.addBtn}>
               {t('team.addCustom')}
             </button>
-            <button
-              onClick={handleGenerateMembers}
-              className={styles.aiCreateBtn}
-            >
+            <button onClick={handleGenerateMembers} className={styles.aiCreateBtn}>
               <IconSparkles size={12} /> {t('team.aiGenerateMembers')}
             </button>
           </div>
@@ -485,33 +598,14 @@ export default function TeamTab() {
         {addMode === 'agent' && (
           <div
             style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 8,
-              marginTop: 8,
-              padding: 12,
-              border: '1px solid var(--border)',
-              borderRadius: 'var(--r-sm)',
-              background: 'var(--bg-card)',
+              display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8, padding: 12,
+              border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--bg-card)',
             }}
           >
-            <Select
-              value={agentSelect}
-              options={agentOpts}
-              onChange={setAgentSelect}
-              placeholder={t('team.selectAgent')}
-            />
+            <Select value={agentSelect} options={agentOpts} onChange={setAgentSelect} placeholder={t('team.selectAgent')} />
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => setAddMode(null)} className={styles.cancelBtn}>
-                {t('common.cancel')}
-              </button>
-              <button
-                onClick={addAgentMember}
-                disabled={!agentSelect}
-                className={styles.submitBtn}
-              >
-                {t('common.confirm')}
-              </button>
+              <button onClick={() => setAddMode(null)} className={styles.cancelBtn}>{t('common.cancel')}</button>
+              <button onClick={addAgentMember} disabled={!agentSelect} className={styles.submitBtn}>{t('common.confirm')}</button>
             </div>
           </div>
         )}
@@ -520,46 +614,16 @@ export default function TeamTab() {
         {addMode === 'custom' && (
           <div
             style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 8,
-              marginTop: 8,
-              padding: 12,
-              border: '1px solid var(--border)',
-              borderRadius: 'var(--r-sm)',
-              background: 'var(--bg-card)',
+              display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8, padding: 12,
+              border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--bg-card)',
             }}
           >
-            <input
-              value={customName}
-              onChange={(e) => setCustomName(e.target.value)}
-              placeholder={t('team.memberNamePlaceholder')}
-              className={styles.formInput}
-            />
-            <textarea
-              value={customPersona}
-              onChange={(e) => setCustomPersona(e.target.value)}
-              placeholder={t('team.memberPersonaPlaceholder')}
-              className={styles.formTextarea}
-              style={{ minHeight: 60 }}
-            />
-            <Select
-              value={customModel}
-              options={modelOpts}
-              onChange={setCustomModel}
-              placeholder={t('team.memberModel')}
-            />
+            <input value={customName} onChange={(e) => setCustomName(e.target.value)} placeholder={t('team.memberNamePlaceholder')} className={styles.formInput} />
+            <textarea value={customPersona} onChange={(e) => setCustomPersona(e.target.value)} placeholder={t('team.memberPersonaPlaceholder')} className={styles.formTextarea} style={{ minHeight: 60 }} />
+            <Select value={customModel} options={modelOpts} onChange={setCustomModel} placeholder={t('team.memberModel')} />
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => setAddMode(null)} className={styles.cancelBtn}>
-                {t('common.cancel')}
-              </button>
-              <button
-                onClick={addCustomMember}
-                disabled={!customName.trim() || !customPersona.trim()}
-                className={styles.submitBtn}
-              >
-                {t('common.confirm')}
-              </button>
+              <button onClick={() => setAddMode(null)} className={styles.cancelBtn}>{t('common.cancel')}</button>
+              <button onClick={addCustomMember} disabled={!customName.trim() || !customPersona.trim()} className={styles.submitBtn}>{t('common.confirm')}</button>
             </div>
           </div>
         )}
@@ -567,17 +631,11 @@ export default function TeamTab() {
 
       {/* Actions */}
       <div className={styles.formActions}>
-        <button onClick={resetForm} className={styles.cancelBtn}>
-          {t('common.cancel')}
-        </button>
+        <button onClick={resetForm} className={styles.cancelBtn}>{t('common.cancel')}</button>
         {isEdit ? (
-          <button onClick={handleUpdate} disabled={!valid} className={styles.submitBtn}>
-            {t('common.save')}
-          </button>
+          <button onClick={handleUpdate} disabled={!valid} className={styles.submitBtn}>{t('common.save')}</button>
         ) : (
-          <button onClick={handleCreate} disabled={!valid} className={styles.submitBtn}>
-            {t('common.create')}
-          </button>
+          <button onClick={handleCreate} disabled={!valid} className={styles.submitBtn}>{t('common.create')}</button>
         )}
       </div>
     </div>
@@ -596,42 +654,36 @@ export default function TeamTab() {
       <div className={styles.header}>
         {!isEditing && !isCreating && (
           <div className={styles.headerButtons}>
-            <button onClick={() => setShowForm(true)} className={styles.addBtn}>
-              {t('team.new')}
-            </button>
+            <button onClick={() => setShowForm(true)} className={styles.addBtn}>{t('team.new')}</button>
           </div>
         )}
       </div>
 
-      {/* Create form */}
       {isCreating && renderForm(false)}
 
-      {/* Empty state */}
       {teams.length === 0 && !isEditing && !isCreating && (
         <p className={styles.empty}>{t('team.empty')}</p>
       )}
 
-      {/* Team list */}
       <div className={styles.list}>
         {teams.map((team: TeamConfig) => {
           const isActive = editingId === team.id
           return (
             <div key={team.id} className={isActive ? styles.editGroup : ''}>
-              <div
-                className={`${styles.agentCard} ${isActive ? styles.agentCardActive : ''}`}
-              >
+              <div className={`${styles.agentCard} ${isActive ? styles.agentCardActive : ''}`}>
                 <div className={styles.agentAvatar}>
-                  <span className={styles.agentAvatarLetter}>
-                    {team.name[0]?.toUpperCase() || '?'}
-                  </span>
+                  <span className={styles.agentAvatarLetter}>{team.name[0]?.toUpperCase() || '?'}</span>
                 </div>
                 <div className={styles.agentCardBody}>
                   <div className={styles.agentCardHeader}>
                     <span className={styles.agentName}>{team.name}</span>
                     <div className={styles.agentBadges}>
-                      <span className={styles.modelBadge}>
-                        {strategyLabel(team.strategy)}
-                      </span>
+                      <span className={styles.modelBadge}>{strategyLabel(team.strategy)}</span>
+                      {team.captain?.model && (
+                        <span className={styles.modelBadge}>
+                          {t('team.captainLabel')}: {captainModelLabel(team.captain.model)}
+                        </span>
+                      )}
                       <span className={styles.modelBadge}>
                         {t('team.membersCount', { count: memberCount(team.members) })}
                       </span>
@@ -643,17 +695,21 @@ export default function TeamTab() {
                       {team.description.length > 80 ? '...' : ''}
                     </p>
                   )}
+                  {/* Team inline info: captain + member summary */}
+                  {(team.captain?.model || team.members?.length > 0) && (
+                    <div style={{ display: 'flex', gap: 12, marginTop: 4, fontSize: 10, color: 'var(--text-muted)' }}>
+                      {!team.captain?.model && (
+                        <span>{t('team.captainLabel')}: {t('team.captainDefaultModel')}</span>
+                      )}
+                      {team.members?.length > 0 && (
+                        <span>{team.members.map((m) => m.name).join(', ')}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className={styles.agentActions}>
-                  <button onClick={() => startEdit(team)} className={styles.editBtn}>
-                    {t('common.edit')}
-                  </button>
-                  <button
-                    onClick={() => handleDelete(team.id, team.name)}
-                    className={styles.deleteBtn}
-                  >
-                    {t('common.delete')}
-                  </button>
+                  <button onClick={() => startEdit(team)} className={styles.editBtn}>{t('common.edit')}</button>
+                  <button onClick={() => handleDelete(team.id, team.name)} className={styles.deleteBtn}>{t('common.delete')}</button>
                 </div>
               </div>
               {isActive && renderForm(true)}

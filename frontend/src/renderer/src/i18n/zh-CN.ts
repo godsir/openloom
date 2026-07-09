@@ -1197,6 +1197,14 @@ export const zhCN: TranslationMap = {
   'team.generating': '团长正在生成成员...',
   'team.membersGenerated': '已生成 {count} 个成员',
   'team.generateFailed': '成员生成失败: {reason}',
+  'team.captain': '团长配置',
+  'team.captainDesc': '团长负责汇总各成员输出并综合结论',
+  'team.captainLabel': '团长',
+  'team.captainDefaultModel': '默认模型',
+  'team.memberType': '类型',
+  'team.memberName': '名称',
+  'team.refAgent': '引用 Agent: {agent}',
+  'team.refAgentName': 'Agent',
 
   // ── Model Config ─────────────────────────────────────────────────
   'modelPanel.customProvider': '自定义供应商',

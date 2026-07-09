@@ -1197,6 +1197,14 @@ export const enUS: TranslationMap = {
   'team.generating': 'Captain is generating members...',
   'team.membersGenerated': 'Generated {count} members',
   'team.generateFailed': 'Member generation failed: {reason}',
+  'team.captain': 'Captain Configuration',
+  'team.captainDesc': 'The captain synthesizes member outputs into a final conclusion',
+  'team.captainLabel': 'Captain',
+  'team.captainDefaultModel': 'Default model',
+  'team.memberType': 'Type',
+  'team.memberName': 'Name',
+  'team.refAgent': 'Ref Agent: {agent}',
+  'team.refAgentName': 'Agent',
 
   // ── Model Config ─────────────────────────────────────────────────
   'modelPanel.customProvider': 'Custom Provider',
