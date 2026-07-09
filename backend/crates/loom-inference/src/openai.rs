@@ -840,7 +840,7 @@ pub async fn ensure_lm_studio_model(
     } else {
         format!("{}/v1/models", base)
     };
-    let client = HttpClient::new();
+    let client = super::engine::build_http_client();
     match client
         .get(&models_url)
         .timeout(std::time::Duration::from_secs(5))
