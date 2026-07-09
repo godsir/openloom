@@ -9,6 +9,7 @@ import ToolGroupBlock from './ToolGroupBlock'
 import TextBlock from './TextBlock'
 import FileBlock from './FileBlock'
 import SubagentCard from './SubagentCard'
+import TeamCard from './TeamCard'
 import VisionProcessingBlock from './VisionProcessingBlock'
 import ProcessOutputBlock from './ProcessOutputBlock'
 import MessageFooterActions from './MessageFooterActions'
@@ -129,6 +130,8 @@ const AssistantMessage = memo(function AssistantMessage({
                 return <FileBlock key={key} block={block} />
               case 'subagent':
                 return <SubagentCard key={key} block={block} />
+              case 'team':
+                return <TeamCard key={key} block={block} />
               default:
                 return null
             }

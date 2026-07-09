@@ -162,6 +162,7 @@ export const enUS: TranslationMap = {
   'chat.visionCompleted': 'Vision complete, main model generating',
   'chat.visionBatch': 'Batch {n}',
   'chat.subAgent': 'Sub-agent',
+  'chat.team': 'Team',
   'chat.emptyMessage': '(empty)',
   'chat.toolCount': '{n} tools',
   'chat.skillCount': '{n} skills',

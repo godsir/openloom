@@ -162,6 +162,7 @@ export const zhTW: TranslationMap = {
   'chat.visionCompleted': '辅助视觉已完成，主模型生成中',
   'chat.visionBatch': '第 {n} 批',
   'chat.subAgent': '子 Agent',
+  'chat.team': '團隊',
   'chat.emptyMessage': '(空)',
   'chat.toolCount': '{n} 个工具',
   'chat.skillCount': '{n} 个技能',
