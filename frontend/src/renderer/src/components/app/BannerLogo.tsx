@@ -100,9 +100,9 @@ export const BannerLogo: React.FC<{ className?: string }> = ({ className }) => {
           fill="none"
           opacity="0.6"
         />
-        {/* M — closer to OO, classic V-down stroke */}
+        {/* M — O right edge ~x=21, 15px gap → M starts at x=36 */}
         <path
-          d="M28 36 v-72 l20 72 l20 -72 v72"
+          d="M36 36 v-72 l20 72 l20 -72 v72"
           stroke="url(#titleGrad)"
           strokeWidth="7"
           strokeLinecap="round"
