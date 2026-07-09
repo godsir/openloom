@@ -2,7 +2,7 @@ import { useStore } from '../../stores'
 import { IconCpu, IconTerminal, IconBrain, IconBookOpen, IconSparkles, IconMessageSquare } from '../../utils/icons'
 import { useLocale } from '../../i18n'
 import styles from './WelcomeScreen.module.css'
-import bannerImg from '@asset/banner.png'
+import { BannerLogo } from '../app/BannerLogo'
 
 export default function WelcomeScreen() {
   const { t } = useLocale()
@@ -27,11 +27,7 @@ export default function WelcomeScreen() {
     <div className={styles.wrapper}>
       <div className={styles.inner}>
         <div className={styles.banner}>
-          <img
-            src={bannerImg}
-            alt="openLoom"
-            className={styles.bannerImg}
-          />
+          <BannerLogo />
         </div>
         <p className={styles.subtitle}>{t('welcome.subtitle')}</p>
 
