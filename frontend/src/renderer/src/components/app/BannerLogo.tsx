@@ -66,9 +66,9 @@ export const BannerLogo: React.FC<{ className?: string }> = ({ className }) => {
 
       {/* ── Logo: "LOOM" with infinity-loop OO ── */}
       <g transform="translate(240, 88)">
-        {/* L */}
+        {/* L — longer horizontal */}
         <path
-          d="M-115 -36 v72 h30"
+          d="M-115 -36 v72 h40"
           stroke="url(#titleGrad)"
           strokeWidth="7"
           strokeLinecap="round"
@@ -77,7 +77,7 @@ export const BannerLogo: React.FC<{ className?: string }> = ({ className }) => {
         />
         {/* First O (left half of infinity) */}
         <path
-          d="M-65 -6 a26 26 0 1 1 0 12"
+          d="M-60 -6 a26 26 0 1 1 0 12"
           stroke="url(#titleGrad)"
           strokeWidth="7"
           strokeLinecap="round"
@@ -85,7 +85,7 @@ export const BannerLogo: React.FC<{ className?: string }> = ({ className }) => {
         />
         {/* Second O (right half of infinity)  */}
         <path
-          d="M-13 -6 a26 26 0 1 1 0 12"
+          d="M-8 -6 a26 26 0 1 1 0 12"
           stroke="url(#titleGrad)"
           strokeWidth="7"
           strokeLinecap="round"
@@ -93,17 +93,22 @@ export const BannerLogo: React.FC<{ className?: string }> = ({ className }) => {
         />
         {/* Infinity bridge between the two O's */}
         <path
-          d="M-39 6 q13 -8 26 -8 q13 0 26 8"
+          d="M-34 6 q13 -8 26 -8 q13 0 26 8"
           stroke="var(--accent, #22D3EE)"
           strokeWidth="3"
           strokeLinecap="round"
           fill="none"
           opacity="0.6"
         />
-        {/* M — left vertical + V + right vertical */}
-        <path d="M40 36 v-72" stroke="url(#titleGrad)" strokeWidth="7" strokeLinecap="round" fill="none" />
-        <path d="M40 -36 l20 72 l20 -72" stroke="url(#titleGrad)" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-        <path d="M80 36 v-72" stroke="url(#titleGrad)" strokeWidth="7" strokeLinecap="round" fill="none" />
+        {/* M — closer to OO, classic V-down stroke */}
+        <path
+          d="M28 36 v-72 l20 72 l20 -72 v72"
+          stroke="url(#titleGrad)"
+          strokeWidth="7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="none"
+        />
       </g>
 
       {/* Subtitle line */}
