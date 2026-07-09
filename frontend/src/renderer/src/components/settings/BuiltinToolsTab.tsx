@@ -104,6 +104,9 @@ function buildTools(): ToolDef[] {
     { name: 'token_usage', descKey: 'bt.token_usage', category: 'system' },
     { name: 'use_skill', descKey: 'bt.use_skill', category: 'system' },
     { name: 'ask_user', descKey: 'bt.ask_user', category: 'system' },
+    { name: 'loop', descKey: 'bt.loop', category: 'system' },
+    { name: 'push_notification', descKey: 'bt.push_notification', category: 'system' },
+    { name: 'report_findings', descKey: 'bt.report_findings', category: 'system' },
   ]
 }
 

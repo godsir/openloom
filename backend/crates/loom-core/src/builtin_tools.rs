@@ -1107,6 +1107,44 @@ impl AgentTool for AskUserTool {
 }
 
 // ============================================================================
+// Loop — AI requests to continue in another turn
+// ============================================================================
+
+pub struct LoopTool;
+
+#[async_trait]
+impl AgentTool for LoopTool {
+    fn tool_name(&self) -> &str { "loop" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "loop".into(),
+            description: "要求继续执行下一轮。当你完成了当前轮的工作但还有更多要做时调用。prompt 告诉下一轮的你接下来做什么。不要滥用——每轮最多一次。".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "prompt": {"type":"string","description":"告诉下一轮的自己接下来要做什么"}
+                },
+                "required": ["prompt"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    fn supports_parallel(&self) -> bool { false }
+
+    async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, _context: &ToolContext) -> Result<ToolResult> {
+        let prompt = arguments["prompt"].as_str().unwrap_or("继续");
+        Ok(ToolResult {
+            content: format!("[loop] {}", prompt),
+            is_error: false,
+            structured_content: Some(serde_json::json!({"loop": true, "prompt": prompt})),
+        })
+    }
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
+
+// ============================================================================
 // PushNotification — AI pushes a desktop notification to the user
 // ============================================================================
 

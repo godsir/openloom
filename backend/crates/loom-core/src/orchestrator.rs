@@ -876,6 +876,7 @@ impl Orchestrator {
         let _ = registry.register(Arc::new(crate::builtin_tools::AskUserTool));
         let _ = registry.register(Arc::new(crate::builtin_tools::PushNotificationTool));
         let _ = registry.register(Arc::new(crate::builtin_tools::ReportFindingsTool));
+        let _ = registry.register(Arc::new(crate::builtin_tools::LoopTool));
 
         let skill_state = Arc::new(RwLock::new(loom_skills::SkillState::default()));
         let slash_router = Arc::new(RwLock::new(SlashRouter::new()));
