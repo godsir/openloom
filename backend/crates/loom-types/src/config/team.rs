@@ -50,7 +50,8 @@ pub struct TeamMember {
 /// 专家团配置，与 AgentConfig 同级存储。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamConfig {
-    /// 唯一标识（UUID v7）
+    /// 唯一标识（UUID v7），创建时为空则由服务端分配
+    #[serde(default)]
     pub id: String,
     /// 团队名称，如"代码审查团"
     pub name: String,
