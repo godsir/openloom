@@ -1463,10 +1463,10 @@ export const zhCN: TranslationMap = {
 
   // ── Software Tab ────────────────────────────────────────────────
   'software.description': '外观、字体与软件行为',
-  'software.chatSettings': '聊天设置',
-  'software.behavior': '行为',
-  'software.font': '字体',
   'software.appearance': '外观',
+  'software.font': '字体',
+  'software.interaction': '交互',
+  'software.behavior': '行为',
   'software.thinkingExpand': '思考块默认展开',
   'software.thinkingExpandDesc': 'AI 的思考过程内容块是否默认展开显示',
   'software.toolExpand': '工具块默认展开',
@@ -1568,6 +1568,8 @@ export const zhCN: TranslationMap = {
   'theme.ember': '熔岩',
   'theme.navy-gold': '鎏金',
   'theme.umber-cream': '摩卡',
+  'theme.mono': '墨白',
+  'theme.mono-inv': '白墨',
   'theme.custom': '自定义',
   'agent.default': '默认',
   'common.imageLoadError': '图片加载失败，即将关闭...',

@@ -1,6 +1,6 @@
 import { StateCreator } from 'zustand'
 
-export type ThemeId = 'dark' | 'light' | 'midnight' | 'warm-paper' | 'neon-pink' | 'ember' | 'navy-gold' | 'umber-cream' | 'custom'
+export type ThemeId = 'dark' | 'light' | 'midnight' | 'warm-paper' | 'neon-pink' | 'ember' | 'navy-gold' | 'umber-cream' | 'mono' | 'mono-inv' | 'custom'
 
 export interface CustomThemeColors {
   bg: string

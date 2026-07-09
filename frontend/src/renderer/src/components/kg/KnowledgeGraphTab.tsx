@@ -55,6 +55,7 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showLabels, setShowLabels] = useState(true)
   const [listPage, setListPage] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
 
   const chartWrapRef = useRef<HTMLDivElement>(null)
   const fullscreenWrapRef = useRef<HTMLDivElement>(null)
@@ -183,7 +184,10 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
     [kgNodeDelete, showConfirm, t],
   )
 
-  const handleRefreshGraph = useCallback(() => {
+  const handleRefreshGraph = useCallback(async () => {
+    setRefreshing(true)
+    // 先清空图谱强制全量重建，避免 ensurePositions 因节点相同跳过重排
+    useStore.getState().kgClearGraph()
     userClearedGraph.current = false
     const list = kgSearchResults.length > 0 ? kgSearchResults : kgNodeList
     const seen = new Set(['USER'])
@@ -199,7 +203,8 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
     const effectiveScope = scopeFilter === 'all' ? undefined
       : scopeFilter === 'session' ? (currentSessionId ?? undefined)
       : scopeFilter
-    kgLoadGraph(seeds, 2, effectiveScope)
+    await kgLoadGraph(seeds, 2, effectiveScope)
+    setRefreshing(false)
   }, [kgSearchResults, kgNodeList, kgLoadGraph, scopeFilter, currentSessionId])
 
   const handleDeleteEdge = useCallback(
@@ -270,7 +275,9 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
             {isFullscreen ? '⤓' : '⤢'}
           </button>
           {kgGraph && (
-            <button className={styles.clearBtn} onClick={handleRefreshGraph}>{t('kg.refreshGraph')}</button>
+            <button className={styles.clearBtn} onClick={handleRefreshGraph} disabled={refreshing}>
+              {refreshing ? '...' : t('kg.refreshGraph')}
+            </button>
           )}
           {kgStats && (
             <span className={styles.tabsStats}>

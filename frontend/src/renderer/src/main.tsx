@@ -13,6 +13,8 @@ import './themes/neon-pink.css'
 import './themes/ember.css'
 import './themes/navy-gold.css'
 import './themes/umber-cream.css'
+import './themes/mono.css'
+import './themes/mono-inv.css'
 
 // ── Polyfill: Map.prototype.getOrInsertComputed (ES2024) ──
 // pdfjs-dist v6 calls this method internally (e.g. `this.#objs.getOrInsertComputed(...)`).

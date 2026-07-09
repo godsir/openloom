@@ -139,48 +139,64 @@ export default function AgentConfigPanel() {
   const handleAiGenerate = async () => {
     if (!aiDescription.trim()) return
     setAiGenerating(true)
-    try {
-      const config = await loomRpc<any>('agent.config.generate', {
-        description: aiDescription.trim(),
-      })
-      setAiGeneratedConfig(config)
-      setNameDraft(config.name || '')
-      setPersonaDraft(config.persona || '')
-      setModelDraft(config.model || '')
-      setSystemPromptDraft(config.system_prompt_override || '')
-      setAvatarDraft(config.avatar || null)
-      setShowAiForm(false)
-      setShowForm(true)
-    } catch (e: any) {
-      useStore.getState().addToast({
-        type: 'error',
-        message: t('agent.aiGenerateFailed', { message: e.message || e }),
-      })
-    } finally {
-      setAiGenerating(false)
+    let lastError = ''
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const config = await loomRpc<any>('agent.config.generate', {
+          description: aiDescription.trim(),
+        })
+        setAiGeneratedConfig(config)
+        setNameDraft(config.name || '')
+        setPersonaDraft(config.persona || '')
+        setModelDraft(config.model || '')
+        setSystemPromptDraft(config.system_prompt_override || '')
+        setAvatarDraft(config.avatar || null)
+        setShowAiForm(false)
+        setShowForm(true)
+        setAiGenerating(false)
+        return
+      } catch (e: any) {
+        lastError = e.message || e
+        if (attempt === 0) {
+          await new Promise(r => setTimeout(r, 2000))
+        }
+      }
     }
+    useStore.getState().addToast({
+      type: 'error',
+      message: t('agent.aiGenerateFailed', { message: lastError }),
+    })
+    setAiGenerating(false)
   }
 
   const handleAiOptimize = async () => {
     setAiOptimizing(true)
-    try {
-      const config = await loomRpc<any>('agent.config.optimize', {
-        current: buildPayload(),
-      })
-      setNameDraft(config.name || nameDraft)
-      setPersonaDraft(config.persona || '')
-      setModelDraft(config.model || modelDraft)
-      setSystemPromptDraft(config.system_prompt_override || '')
-      setAvatarDraft(config.avatar || avatarDraft)
-      useStore.getState().addToast({ type: 'success', message: t('agent.aiOptimized') })
-    } catch (e: any) {
-      useStore.getState().addToast({
-        type: 'error',
-        message: t('agent.aiOptimizeFailed', { message: e.message || e }),
-      })
-    } finally {
-      setAiOptimizing(false)
+    let lastError = ''
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const config = await loomRpc<any>('agent.config.optimize', {
+          current: buildPayload(),
+        })
+        setNameDraft(config.name || nameDraft)
+        setPersonaDraft(config.persona || '')
+        setModelDraft(config.model || modelDraft)
+        setSystemPromptDraft(config.system_prompt_override || '')
+        setAvatarDraft(config.avatar || avatarDraft)
+        useStore.getState().addToast({ type: 'success', message: t('agent.aiOptimized') })
+        setAiOptimizing(false)
+        return
+      } catch (e: any) {
+        lastError = e.message || e
+        if (attempt === 0) {
+          await new Promise(r => setTimeout(r, 2000))
+        }
+      }
     }
+    useStore.getState().addToast({
+      type: 'error',
+      message: t('agent.aiOptimizeFailed', { message: lastError }),
+    })
+    setAiOptimizing(false)
   }
 
   const handleRegenerate = async () => {

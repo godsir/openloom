@@ -1463,10 +1463,10 @@ export const enUS: TranslationMap = {
 
   // ── Software Tab ────────────────────────────────────────────────
   'software.description': 'Appearance, fonts and behavior',
-  'software.chatSettings': 'Chat Settings',
-  'software.behavior': 'Behavior',
-  'software.font': 'Font',
   'software.appearance': 'Appearance',
+  'software.font': 'Font',
+  'software.interaction': 'Interaction',
+  'software.behavior': 'Behavior',
   'software.thinkingExpand': 'Thinking blocks expanded by default',
   'software.thinkingExpandDesc': 'Whether AI thinking process blocks are expanded by default',
   'software.toolExpand': 'Tool blocks expanded by default',
@@ -1568,6 +1568,8 @@ export const enUS: TranslationMap = {
   'theme.ember': 'Ember',
   'theme.navy-gold': 'Navy Gold',
   'theme.umber-cream': 'Mocha',
+  'theme.mono': 'Bone',
+  'theme.mono-inv': 'Ink',
   'theme.custom': 'Custom',
   'agent.default': 'Default',
   'common.imageLoadError': 'Image failed to load, closing...',

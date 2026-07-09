@@ -92,6 +92,8 @@ export const THEMES: { id: ThemeId; label: string }[] = [
   { id: 'ember', label: _t('theme.ember') },
   { id: 'navy-gold', label: _t('theme.navyGold') },
   { id: 'umber-cream', label: _t('theme.umberCream') },
+  { id: 'mono', label: _t('theme.mono') },
+  { id: 'mono-inv', label: _t('theme.mono-inv') },
   { id: 'custom', label: _t('theme.custom') },
 ]
 
@@ -155,45 +157,9 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
   const [useSystemProxy, setUseSystemProxy] = useState(false)
   const [isWin32, setIsWin32] = useState(false)
   const [loaded, setLoaded] = useState(false)
-  const [activeSection, setActiveSection] = useState('chat')
   const [customColors, setCustomColors] = useState({ bg: '#0B0F14', surface: '#111820', text: '#e2e8f0', accent: '#22d3ee' })
   const UI_FONT_OPTIONS = useUiFontOptions()
   const CODE_FONT_OPTIONS = useCodeFontOptions()
-
-  const SECTIONS = [
-    { id: 'chat', label: t('software.chatSettings') },
-    { id: 'behavior', label: t('software.behavior') },
-    { id: 'font', label: t('software.font') },
-    { id: 'appearance', label: t('software.appearance') },
-  ]
-
-  const scrollToSection = (id: string) => {
-    const el = document.getElementById(`sw-section-${id}`)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      setActiveSection(id)
-    }
-  }
-
-  // Scroll spy: track which section is visible
-  useEffect(() => {
-    const contentEl = document.getElementById('sw-content-body')
-    if (!contentEl) return
-    const sectionEls = SECTIONS.map(s => document.getElementById(`sw-section-${s.id}`)).filter(Boolean) as HTMLElement[]
-    if (sectionEls.length === 0) return
-
-    const onScroll = () => {
-      const top = contentEl.scrollTop + 80 // offset for sub-nav
-      for (let i = sectionEls.length - 1; i >= 0; i--) {
-        if (sectionEls[i].offsetTop <= top) {
-          setActiveSection(SECTIONS[i].id)
-          break
-        }
-      }
-    }
-    contentEl.addEventListener('scroll', onScroll, { passive: true })
-    return () => contentEl.removeEventListener('scroll', onScroll)
-  }, [SECTIONS])
 
   useEffect(() => {
     Promise.all([
@@ -372,347 +338,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
         <p className={styles.sectionDesc}>{t('software.description')}</p>
       </div>
       <div className={styles.contentBody} id="sw-content-body">
-        {/* Quick-jump sub nav */}
-        <div className={styles.subNav}>
-          {SECTIONS.map(s => (
-            <button
-              key={s.id}
-              onClick={() => scrollToSection(s.id)}
-              className={`${styles.subNavItem} ${activeSection === s.id ? styles.subNavActive : ''}`}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Chat Settings */}
-        <div className={styles.aboutSection} id="sw-section-chat">
-          <div className={styles.themeLabel}>{t('software.chatSettings')}</div>
-          {!loaded ? (
-            <p className={styles.toolsEmpty}>{t('common.loading')}</p>
-          ) : (
-            <>
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>{t('software.thinkingExpand')}</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.thinkingExpandDesc')}</p>
-                </div>
-                <div className={styles.mcpTransportToggle}>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${thinkingExpand ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleThinkingExpand(true)}
-                  >
-                    {t('software.expand')}
-                  </button>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${!thinkingExpand ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleThinkingExpand(false)}
-                  >
-                    {t('software.collapse')}
-                  </button>
-                </div>
-              </div>
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>{t('software.toolExpand')}</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.toolExpandDesc')}</p>
-                </div>
-                <div className={styles.mcpTransportToggle}>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${toolExpand ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleToolExpand(true)}
-                  >
-                    {t('software.expand')}
-                  </button>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${!toolExpand ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleToolExpand(false)}
-                  >
-                    {t('software.collapse')}
-                  </button>
-                </div>
-              </div>
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>{t('software.skillExpand')}</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.skillExpandDesc')}</p>
-                </div>
-                <div className={styles.mcpTransportToggle}>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${skillExpand ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleSkillExpand(true)}
-                  >
-                    {t('software.expand')}
-                  </button>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${!skillExpand ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleSkillExpand(false)}
-                  >
-                    {t('software.collapse')}
-                  </button>
-                </div>
-              </div>
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>{t('software.sendShortcut')}</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.sendShortcutDesc')}</p>
-                </div>
-                <div className={styles.mcpTransportToggle}>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${sendShortcut === 'enter' ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleSendShortcut('enter')}
-                  >
-                    Enter
-                  </button>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${sendShortcut === 'ctrl+enter' ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleSendShortcut('ctrl+enter')}
-                  >
-                    Ctrl+Enter
-                  </button>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${sendShortcut === 'shift+enter' ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleSendShortcut('shift+enter')}
-                  >
-                    Shift+Enter
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        <hr className={styles.sectionDivider} />
-
-        {/* Behavior */}
-        <div className={styles.aboutSection} id="sw-section-behavior">
-          <div className={styles.themeLabel}>{t('software.behavior')}</div>
-          {!loaded ? (
-            <p className={styles.toolsEmpty}>{t('common.loading')}</p>
-          ) : (
-            <>
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>{t('software.autoName')}</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.autoNameDesc')}</p>
-                </div>
-                <div className={styles.mcpTransportToggle}>
-                  <button
-                    onClick={() => handleAutoTitle(true)}
-                    className={`${styles.mcpTransportBtn} ${autoTitle ? styles.mcpTransportActive : ''}`}
-                  >
-                    {t('software.enable')}
-                  </button>
-                  <button
-                    onClick={() => handleAutoTitle(false)}
-                    className={`${styles.mcpTransportBtn} ${!autoTitle ? styles.mcpTransportActive : ''}`}
-                  >
-                    {t('software.disable')}
-                  </button>
-                </div>
-              </div>
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>{t('software.closeBehavior')}</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.closeBehaviorDesc')}</p>
-                </div>
-                <div className={styles.mcpTransportToggle}>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${closeToTray ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleCloseToTray(true)}
-                  >
-                    {t('software.minimizeToTray')}
-                  </button>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${!closeToTray ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleCloseToTray(false)}
-                  >
-                    {t('software.quitApp')}
-                  </button>
-                </div>
-              </div>
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>{t('software.startToTray')}</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.startToTrayDesc')}</p>
-                </div>
-                <div className={styles.mcpTransportToggle}>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${startToTray ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleStartToTray(true)}
-                  >
-                    {t('software.silentToTray')}
-                  </button>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${!startToTray ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleStartToTray(false)}
-                  >
-                    {t('software.showForeground')}
-                  </button>
-                </div>
-              </div>
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>{t('software.autoStart')}</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.autoStartDesc')}</p>
-                </div>
-                <div className={styles.mcpTransportToggle}>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${autoStart ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleAutoStart(true)}
-                  >
-                    {t('software.enable')}
-                  </button>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${!autoStart ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleAutoStart(false)}
-                  >
-                    {t('software.disable')}
-                  </button>
-                </div>
-              </div>
-              {isWin32 && (
-                <div className={styles.aboutRow}>
-                  <div>
-                    <span className={styles.aboutLabel}>{t('software.hwAccel')}</span>
-                    <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
-                      {t('software.hwAccelDesc')}
-                    </p>
-                  </div>
-                  <div className={styles.mcpTransportToggle}>
-                    <button
-                      className={`${styles.mcpTransportBtn} ${!disableHwAccel ? styles.mcpTransportActive : ''}`}
-                      onClick={() => handleDisableHwAccel(false)}
-                    >
-                      {t('software.enable')}
-                    </button>
-                    <button
-                      className={`${styles.mcpTransportBtn} ${disableHwAccel ? styles.mcpTransportActive : ''}`}
-                      onClick={() => handleDisableHwAccel(true)}
-                    >
-                      {t('software.disable')}
-                    </button>
-                  </div>
-                </div>
-              )}
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>{t('software.taskCompleteNotification')}</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.taskCompleteNotificationDesc')}</p>
-                </div>
-                <div className={styles.mcpTransportToggle}>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${taskCompleteNotification ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleTaskCompleteNotification(true)}
-                  >
-                    {t('software.enable')}
-                  </button>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${!taskCompleteNotification ? styles.mcpTransportActive : ''}`}
-                    onClick={() => handleTaskCompleteNotification(false)}
-                  >
-                    {t('software.disable')}
-                  </button>
-                </div>
-              </div>
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>{t('software.language')}</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.languageDesc')}</p>
-                </div>
-                <div style={{ width: 180 }}>
-                  <Select
-                    value={locale}
-                    options={LOCALES.map(l => ({ value: l.code, label: l.label }))}
-                    onChange={(v) => setLocale(v as Locale)}
-                    variant="form"
-                  />
-                </div>
-              </div>
-              {/* Proxy */}
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>{t('software.proxy')}</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.proxyDesc')}</p>
-                </div>
-                <div className={styles.mcpTransportToggle}>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${useSystemProxy ? styles.mcpTransportActive : ''}`}
-                    onClick={() => {
-                      setUseSystemProxy(true)
-                      loomRpc('config.set_tool_prefs', { http_proxy: '' }).then(() =>
-                        useStore.getState().addToast({ type: 'success', message: t('software.proxySaved') })
-                      ).catch(() =>
-                        useStore.getState().addToast({ type: 'error', message: t('common.failed') })
-                      )
-                    }}
-                  >
-                    {t('software.enable')}
-                  </button>
-                  <button
-                    className={`${styles.mcpTransportBtn} ${!useSystemProxy ? styles.mcpTransportActive : ''}`}
-                    onClick={() => {
-                      setUseSystemProxy(false)
-                    }}
-                  >
-                    {t('software.disable')}
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        <hr className={styles.sectionDivider} />
-
-        {/* Font */}
-        <div className={styles.aboutSection} id="sw-section-font">
-          <div className={styles.themeLabel}>{t('software.font')}</div>
-          {!loaded ? (
-            <p className={styles.toolsEmpty}>{t('common.loading')}</p>
-          ) : (
-            <>
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>{t('software.uiFont')}</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.uiFontDesc')}</p>
-                </div>
-                <div style={{ width: 240 }}>
-                  <Select
-                    value={uiFont}
-                    options={UI_FONT_OPTIONS}
-                    onChange={(v) => handleUiFont(v)}
-                    variant="form"
-                  />
-                </div>
-              </div>
-              <div className={styles.aboutRow}>
-                <div>
-                  <span className={styles.aboutLabel}>{t('software.codeFont')}</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.codeFontDesc')}</p>
-                </div>
-                <div style={{ width: 240 }}>
-                  <Select
-                    value={codeFont}
-                    options={CODE_FONT_OPTIONS}
-                    onChange={(v) => handleCodeFont(v)}
-                    variant="form"
-                  />
-                </div>
-              </div>
-              <div className={styles.fontPreview}>
-                <div className={styles.fontPreviewLabel}>{t('software.preview')}</div>
-                <pre className={styles.fontPreviewCode} style={{ fontFamily: codeFont || undefined }}>
-                  {`fn main() {\n  println!("Hello, openLoom");\n}`}
-                </pre>
-              </div>
-            </>
-          )}
-        </div>
-
-        <hr className={styles.sectionDivider} />
-
-        {/* Appearance */}
+        {/* ── 外观 ── */}
         <div className={styles.aboutSection} id="sw-section-appearance">
           <div className={styles.themeLabel}>{t('software.appearance')}</div>
 
@@ -820,37 +446,348 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
             </div>
           )}
 
+          {/* Font */}
+          <hr className={styles.sectionDivider} />
+          <div className={styles.themeLabel}>{t('software.font')}</div>
+          <div className={styles.aboutRow}>
+            <div>
+              <span className={styles.aboutLabel}>{t('software.fontSize')}</span>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.fontSizeDesc')}</p>
+            </div>
+            <div style={{ width: 180 }}>
+              <Select
+                value={fontSize}
+                options={(Object.entries(FONT_SIZE_MAP) as [FontSizeId, { label: string; px: number }][]).map(([id, info]) => ({
+                  value: id,
+                  label: `${_t(`textSize.${id}`)} (${info.px}px)`,
+                }))}
+                onChange={(v) => setFontSize(v as FontSizeId)}
+                variant="form"
+              />
+            </div>
+          </div>
+          <div className={styles.aboutRow}>
+            <div>
+              <span className={styles.aboutLabel}>{t('software.uiFont')}</span>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.uiFontDesc')}</p>
+            </div>
+            <div style={{ width: 240 }}>
+              <Select
+                value={uiFont}
+                options={UI_FONT_OPTIONS}
+                onChange={(v) => handleUiFont(v)}
+                variant="form"
+              />
+            </div>
+          </div>
+          <div className={styles.aboutRow}>
+            <div>
+              <span className={styles.aboutLabel}>{t('software.codeFont')}</span>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.codeFontDesc')}</p>
+            </div>
+            <div style={{ width: 240 }}>
+              <Select
+                value={codeFont}
+                options={CODE_FONT_OPTIONS}
+                onChange={(v) => handleCodeFont(v)}
+                variant="form"
+              />
+            </div>
+          </div>
+          <div className={styles.fontPreview}>
+            <div className={styles.fontPreviewLabel}>{t('software.preview')}</div>
+            <pre className={styles.fontPreviewCode} style={{ fontFamily: codeFont || undefined }}>
+              {`fn main() {\n  println!("Hello, openLoom");\n}`}
+            </pre>
+          </div>
+
+          {/* Reset */}
           {loaded && (
             <>
               <div className={styles.aboutRow}>
                 <div>
-                  <span className={styles.aboutLabel}>{t('software.fontSize')}</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.fontSizeDesc')}</p>
+                  <span className={styles.aboutLabel}>{t('software.resetToDefault')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.resetToDefaultDesc')}</p>
+                </div>
+                <button onClick={handleResetSize} className={styles.resetSizeBtn}>
+                  {t('software.resetToDefault')}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
+        <hr className={styles.sectionDivider} />
+
+        {/* ── 交互 ── */}
+        <div className={styles.aboutSection} id="sw-section-interaction">
+          <div className={styles.themeLabel}>{t('software.interaction')}</div>
+          {!loaded ? (
+            <p className={styles.toolsEmpty}>{t('common.loading')}</p>
+          ) : (
+            <>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>{t('software.sendShortcut')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.sendShortcutDesc')}</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${sendShortcut === 'enter' ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleSendShortcut('enter')}
+                  >
+                    Enter
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${sendShortcut === 'ctrl+enter' ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleSendShortcut('ctrl+enter')}
+                  >
+                    Ctrl+Enter
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${sendShortcut === 'shift+enter' ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleSendShortcut('shift+enter')}
+                  >
+                    Shift+Enter
+                  </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>{t('software.thinkingExpand')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.thinkingExpandDesc')}</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${thinkingExpand ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleThinkingExpand(true)}
+                  >
+                    {t('software.expand')}
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!thinkingExpand ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleThinkingExpand(false)}
+                  >
+                    {t('software.collapse')}
+                  </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>{t('software.toolExpand')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.toolExpandDesc')}</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${toolExpand ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleToolExpand(true)}
+                  >
+                    {t('software.expand')}
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!toolExpand ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleToolExpand(false)}
+                  >
+                    {t('software.collapse')}
+                  </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>{t('software.skillExpand')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.skillExpandDesc')}</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${skillExpand ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleSkillExpand(true)}
+                  >
+                    {t('software.expand')}
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!skillExpand ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleSkillExpand(false)}
+                  >
+                    {t('software.collapse')}
+                  </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>{t('software.taskCompleteNotification')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.taskCompleteNotificationDesc')}</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${taskCompleteNotification ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleTaskCompleteNotification(true)}
+                  >
+                    {t('software.enable')}
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!taskCompleteNotification ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleTaskCompleteNotification(false)}
+                  >
+                    {t('software.disable')}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <hr className={styles.sectionDivider} />
+
+        {/* ── 行为 ── */}
+        <div className={styles.aboutSection} id="sw-section-behavior">
+          <div className={styles.themeLabel}>{t('software.behavior')}</div>
+          {!loaded ? (
+            <p className={styles.toolsEmpty}>{t('common.loading')}</p>
+          ) : (
+            <>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>{t('software.closeBehavior')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.closeBehaviorDesc')}</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${closeToTray ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleCloseToTray(true)}
+                  >
+                    {t('software.minimizeToTray')}
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!closeToTray ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleCloseToTray(false)}
+                  >
+                    {t('software.quitApp')}
+                  </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>{t('software.startToTray')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.startToTrayDesc')}</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${startToTray ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleStartToTray(true)}
+                  >
+                    {t('software.silentToTray')}
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!startToTray ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleStartToTray(false)}
+                  >
+                    {t('software.showForeground')}
+                  </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>{t('software.autoStart')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.autoStartDesc')}</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${autoStart ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleAutoStart(true)}
+                  >
+                    {t('software.enable')}
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!autoStart ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleAutoStart(false)}
+                  >
+                    {t('software.disable')}
+                  </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>{t('software.autoName')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.autoNameDesc')}</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${autoTitle ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleAutoTitle(true)}
+                  >
+                    {t('software.enable')}
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!autoTitle ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleAutoTitle(false)}
+                  >
+                    {t('software.disable')}
+                  </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>{t('software.language')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.languageDesc')}</p>
                 </div>
                 <div style={{ width: 180 }}>
                   <Select
-                    value={fontSize}
-                    options={(Object.entries(FONT_SIZE_MAP) as [FontSizeId, { label: string; px: number }][]).map(([id, info]) => ({
-                      value: id,
-                      label: `${_t(`textSize.${id}`)} (${info.px}px)`,
-                    }))}
-                    onChange={(v) => setFontSize(v as FontSizeId)}
+                    value={locale}
+                    options={LOCALES.map(l => ({ value: l.code, label: l.label }))}
+                    onChange={(v) => setLocale(v as Locale)}
                     variant="form"
                   />
                 </div>
               </div>
               <div className={styles.aboutRow}>
                 <div>
-                  <span className={styles.aboutLabel}>{t('software.resetToDefault')}</span>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.resetToDefaultDesc')}</p>
+                  <span className={styles.aboutLabel}>{t('software.proxy')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.proxyDesc')}</p>
                 </div>
-                <button
-                  onClick={handleResetSize}
-                  className={styles.resetSizeBtn}
-                >
-                  {t('software.resetToDefault')}
-                </button>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${useSystemProxy ? styles.mcpTransportActive : ''}`}
+                    onClick={() => {
+                      setUseSystemProxy(true)
+                      loomRpc('config.set_tool_prefs', { http_proxy: '' }).then(() =>
+                        useStore.getState().addToast({ type: 'success', message: t('software.proxySaved') })
+                      ).catch(() =>
+                        useStore.getState().addToast({ type: 'error', message: t('common.failed') })
+                      )
+                    }}
+                  >
+                    {t('software.enable')}
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!useSystemProxy ? styles.mcpTransportActive : ''}`}
+                    onClick={() => setUseSystemProxy(false)}
+                  >
+                    {t('software.disable')}
+                  </button>
+                </div>
               </div>
+              {isWin32 && (
+                <div className={styles.aboutRow}>
+                  <div>
+                    <span className={styles.aboutLabel}>{t('software.hwAccel')}</span>
+                    <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.hwAccelDesc')}</p>
+                  </div>
+                  <div className={styles.mcpTransportToggle}>
+                    <button
+                      className={`${styles.mcpTransportBtn} ${!disableHwAccel ? styles.mcpTransportActive : ''}`}
+                      onClick={() => handleDisableHwAccel(false)}
+                    >
+                      {t('software.enable')}
+                    </button>
+                    <button
+                      className={`${styles.mcpTransportBtn} ${disableHwAccel ? styles.mcpTransportActive : ''}`}
+                      onClick={() => handleDisableHwAccel(true)}
+                    >
+                      {t('software.disable')}
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>

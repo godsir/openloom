@@ -34,7 +34,7 @@ function doSend<T>(method: string, params: Record<string, unknown>): Promise<T> 
     // chat.send can run for many minutes (agent loops up to 100 iterations).
     // session.messages may need to load + serialize thousands of messages
     // for long sessions (e.g. ClawClaw games) — give it the same long window.
-    const longMethods = new Set(['chat.send', 'session.messages', 'session.list'])
+    const longMethods = new Set(['chat.send', 'session.messages', 'session.list', 'agent.config.generate', 'agent.config.optimize'])
     const timeout = longMethods.has(method) ? 1_800_000 : 30_000 // 30 min
     const timer = setTimeout(() => {
       // Don't delete from pending — if the response eventually arrives, deliver it

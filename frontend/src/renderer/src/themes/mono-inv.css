@@ -1,0 +1,61 @@
+/* Inverse Monochrome theme — pure white & black (inverted mono) */
+[data-theme="mono-inv"] {
+  /* Surface */
+  --bg:         #FFFFFF;
+  --bg-surface: #F5F5F5;
+  --bg-card:    #EEEEEE;
+  --bg-active:  #E5E5E5;
+  --bg-overlay: rgba(255,255,255,0.85);
+  --bg-input:   #EEEEEE;
+  --bg-tooltip: #E5E5E5;
+
+  /* Text */
+  --text:           rgba(0,0,0,0.92);
+  --text-secondary: rgba(0,0,0,0.55);
+  --text-muted:     rgba(0,0,0,0.28);
+  --text-light:     rgba(0,0,0,0.55);
+
+  /* Borders */
+  --border:         rgba(0,0,0,0.08);
+  --border-default: rgba(0,0,0,0.12);
+  --border-accent:  rgba(0,0,0,0.25);
+  --border-light:   rgba(0,0,0,0.04);
+
+  /* Accent — Dark Gray */
+  --accent:         #333333;
+  --accent-hover:   #000000;
+  --accent-rgb:     51,51,51;
+  --accent-subtle:  rgba(0,0,0,0.06);
+  --accent-medium:  rgba(0,0,0,0.10);
+  --accent-glow:    rgba(0,0,0,0.08);
+  --accent-light:   rgba(0,0,0,0.06);
+  --accent-strong:  rgba(0,0,0,0.12);
+
+  /* Semantic */
+  --green:        #555555;
+  --green-rgb:    85,85,85;
+  --green-light:  rgba(85,85,85,0.10);
+  --amber:        #666666;
+  --amber-rgb:    102,102,102;
+  --amber-light:  rgba(102,102,102,0.10);
+  --red:          #444444;
+  --red-light:    rgba(68,68,68,0.10);
+
+  /* Toast */
+  --toast-success-bg: #DDDDDD;
+  --toast-success-text: #000000;
+  --toast-warning-bg: #D5D5D5;
+  --toast-warning-text: #000000;
+  --toast-error-bg: #CCCCCC;
+  --toast-error-text: #000000;
+  --toast-info-bg: #DBDBDB;
+  --toast-info-text: #000000;
+
+  /* Shadows */
+  --shadow:          0 1px 3px rgba(0,0,0,0.08);
+  --shadow-md:       0 4px 16px rgba(0,0,0,0.10);
+  --shadow-lg:       0 8px 32px rgba(0,0,0,0.14);
+  --shadow-glow:     0 0 20px rgba(0,0,0,0.04);
+  --shadow-composer: 0 0 30px rgba(0,0,0,0.03), 0 4px 20px rgba(0,0,0,0.08);
+  --shadow-glass:    0 8px 32px rgba(0,0,0,0.08);
+}
