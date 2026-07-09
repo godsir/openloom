@@ -13,12 +13,9 @@ export default function EntitySelector() {
   const agents = useStore((s) => s.agents)
   const teams = useStore((s) => s.teams)
   const currentSessionId = useStore((s) => s.currentSessionId)
-  const agentBindingName = useStore((s) =>
-    currentSessionId ? s.sessionAgentBindings[currentSessionId] : undefined,
-  )
-  const teamBindingId = useStore((s) =>
-    currentSessionId ? s.sessionTeamBindings[currentSessionId] : undefined,
-  )
+  const sid = currentSessionId || 'default'
+  const agentBindingName = useStore((s) => s.sessionAgentBindings[sid])
+  const teamBindingId = useStore((s) => s.sessionTeamBindings[sid])
 
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<TabId>(teamBindingId ? 'team' : 'agent')
