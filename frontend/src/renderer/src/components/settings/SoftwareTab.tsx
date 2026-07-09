@@ -152,7 +152,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
   const [thinkingExpand, setThinkingExpand] = useState(false)
   const [toolExpand, setToolExpand] = useState(true)
   const [skillExpand, setSkillExpand] = useState(false)
-  const [httpProxy, setHttpProxy] = useState('')
+  const [useSystemProxy, setUseSystemProxy] = useState(false)
   const [isWin32, setIsWin32] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [activeSection, setActiveSection] = useState('chat')
@@ -209,7 +209,10 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
       window.loom.getPreference('toolExpandDefault', true),
       window.loom.getPreference('skillExpandDefault', false),
       window.loom.getPreference('taskCompleteNotification', false),
-      loomRpc<{ http_proxy?: string }>('config.get_tool_prefs').then(p => { if (p.http_proxy) setHttpProxy(p.http_proxy) }).catch(() => {}),
+      loomRpc<{ http_proxy?: string }>('config.get_tool_prefs').then(p => {
+        // 没有自定义代理 → 使用系统代理（默认）
+        setUseSystemProxy(!p.http_proxy)
+      }).catch(() => {}),
       window.loom.getPlatform(),
     ]).then(([as, ct, st, at, uf, cf, cc, dha, te, toe, se, tcn, plat]) => {
       setAutoStart(as)
@@ -632,29 +635,27 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                   <span className={styles.aboutLabel}>{t('software.proxy')}</span>
                   <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.proxyDesc')}</p>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input
-                    type="text"
-                    value={httpProxy}
-                    onChange={(e) => setHttpProxy(e.target.value)}
-                    placeholder="http://127.0.0.1:7890"
-                    style={{
-                      width: 220, height: 28, padding: '0 8px', fontSize: 12,
-                      color: 'var(--text)', background: 'var(--bg-input)',
-                      border: '1px solid var(--border)', borderRadius: 4, outline: 'none',
-                    }}
-                  />
+                <div className={styles.mcpTransportToggle}>
                   <button
+                    className={`${styles.mcpTransportBtn} ${useSystemProxy ? styles.mcpTransportActive : ''}`}
                     onClick={() => {
-                      loomRpc('config.set_tool_prefs', { http_proxy: httpProxy }).then(() =>
+                      setUseSystemProxy(true)
+                      loomRpc('config.set_tool_prefs', { http_proxy: '' }).then(() =>
                         useStore.getState().addToast({ type: 'success', message: t('software.proxySaved') })
                       ).catch(() =>
                         useStore.getState().addToast({ type: 'error', message: t('common.failed') })
                       )
                     }}
-                    className={styles.mcpConnectBtn}
                   >
-                    {t('common.save')}
+                    {t('software.enable')}
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!useSystemProxy ? styles.mcpTransportActive : ''}`}
+                    onClick={() => {
+                      setUseSystemProxy(false)
+                    }}
+                  >
+                    {t('software.disable')}
                   </button>
                 </div>
               </div>
