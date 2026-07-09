@@ -135,6 +135,11 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    // Override auto_continue_max_rounds from RPC (for /loop, /goal)
+    if let Some(n) = p.get("auto_continue_max_rounds").and_then(|v| v.as_u64()) {
+        agent_config.auto_continue_max_rounds = n as usize;
+    }
+
     let mut result = state
         .orchestrator
         .process_message_with_config(

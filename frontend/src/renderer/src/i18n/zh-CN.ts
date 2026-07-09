@@ -207,6 +207,8 @@ export const zhCN: TranslationMap = {
   'slash.compactDone': '上下文已压缩（{chars} 字符）',
   'slash.compactDoneMsg': '上下文已压缩，释放约 {chars} 字符的空间。后续对话将更高效。',
   'slash.compactFailed': '压缩失败 — 检查模型是否已配置',
+  'slash.loopDesc': '循环任务 — AI 持续多轮执行，直到你手动停止',
+  'slash.goalDesc': '设定目标 — 设定条件后 AI 自动多轮工作直到达成',
 
   // ── Input ───────────────────────────────────────────────────────
   'input.startChat': '开始新对话...',

@@ -207,6 +207,8 @@ export const zhTW: TranslationMap = {
   'slash.compactDone': '上下文已壓縮（{chars} 字元）',
   'slash.compactDoneMsg': '上下文已壓縮，釋放約 {chars} 字元的空間。後續對話將更高效。',
   'slash.compactFailed': '壓縮失敗 — 檢查模型是否已配置',
+  'slash.loopDesc': '循環任務 — AI 持續多輪執行，直到你手動停止',
+  'slash.goalDesc': '設定目標 — 設定條件後 AI 自動多輪工作直到達成',
 
   // ── Input ───────────────────────────────────────────────────────
   'input.startChat': '开始新對話...',

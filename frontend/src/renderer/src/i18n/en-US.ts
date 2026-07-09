@@ -207,6 +207,8 @@ export const enUS: TranslationMap = {
   'slash.compactDone': 'Context compacted ({chars} chars)',
   'slash.compactDoneMsg': 'Context compacted, freeing ~{chars} chars. Subsequent conversation will be more efficient.',
   'slash.compactFailed': 'Compaction failed — check if a model is configured',
+  'slash.loopDesc': 'Loop task — AI runs multiple turns until you stop it',
+  'slash.goalDesc': 'Set goal — AI loops until condition is met',
 
   // ── Input ───────────────────────────────────────────────────────
   'input.startChat': 'Start a new chat...',

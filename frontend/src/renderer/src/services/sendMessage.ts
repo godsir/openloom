@@ -14,12 +14,11 @@ export interface SendMessageOptions {
   content: string
   attachedFiles?: AttachedFile[]
   skills?: string[]
-  /** For retry: skip appending a new user message (content is already in history). */
   skipUserMessage?: boolean
-  /** Quoted selections captured via Ctrl+Shift+I inline editor. */
   quotedSelections?: QuotedSelection[]
-  /** Override the global permission mode (e.g. write mode always uses 'operate'). */
   permissionMode?: string
+  /** /loop /goal: auto-continue rounds, 0 = use agent config default */
+  autoContinueMaxRounds?: number
 }
 
 /**
@@ -93,7 +92,7 @@ async function detectAndPromptCron(sessionId: string, content: string): Promise<
  * Send a message to the backend and manage the streaming state.
  * This is extracted from InputArea so it can be reused by resend/retry buttons.
  */
-export async function sendMessage({ sessionId, content, attachedFiles = [], skills, skipUserMessage, quotedSelections = [], permissionMode }: SendMessageOptions): Promise<void> {
+export async function sendMessage({ sessionId, content, attachedFiles = [], skills, skipUserMessage, quotedSelections = [], permissionMode, autoContinueMaxRounds }: SendMessageOptions): Promise<void> {
   const sid = sessionId
   useStore.getState().ensureSession(sid)
 
@@ -190,6 +189,7 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
       skills: validSkills && validSkills.length > 0 ? validSkills : undefined,
       skip_user_message: skipUserMessage || undefined,
       permission_mode: permissionMode || useStore.getState().permissionMode,
+      auto_continue_max_rounds: autoContinueMaxRounds || undefined,
       attached_files: attachedFiles.map(f => ({
         path: f.path,
         name: f.name,

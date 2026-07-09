@@ -5,7 +5,8 @@ export interface SlashCommand {
   name: string
   description: string
   kind: 'builtin'
-  execute?: () => void
+  execute?: (arg: string) => void
+  needsArg?: boolean
 }
 
 interface Props {
@@ -96,21 +97,32 @@ export function makeBuiltinCommands(args: {
   createSession: () => Promise<string>
   compactSession: () => Promise<void>
   t: (key: string, vars?: Record<string, string | number>) => string
+  onLoop?: (arg: string) => void
+  onGoal?: (arg: string) => void
 }): SlashCommand[] {
-  const { createSession, compactSession, t } = args
+  const { createSession, compactSession, t, onLoop, onGoal } = args
   return [
     { name: 'new', description: t('chat.newSession'), kind: 'builtin', execute: () => { createSession() } },
     { name: 'clear', description: t('chat.clearInput'), kind: 'builtin' },
     { name: 'compact', description: t('slash.compactDesc'), kind: 'builtin', execute: () => { compactSession() } },
+    { name: 'loop', description: t('slash.loopDesc'), kind: 'builtin', needsArg: true, execute: onLoop ? (arg: string) => { onLoop(arg) } : undefined },
+    { name: 'goal', description: t('slash.goalDesc'), kind: 'builtin', needsArg: true, execute: onGoal ? (arg: string) => { onGoal(arg) } : undefined },
   ]
 }
 
-export function getSlashQuery(text: string, cursorPos: number): string | null {
+export function getSlashQuery(text: string, cursorPos: number, argCommands?: Set<string>): string | null {
   const before = text.slice(0, cursorPos)
   const slashIdx = before.lastIndexOf('/')
   if (slashIdx === -1) return null
   if (slashIdx > 0 && before[slashIdx - 1] !== ' ' && before[slashIdx - 1] !== '\n') return null
-  const query = before.slice(slashIdx + 1)
-  if (/\s/.test(query)) return null
-  return query
+  const afterSlash = before.slice(slashIdx + 1)
+  // Commands that take args: "/loop <task>" or "/goal <condition>"
+  const spaceIdx = afterSlash.indexOf(' ')
+  if (spaceIdx !== -1) {
+    const cmdName = afterSlash.slice(0, spaceIdx)
+    if (argCommands?.has(cmdName)) return cmdName
+    return null
+  }
+  if (/\s/.test(afterSlash)) return null
+  return afterSlash
 }

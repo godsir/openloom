@@ -31,6 +31,9 @@ export default function InputArea() {
   const { t } = useLocale()
   const [text, setText] = useState('')
 
+  // Commands that accept trailing text as argument
+  const argCommands = useMemo(() => new Set(['loop', 'goal']), [])
+
   // 点击外部关闭发送快捷键下拉
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -76,6 +79,29 @@ export default function InputArea() {
   const sessionWorkspace = sessionId ? sessionWorkspaces[sessionId] : undefined
   // Memory enabled defaults to true (missing key = enabled)
   const isMemoryEnabled = sessionId ? (sessionMemoryEnabled[sessionId] ?? true) : true
+
+  // ── /loop and /goal ─────────────────────────────────────────────────
+
+  // /loop <task>: 发送任务并开启 auto_continue 长时间循环执行
+  const handleLoop = useCallback(async (arg: string) => {
+    if (!arg.trim()) return
+    const sid = sessionId || await createSession()
+    if (!sid) return
+    if (sessionId !== sid) await switchSession(sid)
+    setText('')
+    sendMessage({ sessionId: sid, content: arg.trim(), autoContinueMaxRounds: 50 })
+  }, [sessionId, createSession, switchSession])
+
+  // /goal <condition>: 设定目标 + 发送 + auto_continue 循环执行
+  const handleGoal = useCallback(async (arg: string) => {
+    if (!arg.trim()) return
+    const sid = sessionId || await createSession()
+    if (!sid) return
+    if (sessionId !== sid) await switchSession(sid)
+    setText('')
+    try { await loomRpc('goal.set', { session_id: sid, description: arg.trim() }) } catch {}
+    sendMessage({ sessionId: sid, content: '目标: ' + arg.trim(), autoContinueMaxRounds: 50 })
+  }, [sessionId, createSession, switchSession])
 
   // Load available skills (deduplicate by name)
   const refreshSkills = useCallback(async () => {
@@ -156,12 +182,14 @@ export default function InputArea() {
     createSession,
     compactSession,
     t,
-  }), [createSession, compactSession, t])
+    onLoop: handleLoop,
+    onGoal: handleGoal,
+  }), [createSession, compactSession, t, handleLoop, handleGoal])
 
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setText(e.target.value)
     const cursorPos = e.target.selectionStart ?? e.target.value.length
-    const query = getSlashQuery(e.target.value, cursorPos)
+    const query = getSlashQuery(e.target.value, cursorPos, argCommands)
     if (query !== null) {
       setSlashQuery(query)
       setShowSlashMenu(true)
@@ -178,17 +206,21 @@ export default function InputArea() {
 
   const handleSlashSelect = useCallback(
     (cmd: SlashCommand) => {
-      // Remove the "/query" prefix from the textarea
       const cursorPos = textareaRef.current?.selectionStart ?? text.length
       const before = text.slice(0, cursorPos)
       const slashIdx = before.lastIndexOf('/')
+      // Extract arg after command name (e.g. "/loop review my PR" → "review my PR")
+      let arg = ''
       if (slashIdx !== -1) {
+        const afterSlash = text.slice(slashIdx + 1)
+        const spaceIdx = afterSlash.indexOf(' ')
+        arg = spaceIdx !== -1 ? afterSlash.slice(spaceIdx + 1).trim() : ''
         const after = text.slice(cursorPos)
         setText(before.slice(0, slashIdx) + after)
       }
       closeSlashMenu()
       if (cmd.execute) {
-        cmd.execute()
+        cmd.execute(arg)
         textareaRef.current?.focus()
       }
     },
