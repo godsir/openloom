@@ -47,6 +47,7 @@ pub mod tool;
 // Re-export all public types at crate root for ergonomic imports
 pub use config::compaction::*;
 pub use config::model_config::*;
+pub use config::team::{MemberSource, TeamCaptain, TeamConfig, TeamMember, TeamStrategy};
 pub use config::*;
 pub use event::*;
 pub use id::*;
