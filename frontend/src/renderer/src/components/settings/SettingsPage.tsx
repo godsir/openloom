@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useStore } from '../../stores'
-import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconBug, IconChevronUp, IconCommand, IconEdit, IconFileText, IconMessageSquare } from '../../utils/icons'
+import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconBug, IconChevronUp, IconCommand, IconEdit, IconFileText, IconMessageSquare, IconUsers } from '../../utils/icons'
 import AgentConfigPanel from '../shared/AgentConfigPanel'
 import LoomMdSection from '../shared/LoomMdSection'
 import { loomRpc } from '../../services/jsonrpc'
@@ -19,9 +19,10 @@ import ShortcutsTab from './ShortcutsTab'
 import TokenTab from './TokenTab'
 import KgTab from './KgTab'
 import ImTab from './ImTab'
+import TeamTab from './TeamTab'
 import { WriteSettingsSection } from '../write/WriteSettingsSection'
 
-type Tab = 'software' | 'agent' | 'loom' | 'models' | 'workspace' | 'mcp' | 'skills' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'write' | 'about' | 'im' | 'builtin_tools'
+type Tab = 'software' | 'agent' | 'team' | 'loom' | 'models' | 'workspace' | 'mcp' | 'skills' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'write' | 'about' | 'im' | 'builtin_tools'
 
 function GlobalDefaultsSection() {
   const { t } = useLocale()
@@ -98,6 +99,7 @@ function useSettingsTabs() {
       label: t('settings.assistantGroup'),
       items: [
         { id: 'agent' as Tab, label: t('settings.agent'), icon: <IconBot size={14} /> },
+        { id: 'team' as Tab, label: t('settings.team'), icon: <IconUsers size={14} /> },
         { id: 'loom' as Tab, label: t('settings.loomMd'), icon: <IconFileText size={14} /> },
         { id: 'models' as Tab, label: t('settings.models'), icon: <IconBox size={14} /> },
         { id: 'kg' as Tab, label: t('settings.memorySystem'), icon: <IconBrain size={14} /> },
@@ -207,6 +209,18 @@ export default function SettingsPage() {
             <div className={styles.contentBody}>
               <GlobalDefaultsSection />
               <AgentConfigPanel />
+            </div>
+          </>
+        )}
+
+        {tab === 'team' && (
+          <>
+            <div className={styles.contentHeader}>
+              <h3 className={styles.sectionTitle}>{t('settings.teamConfig')}</h3>
+              <p className={styles.sectionDesc}>{t('settings.teamConfigDesc')}</p>
+            </div>
+            <div className={styles.contentBody}>
+              <TeamTab />
             </div>
           </>
         )}
