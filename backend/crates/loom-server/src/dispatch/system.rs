@@ -38,6 +38,9 @@ pub async fn handle(
         // Sandbox
         "config.get_sandbox" => Some(handle_config_get_sandbox(state).await),
         "config.set_sandbox" => Some(handle_config_set_sandbox(state, p).await),
+        // Tool prefs
+        "config.get_tool_prefs" => Some(handle_config_get_tool_prefs(state).await),
+        "config.set_tool_prefs" => Some(handle_config_set_tool_prefs(state, p).await),
         // Global defaults
         "config.get_defaults" => Some(handle_config_get_defaults(state).await),
         "config.set_defaults" => Some(handle_config_set_defaults(state, p).await),
@@ -376,6 +379,36 @@ async fn handle_config_set_defaults(state: &AppState, p: &Value) -> Result<Value
             .set_default_max_prompt_budget(v as usize)
             .await;
     }
+    Ok(json!({ "ok": true }))
+}
+
+// --- config.get_tool_prefs ---
+
+async fn handle_config_get_tool_prefs(state: &AppState) -> Result<Value, JsonRpcError> {
+    let config = state.orchestrator.load_tool_prefs().await;
+    Ok(serde_json::to_value(config).unwrap_or_default())
+}
+
+// --- config.set_tool_prefs ---
+
+async fn handle_config_set_tool_prefs(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let mut config = state.orchestrator.load_tool_prefs().await;
+    if let Some(v) = p.get("shell_default_timeout_secs").and_then(|v| v.as_u64()) { config.shell_default_timeout_secs = v; }
+    if let Some(v) = p.get("shell_max_timeout_secs").and_then(|v| v.as_u64()) { config.shell_max_timeout_secs = v; }
+    if let Some(v) = p.get("file_read_max_output_kb").and_then(|v| v.as_u64()) { config.file_read_max_output_kb = v as usize; }
+    if let Some(v) = p.get("web_search_engine").and_then(|v| v.as_str()) {
+        config.web_search_engine = serde_json::from_value(serde_json::Value::String(v.to_string())).unwrap_or_default();
+    }
+    if let Some(v) = p.get("web_search_max_results").and_then(|v| v.as_u64()) { config.web_search_max_results = v as usize; }
+    if let Some(v) = p.get("web_fetch_max_chars").and_then(|v| v.as_u64()) { config.web_fetch_max_chars = v as usize; }
+    if let Some(v) = p.get("process_wait_max_timeout_secs").and_then(|v| v.as_u64()) { config.process_wait_max_timeout_secs = v; }
+    if let Some(v) = p.get("monitor_default_timeout_ms").and_then(|v| v.as_u64()) { config.monitor_default_timeout_ms = v; }
+    state.orchestrator.save_tool_prefs(&config).await
+        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+    // Also push into the live ToolPrefsConfig ref so executing tools see the change immediately
+    let prefs_lock = state.orchestrator.tool_prefs();
+    let mut live = prefs_lock.write().await;
+    *live = config.clone();
     Ok(json!({ "ok": true }))
 }
 
