@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -725,6 +725,64 @@ impl<'a> McpConfigStore<'a> {
     pub fn delete(&self, name: &str) -> Result<()> {
         self.conn
             .execute("DELETE FROM mcp_servers WHERE name = ?1", params![name])?;
+        Ok(())
+    }
+}
+
+// ============================================================================
+// TeamConfigStore — expert-team config CRUD
+// ============================================================================
+
+pub struct TeamConfigStore<'a> {
+    conn: &'a Connection,
+}
+
+impl<'a> TeamConfigStore<'a> {
+    pub fn new(conn: &'a Connection) -> Self {
+        Self { conn }
+    }
+
+    /// 保存团队配置（INSERT OR REPLACE 语义）
+    pub async fn save_team_config(&self, config: &loom_types::TeamConfig) -> Result<()> {
+        let config_json = serde_json::to_string(config)?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO team_configs (id, name, config_json, updated_at)
+             VALUES (?1, ?2, ?3, datetime('now'))",
+            params![config.id, config.name, config_json],
+        )?;
+        Ok(())
+    }
+
+    /// 获取单个团队配置
+    pub async fn get_team_config(&self, id: &str) -> Result<Option<loom_types::TeamConfig>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT config_json FROM team_configs WHERE id = ?1",
+        )?;
+        let result: Option<String> = stmt
+            .query_row(params![id], |row| row.get(0))
+            .optional()?;
+        match result {
+            Some(json) => Ok(Some(serde_json::from_str(&json)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// 列出所有团队配置
+    pub async fn list_team_configs(&self) -> Result<Vec<loom_types::TeamConfig>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT config_json FROM team_configs ORDER BY name",
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut configs = Vec::new();
+        for row in rows {
+            configs.push(serde_json::from_str(&row?)?);
+        }
+        Ok(configs)
+    }
+
+    /// 删除团队配置
+    pub async fn delete_team_config(&self, id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM team_configs WHERE id = ?1", params![id])?;
         Ok(())
     }
 }

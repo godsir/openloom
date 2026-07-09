@@ -42,7 +42,7 @@ pub use pipeline::{
 };
 pub use store::{
     AgentConfigStore, CognitionRow, CognitionSnapshot, CognitionStore, EventRow, McpConfigStore,
-    McpServerRow, ModelConfigStore, NewEvent,
+    McpServerRow, ModelConfigStore, NewEvent, TeamConfigStore,
 };
 pub use summary::SummaryEngine;
 pub use todo_store::{TodoItem, TodoStore};

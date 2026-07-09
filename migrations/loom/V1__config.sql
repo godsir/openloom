@@ -59,3 +59,11 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     created_at           TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS team_configs (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    config_json     TEXT NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
