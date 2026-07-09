@@ -259,6 +259,12 @@ export const zhTW: TranslationMap = {
   'input.permissionTitle': '權限: {mode}',
   'input.thinkingTitle': '思考: {level}',
 
+  // ── Git ──────────────────────────────────────────────────────────
+  'git.branchUnavailable': '未檢測到 Git',
+  'git.searchBranches': '搜尋分支...',
+  'git.noBranches': '無匹配分支',
+  'git.createBranch': '建立並切換到 ',
+
   // ── Settings ────────────────────────────────────────────────────
   'settings.title': '設定',
   'settings.general': '通用',

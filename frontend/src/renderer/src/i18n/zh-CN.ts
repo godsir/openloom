@@ -259,6 +259,12 @@ export const zhCN: TranslationMap = {
   'input.permissionTitle': '权限: {mode}',
   'input.thinkingTitle': '思考: {level}',
 
+  // ── Git ──────────────────────────────────────────────────────────
+  'git.branchUnavailable': '未检测到 Git',
+  'git.searchBranches': '搜索分支...',
+  'git.noBranches': '无匹配分支',
+  'git.createBranch': '创建并切换到',
+
   // ── Settings ────────────────────────────────────────────────────
   'settings.title': '设置',
   'settings.general': '通用',

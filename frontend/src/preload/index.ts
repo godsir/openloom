@@ -47,6 +47,10 @@ export interface LoomApi {
   unwatchFile: (filePath: string, workspaceRoot: string) => Promise<{ok: boolean}>
   /** Show a native OS notification (Windows toast / macOS notification center) */
   showNotification: (title: string, body: string) => Promise<void>
+  /** Git branch operations */
+  getGitBranches: (workspaceRoot: string) => Promise<import('../main/services/git-service').GitBranchesResult>
+  switchGitBranch: (workspaceRoot: string, branch: string) => Promise<import('../main/services/git-service').GitBranchesResult>
+  createAndSwitchGitBranch: (workspaceRoot: string, branch: string) => Promise<import('../main/services/git-service').GitBranchesResult>
   /** Get / set Chromium zoom factor (Ctrl+/- zoom level) */
   getZoomFactor: () => Promise<number>
   setZoomFactor: (factor: number) => Promise<void>
@@ -185,6 +189,9 @@ contextBridge.exposeInMainWorld('loom', {
   watchFile: (filePath: string, workspaceRoot: string) => ipcRenderer.invoke('write:watch-file', { filePath, workspaceRoot }),
   unwatchFile: (filePath: string, workspaceRoot: string) => ipcRenderer.invoke('write:unwatch-file', { filePath, workspaceRoot }),
   showNotification: (title: string, body: string) => ipcRenderer.invoke('show-notification', title, body),
+  getGitBranches: (workspaceRoot: string) => ipcRenderer.invoke('git:branches', workspaceRoot) as ReturnType<LoomApi['getGitBranches']>,
+  switchGitBranch: (workspaceRoot: string, branch: string) => ipcRenderer.invoke('git:switch-branch', workspaceRoot, branch) as ReturnType<LoomApi['switchGitBranch']>,
+  createAndSwitchGitBranch: (workspaceRoot: string, branch: string) => ipcRenderer.invoke('git:create-and-switch-branch', workspaceRoot, branch) as ReturnType<LoomApi['createAndSwitchGitBranch']>,
   getZoomFactor: () => ipcRenderer.invoke('get-zoom-factor'),
   setZoomFactor: (factor: number) => ipcRenderer.invoke('set-zoom-factor', factor),
   onContextMenu: (cb: (params: ContextMenuParams) => void) => {

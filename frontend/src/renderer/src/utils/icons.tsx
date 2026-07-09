@@ -95,6 +95,7 @@ export {
   ScanSearch as IconScanSearch,
   ClipboardCheck as IconClipboardCheck,
   QrCode as IconQrCode,
+  GitBranch as IconGitBranch,
 } from 'lucide-react'
 
 export function IconStarFilled({ size = 16, className = '' }: { size?: number; className?: string }) {

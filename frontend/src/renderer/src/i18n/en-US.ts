@@ -259,6 +259,12 @@ export const enUS: TranslationMap = {
   'input.permissionTitle': 'Permission: {mode}',
   'input.thinkingTitle': 'Thinking: {level}',
 
+  // ── Git ──────────────────────────────────────────────────────────
+  'git.branchUnavailable': 'No Git detected',
+  'git.searchBranches': 'Search branches...',
+  'git.noBranches': 'No matching branches',
+  'git.createBranch': 'Create & switch to ',
+
   // ── Settings ────────────────────────────────────────────────────
   'settings.title': 'Settings',
   'settings.general': 'General',

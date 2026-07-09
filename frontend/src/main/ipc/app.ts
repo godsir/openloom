@@ -3,6 +3,7 @@ import * as path from 'path'
 import { getStoreKey, setStoreKey } from '../store'
 import { checkForUpdates, downloadUpdate, installUpdate, getUpdateChannel, setUpdateChannel } from '../updater'
 import { restartEngine } from '../engine'
+import { getGitBranches, switchGitBranch, createAndSwitchGitBranch } from '../services/git-service'
 
 export function registerAppIpc(): void {
   ipcMain.handle('get-loom-dir', () => {
@@ -91,6 +92,20 @@ export function registerAppIpc(): void {
       wc.zoomFactor = factor
       setStoreKey('zoomFactor', factor)
     }
+  })
+
+  // ── Git branch operations ──
+
+  ipcMain.handle('git:branches', async (_event, workspaceRoot: string) => {
+    return getGitBranches(workspaceRoot)
+  })
+
+  ipcMain.handle('git:switch-branch', async (_event, workspaceRoot: string, branch: string) => {
+    return switchGitBranch(workspaceRoot, branch)
+  })
+
+  ipcMain.handle('git:create-and-switch-branch', async (_event, workspaceRoot: string, branch: string) => {
+    return createAndSwitchGitBranch(workspaceRoot, branch)
   })
 
   // Native OS notification
