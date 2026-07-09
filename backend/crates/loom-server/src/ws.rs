@@ -227,6 +227,8 @@ fn agent_event_method(event: &AgentEvent) -> &'static str {
         AgentEvent::MonitorOutput { .. } => "monitor.output",
         AgentEvent::MonitorExited { .. } => "monitor.exited",
         AgentEvent::MonitorError { .. } => "monitor.error",
+        AgentEvent::PushNotification { .. } => "push_notification",
+        AgentEvent::ReviewFindings { .. } => "review_findings",
     }
 }
 
@@ -388,6 +390,26 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
                 "monitor_id": monitor_id,
                 "error": error,
                 "session_id": session_id,
+            })
+        }
+        AgentEvent::PushNotification {
+            session_id,
+            title,
+            body,
+        } => {
+            json!({
+                "session_id": session_id,
+                "title": title,
+                "body": body,
+            })
+        }
+        AgentEvent::ReviewFindings {
+            session_id,
+            findings,
+        } => {
+            json!({
+                "session_id": session_id,
+                "findings": findings,
             })
         }
         _ => json!({}),

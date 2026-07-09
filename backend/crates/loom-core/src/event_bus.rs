@@ -96,6 +96,17 @@ pub enum AgentEvent {
     TodoStatusChanged { session_id: String, todo_id: String, status: String },
     /// The entire todo list was replaced (todo_write called by AI).
     TodosReplaced { session_id: String, todos: serde_json::Value },
+    /// AI wants to push a desktop notification to the user.
+    PushNotification {
+        session_id: String,
+        title: String,
+        body: String,
+    },
+    /// AI reports structured code-review findings.
+    ReviewFindings {
+        session_id: String,
+        findings: serde_json::Value,
+    },
     /// A cron job was triggered (started executing).
     CronJobTriggered {
         job_id: String,

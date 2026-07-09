@@ -1073,12 +1073,13 @@ impl AgentTool for AskUserTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "ask_user".into(),
-            description: "Ask the user a clarifying question when their request is ambiguous. Use when you need more information — don't guess.".into(),
+            description: "向用户提问。当需求不明确时用来澄清。支持文字问题 + 可选的 2-4 个多选项。single_choice 模式只能选一个，multi_choice 可多选。".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "question": {"type":"string","description":"The clarifying question"},
-                    "options": {"type":"array","items":{"type":"string"},"description":"Optional choices"}
+                    "question": {"type":"string","description":"要问用户的问题"},
+                    "options": {"type":"array","items":{"type":"string"},"description":"2-4 个选项"},
+                    "multi_choice": {"type":"boolean","description":"是否允许多选（默认单选）"}
                 },
                 "required": ["question"]
             }),
@@ -1091,12 +1092,145 @@ impl AgentTool for AskUserTool {
     async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, _context: &ToolContext) -> Result<ToolResult> {
         let question = arguments["question"].as_str().unwrap_or("");
         let options: Vec<String> = arguments["options"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+        let multi_choice = arguments["multi_choice"].as_bool().unwrap_or(false);
+
         let mut content = format!("? {}", question);
         if !options.is_empty() {
             content.push_str("\n\nOptions:");
             for (i, o) in options.iter().enumerate() { content.push_str(&format!("\n  {}. {}", i+1, o)); }
         }
-        Ok(ToolResult { content, is_error: false, structured_content: Some(serde_json::json!({"question":question,"options":options})) })
+        let sc = serde_json::json!({"question": question, "options": options, "multi_choice": multi_choice});
+
+        Ok(ToolResult { content, is_error: false, structured_content: Some(sc) })
+    }
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
+
+// ============================================================================
+// PushNotification — AI pushes a desktop notification to the user
+// ============================================================================
+
+pub struct PushNotificationTool;
+
+#[async_trait]
+impl AgentTool for PushNotificationTool {
+    fn tool_name(&self) -> &str { "push_notification" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "push_notification".into(),
+            description: "向用户桌面推送通知。长任务完成、构建失败、需要用户决策的阻塞点时使用。title 简短（<30 字），body 补充说明。".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "title": {"type":"string","description":"通知标题，简短精炼"},
+                    "body": {"type":"string","description":"通知正文"}
+                },
+                "required": ["title"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    fn supports_parallel(&self) -> bool { true }
+
+    async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, context: &ToolContext) -> Result<ToolResult> {
+        let title = arguments["title"].as_str().unwrap_or("openLoom");
+        let body = arguments["body"].as_str().unwrap_or("");
+
+        let sid = context.session_id.clone().unwrap_or_default();
+        if let Some(ref bus) = context.event_bus {
+            bus.publish(crate::event_bus::AgentEvent::PushNotification {
+                session_id: sid,
+                title: title.to_string(),
+                body: body.to_string(),
+            });
+        }
+
+        Ok(ToolResult {
+            content: format!("已推送通知: {}", title),
+            is_error: false,
+            structured_content: Some(serde_json::json!({"title": title, "body": body})),
+        })
+    }
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+}
+
+// ============================================================================
+// ReportFindings — AI reports structured code-review findings
+// ============================================================================
+
+pub struct ReportFindingsTool;
+
+#[async_trait]
+impl AgentTool for ReportFindingsTool {
+    fn tool_name(&self) -> &str { "report_findings" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "report_findings".into(),
+            description: "结构化上报代码审查/分析发现的问题。每条发现包含文件路径、行号、严重程度、摘要和修复建议。严重程度：critical（必须修）、important（应该修）、minor（可选）。".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "findings": {
+                        "type": "array",
+                        "description": "发现的问题列表（最多 32 条）",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "file": {"type":"string","description":"文件路径（相对于仓库根目录）"},
+                                "line": {"type":"integer","description":"行号"},
+                                "severity": {"type":"string","enum":["critical","important","minor"]},
+                                "summary": {"type":"string","description":"一句话描述问题"},
+                                "detail": {"type":"string","description":"详细说明和修复建议"}
+                            },
+                            "required": ["file","severity","summary"]
+                        }
+                    }
+                },
+                "required": ["findings"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    fn supports_parallel(&self) -> bool { true }
+
+    async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, context: &ToolContext) -> Result<ToolResult> {
+        let findings = arguments["findings"].as_array().cloned().unwrap_or_default();
+
+        if findings.len() > 32 {
+            return Ok(ToolResult {
+                content: "最多 32 条发现。".into(),
+                is_error: true,
+                structured_content: None,
+            });
+        }
+
+        let sid = context.session_id.clone().unwrap_or_default();
+        if let Some(ref bus) = context.event_bus {
+            bus.publish(crate::event_bus::AgentEvent::ReviewFindings {
+                session_id: sid,
+                findings: serde_json::Value::Array(findings.clone()),
+            });
+        }
+
+        let summary: Vec<String> = findings.iter().map(|f| {
+            let sev = match f["severity"].as_str().unwrap_or("") {
+                "critical" => "CRIT", "important" => "IMPT", _ => "MINOR"
+            };
+            let file = f["file"].as_str().unwrap_or("?");
+            let line = f["line"].as_u64().map(|n| n.to_string()).unwrap_or_else(|| "-".into());
+            let msg = f["summary"].as_str().unwrap_or("");
+            format!("[{sev}] {file}:{line} — {msg}")
+        }).collect();
+
+        Ok(ToolResult {
+            content: format!("已上报 {} 条发现:\n{}", findings.len(), summary.join("\n")),
+            is_error: false,
+            structured_content: Some(serde_json::json!({"count": findings.len(), "findings": findings})),
+        })
     }
     fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
 }

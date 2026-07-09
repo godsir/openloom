@@ -334,6 +334,39 @@ export async function bootstrapApp(): Promise<() => void> {
         streamBufferManager.handleProcessExited(sessionId, mid, -1)
         break
       }
+      case 'push_notification':
+        // AI 主动推送桌面通知
+        window.loom.getPreference<boolean>('taskCompleteNotification', true).then((enabled: boolean) => {
+          if (enabled) {
+            window.loom.showNotification(
+              (p?.title as string) || 'openLoom',
+              (p?.body as string) || 'AI 发来一条通知',
+            )
+          }
+        })
+        break
+      case 'review_findings':
+        // AI 上报代码审查发现 — 展示 toast + 附加到聊天
+        if (sessionId && p?.findings) {
+          const arr = Array.isArray(p.findings) ? p.findings as any[] : []
+          const criticals = arr.filter((f: any) => f.severity === 'critical').length
+          const msg = `发现 ${arr.length} 个问题${criticals > 0 ? `（${criticals} 严重）` : ''}`
+          useStore.getState().addToast({ type: criticals > 0 ? 'error' : 'info', message: msg })
+          useStore.getState().appendMessage(sessionId, {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            blocks: [{
+              type: 'text',
+              html: arr.map((f: any, i: number) => {
+                const s = f.severity === 'critical' ? 'CRIT' : f.severity === 'important' ? 'IMPT' : 'MINOR'
+                return `${i+1}. [${s}] ${f.file || '?'}:${f.line || '-'} — ${f.summary || ''}`
+              }).join('<br>'),
+              source: JSON.stringify(p.findings),
+            }],
+            timestamp: new Date().toISOString(),
+          })
+        }
+        break
       case 'ws.replay_done':
         // replay_done is internal WS protocol, not relevant for IM
         break
