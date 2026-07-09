@@ -334,6 +334,32 @@
   border-color: rgba(var(--accent-rgb), 0.25);
 }
 
+.workspaceGitBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+
+.workspaceBar:hover .workspaceGitBtn {
+  opacity: 1;
+}
+
+.workspaceGitBtn:hover {
+  color: var(--text);
+  background: var(--bg-active);
+  border-color: rgba(var(--accent-rgb), 0.25);
+}
+
 .skillBtnWrap {
   position: relative;
 }

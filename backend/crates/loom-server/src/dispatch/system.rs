@@ -28,6 +28,8 @@ pub async fn handle(
         "agent.config.optimize" => Some(handle_agent_config_optimize(state, p).await),
         // Tools
         "tools.list" => Some(handle_tools_list(state).await),
+        // Workspace
+        "workspace.git_remote" => Some(handle_workspace_git_remote(p).await),
         // Config (vision / auxiliary / fim)
         "config.get_vision" => Some(handle_config_get_vision()),
         "config.set_vision" => Some(handle_config_set_vision(p)),
@@ -224,6 +226,27 @@ async fn handle_agent_config_optimize(state: &AppState, p: &Value) -> Result<Val
 async fn handle_tools_list(state: &AppState) -> Result<Value, JsonRpcError> {
     let names = state.orchestrator.tool_registry().await.list_names();
     Ok(json!({ "tools": names }))
+}
+
+// --- workspace.git_remote ---
+
+async fn handle_workspace_git_remote(p: &Value) -> Result<Value, JsonRpcError> {
+    let workspace = p.get("workspace").and_then(|v| v.as_str()).unwrap_or("");
+    if workspace.is_empty() {
+        return Ok(json!({ "url": null }));
+    }
+    let output = std::process::Command::new("git")
+        .args(["-C", workspace, "remote", "get-url", "origin"])
+        .output()
+        .ok();
+    let url = output.and_then(|o| {
+        if o.status.success() {
+            String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+        } else {
+            None
+        }
+    });
+    Ok(json!({ "url": url }))
 }
 
 // --- config.get_vision ---
