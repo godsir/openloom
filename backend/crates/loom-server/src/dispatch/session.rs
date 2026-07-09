@@ -32,6 +32,8 @@ pub struct SessionData {
     pub agent_config_name: Option<String>,
     pub active_plan_id: Option<String>,
     pub goal: Option<String>,
+    #[serde(default)]
+    pub team_config_id: Option<String>,
 }
 
 fn default_updated_at() -> String {
@@ -58,6 +60,7 @@ impl SessionStore {
             agent_config_name: None,
             active_plan_id: None,
             goal: None,
+            team_config_id: None,
         };
         self.sessions
             .write()
@@ -128,6 +131,7 @@ impl SessionStore {
                 agent_config_name: None,
                 active_plan_id: None,
                 goal: None,
+                team_config_id: None,
             },
         );
     }
@@ -154,6 +158,31 @@ impl SessionStore {
             .get(session_id)
             .and_then(|s| s.agent_config_name.clone())
     }
+
+    pub async fn bind_team(
+        &self,
+        session_id: &str,
+        team_config_id: &str,
+    ) -> Result<(), String> {
+        let mut sessions = self.sessions.write().await;
+        match sessions.get_mut(session_id) {
+            Some(s) => {
+                s.team_config_id = Some(team_config_id.to_string());
+                // Mutual exclusion: clear agent binding
+                s.agent_config_name = None;
+                Ok(())
+            }
+            None => Err("session not found".to_string()),
+        }
+    }
+
+    pub async fn get_bound_team(&self, session_id: &str) -> Option<String> {
+        self.sessions
+            .read()
+            .await
+            .get(session_id)
+            .and_then(|s| s.team_config_id.clone())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +205,7 @@ pub async fn handle(
         "session.auto_title" => Some(handle_session_auto_title(state, p).await),
         "session.delete" => Some(handle_session_delete(state, p).await),
         "session.bind_agent" => Some(handle_session_bind_agent(state, p).await),
+        "session.bind_team" => Some(handle_session_bind_team(state, p).await),
         "session.set_memory_enabled" => Some(handle_session_set_memory_enabled(state, p).await),
         // Workspace
         "workspace.get" => Some(handle_workspace_get(state, p).await),
@@ -352,6 +382,42 @@ async fn handle_session_bind_agent(state: &AppState, p: &Value) -> Result<Value,
         .orchestrator
         .bind_agent_persisted(session_id, config_name)
         .await;
+    Ok(json!({ "ok": true }))
+}
+
+// --- session.bind_team ---
+
+async fn handle_session_bind_team(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let session_id = p
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let team_config_id = p
+        .get("team_config_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if team_config_id.is_empty() {
+        return Err(err(ErrorCode::InvalidRequest, "team_config_id required"));
+    }
+
+    // Verify the team config exists
+    let _ = state
+        .orchestrator
+        .team_config_get(team_config_id)
+        .await
+        .map_err(|_e| {
+            err(
+                ErrorCode::InvalidRequest,
+                &format!("team config '{}' not found", team_config_id),
+            )
+        })?;
+
+    state
+        .sessions
+        .bind_team(session_id, team_config_id)
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &e))?;
     Ok(json!({ "ok": true }))
 }
 

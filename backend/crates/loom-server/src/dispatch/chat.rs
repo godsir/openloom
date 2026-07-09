@@ -103,6 +103,52 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
         "[dispatch] chat.send selected_skills"
     );
 
+    // Check if this is a team message (expert team mode).
+    if let Some(team_config_id) = p.get("team_config_id").and_then(|v| v.as_str()) {
+        let permission_mode = p
+            .get("permission_mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("operate");
+        let skip_user_message = p
+            .get("skip_user_message")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let result = state
+            .orchestrator
+            .process_message_with_team(
+                &combined_content,
+                session_id,
+                team_config_id,
+                thinking_budget,
+                attached_images.clone(),
+                selected_skills.clone(),
+                permission_mode,
+                skip_user_message,
+            )
+            .await
+            .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
+
+        if !skip_user_message {
+            state
+                .sessions
+                .add_message(session_id, "user", content)
+                .await;
+        }
+        state
+            .sessions
+            .add_message(session_id, "assistant", &result.response)
+            .await;
+        return Ok(json!({
+            "response": result.response,
+            "session_id": session_id,
+            "tool_calls": result.tool_calls_made,
+            "iterations": result.iterations,
+            "tokens": result.prompt_tokens + result.completion_tokens,
+            "stop_reason": result.stop_reason,
+        }));
+    }
+
     // Resolve agent config for this session
     let config_name = state
         .sessions

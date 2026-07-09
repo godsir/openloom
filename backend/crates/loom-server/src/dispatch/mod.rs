@@ -20,6 +20,7 @@ mod monitor;
 pub mod session;
 mod skills;
 mod system;
+mod team;
 mod tool;
 mod vfs;
 pub mod write_rag;
@@ -74,6 +75,9 @@ pub async fn dispatch_method(
         return result;
     }
     if let Some(result) = system::handle(state, method, &p).await {
+        return result;
+    }
+    if let Some(result) = team::handle(state, method, &p).await {
         return result;
     }
     if let Some(result) = mcp::handle(state, method, &p).await {
