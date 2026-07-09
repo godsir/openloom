@@ -289,6 +289,8 @@ pub struct Orchestrator {
     default_max_prompt_budget: Arc<RwLock<usize>>,
     /// Sandbox configuration for file and shell access control.
     sandbox_config: Arc<RwLock<loom_types::config::SandboxConfig>>,
+    /// Builtin-tool tunables persisted to tool_prefs.json.
+    tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>>,
     /// Semaphore to limit concurrent entity extraction tasks (prevents unbounded LLM calls).
     extraction_semaphore: Arc<tokio::sync::Semaphore>,
     /// Separate semaphore for lightweight consolidation tasks to avoid deadlock with
@@ -888,6 +890,8 @@ impl Orchestrator {
         let active_model_name: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
         let sandbox_config: Arc<RwLock<loom_types::config::SandboxConfig>> =
             Arc::new(RwLock::new(loom_types::config::SandboxConfig::default()));
+        let tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>> =
+            Arc::new(RwLock::new(loom_types::config::tool_prefs::ToolPrefsConfig::default()));
 
         let _ = registry.register(Arc::new(crate::builtin_tools::SystemInfoTool {
             active_model_name: active_model_name.clone(),
@@ -1013,6 +1017,7 @@ impl Orchestrator {
             default_max_iterations: Arc::new(RwLock::new(100)),
             default_max_prompt_budget: Arc::new(RwLock::new(0)),
             sandbox_config,
+            tool_prefs,
             session_processing_locks: RwLock::new(HashMap::new()),
             extraction_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
             consolidation_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
@@ -1268,6 +1273,11 @@ impl Orchestrator {
     /// Set the sandbox configuration.
     pub async fn set_sandbox_config(&self, config: loom_types::config::SandboxConfig) {
         *self.sandbox_config.write().await = config;
+    }
+
+    /// Get thread-safe access to the built-in tool preferences.
+    pub fn tool_prefs(&self) -> Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>> {
+        self.tool_prefs.clone()
     }
 
     /// Build a continuation note to inject into the next turn's system prompt,
@@ -6128,6 +6138,32 @@ impl Orchestrator {
             .context("failed to write sandbox.json")?;
         // Update in-memory state so enforcement uses the new config immediately
         *self.sandbox_config.write().await = config.clone();
+        Ok(())
+    }
+
+    // === Tool Prefs ===
+
+    /// Load built-in tool preferences from `data_dir/tool_prefs.json`.
+    /// Returns default if the file does not exist or cannot be parsed.
+    pub async fn load_tool_prefs(&self) -> loom_types::config::tool_prefs::ToolPrefsConfig {
+        let path = self.data_dir.join("tool_prefs.json");
+        match tokio::fs::read_to_string(&path).await {
+            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+            Err(_) => loom_types::config::tool_prefs::ToolPrefsConfig::default(),
+        }
+    }
+
+    /// Save built-in tool preferences to `data_dir/tool_prefs.json`.
+    pub async fn save_tool_prefs(
+        &self,
+        config: &loom_types::config::tool_prefs::ToolPrefsConfig,
+    ) -> Result<()> {
+        let _ = tokio::fs::create_dir_all(&self.data_dir).await;
+        let path = self.data_dir.join("tool_prefs.json");
+        let json = serde_json::to_string_pretty(config)?;
+        tokio::fs::write(&path, json).await?;
+        // Update in-memory state so tools see the new config immediately
+        *self.tool_prefs.write().await = config.clone();
         Ok(())
     }
 }
