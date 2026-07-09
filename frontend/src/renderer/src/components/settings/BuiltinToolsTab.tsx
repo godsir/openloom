@@ -30,6 +30,10 @@ interface ConfigDef {
   msToSec?: boolean
   placeholder?: string
   visibleWhen?: { key: string; values: string[] }
+  /** 在同一行跟在 select 后面 */
+  inline?: boolean
+  /** inline text 的触发值 */
+  inlineFor?: string[]
 }
 
 interface ToolDef {
@@ -70,8 +74,8 @@ function buildTools(): ToolDef[] {
         { value: 'serper', label: 'Serper' },
         { value: 'searxng', label: 'SearXNG' },
       ]},
-      { key: 'searxng_url', labelKey: 'bt.searxngUrl', type: 'text', placeholder: 'https://searx.example.com', visibleWhen: { key: 'web_search_engine', values: ['searxng'] } },
-      { key: 'web_search_api_key', labelKey: 'bt.webSearchApiKey', type: 'text', placeholder: 'sk-...', visibleWhen: { key: 'web_search_engine', values: ['brave', 'google', 'bing'] } },
+      { key: 'searxng_url', inline: true, labelKey: 'bt.searxngUrl', type: 'text', placeholder: 'https://searx.example.com', visibleWhen: { key: 'web_search_engine', values: ['searxng'] }, inlineFor: ['searxng'] },
+      { key: 'web_search_api_key', inline: true, labelKey: 'bt.webSearchApiKey', type: 'text', placeholder: 'api-key...', visibleWhen: { key: 'web_search_engine', values: ['brave', 'google', 'bing', 'tavily', 'serper'] }, inlineFor: ['brave', 'google', 'bing', 'tavily', 'serper'] },
       { key: 'web_search_max_results', labelKey: 'bt.webSearchMaxResults', type: 'slider', min: 1, max: 10 },
     ]},
     { name: 'web_fetch', descKey: 'bt.web_fetch', category: 'web', configs: [
@@ -113,6 +117,93 @@ function buildCategories(): CategoryDef[] {
   ]
 }
 
+// ── render helpers ──
+
+function renderConfig(
+  cfg: ConfigDef,
+  rawVal: number | string,
+  displayVal: number | string,
+  t: (k: string) => string,
+  setPref: (key: string, val: string | number) => Promise<void>,
+  getPref: (key: string) => number | string,
+  inlineConfigs?: ConfigDef[],
+) {
+  const filteredInlines = inlineConfigs?.filter(ic => {
+    if (!ic.visibleWhen) return false
+    const depVal = String(getPref(ic.visibleWhen.key))
+    return ic.visibleWhen.values.includes(depVal)
+  })
+
+  return (
+    <div key={cfg.key} className={styles.configField}>
+      <div className={styles.configLabelRow}>
+        <span className={styles.configLabel}>{t(cfg.labelKey)}</span>
+        {(cfg.type !== 'select' || !filteredInlines?.length) && (
+          <span className={styles.configCurrent}>
+            {displayVal}{cfg.unit ? cfg.unit : ''}
+          </span>
+        )}
+      </div>
+      <div className={styles.configControl}>
+        {cfg.type === 'select' ? (
+          <Select
+            value={String(rawVal)}
+            options={cfg.options?.map(o => ({ value: o.value, label: o.label })) || []}
+            onChange={(v) => setPref(cfg.key, v)}
+            variant="form"
+          />
+        ) : cfg.type === 'text' ? (
+          <input
+            type="text"
+            className={styles.configText}
+            value={rawVal as string || ''}
+            placeholder={cfg.placeholder}
+            onChange={e => setPref(cfg.key, e.target.value)}
+          />
+        ) : (
+          <>
+            <input
+              type="range"
+              className={styles.configSlider}
+              value={displayVal}
+              min={cfg.min}
+              max={cfg.max}
+              step={cfg.step ?? 1}
+              onChange={e => setPref(cfg.key, Number(e.target.value))}
+            />
+            <input
+              type="number"
+              className={styles.configInput}
+              value={displayVal}
+              min={cfg.min}
+              max={cfg.max}
+              step={cfg.step ?? 1}
+              onChange={e => { const v = Number(e.target.value); if (!isNaN(v)) setPref(cfg.key, v) }}
+            />
+          </>
+        )}
+        {/* inline 字段跟在 select 同行 */}
+        {cfg.type === 'select' && filteredInlines?.map(ic => {
+          const v = getPref(ic.key)
+          return (
+            <input
+              key={ic.key}
+              type="text"
+              className={styles.configText}
+              value={typeof v === 'string' ? v : ''}
+              placeholder={ic.placeholder}
+              onChange={e => setPref(ic.key, e.target.value)}
+            />
+          )
+        })}
+      </div>
+      {cfg.min !== undefined && cfg.max !== undefined && cfg.type !== 'select' && (
+        <div className={styles.configRange}>{cfg.min} — {cfg.max}</div>
+      )}
+    </div>
+  )
+}
+
 function renderTool(
   tool: ToolDef,
   t: (k: string) => string,
@@ -123,6 +214,10 @@ function renderTool(
 ) {
   const open = expandedTools.has(tool.name)
   const hasConfig = tool.configs && tool.configs.length > 0
+  // 收集 inline 字段
+  const inlineConfigs = (tool.configs || []).filter(c => c.inline)
+  // 非 inline 的顶级字段
+  const topConfigs = (tool.configs || []).filter(c => !c.inline)
 
   return (
     <div key={tool.name} className={styles.toolItem}>
@@ -140,94 +235,14 @@ function renderTool(
           {!hasConfig && (
             <span className={styles.noConfig}>{t('bt.noConfig')}</span>
           )}
-          {tool.configs?.filter(cfg => {
+          {topConfigs.filter(cfg => {
             if (!cfg.visibleWhen) return true
             const depVal = String(getPref(cfg.visibleWhen.key))
             return cfg.visibleWhen.values.includes(depVal)
           }).map(cfg => {
             const rawVal = getPref(cfg.key)
-            const strVal = typeof rawVal === 'string' ? rawVal : ''
             const displayVal = cfg.msToSec && typeof rawVal === 'number' ? Math.round(rawVal / 1000) : rawVal
-            // 条件字段（SearXNG URL / API Key）跟随在 select 同行，不独立占一块
-            if (cfg.visibleWhen) {
-              return (
-                <div key={cfg.key} className={styles.configInline}>
-                  {cfg.type === 'text' ? (
-                    <input
-                      type="text"
-                      className={styles.configText}
-                      value={strVal}
-                      placeholder={cfg.placeholder}
-                      onChange={e => setPref(cfg.key, e.target.value)}
-                    />
-                  ) : (
-                    <input
-                      type="number"
-                      className={styles.configInput}
-                      value={displayVal}
-                      min={cfg.min}
-                      max={cfg.max}
-                      onChange={e => { const v = Number(e.target.value); if (!isNaN(v)) setPref(cfg.key, v) }}
-                    />
-                  )}
-                </div>
-              )
-            }
-            return (
-              <div key={cfg.key} className={styles.configField}>
-                <div className={styles.configLabelRow}>
-                  <span className={styles.configLabel}>{t(cfg.labelKey)}</span>
-                  <span className={styles.configCurrent}>
-                    {displayVal}{cfg.unit ? cfg.unit : ''}
-                  </span>
-                </div>
-                <div className={styles.configControl}>
-                  {cfg.type === 'select' ? (
-                    <Select
-                      value={String(rawVal)}
-                      options={cfg.options?.map(o => ({ value: o.value, label: o.label })) || []}
-                      onChange={(v) => setPref(cfg.key, v)}
-                      variant="form"
-                    />
-                  ) : cfg.type === 'text' ? (
-                    <input
-                      type="text"
-                      className={styles.configText}
-                      value={strVal}
-                      placeholder={cfg.placeholder}
-                      onChange={e => setPref(cfg.key, e.target.value)}
-                    />
-                  ) : (
-                    <>
-                      <input
-                        type="range"
-                        className={styles.configSlider}
-                        value={displayVal}
-                        min={cfg.min}
-                        max={cfg.max}
-                        step={cfg.step ?? 1}
-                        onChange={e => setPref(cfg.key, Number(e.target.value))}
-                      />
-                      <input
-                        type="number"
-                        className={styles.configInput}
-                        value={displayVal}
-                        min={cfg.min}
-                        max={cfg.max}
-                        step={cfg.step ?? 1}
-                        onChange={e => {
-                          const v = Number(e.target.value)
-                          if (!isNaN(v)) setPref(cfg.key, v)
-                        }}
-                      />
-                    </>
-                  )}
-                </div>
-                {cfg.min !== undefined && cfg.max !== undefined && (
-                  <div className={styles.configRange}>{cfg.min} — {cfg.max}</div>
-                )}
-              </div>
-            )
+            return renderConfig(cfg, rawVal, displayVal, t, setPref, getPref, inlineConfigs)
           })}
         </div>
       )}
