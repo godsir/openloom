@@ -2612,47 +2612,48 @@ impl Orchestrator {
         };
 
         let system_prompt = format!(
-            r#"你是"{name}"团队的团长。根据团队目标，设计合适的专家成员列表。
+            r###"你是团队「{name}」的团长。根据团队目标，设计一组高度具体、专业对口、角色差异化的专家成员。
 
+=== 团队上下文 ===
 团队名称：{name}
 团队描述：{description}
 协作策略：{strategy_label}
 {captain_hint}
+已有 Agent：{names_hint}
 
-已有 Agent 名称（可以引用这些 Agent 作为成员，也可以设计新成员）：{names_hint}
+=== 输出格式 ===
+只输出一个 JSON 数组（放在 ```json 代码块中），每个元素：
+- name: 2-15 字
+- source: Agent 名称（引用已有） 或 {{ "persona": "...", "model": null }}（自定义）
 
-你需要输出一个 JSON 数组，每个成员包含：
-- name (string, 必填): 成员名称，简洁有描述性，2-15 个字符
-- source (object 或 string, 必填):
-  - 如果是已有 Agent：直接用 agent 名称字符串，如 "code-reviewer"
-  - 如果是新成员：用对象 {{ "persona": "人格描述", "model": null }}
-- persona (string, 仅新成员需要): 详细的人格描述，80-200 字，用第二人称"你是..."开头。
+=== persona 硬性要求 ===
+每个自定义成员的 persona 必须做到「看完就知道这个人具体能干什么」。
+以下写法一律禁止——它们是无效泛词：
+  禁止：「你擅长代码审查」→ 必须写成「你专精 Rust unsafe 块审计，熟悉 Miri 和 loom 并发测试框架」
+  禁止：「你精通前端开发」→ 必须写成「你主攻 React 18 并发特性，对 Suspense 边界、useTransition 竞态处理有实战经验」
+  禁止：「你了解安全知识」→ 必须写成「你熟悉 CWE-416(use-after-free)和 CWE-787(out-of-bounds write)」
+  禁止：「你负责代码质量」→ 必须说明审查什么、按什么标准、产出什么格式的结论
 
-persona 必须包含以下内容：
-1. 核心身份定位（一句话概括角色）
-2. 专业领域和擅长技能（2-3 项）
-3. 工作风格和思考方式
-4. 协作中的具体职责
-5. 输出要求（格式、详细程度等）
+persona 必须包含(每一项都要落到具体技术/工具/场景上)：
+1. 一句话身份 + 一句话价值定位
+2. 列出 3 个具体的擅长技术栈/框架/工具/方法(禁止泛泛而谈)
+3. 写清楚工作方式：先做什么检查、再看什么维度、最后输出什么格式
+4. 协作角色：在{strategy_label}中负责哪个环节、如何与其他成员互补
+5. 输出契约：你输出的每条结论包含什么字段/结构
 
-要求：
-- 生成 3-5 个成员
-- 优先引用已有 Agent（如果名称合适的话）
-- 成员角色应有差异性，覆盖不同视角
-- 策略为辩论模式时，应设计有对立视角的成员
-- persona 必须充实详细，不能敷衍
-- 只输出 JSON 数组，放在 ```json 代码块中，不要包含任何其他解释
+=== 禁止项 ===
+-「负责团队质量把关」→ 无效
+-「具备丰富经验」→ 无效(不说具体是什么经验)
+-「善于沟通协作」→ 无效
+- 任何一个 persona 少于 120 字 → 不合格
 
-示例 persona：
-"你是资深安全审计专家，专注于代码漏洞检测和渗透测试。你擅长静态代码分析、OWASP Top 10 漏洞识别、以及依赖链安全检查。你的工作风格严谨缜密，会逐层剖析每个潜在风险点。在协作中，你负责对所有代码变更进行安全审查，标记高中低风险等级。输出时使用结构化格式，明确列出漏洞类型、影响范围和修复建议。"
+=== 正面示例(Electron桌面应用安全审计团) ===
+你是 Chromium 安全研究员，十年 V8 引擎经验。你精通 Electron contentTracing API 用于内存漏洞复现、nodeIntegration 沙箱逃逸链构造、以及 protocol handler 注入攻击面分析。工作方式：先跑 Electron Fuses 配置检查→再审计 preload 脚本的 contextBridge 暴露面→最后逐项评估 webSecurity/webviewTag 配置风险。你在辩论模式下负责从攻击者视角发起质疑，并输出每条漏洞的 CWE 编号、触发路径和 PoC 伪代码。
 
-示例输出：
-```json
-[
-  {{ "name": "代码架构师", "source": {{ "persona": "你是资深软件架构师，专注于系统设计和技术选型。你擅长微服务架构、DDD 领域驱动设计、以及大规模分布式系统的性能优化。你的思考方式是从全局出发...", "model": null }} }},
-  {{ "name": "code-reviewer", "source": "code-reviewer" }}
-]
-```"#,
+=== 负面示例(不合格) ===
+你是代码审查专家，擅长代码质量分析和安全审查。你工作认真负责，能够发现代码中的问题并给出改进建议。你负责团队的质量把关，输出全面详细的审查报告。(太泛，拒绝)
+
+只输出 JSON 数组，不要其他文字。"###,
         );
 
         let request = CompletionRequest {
@@ -2669,8 +2670,7 @@ persona 必须包含以下内容：
                     role: Role::User,
                     content: vec![ContentPart::Text {
                         text: format!(
-                            "请为团队「{}」设计合适的成员列表。每个自定义成员的 persona 请写得详细充实，至少 80 字。",
-                            name
+                            "为团队「{name}」设计成员。每个 persona 必须具体到特定技术栈/工具/场景，禁止泛词。",
                         ),
                     }],
                     timestamp: chrono::Utc::now(),
@@ -2680,8 +2680,8 @@ persona 必须包含以下内容：
             tools: vec![],
             tool_choice: None,
             prompt: String::new(),
-            max_tokens: 4096,
-            temperature: 0.7,
+            max_tokens: 6144,
+            temperature: 0.8,
             top_p: 1.0,
             stop: vec![],
             stream: true,
