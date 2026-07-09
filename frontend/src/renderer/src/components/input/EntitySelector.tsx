@@ -21,22 +21,30 @@ export default function EntitySelector() {
   )
 
   const [open, setOpen] = useState(false)
-  const [tab, setTab] = useState<TabId>('agent')
+  const [tab, setTab] = useState<TabId>(teamBindingId ? 'team' : 'agent')
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
 
-  // Determine which entity is currently active for the trigger label
-  const activeAgent = agentBindingName
-    ? agents.find((a) => a.name === agentBindingName)
-    : undefined
+  // Load teams on mount (like agents are loaded by AgentConfigPanel)
+  useEffect(() => {
+    loomRpc<{ teams: { id: string; name: string; description: string; strategy: string; captain: unknown; members: unknown[] }[] }>('team.config.list')
+      .then((r) => useStore.getState().setTeams((r.teams || []) as any))
+      .catch(() => {})
+  }, [])
+
+  // Determine which entity is currently active for the trigger label.
+  // Team takes priority: when a team is selected, agent binding is reset to 'default'.
   const activeTeam = teamBindingId
     ? teams.find((t) => t.id === teamBindingId)
     : undefined
+  const activeAgent = agentBindingName && agentBindingName !== 'default'
+    ? agents.find((a) => a.name === agentBindingName)
+    : undefined
 
-  const triggerLabel: string = activeAgent
-    ? activeAgent.name
-    : activeTeam
-      ? activeTeam.name
+  const triggerLabel = activeTeam
+    ? activeTeam.name
+    : activeAgent
+      ? activeAgent.name
       : t('input.defaultAgent')
 
   const hasActiveBinding = !!activeAgent || !!activeTeam
@@ -95,11 +103,6 @@ export default function EntitySelector() {
   const handleOpenSettings = useCallback(() => {
     setOpen(false)
     useStore.getState().setAppMode('settings')
-  }, [])
-
-  // Determine popover position
-  const updatePosition = useCallback(() => {
-    // We use a fixed popover that auto-positions via CSS instead of JS positioning
   }, [])
 
   // Position popover relative to trigger
