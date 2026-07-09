@@ -12,6 +12,7 @@ import SoftwareTab from './SoftwareTab'
 import ModelsTab from './ModelsTab'
 import McpLspTab from './McpTab'
 import SkillsTab from './SkillsTab'
+import BuiltinToolsTab from './BuiltinToolsTab'
 import AboutTab from './AboutTab'
 import DevTestTab from './DevTestTab'
 import ShortcutsTab from './ShortcutsTab'
@@ -20,7 +21,7 @@ import KgTab from './KgTab'
 import ImTab from './ImTab'
 import { WriteSettingsSection } from '../write/WriteSettingsSection'
 
-type Tab = 'software' | 'agent' | 'loom' | 'models' | 'workspace' | 'mcp' | 'skills' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'write' | 'about' | 'im'
+type Tab = 'software' | 'agent' | 'loom' | 'models' | 'workspace' | 'mcp' | 'skills' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'write' | 'about' | 'im' | 'builtin_tools'
 
 function GlobalDefaultsSection() {
   const { t } = useLocale()
@@ -111,6 +112,7 @@ function useSettingsTabs() {
         { id: 'skills' as Tab, label: t('settings.skills'), icon: <IconSparkles size={14} /> },
         { id: 'write' as Tab, label: t('write.settings', '写作设置'), icon: <IconEdit size={14} /> },
         { id: 'im' as Tab, label: t('settings.im', 'IM 接入'), icon: <IconMessageSquare size={14} /> },
+        { id: 'builtin_tools' as Tab, label: t('settings.builtinTools'), icon: <IconSettings size={14} /> },
       ],
     },
     {
@@ -267,6 +269,18 @@ export default function SettingsPage() {
             </div>
             <div className={styles.contentBody}>
               <WriteSettingsSection />
+            </div>
+          </>
+        )}
+
+        {tab === 'builtin_tools' && (
+          <>
+            <div className={styles.contentHeader}>
+              <h3 className={styles.sectionTitle}>{t('settings.builtinTools')}</h3>
+              <p className={styles.sectionDesc}>{t('settings.builtinToolsDesc')}</p>
+            </div>
+            <div className={styles.contentBody}>
+              <BuiltinToolsTab />
             </div>
           </>
         )}
