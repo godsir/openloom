@@ -4,6 +4,7 @@ import { type ThemeId, type FontSizeId, FONT_SIZE_MAP } from '../../stores/ui'
 import type { SendShortcut } from '../../stores/input'
 import { useLocale, t as _t, LOCALES } from '../../i18n'
 import type { Locale } from '../../i18n'
+import { loomRpc } from '../../services/jsonrpc'
 import Select, { type SelectOption } from '../shared/Select'
 import styles from '../shared/SettingsModal.module.css'
 import { readThemeColors } from '../../utils/theme'
@@ -151,6 +152,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
   const [thinkingExpand, setThinkingExpand] = useState(false)
   const [toolExpand, setToolExpand] = useState(true)
   const [skillExpand, setSkillExpand] = useState(false)
+  const [httpProxy, setHttpProxy] = useState('')
   const [isWin32, setIsWin32] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [activeSection, setActiveSection] = useState('chat')
@@ -207,6 +209,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
       window.loom.getPreference('toolExpandDefault', true),
       window.loom.getPreference('skillExpandDefault', false),
       window.loom.getPreference('taskCompleteNotification', false),
+      loomRpc<{ http_proxy?: string }>('config.get_tool_prefs').then(p => { if (p.http_proxy) setHttpProxy(p.http_proxy) }).catch(() => {}),
       window.loom.getPlatform(),
     ]).then(([as, ct, st, at, uf, cf, cc, dha, te, toe, se, tcn, plat]) => {
       setAutoStart(as)
@@ -621,6 +624,38 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                     onChange={(v) => setLocale(v as Locale)}
                     variant="form"
                   />
+                </div>
+              </div>
+              {/* Proxy */}
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>{t('software.proxy')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.proxyDesc')}</p>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="text"
+                    value={httpProxy}
+                    onChange={(e) => setHttpProxy(e.target.value)}
+                    placeholder="http://127.0.0.1:7890"
+                    style={{
+                      width: 220, height: 28, padding: '0 8px', fontSize: 12,
+                      color: 'var(--text)', background: 'var(--bg-input)',
+                      border: '1px solid var(--border)', borderRadius: 4, outline: 'none',
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      loomRpc('config.set_tool_prefs', { http_proxy: httpProxy }).then(() =>
+                        useStore.getState().addToast({ type: 'success', message: t('software.proxySaved') })
+                      ).catch(() =>
+                        useStore.getState().addToast({ type: 'error', message: t('common.failed') })
+                      )
+                    }}
+                    className={styles.mcpConnectBtn}
+                  >
+                    {t('common.save')}
+                  </button>
                 </div>
               </div>
             </>
