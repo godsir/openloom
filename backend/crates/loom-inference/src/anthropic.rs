@@ -310,7 +310,7 @@ impl AnthropicClient {
                 }
             }).collect();
             let mut msg_json = serde_json::json!({"role": anthropic_role, "content": content});
-            if cache_hit && i == 0 {
+            if i == 0 {
                 if let Some(content_arr) = msg_json
                     .get_mut("content")
                     .and_then(|c| c.as_array_mut())

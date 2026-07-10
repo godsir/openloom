@@ -49,10 +49,10 @@ pub trait AgentTool: Send + Sync {
         context: &ToolContext,
     ) -> Result<ToolResult>;
 
-    /// Whether this tool supports parallel execution with others.
-    fn supports_parallel(&self) -> bool {
-        false
-    }
+   /// Whether this tool supports parallel execution with others.
+   fn supports_parallel(&self) -> bool {
+       false
+   }
 
     /// Source provenance for telemetry.
     fn provenance(&self) -> ToolProvenance;
@@ -495,6 +495,155 @@ impl AgentTool for SpawnAgentTool {
     fn provenance(&self) -> ToolProvenance {
         ToolProvenance::Builtin
     }
+}
+
+/// Parallel sub-agent spawner — runs multiple tasks concurrently via tokio::spawn.
+pub struct SpawnAgentsTool {
+    pub max_parallel: usize,
+    pub context: Arc<SpawnContext>,
+}
+
+#[async_trait]
+impl AgentTool for SpawnAgentsTool {
+    fn tool_name(&self) -> &str { "spawn_agents" }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "spawn_agents".into(),
+            description: "Spawn multiple sub-agents in parallel with optional multi-round debate. Each round, all tasks run concurrently. When rounds>1, subsequent rounds see previous round results for cross-examination and refinement. Use for: (1) simple parallel tasks, (2) expert team synthesis, (3) multi-round debate.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "tasks": {
+                        "type": "array",
+                        "description": "List of tasks to run in parallel",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "description": {"type": "string", "description": "Short description of this subtask"},
+                                "prompt": {"type": "string", "description": "Detailed instructions for this sub-agent"}
+                            },
+                            "required": ["description", "prompt"]
+                        }
+                    }
+                },
+                "required": ["tasks"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+       _context: &ToolContext,
+   ) -> Result<ToolResult> {
+       let tasks = match arguments["tasks"].as_array() {
+            Some(arr) if !arr.is_empty() => arr.clone(),
+            _ => return Ok(ToolResult { content: "tasks array required and must be non-empty.".into(), is_error: true, structured_content: None }),
+        };
+        let rounds = arguments["rounds"].as_u64().unwrap_or(1).max(1).min(5) as usize;
+        let limit = tasks.len().min(self.max_parallel);
+        let subagent_max_iters = self.context.subagent_max_iterations;
+        let config = self.context.loop_config.read().await;
+        let base = config.clone();
+        drop(config);
+
+        // Build initial prompts from tasks
+        let mut current_prompts: Vec<(usize, String, String)> = Vec::new();
+        for (i, task) in tasks.iter().take(limit).enumerate() {
+            let desc = task["description"].as_str().unwrap_or("subtask").to_string();
+            let prompt = match task["prompt"].as_str() { Some(p) if !p.is_empty() => p.to_string(), _ => continue };
+            current_prompts.push((i, desc, prompt));
+        }
+        if current_prompts.is_empty() {
+            return Ok(ToolResult { content: "No valid tasks (all prompts empty).".into(), is_error: true, structured_content: None });
+        }
+
+        let mut all_round_results: Vec<String> = Vec::new();
+
+        for round in 0..rounds {
+            // Build sub-agent configs and spawn in parallel
+            let mut handles = Vec::with_capacity(current_prompts.len());
+            for (i, desc, prompt) in &current_prompts {
+                let i = *i; let desc = desc.clone(); let prompt = prompt.clone();
+                let ctx = self.context.clone();
+                let base = base.clone();
+                let max_iters = subagent_max_iters.min(base.max_iterations);
+                handles.push(tokio::spawn(async move {
+                    let sub = crate::agent_loop::AgentLoopConfig {
+                        system_prompt: format!("You are a parallel sub-agent. Task: {}\n\nInstructions:\n{}", desc, prompt),
+                        max_iterations: max_iters,
+                        max_tokens: base.max_tokens, temperature: base.temperature,
+                        lazy_tools: base.lazy_tools, cc_dispatch: base.cc_dispatch,
+                        selected_skills: Vec::new(), available_skill_count: 0,
+                        persona: None, summary: None, kg_context: None,
+                        thinking_budget: base.thinking_budget,
+                        model_configs: Vec::new(), active_model_name: None,
+                        workspace_path: base.workspace_path.clone(),
+                        max_prompt_budget: 0, context_window: None, summary_at_count: 0,
+                        default_permissions: base.default_permissions.clone(),
+                        session_id: String::new(), agent_id: String::new(),
+                        key_store: None, loom_dir: base.loom_dir.clone(),
+                        permission_mode: "operate".to_string(),
+                        event_bus: None, pending_permissions: None,
+                        session_approved_tools: Arc::new(std::sync::Mutex::new(HashSet::new())),
+                        sandbox: base.sandbox.clone(), todo_store: None,
+                        compaction_config: CompactionConfig::default(),
+                        dynamic_context: None, todo_context: None,
+                        continuation_note: None, steering_queue: None,
+                        few_shots: Vec::new(), progress_checkpoint: None,
+                        skill_tool_allowlist: None,
+                    };
+                    let sid = loom_types::SessionId::new();
+                    let cid = match ctx.agent_pool.spawn(loom_types::AgentConfig::default(), None, sid.clone()).await { Ok(id) => id, Err(e) => return (i, desc, format!("spawn: {}", e), true) };
+                    let _ = ctx.agent_pool.transition(&cid, crate::agent::AgentStatus::Thinking, Some("sub-agent".into())).await;
+                    let cancel = match ctx.agent_pool.cancel_token(&cid).await { Ok(t) => t, Err(e) => { let _ = ctx.agent_pool.remove(&cid).await; return (i, desc, format!("cancel: {}", e), true); } };
+                    let client = { let g = ctx.cloud_client.read().await; match g.as_ref() { Some(c) => c.clone(), None => { let _ = ctx.agent_pool.remove(&cid).await; return (i, desc, "no model".into(), true); } } };
+                    let reg = ctx.tool_registry.read().await;
+                    let res = crate::agent_loop::run_agent_turn_with_cancel(client.as_ref(), &reg, &[], &prompt, &sub, &None, &None, &cancel).await;
+                    drop(reg); drop(client);
+                    match res { Ok(t) => { let _ = ctx.agent_pool.transition(&cid, crate::agent::AgentStatus::Completed, None).await; let _ = ctx.agent_pool.remove(&cid).await; (i, desc, t.response, false) } Err(e) => { let _ = ctx.agent_pool.transition(&cid, crate::agent::AgentStatus::Errored { message: e.to_string() }, None).await; let _ = ctx.agent_pool.remove(&cid).await; (i, desc, e.to_string(), true) } }
+                }));
+            }
+            let raw: Vec<_> = futures::future::join_all(handles).await.into_iter().filter_map(|r| r.ok()).collect();
+            let (mut ok, mut fail) = (0usize, 0usize);
+            let mut parts = Vec::new();
+            for (_, desc, result, is_err) in &raw {
+                if *is_err { fail += 1; parts.push(format!("### {} (FAILED)\n{}", desc, result)); }
+                else { ok += 1; parts.push(format!("### {}\n{}", desc, result)); }
+            }
+            let round_label = if rounds > 1 { format!("## Round {}\n", round + 1) } else { String::new() };
+            all_round_results.push(format!("{}{} tasks ({} ok, {} failed)\n\n{}", round_label, current_prompts.len(), ok, fail, parts.join("\n\n")));
+
+            // Build next round prompts with peer review
+            if rounds > 1 && round + 1 < rounds {
+                let peer_results: Vec<(usize, String)> = raw.iter().map(|(i, desc, result, is_err)| {
+                    (*i, if *is_err { format!("{} (ERROR): {}", desc, result) } else { format!("{}: {}", desc, result) })
+                }).collect();
+                let mut next_prompts = Vec::new();
+                for (i, desc, _) in &current_prompts {
+                    let others: String = peer_results.iter()
+                        .filter(|(j, _)| j != i)
+                        .map(|(_, r)| r.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n---\n");
+                    let original = tasks.get(*i).and_then(|t| t["prompt"].as_str()).unwrap_or("");
+                    let debate = format!("Original task:\n{}\n\nOther experts'' responses from the previous round:\n{}\n\nCritically examine your own position. Identify agreements, disagreements, and flaws. Revise or defend your conclusion accordingly.", original, others);
+                    next_prompts.push((*i, desc.clone(), debate));
+                }
+                current_prompts = next_prompts;
+            }
+        }
+        Ok(ToolResult {
+            content: all_round_results.join("\n"),
+            is_error: false,
+            structured_content: Some(serde_json::json!({"rounds": rounds, "tasks": tasks.len()})),
+        })
+    }
+    fn supports_parallel(&self) -> bool { true }
+    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
 }
 
 #[cfg(test)]

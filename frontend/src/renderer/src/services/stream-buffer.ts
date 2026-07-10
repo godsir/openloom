@@ -53,10 +53,13 @@ interface BufferState {
 }
 
 class StreamBufferManager {
-  private buffers = new Map<string, BufferState>()
-  /** Sessions whose deltas arrived via main WebSocket (loomSubscribe).
-   *  Duplicate deltas forwarded by ImBridge will be skipped. */
-  private wsStreamSessions = new Set<string>()
+ private buffers = new Map<string, BufferState>()
+ /** Sessions whose deltas arrived via main WebSocket (loomSubscribe).
+  *  Duplicate deltas forwarded by ImBridge will be skipped. */
+ private wsStreamSessions = new Set<string>()
+ /** Sessions whose stream has been ended (buffer deleted).
+  *  Late-arriving deltas/tool events for ended sessions must be ignored. */
+ private endedSessions = new Set<string>()
 
   /** Register an existing assistant placeholder message for streaming updates.
    *  Resets any stale state from a previous stream on the same session. */
@@ -122,12 +125,15 @@ class StreamBufferManager {
     return this.buffers.get(sessionId)!
   }
 
-  private ensureStreamingForIM(sessionId: string): boolean {
-    const store = useStore.getState()
-    if (store.streamingSessionIds.has(sessionId)) return true
-    // IM sessions: chat.send was initiated by ImBridge (separate WS), so the
-    // renderer never called `startStream`. Auto-register if the session exists.
-    const msgs = store.messagesBySession.get(sessionId)
+ private ensureStreamingForIM(sessionId: string): boolean {
+   const store = useStore.getState()
+   if (store.streamingSessionIds.has(sessionId)) return true
+   // If the stream was already ended, don't auto-create a new buffer.
+   // Prevents late-arriving WS events from creating phantom messages.
+   if (this.endedSessions.has(sessionId)) return false
+   // IM sessions: chat.send was initiated by ImBridge (separate WS), so the
+   // renderer never called `startStream`. Auto-register if the session exists.
+   const msgs = store.messagesBySession.get(sessionId)
     if (!msgs) return false
     const buf = this.ensureBuffer(sessionId)
     // Adopt an existing empty assistant placeholder if available, otherwise create one.
@@ -145,11 +151,13 @@ class StreamBufferManager {
           timestamp: new Date().toISOString(),
         })
       }
-    }
-    store.addStreamingSession(sessionId)
-    store.setStreamingActivity(sessionId, { phase: 'generating' })
-    return true
-  }
+   }
+   store.addStreamingSession(sessionId)
+   store.setStreamingActivity(sessionId, { phase: 'generating' })
+   // Clear ended flag — a new stream is starting for this session
+   this.endedSessions.delete(sessionId)
+   return true
+ }
 
   handleStreamDelta(sessionId: string, delta: string): void {
     // Handle cancellation marker — treat as stream end
@@ -180,16 +188,16 @@ class StreamBufferManager {
     this._doHandleStreamDelta(sessionId, delta)
   }
 
-  handleProcessOutput(sessionId: string, pid: string, data: string, stream: string): void {
-    const store = useStore.getState()
-    // Only render for sessions that already have a streaming buffer or
-    // an explicit session_id match. Never auto-create a new buffer from
-    // process/monitor side-channel events — that would leak streaming state.
-    const sid = sessionId || store.currentSessionId || 'default'
-    if (!this.buffers.has(sid) && !sessionId) return
+ handleProcessOutput(sessionId: string, pid: string, data: string, stream: string): void {
+   const store = useStore.getState()
+   const sid = sessionId || store.currentSessionId || 'default'
+   // Only render for sessions that already have a streaming buffer.
+   // Never auto-create a new buffer from process/monitor side-channel
+   // events — that would leak streaming state and create phantom messages.
+   if (!this.buffers.has(sid)) return
 
-    store.ensureSession(sid)
-    const buf = this.ensureBuffer(sid)
+   store.ensureSession(sid)
+   const buf = this.ensureBuffer(sid)
     if (!buf.messageId) {
       buf.messageId = crypto.randomUUID()
       store.appendMessage(sid, {
@@ -215,23 +223,24 @@ class StreamBufferManager {
     this.scheduleFlush(buf, sid)
   }
 
-  handleProcessExited(sessionId: string, pid: string, exitCode: number): void {
-    // Same guard as handleProcessOutput: don't auto-create buffers from
-    // process/monitor events that lack an explicit session_id.
-    const sid = sessionId || useStore.getState().currentSessionId || 'default'
-    if (!this.buffers.has(sid) && !sessionId) return
+ handleProcessExited(sessionId: string, pid: string, exitCode: number): void {
+   const sid = sessionId || useStore.getState().currentSessionId || 'default'
+   // Same guard as handleProcessOutput: don't auto-create buffers from
+   // process/monitor events — that would leak streaming state and create
+   // phantom messages.
+   if (!this.buffers.has(sid)) return
 
-    const buf = this.ensureBuffer(sid)
-    if (!buf.messageId) {
-      buf.messageId = crypto.randomUUID()
-      useStore.getState().ensureSession(sid)
-      useStore.getState().appendMessage(sid, {
-        id: buf.messageId,
-        role: 'assistant',
-        blocks: [],
-        timestamp: new Date().toISOString(),
-      })
-    }
+  const buf = this.ensureBuffer(sid)
+   if (!buf.messageId) {
+     buf.messageId = crypto.randomUUID()
+     useStore.getState().ensureSession(sid)
+     useStore.getState().appendMessage(sid, {
+       id: buf.messageId,
+       role: 'assistant',
+       blocks: [],
+       timestamp: new Date().toISOString(),
+     })
+   }
     let procEntry = buf.processAcc.find(p => p.pid === pid)
     if (!procEntry) {
       procEntry = { pid, lines: [], exited: false }
@@ -416,18 +425,19 @@ class StreamBufferManager {
     if (buf.messageId && usage && (usage.prompt || usage.completion)) {
       useStore.getState().setMessageUsage(sessionId, buf.messageId, { ...usage })
     }
-    useStore.getState().removeStreamingSession(sessionId)
-    // If this was an IM-originated stream, the user message (sent via IM) and
-    // the final assistant response aren't in the renderer store — only the
-    // streamed blocks are. Sync the full history from the engine so the
-    // desktop ChatArea shows everything.
-    const wasIM = buf.imOrigin
-    this.buffers.delete(sessionId)
-    this.wsStreamSessions.delete(sessionId)
-    // Fire and forget the sync — it updates messagesBySession asynchronously.
-    if (wasIM) {
-      this.syncIMSessionHistory(sessionId)
-    }
+   useStore.getState().removeStreamingSession(sessionId)
+   // If this was an IM-originated stream, the user message (sent via IM) and
+   // the final assistant response aren't in the renderer store — only the
+   // streamed blocks are. Sync the full history from the engine so the
+   // desktop ChatArea shows everything.
+   const wasIM = buf.imOrigin
+   this.buffers.delete(sessionId)
+   this.wsStreamSessions.delete(sessionId)
+   this.endedSessions.add(sessionId)
+   // Fire and forget the sync — it updates messagesBySession asynchronously.
+   if (wasIM) {
+     this.syncIMSessionHistory(sessionId)
+   }
 
     // Auto-title: trigger if session has no title and feature is enabled
     this.maybeAutoTitle(sessionId)

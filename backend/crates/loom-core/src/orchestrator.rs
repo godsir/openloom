@@ -253,7 +253,7 @@ use crate::agent_pool::{AgentPool, AgentSummary};
 use crate::event_bus::{AgentEvent, EventBus};
 use crate::process_manager::ProcessManager;
 use crate::slash_router::SlashRouter;
-use crate::tool_registry::{AgentTool, SpawnAgentTool, SpawnContext, ToolRegistry};
+use crate::tool_registry::{AgentTool, SpawnAgentTool, SpawnAgentsTool, SpawnContext, ToolRegistry};
 use loom_cron::CronScheduler;
 
 /// The central orchestrator for openLoom v2.
@@ -1226,16 +1226,17 @@ impl Orchestrator {
             subagent_max_iterations: 20,
             max_retries: 2,
         });
-        let _ = self
-            .tool_registry
-            .write()
-            .await
-            .register(Arc::new(SpawnAgentTool {
-                max_depth,
-                default_timeout_secs,
-                context: ctx,
-            }));
-    }
+       let _ = self
+           .tool_registry
+           .write()
+           .await
+           .register(Arc::new(SpawnAgentTool {
+               max_depth,
+               default_timeout_secs,
+               context: ctx.clone(),
+           }));
+       let _ = self.tool_registry.write().await.register(Arc::new(SpawnAgentsTool { max_parallel: 8, context: ctx }));
+   }
 
     // === Inference ===
 
@@ -3312,6 +3313,18 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
     pub async fn active_model_name(&self) -> Option<String> {
         self.active_model_name.read().await.clone()
     }
+    /// Map the active model to the correct tokenizer for accurate context-window budgeting.
+    pub async fn tokenizer_for_active_model(&self) -> loom_context::TokenizerId {
+        let model_name = self.active_model_name.read().await.clone().unwrap_or_default();
+        let backend = self
+            .model_configs
+            .read()
+            .await
+            .get(&model_name)
+            .map(|c| c.backend.clone())
+            .unwrap_or_default();
+        loom_context::tokenizer_for_model(&model_name, backend)
+    }
 
     /// Try to build a new CloudClient from a ModelConfig.
     /// Replaces the current cloud_client on success.
@@ -4580,8 +4593,8 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             }
         }; // lock released
 
-        let bpe = loom_context::bpe();
-        let history_tokens: usize = history.iter().map(|m| loom_context::message_tokens(m, bpe)).sum();
+        let tid = self.tokenizer_for_active_model().await;
+        let history_tokens: usize = history.iter().map(|m| loom_context::message_tokens_with_id(m, tid)).sum();
         // ── Include stable prefix in the occupancy estimate ──
         // The stable prefix (system prompt + persona + summary + KG + tool catalog)
         // is sent on every turn and can consume 10 K–80 K+ tokens.  Without this
@@ -5734,8 +5747,8 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             }
         }; // lock dropped here
 
-        let bpe = loom_context::bpe();
-        let history_tokens: usize = history.iter().map(|m| loom_context::message_tokens(m, bpe)).sum();
+        let tid = self.tokenizer_for_active_model().await;
+        let history_tokens: usize = history.iter().map(|m| loom_context::message_tokens_with_id(m, tid)).sum();
         // ── Include stable prefix in the occupancy estimate ──
         let prefix_estimate: usize = {
             let persona = agent_config.persona.len().saturating_sub(2).max(0) / 4;

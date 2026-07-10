@@ -228,13 +228,25 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
   catch (e: any) {
     useStore.getState().setInlineError(sid, e.message || t('sessions.sendFailed'))
   }
-  finally {
-    clearTimeout(safetyTimer)
-    const buf = streamBufferManager.snapshot(sid)
-    if (buf && buf.messageId === aiMsgId) {
-      streamBufferManager.handleStreamEnd(sid)
-    }
-    // Update current session's modified time in sidebar
+ finally {
+   const buf = streamBufferManager.snapshot(sid)
+   if (buf && buf.messageId === aiMsgId) {
+     // Only call handleStreamEnd as a safety net if the stream hasn't already
+     // been handled by the WS chat.stream_end event. If the session is still
+     // streaming, WS events may still be arriving — defer to WS stream_end.
+     // The safety timer (5 min) remains as the ultimate fallback.
+     if (useStore.getState().streamingSessionIds.has(sid)) {
+       // Don't clear safety timer yet — let it serve as the ultimate fallback
+       // in case WS stream_end never arrives.
+     } else {
+       clearTimeout(safetyTimer)
+       streamBufferManager.handleStreamEnd(sid)
+     }
+   }
+   else {
+     clearTimeout(safetyTimer)
+   }
+   // Update current session's modified time in sidebar
     const now = new Date().toISOString()
     useStore.getState().setSessions(
       useStore.getState().sessions.map(s =>
@@ -284,13 +296,20 @@ export async function sendContinuation(sessionId: string): Promise<void> {
     }
   } catch (e: any) {
     store.setInlineError(sessionId, e.message || t('sessions.sendFailed'))
-  } finally {
-    clearTimeout(safetyTimer)
-    const buf = streamBufferManager.snapshot(sessionId)
-    if (buf && buf.messageId === aiMsgId) {
-      streamBufferManager.handleStreamEnd(sessionId)
-    }
-    const now = new Date().toISOString()
+ } finally {
+   const buf = streamBufferManager.snapshot(sessionId)
+   if (buf && buf.messageId === aiMsgId) {
+     if (store.streamingSessionIds.has(sessionId)) {
+       // Don't clear safety timer — let WS stream_end handle it
+     } else {
+       clearTimeout(safetyTimer)
+       streamBufferManager.handleStreamEnd(sessionId)
+     }
+   }
+   else {
+     clearTimeout(safetyTimer)
+   }
+   const now = new Date().toISOString()
     store.setSessions(
       store.sessions.map(s =>
         s.path === sessionId ? { ...s, modified: now } : s

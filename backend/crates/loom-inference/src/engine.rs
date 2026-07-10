@@ -421,9 +421,9 @@ impl InferenceEngine {
         Ok(())
     }
 
-    /// Rough token count (char-based estimate — local models vary).
+    /// Token count using the Cl100k tokenizer (real BPE, not char/4 heuristic).
     pub fn token_count(&self, text: &str) -> usize {
-        text.chars().count() / 4
+        loom_context::bpe().encode_with_special_tokens(text).len()
     }
 
     // ── GPU detection ───────────────────────────────────────────

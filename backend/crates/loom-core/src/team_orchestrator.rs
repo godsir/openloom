@@ -42,7 +42,7 @@ pub fn build_captain_system_prompt(
 {}
 {captain_override}
 ## Important Rules
-- Use the spawn_agent tool to start ALL team members in parallel.
+- Use the spawn_agents tool (with rounds=1 for Synthesize or rounds=2 for Debate) to start ALL team members in parallel. Do NOT use spawn_agent for individual members — use spawn_agents for all members at once.
 - Members cannot communicate with each other — only through you.
 - After all members complete, synthesize their findings into one comprehensive answer.
 - Highlight agreements, disagreements, and your own judgment where appropriate.
@@ -52,7 +52,7 @@ pub fn build_captain_system_prompt(
 }
 
 const SYNTHESIZE_INSTRUCTION: &str = r#"Synthesize Mode:
-1. Spawn all members with their specific personas.
+1. Use spawn_agents (rounds=1) to run all members in parallel with their specific personas.
 2. Wait for all to complete.
 3. Read each member's response carefully.
 4. Produce a unified conclusion that integrates all perspectives.
@@ -61,26 +61,13 @@ const SYNTHESIZE_INSTRUCTION: &str = r#"Synthesize Mode:
 const DEBATE_INSTRUCTION: &str = r#"Debate Mode (Two Rounds):
 
 Round 1:
-1. Spawn all members with their specific personas.
+1. Use spawn_agents (rounds=1) to run all members in parallel with their specific personas.
 2. Collect all Round 1 responses.
 
 Round 2:
 3. For each member, spawn them again with this additional context:
    "Here are the other experts' opinions from Round 1. Critically examine your own conclusion:
    identify points you agree with, points you disagree with, and either revise or defend your position."
-
-Round 2 Prompt for each member:
----
-Other experts' Round 1 responses:
-{other_responses}
-
-Please critically examine your own conclusion from Round 1. For each point raised by others:
-- If you agree, acknowledge it and integrate it.
-- If you disagree, explain why and defend your position.
-- If you discover a flaw in your own reasoning, correct it.
-
-Provide your revised (or reaffirmed) analysis.
----
 
 4. After all Round 2 responses are collected, synthesize everything into a final conclusion.
 5. Highlight: points of consensus, remaining disagreements, and your own recommendation."#;

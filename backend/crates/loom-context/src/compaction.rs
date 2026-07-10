@@ -7,7 +7,7 @@ use anyhow::Result;
 use loom_types::{CompactionConfig, ContentPart, Message, Role};
 use tiktoken_rs::CoreBPE;
 
-use crate::bpe;
+use crate::tokenizers::TokenizerId;
 
 /// The result of a compaction pass.
 #[derive(Debug, Clone)]
@@ -34,17 +34,26 @@ pub enum CompactionStrategy {
     LLMSummarization,
 }
 
-/// Compact conversation history using the configured strategies.
-///
-/// Partitioning: the most recent `config.keep_recent_messages` messages are
-/// preserved as-is. The older block goes through heuristic compaction first,
-/// then optionally LLM summarization if still over budget.
+/// Compact conversation history using the configured strategies and default
+/// `cl100k_base` tokenizer. Prefer [`compact_history_with_tokenizer`] when
+/// the active model name is available.
 pub fn compact_history(
     history: &[Message],
     config: &CompactionConfig,
-    _llm_client: Option<&dyn std::any::Any>, // LLM summarization deferred
+    _llm_client: Option<&dyn std::any::Any>,
 ) -> Result<CompactionResult> {
-    let bpe = bpe();
+    compact_history_with_tokenizer(history, config, _llm_client, TokenizerId::Cl100k)
+}
+
+/// Compact conversation history using a model‑aware tokenizer so that
+/// token-count‑driven thresholds match the active model's vocabulary.
+pub fn compact_history_with_tokenizer(
+    history: &[Message],
+    config: &CompactionConfig,
+    _llm_client: Option<&dyn std::any::Any>, // LLM summarization deferred
+    tokenizer_id: TokenizerId,
+) -> Result<CompactionResult> {
+    let bpe = tokenizer_id.get();
     let tokens_before = count_tokens(history, bpe);
 
     if !config.enabled {

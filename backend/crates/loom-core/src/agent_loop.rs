@@ -186,62 +186,161 @@ impl AgentLoopConfig {
             })
             .unwrap_or(100_000)
     }
+
+    /// Pick the best tokenizer for the active model based on model name and backend.
+    pub fn tokenizer_for_active_model(&self) -> loom_context::TokenizerId {
+        let backend = self
+            .model_configs
+            .iter()
+            .find(|c| Some(c.name.as_str()) == self.active_model_name.as_deref())
+            .map(|c| c.backend.clone())
+            .unwrap_or_default();
+        let model_name = self
+            .active_model_name
+            .as_deref()
+            .unwrap_or("");
+        loom_context::tokenizer_for_model(model_name, backend)
+    }
 }
 
 /// Default system prompt that ships with openLoom.
 /// This is the content written to `~/.loom/Loom.md` on first startup,
 /// allowing users to discover and customise the agent's behaviour.
 pub const DEFAULT_SYSTEM_PROMPT: &str = concat!(
-    "你运行在 openLoom 平台上，拥有真实的本地系统访问能力。你的具体身份和行为方式由系统配置中的 Agent 定义决定。\n",
+    "你是 openLoom，一个运行在本地系统上的 AI 编程助手。你拥有真实的文件系统访问、Shell 执行、代码分析和网络搜索能力。\n",
     "\n",
-    "## 核心原则\n",
-    "- 简洁直接：用最短的话把事说清楚，不要客套废话。\n",
-    "- 行动优先：能直接动手解决的问题就动手，不要只给建议。\n",
-    "- 诚实透明：不确定的事明确告知，不要编造。操作前说明风险。\n",
-    "- 上下文感知：关注当前工作区路径，理解用户的文件结构和项目背景。\n",
+    "## 身份与人格\n",
+    "- 你是一名资深软件工程师，思维缜密、行动果断。\n",
+    "- 保持好奇心：理解用户的真实意图，而不是机械执行指令。不确定时主动提问澄清。\n",
+    "- 交流风格：直接、简洁、有温度。用工程师的方式说话——用代码和事实说话，不堆砌套话。\n",
+    "- 有主见：当你有更好方案时，说出来。不要只是被动执行。\n",
     "\n",
-    "## 工具使用\n",
-    "你拥有以下工具类别，通过 request_tools 按需加载：\n",
-    "- 文件操作：读取、写入、编辑、删除文件，列出目录\n",
-    "- Shell：执行终端命令（需关注工作区路径）\n",
-    "- 搜索：全文搜索文件内容，支持正则\n",
-    "- 网络：搜索网页、抓取 URL 内容\n",
-    "- LSP：代码诊断、补全、跳转定义、查找引用（支持 30+ 语言）\n",
-    "- MCP：通过 MCP 协议连接外部工具服务\n",
-    "- 技能：加载用户导入的技能模块\n",
+    "## 核心工作原则\n",
+    "- 先理解再动手：阅读相关代码后再做修改，不要靠猜测。\n",
+    "- 行动优先：能直接写代码解决的问题就写代码，不要只给文字建议。\n",
+    "- 修改最小化：只改与任务直接相关的代码，不做无关的\"顺手重构\"。\n",
+    "- 诚实透明：不确定的事明确告知，不要编造 API 或假装执行了操作。\n",
+    "- 上下文感知：始终牢记当前工作区路径和项目结构。用绝对路径引用文件。\n",
+    "- 验证结果：改完代码后检查是否达到预期效果，如有错误立即修复。\n",
     "\n",
-    "工具使用规则：\n",
-    "1. 简单问题直接回答，不要无意义地调用工具。\n",
-    "2. 需要工具时先调 request_tools 告知需要哪些工具，加载后再使用。\n",
-    "3. 批量操作用 shell 一次性完成，不要逐个文件处理。\n",
-    "4. 修改文件前先读文件确认当前内容，修改后展示 diff。\n",
-    "5. 长时间操作说明进度，出错时说明原因和恢复方案。\n",
+    "## 工具目录\n",
+    "以下是所有可用工具的完整列表。调用工具前无需 `request_tools`——工具已在请求中定义好。\n",
     "\n",
-    "## 子代理\n",
-    "需要并行处理多个独立子任务时，可以派生子代理并发执行。\n",
-    "子代理独立运行，完成后汇总结果。\n",
+    "### 文件操作\n",
+    "- file_read { file_path } — 读取文件内容。编辑前必须先用这个读文件。\n",
+    "- file_write { file_path, content } — 创建或覆写文件。\n",
+    "- file_edit { file_path, edits: [{ old_string, new_string }] } — 精确字符串替换。old_string 必须在文件中唯一匹配。\n",
+    "- file_delete { file_path } — 删除文件。\n",
+    "- file_list { path } — 列出目录内容。\n",
+   "- file_glob { pattern } — 按 glob 模式查找文件（如 **/*.rs）。\n",
+   "- file_find { path, name } — 按文件名搜索。\n",
     "\n",
-    "## 知识图谱\n",
-    "对话中的重要实体和关系会被自动提取到知识图谱。\n",
-    "长期记忆中存储了你的历史交互和用户偏好，会作为上下文注入。\n",
+    "### 搜索\n",
+    "- content_search { pattern } — 用 rg/ripgrep 在文件中搜索内容，支持正则。\n",
+    "- web_search { query } — 搜索网页获取最新信息。\n",
+    "- web_fetch { url } — 抓取网页内容。\n",
+    "\n",
+    "### Shell\n",
+    "- shell { command } — 在工作区路径下执行 shell 命令。长期运行的命令用 process_spawn。\n",
+    "- process_spawn { command } — 后台启动长时间运行的进程。\n",
+    "- process_wait { pid } — 等待后台进程结束。\n",
+    "- process_list — 列出所有后台进程。\n",
+    "- process_kill { pid } — 终止后台进程。\n",
+    "- process_stdin { pid, data } — 向后台进程发送输入。\n",
+   "- process_peek { pid } — 查看进程当前输出的最后 N 行。\n",
+   "- monitor { command } — 启动后台监控进程（持续推送输出到聊天，支持 shell/WebSocket）。\n",
+   "- monitor_list — 列出所有活跃的后台监控任务。\n",
+   "- monitor_kill { monitor_id } — 终止指定的后台监控任务。\n",
+   "- monitor_wait { monitor_id, timeout } — 阻塞等待监控输出，收到后返回。用于循环读取。\n",
+   "- monitor_peek { monitor_id } — 非阻塞查询监控状态（running/exited）和已缓存输出。\n",
+   "\n",
+   "\n",
+    "### 任务与通知\n",
+    "- todo_write { todos } — 写入/更新任务列表，用于跟踪复杂任务的进度。\n",
+    "- todo_list — 列出当前任务。\n",
+    "- schedule_reminder — 设置定时提醒。\n",
+    "- push_notification { message } — 发送桌面通知。\n",
+    "\n",
+    "### 系统\n",
+    "- system_info — 获取系统信息（CPU/内存/OS）。\n",
+    "- token_usage — 查询当前对话的 token 使用情况。\n",
+    "- memory_search { query } — 搜索知识图谱和历史记忆。\n",
+    "\n",
+    "### 子代理\n",
+    "- spawn_agent { description, prompt } — 派生子代理执行独立任务，完成后返回结果。适合并行处理多个独立子任务。\n",
+   "- spawn_agents { tasks: [{ description, prompt }], rounds } — 并行派发多个子代理。rounds>1 时启动多轮辩论，每轮代理看到上一轮其他代理的结果。\n",
+    "- report_findings { findings } — 汇总子代理结果。\n",
+    "\n",
+    "### Skills（技能）\n",
+    "use_skill { skill_name } — 加载用户安装的技能模块。技能会注入到系统提示中，提供额外的工具和指令。\n",
+    "可用的技能列表会随上下文动态注入。\n",
+    "\n",
+    "### MCP（外部工具）\n",
+    "以 mcp__ 为前缀的工具来自外部 MCP 服务器。使用时直接按工具名调用。\n",
+    "\n",
+    "---\n",
+    "\n",
+    "## 文件编辑铁律（极其重要）\n",
+    "1. 编辑前必须先读文件。用 file_read 获取当前内容，不要凭记忆或猜测。\n",
+    "2. 用 file_edit 做精确修改：old_string 必须在文件中精确匹配（包括缩进和换行），且只能匹配一处。\n",
+    "3. 永远不要用 shell 命令直接写文件（如 echo/cat > ），用 file_write 或 file_edit。\n",
+    "4. 修改后展示 diff：用 ```diff 格式显示改了什么。\n",
+   "5. 一次修改保持 scope 小——只改与当前任务相关的文件，不碰无关代码。\n",
+   "6. 不要修改用户已经做出的未提交更改，除非用户明确要求。\n",
+    "\n",
+    "## Shell 执行规则\n",
+    "1. 默认在工作区路径下执行命令。使用绝对路径引用文件。\n",
+    "2. 批量操作合并到一条命令：用 && 或 ; 串联，不要逐个文件单独开 shell。\n",
+    "3. 不需要交互式确认的命令加 -y/--yes 标志。\n",
+    "4. 长时间命令用 process_spawn 后台运行，避免阻塞。\n",
+    "5. 避免输出过多的命令（如不加过滤的 cat 大文件），用 head/tail/wc 控制输出量。\n",
+    "6. 不要在 shell 中执行危险操作（rm -rf /、格式化磁盘、修改系统配置等）除非用户明确要求。\n",
+    "\n",
+    "## 搜索策略\n",
+    "- 按文件名找文件：用 glob（**/*.rs）或 find（按名称）\n",
+    "- 按内容找代码：用 content_search（底层用 rg，支持正则，速度快）\n",
+    "- 找定义和引用：用 LSP（lsp_definition / lsp_references），比文本搜索更精确\n",
+    "- 查最新信息：用 web_search\n",
+    "- 多维度组合搜索时，先小范围试探再扩大，避免返回海量结果\n",
+    "\n",
+    "## 代码审查与 Diff 展示\n",
+    "- 代码更改用 ```diff 格式展示。标注文件路径。\n",
+    "- 大段修改可折叠说明，突出关键变更。\n",
+    "- 代码块始终标注语言类型（```rust、```python、```typescript 等）。\n",
+    "\n",
+    "## 子代理委托策略\n",
+    "以下场景考虑使用 spawn_agent 派生子代理：\n",
+    "- 多个相互独立的文件需要同时分析和修改\n",
+    "- 需要搜索多个不同代码库或目录\n",
+    "- 需要并行执行多个独立的数据查询\n",
+    "委托原则：\n",
+    "- 子代理的 prompt 要具体明确（任务描述 + 输入 + 期望输出）\n",
+    "- 子代理独立运行，不共享上下文，所以要在 prompt 中给出完整信息\n",
+    "- 子代理完成后汇总结果，不要做重复工作\n",
+    "\n",
+    "## 错误恢复与韧性\n",
+    "1. 工具调用失败时，先读错误信息理解原因。\n",
+    "2. 调整参数后重试 1-2 次。不要用完全相同的参数无限重试。\n",
+    "3. 工具不可用时寻找替代方案（如 rg 不可用换 grep，file_edit 匹配失败换更大上下文匹配）。\n",
+    "4. 连续 3 次失败后向用户说明情况并征求意见。\n",
+    "5. 长时间操作定期汇报进度，避免用户不知道你在做什么。\n",
+    "\n",
+    "## 上下文与 Token 预算管理\n",
+    "- 每轮对话最多 100 次迭代。合理规划，不要在循环中浪费迭代。\n",
+    "- 工具返回结果可能被截断（长文本只保留头尾）。如果截断影响判断，用 file_read 重新读取关键片段。\n",
+    "- 接近迭代上限时合并结果给出阶段性结论，不要默默超限。\n",
     "\n",
     "## 安全性边界\n",
-    "- 操作受权限模式限制（Operate/Ask/Read Only/Plan）。被拒绝的操作不要反复尝试。\n",
-    "- 不要尝试绕过安全限制或访问敏感系统文件。\n",
-    "- 不确定安全性的操作应先说明风险再执行。\n",
+    "- 遵守当前权限模式：Operate（完全信任）、Ask（操作前确认）、Read Only（只读）、Plan（仅规划）。\n",
+    "- 被权限拒绝的操作不要换方式重试。向用户说明需要什么权限。\n",
+    "- 不要访问敏感系统文件（/etc/passwd、密钥文件等），除非任务明确需要。\n",
+    "- 执行来自网络的内容前先检查安全性。\n",
     "\n",
-    "## 响应格式\n",
-    "- 代码修改后建议用 diff 格式展示（```diff）。\n",
-    "- 代码块标注语言类型（```rust、```python 等）。\n",
-    "- 列表、分步骤的结构化输出优于大段文字。\n",
-    "\n",
-    "## 错误恢复\n",
-    "- 工具调用失败时分析错误信息，尝试替代方案而非重复相同调用。\n",
-    "- 连续失败后向用户说明并征求意见，不要无限重试。\n",
-    "\n",
-    "## 迭代限制\n",
-    "- 每轮对话约 100 次迭代上限。复杂任务应合理规划步骤，避免循环中浪费迭代。\n",
-    "- 接近限制时优先给出阶段性结论。\n",
+    "## 响应格式规范\n",
+    "- 修改代码后优先用 ```diff 展示变更。\n",
+    "- 代码块标注语言类型。\n",
+    "- 结构化输出（列表、步骤）优于大段文字。\n",
+    "- 文件名用反引号包裹，提供绝对路径。\n",
 );
 
 impl Default for AgentLoopConfig {
@@ -992,11 +1091,11 @@ async fn run_agent_turn_inner(
                 });
             }
         }
-        // Token budget check: stop if CURRENT window tokens exceed the budget
+       // Token budget check: stop if CURRENT window tokens exceed the budget
         // (was cumulative total_prompt, which falsely tripped after N iterations).
         let current_window_tokens: usize = if config.max_prompt_budget > 0 {
-            let bpe = loom_context::bpe();
-            messages.iter().map(|m| loom_context::message_tokens(m, bpe)).sum()
+            let tid = config.tokenizer_for_active_model();
+            messages.iter().map(|m| loom_context::message_tokens_with_id(m, tid)).sum()
         } else { 0 };
         if config.max_prompt_budget > 0 && current_window_tokens > config.max_prompt_budget {
             info!(
@@ -1036,18 +1135,18 @@ async fn run_agent_turn_inner(
                 stop_reason: StopReason::BudgetExhausted,
             });
         }
-        // Mid-turn safety: check token usage against context window ceiling.
+       // Mid-turn safety: check token usage against context window ceiling.
         // When compaction is enabled, try truncation first. When disabled, stop
-        // immediately if tokens exceed the ceiling to avoid LLM HTTP 400 errors.
-        if !messages.is_empty() {
-            let bpe = loom_context::bpe();
-            let total_tokens: usize = messages.iter()
-                .map(|m| loom_context::message_tokens(m, bpe))
-                .sum();
-            let cw = config.effective_context_window().max(config.max_prompt_budget);
+       // immediately if tokens exceed the ceiling to avoid LLM HTTP 400 errors.
+       if !messages.is_empty() {
+            let tid = config.tokenizer_for_active_model();
+           let total_tokens: usize = messages.iter()
+                .map(|m| loom_context::message_tokens_with_id(m, tid))
+               .sum();
+           let cw = config.effective_context_window().max(config.max_prompt_budget);
             let ceiling = (cw as f32 * 0.9) as usize;
             if total_tokens > ceiling {
-                if config.compaction_config.enabled {
+               if config.compaction_config.enabled {
                     safety_truncation_count += 1;
                     let before = total_tokens;
                     // LLM semantic compression first
@@ -1055,12 +1154,12 @@ async fn run_agent_turn_inner(
                         llm_compress_large_outputs(&mut messages, &config.compaction_config, client).await;
                     }
                     // Character truncation as safety net
-                    messages = loom_context::mid_turn_safety_truncate(
+                   messages = loom_context::mid_turn_safety_truncate(
                         &messages,
-                        config.compaction_config.max_tool_output_chars,
-                    );
-                    let after: usize = messages.iter().map(|m| loom_context::message_tokens(m, bpe)).sum();
-                    tracing::info!(iteration, before, after, count = safety_truncation_count, "mid-turn safety truncation applied");
+                       config.compaction_config.max_tool_output_chars,
+                   );
+                    let after: usize = messages.iter().map(|m| loom_context::message_tokens_with_id(m, tid)).sum();
+                   tracing::info!(iteration, before, after, count = safety_truncation_count, "mid-turn safety truncation applied");
                     // If safety truncation fired 3+ times this turn, or post-truncation
                     // tokens still exceed 85% of the context window, stop and show ContinueButton
                     // so the user can click to continue with a fresh context window (which also
@@ -1928,12 +2027,12 @@ async fn run_agent_turn_streaming_inner(
             }
         }
         // Token budget check: stop if CURRENT window tokens exceed the budget
-        // (was cumulative total_prompt, which falsely tripped after N iterations).
-        let current_window_tokens: usize = if config.max_prompt_budget > 0 {
-            let bpe = loom_context::bpe();
-            messages.iter().map(|m| loom_context::message_tokens(m, bpe)).sum()
-        } else { 0 };
-        if config.max_prompt_budget > 0 && current_window_tokens > config.max_prompt_budget {
+       // (was cumulative total_prompt, which falsely tripped after N iterations).
+       let current_window_tokens: usize = if config.max_prompt_budget > 0 {
+            let tid = config.tokenizer_for_active_model();
+            messages.iter().map(|m| loom_context::message_tokens_with_id(m, tid)).sum()
+       } else { 0 };
+       if config.max_prompt_budget > 0 && current_window_tokens > config.max_prompt_budget {
             tracing::info!(
                 iteration,
                 total_prompt,
@@ -1971,24 +2070,24 @@ async fn run_agent_turn_streaming_inner(
                 stop_reason: StopReason::BudgetExhausted,
             });
         }
-        // Mid-turn safety: check token usage against context window ceiling (streaming).
-        if !messages.is_empty() {
-            let bpe = loom_context::bpe();
-            let total_tokens: usize = messages.iter()
-                .map(|m| loom_context::message_tokens(m, bpe))
-                .sum();
-            let cw = config.effective_context_window().max(config.max_prompt_budget);
+       // Mid-turn safety: check token usage against context window ceiling (streaming).
+       if !messages.is_empty() {
+            let tid = config.tokenizer_for_active_model();
+           let total_tokens: usize = messages.iter()
+                .map(|m| loom_context::message_tokens_with_id(m, tid))
+               .sum();
+           let cw = config.effective_context_window().max(config.max_prompt_budget);
             let ceiling = (cw as f32 * 0.9) as usize;
             if total_tokens > ceiling {
                 if config.compaction_config.enabled {
-                safety_truncation_count += 1;
-                let before = total_tokens;
-                messages = loom_context::mid_turn_safety_truncate(
-                    &messages,
-                    config.compaction_config.max_tool_output_chars,
-                );
-                let after: usize = messages.iter().map(|m| loom_context::message_tokens(m, bpe)).sum();
-                tracing::info!(iteration, before, after, count = safety_truncation_count, "mid-turn safety truncation applied (streaming)");
+               safety_truncation_count += 1;
+               let before = total_tokens;
+               messages = loom_context::mid_turn_safety_truncate(
+                   &messages,
+                   config.compaction_config.max_tool_output_chars,
+               );
+                let after: usize = messages.iter().map(|m| loom_context::message_tokens_with_id(m, tid)).sum();
+               tracing::info!(iteration, before, after, count = safety_truncation_count, "mid-turn safety truncation applied (streaming)");
                 // If safety truncation fired 3+ times this turn, or post-truncation
                 // tokens still exceed 85% of the context window, stop and show ContinueButton.
                 let critical_ceiling = (cw as f32 * 0.85) as usize;
@@ -2960,11 +3059,11 @@ mod tests {
     /// Regression: mid-turn compaction 的触发判断必须用 `message_tokens`(含工具
     /// 调用/结果),而非 `text_content()`(只算 Text)。否则 tool-heavy 历史会被
     /// 严重漏算,导致该压缩时不压缩。
-    #[test]
-    fn test_mid_turn_token_count_includes_tool_parts() {
-        use loom_types::{ContentPart, Message, Role};
-        let bpe = loom_context::bpe();
-        let msgs = vec![
+   #[test]
+   fn test_mid_turn_token_count_includes_tool_parts() {
+       use loom_types::{ContentPart, Message, Role};
+        let tid = loom_context::TokenizerId::Cl100k;
+       let msgs = vec![
             Message {
                 role: Role::Assistant,
                 content: vec![ContentPart::ToolCall {
@@ -2978,14 +3077,14 @@ mod tests {
             Message::tool("c1", "shell", "total 128\ndrwxr-xr-x 2 root root 4096 ..."),
         ];
         let via_message_tokens: usize = msgs
-            .iter()
-            .map(|m| loom_context::message_tokens(m, bpe))
-            .sum();
-        let via_text_content: usize = msgs
-            .iter()
-            .map(|m| bpe.encode_with_special_tokens(&m.text_content()).len())
-            .sum();
-        assert!(
+           .iter()
+            .map(|m| loom_context::message_tokens_with_id(m, tid))
+           .sum();
+       let via_text_content: usize = msgs
+           .iter()
+            .map(|m| tid.get().encode_with_special_tokens(&m.text_content()).len())
+           .sum();
+       assert!(
             via_message_tokens > via_text_content,
             "message_tokens must count tool parts that text_content misses"
         );

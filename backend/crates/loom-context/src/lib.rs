@@ -11,10 +11,11 @@
 use anyhow::Result;
 use loom_types::Message;
 use sha2::{Digest, Sha256};
-use std::sync::OnceLock;
 
 pub mod compaction;
-pub use compaction::{CompactionResult, CompactionStrategy, compact_history, mid_turn_safety_truncate};
+pub mod tokenizers;
+pub use tokenizers::{TokenizerId, tokenizer_for_model, bpe};
+pub use compaction::{CompactionResult, CompactionStrategy, compact_history, compact_history_with_tokenizer, mid_turn_safety_truncate};
 
 /// Deterministic SHA256 fingerprint of the stable prompt prefix.
 ///
@@ -45,18 +46,6 @@ pub struct PrefixDigest {
     pub prefix_token_count: usize,
 }
 
-/// Shared tiktoken BPE instance — initialised once, reused for all assemblies.
-pub fn bpe() -> &'static tiktoken_rs::CoreBPE {
-    static BPE: OnceLock<tiktoken_rs::CoreBPE> = OnceLock::new();
-    BPE.get_or_init(|| {
-        // `cl100k_base()` only fails if the embedded model data is corrupt, which
-        // cannot happen at runtime — but avoid `.expect()` per workspace lints.
-        match tiktoken_rs::cl100k_base() {
-            Ok(b) => b,
-            Err(e) => unreachable!("tiktoken cl100k_base model should always load: {e}"),
-        }
-    })
-}
 
 /// Fixed per-message token overhead approximating the role/delimiter framing
 /// that chat APIs add around every message (e.g. `<|im_start|>role ... <|im_end|>`).
@@ -65,11 +54,22 @@ const PER_MESSAGE_TOKEN_OVERHEAD: usize = 4;
 /// Estimate the token cost of a single message, counting **all** content parts —
 /// not just `Text`. Tool-call arguments, tool results, and thinking blocks all
 /// consume real budget on the wire, so they must be included or the estimate
-/// under-counts tool-heavy history (causing the assembled prompt to exceed the
-/// intended budget and compaction to undercount).
+/// under-counts tool-heavy history.
 ///
-/// Uses the shared cl100k_base tokenizer plus a small fixed per-message overhead.
+/// This is the legacy entry-point. Prefer [`message_tokens_with_id`] for
+/// model‑aware token counting.
 pub fn message_tokens(msg: &Message, bpe: &tiktoken_rs::CoreBPE) -> usize {
+    message_tokens_impl(msg, bpe)
+}
+
+/// Estimate the token cost of a single message using the model‑appropriate
+/// tiktoken vocabulary.
+pub fn message_tokens_with_id(msg: &Message, tid: TokenizerId) -> usize {
+    message_tokens_impl(msg, tid.get())
+}
+
+/// Internal implementation — shared by both public entry-points.
+fn message_tokens_impl(msg: &Message, bpe: &tiktoken_rs::CoreBPE) -> usize {
     use loom_types::ContentPart;
     let mut tokens = PER_MESSAGE_TOKEN_OVERHEAD;
     for part in &msg.content {
@@ -83,8 +83,6 @@ pub fn message_tokens(msg: &Message, bpe: &tiktoken_rs::CoreBPE) -> usize {
             ContentPart::ToolCall {
                 name, arguments, ..
             } => std::borrow::Cow::Owned(format!("{name}{arguments}")),
-            // Inline image bytes are elided during compaction and are not text;
-            // count only the (small) reference framing via the per-message overhead.
             ContentPart::Image { media_type, .. } | ContentPart::ImageRef { media_type, .. } => {
                 std::borrow::Cow::Borrowed(media_type.as_str())
             }
@@ -121,14 +119,27 @@ pub struct AssembleOptions {
 pub struct ContextAssembler {
     system_prompt: String,
     max_history_tokens: usize,
+    /// Which tiktoken vocabulary to use for token counting in this instance.
+    tokenizer_id: TokenizerId,
 }
 
 impl ContextAssembler {
-    pub fn new(system_prompt: impl Into<String>, max_history_tokens: usize) -> Self {
+    /// Create a new assembler with an explicit tokenizer.
+    pub fn new_with_tokenizer(
+        system_prompt: impl Into<String>,
+        max_history_tokens: usize,
+        tokenizer_id: TokenizerId,
+    ) -> Self {
         Self {
             system_prompt: system_prompt.into(),
             max_history_tokens,
+            tokenizer_id,
         }
+    }
+
+    /// Create a new assembler — uses the default `Cl100k` tokenizer.
+    pub fn new(system_prompt: impl Into<String>, max_history_tokens: usize) -> Self {
+        Self::new_with_tokenizer(system_prompt, max_history_tokens, TokenizerId::Cl100k)
     }
 
     /// Build the messages array for an LLM request.
@@ -190,7 +201,7 @@ impl ContextAssembler {
         max_tokens: usize,
         summary_at_count: usize,
     ) -> Vec<Message> {
-        let bpe = bpe();
+        let bpe = self.tokenizer_id.get();
         let mut token_count = 0usize;
         let mut included: Vec<usize> = Vec::new();
         let start = summary_at_count.min(history.len());
@@ -270,7 +281,7 @@ impl ContextAssembler {
         }
 
         let combined_hash = hex::encode(Sha256::digest(combined.as_bytes()));
-        let prefix_token_count = bpe().encode_with_special_tokens(&combined).len();
+        let prefix_token_count = self.tokenizer_id.get().encode_with_special_tokens(&combined).len();
 
         PrefixDigest {
             combined_hash,

@@ -34,5 +34,6 @@ pub use loom_types::{
 };
 pub use slash_router::{SlashIntercept, SlashRouter};
 pub use tool_registry::{
-    AgentTool, SpawnAgentTool, SpawnContext, ToolProvenance, ToolRegistry, ToolResult,
+   AgentTool, SpawnAgentTool, SpawnContext, ToolProvenance, ToolRegistry, ToolResult,
+   SpawnAgentsTool,
 };
