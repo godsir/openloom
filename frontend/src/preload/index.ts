@@ -51,7 +51,7 @@ export interface LoomApi {
   getGitBranches: (workspaceRoot: string) => Promise<import('../main/services/git-service').GitBranchesResult>
   switchGitBranch: (workspaceRoot: string, branch: string) => Promise<import('../main/services/git-service').GitBranchesResult>
   createAndSwitchGitBranch: (workspaceRoot: string, branch: string) => Promise<import('../main/services/git-service').GitBranchesResult>
-  getUncommittedChanges: (workspaceRoot: string) => Promise<{ files: import('../main/services/git-service').UncommittedFile[]; diff: string; repoRoot: string; error?: string }>
+  getUncommittedChanges: (workspaceRoot: string) => Promise<{ files: import('../main/services/git-service').UncommittedFile[]; diff: string; repoRoot: string; error?: string; unpushedCommits: number; ahead: number; behind: number; unpushedLog: { hash: string; subject: string }[] }>
   gitCommit: (workspaceRoot: string, message: string) => Promise<{ ok: boolean; message: string }>
   gitPush: (workspaceRoot: string) => Promise<{ ok: boolean; message: string }>
   /** Get / set Chromium zoom factor (Ctrl+/- zoom level) */

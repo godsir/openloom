@@ -1,7 +1,7 @@
 import { StateCreator } from 'zustand'
 
 /** AI 生成过程中的子阶段，用于灵动岛流转显示 */
-export type StreamPhase = 'thinking' | 'vision' | 'skill' | 'tool' | 'generating'
+export type StreamPhase = 'thinking' | 'vision' | 'skill' | 'tool' | 'team' | 'generating'
 
 export interface StreamingActivity {
   phase: StreamPhase

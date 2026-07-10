@@ -2,7 +2,7 @@ import { useMemo, useEffect, useRef, useState } from 'react'
 import { useStore } from '../../stores'
 import { useIMStore, PLATFORM_LABELS, type Platform } from '../../stores/im'
 import type { StreamPhase } from '../../stores/streaming'
-import { IconMessageSquare, IconEdit, IconAlertCircle, IconDownload, IconSparkles, IconRotateCcw, IconBrain, IconEye, IconTerminal, IconCheck, IconChevronDown } from '../../utils/icons'
+import { IconMessageSquare, IconEdit, IconAlertCircle, IconDownload, IconSparkles, IconRotateCcw, IconBrain, IconEye, IconTerminal, IconCheck, IconChevronDown, IconUsers } from '../../utils/icons'
 import { useLocale } from '../../i18n'
 import PlatformIcon from '../shared/PlatformIcon'
 import styles from './AppShell.module.css'
@@ -23,6 +23,7 @@ export default function DynamicIslandCenter() {
   const islandExpanded = useStore(s => s.islandExpanded)
   const setIslandExpanded = useStore(s => s.setIslandExpanded)
   const imSessionSources = useIMStore(s => s.imSessionSources)
+  const sessionTeamBindings = useStore(s => s.sessionTeamBindings)
 
   const isStreaming = streamingIds.size > 0
   const isDownloading = update.status === 'downloading'
@@ -52,7 +53,17 @@ export default function DynamicIslandCenter() {
   const imSource = imSessionSources[currentSessionId || '']
   const streamImSource = activeStreamId ? imSessionSources[activeStreamId] : undefined
   const activity = activeStreamId ? streamingActivity[activeStreamId] : undefined
-  const phase: StreamPhase = activity?.phase ?? 'generating'
+  const effectiveActivity = useMemo(() => {
+    if (!activity) return undefined
+    // If this session is using a team, show team phase instead of generic generating
+    const hasTeam = !!(activeStreamId && sessionTeamBindings[activeStreamId])
+    if (hasTeam && activity.phase === 'generating') {
+      return { ...activity, phase: 'team' as StreamPhase }
+    }
+    return activity
+  }, [activity, activeStreamId, sessionTeamBindings])
+  const phase: StreamPhase = effectiveActivity?.phase ?? 'generating'
+  const phaseActivity = effectiveActivity
 
   // Per-session token usage for the actively streaming session
   const usageBySession = useStore(s => s.usageBySession)
@@ -128,13 +139,10 @@ export default function DynamicIslandCenter() {
 
   const phaseMeta: Record<StreamPhase, { icon: typeof IconBrain; title: string; sub?: string }> = {
     thinking: { icon: IconBrain, title: t('island.thinking'), sub: t('island.thinkingHint') },
-    vision: {
-      icon: IconEye,
-      title: t('island.vision'),
-      sub: activity?.visionTotal ? t('island.visionProgress', { done: activity.visionDone ?? 0, total: activity.visionTotal }) : t('island.visionHint'),
-    },
+    vision: { icon: IconEye, title: t('island.vision'), sub: activity?.visionTotal ? t('island.visionProgress', { done: activity.visionDone ?? 0, total: activity.visionTotal }) : t('island.visionHint') },
     skill: { icon: IconSparkles, title: t('island.skill'), sub: activity?.detail ?? '' },
     tool: { icon: IconTerminal, title: t('island.tool'), sub: activity?.detail ?? '' },
+    team: { icon: IconUsers, title: t('island.team'), sub: activity?.detail ?? '' },
     generating: { icon: IconSparkles, title: t('app.generating'), sub: t('app.generatingHint') },
   }
   const meta = phaseMeta[phase]

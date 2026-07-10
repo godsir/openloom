@@ -193,6 +193,7 @@ export default function TeamTab() {
     setGenerating(true)
     setGenStepIdx(0)
     setGenError('')
+    useStore.getState().showIslandTransient(t('team.generatingMembers'), 300_000)
     let tick = 0
 
     // Animate through first 2 steps while RPC runs (analyze → design)
@@ -224,7 +225,8 @@ export default function TeamTab() {
       }
 
       // All revealed — done
-      setGenStepIdx(3)           // "生成完成"
+      setGenStepIdx(3)
+      useStore.getState().clearIslandTransient()
       await new Promise((r) => setTimeout(r, 500))
       useStore.getState().addToast({
         type: 'success',
@@ -233,6 +235,7 @@ export default function TeamTab() {
     } catch (e: any) {
       if (stepTimerRef.current) { clearInterval(stepTimerRef.current); stepTimerRef.current = null }
       setGenError(e.message || String(e))
+      useStore.getState().clearIslandTransient()
       useStore.getState().addToast({
         type: 'error',
         message: t('team.generateFailed', { reason: e.message || String(e) }),

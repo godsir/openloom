@@ -280,11 +280,11 @@ async fn handle_completion_chat(state: &AppState, p: &Value) -> Result<Value, Js
         Ok(resp) if resp.status().is_success() => {
             let json: Value = resp.json().await.unwrap_or_default();
             tracing::info!(body = %json.to_string().chars().take(500).collect::<String>(), "completion.chat raw response");
-            let text = json["choices"][0]["message"]["content"]
-                .as_str()
-                .or(json["choices"][0]["message"]["reasoning_content"].as_str())
-                .unwrap_or("")
-                .to_string();
+            let content = json["choices"][0]["message"]["content"]
+                .as_str().filter(|s| !s.is_empty());
+            let reasoning = json["choices"][0]["message"]["reasoning_content"]
+                .as_str().filter(|s| !s.is_empty());
+            let text = content.or(reasoning).unwrap_or("").to_string();
             tracing::info!(len = text.len(), "completion.chat extracted text");
             Ok(serde_json::json!({ "ok": true, "content": text }))
         }

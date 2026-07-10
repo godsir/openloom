@@ -122,9 +122,9 @@ export interface UncommittedFile {
   dels: number
 }
 
-export async function getUncommittedChanges(workspaceRoot: string): Promise<{ files: UncommittedFile[]; diff: string; repoRoot: string; error?: string }> {
+export async function getUncommittedChanges(workspaceRoot: string): Promise<{ files: UncommittedFile[]; diff: string; repoRoot: string; error?: string; unpushedCommits: number; ahead: number; behind: number; unpushedLog: { hash: string; subject: string }[] }> {
   const cwd = workspaceRoot.trim()
-  if (!cwd) return { files: [], diff: '', repoRoot: '' }
+  if (!cwd) return { files: [], diff: '', repoRoot: '', unpushedCommits: 0, ahead: 0, behind: 0, unpushedLog: [] }
   try {
     const repoRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
 
@@ -155,11 +155,43 @@ export async function getUncommittedChanges(workspaceRoot: string): Promise<{ fi
     const stagedDiff = (await runGit(cwd, ['diff', '--cached'])).stdout
     const diff = [unstagedDiff, stagedDiff].filter(Boolean).join('\n')
 
-    return { files, diff, repoRoot }
+    // Count ahead/behind vs upstream
+    let ahead = 0
+    let behind = 0
+    try {
+      const branch = (await runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim()
+      ahead = parseInt((await runGit(cwd, ['rev-list', '--count', `${branch}..@{upstream}`])).stdout.trim()) || 0
+    } catch { /* no upstream or no branch */ }
+    try {
+      const branch = (await runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim()
+      behind = parseInt((await runGit(cwd, ['rev-list', '--count', `@{upstream}..${branch}`])).stdout.trim()) || 0
+    } catch { /* no upstream or no branch */ }
+
+    // Get unpushed commit hashes + subjects
+    let unpushedCommits = 0
+    let unpushedLog: { hash: string; subject: string }[] = []
+    try {
+      const branch = (await runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim()
+      const logOut = (await runGit(cwd, ['log', '--oneline', `@{upstream}..${branch}`])).stdout
+      unpushedLog = logOut.split('\n').filter(Boolean).map(line => {
+        const space = line.indexOf(' ')
+        return { hash: line.slice(0, space), subject: line.slice(space + 1) }
+      })
+      unpushedCommits = unpushedLog.length
+    } catch { /* no upstream */ }
+    // Fallback: count all commits on current branch not in any remote
+    if (unpushedCommits === 0) {
+      try {
+        const countOut = (await runGit(cwd, ['rev-list', '--count', '--branches', '--not', '--remotes'])).stdout.trim()
+        unpushedCommits = parseInt(countOut) || 0
+      } catch { /* ignore */ }
+    }
+
+    return { files, diff, repoRoot, unpushedCommits, ahead, behind, unpushedLog }
   } catch (err) {
     console.error('[git:uncommitted-changes] error:', err)
     const msg = err instanceof Error ? err.message : String(err)
-    return { files: [], diff: '', repoRoot: '', error: msg }
+    return { files: [], diff: '', repoRoot: '', error: msg, unpushedCommits: 0, ahead: 0, behind: 0, unpushedLog: [] }
   }
 }
 
