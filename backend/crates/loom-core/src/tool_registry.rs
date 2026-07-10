@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use loom_types::{CompactionConfig, ToolDefinition, ToolProgress};
+use loom_types::{CompactionConfig, StreamDelta, ToolDefinition, ToolProgress};
 use tokio::sync::RwLock;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -505,27 +505,27 @@ pub struct SpawnAgentsTool {
 
 #[async_trait]
 impl AgentTool for SpawnAgentsTool {
-    fn tool_name(&self) -> &str { "spawn_agents" }
+    fn tool_name(&self) -> &str { "team_spawn" }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "spawn_agents".into(),
-            description: "Spawn multiple sub-agents in parallel with optional multi-round debate. Each round, all tasks run concurrently. When rounds>1, subsequent rounds see previous round results for cross-examination and refinement. Use for: (1) simple parallel tasks, (2) expert team synthesis, (3) multi-round debate.".into(),
+            name: "team_spawn".into(),
+            description: "Launch team members in parallel. Each member runs and returns results when all complete. Use for: expert team synthesis (rounds=1) or multi-round debate (rounds=2).".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "tasks": {
-                        "type": "array",
-                        "description": "List of tasks to run in parallel",
+                        "type": "array", "description": "List of member tasks to run in parallel",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "description": {"type": "string", "description": "Short description of this subtask"},
-                                "prompt": {"type": "string", "description": "Detailed instructions for this sub-agent"}
+                                "name": {"type": "string", "description": "Member display name"},
+                                "prompt": {"type": "string", "description": "Detailed instructions"}
                             },
-                            "required": ["description", "prompt"]
+                            "required": ["name", "prompt"]
                         }
-                    }
+                    },
+                    "rounds": {"type": "integer", "description": "Number of debate rounds (1=synthesize, 2=debate)"}
                 },
                 "required": ["tasks"]
             }),
@@ -537,9 +537,9 @@ impl AgentTool for SpawnAgentsTool {
         &self,
         arguments: serde_json::Value,
         _progress: UnboundedSender<ToolProgress>,
-       _context: &ToolContext,
-   ) -> Result<ToolResult> {
-       let tasks = match arguments["tasks"].as_array() {
+        context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let tasks = match arguments["tasks"].as_array() {
             Some(arr) if !arr.is_empty() => arr.clone(),
             _ => return Ok(ToolResult { content: "tasks array required and must be non-empty.".into(), is_error: true, structured_content: None }),
         };
@@ -550,10 +550,13 @@ impl AgentTool for SpawnAgentsTool {
         let base = config.clone();
         drop(config);
 
+        // Capture session_id from tool context for event routing
+        let capture_session_id = context.session_id.clone().unwrap_or_default();
+
         // Build initial prompts from tasks
         let mut current_prompts: Vec<(usize, String, String)> = Vec::new();
         for (i, task) in tasks.iter().take(limit).enumerate() {
-            let desc = task["description"].as_str().unwrap_or("subtask").to_string();
+            let desc = task["name"].as_str().unwrap_or("member").to_string();
             let prompt = match task["prompt"].as_str() { Some(p) if !p.is_empty() => p.to_string(), _ => continue };
             current_prompts.push((i, desc, prompt));
         }
@@ -562,20 +565,23 @@ impl AgentTool for SpawnAgentsTool {
         }
 
         let mut all_round_results: Vec<String> = Vec::new();
+        let team_id = loom_types::AgentId::new(); // synthetic team ID for this invocation
 
         for round in 0..rounds {
-            // Build sub-agent configs and spawn in parallel
             let mut handles = Vec::with_capacity(current_prompts.len());
-            for (i, desc, prompt) in &current_prompts {
-                let i = *i; let desc = desc.clone(); let prompt = prompt.clone();
-                let ctx = self.context.clone();
-                let base = base.clone();
+
+            for (i, name, prompt) in &current_prompts {
+                let i = *i; let name = name.clone(); let prompt = prompt.clone();
+                let ctx = self.context.clone(); let base = base.clone();
                 let max_iters = subagent_max_iters.min(base.max_iterations);
+                let eb = self.context.event_bus.clone();
+                let tid = team_id.clone();
+                let fwd_sid = capture_session_id.clone();
+
                 handles.push(tokio::spawn(async move {
-                    let sub = crate::agent_loop::AgentLoopConfig {
-                        system_prompt: format!("You are a parallel sub-agent. Task: {}\n\nInstructions:\n{}", desc, prompt),
-                        max_iterations: max_iters,
-                        max_tokens: base.max_tokens, temperature: base.temperature,
+                    let config = crate::agent_loop::AgentLoopConfig {
+                        system_prompt: format!("You are team member \"{}\". Task: {}", name, prompt),
+                        max_iterations: max_iters, max_tokens: base.max_tokens, temperature: base.temperature,
                         lazy_tools: base.lazy_tools, cc_dispatch: base.cc_dispatch,
                         selected_skills: Vec::new(), available_skill_count: 0,
                         persona: None, summary: None, kg_context: None,
@@ -584,7 +590,7 @@ impl AgentTool for SpawnAgentsTool {
                         workspace_path: base.workspace_path.clone(),
                         max_prompt_budget: 0, context_window: None, summary_at_count: 0,
                         default_permissions: base.default_permissions.clone(),
-                        session_id: String::new(), agent_id: String::new(),
+                        session_id: fwd_sid.clone(), agent_id: String::new(),
                         key_store: None, loom_dir: base.loom_dir.clone(),
                         permission_mode: "operate".to_string(),
                         event_bus: None, pending_permissions: None,
@@ -596,17 +602,53 @@ impl AgentTool for SpawnAgentsTool {
                         few_shots: Vec::new(), progress_checkpoint: None,
                         skill_tool_allowlist: None,
                     };
-                    let sid = loom_types::SessionId::new();
-                    let cid = match ctx.agent_pool.spawn(loom_types::AgentConfig::default(), None, sid.clone()).await { Ok(id) => id, Err(e) => return (i, desc, format!("spawn: {}", e), true) };
-                    let _ = ctx.agent_pool.transition(&cid, crate::agent::AgentStatus::Thinking, Some("sub-agent".into())).await;
-                    let cancel = match ctx.agent_pool.cancel_token(&cid).await { Ok(t) => t, Err(e) => { let _ = ctx.agent_pool.remove(&cid).await; return (i, desc, format!("cancel: {}", e), true); } };
-                    let client = { let g = ctx.cloud_client.read().await; match g.as_ref() { Some(c) => c.clone(), None => { let _ = ctx.agent_pool.remove(&cid).await; return (i, desc, "no model".into(), true); } } };
+                    // Use streaming turn — forward deltas as TeamMemberDelta events
+                    let (delta_tx, mut delta_rx) = tokio::sync::mpsc::channel::<StreamDelta>(256);
+                    let client = { let g = ctx.cloud_client.read().await; g.as_ref().map(|c| c.clone()) };
+                    let Some(client) = client else { return (i, name, "no model configured".into(), true) };
+
                     let reg = ctx.tool_registry.read().await;
-                    let res = crate::agent_loop::run_agent_turn_with_cancel(client.as_ref(), &reg, &[], &prompt, &sub, &None, &None, &cancel).await;
+                    let config_clone = config.clone();
+                    let _eb = eb.clone();
+                    let _tid = tid.clone();
+                    let member_name = name.clone();
+                    let fwd_sid2 = fwd_sid.clone();
+
+                    // Publish member started event so frontend creates SubagentCard
+                    let _ = eb.publish(crate::event_bus::AgentEvent::TeamMemberStarted {
+                        team_id: tid.to_string(),
+                        member_name: member_name.clone(),
+                        session_id: fwd_sid2.clone(),
+                    });
+
+                    // Spawn forwarder that sends deltas as TeamMemberDelta events
+                    let fwd = tokio::spawn(async move {
+                        let mut body = String::new();
+                        while let Some(delta) = delta_rx.recv().await {
+                            match &delta {
+                                StreamDelta::Text(t) => { body.push_str(t);
+                                    let _ = _eb.publish(crate::event_bus::AgentEvent::TeamMemberDelta {
+                                        team_id: _tid.to_string(), member_name: member_name.clone(), delta: t.clone(), session_id: fwd_sid2.clone(),
+                                    });
+                                }
+                                StreamDelta::Reasoning(_) => { /* skip — reasoning is internal, not for display */ }
+                                _ => {}
+                            }
+                        }
+                        body
+                    });
+
+                    let res = crate::agent_loop::run_agent_turn_streaming(client.as_ref(), &reg, &[], &prompt, &config_clone, delta_tx, &None, &None).await;
                     drop(reg); drop(client);
-                    match res { Ok(t) => { let _ = ctx.agent_pool.transition(&cid, crate::agent::AgentStatus::Completed, None).await; let _ = ctx.agent_pool.remove(&cid).await; (i, desc, t.response, false) } Err(e) => { let _ = ctx.agent_pool.transition(&cid, crate::agent::AgentStatus::Errored { message: e.to_string() }, None).await; let _ = ctx.agent_pool.remove(&cid).await; (i, desc, e.to_string(), true) } }
+
+                    let body = match fwd.await { Ok(b) => b, Err(_) => String::new() };
+                    match res {
+                        Ok(t) => (i, name, if body.is_empty() { t.response } else { body }, false),
+                        Err(e) => (i, name, e.to_string(), true),
+                    }
                 }));
             }
+
             let raw: Vec<_> = futures::future::join_all(handles).await.into_iter().filter_map(|r| r.ok()).collect();
             let (mut ok, mut fail) = (0usize, 0usize);
             let mut parts = Vec::new();

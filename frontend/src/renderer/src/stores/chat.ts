@@ -60,7 +60,12 @@ export const createChatSlice: StateCreator<ChatSlice> = (set, get) => ({
     if (idx === -1) return
 
     const msg = { ...msgs[idx], blocks: [...msgs[idx].blocks] }
-    const existingIdx = msg.blocks.findIndex((b) => b.type === block.type)
+    // Match by id for blocks that carry one (subagent, skill, shell, team),
+    // fall back to type match for blocks without an id.
+    const blockId = (block as any).id
+    const existingIdx = blockId
+      ? msg.blocks.findIndex((b) => (b as any).id === blockId)
+      : msg.blocks.findIndex((b) => b.type === block.type)
     if (existingIdx >= 0) {
       msg.blocks[existingIdx] = block
     } else {

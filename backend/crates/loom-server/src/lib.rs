@@ -143,6 +143,14 @@ pub async fn serve(
         if let Some(name) = agent_name {
             let _ = state.sessions.bind_agent(&id, &name).await;
         }
+        // Restore persisted team binding
+        let team_id = state
+            .orchestrator
+            .memory_store_session_team_id(&id)
+            .await;
+        if let Some(tid) = team_id {
+            let _ = state.sessions.bind_team(&id, &tid).await;
+        }
     }
 
     // Phase 3: Start background forgetting loop (hourly check, 7-day interval gate).

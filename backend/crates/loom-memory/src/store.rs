@@ -392,6 +392,30 @@ impl<'a> AgentConfigStore<'a> {
         Ok(row)
     }
 
+    pub fn set_session_team_binding(&self, session_id: &str, team_id: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO sessions (id, created_at, message_count) VALUES (?1, datetime('now'), 0)",
+            params![session_id],
+        )?;
+        self.conn.execute(
+            "UPDATE sessions SET team_config_id = ?1 WHERE id = ?2",
+            params![team_id, session_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_session_team_binding(&self, session_id: &str) -> Result<Option<String>> {
+        let row: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT team_config_id FROM sessions WHERE id = ?1",
+                params![session_id],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(row)
+    }
+
     pub fn set_session_workspace(&self, session_id: &str, workspace_path: &str) -> Result<()> {
         self.conn.execute(
             "INSERT OR IGNORE INTO sessions (id, created_at, message_count) VALUES (?1, datetime('now'), 0)",

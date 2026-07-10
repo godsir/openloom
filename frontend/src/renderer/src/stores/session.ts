@@ -106,6 +106,10 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
     const isStreaming = (get() as any).streamingSessionIds?.has(id)
     const hasCached = (get() as any).messagesBySession?.has(id)
     if (isStreaming && hasCached) {
+      // Force UI refresh — copy Maps so zustand sees new references for React re-render
+      const next = new Map((get() as any).messagesBySession as Map<string, any>)
+      const nextActivity = { ...(get() as any).streamingActivity }
+      set({ messagesBySession: next, streamingActivity: nextActivity } as any)
       return
     }
     try {
@@ -155,14 +159,11 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
         } : undefined,
       }))
 
-      // Merge consecutive assistant messages into one (agent loop iterations
-      // produce multiple Assistant rows per turn; the frontend expects a single
-      // message with all blocks combined).
+      // Merge consecutive assistant messages into one.
       const msgs = rawMsgs.reduce((acc: typeof rawMsgs, msg) => {
         if (msg.role === 'assistant' && acc.length > 0 && acc[acc.length - 1].role === 'assistant') {
           const prev = acc[acc.length - 1]
           prev.blocks = [...prev.blocks, ...msg.blocks]
-          // Use the last message's usage (final turn has complete token count)
           if (msg.usage) prev.usage = msg.usage
           prev.timestamp = msg.timestamp
           return acc
@@ -293,13 +294,17 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
     })).filter((s: SessionSummary) => !(s.title || '').startsWith('[写]'))
     set({ sessions: mapped })
     // Restore agent bindings for all sessions
-    const bindings: Record<string, string> = {}
-    for (const s of mapped) {
-      if (s.agentName && s.agentName !== 'default') {
-        bindings[s.path] = s.agentName
+    const agentBindings: Record<string, string> = {}
+    const teamBindings: Record<string, string> = {}
+    for (const s of (result.sessions || [])) {
+      if (s.agent_config_name && s.agent_config_name !== 'default') {
+        agentBindings[s.id || s.path || ''] = s.agent_config_name
+      }
+      if (s.team_config_id) {
+        teamBindings[s.id || s.path || ''] = s.team_config_id
       }
     }
-    set({ sessionAgentBindings: bindings } as any)
+    set({ sessionAgentBindings: agentBindings, sessionTeamBindings: teamBindings } as any)
     // Load workspace bindings for all sessions in parallel (was serial — an
     // N+1 await that ran one round-trip per session and made reconnects slow).
     const workspaces: Record<string, string> = {}
@@ -420,6 +425,16 @@ export function parseRole(role: any): 'user' | 'assistant' {
 export function parseContentParts(content: any, sessionId: string, port: number): any[] {
   // If content is a plain string (legacy format), treat as single text block
   if (typeof content === 'string') {
+    const trimmed = content.trim()
+    // Check if this is a JSON array of blocks (team card persisted by orchestrator)
+    if (trimmed.startsWith('[{') && trimmed.endsWith('}]')) {
+      try {
+        const parsed = JSON.parse(trimmed)
+        if (Array.isArray(parsed)) {
+          return parsed.map((b: any) => ({ ...b, sealed: true }))
+        }
+      } catch { /* fall through */ }
+    }
     return [{ type: 'text', html: sanitizeHtml(renderMarkdown(content)), source: content }]
   }
 
@@ -436,6 +451,12 @@ export function parseContentParts(content: any, sessionId: string, port: number)
 
   for (const part of content) {
     if (!part || typeof part !== 'object') continue
+
+    // Pass through team/subagent blocks persisted by the orchestrator
+    if ((part as any).type === 'team' || (part as any).type === 'subagent') {
+      blocks.push({ ...part, sealed: true })
+      continue
+    }
 
     // Serde tagged enum format (snake_case): { "text": { "text": "..." } }
     if ('thinking' in part) {

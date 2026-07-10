@@ -233,6 +233,8 @@ fn agent_event_method(event: &AgentEvent) -> &'static str {
         AgentEvent::TeamMemberDone { .. } => "team.member_done",
         AgentEvent::TeamRoundComplete { .. } => "team.round_complete",
         AgentEvent::TeamCompleted { .. } => "team.completed",
+        AgentEvent::TeamMemberDelta { .. } => "team.member_delta",
+        AgentEvent::TeamMemberStarted { .. } => "team.member_started",
     }
 }
 
@@ -243,8 +245,9 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
             agent_id: _,
             session_id,
             delta,
+            child_name,
         } => {
-            json!({ "session_id": session_id, "delta": delta })
+            json!({ "session_id": session_id, "delta": delta, "child_name": child_name })
         }
         AgentEvent::StreamEnd {
             agent_id: _,
@@ -415,6 +418,33 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
                 "session_id": session_id,
                 "findings": findings,
             })
+        }
+        AgentEvent::SubagentSpawned { parent_id, child_id, child_name } => {
+            json!({ "parent_id": parent_id, "child_id": child_id, "child_name": child_name })
+        }
+        AgentEvent::SubagentCompleted { parent_id, child_id, result } => {
+            json!({ "parent_id": parent_id, "child_id": child_id, "result": result })
+        }
+        AgentEvent::SubagentErrored { parent_id, child_id, error } => {
+            json!({ "parent_id": parent_id, "child_id": child_id, "error": error })
+        }
+        AgentEvent::TeamStarted { team_id, team_name, captain_id, member_ids } => {
+            json!({ "team_id": team_id, "team_name": team_name, "captain_id": captain_id, "member_ids": member_ids })
+        }
+        AgentEvent::TeamMemberDone { team_id, member_id, member_name, round } => {
+            json!({ "team_id": team_id, "member_id": member_id, "member_name": member_name, "round": round })
+        }
+        AgentEvent::TeamRoundComplete { team_id, round } => {
+            json!({ "team_id": team_id, "round": round })
+        }
+        AgentEvent::TeamCompleted { team_id, session_id, summary } => {
+            json!({ "team_id": team_id, "session_id": session_id, "summary": summary })
+        }
+        AgentEvent::TeamMemberDelta { member_name, delta, .. } => {
+            json!({ "member_name": member_name, "delta": delta })
+        }
+        AgentEvent::TeamMemberStarted { member_name, session_id, .. } => {
+            json!({ "member_name": member_name, "session_id": session_id })
         }
         _ => json!({}),
     }

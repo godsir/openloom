@@ -51,6 +51,14 @@ impl SessionDb {
             conn.execute_batch("ALTER TABLE sessions ADD COLUMN memory_enabled INTEGER NOT NULL DEFAULT 1;")?;
         }
 
+        // Migration V5: add team_config_id column (session-team binding)
+        let has_team_config_id: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'team_config_id'")?
+            .exists([])?;
+        if !has_team_config_id {
+            conn.execute_batch("ALTER TABLE sessions ADD COLUMN team_config_id TEXT;")?;
+        }
+
         Ok(Self { conn })
     }
 

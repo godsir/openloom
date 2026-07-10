@@ -30,16 +30,20 @@ const AssistantMessage = memo(function AssistantMessage({
 }) {
   const openLightbox = useStore(s => s.openLightbox)
   const agent = useStore(s => sessionId ? s.getSessionAgent(sessionId) : undefined)
+  const team = useStore(s => sessionId ? s.getSessionTeam(sessionId) : undefined)
   const { t } = useLocale()
 
   const avatarContent = useMemo(() => {
     if (agent?.avatar) {
       return <img src={agent.avatar} alt={agent.name} className={styles.avatarImg} />
     }
+    if (team) {
+      return <span className={styles.avatarText}>T</span>
+    }
     return <span className={styles.avatarText}>L</span>
-  }, [agent?.avatar, agent?.name])
+  }, [agent?.avatar, agent?.name, team])
 
-  const displayName = (agent?.name && agent.name !== 'default') ? agent.name : 'Loom'
+  const displayName = team ? team.name : (agent?.name && agent.name !== 'default') ? agent.name : 'Loom'
 
   const isTruncated = message.stop_reason === 'budget_exhausted' || message.stop_reason === 'max_iterations'
 

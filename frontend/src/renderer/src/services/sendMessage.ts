@@ -181,6 +181,10 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
       }
     }
 
+    // Team binding: pass team_config_id so backend routes to process_message_with_team
+    const store = useStore.getState()
+    const teamId = sessionId ? store.sessionTeamBindings[sessionId] : undefined
+
     const chatResult: any = await loomRpc('chat.send', {
       session_id: sid,
       content,
@@ -188,7 +192,8 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
       thinking_level: thinkingLevel || 'off',
       skills: validSkills && validSkills.length > 0 ? validSkills : undefined,
       skip_user_message: skipUserMessage || undefined,
-      permission_mode: permissionMode || useStore.getState().permissionMode,
+      permission_mode: permissionMode || store.permissionMode,
+      team_config_id: teamId || undefined,
       auto_continue_max_rounds: autoContinueMaxRounds || undefined,
       attached_files: attachedFiles.map(f => ({
         path: f.path,
@@ -284,10 +289,11 @@ export async function sendContinuation(sessionId: string): Promise<void> {
     const chatResult: any = await loomRpc('chat.send', {
       session_id: sessionId,
       content: '继续',
-      skip_user_message: true,   // Don't persist "继续" in session history — invisible action
+      skip_user_message: true,
       model: store.currentModel || undefined,
       thinking_level: store.thinkingLevel || 'off',
       permission_mode: store.permissionMode,
+      team_config_id: store.sessionTeamBindings[sessionId] || undefined,
     })
 
     // Store stop_reason in case the continuation also truncates

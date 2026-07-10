@@ -54,6 +54,8 @@ pub enum AgentEvent {
         agent_id: AgentId,
         session_id: String,
         delta: String,
+        /** Sub-agent name when this delta is from a team member */
+        child_name: Option<String>,
     },
     /// Streaming response complete.
     StreamEnd {
@@ -197,6 +199,19 @@ pub enum AgentEvent {
         team_id: String,
         session_id: String,
         summary: String,
+    },
+    /// 团队成员流式输出（实时）
+    TeamMemberDelta {
+        team_id: String,
+        member_name: String,
+        delta: String,
+        session_id: String,
+    },
+    /// 团队成员开始执行
+    TeamMemberStarted {
+        team_id: String,
+        member_name: String,
+        session_id: String,
     },
 }
 

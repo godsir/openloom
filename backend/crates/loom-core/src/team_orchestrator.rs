@@ -42,8 +42,7 @@ pub fn build_captain_system_prompt(
 {}
 {captain_override}
 ## Important Rules
-- Use the spawn_agents tool (with rounds=1 for Synthesize or rounds=2 for Debate) to start ALL team members in parallel. Do NOT use spawn_agent for individual members — use spawn_agents for all members at once.
-- Members cannot communicate with each other — only through you.
+- Use the team_spawn tool (with rounds=1 for Synthesize or rounds=2 for Debate) to start ALL team members in parallel. Each task must include name (member display name) and prompt (instructions).
 - After all members complete, synthesize their findings into one comprehensive answer.
 - Highlight agreements, disagreements, and your own judgment where appropriate.
 "#,
@@ -52,8 +51,8 @@ pub fn build_captain_system_prompt(
 }
 
 const SYNTHESIZE_INSTRUCTION: &str = r#"Synthesize Mode:
-1. Use spawn_agents (rounds=1) to run all members in parallel with their specific personas.
-2. Wait for all to complete.
+1. Use team_spawn (rounds=1) to run all members in parallel. Each task needs name and prompt.
+2. Wait for all members to complete (monitor team_results).
 3. Read each member's response carefully.
 4. Produce a unified conclusion that integrates all perspectives.
 5. Explicitly note any conflicting viewpoints and your resolution."#;
@@ -61,11 +60,11 @@ const SYNTHESIZE_INSTRUCTION: &str = r#"Synthesize Mode:
 const DEBATE_INSTRUCTION: &str = r#"Debate Mode (Two Rounds):
 
 Round 1:
-1. Use spawn_agents (rounds=1) to run all members in parallel with their specific personas.
-2. Collect all Round 1 responses.
+1. Use team_spawn (rounds=1) to run all members in parallel.
+2. Collect all Round 1 responses via team_results.
 
 Round 2:
-3. For each member, spawn them again with this additional context:
+3. Use team_spawn (rounds=1) again for each member with additional context:
    "Here are the other experts' opinions from Round 1. Critically examine your own conclusion:
    identify points you agree with, points you disagree with, and either revise or defend your position."
 

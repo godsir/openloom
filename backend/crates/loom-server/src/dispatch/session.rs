@@ -418,6 +418,11 @@ async fn handle_session_bind_team(state: &AppState, p: &Value) -> Result<Value, 
         .bind_team(session_id, team_config_id)
         .await
         .map_err(|e| err(ErrorCode::InternalError, &e))?;
+    // Persist the binding so it survives restarts
+    state
+        .orchestrator
+        .bind_team_persisted(session_id, team_config_id)
+        .await;
     Ok(json!({ "ok": true }))
 }
 

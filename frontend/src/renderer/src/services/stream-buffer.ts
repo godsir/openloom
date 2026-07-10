@@ -572,6 +572,9 @@ class StreamBufferManager {
   private flush(buf: BufferState, sessionId: string, final = false): void {
     if (!buf.messageId) return
 
+    const store = useStore.getState()
+    const allMsgs = store.messagesBySession.get(sessionId) || []
+    const msgIdx = allMsgs.findIndex((m) => m.id === buf.messageId)
     const blocks: Array<{ type: string; [key: string]: unknown }> = []
 
     console.log('[stream-buffer] Flushing buffer:', {
@@ -671,14 +674,20 @@ class StreamBufferManager {
       blocks.push({ type: 'text', html, source: buf.textAcc })
     }
 
+    // Preserve team and subagent blocks added by bootstrap events across flushes
+    if (msgIdx >= 0) {
+      for (const b of allMsgs[msgIdx]?.blocks || []) {
+        if ((b as any).type === 'team' || (b as any).type === 'subagent') {
+          blocks.push(b)
+        }
+      }
+    }
+
     // Replace all blocks in the message
-    const store = useStore.getState()
-    const msgs = store.messagesBySession.get(sessionId) || []
-    const msgIdx = msgs.findIndex((m) => m.id === buf.messageId)
     if (msgIdx >= 0) {
       const next = new Map(store.messagesBySession)
-      const updatedMsgs = [...msgs]
-      updatedMsgs[msgIdx] = { ...msgs[msgIdx], blocks }
+      const updatedMsgs = [...allMsgs]
+      updatedMsgs[msgIdx] = { ...allMsgs[msgIdx], blocks }
       next.set(sessionId, updatedMsgs)
       useStore.setState({ messagesBySession: next })
     }

@@ -79,12 +79,28 @@ export async function bootstrapApp(): Promise<() => void> {
 
     switch (method) {
       case 'chat.stream_delta': {
-        streamBufferManager.handleStreamDelta(sessionId, (p?.delta as string) || '')
-        // First delta = AI started replying
-        if (!_streaming) {
-          _streaming = true
-          import('./pet-sync').then(m => m.sendPetState('wave'))
+        const childName = (p as any)?.child_name as string | undefined
+        if (childName) {
+          // Team subagent delta — route to SubagentCard block, not captain text
+          const store = useStore.getState()
+          const sid = (p?.session_id as string) || ''
+          const msgs = store.messagesBySession.get(sid) || []
+          const lastAsst = [...msgs].reverse().find((m: any) => m.role === 'assistant')
+          if (lastAsst) {
+            const block = lastAsst.blocks.find((b: any) => b.type === 'subagent' && b.id === 'sub_' + childName)
+            const prevBody = (block?.body as string) || ''
+            store.upsertBlock(sid, lastAsst.id, {
+              type: 'subagent',
+              id: 'sub_' + childName,
+              name: childName,
+              streamStatus: 'running',
+              body: prevBody + ((p as any)?.delta || ''),
+            })
+          }
+        } else {
+          streamBufferManager.handleStreamDelta(sessionId, (p?.delta as string) || '')
         }
+        if (!_streaming) { _streaming = true; import('./pet-sync').then(m => m.sendPetState('wave')) }
         break
       }
       case 'chat.stream_end':
@@ -119,16 +135,135 @@ export async function bootstrapApp(): Promise<() => void> {
         )
         import('./pet-sync').then(m => m.sendPetState('inspect'))
         break
-      case 'agent.subagent_spawned':
+      case 'agent.subagent_spawned': {
         import('./pet-sync').then(m => m.sendPetState('dash'))
+        const store = useStore.getState()
+        const sid = [...store.streamingSessionIds][0]
+        if (!sid) break
+        const msgs = store.messagesBySession.get(sid)
+        const lastAsst = [...(msgs || [])].reverse().find((m: any) => m.role === 'assistant')
+        if (!lastAsst) break
+        const childName = (p as any)?.child_name || 'subagent'
+        // Create a subagent block in the chat for this member
+        store.upsertBlock(sid, lastAsst.id, {
+          type: 'subagent',
+          id: 'sub_' + childName,
+          name: childName,
+          streamStatus: 'running',
+          body: '',
+        })
+        // Update team card members list
+        if (store.sessionTeamBindings[sid]) {
+          const teamId = store.sessionTeamBindings[sid]
+          const teamConfig = store.teams.find((t: any) => t.id === teamId)
+          const teamBlock = lastAsst.blocks.find((b: any) => b.type === 'team') as any
+          const members = (teamBlock?.members || []) as any[]
+          members.push({ name: childName, status: 'running' })
+          store.upsertBlock(sid, lastAsst.id, { type: 'team', teamName: teamConfig?.name || '专家团', members })
+        }
         break
-      case 'agent.subagent_completed':
+      }
+      case 'agent.subagent_completed': {
         import('./pet-sync').then(m => m.sendPetState('inspect'))
+        const store2 = useStore.getState()
+        const sid2 = [...store2.streamingSessionIds][0]
+        if (!sid2) break
+        const msgs2 = store2.messagesBySession.get(sid2)
+        const lastAsst2 = [...(msgs2 || [])].reverse().find((m: any) => m.role === 'assistant')
+        if (!lastAsst2) break
+        const childName2 = (p as any)?.child_name || ''
+        const result2 = String((p as any)?.result || '')
+        // Mark subagent block done
+        const subBlock = lastAsst2.blocks.find((b: any) => b.type === 'subagent' && b.id === 'sub_' + childName2)
+        store2.upsertBlock(sid2, lastAsst2.id, {
+          type: 'subagent',
+          id: 'sub_' + childName2,
+          name: childName2,
+          streamStatus: 'done',
+          body: subBlock?.body || '',
+          summary: result2.slice(0, 120),
+        })
+        // Update team card
+        if (store2.sessionTeamBindings[sid2]) {
+          const teamId2 = store2.sessionTeamBindings[sid2]
+          const teamConfig2 = store2.teams.find((t: any) => t.id === teamId2)
+          const teamBlock2 = lastAsst2.blocks.find((b: any) => b.type === 'team') as any
+          const members2 = ((teamBlock2?.members || []) as any[]).map((m: any) =>
+            m.name === childName2 ? { ...m, status: 'done' as const, summary: result2.slice(0, 120) } : m
+          )
+          store2.upsertBlock(sid2, lastAsst2.id, { type: 'team', teamName: teamConfig2?.name || '专家团', members: members2 })
+        }
         break
+      }
+      case 'team.member_started': {
+        const store4 = useStore.getState()
+        const sid4 = ((p as any)?.session_id as string) || [...store4.streamingSessionIds][0] || ''
+        if (!sid4) break
+        const msgs4 = store4.messagesBySession.get(sid4) || []
+        const last4 = [...msgs4].reverse().find((m: any) => m.role === 'assistant')
+        if (!last4) break
+        const mName = (p as any)?.member_name || ''
+        store4.upsertBlock(sid4, last4.id, {
+          type: 'subagent', id: 'sub_' + mName, name: mName,
+          streamStatus: 'running', body: '',
+        })
+        // Also update team card
+        if (store4.sessionTeamBindings[sid4]) {
+          const teamId4 = store4.sessionTeamBindings[sid4]
+          const teamConfig4 = store4.teams.find((t: any) => t.id === teamId4)
+          const teamBlock4 = last4.blocks.find((b: any) => b.type === 'team') as any
+          const members4 = (teamBlock4?.members || []) as any[]
+          if (!members4.find((m: any) => m.name === mName)) {
+            members4.push({ name: mName, status: 'running' })
+          }
+          store4.upsertBlock(sid4, last4.id, { type: 'team', teamName: teamConfig4?.name || '专家团', members: members4 })
+        }
+        break
+      }
+      case 'team.member_delta': {
+        const store3 = useStore.getState()
+        const sid3 = ((p as any)?.session_id as string) || [...store3.streamingSessionIds][0] || ''
+        if (!sid3) break
+        const msgs3 = store3.messagesBySession.get(sid3) || []
+        const last3 = [...msgs3].reverse().find((m: any) => m.role === 'assistant')
+        if (!last3) break
+        const memberName = (p as any)?.member_name || ''
+        const block = last3.blocks.find((b: any) => b.type === 'subagent' && b.id === 'sub_' + memberName)
+        const prev = (block?.body as string) || ''
+        store3.upsertBlock(sid3, last3.id, {
+          type: 'subagent', id: 'sub_' + memberName, name: memberName,
+          streamStatus: 'running', body: prev + ((p as any)?.delta || ''),
+        })
+        break
+      }
       case 'agent.subagent_errored':
         import('./pet-sync').then(m => m.sendPetState('failed'))
         setTimeout(() => import('./pet-sync').then(m => m.sendPetState('idle')), 3000)
         break
+      case 'team.started': {
+        const store = useStore.getState()
+        const sid = [...store.streamingSessionIds][0] || ''
+        if (sid) store.setStreamingActivity(sid, { phase: 'team', detail: (p?.team_name as string) || '' })
+        import('./pet-sync').then(m => m.sendPetState('dash'))
+        break
+      }
+      case 'team.member_done': {
+        const store = useStore.getState()
+        const sid = [...store.streamingSessionIds][0] || ''
+        if (sid) store.setStreamingActivity(sid, { phase: 'team', detail: `${p?.member_name || ''}: 第${p?.round || ''}轮完成` })
+        break
+      }
+      case 'team.round_complete': {
+        const store = useStore.getState()
+        const sid = [...store.streamingSessionIds][0] || ''
+        if (sid) store.setStreamingActivity(sid, { phase: 'team', detail: `第${p?.round || ''}轮完成` })
+        break
+      }
+      case 'team.completed': {
+        const sid = (p?.session_id as string) || [...useStore.getState().streamingSessionIds][0] || ''
+        if (sid) useStore.getState().setStreamingActivity(sid, { phase: 'generating', detail: '' })
+        break
+      }
       case 'tool.permission_request': {
         // Show permission confirmation dialog with three options
         const callId = p?.call_id as string

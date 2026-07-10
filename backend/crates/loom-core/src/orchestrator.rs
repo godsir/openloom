@@ -422,6 +422,9 @@ pub trait MemoryStore: Send + Sync {
         agent_config_name: &str,
     ) -> Result<()>;
     async fn get_session_agent_name(&self, session_id: &str) -> Result<Option<String>>;
+    // Session-team binding
+    async fn save_session_team_id(&self, session_id: &str, team_id: &str) -> Result<()>;
+    async fn get_session_team_id(&self, session_id: &str) -> Result<Option<String>>;
     // Session workspace
     async fn save_session_workspace(&self, session_id: &str, path: &str) -> Result<()>;
     async fn get_session_workspace(&self, session_id: &str) -> Result<Option<String>>;
@@ -2213,6 +2216,26 @@ impl Orchestrator {
         }
     }
 
+    /// Persist a session-team binding to the memory store.
+    pub async fn bind_team_persisted(&self, session_id: &str, team_id: &str) {
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            if let Err(e) = s.save_session_team_id(session_id, team_id).await {
+                tracing::warn!(?session_id, ?team_id, error = %e, "failed to persist team binding");
+            }
+        }
+    }
+
+    /// Read a persisted session-team binding from the memory store.
+    pub async fn memory_store_session_team_id(&self, session_id: &str) -> Option<String> {
+        let store = self.memory_store.read().await;
+        if let Some(ref s) = *store {
+            s.get_session_team_id(session_id).await.ok().flatten()
+        } else {
+            None
+        }
+    }
+
     /// Persist a session-agent binding to the memory store.
     pub async fn bind_agent_persisted(&self, session_id: &str, agent_config_name: &str) {
         let store = self.memory_store.read().await;
@@ -2819,6 +2842,19 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         }
 
         let summary = result.as_ref().map(|r| r.response.clone()).unwrap_or_default();
+
+        // Persist team card block so it survives session reload
+        // Use user-visible member names from team config, not internal __team_xxx names
+        let member_display_names: Vec<String> = team.members.iter().map(|m| m.name.clone()).collect();
+        let team_card = serde_json::json!([
+            {"type": "team", "teamName": team.name, "members": member_display_names.iter().map(|n|
+                serde_json::json!({"name": n, "status": "done"})
+            ).collect::<Vec<_>>()}
+        ]);
+        if let Some(store) = self.memory_store.read().await.as_ref() {
+            let _ = store.append_message(session_id, "assistant", &team_card.to_string(), None).await;
+        }
+
         self.pool.event_bus().publish(crate::event_bus::AgentEvent::TeamCompleted {
             team_id: team.id.clone(),
             session_id: session_id.to_string(),
@@ -4853,6 +4889,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                             agent_id: forward_agent_id.clone(),
                             session_id: forward_session_id.clone(),
                             delta: t,
+                            child_name: None,
                         });
                         // Periodically persist the accumulating assistant text
                         // (every 1s) so a crash mid-stream doesn't lose it.
@@ -4878,6 +4915,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                             agent_id: forward_agent_id.clone(),
                             session_id: forward_session_id.clone(),
                             delta: format!("\x02REASONING\x02{}", t),
+                            child_name: None,
                         });
                     }
                     StreamDelta::ToolCallBegin { index, id, name } => {
@@ -4957,6 +4995,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                             agent_id: forward_agent_id.clone(),
                             session_id: forward_session_id.clone(),
                             delta: format!("\x02IMAGE\x02{};{}", media_type, data),
+                            child_name: None,
                         });
                     }
                     StreamDelta::Usage {

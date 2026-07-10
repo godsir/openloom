@@ -826,6 +826,20 @@ impl MemoryStore for LoomMemoryStore {
         AgentConfigStore::new(store.conn()).get_session_binding(session_id)
     }
 
+    async fn save_session_team_id(
+        &self,
+        session_id: &str,
+        team_id: &str,
+    ) -> Result<()> {
+        let store = self.session_db.lock().expect("lock poisoned");
+        AgentConfigStore::new(store.conn()).set_session_team_binding(session_id, team_id)
+    }
+
+    async fn get_session_team_id(&self, session_id: &str) -> Result<Option<String>> {
+        let store = self.session_db.lock().expect("lock poisoned");
+        AgentConfigStore::new(store.conn()).get_session_team_binding(session_id)
+    }
+
     async fn save_session_workspace(&self, session_id: &str, path: &str) -> Result<()> {
         let store = self.session_db.lock().expect("lock poisoned");
         AgentConfigStore::new(store.conn()).set_session_workspace(session_id, path)
