@@ -5,6 +5,7 @@ import AssistantMessage from './AssistantMessage'
 import UserMessage from './UserMessage'
 import ImageLightbox from '../shared/ImageLightbox'
 import ChatTimelineNavigator from './ChatTimelineNavigator'
+import ReviewPanel from './ReviewPanel'
 import { buildTimelineAnchors } from './timeline-anchors'
 import { IconChevronDown } from '../../utils/icons'
 import styles from './ChatArea.module.css'
@@ -147,6 +148,7 @@ export default function ChatArea() {
         </button>
       )}
       <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
+      <ReviewPanel />
     </div>
   )
 }

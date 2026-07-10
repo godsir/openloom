@@ -51,6 +51,9 @@ export interface LoomApi {
   getGitBranches: (workspaceRoot: string) => Promise<import('../main/services/git-service').GitBranchesResult>
   switchGitBranch: (workspaceRoot: string, branch: string) => Promise<import('../main/services/git-service').GitBranchesResult>
   createAndSwitchGitBranch: (workspaceRoot: string, branch: string) => Promise<import('../main/services/git-service').GitBranchesResult>
+  getUncommittedChanges: (workspaceRoot: string) => Promise<{ files: import('../main/services/git-service').UncommittedFile[]; diff: string; repoRoot: string; error?: string }>
+  gitCommit: (workspaceRoot: string, message: string) => Promise<{ ok: boolean; message: string }>
+  gitPush: (workspaceRoot: string) => Promise<{ ok: boolean; message: string }>
   /** Get / set Chromium zoom factor (Ctrl+/- zoom level) */
   getZoomFactor: () => Promise<number>
   setZoomFactor: (factor: number) => Promise<void>
@@ -123,6 +126,9 @@ contextBridge.exposeInMainWorld('loom', {
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   openFolder: (filePath: string) => { ipcRenderer.invoke('open-folder', filePath) },
   openFile: (filePath: string) => ipcRenderer.invoke('open-file', filePath),
+  getUncommittedChanges: (workspaceRoot: string) => ipcRenderer.invoke('git:uncommitted-changes', workspaceRoot),
+  gitCommit: (workspaceRoot: string, message: string) => ipcRenderer.invoke('git:commit', workspaceRoot, message),
+  gitPush: (workspaceRoot: string) => ipcRenderer.invoke('git:push', workspaceRoot),
   windowMinimize: () => { ipcRenderer.invoke('window-minimize') },
   windowMaximize: () => { ipcRenderer.invoke('window-maximize') },
   windowClose: () => { ipcRenderer.invoke('window-close') },

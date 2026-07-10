@@ -13,7 +13,7 @@ import PermissionModeButton from './PermissionModeButton'
 import AttachedFiles from './AttachedFiles'
 import QuotedSelectionCard from './QuotedSelectionCard'
 import SlashCommandMenu, { getSlashQuery, makeBuiltinCommands } from './SlashCommandMenu'
-import { IconImage, IconPaperclip, IconSparkles, IconX, IconCheck, IconListTodo } from '../../utils/icons'
+import { IconImage, IconPaperclip, IconSparkles, IconX, IconCheck, IconListTodo, IconScanSearch } from '../../utils/icons'
 import { TodoPanel } from '../todo/TodoPanel'
 import { GitBranchPicker } from './GitBranchPicker'
 import styles from './InputArea.module.css'
@@ -30,6 +30,8 @@ interface SkillInfo {
 
 export default function InputArea() {
   const { t } = useLocale()
+  const toggleReviewPanel = useStore(s => s.toggleReviewPanel)
+  const reviewPanelOpen = useStore(s => s.reviewPanelOpen)
   const [text, setText] = useState('')
 
   // Commands that accept trailing text as argument
@@ -602,6 +604,9 @@ export default function InputArea() {
                 </svg>
               </button>
               <div className={styles.workspaceSpacer} />
+              <button className={styles.toolbarBtn} onClick={() => toggleReviewPanel()} title={t("review.open")} data-active={reviewPanelOpen || undefined}>
+                <IconScanSearch size={14} />
+              </button>
               <GitBranchPicker workspaceRoot={sessionWorkspace} />
             </div>
           )}

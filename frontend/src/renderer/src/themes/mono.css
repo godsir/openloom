@@ -31,15 +31,15 @@
   --accent-light:   rgba(255,255,255,0.08);
   --accent-strong:  rgba(255,255,255,0.15);
 
-  /* Semantic */
-  --green:        #AAAAAA;
-  --green-rgb:    170,170,170;
-  --green-light:  rgba(170,170,170,0.10);
-  --amber:        #999999;
-  --amber-rgb:    153,153,153;
-  --amber-light:  rgba(153,153,153,0.10);
-  --red:          #888888;
-  --red-light:    rgba(136,136,136,0.10);
+  /* Semantic — keep native colors; they carry meaning (diff, status, etc.) */
+  --green:        #2DD4BF;
+  --green-rgb:    45,212,191;
+  --green-light:  rgba(45,212,191,0.10);
+  --amber:        #F59E0B;
+  --amber-rgb:    245,158,11;
+  --amber-light:  rgba(245,158,11,0.10);
+  --red:          #EF4444;
+  --red-light:    rgba(239,68,68,0.10);
 
   /* Toast */
   --toast-success-bg: #333333;

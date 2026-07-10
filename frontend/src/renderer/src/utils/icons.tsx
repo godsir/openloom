@@ -19,6 +19,9 @@ export {
   Minus as IconWinMin,
   Square as IconWinMax,
   AlertCircle as IconAlertCircle,
+  AlertTriangle as IconAlertTriangle,
+  GitBranch as IconGitBranch,
+  Info as IconInfo,
   Check as IconCheck,
   RefreshCw as IconRefresh,
   Zap as IconZap,
@@ -57,7 +60,6 @@ export {
   MessageSquare as IconMessageSquare,
   ListTodo as IconListTodo,
   PawPrint as IconPawPrint,
-  Info as IconInfo,
   Puzzle as IconPuzzle,
   Globe as IconGlobe,
   Server as IconServer,
@@ -95,10 +97,8 @@ export {
   ScanSearch as IconScanSearch,
   ClipboardCheck as IconClipboardCheck,
   QrCode as IconQrCode,
-  GitBranch as IconGitBranch,
   Users as IconUsers,
 } from 'lucide-react'
-
 export function IconStarFilled({ size = 16, className = '' }: { size?: number; className?: string }) {
   return <Star size={size} className={className} fill="currentColor" />
 }

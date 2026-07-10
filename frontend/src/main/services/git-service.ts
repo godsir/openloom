@@ -113,3 +113,92 @@ export async function createAndSwitchGitBranch(
     return gitFailure(error)
   }
 }
+
+
+export interface UncommittedFile {
+  status: string
+  file: string
+  adds: number
+  dels: number
+}
+
+export async function getUncommittedChanges(workspaceRoot: string): Promise<{ files: UncommittedFile[]; diff: string; repoRoot: string; error?: string }> {
+  const cwd = workspaceRoot.trim()
+  if (!cwd) return { files: [], diff: '', repoRoot: '' }
+  try {
+    const repoRoot = (await runGit(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim()
+
+    const statusOut = (await runGit(cwd, ['status', '--porcelain'])).stdout
+    const rawFiles: { status: string; file: string }[] = statusOut.split('\n').filter(Boolean).map(line => {
+      const statusCode = line.substring(0, 2).trim()
+      let filePath = line.substring(3).trim()
+      if (filePath.includes(' -> ')) filePath = filePath.split(' -> ')[1]
+      return { status: statusCode || 'M', file: filePath }
+    })
+
+    const numstatOut = (await runGit(cwd, ['diff', '--numstat'])).stdout
+    const stagedNumstatOut = (await runGit(cwd, ['diff', '--cached', '--numstat'])).stdout
+    const statMap = new Map<string, { adds: number; dels: number }>()
+    for (const line of [...numstatOut.split('\n'), ...stagedNumstatOut.split('\n')].filter(Boolean)) {
+      const parts = line.split('\t')
+      if (parts.length < 3) continue
+      const f = parts[2]
+      const prev = statMap.get(f) || { adds: 0, dels: 0 }
+      statMap.set(f, { adds: prev.adds + (parseInt(parts[0]) || 0), dels: prev.dels + (parseInt(parts[1]) || 0) })
+    }
+    const files: UncommittedFile[] = rawFiles.map(f => {
+      const stats = statMap.get(f.file)
+      return { ...f, adds: stats?.adds ?? 0, dels: stats?.dels ?? 0 }
+    })
+
+    const unstagedDiff = (await runGit(cwd, ['diff'])).stdout
+    const stagedDiff = (await runGit(cwd, ['diff', '--cached'])).stdout
+    const diff = [unstagedDiff, stagedDiff].filter(Boolean).join('\n')
+
+    return { files, diff, repoRoot }
+  } catch (err) {
+    console.error('[git:uncommitted-changes] error:', err)
+    const msg = err instanceof Error ? err.message : String(err)
+    return { files: [], diff: '', repoRoot: '', error: msg }
+  }
+}
+
+export async function gitCommit(
+  workspaceRoot: string,
+  message: string
+): Promise<{ ok: boolean; message: string }> {
+  const cwd = workspaceRoot.trim()
+  if (!cwd) return { ok: false, message: '未选择工作目录。' }
+  if (!message.trim()) return { ok: false, message: '提交信息不能为空。' }
+  try {
+    // Stage all changes before commit — the desktop panel shows exactly
+    // what will be committed (uncommitted changes list), so this is expected.
+    await runGit(cwd, ['add', '-A'], 30_000)
+    const { stdout, stderr } = await runGit(cwd, ['commit', '-m', message], 30_000)
+    return { ok: true, message: stdout.trim() || stderr.trim() || '提交成功' }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    return { ok: false, message: msg }
+  }
+}
+
+export async function gitPush(workspaceRoot: string): Promise<{ ok: boolean; message: string }> {
+  const cwd = workspaceRoot.trim()
+  if (!cwd) return { ok: false, message: '未选择工作目录。' }
+  try {
+    // Check if upstream is configured (rev-parse throws on no upstream)
+    const branch = (await runGit(cwd, ['branch', '--show-current'])).stdout.trim()
+    let upstream = ''
+    try {
+      upstream = (await runGit(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])).stdout.trim()
+    } catch { /* no upstream */ }
+    if (!upstream) {
+      return { ok: false, message: `分支 '${branch}' 没有设置上游远程，请先用 git push --set-upstream 配置。` }
+    }
+    const { stdout, stderr } = await runGit(cwd, ['push'], 60_000)
+    return { ok: true, message: stdout.trim() || stderr.trim() || '推送成功' }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    return { ok: false, message: msg }
+  }
+}

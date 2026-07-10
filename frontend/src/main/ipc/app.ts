@@ -3,7 +3,7 @@ import * as path from 'path'
 import { getStoreKey, setStoreKey } from '../store'
 import { checkForUpdates, downloadUpdate, installUpdate, getUpdateChannel, setUpdateChannel } from '../updater'
 import { restartEngine } from '../engine'
-import { getGitBranches, switchGitBranch, createAndSwitchGitBranch } from '../services/git-service'
+import { getGitBranches, switchGitBranch, createAndSwitchGitBranch, getUncommittedChanges, gitCommit, gitPush } from '../services/git-service'
 
 export function registerAppIpc(): void {
   ipcMain.handle('get-loom-dir', () => {
@@ -104,6 +104,9 @@ export function registerAppIpc(): void {
     return switchGitBranch(workspaceRoot, branch)
   })
 
+  ipcMain.handle('git:uncommitted-changes', async (_event, workspaceRoot: string) => { return getUncommittedChanges(workspaceRoot) })
+  ipcMain.handle('git:commit', async (_event, workspaceRoot: string, message: string) => { return gitCommit(workspaceRoot, message) })
+  ipcMain.handle('git:push', async (_event, workspaceRoot: string) => { return gitPush(workspaceRoot) })
   ipcMain.handle('git:create-and-switch-branch', async (_event, workspaceRoot: string, branch: string) => {
     return createAndSwitchGitBranch(workspaceRoot, branch)
   })

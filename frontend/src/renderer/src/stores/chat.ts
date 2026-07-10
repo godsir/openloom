@@ -25,6 +25,8 @@ export interface ChatSlice {
   appendBlock: (sessionId: string, messageId: string, block: ContentBlock) => void
   patchBlockByTaskId: (sessionId: string, taskId: string, patch: Partial<ContentBlock>) => void
   hydrateMessages: (sessionId: string, messages: Message[]) => void
+  reviewPanelOpen: boolean
+  toggleReviewPanel: () => void
   deleteMessage: (sessionId: string, messageId: string) => void
   setMessageUsage: (sessionId: string, messageId: string, usage: { prompt: number; completion: number; model?: string; contextWindow?: number; cached?: number; cacheRead?: number; cacheWrite?: number }) => void
   setMessageStopReason: (sessionId: string, messageId: string, stopReason: string | null) => void
@@ -33,6 +35,7 @@ export interface ChatSlice {
 
 export const createChatSlice: StateCreator<ChatSlice> = (set, get) => ({
   messagesBySession: new Map(),
+  reviewPanelOpen: false,
 
   ensureSession: (sessionId) => {
     const map = get().messagesBySession
@@ -67,6 +70,8 @@ export const createChatSlice: StateCreator<ChatSlice> = (set, get) => ({
     next.set(sessionId, msgs)
     set({ messagesBySession: next })
   },
+
+  toggleReviewPanel: () => { set(s => ({ reviewPanelOpen: !s.reviewPanelOpen })) },
 
   appendBlock: (sessionId, messageId, block) => {
     const next = new Map(get().messagesBySession)

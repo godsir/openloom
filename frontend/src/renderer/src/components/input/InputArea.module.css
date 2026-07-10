@@ -447,3 +447,30 @@
   flex-shrink: 0;
   margin-left: auto;
 }
+
+.toolbarBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.toolbarBtn:hover {
+  color: var(--text);
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+}
+
+.toolbarBtn[data-active] {
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+}
