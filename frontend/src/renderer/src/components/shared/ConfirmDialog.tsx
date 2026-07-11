@@ -34,7 +34,12 @@ export default function ConfirmDialog({
       if (e.key === 'Escape') onCancel()
     }
     document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    // Auto-cancel after 60s to prevent stuck promise
+    const t = setTimeout(() => onCancel(), 60_000)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      clearTimeout(t)
+    }
   }, [open, onCancel])
 
   if (!open) return null

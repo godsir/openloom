@@ -51,7 +51,11 @@ export default function CronDetectedDialog({
       if (e.key === 'Escape') onCancel()
     }
     document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    const t = setTimeout(() => onCancel(), 60_000)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      clearTimeout(t)
+    }
   }, [open, onCancel])
 
   // Cleanup on unmount: resolve pending promise to prevent leaks

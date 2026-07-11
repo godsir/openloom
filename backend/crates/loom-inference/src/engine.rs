@@ -16,6 +16,9 @@ use tokio::sync::mpsc;
 /// Global proxy URL and enabled flag, synced from ToolPrefsConfig when saved/loaded.
 static GLOBAL_PROXY: OnceLock<Mutex<(Option<String>, bool)>> = OnceLock::new();
 
+/// Cached auto-detected local proxy URL (set once on first probe).
+static AUTO_PROXY: OnceLock<Option<String>> = OnceLock::new();
+
 /// Update the global proxy from ToolPrefsConfig.
 /// Call this from save_tool_prefs so all HTTP clients pick it up.
 pub fn set_global_proxy(url: Option<String>, enabled: bool) {
@@ -25,7 +28,8 @@ pub fn set_global_proxy(url: Option<String>, enabled: bool) {
     }
 }
 
-/// Resolve the effective proxy URL: global setting first, then env vars.
+/// Resolve the effective proxy URL: global setting first, then env vars,
+/// then common system proxy addresses for PAC/non-global mode.
 /// Respects proxy_enabled flag — when false, returns None (direct connection).
 pub fn get_effective_proxy() -> Option<String> {
     // Check global proxy config (set via tool_prefs)
@@ -43,12 +47,34 @@ pub fn get_effective_proxy() -> Option<String> {
         }
     }
     // Fall through to environment variables
-    std::env::var("HTTPS_PROXY")
+    if let Some(u) = std::env::var("HTTPS_PROXY")
         .or_else(|_| std::env::var("https_proxy"))
         .or_else(|_| std::env::var("HTTP_PROXY"))
         .or_else(|_| std::env::var("http_proxy"))
         .ok()
         .filter(|s| !s.is_empty())
+    {
+        return Some(u);
+    }
+    // Proxy is enabled but no explicit URL or env var — try common local
+    // proxy ports.
+    // Clash (7890) and V2Ray (10809). Probe once and cache the result.
+    AUTO_PROXY.get_or_init(|| {
+        for probe in &["http://127.0.0.1:7890", "http://127.0.0.1:10809"] {
+            if let Some(host) = probe.strip_prefix("http://").or_else(|| probe.strip_prefix("https://")) {
+                let addr = (host, 0);
+                if let Ok(mut iter) = std::net::ToSocketAddrs::to_socket_addrs(&addr) {
+                    if let Some(sock_addr) = iter.next() {
+                        if std::net::TcpStream::connect_timeout(&sock_addr, std::time::Duration::from_millis(300)).is_ok() {
+                            tracing::info!(%probe, "auto-detected system proxy");
+                            return Some(probe.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }).clone()
 }
 
 /// 构建 HTTP 客户端（带 UA，给 web_search/web_fetch 用），支持全局代理

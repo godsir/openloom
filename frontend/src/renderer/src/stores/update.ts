@@ -61,9 +61,11 @@ export const createUpdateSlice: StateCreator<UpdateSlice> = (set, get) => ({
 
   onAutoUpdateAvailable: (version: string | null, releaseNotes?: string | null) => {
     const dismissed = get().dismissedVersion
+    // Clear __error__ dismissal when a new version is found
     set({
       update: { ...initialUpdate, status: 'available', version, releaseNotes: releaseNotes ?? null },
       updateModalOpen: version !== dismissed,
+      dismissedVersion: dismissed === '__error__' ? null : dismissed,
     })
   },
 
@@ -92,8 +94,11 @@ export const createUpdateSlice: StateCreator<UpdateSlice> = (set, get) => ({
   },
 
   onAutoUpdateError: (error: string) => {
+    const state = get()
+    // If user dismissed this error, don't re-display the island
+    if (state.dismissedVersion === '__error__') return
     set({
-      update: { ...get().update, status: 'error', error },
+      update: { ...state.update, status: 'error', error },
     })
   },
 
@@ -159,9 +164,10 @@ export const createUpdateSlice: StateCreator<UpdateSlice> = (set, get) => ({
       set({ update: { ...initialUpdate }, updateModalOpen: false })
       return
     }
-    const version = get().update.version
-    // 清除 update 状态（灵动岛不再显示），并记录已忽略版本
-    set({ update: { ...initialUpdate }, updateModalOpen: false, dismissedVersion: version })
+    const state = get()
+    // If dismissing an error, block future re-displays for this update cycle
+    const v = state.update.status === 'error' ? '__error__' : state.update.version
+    set({ update: { ...initialUpdate }, updateModalOpen: false, dismissedVersion: v })
   },
 
   closeUpdateModal: () => {

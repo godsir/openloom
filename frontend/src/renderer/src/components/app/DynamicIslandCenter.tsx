@@ -419,6 +419,13 @@ export default function DynamicIslandCenter() {
           >
             {t('island.retry')}
           </button>
+          <button
+            className={styles.islandDismissBtn}
+            title={t('common.dismiss')}
+            onClick={(e) => { e.stopPropagation(); useStore.getState().dismissUpdate() }}
+          >
+            {t('common.close')}
+          </button>
         </div>
       </div>
 

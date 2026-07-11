@@ -46,6 +46,11 @@ export const createConfirmSlice: StateCreator<ConfirmSlice> = (set, get) => ({
 
   showConfirm: (title: string, message: string, danger?: boolean) => {
     return new Promise<boolean>((resolve) => {
+      // Release previous hanging promise if a dialog is already open
+      const prev = get().confirm
+      if (prev.open && prev.resolve) {
+        prev.resolve(false)
+      }
       set({
         confirm: { open: true, title, message, danger: !!danger, resolve },
       })
@@ -54,6 +59,11 @@ export const createConfirmSlice: StateCreator<ConfirmSlice> = (set, get) => ({
 
   showPermissionConfirm: (title: string, message: string, toolName: string, danger?: boolean) => {
     return new Promise<PermissionChoice>((resolve) => {
+      // Release previous hanging promise if a dialog is already open
+      const prev = get().permissionConfirm
+      if (prev.open && prev.resolve) {
+        prev.resolve('deny')
+      }
       set({
         permissionConfirm: { open: true, title, message, danger: !!danger, toolName, resolve },
       })

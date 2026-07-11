@@ -32,7 +32,12 @@ export default function PermissionDialog({
       if (e.key === 'Escape') onDeny()
     }
     document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    // Auto-deny after 60s to prevent backend hang if user is afk
+    const t = setTimeout(() => onDeny(), 60_000)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      clearTimeout(t)
+    }
   }, [open, onDeny])
 
   if (!open) return null
