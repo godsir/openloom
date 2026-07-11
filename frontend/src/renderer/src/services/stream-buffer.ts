@@ -16,7 +16,6 @@ interface BufferState {
     lines: Array<{ stream: string; text: string }>
     exited: boolean
   }>
-  moodAcc: { yuan: string; text: string }
   skillCalls: Array<{
     id: string
     name: string
@@ -71,6 +70,7 @@ class StreamBufferManager {
     buf.textAcc = ''
     buf.thinkingAcc = ''
     buf.imageAcc = []
+    buf.processAcc = []
     buf.skillCalls = []
     buf.shellCalls = []
     buf.userSkills = userSkills ?? []
@@ -105,7 +105,6 @@ class StreamBufferManager {
         thinkingAcc: '',
         imageAcc: [],
         processAcc: [],
-        moodAcc: { yuan: '', text: '' },
         skillCalls: [],
         shellCalls: [],
         userSkills: [],
@@ -444,6 +443,9 @@ class StreamBufferManager {
       useStore.getState().setMessageUsage(sessionId, buf.messageId, { ...usage })
     }
    useStore.getState().removeStreamingSession(sessionId)
+   // Drain pending steering queue: drain items and send each as a normal
+   // message now that the previous turn has completed.
+   this.drainSteeringQueue(sessionId)
    // If this was an IM-originated stream, the user message (sent via IM) and
    // the final assistant response aren't in the renderer store — only the
    // streamed blocks are. Sync the full history from the engine so the
@@ -526,8 +528,7 @@ class StreamBufferManager {
       const session = sessions.find(s => s.path === sessionId)
       if (session?.title) return
       // Call backend
-      const { loomRpc: rpc } = await import('../services/jsonrpc')
-      const result = await rpc<{ title: string }>('session.auto_title', { session_id: sessionId })
+      const result = await loomRpc<{ title: string }>('session.auto_title', { session_id: sessionId })
       if (result?.title) {
         // Backend already persisted the rename; just refresh the sidebar list silently.
         await useStore.getState().loadSessions()
@@ -536,6 +537,14 @@ class StreamBufferManager {
       console.warn('[auto-title] failed:', e)
       // Best-effort, silently ignore failures
     }
+  }
+
+  private scheduleFlush(buf: BufferState, sessionId: string): void {
+    if (buf.rafId) return // already scheduled for next frame — coalesce
+    buf.rafId = requestAnimationFrame(() => {
+      buf.rafId = null
+      this.flush(buf, sessionId)
+    })
   }
 
   private flush(buf: BufferState, sessionId: string, final = false): void {
@@ -590,10 +599,6 @@ class StreamBufferManager {
         content: buf.thinkingAcc,
         sealed: !buf.inThinking,
       })
-    }
-
-    if (buf.moodAcc.text) {
-      blocks.push({ type: 'mood', ...buf.moodAcc })
     }
 
     // Terminal-style blocks for shell/file tools — rendered below thinking
@@ -758,6 +763,26 @@ class StreamBufferManager {
     const buf = this.buffers.get(sessionId)
     if (buf?.rafId) cancelAnimationFrame(buf.rafId)
     this.buffers.delete(sessionId)
+  }
+
+  /** Drain the pending steering queue and send each item as a normal message.
+   *  Called when the previous assistant turn completes (stream_end). */
+  private async drainSteeringQueue(sessionId: string): Promise<void> {
+    const items = useStore.getState().steeringQueueItems[sessionId]
+    if (!items || items.length === 0) return
+
+    // Clear the queue first to prevent re-entry
+    useStore.getState().clearSteeringItems(sessionId)
+
+    // Combine all pending items into one user message, separated by newlines.
+    // Then send as a single chat.send to avoid overlapping streaming sessions.
+    const combined = items.map(it => it.text).join('\n')
+    try {
+      const { sendMessage } = await import('./sendMessage')
+      await sendMessage({ sessionId, content: combined })
+    } catch {
+      // Best-effort; if send fails the user can re-send manually
+    }
   }
 }
 

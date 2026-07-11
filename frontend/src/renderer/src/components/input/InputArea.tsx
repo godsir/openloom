@@ -399,33 +399,17 @@ export default function InputArea() {
     interruptingRef.current = false
   }
 
-  const plainEscapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-
   const handleInterruptSend = async () => {
-    // 插话：通过 steering queue 将用户输入注入到正在运行的 agent 中
+    // 插话：先进入等待区，等当前消息输出完毕后再发送。
+    // 不直接发 chat.steer 也不插入聊天区。
     if (!sessionId) return
     const contentToSend = text.trim()
     if (!contentToSend) return
 
-    // 发送 chat.steer — 后端写入 steering queue，agent loop 下轮迭代自动消费
-    try {
-      await loomRpc('chat.steer', { session_id: sessionId, guidance: contentToSend })
-      // 清空输入框
-      setText('')
-    } catch (e: any) {
-      useStore.getState().addToast({ type: 'warning', message: e?.message || 'Steer failed' })
-      return
-    }
-
-    // 把用户插话内容显示为聊天中的 user message（标注为插话）
-    const store = useStore.getState()
-    store.ensureSession(sessionId)
-    store.appendMessage(sessionId, {
-      id: crypto.randomUUID(),
-      role: 'user',
-      blocks: [{ type: 'text', html: plainEscapeHtml(contentToSend), source: contentToSend, isSteering: true }],
-      timestamp: new Date().toISOString(),
-    })
+    // 写入前端等待区
+    const item = { id: crypto.randomUUID(), text: contentToSend }
+    useStore.getState().addSteeringItem(sessionId, item)
+    setText('')
   }
 
   const handleSend = async () => {

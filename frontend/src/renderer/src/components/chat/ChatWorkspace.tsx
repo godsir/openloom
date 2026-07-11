@@ -3,6 +3,7 @@ import { useIMStore } from '../../stores/im'
 import { useLocale } from '../../i18n'
 import ChatArea from './ChatArea'
 import InputArea from '../input/InputArea'
+import SteeringQueuePanel from './SteeringQueuePanel'
 import ImSessionNotice from './ImSessionNotice'
 import WelcomeScreen from '../shared/WelcomeScreen'
 
@@ -14,6 +15,7 @@ export default function ChatWorkspace() {
   return (
     <div className="flex flex-col h-full relative">
       {sessionId ? <ChatArea /> : <WelcomeScreen />}
+      {sessionId && !imSource && <SteeringQueuePanel sessionId={sessionId} />}
       {imSource
         ? <ImSessionNotice platform={imSource.platform} t={t} />
         : <InputArea />

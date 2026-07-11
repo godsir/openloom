@@ -16,6 +16,12 @@ export default function SkillBlock({ block }: { block: ContentBlock }) {
   // Load default expand preference
   useEffect(() => {
     window.loom.getPreference('skillExpandDefault', false).then(v => setExpanded(v))
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent).detail
+      if (d?.key === 'skill_expand') setExpanded(d.val)
+    }
+    window.addEventListener('loom-pref-changed', handler)
+    return () => window.removeEventListener('loom-pref-changed', handler)
   }, [])
 
   // Strip the "## Skill: {name}\n\n" prefix from use_skill result

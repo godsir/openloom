@@ -14,6 +14,7 @@ const UserMessage = memo(function UserMessage({ message }: { message: Message })
   const imageBlocks = message.blocks.filter((b) => b.type === 'image')
   const fileBlocks = message.blocks.filter((b) => b.type === 'file')
   const quotedSelectionBlocks = message.blocks.filter((b) => b.type === 'quoted_selection')
+  const isSteering = (textBlock as any)?.isSteering === true
   const hasVisualBlocks = imageBlocks.length > 0 || fileBlocks.length > 0 || quotedSelectionBlocks.length > 0
   const openLightbox = useStore(s => s.openLightbox)
   const { t } = useLocale()
@@ -57,7 +58,10 @@ const UserMessage = memo(function UserMessage({ message }: { message: Message })
 
   return (
     <div className={styles.wrapper} data-message-id={message.id}>
-      <div className={styles.bubble}>
+      <div className={`${styles.bubble} ${isSteering ? styles.steeringBubble : ''}`}>
+        {isSteering && (
+          <div className={styles.steeringFlag}>{t('chat.interruptSend')}</div>
+        )}
         <div className={styles.content}>
           {hasVisualBlocks && (
             <div className={styles.attachments}>

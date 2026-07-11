@@ -1,0 +1,94 @@
+.card {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.04);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  margin: 8px 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(99,102,241,0.08);
+}
+
+.teamName {
+  font-size: 11px;
+  font-weight: 500;
+  color: #6366f1;
+}
+
+.memberCount {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.memberRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.memberRow:hover {
+  background: var(--bg-active);
+}
+
+.memberName {
+  font-size: 11px;
+  color: var(--text-light);
+}
+
+.memberSummary {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.expandedBody {
+  padding: 0 12px 12px 32px;
+}
+
+.expandedPre {
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.statusIcon {
+  flex-shrink: 0;
+}
+
+.iconGreen { color: var(--green); }
+.iconRed { color: var(--red); }
+.iconAmber { color: var(--amber); }
+.iconIndigo { color: #6366f1; }
+.spin { animation: spin 1s linear infinite; }
+
+.chevronUp {
+  color: var(--text-muted);
+  transform: rotate(180deg);
+  transition: transform 0.15s;
+}
+
+.chevronDown {
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

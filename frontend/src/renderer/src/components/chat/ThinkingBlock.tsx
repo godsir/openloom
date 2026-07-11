@@ -15,6 +15,12 @@ export default function ThinkingBlock({ block }: { block: ContentBlock }) {
   // Load default expand preference
   useEffect(() => {
     window.loom.getPreference('thinkingExpandDefault', false).then(v => setExpanded(v))
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent).detail
+      if (d?.key === 'thinking_expand') setExpanded(d.val)
+    }
+    window.addEventListener('loom-pref-changed', handler)
+    return () => window.removeEventListener('loom-pref-changed', handler)
   }, [])
 
   // Auto-scroll thinking body to bottom when content grows during streaming

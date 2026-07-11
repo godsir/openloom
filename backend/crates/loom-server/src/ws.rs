@@ -238,6 +238,7 @@ fn agent_event_method(event: &AgentEvent) -> &'static str {
         AgentEvent::TeamMemberStarted { .. } => "team.member_started",
         AgentEvent::SteeringQueued { .. } => "steering.queued",
         AgentEvent::SteeringConsumed { .. } => "steering.consumed",
+        AgentEvent::PreferencesChanged { .. } => "preferences.changed",
     }
 }
 
@@ -528,15 +529,19 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
         AgentEvent::SteeringQueued {
             session_id,
             pending_count,
-            guidance,
+            item,
         } => {
-            json!({ "session_id": session_id, "pending_count": pending_count, "guidance": guidance })
+            json!({ "session_id": session_id, "pending_count": pending_count, "item": item })
         }
         AgentEvent::SteeringConsumed {
             session_id,
             remaining_count,
+            items,
         } => {
-            json!({ "session_id": session_id, "remaining_count": remaining_count })
+            json!({ "session_id": session_id, "remaining_count": remaining_count, "items": items })
+        }
+        AgentEvent::PreferencesChanged { updates } => {
+            json!({ "updates": updates })
         }
         _ => json!({}),
     }

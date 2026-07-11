@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
 import type { Locale, TranslationMap } from './types'
 import { zhCN } from './zh-CN'
 import { zhTW } from './zh-TW'
@@ -50,6 +50,19 @@ export function LocaleProvider({ children, initial, onChange }: {
   const setLocale = useCallback((l: Locale) => {
     setLocaleState(l)
     onChange?.(l)
+  }, [onChange])
+
+  // Listen for backend-triggered locale changes (preferences.changed event)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const lang = (e as CustomEvent).detail as Locale
+      if (lang === 'zh-CN' || lang === 'zh-TW' || lang === 'en-US') {
+        setLocaleState(lang)
+        onChange?.(lang)
+      }
+    }
+    window.addEventListener('loom-locale-changed', handler)
+    return () => window.removeEventListener('loom-locale-changed', handler)
   }, [onChange])
 
   const t = useCallback(

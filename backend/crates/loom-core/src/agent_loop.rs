@@ -163,7 +163,7 @@ pub struct AgentLoopConfig {
     /// Steering queue: the GUI can push guidance messages here mid-turn.
     /// Each message is drained at the top of every iteration and injected
     /// as a System message so the LLM can adapt without canceling the turn.
-    pub steering_queue: Option<Arc<RwLock<Vec<String>>>>,
+    pub steering_queue: Option<Arc<RwLock<Vec<crate::event_bus::SteeringItem>>>>,
     /// Few-shot examples injected as additional system messages after the
     /// stable prefix but before dynamic_context. Each entry becomes a separate
     /// System message. Empty vec (default) disables injection.
@@ -1094,34 +1094,31 @@ async fn run_agent_turn_inner(
 
     for iteration in 0..config.max_iterations {
         // Drain steering queue: inject any GUI-provided guidance messages
-        let steering_consumed = if let Some(ref queue) = config.steering_queue {
+        let steering_consumed: Vec<crate::event_bus::SteeringItem> = if let Some(ref queue) = config.steering_queue {
             let mut msgs = queue.write().await;
-            let count = msgs.len();
-            while let Some(msg) = msgs.pop() {
+            let items: Vec<crate::event_bus::SteeringItem> = msgs.drain(..).collect();
+            for item in &items {
                 messages.push(Message {
                     role: Role::System,
                     content: vec![ContentPart::Text {
-                        text: format!("[用户指引] {}", msg),
+                        text: format!("[用户指引] {}", item.text),
                     }],
                     timestamp: chrono::Utc::now(),
                     usage: None,
                 });
             }
-            count
-        } else { 0 };
+            items
+        } else { Vec::new() };
         // Notify frontend when we consumed steering items
-        if steering_consumed > 0 {
+        if !steering_consumed.is_empty() {
             if let Some(ref bus) = config.event_bus {
                 let remaining = config.steering_queue.as_ref()
-                    .map(|q| {
-                        // We can't hold the write lock simultaneously, estimate: was N, took all N
-                        // But other threads may have pushed more — use try_read for approximate
-                        q.try_read().map(|q| q.len()).unwrap_or(0)
-                    })
+                    .map(|q| q.try_read().map(|q| q.len()).unwrap_or(0))
                     .unwrap_or(0);
                 bus.publish(crate::event_bus::AgentEvent::SteeringConsumed {
                     session_id: config.session_id.clone(),
                     remaining_count: remaining,
+                    items: steering_consumed,
                 });
             }
         }
@@ -2115,34 +2112,31 @@ async fn run_agent_turn_streaming_inner(
 
     for iteration in 0..config.max_iterations {
         // Drain steering queue: inject any GUI-provided guidance messages
-        let steering_consumed = if let Some(ref queue) = config.steering_queue {
+        let steering_consumed: Vec<crate::event_bus::SteeringItem> = if let Some(ref queue) = config.steering_queue {
             let mut msgs = queue.write().await;
-            let count = msgs.len();
-            while let Some(msg) = msgs.pop() {
+            let items: Vec<crate::event_bus::SteeringItem> = msgs.drain(..).collect();
+            for item in &items {
                 messages.push(Message {
                     role: Role::System,
                     content: vec![ContentPart::Text {
-                        text: format!("[用户指引] {}", msg),
+                        text: format!("[用户指引] {}", item.text),
                     }],
                     timestamp: chrono::Utc::now(),
                     usage: None,
                 });
             }
-            count
-        } else { 0 };
+            items
+        } else { Vec::new() };
         // Notify frontend when we consumed steering items
-        if steering_consumed > 0 {
+        if !steering_consumed.is_empty() {
             if let Some(ref bus) = config.event_bus {
                 let remaining = config.steering_queue.as_ref()
-                    .map(|q| {
-                        // We can't hold the write lock simultaneously, estimate: was N, took all N
-                        // But other threads may have pushed more — use try_read for approximate
-                        q.try_read().map(|q| q.len()).unwrap_or(0)
-                    })
+                    .map(|q| q.try_read().map(|q| q.len()).unwrap_or(0))
                     .unwrap_or(0);
                 bus.publish(crate::event_bus::AgentEvent::SteeringConsumed {
                     session_id: config.session_id.clone(),
                     remaining_count: remaining,
+                    items: steering_consumed,
                 });
             }
         }

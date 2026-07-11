@@ -18,6 +18,8 @@ pub async fn handle(
         "chat.send" => Some(handle_chat_send(state, p).await),
         "chat.stop" => Some(handle_chat_stop(state, p).await),
         "chat.steer" => Some(handle_chat_steer(state, p).await),
+        "chat.steer_list" => Some(handle_chat_steer_list(state, p).await),
+        "chat.steer_clear" => Some(handle_chat_steer_clear(state, p).await),
         "chat.compact" => Some(handle_chat_compact(state, p).await),
         "session.last_stop_reason" => Some(handle_last_stop_reason(state, p).await),
         _ => None,
@@ -357,6 +359,24 @@ async fn handle_chat_steer(state: &AppState, p: &Value) -> Result<Value, JsonRpc
     }
     let count = state.orchestrator.steer_session(session_id, guidance).await;
     Ok(json!({ "ok": true, "pending_count": count }))
+}
+
+async fn handle_chat_steer_list(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let session_id = p
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let items = state.orchestrator.peek_steering_queue(session_id).await;
+    Ok(json!({ "items": items, "count": items.len() }))
+}
+
+async fn handle_chat_steer_clear(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let session_id = p
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    state.orchestrator.clear_steering_queue(session_id).await;
+    Ok(json!({ "ok": true }))
 }
 
 async fn handle_chat_compact(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {

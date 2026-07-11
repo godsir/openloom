@@ -47,6 +47,8 @@ export interface SessionSlice {
   setSessionWorkspace: (id: string, path: string) => void
   /** Toggle per-session memory recording (default: true). */
   setSessionMemoryEnabledAction: (id: string, enabled: boolean) => void
+  /** In-flight createSession promise to prevent duplicate sessions from concurrent calls */
+  _creatingSession: Promise<string> | null
   closeCurrentSession: () => Promise<void>
   selectNextSession: () => void
   selectPrevSession: () => void
@@ -383,10 +385,6 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
     switchSession(sessions[idx - 1].path)
   },
 })
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
 
 /**
  * Parse process_wait text output into ProcessLine[] for ProcessOutputBlock rendering.

@@ -357,7 +357,7 @@ pub struct Orchestrator {
     memory_disabled_sessions: RwLock<HashSet<String>>,
     /// Per-session steering queues — user guidance pending injection into agent loop.
     /// Each entry holds the entries for one session, consumed FIFO at each iteration.
-    session_steering_queues: RwLock<HashMap<String, Arc<RwLock<Vec<String>>>>>,
+    session_steering_queues: RwLock<HashMap<String, Arc<RwLock<Vec<crate::event_bus::SteeringItem>>>>>,
 }
 
 /// Trait for memory backends (SqliteEventStore, etc.)
@@ -1051,12 +1051,37 @@ impl Orchestrator {
         let _ = registry.register(Arc::new(crate::builtin_tools::UpdateConfigTool {
             tool_prefs: tool_prefs.clone(),
             data_dir: data_dir.clone(),
+            event_bus: Some(pool.event_bus().clone()),
+        }));
+
+        // Entity management tools — AI can CRUD agent/model/team configs
+        let _ = registry.register(Arc::new(crate::entity_tools::ManageAgentTool {
+            memory_store: memory_store.clone(),
+        }));
+        let _ = registry.register(Arc::new(crate::entity_tools::ManageModelTool {
+            memory_store: memory_store.clone(),
+        }));
+        let _ = registry.register(Arc::new(crate::entity_tools::ManageTeamTool {
+            memory_store: memory_store.clone(),
+        }));
+
+        // Cron/skills/MCP tools
+        let _ = registry.register(Arc::new(crate::entity_cron_tools::ManageCronTool {
+            cron_scheduler: cron_scheduler.clone(),
+        }));
+        let _ = registry.register(Arc::new(crate::entity_skills_tools::ManageSkillsTool {
+            skill_state: skill_state.clone(),
+        }));
+        let mcp_client = Arc::new(McpClient::new());
+        let _ = registry.register(Arc::new(crate::entity_mcp_tools::ManageMcpTool {
+            mcp_client: mcp_client.clone(),
+            data_dir: data_dir.clone(),
         }));
 
         Self {
             pool,
             tool_registry: Arc::new(RwLock::new(registry)),
-            mcp_client: Arc::new(McpClient::new()),
+            mcp_client,
             lsp_client,
             cloud_client: Arc::new(RwLock::new(None)),
             loop_config: Arc::new(RwLock::new(AgentLoopConfig::default())),
@@ -6309,7 +6334,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                     sc, ws_path,
                 )))
             },
-            steering_queue: Some(Arc::new(RwLock::new(Vec::new()))),
+            steering_queue: Some(self.get_or_create_steering_queue(session_id).await),
             todo_context,
             continuation_note,
             todo_store: Some(self.todo_store.clone()),
@@ -6675,10 +6700,8 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                 killed += 1;
             }
         }
-        // Clear any pending steering queue items
-        if let Some(q) = self.session_steering_queues.read().await.get(session_id) {
-            q.write().await.clear();
-        }
+        // Clear and remove any pending steering queue items for this session
+        self.session_steering_queues.write().await.remove(session_id);
         Ok(killed)
     }
 
@@ -6692,8 +6715,12 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             .entry(session_id.to_string())
             .or_insert_with(|| Arc::new(RwLock::new(Vec::new())))
             .clone();
+        let item = crate::event_bus::SteeringItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            text: guidance.to_string(),
+        };
         let mut msgs = queue.write().await;
-        msgs.push(guidance.to_string());
+        msgs.push(item.clone());
         let count = msgs.len();
         drop(msgs);
         drop(queues);
@@ -6701,7 +6728,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         self.pool.event_bus().publish(AgentEvent::SteeringQueued {
             session_id: session_id.to_string(),
             pending_count: count,
-            guidance: guidance.to_string(),
+            item,
         });
         count
     }
@@ -6712,7 +6739,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
     pub async fn get_or_create_steering_queue(
         &self,
         session_id: &str,
-    ) -> Arc<RwLock<Vec<String>>> {
+    ) -> Arc<RwLock<Vec<crate::event_bus::SteeringItem>>> {
         let mut queues = self.session_steering_queues.write().await;
         queues
             .entry(session_id.to_string())
@@ -6721,12 +6748,26 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
     }
 
     /// Get the current steering queue entries for a session (non-destructive peek).
-    pub async fn peek_steering_queue(&self, session_id: &str) -> Vec<String> {
+    pub async fn peek_steering_queue(&self, session_id: &str) -> Vec<crate::event_bus::SteeringItem> {
         let queues = self.session_steering_queues.read().await;
         if let Some(q) = queues.get(session_id) {
             q.read().await.clone()
         } else {
             Vec::new()
+        }
+    }
+
+    /// Clear all pending steering queue entries for a session.
+    pub async fn clear_steering_queue(&self, session_id: &str) {
+        if let Some(q) = self.session_steering_queues.read().await.get(session_id) {
+            q.write().await.clear();
+
+            // Notify frontend that all remaining items were removed
+            self.pool.event_bus().publish(AgentEvent::SteeringConsumed {
+                session_id: session_id.to_string(),
+                remaining_count: 0,
+                items: Vec::new(),
+            });
         }
     }
 

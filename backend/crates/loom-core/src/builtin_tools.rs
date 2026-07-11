@@ -193,16 +193,28 @@ impl AgentTool for ShellTool {
         let mut stderr_lines: Vec<String> = Vec::new();
         let max_bytes = prefs.file_read_max_output_kb * 1024;
 
-        // Wait with timeout — drain output lines concurrently with process exit
+        // Wait with timeout — drain output lines concurrently with process exit.
+        // Also listen for cancellation: kill the child immediately instead of
+        // letting it become an orphan.
         let timeout_duration = std::time::Duration::from_secs(timeout_secs);
+        let cancel = context.cancel_token.clone();
         let wait_result = tokio::time::timeout(timeout_duration, async {
-            // While waiting for exit, continuously drain output lines
             loop {
                 tokio::select! {
                     result = child.wait() => {
                         return result;
                     }
                     _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                        // Check for cancellation each tick — if the user hit stop,
+                        // kill the child process so it doesn't become orphaned.
+                        if let Some(ref c) = cancel {
+                            if c.is_cancelled() {
+                                let _ = child.kill().await;
+                                let _ = child.wait().await;
+                                tracing::info!("shell tool: killed child process due to user cancellation");
+                                return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
+                            }
+                        }
                         // Drain any available lines
                         while let Ok((line, is_stderr)) = line_rx.try_recv() {
                             let prefix = if is_stderr { "[stderr] " } else { "" };
@@ -4257,6 +4269,26 @@ impl AgentTool for MonitorPeekTool {
 // UpdateConfigTool — AI-editable Loom settings via natural language
 // ============================================================================
 
+/// Simple Levenshtein distance for fuzzy key matching.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let n = a.len();
+    let m = b.len();
+    let mut d = (0..=m).collect::<Vec<_>>();
+    for i in 1..=n {
+        let mut prev = d[0];
+        d[0] = i;
+        for j in 1..=m {
+            let sub_cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            let new = (d[j - 1] + 1).min(d[j] + 1).min(prev + sub_cost);
+            prev = d[j];
+            d[j] = new;
+        }
+    }
+    d[m]
+}
+
 /// Maps the AI's natural-language config request to live config and persists it.
 ///
 /// The AI translates the user's natural language into structured `updates`, and
@@ -4265,6 +4297,7 @@ impl AgentTool for MonitorPeekTool {
 pub struct UpdateConfigTool {
     pub tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>>,
     pub data_dir: std::path::PathBuf,
+    pub event_bus: Option<crate::event_bus::EventBus>,
 }
 
 #[async_trait]
@@ -4276,13 +4309,47 @@ impl AgentTool for UpdateConfigTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "update_config".into(),
-            description: "Update Loom settings. Use when the user wants to change a preference in natural language (e.g. \"把默认 shell 超时改成 120 秒\" or \"切换到 Brave 搜索引擎\"). Map their intent to the matching field name and value.\n\nAvailable fields:\n- shell_default_timeout_secs (u64, max shell timeout in seconds)\n- shell_max_timeout_secs (u64, capped at 300)\n- file_read_max_output_kb (u64, max file read size in KB)\n- web_search_engine (string: \"duckduckgo_lite\" | \"brave\" | \"searxng\" | \"google\" | \"bing\" | \"tavily\" | \"serper\")\n- web_search_max_results (u64)\n- searxng_url (string or null)\n- web_search_api_key (string or null)\n- http_proxy (string or null, e.g. \"http://127.0.0.1:7890\")\n- proxy_enabled (bool)\n- web_fetch_max_chars (u64)\n- process_wait_max_timeout_secs (u64)\n- monitor_default_timeout_ms (u64)".into(),
+            description: "Update Loom settings. Use when the user wants to change a preference in natural language (e.g. \"切换到暗色主题\" or \"把默认 shell 超时改成 120 秒\" or \"切换到 Brave 搜索引擎\"). Map their intent to the matching field name and value.\n\nAvailable fields:\n- shell_default_timeout_secs (u64, max shell timeout in seconds)\n- shell_max_timeout_secs (u64, capped at 300)\n- file_read_max_output_kb (u64, max file read size in KB)\n- web_search_engine (string: \"duckduckgo_lite\" | \"brave\" | \"searxng\" | \"google\" | \"bing\" | \"tavily\" | \"serper\")\n- web_search_max_results (u64)\n- searxng_url (string or null)\n- web_search_api_key (string or null)\n- http_proxy (string or null, e.g. \"http://127.0.0.1:7890\")\n- proxy_enabled (bool)\n- web_fetch_max_chars (u64)\n- process_wait_max_timeout_secs (u64)\n- monitor_default_timeout_ms (u64)\n- theme (string: \"dark\" | \"light\" | \"midnight\" | \"warm-paper\" | \"neon-pink\" | \"ember\" | \"navy-gold\" | \"umber-cream\" | \"mono\" | \"mono-inv\" | \"custom\")\n- font_size (string: \"small\" | \"default\" | \"large\" | \"xlarge\")\n- language (string: \"zh-CN\" | \"zh-TW\" | \"en-US\")\n- app_zoom (number, 0.5~2.0)\n- permission_mode (string: \"operate\" | \"ask\" | \"read_only\" | \"plan\" — tool permission level)\n- thinking_level (string: \"low\" | \"medium\" | \"high\" | \"xhigh\" | \"max\" — AI reasoning depth)\n- send_shortcut (string: \"enter\" | \"ctrl+enter\" | \"shift+enter\" — keyboard shortcut to send)\n- fim_enabled (bool — code completion toggle)\n- thinking_expand (bool — default expand thinking blocks)\n- tool_expand (bool — default expand tool-call blocks)\n- skill_expand (bool — default expand skill blocks)\n- task_notification (bool — desktop notification on task complete)\n- auto_start (bool — launch on system startup)\n- auto_title (bool — auto-generate session titles from AI)\n- close_to_tray (bool — minimize to tray instead of quitting)\n- start_to_tray (bool — start silently in system tray)\n- disable_hw_accel (bool — disable GPU hardware acceleration)\n- ui_font (string — CSS font-family for UI, empty = system default)\n- code_font (string — CSS font-family for code, empty = system default)\n- custom_colors (object with bg/surface/text/accent hex strings — only valid when theme=custom)".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "updates": {
                         "type": "object",
-                        "description": "Key-value pairs to update. Only include fields the user wants to change."
+                        "description": "Key-value pairs to update. Only include fields the user wants to change.",
+                        "properties": {
+                            "shell_default_timeout_secs": { "type": "integer", "minimum": 1, "description": "Default shell timeout in seconds" },
+                            "shell_max_timeout_secs": { "type": "integer", "minimum": 1, "maximum": 300, "description": "Max shell timeout in seconds (capped at 300)" },
+                            "file_read_max_output_kb": { "type": "integer", "minimum": 1, "maximum": 10240, "description": "Max file read size in KB" },
+                            "web_search_engine": { "type": "string", "enum": ["duckduckgo_lite", "brave", "searxng", "google", "bing", "tavily", "serper"], "description": "Web search backend" },
+                            "web_search_max_results": { "type": "integer", "minimum": 1, "maximum": 50, "description": "Max search results" },
+                            "searxng_url": { "type": ["string", "null"], "description": "SearXNG instance URL" },
+                            "web_search_api_key": { "type": ["string", "null"], "description": "Google/Bing API key" },
+                            "http_proxy": { "type": ["string", "null"], "description": "HTTP proxy address (e.g. http://127.0.0.1:7890)" },
+                            "proxy_enabled": { "type": "boolean", "description": "Whether HTTP proxy is enabled" },
+                            "web_fetch_max_chars": { "type": "integer", "minimum": 1, "maximum": 500000, "description": "Max characters fetched from web pages" },
+                            "process_wait_max_timeout_secs": { "type": "integer", "minimum": 1, "maximum": 86400, "description": "Max process wait timeout in seconds" },
+                            "monitor_default_timeout_ms": { "type": "integer", "minimum": 1, "maximum": 3600000, "description": "Default monitor timeout in milliseconds" },
+                            "theme": { "type": "string", "enum": ["dark", "light", "midnight", "warm-paper", "neon-pink", "ember", "navy-gold", "umber-cream", "mono", "mono-inv", "custom"], "description": "UI colour theme" },
+                            "font_size": { "type": "string", "enum": ["small", "default", "large", "xlarge"], "description": "UI font size" },
+                            "language": { "type": "string", "enum": ["zh-CN", "zh-TW", "en-US"], "description": "UI language" },
+                            "app_zoom": { "type": "number", "minimum": 0.5, "maximum": 2.0, "description": "Global UI zoom factor" },
+                            "permission_mode": { "type": "string", "enum": ["operate", "ask", "read_only", "plan"], "description": "Tool permission mode: operate (auto-approve), ask (confirm each), read_only (deny writes), plan (no execution)" },
+                            "thinking_level": { "type": "string", "enum": ["low", "medium", "high", "xhigh", "max"], "description": "AI reasoning depth — higher = smarter but slower and more expensive" },
+                            "send_shortcut": { "type": "string", "enum": ["enter", "ctrl+enter", "shift+enter"], "description": "Keyboard shortcut to send a message" },
+                            "fim_enabled": { "type": "boolean", "description": "Enable code completion (fill-in-the-middle)" },
+                            "thinking_expand": { "type": "boolean", "description": "Expand thinking blocks by default" },
+                            "tool_expand": { "type": "boolean", "description": "Expand tool call blocks by default" },
+                            "skill_expand": { "type": "boolean", "description": "Expand skill blocks by default" },
+                            "task_notification": { "type": "boolean", "description": "Show desktop notification when AI finishes a task" },
+                            "auto_start": { "type": "boolean", "description": "Launch openLoom on system startup" },
+                            "auto_title": { "type": "boolean", "description": "Auto-generate session titles from AI's first response" },
+                            "close_to_tray": { "type": "boolean", "description": "Minimize to system tray instead of quitting" },
+                            "start_to_tray": { "type": "boolean", "description": "Start silently in system tray (no window)" },
+                            "disable_hw_accel": { "type": "boolean", "description": "Disable GPU hardware acceleration (needs restart)" },
+                            "ui_font": { "type": "string", "description": "CSS font-family for UI text. Empty string resets to system default. Common values: 'Inter, sans-serif', 'Microsoft YaHei, sans-serif', 'PingFang SC, sans-serif', 'LXGW WenKai, serif'." },
+                            "code_font": { "type": "string", "description": "CSS font-family for code. Empty string resets to system default. Common values: 'JetBrains Mono, monospace', 'Fira Code, monospace', 'Cascadia Code, monospace', 'Consolas, monospace'." },
+                            "custom_colors": { "type": "object", "description": "Custom theme colors (only applies when theme='custom'). Properties: bg (hex), surface (hex), text (hex), accent (hex). Example: {\"bg\":\"#0B0F14\",\"surface\":\"#111820\",\"text\":\"#e2e8f0\",\"accent\":\"#22d3ee\"}" }
+                        }
                     }
                 },
                 "required": ["updates"]
@@ -4337,39 +4404,61 @@ impl AgentTool for UpdateConfigTool {
             match key.as_str() {
                 "shell_default_timeout_secs" => {
                     if let Some(v) = val.as_u64() {
-                        let old = config.shell_default_timeout_secs;
-                        config.shell_default_timeout_secs = v;
-                        changed.push(format!("shell_default_timeout_secs: {old} → {v}"));
+                        if v < 1 {
+                            errors.push(format!("{key} must be a positive integer"));
+                        } else {
+                            let old = config.shell_default_timeout_secs;
+                            config.shell_default_timeout_secs = v;
+                            changed.push(format!("shell_default_timeout_secs: {old} → {v}"));
+                        }
                     } else {
                         errors.push(format!("{key} must be a positive integer"));
                     }
                 }
                 "shell_max_timeout_secs" => {
                     if let Some(v) = val.as_u64() {
-                        let old = config.shell_max_timeout_secs;
-                        config.shell_max_timeout_secs = v;
-                        changed.push(format!("shell_max_timeout_secs: {old} → {v}"));
+                        if !(1..=300).contains(&v) {
+                            errors.push(format!("{key} must be 1–300"));
+                        } else {
+                            let old = config.shell_max_timeout_secs;
+                            config.shell_max_timeout_secs = v;
+                            changed.push(format!("shell_max_timeout_secs: {old} → {v}"));
+                        }
                     } else {
                         errors.push(format!("{key} must be a positive integer"));
                     }
                 }
                 "file_read_max_output_kb" => {
                     if let Some(v) = val.as_u64() {
-                        let old = config.file_read_max_output_kb;
-                        config.file_read_max_output_kb = v as usize;
-                        changed.push(format!("file_read_max_output_kb: {old} → {v}"));
+                        if !(1..=10240).contains(&v) {
+                            errors.push(format!("{key} must be 1–10240"));
+                        } else {
+                            let old = config.file_read_max_output_kb;
+                            config.file_read_max_output_kb = v as usize;
+                            changed.push(format!("file_read_max_output_kb: {old} → {v}"));
+                        }
                     } else {
                         errors.push(format!("{key} must be a positive integer"));
                     }
                 }
                 "web_search_engine" => {
                     if let Some(v) = val.as_str() {
-                        let old = format!("{:?}", config.web_search_engine);
-                        config.web_search_engine = serde_json::from_value(
-                            serde_json::Value::String(v.to_string()),
-                        )
-                        .unwrap_or_default();
-                        changed.push(format!("web_search_engine: {old} → {v}"));
+                        const VALID: &[&str] = &[
+                            "duckduckgo_lite", "brave", "searxng",
+                            "google", "bing", "tavily", "serper",
+                        ];
+                        if !VALID.contains(&v) {
+                            errors.push(format!(
+                                "web_search_engine must be one of: {}",
+                                VALID.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(", ")
+                            ));
+                        } else {
+                            let old = format!("{:?}", config.web_search_engine);
+                            config.web_search_engine = serde_json::from_value(
+                                serde_json::Value::String(v.to_string()),
+                            ).unwrap_or_default();
+                            changed.push(format!("web_search_engine: {old} → {v}"));
+                        }
                     } else {
                         errors.push(format!(
                             "{key} must be a string: duckduckgo_lite, brave, searxng, google, bing, tavily, serper"
@@ -4378,9 +4467,13 @@ impl AgentTool for UpdateConfigTool {
                 }
                 "web_search_max_results" => {
                     if let Some(v) = val.as_u64() {
-                        let old = config.web_search_max_results;
-                        config.web_search_max_results = v as usize;
-                        changed.push(format!("web_search_max_results: {old} → {v}"));
+                        if !(1..=50).contains(&v) {
+                            errors.push(format!("{key} must be 1–50"));
+                        } else {
+                            let old = config.web_search_max_results;
+                            config.web_search_max_results = v as usize;
+                            changed.push(format!("web_search_max_results: {old} → {v}"));
+                        }
                     } else {
                         errors.push(format!("{key} must be a positive integer"));
                     }
@@ -4433,33 +4526,201 @@ impl AgentTool for UpdateConfigTool {
                 }
                 "web_fetch_max_chars" => {
                     if let Some(v) = val.as_u64() {
-                        let old = config.web_fetch_max_chars;
-                        config.web_fetch_max_chars = v as usize;
-                        changed.push(format!("web_fetch_max_chars: {old} → {v}"));
+                        if !(1..=500_000).contains(&v) {
+                            errors.push(format!("{key} must be 1–500000"));
+                        } else {
+                            let old = config.web_fetch_max_chars;
+                            config.web_fetch_max_chars = v as usize;
+                            changed.push(format!("web_fetch_max_chars: {old} → {v}"));
+                        }
                     } else {
                         errors.push(format!("{key} must be a positive integer"));
                     }
                 }
                 "process_wait_max_timeout_secs" => {
                     if let Some(v) = val.as_u64() {
-                        let old = config.process_wait_max_timeout_secs;
-                        config.process_wait_max_timeout_secs = v;
-                        changed.push(format!("process_wait_max_timeout_secs: {old} → {v}"));
+                        if !(1..=86400).contains(&v) {
+                            errors.push(format!("{key} must be 1–86400"));
+                        } else {
+                            let old = config.process_wait_max_timeout_secs;
+                            config.process_wait_max_timeout_secs = v;
+                            changed.push(format!("process_wait_max_timeout_secs: {old} → {v}"));
+                        }
                     } else {
                         errors.push(format!("{key} must be a positive integer"));
                     }
                 }
                 "monitor_default_timeout_ms" => {
                     if let Some(v) = val.as_u64() {
-                        let old = config.monitor_default_timeout_ms;
-                        config.monitor_default_timeout_ms = v;
-                        changed.push(format!("monitor_default_timeout_ms: {old} → {v}"));
+                        if !(1..=3_600_000).contains(&v) {
+                            errors.push(format!("{key} must be 1–3600000 (1h)"));
+                        } else {
+                            let old = config.monitor_default_timeout_ms;
+                            config.monitor_default_timeout_ms = v;
+                            changed.push(format!("monitor_default_timeout_ms: {old} → {v}"));
+                        }
                     } else {
                         errors.push(format!("{key} must be a positive integer"));
                     }
                 }
+                // UI preferences — not stored in tool_prefs.json, but published
+                // via PreferencesChanged event for the Electron frontend to apply.
+                "theme" => {
+                    if let Some(v) = val.as_str() {
+                        const VALID: &[&str] = &[
+                            "dark", "light", "midnight", "warm-paper", "neon-pink",
+                            "ember", "navy-gold", "umber-cream", "mono", "mono-inv", "custom",
+                        ];
+                        if VALID.contains(&v) {
+                            changed.push(format!("theme: → {v}"));
+                        } else {
+                            errors.push(format!(
+                                "theme must be one of: {}",
+                                VALID.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(", ")
+                            ));
+                        }
+                    } else {
+                        errors.push("theme must be a string".into());
+                    }
+                }
+                "font_size" => {
+                    if let Some(v) = val.as_str() {
+                        const VALID: &[&str] = &["small", "default", "large", "xlarge"];
+                        if VALID.contains(&v) {
+                            changed.push(format!("font_size: → {v}"));
+                        } else {
+                            errors.push(format!(
+                                "font_size must be one of: {}", VALID.join(", ")
+                            ));
+                        }
+                    } else {
+                        errors.push("font_size must be a string".into());
+                    }
+                }
+                "language" => {
+                    if let Some(v) = val.as_str() {
+                        const VALID: &[&str] = &["zh-CN", "zh-TW", "en-US"];
+                        if VALID.contains(&v) {
+                            changed.push(format!("language: → {v}"));
+                        } else {
+                            errors.push(format!(
+                                "language must be one of: {}", VALID.join(", ")
+                            ));
+                        }
+                    } else {
+                        errors.push("language must be a string".into());
+                    }
+                }
+                "app_zoom" => {
+                    if let Some(v) = val.as_f64() {
+                        if !(0.5..=2.0).contains(&v) {
+                            errors.push("app_zoom must be between 0.5 and 2.0".into());
+                        } else {
+                            changed.push(format!("app_zoom: → {v}"));
+                        }
+                    } else {
+                        errors.push("app_zoom must be a number".into());
+                    }
+                }
+                "permission_mode" => {
+                    if let Some(v) = val.as_str() {
+                        const VALID: &[&str] = &["operate", "ask", "read_only", "plan"];
+                        if VALID.contains(&v) {
+                            changed.push(format!("permission_mode: → {v}"));
+                        } else {
+                            errors.push(format!("permission_mode must be one of: {}", VALID.join(", ")));
+                        }
+                    } else {
+                        errors.push("permission_mode must be a string".into());
+                    }
+                }
+                "thinking_level" => {
+                    if let Some(v) = val.as_str() {
+                        const VALID: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+                        if VALID.contains(&v) {
+                            changed.push(format!("thinking_level: → {v}"));
+                        } else {
+                            errors.push(format!("thinking_level must be one of: {}", VALID.join(", ")));
+                        }
+                    } else {
+                        errors.push("thinking_level must be a string".into());
+                    }
+                }
+                "send_shortcut" => {
+                    if let Some(v) = val.as_str() {
+                        const VALID: &[&str] = &["enter", "ctrl+enter", "shift+enter"];
+                        if VALID.contains(&v) {
+                            changed.push(format!("send_shortcut: → {v}"));
+                        } else {
+                            errors.push(format!("send_shortcut must be one of: {}", VALID.join(", ")));
+                        }
+                    } else {
+                        errors.push("send_shortcut must be a string".into());
+                    }
+                }
+                "fim_enabled" | "thinking_expand" | "tool_expand" | "skill_expand"
+                    | "task_notification" | "auto_start" | "auto_title" | "close_to_tray"
+                    | "start_to_tray" | "disable_hw_accel" => {
+                    if let Some(v) = val.as_bool() {
+                        changed.push(format!("{key}: → {v}"));
+                    } else {
+                        errors.push(format!("{key} must be a boolean"));
+                    }
+                }
+                "ui_font" | "code_font" => {
+                    if let Some(v) = val.as_str() {
+                        changed.push(format!("{key}: → \"{v}\""));
+                    } else {
+                        errors.push(format!("{key} must be a string"));
+                    }
+                }
+                "custom_colors" => {
+                    if let Some(obj) = val.as_object() {
+                        let mut valid = true;
+                        for field in &["bg", "surface", "text", "accent"] {
+                            if let Some(c) = obj.get(*field).and_then(|v| v.as_str()) {
+                                if !c.starts_with('#') || c.len() != 7
+                                    || !c[1..].chars().all(|ch| ch.is_ascii_hexdigit())
+                                {
+                                    errors.push(format!("custom_colors.{field}: must be a hex color like #RRGGBB"));
+                                    valid = false;
+                                }
+                            } else {
+                                errors.push(format!("custom_colors: missing required field \"{field}\""));
+                                valid = false;
+                            }
+                        }
+                        if valid {
+                            changed.push("custom_colors: updated".into());
+                        }
+                    } else {
+                        errors.push("custom_colors must be an object with bg/surface/text/accent hex strings".into());
+                    }
+                }
                 _ => {
-                    errors.push(format!("Unknown config key: {key}"));
+                    let all_keys: &[&str] = &[
+                        "shell_default_timeout_secs", "shell_max_timeout_secs",
+                        "file_read_max_output_kb", "web_search_engine",
+                        "web_search_max_results", "searxng_url", "web_search_api_key",
+                        "http_proxy", "proxy_enabled", "web_fetch_max_chars",
+                        "process_wait_max_timeout_secs", "monitor_default_timeout_ms",
+                        "theme", "font_size", "language", "app_zoom",
+                        "permission_mode", "thinking_level", "send_shortcut",
+                        "fim_enabled", "thinking_expand", "tool_expand", "skill_expand",
+                        "task_notification", "auto_start", "auto_title",
+                        "close_to_tray", "start_to_tray", "disable_hw_accel",
+                        "ui_font", "code_font", "custom_colors",
+                    ];
+                    let guess = all_keys
+                        .iter()
+                        .map(|k| (k, edit_distance(k, key)))
+                        .min_by_key(|&(_, d)| d)
+                        .filter(|&(_, d)| d <= 4)
+                        .map(|(k, _)| format!(" (did you mean \"{k}\"?)"));
+                    errors.push(format!(
+                        "Unknown config key: \"{key}\".{}",
+                        guess.as_deref().unwrap_or("")
+                    ));
                 }
             }
         }
@@ -4472,33 +4733,92 @@ impl AgentTool for UpdateConfigTool {
             });
         }
 
-        // Persist to disk + update in-memory state (same pattern as orchestrator::save_tool_prefs)
-        let path = self.data_dir.join("tool_prefs.json");
-        let _ = tokio::fs::create_dir_all(&self.data_dir).await;
-        let json = serde_json::to_string_pretty(&config)?;
-        tokio::fs::write(&path, json).await?;
-
-        // Atomically update in-memory so all tools see the new config immediately.
-        // This also serialises with save_tool_prefs via the write lock.
-        {
-            let mut guard = self.tool_prefs.write().await;
-            *guard = config.clone();
+        if changed.is_empty() {
+            return Ok(ToolResult {
+                content: "No changes applied — all values already match current settings.".into(),
+                is_error: false,
+                structured_content: Some(serde_json::to_value(&config).unwrap_or_default()),
+            });
         }
 
-        // Sync global proxy so all HTTP clients pick up the change
-        loom_inference::engine::set_global_proxy(
-            config.http_proxy.clone(),
-            config.proxy_enabled,
-        );
+        // Split updates into tool-prefs vs UI-only. UI-only changes don't need
+        // disk I/O or global proxy sync — just publish to the frontend.
+        let ui_keys: &[&str] = &[
+            "theme", "font_size", "language", "app_zoom",
+            "permission_mode", "thinking_level", "send_shortcut",
+            "fim_enabled", "thinking_expand", "tool_expand",
+            "skill_expand", "task_notification", "auto_start",
+            "auto_title", "close_to_tray", "start_to_tray",
+            "disable_hw_accel", "ui_font", "code_font", "custom_colors",
+        ];
+        let has_tool_change = changed.iter().any(|c| {
+            ui_keys.iter().all(|k| !c.starts_with(&format!("{k}:")))
+        });
+        let has_ui_change = changed.iter().any(|c| {
+            ui_keys.iter().any(|k| c.starts_with(&format!("{k}:")))
+        });
+        let has_proxy_change = changed.iter().any(|c| {
+            c.starts_with("http_proxy:") || c.starts_with("proxy_enabled:")
+        });
 
-        let mut response = "Configuration updated:\n".to_string();
+        if has_tool_change {
+            // Cross-field: shell_default must not exceed shell_max
+            if config.shell_default_timeout_secs > config.shell_max_timeout_secs {
+                errors.push(format!(
+                    "shell_default_timeout_secs ({}) exceeds shell_max_timeout_secs ({}). Lowered default to match max.",
+                    config.shell_default_timeout_secs,
+                    config.shell_max_timeout_secs,
+                ));
+                config.shell_default_timeout_secs = config.shell_max_timeout_secs;
+            }
+
+            let path = self.data_dir.join("tool_prefs.json");
+            let _ = tokio::fs::create_dir_all(&self.data_dir).await;
+            let json = serde_json::to_string_pretty(&config)?;
+            tokio::fs::write(&path, json).await?;
+
+            {
+                let mut guard = self.tool_prefs.write().await;
+                *guard = config.clone();
+            }
+        }
+
+        if has_proxy_change {
+            loom_inference::engine::set_global_proxy(
+                config.http_proxy.clone(),
+                config.proxy_enabled,
+            );
+        }
+
+        if has_ui_change {
+            let mut ui_updates = std::collections::HashMap::new();
+            for (key, val) in updates {
+                if ui_keys.contains(&key.as_str()) {
+                    let prefix = format!("{key}:");
+                    if changed.iter().any(|c| c.starts_with(&prefix)) {
+                        ui_updates.insert(key.clone(), val.clone());
+                    }
+                }
+            }
+            if !ui_updates.is_empty() && let Some(ref bus) = self.event_bus {
+                bus.publish(crate::event_bus::AgentEvent::PreferencesChanged {
+                    updates: ui_updates,
+                });
+            }
+        }
+
+        let mut response = if errors.is_empty() {
+            format!("Applied {} change(s):\n", changed.len())
+        } else {
+            format!("Applied {} change(s) with {} error(s):\n", changed.len(), errors.len())
+        };
         for c in &changed {
-            response.push_str(&format!("  - {c}\n"));
+            response.push_str(&format!("  OK  {c}\n"));
         }
         if !errors.is_empty() {
-            response.push_str("\nWarnings:\n");
+            response.push_str("\nRejected:\n");
             for e in &errors {
-                response.push_str(&format!("  - {e}\n"));
+                response.push_str(&format!("  FAIL  {e}\n"));
             }
         }
 

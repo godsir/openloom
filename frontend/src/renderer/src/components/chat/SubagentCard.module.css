@@ -1,0 +1,80 @@
+.card {
+  background: var(--bg-active);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.headerExpanded {
+  border-bottom: 1px solid var(--border);
+}
+
+.name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.summaryText {
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+  flex: 1;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.tokensBadge {
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 1px 6px;
+  border-radius: var(--r-xs);
+  background: var(--bg-subtle);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.body {
+  padding: 10px 12px;
+  max-height: 400px;
+  overflow-y: auto;
+  background: var(--bg-surface);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.empty {
+  padding: 20px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.accentColor { color: var(--accent); }
+.iconGreen { color: var(--green); }
+.iconAmber { color: var(--amber); }
+
+.chevronUp {
+  color: var(--text-muted);
+  transform: rotate(180deg);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.chevronDown {
+  color: var(--text-muted);
+  transition: transform var(--dur-fast) var(--ease-out);
+}

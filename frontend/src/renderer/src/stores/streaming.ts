@@ -12,6 +12,12 @@ export interface StreamingActivity {
   visionTotal?: number
 }
 
+/** 插话队列中的单条项 */
+export interface SteeringQueueItem {
+  id: string
+  text: string
+}
+
 export interface StreamingSlice {
   streamingSessionIds: Set<string>
   /** 按 sessionId 索引的生成子状态，供灵动岛读取 */
@@ -19,8 +25,10 @@ export interface StreamingSlice {
   inlineErrors: Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null }>
   /** 灵动岛瞬态反馈（复制成功等），短暂显示后自动清除 */
   islandTransient: { text: string; platform?: string; timer: ReturnType<typeof setTimeout> | null } | null
-  /** Per-session steering queue pending count */
+  /** Per-session steering queue pending items */
   steeringQueueCounts: Record<string, number>
+  /** Per-session steering queue items (ordered list) */
+  steeringQueueItems: Record<string, SteeringQueueItem[]>
   addStreamingSession: (id: string) => void
   removeStreamingSession: (id: string) => void
   setStreamingActivity: (id: string, activity: StreamingActivity | null) => void
@@ -29,6 +37,9 @@ export interface StreamingSlice {
   showIslandTransient: (text: string, duration?: number, platform?: string) => void
   clearIslandTransient: () => void
   setSteeringQueueCount: (id: string, count: number) => void
+  addSteeringItem: (id: string, item: SteeringQueueItem) => void
+  removeSteeringItems: (id: string, itemIds: string[]) => void
+  clearSteeringItems: (id: string) => void
 }
 
 export const createStreamingSlice: StateCreator<StreamingSlice> = (set, get) => ({
@@ -37,6 +48,7 @@ export const createStreamingSlice: StateCreator<StreamingSlice> = (set, get) => 
   inlineErrors: new Map(),
   islandTransient: null,
   steeringQueueCounts: {},
+  steeringQueueItems: {},
 
   addStreamingSession: (id) => {
     const next = new Set(get().streamingSessionIds)
@@ -111,5 +123,24 @@ export const createStreamingSlice: StateCreator<StreamingSlice> = (set, get) => 
     } else {
       set({ steeringQueueCounts: { ...get().steeringQueueCounts, [id]: count } })
     }
+  },
+
+  addSteeringItem: (id, item) => {
+    const prev = get().steeringQueueItems[id] || []
+    set({ steeringQueueItems: { ...get().steeringQueueItems, [id]: [...prev, item] } })
+    get().setSteeringQueueCount(id, prev.length + 1)
+  },
+
+  removeSteeringItems: (id, itemIds) => {
+    const prev = get().steeringQueueItems[id] || []
+    const idSet = new Set(itemIds)
+    const next = prev.filter(item => !idSet.has(item.id))
+    set({ steeringQueueItems: { ...get().steeringQueueItems, [id]: next } })
+    get().setSteeringQueueCount(id, next.length)
+  },
+
+  clearSteeringItems: (id) => {
+    set({ steeringQueueItems: { ...get().steeringQueueItems, [id]: [] } })
+    get().setSteeringQueueCount(id, 0)
   },
 })

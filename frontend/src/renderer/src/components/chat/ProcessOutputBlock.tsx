@@ -113,6 +113,12 @@ export default function ProcessOutputBlock({ block }: {
 
   useEffect(() => {
     window.loom.getPreference('toolExpandDefault', true).then(v => setExpanded(v))
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent).detail
+      if (d?.key === 'tool_expand') setExpanded(d.val)
+    }
+    window.addEventListener('loom-pref-changed', handler)
+    return () => window.removeEventListener('loom-pref-changed', handler)
   }, [])
 
   useEffect(() => {

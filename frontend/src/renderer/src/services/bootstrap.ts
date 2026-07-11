@@ -58,6 +58,102 @@ function handleTokenUsage(sessionId: string, p: any) {
   }
 }
 
+function applyPreference(key: string, val: unknown) {
+  if (key === 'theme') {
+    const themeVal = String(val)
+    useStore.getState().setTheme(themeVal as any)
+    window.loom.setPreference('theme', themeVal)
+  } else if (key === 'font_size') {
+    useStore.getState().setFontSize(String(val) as any)
+    window.loom.setPreference('fontSize', String(val))
+  } else if (key === 'language') {
+    const langVal = String(val)
+    localStorage.setItem('loom-locale', langVal)
+    document.documentElement.lang = langVal
+    window.dispatchEvent(new CustomEvent('loom-locale-changed', { detail: langVal }))
+    window.loom.setPreference('language', langVal)
+  } else if (key === 'app_zoom') {
+    const zoom = Number(val) || 1
+    document.documentElement.style.setProperty('--app-zoom', String(zoom))
+    window.loom.setPreference('appZoom', zoom)
+  } else if (key === 'permission_mode') {
+    useStore.getState().setPermissionMode(String(val) as any)
+  } else if (key === 'thinking_level') {
+    useStore.getState().setThinkingLevel(String(val) as any)
+  } else if (key === 'send_shortcut') {
+    useStore.getState().setSendShortcut(String(val) as any)
+  } else if (key === 'fim_enabled') {
+    const v = Boolean(val)
+    useStore.getState().setFimEnabled(v)
+    window.loom.setPreference('fimEnabled', v)
+  } else if (key === 'thinking_expand') {
+    window.loom.setPreference('thinkingExpandDefault', Boolean(val))
+    window.dispatchEvent(new CustomEvent('loom-pref-changed', { detail: { key: 'thinking_expand', val: Boolean(val) } }))
+  } else if (key === 'tool_expand') {
+    window.loom.setPreference('toolExpandDefault', Boolean(val))
+    window.dispatchEvent(new CustomEvent('loom-pref-changed', { detail: { key: 'tool_expand', val: Boolean(val) } }))
+  } else if (key === 'skill_expand') {
+    window.loom.setPreference('skillExpandDefault', Boolean(val))
+    window.dispatchEvent(new CustomEvent('loom-pref-changed', { detail: { key: 'skill_expand', val: Boolean(val) } }))
+  } else if (key === 'task_notification') {
+    window.loom.setPreference('taskCompleteNotification', Boolean(val))
+    window.dispatchEvent(new CustomEvent('loom-pref-changed', { detail: { key: 'task_notification', val: Boolean(val) } }))
+  } else if (key === 'auto_start') {
+    window.loom.setPreference('autoStart', Boolean(val))
+  } else if (key === 'auto_title') {
+    window.loom.setPreference('autoTitle', Boolean(val))
+  } else if (key === 'close_to_tray') {
+    window.loom.setPreference('closeToTray', Boolean(val))
+  } else if (key === 'start_to_tray') {
+    window.loom.setPreference('startToTray', Boolean(val))
+  } else if (key === 'disable_hw_accel') {
+    window.loom.setPreference('disableHardwareAcceleration', Boolean(val))
+  } else if (key === 'ui_font') {
+    const font = String(val)
+    if (font) {
+      document.documentElement.style.setProperty('--font', font)
+      if (font.includes('KaiTi') || font.includes('楷体')) {
+        document.documentElement.style.setProperty('-webkit-text-stroke', '0.35px')
+      } else {
+        document.documentElement.style.removeProperty('-webkit-text-stroke')
+      }
+    } else {
+      document.documentElement.style.removeProperty('--font')
+      document.documentElement.style.removeProperty('-webkit-text-stroke')
+    }
+    window.loom.setPreference('uiFont', font)
+  } else if (key === 'code_font') {
+    const font = String(val)
+    if (font) {
+      document.documentElement.style.setProperty('--font-mono', font)
+    } else {
+      document.documentElement.style.removeProperty('--font-mono')
+    }
+    window.loom.setPreference('codeFont', font)
+  } else if (key === 'custom_colors') {
+    const cc = val as Record<string, unknown> | null
+    if (cc && typeof cc.bg === 'string' && typeof cc.surface === 'string'
+         && typeof cc.text === 'string' && typeof cc.accent === 'string') {
+      const hexToRgb = (hex: string): [number, number, number] => {
+        const v = parseInt(String(hex).replace('#', ''), 16)
+        return [(v >> 16) & 255, (v >> 8) & 255, v & 255]
+      }
+      const root = document.documentElement
+      const [ar, ag, ab] = hexToRgb(cc.accent)
+      root.style.setProperty('--bg', cc.bg)
+      root.style.setProperty('--bg-surface', cc.surface)
+      root.style.setProperty('--bg-card', cc.surface)
+      root.style.setProperty('--text', cc.text)
+      root.style.setProperty('--accent', cc.accent)
+      root.style.setProperty('--accent-rgb', `${ar},${ag},${ab}`)
+      root.style.setProperty('--accent-subtle', `rgba(${ar},${ag},${ab},0.10)`)
+      root.style.setProperty('--accent-medium', `rgba(${ar},${ag},${ab},0.16)`)
+      root.style.setProperty('--border-accent', `rgba(${ar},${ag},${ab},0.28)`)
+      window.loom.setPreference('customTheme', cc)
+    }
+  }
+}
+
 export async function bootstrapApp(): Promise<() => void> {
   const port = await waitForPort()
   useStore.getState().setPort(port)
@@ -121,10 +217,13 @@ export async function bootstrapApp(): Promise<() => void> {
       case 'chat.token_usage':
         handleTokenUsage(sessionId, p)
         break
-      case 'tool.started':
-        streamBufferManager.handleToolStarted(sessionId, p as any)
+      case 'tool.started': {
+        const ts = p?.session_id as string | undefined
+        if (!ts) break
+        streamBufferManager.handleToolStarted(ts, p as any)
         import('./pet-sync').then(m => m.sendPetState('dash'))
         break
+      }
       case 'tool.completed':
         streamBufferManager.handleToolCompleted(
           sessionId,
@@ -135,13 +234,16 @@ export async function bootstrapApp(): Promise<() => void> {
         )
         import('./pet-sync').then(m => m.sendPetState('inspect'))
         break
-      case 'tool.output':
+      case 'tool.output': {
+        const to = p?.session_id as string | undefined
+        if (!to) break
         streamBufferManager.handleToolOutput(
-          sessionId,
+          to,
           (p?.id as string) || '',
           (p?.line as string) || '',
         )
         break
+      }
       case 'agent.subagent_spawned': {
         import('./pet-sync').then(m => m.sendPetState('dash'))
         const store = useStore.getState()
@@ -354,69 +456,104 @@ export async function bootstrapApp(): Promise<() => void> {
         // checkbox changes synced by the backend.
         useStore.getState().loadTodos(sessionId).catch(() => {})
         break
-      case 'process.output':
+      case 'process.output': {
+        const po = p?.session_id as string | undefined
+        if (!po) break
         streamBufferManager.handleProcessOutput(
-          sessionId,
+          po,
           (p?.pid as string) || '',
           (p?.data as string) || '',
           (p?.stream as string) || 'stdout',
         )
         break
-      case 'process.exited':
+      }
+      case 'process.exited': {
+        const pe = p?.session_id as string | undefined
+        if (!pe) break
         streamBufferManager.handleProcessExited(
-          sessionId,
+          pe,
           (p?.pid as string) || '',
           (p?.exit_code as number) ?? -1,
         )
         break
+      }
       case 'monitor.started':
         // Just mark the session as streaming. The actual activity comes from
         // processAcc populated by monitor.output → handleProcessOutput,
         // which deriveActivity now checks for running processes.
-        if (sessionId) {
-          useStore.getState().addStreamingSession(sessionId)
+        if (p?.session_id) {
+          useStore.getState().addStreamingSession(p.session_id as string)
         }
         break
-      case 'monitor.output':
+      case 'monitor.output': {
+        const mo = p?.session_id as string | undefined
+        if (!mo) break
         streamBufferManager.handleProcessOutput(
-          sessionId,
+          mo,
           (p?.monitor_id as string) || '',
           (p?.data as string) || '',
           (p?.stream as string) || 'stdout',
         )
         break
-      case 'monitor.exited':
+      }
+      case 'monitor.exited': {
+        const me = p?.session_id as string | undefined
+        if (!me) break
         streamBufferManager.handleProcessExited(
-          sessionId,
+          me,
           (p?.monitor_id as string) || '',
           (p?.exit_code as number) ?? -1,
         )
         break
+      }
       case 'monitor.error': {
-        // Monitor error — show inline error notification in the chat
+        const me2 = p?.session_id as string | undefined
+        if (!me2) break
         const errMsg = (p?.error as string) || 'Monitor error'
         const mid = (p?.monitor_id as string) || ''
         streamBufferManager.handleProcessOutput(
-          sessionId,
+          me2,
           mid,
           `[Monitor 错误] ${errMsg}`,
           'stderr',
         )
-        streamBufferManager.handleProcessExited(sessionId, mid, -1)
+        streamBufferManager.handleProcessExited(me2, mid, -1)
         break
       }
       case 'steering.queued': {
-        // User steering added to queue — update the pending count in store
+        // User steering added to queue — add to store item list
         const sid2 = (p?.session_id as string) || ''
-        const pending = (p?.pending_count as number) || 0
-        if (sid2) useStore.getState().setSteeringQueueCount(sid2, pending)
+        const item = p?.item as { id: string; text: string } | undefined
+        if (sid2 && item) useStore.getState().addSteeringItem(sid2, item)
         break
       }
       case 'steering.consumed': {
-        // Backend consumed steering items — update remaining count
+        // Backend consumed steering items — remove from queue, insert into chat
         const sid2 = (p?.session_id as string) || ''
+        const items = (p?.items as Array<{ id: string; text: string }>) || []
         const remaining = (p?.remaining_count as number) || 0
-        if (sid2) useStore.getState().setSteeringQueueCount(sid2, remaining)
+        if (sid2 && items.length > 0) {
+          const store = useStore.getState()
+          const ids = items.map(it => it.id)
+          store.removeSteeringItems(sid2, ids)
+          store.setSteeringQueueCount(sid2, remaining)
+          // When items are consumed, insert them as user messages into chat
+          const plainEscapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          store.ensureSession(sid2)
+          for (const it of items) {
+            store.appendMessage(sid2, {
+              id: crypto.randomUUID(),
+              role: 'user',
+              blocks: [{ type: 'text', html: plainEscapeHtml(it.text), source: it.text, isSteering: true }],
+              timestamp: new Date().toISOString(),
+            })
+          }
+        }
+        break
+      }
+      case 'preferences.changed': {
+        const updates = (p?.updates ?? {}) as Record<string, unknown>
+        for (const [key, val] of Object.entries(updates)) applyPreference(key, val)
         break
       }
       case 'ws.replay_done':
@@ -558,14 +695,132 @@ export async function bootstrapApp(): Promise<() => void> {
         break
       case 'steering.queued': {
         const sid3 = (p?.session_id as string) || ''
-        const pending2 = (p?.pending_count as number) || 0
-        if (sid3) useStore.getState().setSteeringQueueCount(sid3, pending2)
+        const item = p?.item as { id: string; text: string } | undefined
+        if (sid3 && item) useStore.getState().addSteeringItem(sid3, item)
         break
       }
       case 'steering.consumed': {
         const sid3 = (p?.session_id as string) || ''
+        const items = (p?.items as Array<{ id: string; text: string }>) || []
         const remaining2 = (p?.remaining_count as number) || 0
-        if (sid3) useStore.getState().setSteeringQueueCount(sid3, remaining2)
+        if (sid3 && items.length > 0) {
+          const store = useStore.getState()
+          const ids = items.map(it => it.id)
+          store.removeSteeringItems(sid3, ids)
+          store.setSteeringQueueCount(sid3, remaining2)
+          const plainEscapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          store.ensureSession(sid3)
+          for (const it of items) {
+            store.appendMessage(sid3, {
+              id: crypto.randomUUID(),
+              role: 'user',
+              blocks: [{ type: 'text', html: plainEscapeHtml(it.text), source: it.text, isSteering: true }],
+              timestamp: new Date().toISOString(),
+            })
+          }
+        }
+        break
+      }
+      case 'preferences.changed': {
+        const updates = p?.updates as Record<string, unknown> || {}
+        for (const [key, val] of Object.entries(updates)) {
+          if (key === 'theme') {
+            const themeVal = String(val)
+            useStore.getState().setTheme(themeVal as any)
+            window.loom.setPreference('theme', themeVal)
+          } else if (key === 'font_size') {
+            useStore.getState().setFontSize(String(val) as any)
+            window.loom.setPreference('fontSize', String(val))
+          } else if (key === 'language') {
+            const langVal = String(val)
+            localStorage.setItem('loom-locale', langVal)
+            document.documentElement.lang = langVal
+            window.dispatchEvent(new CustomEvent('loom-locale-changed', { detail: langVal }))
+            window.loom.setPreference('language', langVal)
+          } else if (key === 'app_zoom') {
+            const zoom = Number(val) || 1
+            document.documentElement.style.setProperty('--app-zoom', String(zoom))
+            window.loom.setPreference('appZoom', zoom)
+          } else if (key === 'permission_mode') {
+            const modeVal = String(val) as any
+            useStore.getState().setPermissionMode(modeVal)
+          } else if (key === 'thinking_level') {
+            const levelVal = String(val) as any
+            useStore.getState().setThinkingLevel(levelVal)
+          } else if (key === 'send_shortcut') {
+            const shortcutVal = String(val) as any
+            useStore.getState().setSendShortcut(shortcutVal)
+          } else if (key === 'fim_enabled') {
+            const enabledVal = Boolean(val)
+            useStore.getState().setFimEnabled(enabledVal)
+            window.loom.setPreference('fimEnabled', enabledVal)
+          } else if (key === 'thinking_expand') {
+            window.loom.setPreference('thinkingExpandDefault', Boolean(val))
+            window.dispatchEvent(new CustomEvent('loom-pref-changed', { detail: { key: 'thinking_expand', val: Boolean(val) } }))
+          } else if (key === 'tool_expand') {
+            window.loom.setPreference('toolExpandDefault', Boolean(val))
+            window.dispatchEvent(new CustomEvent('loom-pref-changed', { detail: { key: 'tool_expand', val: Boolean(val) } }))
+          } else if (key === 'skill_expand') {
+            window.loom.setPreference('skillExpandDefault', Boolean(val))
+            window.dispatchEvent(new CustomEvent('loom-pref-changed', { detail: { key: 'skill_expand', val: Boolean(val) } }))
+          } else if (key === 'task_notification') {
+            window.loom.setPreference('taskCompleteNotification', Boolean(val))
+            window.dispatchEvent(new CustomEvent('loom-pref-changed', { detail: { key: 'task_notification', val: Boolean(val) } }))
+          } else if (key === 'auto_start') {
+            window.loom.setPreference('autoStart', Boolean(val))
+          } else if (key === 'auto_title') {
+            window.loom.setPreference('autoTitle', Boolean(val))
+          } else if (key === 'close_to_tray') {
+            window.loom.setPreference('closeToTray', Boolean(val))
+          } else if (key === 'start_to_tray') {
+            window.loom.setPreference('startToTray', Boolean(val))
+          } else if (key === 'disable_hw_accel') {
+            window.loom.setPreference('disableHardwareAcceleration', Boolean(val))
+          } else if (key === 'ui_font') {
+            const font = String(val)
+            if (font) {
+              document.documentElement.style.setProperty('--font', font)
+              if (font.includes('KaiTi') || font.includes('楷体')) {
+                document.documentElement.style.setProperty('-webkit-text-stroke', '0.35px')
+              } else {
+                document.documentElement.style.removeProperty('-webkit-text-stroke')
+              }
+            } else {
+              document.documentElement.style.removeProperty('--font')
+              document.documentElement.style.removeProperty('-webkit-text-stroke')
+            }
+            window.loom.setPreference('uiFont', font)
+          } else if (key === 'code_font') {
+            const font = String(val)
+            if (font) {
+              document.documentElement.style.setProperty('--font-mono', font)
+            } else {
+              document.documentElement.style.removeProperty('--font-mono')
+            }
+            window.loom.setPreference('codeFont', font)
+          } else if (key === 'custom_colors') {
+            const cc = val as Record<string, unknown> | null
+            if (cc && typeof cc.bg === 'string' && typeof cc.surface === 'string'
+                 && typeof cc.text === 'string' && typeof cc.accent === 'string') {
+              const hexToRgb = (hex: string): [number, number, number] => {
+                const v = parseInt(String(hex).replace('#', ''), 16)
+                return [(v >> 16) & 255, (v >> 8) & 255, v & 255]
+              }
+              const root = document.documentElement
+              const [ar, ag, ab] = hexToRgb(cc.accent)
+              root.style.setProperty('--bg', cc.bg)
+              root.style.setProperty('--bg-surface', cc.surface)
+              root.style.setProperty('--bg-card', cc.surface)
+              root.style.setProperty('--text', cc.text)
+              root.style.setProperty('--accent', cc.accent)
+              root.style.setProperty('--accent-rgb', `${ar},${ag},${ab}`)
+              root.style.setProperty('--accent-subtle', `rgba(${ar},${ag},${ab},0.10)`)
+              root.style.setProperty('--accent-medium', `rgba(${ar},${ag},${ab},0.16)`)
+              root.style.setProperty('--border-accent', `rgba(${ar},${ag},${ab},0.28)`)
+              window.loom.setPreference('customTheme', cc)
+            }
+          }
+        }
         break
       }
       case 'ws.replay_done':

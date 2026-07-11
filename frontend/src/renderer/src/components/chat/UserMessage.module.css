@@ -8,6 +8,22 @@
   max-width: 65%;
 }
 
+.steeringBubble {
+  border-color: rgba(var(--accent-rgb), 0.25);
+  box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.08);
+}
+
+.steeringFlag {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.12);
+}
+
 .content {
   background: var(--bg-active);
   border: 1px solid var(--border-default);

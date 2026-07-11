@@ -5,6 +5,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::AgentStatus;
 
+/// 一条插话队列项，带唯一 ID，前端据此追踪每项的消费状态。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SteeringItem {
+    pub id: String,
+    pub text: String,
+}
+
 /// Events emitted by agents during their lifecycle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -236,14 +243,21 @@ pub enum AgentEvent {
         session_id: String,
         /** 当前队列中的插话数量 */
         pending_count: usize,
-        /** 本次加入的插话内容 */
-        guidance: String,
+        /** 本次加入的插话项 */
+        item: SteeringItem,
     },
-    /// Agent 已消费一条 steering queue 中的插话
+    /// Agent 已消费 steering queue 中的插话项
     SteeringConsumed {
         session_id: String,
         /** 队列中剩余的插话数量 */
         remaining_count: usize,
+        /** 本次被消费的插话项 */
+        items: Vec<SteeringItem>,
+    },
+    /// 偏好设置被 update_config 工具修改，前端应实时应用
+    PreferencesChanged {
+        /** 变更的 key-value 对 */
+        updates: std::collections::HashMap<String, serde_json::Value>,
     },
 }
 
