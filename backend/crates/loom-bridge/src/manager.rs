@@ -3,7 +3,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::channel_config::InstanceConfig;
 use crate::types::*;
@@ -67,9 +67,7 @@ impl BridgeManager {
 
     /// Stop all instances
     pub async fn shutdown_all(&self) {
-        let keys: Vec<AdapterKey> = {
-            self.adapters.lock().await.keys().cloned().collect()
-        };
+        let keys: Vec<AdapterKey> = { self.adapters.lock().await.keys().cloned().collect() };
         for key in keys {
             let _ = self.stop_instance(key.0, &key.1).await;
         }
@@ -121,9 +119,10 @@ impl BridgeManager {
     /// Upsert a config (memory only — caller persists to SQLite separately)
     pub async fn upsert_config(&self, config: InstanceConfig) {
         let mut configs = self.configs.write().await;
-        if let Some(existing) = configs.iter_mut().find(|c| {
-            c.platform == config.platform && c.instance_id == config.instance_id
-        }) {
+        if let Some(existing) = configs
+            .iter_mut()
+            .find(|c| c.platform == config.platform && c.instance_id == config.instance_id)
+        {
             *existing = config;
         } else {
             configs.push(config);

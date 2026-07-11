@@ -25,10 +25,7 @@ async fn handle_list(state: &AppState, _p: &Value) -> Result<Value, JsonRpcError
 }
 
 async fn handle_kill(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
-    let monitor_id = p
-        .get("monitor_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let monitor_id = p.get("monitor_id").and_then(|v| v.as_str()).unwrap_or("");
     if monitor_id.is_empty() {
         return Err(err(ErrorCode::InvalidRequest, "monitor_id required"));
     }

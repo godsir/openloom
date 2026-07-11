@@ -139,7 +139,10 @@ impl AnthropicClient {
             .unwrap_or_else(|| anyhow::anyhow!("no completion attempts were made")))
     }
 
-    async fn try_complete(&self, req: &CompletionRequest) -> Result<CompletionResponse, RetryableError> {
+    async fn try_complete(
+        &self,
+        req: &CompletionRequest,
+    ) -> Result<CompletionResponse, RetryableError> {
         let eff = req.effective_messages();
         let digest = self.pending_digest.lock().unwrap().clone();
         let (cache_status, _, reasons) = self.prefix_cache.check_digest(&digest);

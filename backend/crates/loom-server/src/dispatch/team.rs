@@ -34,7 +34,10 @@ async fn handle_team_config_get(state: &AppState, p: &Value) -> Result<Value, Js
     if id.is_empty() {
         return Err(err(ErrorCode::InvalidRequest, "id required"));
     }
-    let config = state.orchestrator.team_config_get(id).await
+    let config = state
+        .orchestrator
+        .team_config_get(id)
+        .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
     Ok(serde_json::to_value(config).unwrap_or_default())
 }
@@ -48,7 +51,10 @@ async fn handle_team_config_create(state: &AppState, p: &Value) -> Result<Value,
     if config.id.is_empty() {
         config.id = Uuid::now_v7().to_string();
     }
-    state.orchestrator.team_config_create(config.clone()).await
+    state
+        .orchestrator
+        .team_config_create(config.clone())
+        .await
         .map_err(|e| err(ErrorCode::InvalidRequest, &e.to_string()))?;
     Ok(json!({ "id": config.id }))
 }
@@ -59,7 +65,10 @@ async fn handle_team_config_update(state: &AppState, p: &Value) -> Result<Value,
     if config.id.is_empty() || config.name.is_empty() {
         return Err(err(ErrorCode::InvalidRequest, "id and name required"));
     }
-    state.orchestrator.team_config_update(config).await
+    state
+        .orchestrator
+        .team_config_update(config)
+        .await
         .map_err(|e| err(ErrorCode::InvalidRequest, &e.to_string()))?;
     Ok(json!({ "ok": true }))
 }
@@ -69,7 +78,10 @@ async fn handle_team_config_delete(state: &AppState, p: &Value) -> Result<Value,
     if id.is_empty() {
         return Err(err(ErrorCode::InvalidRequest, "id required"));
     }
-    state.orchestrator.team_config_delete(id).await
+    state
+        .orchestrator
+        .team_config_delete(id)
+        .await
         .map_err(|e| err(ErrorCode::InvalidRequest, &e.to_string()))?;
     Ok(json!({ "ok": true }))
 }
@@ -77,11 +89,17 @@ async fn handle_team_config_delete(state: &AppState, p: &Value) -> Result<Value,
 async fn handle_team_generate_members(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
     let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let description = p.get("description").and_then(|v| v.as_str()).unwrap_or("");
-    let strategy = p.get("strategy").and_then(|v| v.as_str()).unwrap_or("synthesize");
+    let strategy = p
+        .get("strategy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("synthesize");
     let captain_model = p.get("captain_model").and_then(|v| v.as_str());
 
     if name.trim().is_empty() && description.trim().is_empty() {
-        return Err(err(ErrorCode::InvalidRequest, "name or description required"));
+        return Err(err(
+            ErrorCode::InvalidRequest,
+            "name or description required",
+        ));
     }
 
     let members = state

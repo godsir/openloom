@@ -100,9 +100,7 @@ impl ProcessManager {
             }
         }
 
-        let mut child = cmd
-            .spawn()
-            .context("failed to spawn process")?;
+        let mut child = cmd.spawn().context("failed to spawn process")?;
 
         // ── stdout reader ──
         let stdout = child.stdout.take();
@@ -182,7 +180,11 @@ impl ProcessManager {
             tokio::spawn(async move {
                 use tokio::io::AsyncWriteExt;
                 while let Some(line) = stdin_rx.recv().await {
-                    let to_write = if line.ends_with('\n') { line } else { format!("{}\n", line) };
+                    let to_write = if line.ends_with('\n') {
+                        line
+                    } else {
+                        format!("{}\n", line)
+                    };
                     if stdin_writer.write_all(to_write.as_bytes()).await.is_err() {
                         break;
                     }
@@ -369,7 +371,11 @@ impl ProcessManager {
             // Check cancel token
             if let Some(ref ct) = cancel {
                 if ct.is_cancelled() {
-                    return Ok(ProcessWaitResult { exit_code: -1, output, truncated: false });
+                    return Ok(ProcessWaitResult {
+                        exit_code: -1,
+                        output,
+                        truncated: false,
+                    });
                 }
             }
             // Drain buffered output + check exit status in one lock.
@@ -531,7 +537,11 @@ impl ProcessManager {
                     last_output_at = Some(Instant::now());
                     continue;
                 }
-                AgentEvent::ProcessExited { pid: ev_pid, exit_code, .. } if ev_pid == pid_for_events => {
+                AgentEvent::ProcessExited {
+                    pid: ev_pid,
+                    exit_code,
+                    ..
+                } if ev_pid == pid_for_events => {
                     // Drain any final buffered output before returning.
                     let mut procs = self.processes.write().await;
                     if let Some(entry) = procs.get_mut(&pid) {

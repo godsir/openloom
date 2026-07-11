@@ -107,8 +107,7 @@ pub fn compact_history_with_tokenizer(
     }
 
     // Step 3: Collapse repetitive loops
-    let (old_compacted, loops_collapsed) =
-        collapse_repetitive_loops(&old_compacted, 3);
+    let (old_compacted, loops_collapsed) = collapse_repetitive_loops(&old_compacted, 3);
     if loops_collapsed > 0 {
         repetitive_loops_collapsed += loops_collapsed;
         strategies.push(CompactionStrategy::RepetitiveLoopCollapse);
@@ -143,27 +142,44 @@ pub fn compact_history_with_tokenizer(
 /// Mid-turn safety truncation: no LLM, only trims oversized tool results.
 /// `file_read` results are exempt (never truncate user source code).
 /// Used inside the agent loop iteration to prevent single-turn blowups.
-pub fn mid_turn_safety_truncate(messages: &[Message], max_tool_output_chars: usize) -> Vec<Message> {
+pub fn mid_turn_safety_truncate(
+    messages: &[Message],
+    max_tool_output_chars: usize,
+) -> Vec<Message> {
     let keep_head = 500;
     let keep_tail = 200;
-    messages.iter().map(|msg| {
-        let mut new_msg = msg.clone();
-        let is_file_read = new_msg.content.iter().any(|p| matches!(p, ContentPart::ToolResult { name, .. } if name == "file_read"));
-        if is_file_read {
-            return new_msg;
-        }
-        for part in &mut new_msg.content {
-            if let ContentPart::ToolResult { result, .. } = part {
-                if result.len() > max_tool_output_chars && !has_signal_markers(result) {
-                    let head: String = result.chars().take(keep_head).collect();
-                    let tail: String = result.chars().rev().take(keep_tail).collect::<Vec<_>>().into_iter().rev().collect();
-                    let truncated = result.len().saturating_sub(keep_head + keep_tail);
-                    *result = format!("{}...\n[truncated {} chars]\n...{}", head, truncated, tail);
+    messages
+        .iter()
+        .map(|msg| {
+            let mut new_msg = msg.clone();
+            let is_file_read = new_msg
+                .content
+                .iter()
+                .any(|p| matches!(p, ContentPart::ToolResult { name, .. } if name == "file_read"));
+            if is_file_read {
+                return new_msg;
+            }
+            for part in &mut new_msg.content {
+                if let ContentPart::ToolResult { result, .. } = part {
+                    if result.len() > max_tool_output_chars && !has_signal_markers(result) {
+                        let head: String = result.chars().take(keep_head).collect();
+                        let tail: String = result
+                            .chars()
+                            .rev()
+                            .take(keep_tail)
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .collect();
+                        let truncated = result.len().saturating_sub(keep_head + keep_tail);
+                        *result =
+                            format!("{}...\n[truncated {} chars]\n...{}", head, truncated, tail);
+                    }
                 }
             }
-        }
-        new_msg
-    }).collect()
+            new_msg
+        })
+        .collect()
 }
 
 /// Apply heuristic compaction to a single message.
@@ -177,7 +193,10 @@ fn apply_heuristic_compaction(
     let mut elisions = 0;
 
     // Never truncate file_read results (user's source code)
-    let is_file_read = msg.content.iter().any(|p| matches!(p, ContentPart::ToolResult { name, .. } if name == "file_read"));
+    let is_file_read = msg
+        .content
+        .iter()
+        .any(|p| matches!(p, ContentPart::ToolResult { name, .. } if name == "file_read"));
     if is_file_read {
         return (msg.clone(), 0, elisions);
     }
@@ -203,12 +222,16 @@ fn apply_heuristic_compaction(
                     && !has_signal_markers(text)
                 {
                     let head: String = text.chars().take(keep_head).collect();
-                    let tail: String = text.chars().rev().take(keep_tail).collect::<Vec<_>>().into_iter().rev().collect();
+                    let tail: String = text
+                        .chars()
+                        .rev()
+                        .take(keep_tail)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
                     let truncated = text.len().saturating_sub(keep_head + keep_tail);
-                    *text = format!(
-                        "{}...\n[truncated {} chars]\n...{}",
-                        head, truncated, tail
-                    );
+                    *text = format!("{}...\n[truncated {} chars]\n...{}", head, truncated, tail);
                     truncations += 1;
                 }
             }
@@ -230,16 +253,18 @@ fn apply_heuristic_compaction(
                 }
 
                 // Truncate long tool results
-                if result.len() > config.max_tool_output_chars
-                    && !has_signal_markers(result)
-                {
+                if result.len() > config.max_tool_output_chars && !has_signal_markers(result) {
                     let head: String = result.chars().take(keep_head).collect();
-                    let tail: String = result.chars().rev().take(keep_tail).collect::<Vec<_>>().into_iter().rev().collect();
+                    let tail: String = result
+                        .chars()
+                        .rev()
+                        .take(keep_tail)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
                     let truncated = result.len().saturating_sub(keep_head + keep_tail);
-                    *result = format!(
-                        "{}...\n[truncated {} chars]\n...{}",
-                        head, truncated, tail
-                    );
+                    *result = format!("{}...\n[truncated {} chars]\n...{}", head, truncated, tail);
                     truncations += 1;
                 }
             }
@@ -275,7 +300,8 @@ fn elide_base64_in_text(text: &str) -> String {
         let data_start = pos + ";base64,".len();
         let data = &remaining[data_start..];
         // Find the end of the base64 chunk (up to next whitespace, quote, or end)
-        let end = data.find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '>')
+        let end = data
+            .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '>')
             .unwrap_or(data.len());
         let byte_len = data[..end].len();
         result.push_str(&format!(";base64,[{} bytes]", byte_len));
@@ -290,10 +316,7 @@ fn elide_base64_in_text(text: &str) -> String {
 /// Scans consecutive (ToolCall, ToolResult) pairs. If the same tool is called
 /// with identical arguments >= threshold times consecutively, keeps the first
 /// pair and replaces subsequent repeats with a summary message.
-fn collapse_repetitive_loops(
-    messages: &[Message],
-    threshold: usize,
-) -> (Vec<Message>, usize) {
+fn collapse_repetitive_loops(messages: &[Message], threshold: usize) -> (Vec<Message>, usize) {
     if messages.len() < 2 * threshold {
         return (messages.to_vec(), 0);
     }
@@ -324,7 +347,11 @@ fn collapse_repetitive_loops(
     while i < messages.len() {
         // Check for consecutive repetitive pairs starting at i
         let anchor_pair_idx = pairs.iter().position(|p| p.0 == i);
-        let mut repeat_count = if anchor_pair_idx.is_some() { 1usize } else { 0usize };
+        let mut repeat_count = if anchor_pair_idx.is_some() {
+            1usize
+        } else {
+            0usize
+        };
 
         if repeat_count > 0 {
             let anchor = &pairs[anchor_pair_idx.unwrap()];
@@ -474,12 +501,18 @@ mod tests {
 
     #[test]
     fn test_truncation_respects_signals() {
-        let error_text = format!("output start\n{}\nError: something broke\n{}",
-            "x".repeat(2000), "y".repeat(2000));
+        let error_text = format!(
+            "output start\n{}\nError: something broke\n{}",
+            "x".repeat(2000),
+            "y".repeat(2000)
+        );
         let msg = make_tool_result(&error_text);
         let config = CompactionConfig::default();
         let (compacted, truncations, _) = apply_heuristic_compaction(&msg, &config, true);
-        assert_eq!(truncations, 0, "Error-containing text should not be truncated");
+        assert_eq!(
+            truncations, 0,
+            "Error-containing text should not be truncated"
+        );
         assert_eq!(compacted.content.len(), msg.content.len());
     }
 
@@ -531,7 +564,10 @@ mod tests {
     #[test]
     fn test_compact_disabled() {
         let msgs = vec![make_text_msg(Role::User, "hello")];
-        let config = CompactionConfig { enabled: false, ..Default::default() };
+        let config = CompactionConfig {
+            enabled: false,
+            ..Default::default()
+        };
         let result = compact_history(&msgs, &config, None).unwrap();
         assert_eq!(result.compacted_history.len(), 1);
         assert_eq!(result.savings_pct, 0.0);
@@ -540,7 +576,10 @@ mod tests {
     #[test]
     fn test_compact_empty_history() {
         let msgs: Vec<Message> = vec![];
-        let config = CompactionConfig { enabled: true, ..Default::default() };
+        let config = CompactionConfig {
+            enabled: true,
+            ..Default::default()
+        };
         let result = compact_history(&msgs, &config, None);
         assert!(result.is_ok());
         let r = result.unwrap();
@@ -568,7 +607,10 @@ mod tests {
             ..Default::default()
         };
         let result = compact_history(&msgs, &config, None).unwrap();
-        assert!(result.savings_pct > 0.0, "should have savings from truncating the large tool result");
+        assert!(
+            result.savings_pct > 0.0,
+            "should have savings from truncating the large tool result"
+        );
     }
 
     #[test]
@@ -597,7 +639,10 @@ mod tests {
         let msgs = vec![Message::tool("c1", "shell", &long)];
         let out = mid_turn_safety_truncate(&msgs, 2000);
         if let ContentPart::ToolResult { result, .. } = &out[0].content[0] {
-            assert!(result.len() < long.len(), "long tool result must be truncated");
+            assert!(
+                result.len() < long.len(),
+                "long tool result must be truncated"
+            );
             assert!(result.contains("[truncated"));
         } else {
             panic!("expected ToolResult");
@@ -620,7 +665,11 @@ mod tests {
         }];
         let out = mid_turn_safety_truncate(&msgs, 2000);
         if let ContentPart::ToolResult { result, .. } = &out[0].content[0] {
-            assert_eq!(result.len(), long.len(), "file_read results must NOT be truncated");
+            assert_eq!(
+                result.len(),
+                long.len(),
+                "file_read results must NOT be truncated"
+            );
         }
     }
 

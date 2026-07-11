@@ -171,7 +171,7 @@ impl<'a> BridgeStore<'a> {
             "SELECT id, platform, instance_id, instance_name, enabled, config_json,
                     dm_policy, allow_from, group_policy, group_allow_from,
                     agent_id, created_at, updated_at
-             FROM bridge_channels ORDER BY platform, instance_id"
+             FROM bridge_channels ORDER BY platform, instance_id",
         )?;
         let rows = stmt.query_map([], |row| {
             let platform_str: String = row.get(1)?;
@@ -210,7 +210,8 @@ impl<'a> BridgeStore<'a> {
                         _ => AccessMode::Disabled,
                     }
                 },
-                group_allow_from: serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_default(),
+                group_allow_from: serde_json::from_str(&row.get::<_, String>(9)?)
+                    .unwrap_or_default(),
                 agent_id: row.get(10)?,
                 created_at: row.get(11)?,
                 updated_at: row.get(12)?,
@@ -428,9 +429,7 @@ mod tests {
         assert_eq!(configs.len(), 2);
 
         // Delete the first one.
-        store
-            .delete_channel_config("telegram", "default")
-            .unwrap();
+        store.delete_channel_config("telegram", "default").unwrap();
         let configs = store.list_channel_configs().unwrap();
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].platform, Platform::Feishu);

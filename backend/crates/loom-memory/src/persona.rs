@@ -635,62 +635,101 @@ fn assemble_expertise_areas(conn: &Connection) -> Result<Vec<String>> {
     // Infer broad domains from tech node names
     if tech_strs.iter().any(|n| {
         let l = n.to_lowercase();
-        l.contains("rust") || l.contains(" go") || l.contains("python")
-            || l.contains("java") || l.contains("c++") || l.contains("c#")
-            || l.contains("ruby") || l.contains("swift") || l.contains("kotlin")
+        l.contains("rust")
+            || l.contains(" go")
+            || l.contains("python")
+            || l.contains("java")
+            || l.contains("c++")
+            || l.contains("c#")
+            || l.contains("ruby")
+            || l.contains("swift")
+            || l.contains("kotlin")
     }) {
         areas.push("backend".into());
     }
     if tech_strs.iter().any(|n| {
         let l = n.to_lowercase();
-        l.contains("react") || l.contains("vue") || l.contains("angular")
-            || l.contains("css") || l.contains("typescript") || l.contains("javascript")
-            || l.contains("html") || l.contains("svelte") || l.contains("next")
+        l.contains("react")
+            || l.contains("vue")
+            || l.contains("angular")
+            || l.contains("css")
+            || l.contains("typescript")
+            || l.contains("javascript")
+            || l.contains("html")
+            || l.contains("svelte")
+            || l.contains("next")
     }) {
         areas.push("frontend".into());
     }
     if tech_strs.iter().any(|n| {
         let l = n.to_lowercase();
-        l.contains("docker") || l.contains("kubernetes") || l.contains("k8s")
-            || l.contains("nginx") || l.contains("terraform") || l.contains("ansible")
-            || l.contains("ci/cd") || l.contains("github action")
+        l.contains("docker")
+            || l.contains("kubernetes")
+            || l.contains("k8s")
+            || l.contains("nginx")
+            || l.contains("terraform")
+            || l.contains("ansible")
+            || l.contains("ci/cd")
+            || l.contains("github action")
     }) {
         areas.push("DevOps".into());
     }
     if tech_strs.iter().any(|n| {
         let l = n.to_lowercase();
-        l.contains("ai") || l.contains("ml") || l.contains("tensor")
-            || l.contains("pytorch") || l.contains("llm") || l.contains("gpt")
-            || l.contains("hugging") || l.contains("model")
+        l.contains("ai")
+            || l.contains("ml")
+            || l.contains("tensor")
+            || l.contains("pytorch")
+            || l.contains("llm")
+            || l.contains("gpt")
+            || l.contains("hugging")
+            || l.contains("model")
     }) {
         areas.push("AI/ML".into());
     }
     if tech_strs.iter().any(|n| {
         let l = n.to_lowercase();
-        l.contains("sql") || l.contains("postgres") || l.contains("mysql")
-            || l.contains("redis") || l.contains("mongo") || l.contains("sqlite")
-            || l.contains("database") || l.contains("influx")
+        l.contains("sql")
+            || l.contains("postgres")
+            || l.contains("mysql")
+            || l.contains("redis")
+            || l.contains("mongo")
+            || l.contains("sqlite")
+            || l.contains("database")
+            || l.contains("influx")
     }) {
         areas.push("databases".into());
     }
     if tech_strs.iter().any(|n| {
         let l = n.to_lowercase();
-        l.contains("android") || l.contains("ios") || l.contains("flutter")
-            || l.contains("react native") || l.contains("swift") || l.contains("kotlin")
+        l.contains("android")
+            || l.contains("ios")
+            || l.contains("flutter")
+            || l.contains("react native")
+            || l.contains("swift")
+            || l.contains("kotlin")
     }) {
         areas.push("mobile".into());
     }
     if tech_strs.iter().any(|n| {
         let l = n.to_lowercase();
-        l.contains("aws") || l.contains("azure") || l.contains("gcp")
-            || l.contains("cloud") || l.contains("lambda") || l.contains("s3")
+        l.contains("aws")
+            || l.contains("azure")
+            || l.contains("gcp")
+            || l.contains("cloud")
+            || l.contains("lambda")
+            || l.contains("s3")
     }) {
         areas.push("cloud".into());
     }
     if tech_strs.iter().any(|n| {
         let l = n.to_lowercase();
-        l.contains("security") || l.contains("auth") || l.contains("oauth")
-            || l.contains("jwt") || l.contains("ssl") || l.contains("tls")
+        l.contains("security")
+            || l.contains("auth")
+            || l.contains("oauth")
+            || l.contains("jwt")
+            || l.contains("ssl")
+            || l.contains("tls")
     }) {
         areas.push("security".into());
     }
@@ -940,7 +979,13 @@ mod tests {
         conn
     }
 
-    fn insert_cognition(conn: &Connection, subject: &str, trait_name: &str, value: &str, confidence: f64) {
+    fn insert_cognition(
+        conn: &Connection,
+        subject: &str,
+        trait_name: &str,
+        value: &str,
+        confidence: f64,
+    ) {
         conn.execute(
             "INSERT INTO cognitions (subject, trait, value, confidence) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![subject, trait_name, value, confidence],
@@ -964,15 +1009,33 @@ mod tests {
 
         // Goal 1: status from trait name → Achieved
         let g1 = goals.iter().find(|g| g.description == "学习Rust").unwrap();
-        assert_eq!(g1.status, GoalStatus::Achieved, "trait '完成_目标' should mark as Achieved");
+        assert_eq!(
+            g1.status,
+            GoalStatus::Achieved,
+            "trait '完成_目标' should mark as Achieved"
+        );
 
         // Goal 2: status from value → Achieved
-        let g2 = goals.iter().find(|g| g.description.contains("CLI")).unwrap();
-        assert_eq!(g2.status, GoalStatus::Achieved, "value containing '完成' should mark as Achieved");
+        let g2 = goals
+            .iter()
+            .find(|g| g.description.contains("CLI"))
+            .unwrap();
+        assert_eq!(
+            g2.status,
+            GoalStatus::Achieved,
+            "value containing '完成' should mark as Achieved"
+        );
 
         // Goal 3: no status keyword → Active
-        let g3 = goals.iter().find(|g| g.description == "TypeScript进阶").unwrap();
-        assert_eq!(g3.status, GoalStatus::Active, "no status keyword should be Active");
+        let g3 = goals
+            .iter()
+            .find(|g| g.description == "TypeScript进阶")
+            .unwrap();
+        assert_eq!(
+            g3.status,
+            GoalStatus::Active,
+            "no status keyword should be Active"
+        );
     }
 
     #[test]
@@ -990,7 +1053,10 @@ mod tests {
         let g1 = goals.iter().find(|g| g.description == "旧计划").unwrap();
         assert_eq!(g1.status, GoalStatus::Abandoned);
 
-        let g2 = goals.iter().find(|g| g.description == "已放弃的项目").unwrap();
+        let g2 = goals
+            .iter()
+            .find(|g| g.description == "已放弃的项目")
+            .unwrap();
         assert_eq!(g2.status, GoalStatus::Abandoned);
     }
 }

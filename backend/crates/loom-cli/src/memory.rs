@@ -6,7 +6,8 @@ use anyhow::Result;
 use loom_core::MemoryStore;
 use loom_memory::{
     AgentConfigStore, CognitionStore, GraphStore, McpConfigStore, McpServerRow, ModelConfigStore,
-    NewEvent, RichPersonaProvider, TeamConfigStore, config_db::ConfigDb, memory_db::MemoryDb, session_db::SessionDb,
+    NewEvent, RichPersonaProvider, TeamConfigStore, config_db::ConfigDb, memory_db::MemoryDb,
+    session_db::SessionDb,
 };
 use loom_types::{AgentConfig, Message, ModelConfig, PersonaProvider, TeamConfig};
 
@@ -153,12 +154,14 @@ impl MemoryStore for LoomMemoryStore {
         cached_read_tokens: usize,
         cached_write_tokens: usize,
         context_window: usize,
+        model: &str,
         tool_msgs_json: &[String],
         skip_user: bool,
     ) -> Result<i64> {
         // Write messages to session db
         let now = chrono::Utc::now().to_rfc3339();
         let usage_meta = serde_json::json!({
+            "model": model,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "cached_tokens": cached_read_tokens + cached_write_tokens,
@@ -337,7 +340,7 @@ impl MemoryStore for LoomMemoryStore {
             "SELECT role, content, metadata, timestamp FROM (
                 SELECT role, content, metadata, timestamp, seq FROM message_history
                 WHERE session_id = ?1 ORDER BY seq DESC LIMIT ?2
-            ) ORDER BY seq ASC"
+            ) ORDER BY seq ASC",
         )?;
         let rows = stmt.query_map(rusqlite::params![session_id, limit as i64], |row| {
             let role: String = row.get(0)?;
@@ -349,6 +352,7 @@ impl MemoryStore for LoomMemoryStore {
                 Some(loom_types::TokenUsage {
                     prompt_tokens: v["prompt_tokens"].as_u64()? as usize,
                     completion_tokens: v["completion_tokens"].as_u64()? as usize,
+                    model: v["model"].as_str().unwrap_or("").to_string(),
                     cached_tokens: v["cached_tokens"].as_u64().unwrap_or(0) as usize,
                     cache_read_tokens: v["cache_read_tokens"].as_u64().unwrap_or(0) as usize,
                     cache_write_tokens: v["cache_write_tokens"].as_u64().unwrap_or(0) as usize,
@@ -826,11 +830,7 @@ impl MemoryStore for LoomMemoryStore {
         AgentConfigStore::new(store.conn()).get_session_binding(session_id)
     }
 
-    async fn save_session_team_id(
-        &self,
-        session_id: &str,
-        team_id: &str,
-    ) -> Result<()> {
+    async fn save_session_team_id(&self, session_id: &str, team_id: &str) -> Result<()> {
         let store = self.session_db.lock().expect("lock poisoned");
         AgentConfigStore::new(store.conn()).set_session_team_binding(session_id, team_id)
     }
@@ -1398,7 +1398,13 @@ impl MemoryStore for LoomMemoryStore {
         }
     }
 
-    async fn save_summary(&self, session_id: &str, summary: &str, at_count: usize, model_name: &str) -> Result<()> {
+    async fn save_summary(
+        &self,
+        session_id: &str,
+        summary: &str,
+        at_count: usize,
+        model_name: &str,
+    ) -> Result<()> {
         let store = self.session_db.lock().expect("lock poisoned");
         store.conn().execute(
             "UPDATE sessions SET summary = ?1, summary_at_count = ?2, summary_model = ?3, summary_updated_at = datetime('now') WHERE id = ?4",

@@ -175,9 +175,9 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
       window.loom.getPreference('toolExpandDefault', true),
       window.loom.getPreference('skillExpandDefault', false),
       window.loom.getPreference('taskCompleteNotification', false),
-      loomRpc<{ http_proxy?: string }>('config.get_tool_prefs').then(p => {
-        // 没有自定义代理 → 使用系统代理（默认）
-        setUseSystemProxy(!p.http_proxy)
+      loomRpc<{ http_proxy?: string; proxy_enabled?: boolean }>('config.get_tool_prefs').then(p => {
+        // 无自定义代理且已启用 → 使用系统代理
+        setUseSystemProxy(!p.http_proxy && p.proxy_enabled !== false)
       }).catch(() => {}),
       window.loom.getPlatform(),
     ]).then(([as, ct, st, at, uf, cf, cc, dha, te, toe, se, tcn, plat]) => {
@@ -749,7 +749,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                     className={`${styles.mcpTransportBtn} ${useSystemProxy ? styles.mcpTransportActive : ''}`}
                     onClick={() => {
                       setUseSystemProxy(true)
-                      loomRpc('config.set_tool_prefs', { http_proxy: '' }).then(() =>
+                      loomRpc('config.set_tool_prefs', { http_proxy: '', proxy_enabled: true }).then(() =>
                         useStore.getState().addToast({ type: 'success', message: t('software.proxySaved') })
                       ).catch(() =>
                         useStore.getState().addToast({ type: 'error', message: t('common.failed') })
@@ -760,7 +760,14 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                   </button>
                   <button
                     className={`${styles.mcpTransportBtn} ${!useSystemProxy ? styles.mcpTransportActive : ''}`}
-                    onClick={() => setUseSystemProxy(false)}
+                    onClick={() => {
+                      setUseSystemProxy(false)
+                      loomRpc('config.set_tool_prefs', { proxy_enabled: false }).then(() =>
+                        useStore.getState().addToast({ type: 'success', message: t('software.proxySaved') })
+                      ).catch(() =>
+                        useStore.getState().addToast({ type: 'error', message: t('common.failed') })
+                      )
+                    }}
                   >
                     {t('software.disable')}
                   </button>

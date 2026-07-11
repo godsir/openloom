@@ -48,7 +48,9 @@ impl SessionDb {
             .prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'memory_enabled'")?
             .exists([])?;
         if !has_memory_enabled {
-            conn.execute_batch("ALTER TABLE sessions ADD COLUMN memory_enabled INTEGER NOT NULL DEFAULT 1;")?;
+            conn.execute_batch(
+                "ALTER TABLE sessions ADD COLUMN memory_enabled INTEGER NOT NULL DEFAULT 1;",
+            )?;
         }
 
         // Migration V5: add team_config_id column (session-team binding)

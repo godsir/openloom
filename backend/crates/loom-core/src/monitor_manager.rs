@@ -145,17 +145,18 @@ impl MonitorManager {
                     .spawn(cmd, cwd, env, Some(description), session_id)
                     .await
                     .context("failed to spawn shell monitor")?;
-                (MonitorSource::Shell { pid: pid.clone() }, "shell".to_string())
-            }
-            (None, Some(ws_cfg)) => {
                 (
-                    MonitorSource::WebSocket {
-                        url: ws_cfg.url.clone(),
-                        protocols: ws_cfg.protocols.clone(),
-                    },
-                    "websocket".to_string(),
+                    MonitorSource::Shell { pid: pid.clone() },
+                    "shell".to_string(),
                 )
             }
+            (None, Some(ws_cfg)) => (
+                MonitorSource::WebSocket {
+                    url: ws_cfg.url.clone(),
+                    protocols: ws_cfg.protocols.clone(),
+                },
+                "websocket".to_string(),
+            ),
             _ => {
                 anyhow::bail!("one of 'command' or 'ws' is required");
             }
@@ -869,7 +870,12 @@ impl MonitorManager {
             // Check cancel token
             if let Some(ref ct) = cancel {
                 if ct.is_cancelled() {
-                    return Ok(MonitorWaitResult { exit_code: -1, output, truncated, running: true });
+                    return Ok(MonitorWaitResult {
+                        exit_code: -1,
+                        output,
+                        truncated,
+                        running: true,
+                    });
                 }
             }
 
@@ -999,11 +1005,17 @@ impl MonitorManager {
             };
 
             match event {
-                AgentEvent::MonitorOutput { monitor_id: ev_mid, .. } if ev_mid == mid => {
+                AgentEvent::MonitorOutput {
+                    monitor_id: ev_mid, ..
+                } if ev_mid == mid => {
                     last_output_at = Some(Instant::now());
                     continue;
                 }
-                AgentEvent::MonitorExited { monitor_id: ev_mid, exit_code, .. } if ev_mid == mid => {
+                AgentEvent::MonitorExited {
+                    monitor_id: ev_mid,
+                    exit_code,
+                    ..
+                } if ev_mid == mid => {
                     // Drain any final buffered output
                     let mut monitors = self.monitors.write().await;
                     if let Some(entry) = monitors.get_mut(&mid) {

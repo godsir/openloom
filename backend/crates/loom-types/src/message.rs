@@ -95,6 +95,12 @@ impl Message {
         }
     }
 
+    /// Attach token usage to an existing message (builder pattern).
+    pub fn with_usage(mut self, usage: crate::inference::TokenUsage) -> Self {
+        self.usage = Some(usage);
+        self
+    }
+
     pub fn assistant(text: impl Into<String>) -> Self {
         Self {
             role: Role::Assistant,

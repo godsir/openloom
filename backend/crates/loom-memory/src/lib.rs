@@ -14,9 +14,9 @@ pub mod pattern;
 pub mod persona;
 pub mod pipeline;
 pub mod session_db;
-pub mod todo_store;
 pub mod store;
 pub mod summary;
+pub mod todo_store;
 
 pub use consolidation::{ConsolidationReport, MemoryConsolidator};
 pub use extractor::{

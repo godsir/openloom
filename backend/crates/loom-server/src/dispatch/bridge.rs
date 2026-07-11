@@ -30,10 +30,7 @@ pub async fn handle(
 
 async fn handle_bridge_list_configs(state: &AppState) -> Result<Value, JsonRpcError> {
     let configs = state.bridge_manager.list_configs().await;
-    let items: Vec<Value> = configs
-        .iter()
-        .map(|c| instance_config_to_json(c))
-        .collect();
+    let items: Vec<Value> = configs.iter().map(|c| instance_config_to_json(c)).collect();
     Ok(json!({ "configs": items }))
 }
 
@@ -196,8 +193,12 @@ fn parse_platform(p: &Value) -> Result<Platform, JsonRpcError> {
         .get("platform")
         .and_then(|v| v.as_str())
         .ok_or_else(|| err(ErrorCode::InvalidRequest, "platform required"))?;
-    serde_json::from_str::<Platform>(&format!("\"{}\"", s))
-        .map_err(|e| err(ErrorCode::InvalidRequest, &format!("invalid platform: {}", e)))
+    serde_json::from_str::<Platform>(&format!("\"{}\"", s)).map_err(|e| {
+        err(
+            ErrorCode::InvalidRequest,
+            &format!("invalid platform: {}", e),
+        )
+    })
 }
 
 fn instance_config_to_json(c: &InstanceConfig) -> Value {

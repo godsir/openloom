@@ -135,6 +135,13 @@ export async function bootstrapApp(): Promise<() => void> {
         )
         import('./pet-sync').then(m => m.sendPetState('inspect'))
         break
+      case 'tool.output':
+        streamBufferManager.handleToolOutput(
+          sessionId,
+          (p?.id as string) || '',
+          (p?.line as string) || '',
+        )
+        break
       case 'agent.subagent_spawned': {
         import('./pet-sync').then(m => m.sendPetState('dash'))
         const store = useStore.getState()
@@ -173,8 +180,13 @@ export async function bootstrapApp(): Promise<() => void> {
         if (!lastAsst2) break
         const childName2 = (p as any)?.child_name || ''
         const result2 = String((p as any)?.result || '')
-        // Mark subagent block done
-        const subBlock = lastAsst2.blocks.find((b: any) => b.type === 'subagent' && b.id === 'sub_' + childName2)
+        // Mark subagent block done — read existing block to preserve token data
+        // that may have been written by team.member_done
+        const subBlock = lastAsst2.blocks.find((b: any) => b.type === 'subagent' && b.id === 'sub_' + childName2) as any
+        const existingTokens = {
+          promptTokens: subBlock?.promptTokens || 0,
+          completionTokens: subBlock?.completionTokens || 0,
+        }
         store2.upsertBlock(sid2, lastAsst2.id, {
           type: 'subagent',
           id: 'sub_' + childName2,
@@ -182,6 +194,7 @@ export async function bootstrapApp(): Promise<() => void> {
           streamStatus: 'done',
           body: subBlock?.body || '',
           summary: result2.slice(0, 120),
+          ...existingTokens,
         })
         // Update team card
         if (store2.sessionTeamBindings[sid2]) {
@@ -243,25 +256,45 @@ export async function bootstrapApp(): Promise<() => void> {
       case 'team.started': {
         const store = useStore.getState()
         const sid = [...store.streamingSessionIds][0] || ''
-        if (sid) store.setStreamingActivity(sid, { phase: 'team', detail: (p?.team_name as string) || '' })
+        if (sid) streamBufferManager.setOverrideActivity(sid, { phase: 'team', detail: (p?.team_name as string) || '' })
         import('./pet-sync').then(m => m.sendPetState('dash'))
         break
       }
       case 'team.member_done': {
         const store = useStore.getState()
         const sid = [...store.streamingSessionIds][0] || ''
-        if (sid) store.setStreamingActivity(sid, { phase: 'team', detail: `${p?.member_name || ''}: 第${p?.round || ''}轮完成` })
+        if (sid) streamBufferManager.setOverrideActivity(sid, { phase: 'team', detail: `${p?.member_name || ''}: 第${p?.round || ''}轮完成` })
+        // Update SubagentCard with token usage
+        const msgsDone = store.messagesBySession.get(sid) || []
+        const lastDone = [...msgsDone].reverse().find((m: any) => m.role === 'assistant')
+        if (lastDone) {
+          const mName = (p?.member_name as string) || ''
+          const promptTokens = (p?.prompt_tokens as number) || 0
+          const completionTokens = (p?.completion_tokens as number) || 0
+          const subId = 'sub_' + mName
+          const existingBlock = lastDone.blocks.find((b: any) => b.type === 'subagent' && (b as any).id === subId) as any
+          store.upsertBlock(sid, lastDone.id, {
+            type: 'subagent',
+            id: subId,
+            name: mName,
+            streamStatus: 'done',
+            body: existingBlock?.body || '',
+            summary: existingBlock?.summary || '',
+            promptTokens,
+            completionTokens,
+          })
+        }
         break
       }
       case 'team.round_complete': {
         const store = useStore.getState()
         const sid = [...store.streamingSessionIds][0] || ''
-        if (sid) store.setStreamingActivity(sid, { phase: 'team', detail: `第${p?.round || ''}轮完成` })
+        if (sid) streamBufferManager.setOverrideActivity(sid, { phase: 'team', detail: `第${p?.round || ''}轮完成` })
         break
       }
       case 'team.completed': {
         const sid = (p?.session_id as string) || [...useStore.getState().streamingSessionIds][0] || ''
-        if (sid) useStore.getState().setStreamingActivity(sid, { phase: 'generating', detail: '' })
+        if (sid) streamBufferManager.setOverrideActivity(sid, null)
         break
       }
       case 'tool.permission_request': {
@@ -337,10 +370,11 @@ export async function bootstrapApp(): Promise<() => void> {
         )
         break
       case 'monitor.started':
-        // Monitor started — mark session as streaming so the Dynamic Island reacts
+        // Just mark the session as streaming. The actual activity comes from
+        // processAcc populated by monitor.output → handleProcessOutput,
+        // which deriveActivity now checks for running processes.
         if (sessionId) {
           useStore.getState().addStreamingSession(sessionId)
-          useStore.getState().setStreamingActivity(sessionId, { phase: 'tool', detail: 'monitor' })
         }
         break
       case 'monitor.output':
@@ -369,6 +403,20 @@ export async function bootstrapApp(): Promise<() => void> {
           'stderr',
         )
         streamBufferManager.handleProcessExited(sessionId, mid, -1)
+        break
+      }
+      case 'steering.queued': {
+        // User steering added to queue — update the pending count in store
+        const sid2 = (p?.session_id as string) || ''
+        const pending = (p?.pending_count as number) || 0
+        if (sid2) useStore.getState().setSteeringQueueCount(sid2, pending)
+        break
+      }
+      case 'steering.consumed': {
+        // Backend consumed steering items — update remaining count
+        const sid2 = (p?.session_id as string) || ''
+        const remaining = (p?.remaining_count as number) || 0
+        if (sid2) useStore.getState().setSteeringQueueCount(sid2, remaining)
         break
       }
       case 'ws.replay_done':
@@ -421,6 +469,13 @@ export async function bootstrapApp(): Promise<() => void> {
           p?.name as string | undefined,
         )
         break
+      case 'tool.output':
+        streamBufferManager.handleToolOutput(
+          sessionId,
+          (p?.id as string) || '',
+          (p?.line as string) || '',
+        )
+        break
       case 'process.output':
         streamBufferManager.handleProcessOutput(
           sessionId,
@@ -439,7 +494,6 @@ export async function bootstrapApp(): Promise<() => void> {
       case 'monitor.started':
         if (sessionId) {
           useStore.getState().addStreamingSession(sessionId)
-          useStore.getState().setStreamingActivity(sessionId, { phase: 'tool', detail: 'monitor' })
         }
         break
       case 'monitor.output':
@@ -502,6 +556,18 @@ export async function bootstrapApp(): Promise<() => void> {
           })
         }
         break
+      case 'steering.queued': {
+        const sid3 = (p?.session_id as string) || ''
+        const pending2 = (p?.pending_count as number) || 0
+        if (sid3) useStore.getState().setSteeringQueueCount(sid3, pending2)
+        break
+      }
+      case 'steering.consumed': {
+        const sid3 = (p?.session_id as string) || ''
+        const remaining2 = (p?.remaining_count as number) || 0
+        if (sid3) useStore.getState().setSteeringQueueCount(sid3, remaining2)
+        break
+      }
       case 'ws.replay_done':
         // replay_done is internal WS protocol, not relevant for IM
         break

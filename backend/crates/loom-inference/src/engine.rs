@@ -2,85 +2,127 @@
 //! and CloudClient trait for provider dispatch.
 
 use crate::cache::{CacheStatus, PrefixCache};
-use loom_context::PrefixDigest;
 use anyhow::Result;
 use async_trait::async_trait;
+use loom_context::PrefixDigest;
 use loom_types::{
     CompletionRequest, CompletionResponse, ContentPart, GpuInfo, Message, ModelBackend,
     StreamDelta, ToolCall,
 };
 use reqwest::Client as HttpClient;
+use std::sync::{Mutex, OnceLock};
 use tokio::sync::mpsc;
 
+/// Global proxy URL and enabled flag, synced from ToolPrefsConfig when saved/loaded.
+static GLOBAL_PROXY: OnceLock<Mutex<(Option<String>, bool)>> = OnceLock::new();
+
+/// Update the global proxy from ToolPrefsConfig.
+/// Call this from save_tool_prefs so all HTTP clients pick it up.
+pub fn set_global_proxy(url: Option<String>, enabled: bool) {
+    let lock = GLOBAL_PROXY.get_or_init(|| Mutex::new((None, true)));
+    if let Ok(mut guard) = lock.lock() {
+        *guard = (url.filter(|s| !s.is_empty()), enabled);
+    }
+}
+
+/// Resolve the effective proxy URL: global setting first, then env vars.
+/// Respects proxy_enabled flag — when false, returns None (direct connection).
+fn get_effective_proxy() -> Option<String> {
+    // Check global proxy config (set via tool_prefs)
+    if let Some(lock) = GLOBAL_PROXY.get() {
+        if let Ok(guard) = lock.lock() {
+            let (url, enabled) = &*guard;
+            if !enabled {
+                return None; // proxy explicitly disabled
+            }
+            if let Some(url) = url {
+                if !url.is_empty() {
+                    return Some(url.clone());
+                }
+            }
+        }
+    }
+    // Fall through to environment variables
+    std::env::var("HTTPS_PROXY")
+        .or_else(|_| std::env::var("https_proxy"))
+        .or_else(|_| std::env::var("HTTP_PROXY"))
+        .or_else(|_| std::env::var("http_proxy"))
+        .ok()
+        .filter(|s| !s.is_empty())
+}
+
+/// 构建 HTTP 客户端（带 UA，给 web_search/web_fetch 用），支持全局代理
 pub fn build_http_client_with_ua() -> HttpClient {
     let mut builder = HttpClient::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .user_agent("Mozilla/5.0 (compatible; openLoom/1.0; +https://github.com/godsir/openloom)");
 
-    let proxy_url = std::env::var("HTTPS_PROXY")
-        .or_else(|_| std::env::var("https_proxy"))
-        .or_else(|_| std::env::var("HTTP_PROXY"))
-        .or_else(|_| std::env::var("http_proxy"))
-        .ok()
-        .filter(|s| !s.is_empty());
-
-    if let Some(url) = proxy_url {
-        if let Ok(proxy) = reqwest::Proxy::all(&url) {
+    if let Some(url) = get_effective_proxy() {
+        if let Ok(proxy) = build_proxy(&url) {
             builder = builder.proxy(proxy);
+        } else {
+            tracing::warn!(%url, "invalid proxy URL, connections will go direct");
         }
     }
 
     builder.build().unwrap_or_default()
 }
 
-/// 构建 HTTP 客户端（无 UA，给 API 调用用），支持 set_tool_prefs 覆盖
-pub fn build_http_client_with_prefs(tool_prefs: Option<&loom_types::config::tool_prefs::ToolPrefsConfig>) -> HttpClient {
-    let mut builder = HttpClient::builder()
-        .connect_timeout(std::time::Duration::from_secs(10));
-
-    // 优先用用户显式配置，其次环境变量
-    let proxy_url = tool_prefs
-        .and_then(|p| p.http_proxy.as_deref())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .or_else(|| {
-            std::env::var("HTTPS_PROXY")
-                .or_else(|_| std::env::var("https_proxy"))
-                .or_else(|_| std::env::var("HTTP_PROXY"))
-                .or_else(|_| std::env::var("http_proxy"))
-                .ok()
-                .filter(|s| !s.is_empty())
-        });
-
-    if let Some(url) = proxy_url {
-        if let Ok(proxy) = reqwest::Proxy::all(&url) {
-            builder = builder.proxy(proxy);
-        }
-    }
-
-    builder.build().unwrap_or_default()
-}
-
-/// 构建统一 HTTP 客户端（无 UA，给 API 调用用的最简版）
+/// 构建统一 HTTP 客户端（无 UA，给 API 调用用），支持全局代理
 pub fn build_http_client() -> HttpClient {
-    let mut builder = HttpClient::builder()
-        .connect_timeout(std::time::Duration::from_secs(10));
+    let mut builder = HttpClient::builder().connect_timeout(std::time::Duration::from_secs(10));
 
-    // 读取 HTTPS_PROXY（优先）或 HTTP_PROXY
-    let proxy_url = std::env::var("HTTPS_PROXY")
-        .or_else(|_| std::env::var("https_proxy"))
-        .or_else(|_| std::env::var("HTTP_PROXY"))
-        .or_else(|_| std::env::var("http_proxy"))
-        .ok()
-        .filter(|s| !s.is_empty());
-
-    if let Some(url) = proxy_url {
-        if let Ok(proxy) = reqwest::Proxy::all(&url) {
+    if let Some(url) = get_effective_proxy() {
+        if let Ok(proxy) = build_proxy(&url) {
             builder = builder.proxy(proxy);
+        } else {
+            tracing::warn!(%url, "invalid proxy URL, connections will go direct");
         }
     }
 
     builder.build().unwrap_or_default()
+}
+
+/// Build a reqwest::Proxy that routes through `proxy_url` but bypasses
+/// localhost/loopback and any hosts listed in NO_PROXY / no_proxy.
+fn build_proxy(proxy_url: &str) -> Result<reqwest::Proxy, reqwest::Error> {
+    let url_owned = proxy_url.to_string();
+    let mut proxy = reqwest::Proxy::custom(move |url| {
+        let host = url.host_str().unwrap_or("");
+        // Always bypass localhost and loopback
+        if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+            return None; // direct connection
+        }
+        // Respect NO_PROXY / no_proxy env var
+        if host_matches_no_proxy(host) {
+            return None;
+        }
+        Some(url_owned.clone())
+    });
+    // Also set as default for HTTPS → HTTP upgrade detection
+    proxy = proxy.no_proxy(reqwest::NoProxy::from_string("localhost,127.0.0.1,::1"));
+    Ok(proxy)
+}
+
+/// Check if a host matches any entry in the NO_PROXY / no_proxy env var.
+fn host_matches_no_proxy(host: &str) -> bool {
+    let no_proxy = std::env::var("NO_PROXY")
+        .or_else(|_| std::env::var("no_proxy"))
+        .unwrap_or_default();
+    if no_proxy.is_empty() {
+        return false;
+    }
+    let host_lower = host.to_lowercase();
+    no_proxy.split(',').any(|entry| {
+        let entry = entry.trim().to_lowercase();
+        if entry.is_empty() {
+            return false;
+        }
+        // Exact match or suffix match (e.g. ".corp.com" matches "foo.corp.com")
+        entry == host_lower
+            || (entry.starts_with('.') && host_lower.ends_with(&entry))
+            || host_lower.ends_with(&format!(".{}", entry))
+    })
 }
 
 /// Local inference engine backed by an OpenAI-compatible HTTP endpoint.
@@ -110,9 +152,7 @@ impl InferenceEngine {
     /// Connect to a local endpoint and trigger model loading if supported.
     pub async fn connect(base_url: &str, model: &str, _context_size: usize) -> Result<Self> {
         let base = base_url.trim_end_matches('/').to_string();
-        let http = HttpClient::new();
-
-        // Check if the model is already loaded before triggering a redundant load
+        let http = build_http_client();
         let already_loaded = match http
             .get(format!("{}/models", base))
             .timeout(std::time::Duration::from_secs(5))
@@ -471,7 +511,7 @@ pub async fn unload_local_model(base_url: &str, model: &str) {
     // LM Studio newer versions use "identifier"; older ones used "model".
     // Try with "identifier" first (newer API), silently ignore any failure.
     let body = serde_json::json!({"identifier": model, "model": model});
-    match HttpClient::new()
+    match build_http_client()
         .post(&url)
         .json(&body)
         .timeout(std::time::Duration::from_secs(5))
@@ -519,7 +559,11 @@ pub(crate) struct RetryableError {
 impl RetryableError {
     /// Build an error from a non-success HTTP response: classify by status code
     /// and capture any `Retry-After` header.
-    pub fn from_status(status: u16, retry_after: Option<std::time::Duration>, source: anyhow::Error) -> Self {
+    pub fn from_status(
+        status: u16,
+        retry_after: Option<std::time::Duration>,
+        source: anyhow::Error,
+    ) -> Self {
         Self {
             status: Some(status),
             retry_after,
@@ -574,7 +618,9 @@ impl From<anyhow::Error> for RetryableError {
 
 /// Parse the `Retry-After` response header. Anthropic/OpenAI send it as an
 /// integer number of seconds on 429 (and sometimes 503) responses.
-pub(crate) fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<std::time::Duration> {
+pub(crate) fn parse_retry_after(
+    headers: &reqwest::header::HeaderMap,
+) -> Option<std::time::Duration> {
     headers
         .get(reqwest::header::RETRY_AFTER)
         .and_then(|v| v.to_str().ok())
@@ -824,7 +870,10 @@ pub trait CloudClient: Send + Sync {
                             prompt_tokens: parts[0].parse().unwrap_or(0),
                             completion_tokens: parts[1].parse().unwrap_or(0),
                             cache_read_tokens: parts[2].parse().unwrap_or(0),
-                            cache_write_tokens: parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0),
+                            cache_write_tokens: parts
+                                .get(3)
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(0),
                         }
                     } else {
                         continue;

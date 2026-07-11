@@ -31,9 +31,18 @@ fn load_fim_config() -> (Option<String>, Option<String>, Option<String>) {
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or(json!({}));
 
-    let model = config.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let base_url = config.get("base_url").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let api_key_env = config.get("api_key_env").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let model = config
+        .get("model")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let base_url = config
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let api_key_env = config
+        .get("api_key_env")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     (model, base_url, api_key_env)
 }
 
@@ -63,7 +72,7 @@ async fn resolve_fim_model(
 /// standard /v1 API base. Mirrors orchestrator::try_build_cloud_client otherwise.
 fn backend_default_base_url(backend: &ModelBackend) -> &'static str {
     match backend {
-        ModelBackend::DeepSeek => "https://api.deepseek.com/beta",  // FIM is at /beta, not /v1
+        ModelBackend::DeepSeek => "https://api.deepseek.com/beta", // FIM is at /beta, not /v1
         ModelBackend::LmStudio => "http://localhost:1234/v1",
         ModelBackend::Ollama => "http://localhost:11434/v1",
         ModelBackend::Anthropic => "https://api.anthropic.com",
@@ -83,18 +92,9 @@ fn backend_default_key_env(backend: &ModelBackend) -> &'static str {
 }
 
 async fn handle_completion_fim(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
-    let prefix = p
-        .get("prefix")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let suffix = p
-        .get("suffix")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let max_tokens = p
-        .get("max_tokens")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(64) as usize;
+    let prefix = p.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
+    let suffix = p.get("suffix").and_then(|v| v.as_str()).unwrap_or("");
+    let max_tokens = p.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(64) as usize;
 
     if prefix.is_empty() {
         return Ok(serde_json::json!({ "ok": false, "message": "prefix is required" }));
@@ -109,7 +109,8 @@ async fn handle_completion_fim(state: &AppState, p: &Value) -> Result<Value, Jso
         .unwrap_or("deepseek-chat");
 
     // 2. Resolve from user's supplier settings (model config)
-    let (model, config_base_url, config_key_env, config_backend) = resolve_fim_model(state, model_name).await;
+    let (model, config_base_url, config_key_env, config_backend) =
+        resolve_fim_model(state, model_name).await;
 
     // 3. base_url priority:
     //    a) fim.json override (advanced users)
@@ -119,11 +120,13 @@ async fn handle_completion_fim(state: &AppState, p: &Value) -> Result<Value, Jso
     let base_url = saved_fim_base_url
         .filter(|s| !s.is_empty())
         .or_else(|| {
-            if !config_base_url.is_empty() { Some(config_base_url) } else { None }
+            if !config_base_url.is_empty() {
+                Some(config_base_url)
+            } else {
+                None
+            }
         })
-        .or_else(|| {
-            Some(backend_default_base_url(&config_backend).to_string())
-        })
+        .or_else(|| Some(backend_default_base_url(&config_backend).to_string()))
         .unwrap_or_else(|| DEFAULT_FIM_BASE_URL.to_string());
 
     // 4. API key priority:
@@ -139,16 +142,33 @@ async fn handle_completion_fim(state: &AppState, p: &Value) -> Result<Value, Jso
     let api_key: String = match api_key {
         Some(k) => k.to_string(),
         None => {
-            let env_name = saved_fim_key_env.as_deref()
+            let env_name = saved_fim_key_env
+                .as_deref()
                 .filter(|s| !s.is_empty())
-                .or_else(|| if !config_key_env.is_empty() { Some(&config_key_env[..]) } else { None })
+                .or_else(|| {
+                    if !config_key_env.is_empty() {
+                        Some(&config_key_env[..])
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or_else(|| backend_default_key_env(&config_backend));
-            state.key_store.read().await.get(env_name).cloned().unwrap_or_default()
+            state
+                .key_store
+                .read()
+                .await
+                .get(env_name)
+                .cloned()
+                .unwrap_or_default()
         }
     };
 
     // 5. Model ID: user config value → model_name as fallback
-    let model = if model.is_empty() { model_name.to_string() } else { model };
+    let model = if model.is_empty() {
+        model_name.to_string()
+    } else {
+        model
+    };
 
     let client = reqwest::Client::new();
     let body = serde_json::json!({
@@ -205,8 +225,13 @@ async fn handle_completion_fim(state: &AppState, p: &Value) -> Result<Value, Jso
 /// Simple chat completion — uses the orchestrator's cloud client (active model).
 /// Speaks OpenAI-compatible HTTP to the configured provider.
 async fn handle_completion_chat(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
-    let messages_raw = p.get("messages").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let max_tokens = (p.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(200) as usize).clamp(1, 4096);
+    let messages_raw = p
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let max_tokens =
+        (p.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(200) as usize).clamp(1, 4096);
     let temperature = p.get("temperature").and_then(|v| v.as_f64()).unwrap_or(0.3) as f32;
 
     if messages_raw.is_empty() {
@@ -233,23 +258,34 @@ async fn handle_completion_chat(state: &AppState, p: &Value) -> Result<Value, Js
     let (model_id, base_url, api_key) = if let Some(ref name) = active_name {
         let config = match state.orchestrator.model_config_get(name).await {
             Ok(c) => c,
-            Err(_) => return Ok(serde_json::json!({ "ok": false, "message": format!("model config '{}' not found", name) })),
+            Err(_) => {
+                return Ok(
+                    serde_json::json!({ "ok": false, "message": format!("model config '{}' not found", name) }),
+                );
+            }
         };
         let model = config.model.clone().unwrap_or_else(|| config.name.clone());
-        let url = config.base_url.clone().unwrap_or_else(|| {
-            match config.backend {
+        let url = config
+            .base_url
+            .clone()
+            .unwrap_or_else(|| match config.backend {
                 ModelBackend::LmStudio => "http://localhost:1234/v1".into(),
                 ModelBackend::Ollama => "http://localhost:11434/v1".into(),
                 ModelBackend::OpenAI => "https://api.openai.com/v1".into(),
                 ModelBackend::DeepSeek => "https://api.deepseek.com/v1".into(),
                 ModelBackend::Anthropic => "https://api.anthropic.com".into(),
                 ModelBackend::Custom => "http://localhost:8080/v1".into(),
-            }
-        });
-        let key = state.orchestrator.resolve_api_key(config.api_key_env.as_deref(), &config.backend).await.unwrap_or_default();
+            });
+        let key = state
+            .orchestrator
+            .resolve_api_key(config.api_key_env.as_deref(), &config.backend)
+            .await
+            .unwrap_or_default();
         // Anthropic uses /v1/messages, not /chat/completions — unsupported via this path
         if matches!(config.backend, ModelBackend::Anthropic) {
-            return Ok(serde_json::json!({ "ok": false, "message": "Anthropic backend is not supported for completion.chat; use an OpenAI-compatible provider" }));
+            return Ok(
+                serde_json::json!({ "ok": false, "message": "Anthropic backend is not supported for completion.chat; use an OpenAI-compatible provider" }),
+            );
         }
         (model, url, key)
     } else {
@@ -281,9 +317,11 @@ async fn handle_completion_chat(state: &AppState, p: &Value) -> Result<Value, Js
             let json: Value = resp.json().await.unwrap_or_default();
             tracing::info!(body = %json.to_string().chars().take(500).collect::<String>(), "completion.chat raw response");
             let content = json["choices"][0]["message"]["content"]
-                .as_str().filter(|s| !s.is_empty());
+                .as_str()
+                .filter(|s| !s.is_empty());
             let reasoning = json["choices"][0]["message"]["reasoning_content"]
-                .as_str().filter(|s| !s.is_empty());
+                .as_str()
+                .filter(|s| !s.is_empty());
             let text = content.or(reasoning).unwrap_or("").to_string();
             tracing::info!(len = text.len(), "completion.chat extracted text");
             Ok(serde_json::json!({ "ok": true, "content": text }))

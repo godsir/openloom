@@ -399,48 +399,33 @@ export default function InputArea() {
     interruptingRef.current = false
   }
 
+  const plainEscapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
   const handleInterruptSend = async () => {
-    // 先停再发
-    if (!sessionId || interruptingRef.current) return
-    interruptingRef.current = true
-    sendingRef.current = true
-    // 快照本次要发的内容，避免异步期间状态被改动
-    const contentToSend = text
-    const filesToSend = attachedFiles
-    const selectionsToSend = [...useStore.getState().quotedSelections]
-    const skillsToSend = selectedSkills.length > 0 ? selectedSkills : undefined
-    // 立即清空输入框（与 handleSend 行为一致）
-    setText('')
-    setAttachedFiles([])
-    useStore.getState().clearQuotedSelections()
+    // 插话：通过 steering queue 将用户输入注入到正在运行的 agent 中
+    if (!sessionId) return
+    const contentToSend = text.trim()
+    if (!contentToSend) return
+
+    // 发送 chat.steer — 后端写入 steering queue，agent loop 下轮迭代自动消费
     try {
-      await loomRpc('chat.stop', { session_id: sessionId })
-    } catch { /* ignore */ }
-    // 短暂等待后端清理
-    await new Promise(r => setTimeout(r, 300))
-    // 清 streaming 标志
-    useStore.getState().removeStreamingSession(sessionId)
-    streamBufferManager.clear(sessionId)
-    // 打断阶段（stop + wait + clear）已完成，清掉 interruptingRef
-    // 让用户可以再次打断发送；后续 sendMessage 的 streaming 期间由
-    // sendingRef + prevStreamingRef effect 守护，与正常 send 一致
-    interruptingRef.current = false
-    try {
-      const sid = sessionId || await createSession()
-      if (!sid) {
-        // 恢复输入内容
-        setText(contentToSend)
-        setAttachedFiles(filesToSend)
-        return
-      }
-      await sendMessage({ sessionId: sid, content: contentToSend, attachedFiles: filesToSend, skills: skillsToSend, quotedSelections: selectionsToSend })
-    } catch {
-      // 发送失败：恢复输入内容，避免用户丢失
-      setText(contentToSend)
-      setAttachedFiles(filesToSend)
-    } finally {
-      sendingRef.current = false
+      await loomRpc('chat.steer', { session_id: sessionId, guidance: contentToSend })
+      // 清空输入框
+      setText('')
+    } catch (e: any) {
+      useStore.getState().addToast({ type: 'warning', message: e?.message || 'Steer failed' })
+      return
     }
+
+    // 把用户插话内容显示为聊天中的 user message（标注为插话）
+    const store = useStore.getState()
+    store.ensureSession(sessionId)
+    store.appendMessage(sessionId, {
+      id: crypto.randomUUID(),
+      role: 'user',
+      blocks: [{ type: 'text', html: plainEscapeHtml(contentToSend), source: contentToSend, isSteering: true }],
+      timestamp: new Date().toISOString(),
+    })
   }
 
   const handleSend = async () => {

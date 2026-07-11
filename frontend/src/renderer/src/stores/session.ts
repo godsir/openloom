@@ -118,6 +118,8 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
 
       // Merge tool_result content into the preceding assistant message so
       // parseContentParts can pair tool_call ↔ tool_result within one array.
+      // Tool results are inserted BEFORE the text block so the display order
+      // matches the streaming path: thinking → cards → text.
       for (let i = 0; i < allMsgs.length; i++) {
         const m = allMsgs[i]
         const role = typeof m.role === 'string' ? m.role.toLowerCase() : ''
@@ -133,7 +135,18 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
             const assistantContent = allMsgs[prev].content
             if (Array.isArray(assistantContent)) {
               const toolParts = Array.isArray(m.content) ? m.content : []
-              assistantContent.push(...toolParts)
+              // Find insertion point: right before the first text/image block,
+              // after all thinking/tool_call blocks. This keeps cards grouped
+              // above the prose reply, matching the streaming layout.
+              let insertAt = assistantContent.length
+              for (let j = 0; j < assistantContent.length; j++) {
+                const p = assistantContent[j]
+                if (p && typeof p === 'object' && ('text' in p || 'image' in p || 'image_ref' in p)) {
+                  insertAt = j
+                  break
+                }
+              }
+              assistantContent.splice(insertAt, 0, ...toolParts)
             }
           }
         }
@@ -152,6 +165,7 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
         usage: m.usage ? {
           prompt: m.usage.prompt_tokens || 0,
           completion: m.usage.completion_tokens || 0,
+          model: m.usage.model || '',
           cached: m.usage.cached_tokens || 0,
           cacheRead: m.usage.cache_read_tokens || 0,
           cacheWrite: m.usage.cache_write_tokens || 0,

@@ -997,9 +997,18 @@ mod tests {
     fn test_pipeline_stage_label() {
         assert_eq!(MemoryPipelineStage::Extraction.label(), "extraction");
         assert_eq!(MemoryPipelineStage::Consolidation.label(), "consolidation");
-        assert_eq!(MemoryPipelineStage::Generalization.label(), "generalization");
-        assert_eq!(MemoryPipelineStage::ActiveForgetting.label(), "active_forgetting");
-        assert_eq!(MemoryPipelineStage::SelfEvaluation.label(), "self_evaluation");
+        assert_eq!(
+            MemoryPipelineStage::Generalization.label(),
+            "generalization"
+        );
+        assert_eq!(
+            MemoryPipelineStage::ActiveForgetting.label(),
+            "active_forgetting"
+        );
+        assert_eq!(
+            MemoryPipelineStage::SelfEvaluation.label(),
+            "self_evaluation"
+        );
         assert_eq!(MemoryPipelineStage::Extraction.to_string(), "extraction");
     }
 }

@@ -633,7 +633,8 @@ impl CronScheduler {
         // One-shot cron expressions have a specific year (e.g. "0 30 14 9 6 2026 *")
         // vs recurring ones which have "*" in the year field.
         if status == RunStatus::Completed {
-            let is_one_shot = job.cron_expression
+            let is_one_shot = job
+                .cron_expression
                 .split_whitespace()
                 .nth(6) // year field (7-field format: sec min hour dom month dow year)
                 .map(|y| y.chars().all(|c| c.is_ascii_digit()))
@@ -854,11 +855,13 @@ mod tests {
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].id, run_id);
         assert_eq!(history[0].status, RunStatus::Completed);
-        assert!(history[0]
-            .response
-            .as_deref()
-            .unwrap_or("")
-            .contains("检查天气"));
+        assert!(
+            history[0]
+                .response
+                .as_deref()
+                .unwrap_or("")
+                .contains("检查天气")
+        );
     }
 
     #[tokio::test]
@@ -971,7 +974,13 @@ mod tests {
         let id = {
             let scheduler = CronScheduler::new(db_path.clone()).await.unwrap();
             scheduler
-                .add_job("daily", "0 0 0 * * * *", "report", SessionMode::Isolated, 300)
+                .add_job(
+                    "daily",
+                    "0 0 0 * * * *",
+                    "report",
+                    SessionMode::Isolated,
+                    300,
+                )
                 .await
                 .unwrap()
         };
@@ -1041,8 +1050,8 @@ mod tests {
         let schedule = cron::Schedule::from_str("0 * * * * * *").unwrap();
         let now = chrono::Utc::now();
         let last_run = now.timestamp() - 3600; // one hour ago
-        let nf = initial_next_fire(&schedule, Some(last_run), now)
-            .expect("schedule has occurrences");
+        let nf =
+            initial_next_fire(&schedule, Some(last_run), now).expect("schedule has occurrences");
         // The computed slot should be no later than `now` (it's in the past relative
         // to now), proving the tick loop will treat it as a due catch-up fire.
         assert!(nf.timestamp() <= now.timestamp());

@@ -401,10 +401,7 @@ async fn handle_memory_forget(state: &AppState, p: &Value) -> Result<Value, Json
         .get("min_importance")
         .and_then(|v| v.as_f64())
         .unwrap_or(0.3);
-    let max_age_days = p
-        .get("max_age_days")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(90);
+    let max_age_days = p.get("max_age_days").and_then(|v| v.as_i64()).unwrap_or(90);
     let report = state
         .orchestrator
         .run_forgetting_cycle(min_importance, max_age_days)
@@ -439,7 +436,10 @@ async fn handle_memory_layer_stats(state: &AppState) -> Result<Value, JsonRpcErr
 
 // --- memory.promote_to_layer ---
 
-async fn handle_memory_promote_to_layer(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+async fn handle_memory_promote_to_layer(
+    state: &AppState,
+    p: &Value,
+) -> Result<Value, JsonRpcError> {
     let node_name = p
         .get("node_name")
         .and_then(|v| v.as_str())

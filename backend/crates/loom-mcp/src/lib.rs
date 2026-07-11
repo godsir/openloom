@@ -350,10 +350,7 @@ impl McpConnection {
 }
 
 fn parse_tool_list(result: &Value, config: &McpServerConfig) -> Vec<McpTool> {
-    let tools = result["tools"]
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
+    let tools = result["tools"].as_array().map(Vec::as_slice).unwrap_or(&[]);
     tools
         .iter()
         .filter_map(|t| {
@@ -981,9 +978,7 @@ fn parse_sse_response(text: &str, want_id: Option<&Value>) -> Result<Value> {
         }
         // Otherwise remember the first event that at least looks like a
         // JSON-RPC response (has result or error) as a fallback.
-        if fallback.is_null()
-            && (parsed.get("result").is_some() || parsed.get("error").is_some())
-        {
+        if fallback.is_null() && (parsed.get("result").is_some() || parsed.get("error").is_some()) {
             fallback = parsed;
         }
     }

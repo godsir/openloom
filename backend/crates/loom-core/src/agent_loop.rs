@@ -10,17 +10,17 @@ use loom_inference::engine::CloudClient;
 use loom_memory::TodoStore;
 use loom_security::check_permission;
 use loom_types::SkillPermissions;
-use loom_types::{
-    CompactionConfig, CompletionRequest, CompletionResponse, ContentPart, Message, Role, StreamDelta,
-    ToolDefinition,
-};
 use loom_types::StopReason;
+use loom_types::{
+    CompactionConfig, CompletionRequest, CompletionResponse, ContentPart, Message, Role,
+    StreamDelta, ToolDefinition,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::sync::mpsc;
-use tracing::info;
 use tracing::debug;
+use tracing::info;
 
 use crate::event_bus::EventBus;
 use crate::tool_context::ToolContext;
@@ -55,6 +55,8 @@ pub struct TurnResult {
     pub cache_read_tokens: usize,
     /// Cache write tokens reported by the provider (Anthropic: cache_creation_input_tokens).
     pub cache_write_tokens: usize,
+    /// Context window size used for this turn (from config.effective_context_window()).
+    pub context_window: usize,
     /// Intermediate tool-call and tool-result messages for persistence.
     pub tool_messages: Vec<Message>,
     /// Token usage from auxiliary models (vision, etc.) for separate cost tracking.
@@ -134,8 +136,9 @@ pub struct AgentLoopConfig {
     pub event_bus: Option<EventBus>,
     /// Pending permission approvals keyed by call_id
     #[allow(clippy::type_complexity)]
-    pub pending_permissions:
-        Option<Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<loom_types::PermissionResponse>>>>>,
+    pub pending_permissions: Option<
+        Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<loom_types::PermissionResponse>>>>,
+    >,
     /// Tools that the user has chosen to auto-approve for the rest of this session.
     /// Keyed by tool name. Only used in "ask" permission mode.
     pub session_approved_tools: Arc<std::sync::Mutex<HashSet<String>>>,
@@ -195,10 +198,7 @@ impl AgentLoopConfig {
             .find(|c| Some(c.name.as_str()) == self.active_model_name.as_deref())
             .map(|c| c.backend.clone())
             .unwrap_or_default();
-        let model_name = self
-            .active_model_name
-            .as_deref()
-            .unwrap_or("");
+        let model_name = self.active_model_name.as_deref().unwrap_or("");
         loom_context::tokenizer_for_model(model_name, backend)
     }
 }
@@ -232,8 +232,8 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = concat!(
     "- file_edit { file_path, edits: [{ old_string, new_string }] } — 精确字符串替换。old_string 必须在文件中唯一匹配。\n",
     "- file_delete { file_path } — 删除文件。\n",
     "- file_list { path } — 列出目录内容。\n",
-   "- file_glob { pattern } — 按 glob 模式查找文件（如 **/*.rs）。\n",
-   "- file_find { path, name } — 按文件名搜索。\n",
+    "- file_glob { pattern } — 按 glob 模式查找文件（如 **/*.rs）。\n",
+    "- file_find { path, name } — 按文件名搜索。\n",
     "\n",
     "### 搜索\n",
     "- content_search { pattern } — 用 rg/ripgrep 在文件中搜索内容，支持正则。\n",
@@ -247,14 +247,14 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = concat!(
     "- process_list — 列出所有后台进程。\n",
     "- process_kill { pid } — 终止后台进程。\n",
     "- process_stdin { pid, data } — 向后台进程发送输入。\n",
-   "- process_peek { pid } — 查看进程当前输出的最后 N 行。\n",
-   "- monitor { command } — 启动后台监控进程（持续推送输出到聊天，支持 shell/WebSocket）。\n",
-   "- monitor_list — 列出所有活跃的后台监控任务。\n",
-   "- monitor_kill { monitor_id } — 终止指定的后台监控任务。\n",
-   "- monitor_wait { monitor_id, timeout } — 阻塞等待监控输出，收到后返回。用于循环读取。\n",
-   "- monitor_peek { monitor_id } — 非阻塞查询监控状态（running/exited）和已缓存输出。\n",
-   "\n",
-   "\n",
+    "- process_peek { pid } — 查看进程当前输出的最后 N 行。\n",
+    "- monitor { command } — 启动后台监控进程（持续推送输出到聊天，支持 shell/WebSocket）。\n",
+    "- monitor_list — 列出所有活跃的后台监控任务。\n",
+    "- monitor_kill { monitor_id } — 终止指定的后台监控任务。\n",
+    "- monitor_wait { monitor_id, timeout } — 阻塞等待监控输出，收到后返回。用于循环读取。\n",
+    "- monitor_peek { monitor_id } — 非阻塞查询监控状态（running/exited）和已缓存输出。\n",
+    "\n",
+    "\n",
     "### 任务与通知\n",
     "- todo_write { todos } — 写入/更新任务列表，用于跟踪复杂任务的进度。\n",
     "- todo_list — 列出当前任务。\n",
@@ -268,7 +268,7 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = concat!(
     "\n",
     "### 子代理\n",
     "- spawn_agent { description, prompt } — 派生子代理执行独立任务，完成后返回结果。适合并行处理多个独立子任务。\n",
-   "- spawn_agents { tasks: [{ description, prompt }], rounds } — 并行派发多个子代理。rounds>1 时启动多轮辩论，每轮代理看到上一轮其他代理的结果。\n",
+    "- spawn_agents { tasks: [{ description, prompt }], rounds } — 并行派发多个子代理。rounds>1 时启动多轮辩论，每轮代理看到上一轮其他代理的结果。\n",
     "- report_findings { findings } — 汇总子代理结果。\n",
     "\n",
     "### Skills（技能）\n",
@@ -285,8 +285,8 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = concat!(
     "2. 用 file_edit 做精确修改：old_string 必须在文件中精确匹配（包括缩进和换行），且只能匹配一处。\n",
     "3. 永远不要用 shell 命令直接写文件（如 echo/cat > ），用 file_write 或 file_edit。\n",
     "4. 修改后展示 diff：用 ```diff 格式显示改了什么。\n",
-   "5. 一次修改保持 scope 小——只改与当前任务相关的文件，不碰无关代码。\n",
-   "6. 不要修改用户已经做出的未提交更改，除非用户明确要求。\n",
+    "5. 一次修改保持 scope 小——只改与当前任务相关的文件，不碰无关代码。\n",
+    "6. 不要修改用户已经做出的未提交更改，除非用户明确要求。\n",
     "\n",
     "## Shell 执行规则\n",
     "1. 默认在工作区路径下执行命令。使用绝对路径引用文件。\n",
@@ -631,9 +631,7 @@ fn sanitize_message_sequence(messages: &mut Vec<Message>) {
             // If the assistant has tool_calls but zero tool messages follow
             // at all, or every following tool message is orphaned, the
             // assistant is orphaned too.
-            if tool_run.is_empty()
-                || tool_run.iter().all(|idx| orphaned_tool.contains(idx))
-            {
+            if tool_run.is_empty() || tool_run.iter().all(|idx| orphaned_tool.contains(idx)) {
                 orphaned_assistant.insert(i);
             }
         }
@@ -702,10 +700,7 @@ fn tool_execution_denied(
     {
         return true;
     }
-    if tool_name == "request_tools"
-        || tool_name == "todo_write"
-        || tool_name == "todo_list"
-    {
+    if tool_name == "request_tools" || tool_name == "todo_write" || tool_name == "todo_list" {
         return false;
     }
     if let Some(allow) = allowed_tools
@@ -731,7 +726,10 @@ fn build_toolcall_parts(tool_messages: &[Message]) -> Vec<ContentPart> {
     let mut parts = Vec::new();
     for msg in tool_messages {
         for part in &msg.content {
-            if let ContentPart::ToolResult { tool_call_id, name, .. } = part {
+            if let ContentPart::ToolResult {
+                tool_call_id, name, ..
+            } = part
+            {
                 parts.push(ContentPart::ToolCall {
                     id: tool_call_id.clone(),
                     name: name.clone(),
@@ -893,7 +891,12 @@ async fn run_agent_turn_inner(
     // Inject todo context (after dynamic_context, before user/assistant history)
     if let Some(ref tc) = config.todo_context {
         if !tc.is_empty() {
-            let insert_pos = 1 + config.few_shots.len() + config.dynamic_context.as_ref().map_or(0, |dc| if dc.is_empty() { 0 } else { 1 });
+            let insert_pos = 1
+                + config.few_shots.len()
+                + config
+                    .dynamic_context
+                    .as_ref()
+                    .map_or(0, |dc| if dc.is_empty() { 0 } else { 1 });
             messages.insert(
                 insert_pos,
                 Message {
@@ -908,8 +911,16 @@ async fn run_agent_turn_inner(
     // Inject continuation note — tells LLM the user cancelled and is now giving follow-up
     if let Some(ref note) = config.continuation_note {
         if !note.is_empty() {
-            let insert_pos = 1 + config.few_shots.len() + config.dynamic_context.as_ref().map_or(0, |dc| if dc.is_empty() { 0 } else { 1 })
-                + config.todo_context.as_ref().map_or(0, |tc| if tc.is_empty() { 0 } else { 1 });
+            let insert_pos = 1
+                + config.few_shots.len()
+                + config
+                    .dynamic_context
+                    .as_ref()
+                    .map_or(0, |dc| if dc.is_empty() { 0 } else { 1 })
+                + config
+                    .todo_context
+                    .as_ref()
+                    .map_or(0, |tc| if tc.is_empty() { 0 } else { 1 });
             messages.insert(
                 insert_pos,
                 Message {
@@ -994,14 +1005,17 @@ async fn run_agent_turn_inner(
                     match vision_result {
                         Ok(Ok(vresult)) => {
                             vision_usage = Some(vresult.usage);
-                            messages.insert(messages.len().saturating_sub(1), Message {
-                                role: loom_types::Role::System,
-                                content: vec![ContentPart::Text {
-                                    text: vresult.context,
-                                }],
-                                timestamp: chrono::Utc::now(),
-                                usage: None,
-                            });
+                            messages.insert(
+                                messages.len().saturating_sub(1),
+                                Message {
+                                    role: loom_types::Role::System,
+                                    content: vec![ContentPart::Text {
+                                        text: vresult.context,
+                                    }],
+                                    timestamp: chrono::Utc::now(),
+                                    usage: None,
+                                },
+                            );
                             info!("vision auxiliary context injected");
                         }
                         Ok(Err(e)) => {
@@ -1080,23 +1094,48 @@ async fn run_agent_turn_inner(
 
     for iteration in 0..config.max_iterations {
         // Drain steering queue: inject any GUI-provided guidance messages
-        if let Some(ref queue) = config.steering_queue {
+        let steering_consumed = if let Some(ref queue) = config.steering_queue {
             let mut msgs = queue.write().await;
+            let count = msgs.len();
             while let Some(msg) = msgs.pop() {
                 messages.push(Message {
                     role: Role::System,
-                    content: vec![ContentPart::Text { text: format!("[用户指引] {}", msg) }],
+                    content: vec![ContentPart::Text {
+                        text: format!("[用户指引] {}", msg),
+                    }],
                     timestamp: chrono::Utc::now(),
                     usage: None,
                 });
             }
+            count
+        } else { 0 };
+        // Notify frontend when we consumed steering items
+        if steering_consumed > 0 {
+            if let Some(ref bus) = config.event_bus {
+                let remaining = config.steering_queue.as_ref()
+                    .map(|q| {
+                        // We can't hold the write lock simultaneously, estimate: was N, took all N
+                        // But other threads may have pushed more — use try_read for approximate
+                        q.try_read().map(|q| q.len()).unwrap_or(0)
+                    })
+                    .unwrap_or(0);
+                bus.publish(crate::event_bus::AgentEvent::SteeringConsumed {
+                    session_id: config.session_id.clone(),
+                    remaining_count: remaining,
+                });
+            }
         }
-       // Token budget check: stop if CURRENT window tokens exceed the budget
+        // Token budget check: stop if CURRENT window tokens exceed the budget
         // (was cumulative total_prompt, which falsely tripped after N iterations).
         let current_window_tokens: usize = if config.max_prompt_budget > 0 {
             let tid = config.tokenizer_for_active_model();
-            messages.iter().map(|m| loom_context::message_tokens_with_id(m, tid)).sum()
-        } else { 0 };
+            messages
+                .iter()
+                .map(|m| loom_context::message_tokens_with_id(m, tid))
+                .sum()
+        } else {
+            0
+        };
         if config.max_prompt_budget > 0 && current_window_tokens > config.max_prompt_budget {
             info!(
                 iteration,
@@ -1132,50 +1171,108 @@ async fn run_agent_turn_inner(
                 tool_messages,
                 vision_usage: None,
                 progress: ProgressCheckpoint::default(),
+                context_window: config.effective_context_window(),
                 stop_reason: StopReason::BudgetExhausted,
             });
         }
-       // Mid-turn safety: check token usage against context window ceiling.
+        // Mid-turn safety: check token usage against context window ceiling.
         // When compaction is enabled, try truncation first. When disabled, stop
-       // immediately if tokens exceed the ceiling to avoid LLM HTTP 400 errors.
-       if !messages.is_empty() {
+        // immediately if tokens exceed the ceiling to avoid LLM HTTP 400 errors.
+        if !messages.is_empty() {
             let tid = config.tokenizer_for_active_model();
-           let total_tokens: usize = messages.iter()
+            let total_tokens: usize = messages
+                .iter()
                 .map(|m| loom_context::message_tokens_with_id(m, tid))
-               .sum();
-           let cw = config.effective_context_window().max(config.max_prompt_budget);
+                .sum();
+            let cw = config
+                .effective_context_window()
+                .max(config.max_prompt_budget);
             let ceiling = (cw as f32 * 0.9) as usize;
             if total_tokens > ceiling {
-               if config.compaction_config.enabled {
+                if config.compaction_config.enabled {
                     safety_truncation_count += 1;
                     let before = total_tokens;
                     // LLM semantic compression first
                     if config.compaction_config.use_llm_summarization {
-                        llm_compress_large_outputs(&mut messages, &config.compaction_config, client).await;
+                        llm_compress_large_outputs(
+                            &mut messages,
+                            &config.compaction_config,
+                            client,
+                        )
+                        .await;
                     }
                     // Character truncation as safety net
-                   messages = loom_context::mid_turn_safety_truncate(
+                    messages = loom_context::mid_turn_safety_truncate(
                         &messages,
-                       config.compaction_config.max_tool_output_chars,
-                   );
-                    let after: usize = messages.iter().map(|m| loom_context::message_tokens_with_id(m, tid)).sum();
-                   tracing::info!(iteration, before, after, count = safety_truncation_count, "mid-turn safety truncation applied");
+                        config.compaction_config.max_tool_output_chars,
+                    );
+                    let after: usize = messages
+                        .iter()
+                        .map(|m| loom_context::message_tokens_with_id(m, tid))
+                        .sum();
+                    tracing::info!(
+                        iteration,
+                        before,
+                        after,
+                        count = safety_truncation_count,
+                        "mid-turn safety truncation applied"
+                    );
                     // If safety truncation fired 3+ times this turn, or post-truncation
                     // tokens still exceed 85% of the context window, stop and show ContinueButton
                     // so the user can click to continue with a fresh context window (which also
                     // triggers pre-turn LLM summarization at the 80% threshold).
                     let critical_ceiling = (cw as f32 * 0.85) as usize;
                     if safety_truncation_count >= 3 || after > critical_ceiling {
+                        info!(
+                            iteration,
+                            after,
+                            count = safety_truncation_count,
+                            "safety truncation repeated — stopping for user to continue"
+                        );
+                        return Ok(TurnResult {
+                            response: format!(
+                                "任务进行中（已用 {} tokens，达上下文上限）。输入「继续」以接着执行。",
+                                after
+                            ),
+                            thinking: String::new(),
+                            tool_calls_made,
+                            iterations: iteration,
+                            prompt_tokens: total_prompt,
+                            completion_tokens: total_completion,
+                            cached_tokens: 0,
+                            cache_read_tokens: 0,
+                            cache_write_tokens: 0,
+                            kv_cache_hit: None,
+                            content_parts: {
+                                let mut parts = build_toolcall_parts(&tool_messages);
+                                parts.push(ContentPart::Text {
+                                text: format!(
+                                    "任务进行中（已用 {} tokens，达上下文上限）。输入「继续」以接着执行。",
+                                    after
+                                ),
+                            });
+                                parts
+                            },
+                            tool_messages,
+                            vision_usage: None,
+                            progress: ProgressCheckpoint::default(),
+                            context_window: config.effective_context_window(),
+                            stop_reason: StopReason::BudgetExhausted,
+                        });
+                    }
+                } else {
+                    // Compaction disabled but tokens exceed ceiling — stop immediately
+                    // to avoid LLM HTTP 400 errors from context window overflow.
                     info!(
                         iteration,
-                        after,
-                        count = safety_truncation_count,
-                        "safety truncation repeated — stopping for user to continue"
+                        total_tokens,
+                        ceiling,
+                        "token ceiling exceeded (compaction disabled) — stopping for user to continue"
                     );
                     return Ok(TurnResult {
                         response: format!(
                             "任务进行中（已用 {} tokens，达上下文上限）。输入「继续」以接着执行。",
-                            after
+                            total_tokens
                         ),
                         thinking: String::new(),
                         tool_calls_made,
@@ -1189,59 +1286,21 @@ async fn run_agent_turn_inner(
                         content_parts: {
                             let mut parts = build_toolcall_parts(&tool_messages);
                             parts.push(ContentPart::Text {
-                                text: format!(
-                                    "任务进行中（已用 {} tokens，达上下文上限）。输入「继续」以接着执行。",
-                                    after
-                                ),
-                            });
-                            parts
-                        },
-                        tool_messages,
-                        vision_usage: None,
-                        progress: ProgressCheckpoint::default(),
-                stop_reason: StopReason::BudgetExhausted,
-                    });
-                }
-            } else {
-                // Compaction disabled but tokens exceed ceiling — stop immediately
-                // to avoid LLM HTTP 400 errors from context window overflow.
-                info!(
-                    iteration,
-                    total_tokens,
-                    ceiling,
-                    "token ceiling exceeded (compaction disabled) — stopping for user to continue"
-                );
-                return Ok(TurnResult {
-                    response: format!(
-                        "任务进行中（已用 {} tokens，达上下文上限）。输入「继续」以接着执行。",
-                        total_tokens
-                    ),
-                    thinking: String::new(),
-                    tool_calls_made,
-                    iterations: iteration,
-                    prompt_tokens: total_prompt,
-                    completion_tokens: total_completion,
-                    cached_tokens: 0,
-                    cache_read_tokens: 0,
-                    cache_write_tokens: 0,
-                    kv_cache_hit: None,
-                    content_parts: {
-                        let mut parts = build_toolcall_parts(&tool_messages);
-                        parts.push(ContentPart::Text {
                             text: format!(
                                 "任务进行中（已用 {} tokens，达上下文上限）。输入「继续」以接着执行。",
                                 total_tokens
                             ),
                         });
-                        parts
-                    },
-                    tool_messages,
-                    vision_usage: None,
-                    progress: ProgressCheckpoint::default(),
-                stop_reason: StopReason::BudgetExhausted,
-                });
+                            parts
+                        },
+                        tool_messages,
+                        vision_usage: None,
+                        progress: ProgressCheckpoint::default(),
+                        context_window: config.effective_context_window(),
+                        stop_reason: StopReason::BudgetExhausted,
+                    });
+                }
             }
-        }
         }
         // Check for user interruption before each iteration
         if cancel.is_cancelled() {
@@ -1259,12 +1318,15 @@ async fn run_agent_turn_inner(
                 kv_cache_hit: None,
                 content_parts: {
                     let mut parts = build_toolcall_parts(&tool_messages);
-                    parts.push(ContentPart::Text { text: "[已中断]".into() });
+                    parts.push(ContentPart::Text {
+                        text: "[已中断]".into(),
+                    });
                     parts
                 },
                 tool_messages,
                 vision_usage: None,
                 progress: ProgressCheckpoint::default(),
+                context_window: config.effective_context_window(),
                 stop_reason: StopReason::UserCancelled,
             });
         }
@@ -1436,8 +1498,6 @@ async fn run_agent_turn_inner(
                             .await;
                 }
 
-
-
                 if !allowed {
                     let reason = match config.permission_mode.as_str() {
                         "plan" => format!(
@@ -1470,9 +1530,30 @@ async fn run_agent_turn_inner(
                     continue;
                 }
 
-                let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
-                // Drain progress updates in background to avoid SendError in tool implementations
-                tokio::spawn(async move { while progress_rx.recv().await.is_some() {} });
+                let (progress_tx, mut progress_rx) =
+                    mpsc::unbounded_channel::<loom_types::ToolProgress>();
+                // Forward progress updates to EventBus as ToolOutput events for real-time display
+                {
+                    let eb = tool_context.event_bus.clone();
+                    let aid = config.agent_id.clone();
+                    let cid = tc.id.clone();
+                    let tn = tc.name.clone();
+                    let sid = config.session_id.clone();
+                    tokio::spawn(async move {
+                        while let Some(p) = progress_rx.recv().await {
+                            if let Some(ref bus) = eb {
+                                bus.publish(crate::event_bus::AgentEvent::ToolOutput {
+                                    agent_id: loom_types::AgentId(aid.clone()),
+                                    call_id: cid.clone(),
+                                    tool_name: tn.clone(),
+                                    line: p.message.clone(),
+                                    stream: "stdout".to_string(),
+                                    session_id: sid.clone(),
+                                });
+                            }
+                        }
+                    });
+                }
 
                 // Wrap tool execution with cancel check — if user clicks stop
                 // while a tool is running, we break out immediately.
@@ -1500,6 +1581,7 @@ async fn run_agent_turn_inner(
                             tool_messages,
                             vision_usage: None,
                             progress: ProgressCheckpoint::default(),
+                            context_window: config.effective_context_window(),
                             stop_reason: StopReason::UserCancelled,
                         });
                     }
@@ -1590,6 +1672,7 @@ async fn run_agent_turn_inner(
             tool_messages,
             vision_usage: vision_usage.clone(),
             progress: ProgressCheckpoint::default(),
+            context_window: config.effective_context_window(),
             stop_reason: StopReason::Completed,
         });
     }
@@ -1615,6 +1698,7 @@ async fn run_agent_turn_inner(
         tool_messages,
         vision_usage: vision_usage.clone(),
         progress: ProgressCheckpoint::default(),
+        context_window: config.effective_context_window(),
         stop_reason: StopReason::MaxIterations,
     })
 }
@@ -1756,8 +1840,16 @@ async fn run_agent_turn_streaming_inner(
     // Inject continuation note — tells LLM the user cancelled and is now giving follow-up
     if let Some(ref note) = config.continuation_note {
         if !note.is_empty() {
-            let insert_pos = 1 + config.few_shots.len() + config.dynamic_context.as_ref().map_or(0, |dc| if dc.is_empty() { 0 } else { 1 })
-                + config.todo_context.as_ref().map_or(0, |tc| if tc.is_empty() { 0 } else { 1 });
+            let insert_pos = 1
+                + config.few_shots.len()
+                + config
+                    .dynamic_context
+                    .as_ref()
+                    .map_or(0, |dc| if dc.is_empty() { 0 } else { 1 })
+                + config
+                    .todo_context
+                    .as_ref()
+                    .map_or(0, |tc| if tc.is_empty() { 0 } else { 1 });
             messages.insert(
                 insert_pos,
                 Message {
@@ -1772,7 +1864,12 @@ async fn run_agent_turn_streaming_inner(
     // Inject todo context (after dynamic_context, before user/assistant history)
     if let Some(ref tc) = config.todo_context {
         if !tc.is_empty() {
-            let insert_pos = 1 + config.few_shots.len() + config.dynamic_context.as_ref().map_or(0, |dc| if dc.is_empty() { 0 } else { 1 });
+            let insert_pos = 1
+                + config.few_shots.len()
+                + config
+                    .dynamic_context
+                    .as_ref()
+                    .map_or(0, |dc| if dc.is_empty() { 0 } else { 1 });
             messages.insert(
                 insert_pos,
                 Message {
@@ -1922,14 +2019,17 @@ async fn run_agent_turn_streaming_inner(
                                     .await;
                             }
                             vision_usage = Some(vresult.usage);
-                            messages.insert(messages.len().saturating_sub(1), Message {
-                                role: loom_types::Role::System,
-                                content: vec![ContentPart::Text {
-                                    text: vresult.context,
-                                }],
-                                timestamp: chrono::Utc::now(),
-                                usage: None,
-                            });
+                            messages.insert(
+                                messages.len().saturating_sub(1),
+                                Message {
+                                    role: loom_types::Role::System,
+                                    content: vec![ContentPart::Text {
+                                        text: vresult.context,
+                                    }],
+                                    timestamp: chrono::Utc::now(),
+                                    usage: None,
+                                },
+                            );
                             tracing::info!("vision auxiliary context injected (streaming)");
                         }
                         Ok(Err(e)) => {
@@ -2015,24 +2115,49 @@ async fn run_agent_turn_streaming_inner(
 
     for iteration in 0..config.max_iterations {
         // Drain steering queue: inject any GUI-provided guidance messages
-        if let Some(ref queue) = config.steering_queue {
+        let steering_consumed = if let Some(ref queue) = config.steering_queue {
             let mut msgs = queue.write().await;
+            let count = msgs.len();
             while let Some(msg) = msgs.pop() {
                 messages.push(Message {
                     role: Role::System,
-                    content: vec![ContentPart::Text { text: format!("[用户指引] {}", msg) }],
+                    content: vec![ContentPart::Text {
+                        text: format!("[用户指引] {}", msg),
+                    }],
                     timestamp: chrono::Utc::now(),
                     usage: None,
                 });
             }
+            count
+        } else { 0 };
+        // Notify frontend when we consumed steering items
+        if steering_consumed > 0 {
+            if let Some(ref bus) = config.event_bus {
+                let remaining = config.steering_queue.as_ref()
+                    .map(|q| {
+                        // We can't hold the write lock simultaneously, estimate: was N, took all N
+                        // But other threads may have pushed more — use try_read for approximate
+                        q.try_read().map(|q| q.len()).unwrap_or(0)
+                    })
+                    .unwrap_or(0);
+                bus.publish(crate::event_bus::AgentEvent::SteeringConsumed {
+                    session_id: config.session_id.clone(),
+                    remaining_count: remaining,
+                });
+            }
         }
         // Token budget check: stop if CURRENT window tokens exceed the budget
-       // (was cumulative total_prompt, which falsely tripped after N iterations).
-       let current_window_tokens: usize = if config.max_prompt_budget > 0 {
+        // (was cumulative total_prompt, which falsely tripped after N iterations).
+        let current_window_tokens: usize = if config.max_prompt_budget > 0 {
             let tid = config.tokenizer_for_active_model();
-            messages.iter().map(|m| loom_context::message_tokens_with_id(m, tid)).sum()
-       } else { 0 };
-       if config.max_prompt_budget > 0 && current_window_tokens > config.max_prompt_budget {
+            messages
+                .iter()
+                .map(|m| loom_context::message_tokens_with_id(m, tid))
+                .sum()
+        } else {
+            0
+        };
+        if config.max_prompt_budget > 0 && current_window_tokens > config.max_prompt_budget {
             tracing::info!(
                 iteration,
                 total_prompt,
@@ -2067,40 +2192,93 @@ async fn run_agent_turn_streaming_inner(
                 tool_messages,
                 vision_usage: None,
                 progress: ProgressCheckpoint::default(),
+                context_window: config.effective_context_window(),
                 stop_reason: StopReason::BudgetExhausted,
             });
         }
-       // Mid-turn safety: check token usage against context window ceiling (streaming).
-       if !messages.is_empty() {
+        // Mid-turn safety: check token usage against context window ceiling (streaming).
+        if !messages.is_empty() {
             let tid = config.tokenizer_for_active_model();
-           let total_tokens: usize = messages.iter()
+            let total_tokens: usize = messages
+                .iter()
                 .map(|m| loom_context::message_tokens_with_id(m, tid))
-               .sum();
-           let cw = config.effective_context_window().max(config.max_prompt_budget);
+                .sum();
+            let cw = config
+                .effective_context_window()
+                .max(config.max_prompt_budget);
             let ceiling = (cw as f32 * 0.9) as usize;
             if total_tokens > ceiling {
                 if config.compaction_config.enabled {
-               safety_truncation_count += 1;
-               let before = total_tokens;
-               messages = loom_context::mid_turn_safety_truncate(
-                   &messages,
-                   config.compaction_config.max_tool_output_chars,
-               );
-                let after: usize = messages.iter().map(|m| loom_context::message_tokens_with_id(m, tid)).sum();
-               tracing::info!(iteration, before, after, count = safety_truncation_count, "mid-turn safety truncation applied (streaming)");
-                // If safety truncation fired 3+ times this turn, or post-truncation
-                // tokens still exceed 85% of the context window, stop and show ContinueButton.
-                let critical_ceiling = (cw as f32 * 0.85) as usize;
-                if safety_truncation_count >= 3 || after > critical_ceiling {
+                    safety_truncation_count += 1;
+                    let before = total_tokens;
+                    messages = loom_context::mid_turn_safety_truncate(
+                        &messages,
+                        config.compaction_config.max_tool_output_chars,
+                    );
+                    let after: usize = messages
+                        .iter()
+                        .map(|m| loom_context::message_tokens_with_id(m, tid))
+                        .sum();
                     tracing::info!(
                         iteration,
+                        before,
                         after,
                         count = safety_truncation_count,
-                        "safety truncation repeated — stopping for user to continue (streaming)"
+                        "mid-turn safety truncation applied (streaming)"
+                    );
+                    // If safety truncation fired 3+ times this turn, or post-truncation
+                    // tokens still exceed 85% of the context window, stop and show ContinueButton.
+                    let critical_ceiling = (cw as f32 * 0.85) as usize;
+                    if safety_truncation_count >= 3 || after > critical_ceiling {
+                        tracing::info!(
+                            iteration,
+                            after,
+                            count = safety_truncation_count,
+                            "safety truncation repeated — stopping for user to continue (streaming)"
+                        );
+                        let msg = format!(
+                            "任务进行中（已用 {} tokens，达上下文上限）。输入「继续」以接着执行。",
+                            after
+                        );
+                        let _ = delta_tx.send(StreamDelta::Text(msg.clone())).await;
+                        drop(delta_tx);
+                        return Ok(TurnResult {
+                            response: msg,
+                            thinking: String::new(),
+                            tool_calls_made,
+                            iterations: iteration,
+                            prompt_tokens: total_prompt,
+                            completion_tokens: total_completion,
+                            cached_tokens: 0,
+                            cache_read_tokens: 0,
+                            cache_write_tokens: 0,
+                            kv_cache_hit: None,
+                            content_parts: {
+                                let mut parts = build_toolcall_parts(&tool_messages);
+                                parts.push(ContentPart::Text {
+                                    text: "任务进行中（已达上下文上限）。输入「继续」以接着执行。"
+                                        .into(),
+                                });
+                                parts
+                            },
+                            tool_messages,
+                            vision_usage: None,
+                            progress: ProgressCheckpoint::default(),
+                            context_window: config.effective_context_window(),
+                            stop_reason: StopReason::BudgetExhausted,
+                        });
+                    }
+                } else {
+                    // Compaction disabled but tokens exceed ceiling — stop immediately (streaming).
+                    tracing::info!(
+                        iteration,
+                        total_tokens,
+                        ceiling,
+                        "token ceiling exceeded (compaction disabled, streaming) — stopping"
                     );
                     let msg = format!(
                         "任务进行中（已用 {} tokens，达上下文上限）。输入「继续」以接着执行。",
-                        after
+                        total_tokens
                     );
                     let _ = delta_tx.send(StreamDelta::Text(msg.clone())).await;
                     drop(delta_tx);
@@ -2118,62 +2296,30 @@ async fn run_agent_turn_streaming_inner(
                         content_parts: {
                             let mut parts = build_toolcall_parts(&tool_messages);
                             parts.push(ContentPart::Text {
-                                text: "任务进行中（已达上下文上限）。输入「继续」以接着执行。".into(),
+                                text: "任务进行中（已达上下文上限）。输入「继续」以接着执行。"
+                                    .into(),
                             });
                             parts
                         },
                         tool_messages,
                         vision_usage: None,
                         progress: ProgressCheckpoint::default(),
-                stop_reason: StopReason::BudgetExhausted,
+                        context_window: config.effective_context_window(),
+                        stop_reason: StopReason::BudgetExhausted,
                     });
                 }
-            } else {
-                // Compaction disabled but tokens exceed ceiling — stop immediately (streaming).
-                tracing::info!(
-                    iteration,
-                    total_tokens,
-                    ceiling,
-                    "token ceiling exceeded (compaction disabled, streaming) — stopping"
-                );
-                let msg = format!(
-                    "任务进行中（已用 {} tokens，达上下文上限）。输入「继续」以接着执行。",
-                    total_tokens
-                );
-                let _ = delta_tx.send(StreamDelta::Text(msg.clone())).await;
-                drop(delta_tx);
-                return Ok(TurnResult {
-                    response: msg,
-                    thinking: String::new(),
-                    tool_calls_made,
-                    iterations: iteration,
-                    prompt_tokens: total_prompt,
-                    completion_tokens: total_completion,
-                    cached_tokens: 0,
-                    cache_read_tokens: 0,
-                    cache_write_tokens: 0,
-                    kv_cache_hit: None,
-                    content_parts: {
-                        let mut parts = build_toolcall_parts(&tool_messages);
-                        parts.push(ContentPart::Text {
-                            text: "任务进行中（已达上下文上限）。输入「继续」以接着执行。".into(),
-                        });
-                        parts
-                    },
-                    tool_messages,
-                    vision_usage: None,
-                    progress: ProgressCheckpoint::default(),
-                stop_reason: StopReason::BudgetExhausted,
-                });
             }
-        }
         }
         // Check for user interruption before each iteration
         if cancel.is_cancelled() {
             tracing::info!("agent turn cancelled by user at iteration {}", iteration);
             let interrupted = "[已中断]";
             let partial = &final_text;
-            let response = if partial.is_empty() { interrupted.to_string() } else { format!("{}\n\n{}", partial, interrupted) };
+            let response = if partial.is_empty() {
+                interrupted.to_string()
+            } else {
+                format!("{}\n\n{}", partial, interrupted)
+            };
             let _ = delta_tx.send(StreamDelta::Text(response.clone())).await;
             drop(delta_tx);
             return Ok(TurnResult {
@@ -2192,12 +2338,15 @@ async fn run_agent_turn_streaming_inner(
                     if !final_text.is_empty() {
                         parts.push(ContentPart::Text { text: final_text });
                     }
-                    parts.push(ContentPart::Text { text: interrupted.into() });
+                    parts.push(ContentPart::Text {
+                        text: interrupted.into(),
+                    });
                     parts
                 },
                 tool_messages,
                 vision_usage: None,
                 progress: ProgressCheckpoint::default(),
+                context_window: config.effective_context_window(),
                 stop_reason: StopReason::UserCancelled,
             });
         }
@@ -2299,6 +2448,7 @@ async fn run_agent_turn_streaming_inner(
                             tool_messages,
                             vision_usage: None,
                             progress: ProgressCheckpoint::default(),
+                context_window: config.effective_context_window(),
                 stop_reason: StopReason::UserCancelled,
                         });
                     }
@@ -2592,8 +2742,6 @@ async fn run_agent_turn_streaming_inner(
                     allowed = request_user_approval(tc_id, tc_name, &args, &risk, config).await;
                 }
 
-
-
                 if !allowed {
                     let reason = match config.permission_mode.as_str() {
                         "plan" => format!(
@@ -2654,7 +2802,8 @@ async fn run_agent_turn_streaming_inner(
                                  1. 如果是 file_write/write_file：将内容拆成多次调用，每次不超过 8KB\n\
                                  2. 如果是 use_skill：技能内容已在系统提示中加载，无需重复调用\n\
                                  3. 如果是其他工具：减少参数中的内容量，或分步执行",
-                                tc_name, tc_args.len()
+                                tc_name,
+                                tc_args.len()
                             );
                             messages.push(Message::tool(tc_id, tc_name, &err_content));
                             tool_messages.push(messages.last().unwrap().clone());
@@ -2673,15 +2822,43 @@ async fn run_agent_turn_streaming_inner(
                         serde_json::json!({})
                     }
                 };
-                let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
-                // Drain progress updates in background to avoid SendError in tool implementations
-                tokio::spawn(async move { while progress_rx.recv().await.is_some() {} });
+                let (progress_tx, mut progress_rx) =
+                    mpsc::unbounded_channel::<loom_types::ToolProgress>();
+                // Forward progress updates to EventBus as ToolOutput events for real-time display
+                {
+                    let eb = tool_context.event_bus.clone();
+                    let aid = config.agent_id.clone();
+                    let cid = tc_id.clone();
+                    let tn = tc_name.clone();
+                    let sid = config.session_id.clone();
+                    tokio::spawn(async move {
+                        while let Some(p) = progress_rx.recv().await {
+                            if let Some(ref bus) = eb {
+                                bus.publish(crate::event_bus::AgentEvent::ToolOutput {
+                                    agent_id: loom_types::AgentId(aid.clone()),
+                                    call_id: cid.clone(),
+                                    tool_name: tn.clone(),
+                                    line: p.message.clone(),
+                                    stream: "stdout".to_string(),
+                                    session_id: sid.clone(),
+                                });
+                            }
+                        }
+                    });
+                }
 
                 info!(tool_name = %tc_name, tool_args = %tc_args, "executing tool (streaming)");
                 // Capture file path before arguments is moved into execute
-                let maybe_file_path: Option<String> = if matches!(tc_name.as_str(), "file_write" | "file_edit") {
-                    arguments.get("file_path").or(arguments.get("path")).and_then(|v| v.as_str()).map(|s| s.to_string())
-                } else { None };
+                let maybe_file_path: Option<String> =
+                    if matches!(tc_name.as_str(), "file_write" | "file_edit") {
+                        arguments
+                            .get("file_path")
+                            .or(arguments.get("path"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    } else {
+                        None
+                    };
                 // Clone tc_name for use after tokio::select! (which moves it)
                 let tc_name_for_log = tc_name.clone();
                 // Wrap tool execution with cancel check — if user clicks stop
@@ -2716,6 +2893,7 @@ async fn run_agent_turn_streaming_inner(
                             tool_messages,
                             vision_usage: None,
                             progress: ProgressCheckpoint::default(),
+                            context_window: config.effective_context_window(),
                             stop_reason: StopReason::UserCancelled,
                         });
                     }
@@ -2745,12 +2923,18 @@ async fn run_agent_turn_streaming_inner(
 
                         // Record progress for auto-continue checkpoint
                         let step_summary = content.chars().take(150).collect::<String>();
-                        progress.completed_steps.push(format!("{} -> {}", tc_name, step_summary));
-                        if progress.completed_steps.len() > 50 { progress.completed_steps.remove(0); }
+                        progress
+                            .completed_steps
+                            .push(format!("{} -> {}", tc_name, step_summary));
+                        if progress.completed_steps.len() > 50 {
+                            progress.completed_steps.remove(0);
+                        }
                         progress.tool_calls_executed += 1;
                         // Track file writes/edits
                         if let Some(ref path) = maybe_file_path {
-                            if !progress.files_touched.contains(path) { progress.files_touched.push(path.clone()); }
+                            if !progress.files_touched.contains(path) {
+                                progress.files_touched.push(path.clone());
+                            }
                         }
 
                         let _ = delta_tx
@@ -2855,7 +3039,12 @@ async fn run_agent_turn_streaming_inner(
         thinking: captured_thinking,
         content_parts: final_content_parts,
         tool_calls_made,
-        stop_reason: if completed_iterations > 0 { StopReason::Completed } else { StopReason::MaxIterations },
+        context_window: config.effective_context_window(),
+        stop_reason: if completed_iterations > 0 {
+            StopReason::Completed
+        } else {
+            StopReason::MaxIterations
+        },
         iterations: if completed_iterations > 0 {
             completed_iterations
         } else {
@@ -3005,18 +3194,39 @@ pub(crate) async fn llm_compress_tool_output(
          数值结果、代码片段、JSON 结构。不要编造任何信息。\n\n原始输出:\n{output}",
         target = cfg.semantic_compress_target_chars,
     );
-    let request = CompletionRequest { prompt, max_tokens: 512, temperature: 0.0, ..Default::default() };
+    let request = CompletionRequest {
+        prompt,
+        max_tokens: 512,
+        temperature: 0.0,
+        ..Default::default()
+    };
     match tokio::time::timeout(
         std::time::Duration::from_millis(cfg.summarization_timeout_ms),
         client.complete(request),
-    ).await {
+    )
+    .await
+    {
         Ok(Ok(resp)) if !resp.text.is_empty() => {
-            tracing::info!(tool_name, before = output.len(), after = resp.text.len(), "tool output semantically compressed");
+            tracing::info!(
+                tool_name,
+                before = output.len(),
+                after = resp.text.len(),
+                "tool output semantically compressed"
+            );
             Some(resp.text)
         }
-        Ok(Ok(_)) => { tracing::warn!(tool_name, "LLM compression returned empty"); None }
-        Ok(Err(e)) => { tracing::warn!(tool_name, error = %e, "LLM compression failed"); None }
-        Err(_) => { tracing::warn!(tool_name, "LLM compression timed out"); None }
+        Ok(Ok(_)) => {
+            tracing::warn!(tool_name, "LLM compression returned empty");
+            None
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(tool_name, error = %e, "LLM compression failed");
+            None
+        }
+        Err(_) => {
+            tracing::warn!(tool_name, "LLM compression timed out");
+            None
+        }
     }
 }
 
@@ -3026,23 +3236,36 @@ async fn llm_compress_large_outputs(
     cfg: &CompactionConfig,
     client: &dyn CloudClient,
 ) {
-    if cfg.semantic_compress_min_chars == 0 || !cfg.use_llm_summarization { return; }
+    if cfg.semantic_compress_min_chars == 0 || !cfg.use_llm_summarization {
+        return;
+    }
     let mut compressed = 0usize;
     for msg in messages.iter_mut() {
-        let is_file_read = msg.content.iter().any(|p| matches!(p, ContentPart::ToolResult { name, .. } if name == "file_read"));
-        if is_file_read { continue; }
+        let is_file_read = msg
+            .content
+            .iter()
+            .any(|p| matches!(p, ContentPart::ToolResult { name, .. } if name == "file_read"));
+        if is_file_read {
+            continue;
+        }
         for part in &mut msg.content {
             match part {
                 ContentPart::ToolResult { result, name, .. } => {
-                    if result.len() <= cfg.semantic_compress_min_chars { continue; }
+                    if result.len() <= cfg.semantic_compress_min_chars {
+                        continue;
+                    }
                     if let Some(c) = llm_compress_tool_output(name, result, cfg, client).await {
-                        *result = c; compressed += 1;
+                        *result = c;
+                        compressed += 1;
                     }
                 }
                 ContentPart::Text { text } => {
-                    if text.len() <= cfg.semantic_compress_min_chars { continue; }
+                    if text.len() <= cfg.semantic_compress_min_chars {
+                        continue;
+                    }
                     if let Some(c) = llm_compress_tool_output("unknown", text, cfg, client).await {
-                        *text = c; compressed += 1;
+                        *text = c;
+                        compressed += 1;
                     }
                 }
                 _ => {}
@@ -3059,11 +3282,11 @@ mod tests {
     /// Regression: mid-turn compaction 的触发判断必须用 `message_tokens`(含工具
     /// 调用/结果),而非 `text_content()`(只算 Text)。否则 tool-heavy 历史会被
     /// 严重漏算,导致该压缩时不压缩。
-   #[test]
-   fn test_mid_turn_token_count_includes_tool_parts() {
-       use loom_types::{ContentPart, Message, Role};
+    #[test]
+    fn test_mid_turn_token_count_includes_tool_parts() {
+        use loom_types::{ContentPart, Message, Role};
         let tid = loom_context::TokenizerId::Cl100k;
-       let msgs = vec![
+        let msgs = vec![
             Message {
                 role: Role::Assistant,
                 content: vec![ContentPart::ToolCall {
@@ -3077,14 +3300,18 @@ mod tests {
             Message::tool("c1", "shell", "total 128\ndrwxr-xr-x 2 root root 4096 ..."),
         ];
         let via_message_tokens: usize = msgs
-           .iter()
+            .iter()
             .map(|m| loom_context::message_tokens_with_id(m, tid))
-           .sum();
-       let via_text_content: usize = msgs
-           .iter()
-            .map(|m| tid.get().encode_with_special_tokens(&m.text_content()).len())
-           .sum();
-       assert!(
+            .sum();
+        let via_text_content: usize = msgs
+            .iter()
+            .map(|m| {
+                tid.get()
+                    .encode_with_special_tokens(&m.text_content())
+                    .len()
+            })
+            .sum();
+        assert!(
             via_message_tokens > via_text_content,
             "message_tokens must count tool parts that text_content misses"
         );

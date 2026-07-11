@@ -2,7 +2,7 @@
 
 use base64::Engine;
 use loom_core::AgentEvent;
-use loom_types::{ContentPart, ErrorCode, JsonRpcError};
+use loom_types::{ContentPart, ErrorCode, JsonRpcError, TokenUsage};
 use serde_json::{Value, json};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -17,6 +17,7 @@ pub async fn handle(
     match method {
         "chat.send" => Some(handle_chat_send(state, p).await),
         "chat.stop" => Some(handle_chat_stop(state, p).await),
+        "chat.steer" => Some(handle_chat_steer(state, p).await),
         "chat.compact" => Some(handle_chat_compact(state, p).await),
         "session.last_stop_reason" => Some(handle_last_stop_reason(state, p).await),
         _ => None,
@@ -69,7 +70,7 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
         .and_then(|v| v.as_str())
         .unwrap_or("off");
     let thinking_budget: Option<usize> = match thinking_level {
-        "off" => Some(0),             // explicitly disable thinking
+        "off" => Some(0), // explicitly disable thinking
         "low" => Some(2048),
         "medium" | "mid" => Some(8192),
         "high" => Some(32768),
@@ -132,12 +133,21 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
         if !skip_user_message {
             state
                 .sessions
-                .add_message(session_id, "user", content)
+                .add_message(session_id, "user", content, None)
                 .await;
         }
         state
             .sessions
-            .add_message(session_id, "assistant", &result.response)
+            .add_message(
+                session_id,
+                "assistant",
+                &result.response,
+                Some(TokenUsage {
+                    prompt_tokens: result.prompt_tokens as usize,
+                    completion_tokens: result.completion_tokens as usize,
+                    ..Default::default()
+                }),
+            )
             .await;
         return Ok(json!({
             "response": result.response,
@@ -235,7 +245,11 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
             };
 
             let data = match event {
-                Ok(AgentEvent::MonitorOutput { monitor_id: _, data, .. }) => data,
+                Ok(AgentEvent::MonitorOutput {
+                    monitor_id: _,
+                    data,
+                    ..
+                }) => data,
                 Ok(AgentEvent::MonitorExited { .. }) => {
                     if !mgr.list().await.iter().any(|m| m.running && m.persistent) {
                         break;
@@ -252,7 +266,12 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
             };
 
             monitor_round += 1;
-            tracing::info!(session_id, round = monitor_round, len = data.len(), "monitor bridge: new turn");
+            tracing::info!(
+                session_id,
+                round = monitor_round,
+                len = data.len(),
+                "monitor bridge: new turn"
+            );
 
             // Use auto-continue so the agent treats this as a continuation
             // of the previous conversation, not a fresh user message.
@@ -288,12 +307,21 @@ async fn handle_chat_send(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
     if !skip_user_message {
         state
             .sessions
-            .add_message(session_id, "user", content)
+            .add_message(session_id, "user", content, None)
             .await;
     }
     state
         .sessions
-        .add_message(session_id, "assistant", &result.response)
+        .add_message(
+            session_id,
+            "assistant",
+            &result.response,
+            Some(TokenUsage {
+                prompt_tokens: result.prompt_tokens as usize,
+                completion_tokens: result.completion_tokens as usize,
+                ..Default::default()
+            }),
+        )
         .await;
     Ok(json!({
         "response": result.response,
@@ -318,6 +346,19 @@ async fn handle_chat_stop(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
     Ok(json!({ "ok": true, "killed": killed }))
 }
 
+async fn handle_chat_steer(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let session_id = p
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let guidance = p.get("guidance").and_then(|v| v.as_str()).unwrap_or("");
+    if guidance.is_empty() {
+        return Err(err(ErrorCode::InvalidRequest, "guidance required"));
+    }
+    let count = state.orchestrator.steer_session(session_id, guidance).await;
+    Ok(json!({ "ok": true, "pending_count": count }))
+}
+
 async fn handle_chat_compact(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
     let session_id = p
         .get("session_id")
@@ -330,7 +371,10 @@ async fn handle_chat_compact(state: &AppState, p: &Value) -> Result<Value, JsonR
                 "🗜️ Context compacted — {} chars. This summary replaces earlier conversation details.",
                 summary.len()
             );
-            state.sessions.add_message(session_id, "assistant", &note).await;
+            state
+                .sessions
+                .add_message(session_id, "assistant", &note, None)
+                .await;
             Ok(json!({
                 "ok": true,
                 "summary": summary,

@@ -108,16 +108,19 @@ impl SummaryEngine {
                     .iter()
                     .map(|c| match c {
                         loom_types::ContentPart::Text { text } => text.clone(),
-                        loom_types::ContentPart::Thinking { text } => format!("[thinking] {}", text),
-                        loom_types::ContentPart::ToolCall { name, arguments, .. } => {
+                        loom_types::ContentPart::Thinking { text } => {
+                            format!("[thinking] {}", text)
+                        }
+                        loom_types::ContentPart::ToolCall {
+                            name, arguments, ..
+                        } => {
                             format!("[tool_call {}] {}", name, arguments)
                         }
                         loom_types::ContentPart::ToolResult { name, result, .. } => {
                             format!("[tool_result {}] {}", name, result)
                         }
-                        loom_types::ContentPart::Image { .. } | loom_types::ContentPart::ImageRef { .. } => {
-                            "[image]".to_string()
-                        }
+                        loom_types::ContentPart::Image { .. }
+                        | loom_types::ContentPart::ImageRef { .. } => "[image]".to_string(),
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
@@ -219,8 +222,12 @@ mod tests {
 
     #[test]
     fn test_should_summarize_by_tokens() {
-        assert!(SummaryEngine::should_summarize_by_tokens(81_000, 100_000, 0.8));
-        assert!(!SummaryEngine::should_summarize_by_tokens(79_000, 100_000, 0.8));
+        assert!(SummaryEngine::should_summarize_by_tokens(
+            81_000, 100_000, 0.8
+        ));
+        assert!(!SummaryEngine::should_summarize_by_tokens(
+            79_000, 100_000, 0.8
+        ));
         // context_window=0 now falls back to 100_000 — 81 K ≥ 80 K → true.
         assert!(SummaryEngine::should_summarize_by_tokens(81_000, 0, 0.8));
         // Below the fallback threshold: 70 K < 80 K → false.
@@ -237,7 +244,9 @@ mod tests {
 
     #[test]
     fn test_build_prompt_segmented_range() {
-        let history: Vec<Message> = (0..10).map(|i| Message::user(format!("msg {}", i))).collect();
+        let history: Vec<Message> = (0..10)
+            .map(|i| Message::user(format!("msg {}", i)))
+            .collect();
         let prompt = SummaryEngine::build_prompt_segmented(&history, 2, 8, None);
         assert!(prompt.contains("msg 2"));
         assert!(prompt.contains("msg 7"));
@@ -252,6 +261,9 @@ mod tests {
             Message::tool("c1", "shell", "BIG_RESULT_12345"),
         ];
         let prompt = SummaryEngine::build_prompt_segmented(&history, 0, 2, None);
-        assert!(prompt.contains("BIG_RESULT_12345"), "分段 prompt 必须包含工具结果, 不能只用 text_content");
+        assert!(
+            prompt.contains("BIG_RESULT_12345"),
+            "分段 prompt 必须包含工具结果, 不能只用 text_content"
+        );
     }
 }

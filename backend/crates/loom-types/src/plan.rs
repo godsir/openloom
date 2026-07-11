@@ -29,7 +29,9 @@ pub enum PlanStatus {
 }
 
 impl Default for PlanStatus {
-    fn default() -> Self { PlanStatus::Drafting }
+    fn default() -> Self {
+        PlanStatus::Drafting
+    }
 }
 
 /// A single todo item extracted from a plan's markdown checkboxes.
@@ -52,7 +54,9 @@ pub enum TodoStatus {
 }
 
 impl Default for TodoStatus {
-    fn default() -> Self { TodoStatus::Pending }
+    fn default() -> Self {
+        TodoStatus::Pending
+    }
 }
 
 /// Source of a todo item (plan file path + ordinal + content hash).
@@ -82,7 +86,9 @@ pub enum GoalStatus {
 }
 
 impl Default for GoalStatus {
-    fn default() -> Self { GoalStatus::Active }
+    fn default() -> Self {
+        GoalStatus::Active
+    }
 }
 
 // JSON-RPC request/response types

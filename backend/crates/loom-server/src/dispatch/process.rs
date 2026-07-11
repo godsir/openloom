@@ -27,10 +27,8 @@ async fn handle_spawn(state: &AppState, p: &Value) -> Result<Value, JsonRpcError
     }
     let cwd = p.get("cwd").and_then(|v| v.as_str());
     let name = p.get("name").and_then(|v| v.as_str());
-    let env: Option<std::collections::HashMap<String, String>> = p
-        .get("env")
-        .and_then(|v| v.as_object())
-        .map(|o| {
+    let env: Option<std::collections::HashMap<String, String>> =
+        p.get("env").and_then(|v| v.as_object()).map(|o| {
             o.iter()
                 .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
                 .collect()

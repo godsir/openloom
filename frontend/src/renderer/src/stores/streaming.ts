@@ -19,6 +19,8 @@ export interface StreamingSlice {
   inlineErrors: Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null }>
   /** 灵动岛瞬态反馈（复制成功等），短暂显示后自动清除 */
   islandTransient: { text: string; platform?: string; timer: ReturnType<typeof setTimeout> | null } | null
+  /** Per-session steering queue pending count */
+  steeringQueueCounts: Record<string, number>
   addStreamingSession: (id: string) => void
   removeStreamingSession: (id: string) => void
   setStreamingActivity: (id: string, activity: StreamingActivity | null) => void
@@ -26,6 +28,7 @@ export interface StreamingSlice {
   clearInlineError: (sessionId: string) => void
   showIslandTransient: (text: string, duration?: number, platform?: string) => void
   clearIslandTransient: () => void
+  setSteeringQueueCount: (id: string, count: number) => void
 }
 
 export const createStreamingSlice: StateCreator<StreamingSlice> = (set, get) => ({
@@ -33,6 +36,7 @@ export const createStreamingSlice: StateCreator<StreamingSlice> = (set, get) => 
   streamingActivity: {},
   inlineErrors: new Map(),
   islandTransient: null,
+  steeringQueueCounts: {},
 
   addStreamingSession: (id) => {
     const next = new Set(get().streamingSessionIds)
@@ -97,5 +101,15 @@ export const createStreamingSlice: StateCreator<StreamingSlice> = (set, get) => 
     const prev = get().islandTransient
     if (prev?.timer) clearTimeout(prev.timer)
     set({ islandTransient: null })
+  },
+
+  setSteeringQueueCount: (id, count) => {
+    if (count <= 0) {
+      const next = { ...get().steeringQueueCounts }
+      delete next[id]
+      set({ steeringQueueCounts: next })
+    } else {
+      set({ steeringQueueCounts: { ...get().steeringQueueCounts, [id]: count } })
+    }
   },
 })

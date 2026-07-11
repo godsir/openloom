@@ -15,8 +15,8 @@ use loom_cron::job::SessionMode;
 use loom_types::{ErrorCode, JsonRpcError};
 use serde_json::{Value, json};
 
-use crate::dispatch::err;
 use crate::AppState;
+use crate::dispatch::err;
 
 pub async fn handle(
     state: &AppState,
@@ -30,10 +30,12 @@ pub async fn handle(
 
     let cron = match state.orchestrator.cron_scheduler().await {
         Some(c) => c,
-        None => return Some(Err(err(
-            ErrorCode::InternalError,
-            "Cron scheduler is not initialized. This may happen if the cron database failed to open. Check the server logs for details.",
-        ))),
+        None => {
+            return Some(Err(err(
+                ErrorCode::InternalError,
+                "Cron scheduler is not initialized. This may happen if the cron database failed to open. Check the server logs for details.",
+            )));
+        }
     };
 
     match method {
@@ -257,8 +259,10 @@ async fn handle_run_now(
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn get_str<'a>(params: &'a Value, key: &str) -> Result<&'a str, JsonRpcError> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| err(ErrorCode::InternalError, &format!("missing or invalid '{}'", key)))
+    params.get(key).and_then(|v| v.as_str()).ok_or_else(|| {
+        err(
+            ErrorCode::InternalError,
+            &format!("missing or invalid '{}'", key),
+        )
+    })
 }

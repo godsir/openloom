@@ -33,21 +33,17 @@ impl TokenizerId {
 
 fn cl100k() -> &'static CoreBPE {
     static BPE: OnceLock<CoreBPE> = OnceLock::new();
-    BPE.get_or_init(|| {
-        match tiktoken_rs::cl100k_base() {
-            Ok(b) => b,
-            Err(e) => unreachable!("tiktoken cl100k_base model should always load: {e}"),
-        }
+    BPE.get_or_init(|| match tiktoken_rs::cl100k_base() {
+        Ok(b) => b,
+        Err(e) => unreachable!("tiktoken cl100k_base model should always load: {e}"),
     })
 }
 
 fn o200k() -> &'static CoreBPE {
     static BPE: OnceLock<CoreBPE> = OnceLock::new();
-    BPE.get_or_init(|| {
-        match tiktoken_rs::o200k_base() {
-            Ok(b) => b,
-            Err(e) => unreachable!("tiktoken o200k_base model should always load: {e}"),
-        }
+    BPE.get_or_init(|| match tiktoken_rs::o200k_base() {
+        Ok(b) => b,
+        Err(e) => unreachable!("tiktoken o200k_base model should always load: {e}"),
     })
 }
 
@@ -66,7 +62,8 @@ pub fn tokenizer_for_model(model_name: &str, _backend: ModelBackend) -> Tokenize
     let lower = model_name.to_lowercase();
 
     // OpenAI models that use o200k_base
-    if lower.contains("gpt-4o") || lower.contains("gpt-4.1")
+    if lower.contains("gpt-4o")
+        || lower.contains("gpt-4.1")
         || lower.starts_with("o1")
         || lower.starts_with("o3")
         || (lower.contains("o4") && lower.contains("mini"))
@@ -100,27 +97,54 @@ mod tests {
 
     #[test]
     fn test_gpt4o_uses_o200k() {
-        assert_eq!(tokenizer_for_model("gpt-4o", ModelBackend::OpenAI), TokenizerId::O200k);
-        assert_eq!(tokenizer_for_model("gpt-4o-mini", ModelBackend::OpenAI), TokenizerId::O200k);
-        assert_eq!(tokenizer_for_model("gpt-4.1", ModelBackend::OpenAI), TokenizerId::O200k);
-        assert_eq!(tokenizer_for_model("o3", ModelBackend::OpenAI), TokenizerId::O200k);
-        assert_eq!(tokenizer_for_model("o4-mini", ModelBackend::OpenAI), TokenizerId::O200k);
+        assert_eq!(
+            tokenizer_for_model("gpt-4o", ModelBackend::OpenAI),
+            TokenizerId::O200k
+        );
+        assert_eq!(
+            tokenizer_for_model("gpt-4o-mini", ModelBackend::OpenAI),
+            TokenizerId::O200k
+        );
+        assert_eq!(
+            tokenizer_for_model("gpt-4.1", ModelBackend::OpenAI),
+            TokenizerId::O200k
+        );
+        assert_eq!(
+            tokenizer_for_model("o3", ModelBackend::OpenAI),
+            TokenizerId::O200k
+        );
+        assert_eq!(
+            tokenizer_for_model("o4-mini", ModelBackend::OpenAI),
+            TokenizerId::O200k
+        );
     }
 
     #[test]
     fn test_claude_falls_back_to_cl100k() {
-        assert_eq!(tokenizer_for_model("claude-sonnet-4-20250514", ModelBackend::Anthropic), TokenizerId::Cl100k);
+        assert_eq!(
+            tokenizer_for_model("claude-sonnet-4-20250514", ModelBackend::Anthropic),
+            TokenizerId::Cl100k
+        );
     }
 
     #[test]
     fn test_deepseek_falls_back_to_cl100k() {
-        assert_eq!(tokenizer_for_model("deepseek-chat", ModelBackend::DeepSeek), TokenizerId::Cl100k);
+        assert_eq!(
+            tokenizer_for_model("deepseek-chat", ModelBackend::DeepSeek),
+            TokenizerId::Cl100k
+        );
     }
 
     #[test]
     fn test_local_model_defaults_to_cl100k() {
-        assert_eq!(tokenizer_for_model("qwen2.5-7b-instruct", ModelBackend::LmStudio), TokenizerId::Cl100k);
-        assert_eq!(tokenizer_for_model("llama3.1-8b", ModelBackend::Ollama), TokenizerId::Cl100k);
+        assert_eq!(
+            tokenizer_for_model("qwen2.5-7b-instruct", ModelBackend::LmStudio),
+            TokenizerId::Cl100k
+        );
+        assert_eq!(
+            tokenizer_for_model("llama3.1-8b", ModelBackend::Ollama),
+            TokenizerId::Cl100k
+        );
     }
 
     #[test]

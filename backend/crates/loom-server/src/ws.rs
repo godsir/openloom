@@ -207,6 +207,7 @@ fn agent_event_method(event: &AgentEvent) -> &'static str {
         AgentEvent::SubagentErrored { .. } => "agent.subagent_errored",
         AgentEvent::ToolStarted { .. } => "tool.started",
         AgentEvent::ToolCompleted { .. } => "tool.completed",
+        AgentEvent::ToolOutput { .. } => "tool.output",
         AgentEvent::StreamDelta { .. } => "chat.stream_delta",
         AgentEvent::StreamEnd { .. } => "chat.stream_end",
         AgentEvent::TokenUsage { .. } => "chat.token_usage",
@@ -235,6 +236,8 @@ fn agent_event_method(event: &AgentEvent) -> &'static str {
         AgentEvent::TeamCompleted { .. } => "team.completed",
         AgentEvent::TeamMemberDelta { .. } => "team.member_delta",
         AgentEvent::TeamMemberStarted { .. } => "team.member_started",
+        AgentEvent::SteeringQueued { .. } => "steering.queued",
+        AgentEvent::SteeringConsumed { .. } => "steering.consumed",
     }
 }
 
@@ -261,8 +264,9 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
             call_id,
             tool_name,
             args,
+            session_id,
         } => {
-            json!({ "id": call_id, "name": tool_name, "args": args })
+            json!({ "id": call_id, "name": tool_name, "args": args, "session_id": session_id })
         }
         AgentEvent::ToolCompleted {
             agent_id: _,
@@ -271,8 +275,19 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
             success,
             result,
             structured_content,
+            session_id,
         } => {
-            json!({ "id": call_id, "name": tool_name, "success": success, "result": result, "structured_content": structured_content })
+            json!({ "id": call_id, "name": tool_name, "success": success, "result": result, "structured_content": structured_content, "session_id": session_id })
+        }
+        AgentEvent::ToolOutput {
+            agent_id: _,
+            call_id,
+            tool_name,
+            line,
+            stream,
+            session_id,
+        } => {
+            json!({ "id": call_id, "name": tool_name, "line": line, "stream": stream, "session_id": session_id })
         }
         AgentEvent::TokenUsage {
             agent_id: _,
@@ -320,31 +335,61 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
         AgentEvent::PlanUpdated { plan_id } => {
             json!({ "plan_id": plan_id })
         }
-        AgentEvent::GoalSet { session_id, description } => {
+        AgentEvent::GoalSet {
+            session_id,
+            description,
+        } => {
             json!({ "session_id": session_id, "description": description })
         }
-        AgentEvent::TodoStatusChanged { session_id, todo_id, status } => {
+        AgentEvent::TodoStatusChanged {
+            session_id,
+            todo_id,
+            status,
+        } => {
             json!({ "session_id": session_id, "todo_id": todo_id, "status": status })
         }
         AgentEvent::TodosReplaced { session_id, todos } => {
             json!({ "session_id": session_id, "todos": todos })
         }
-        AgentEvent::CronJobTriggered { job_id, job_name, run_id } => {
+        AgentEvent::CronJobTriggered {
+            job_id,
+            job_name,
+            run_id,
+        } => {
             json!({ "job_id": job_id, "job_name": job_name, "run_id": run_id })
         }
-        AgentEvent::CronJobCompleted { job_id, job_name, run_id, response } => {
+        AgentEvent::CronJobCompleted {
+            job_id,
+            job_name,
+            run_id,
+            response,
+        } => {
             json!({ "job_id": job_id, "job_name": job_name, "run_id": run_id, "response": response })
         }
-        AgentEvent::CronJobFailed { job_id, job_name, run_id, error } => {
+        AgentEvent::CronJobFailed {
+            job_id,
+            job_name,
+            run_id,
+            error,
+        } => {
             json!({ "job_id": job_id, "job_name": job_name, "run_id": run_id, "error": error })
         }
         AgentEvent::CronJobChanged { job_id, action } => {
             json!({ "job_id": job_id, "action": action })
         }
-        AgentEvent::ProcessOutput { pid, data, stream, session_id } => {
+        AgentEvent::ProcessOutput {
+            pid,
+            data,
+            stream,
+            session_id,
+        } => {
             json!({ "pid": pid, "data": data, "stream": stream, "session_id": session_id })
         }
-        AgentEvent::ProcessExited { pid, exit_code, session_id } => {
+        AgentEvent::ProcessExited {
+            pid,
+            exit_code,
+            session_id,
+        } => {
             json!({ "pid": pid, "exit_code": exit_code, "session_id": session_id })
         }
         AgentEvent::MonitorStarted {
@@ -419,32 +464,79 @@ fn agent_event_params(event: &AgentEvent) -> serde_json::Value {
                 "findings": findings,
             })
         }
-        AgentEvent::SubagentSpawned { parent_id, child_id, child_name } => {
+        AgentEvent::SubagentSpawned {
+            parent_id,
+            child_id,
+            child_name,
+        } => {
             json!({ "parent_id": parent_id, "child_id": child_id, "child_name": child_name })
         }
-        AgentEvent::SubagentCompleted { parent_id, child_id, result } => {
+        AgentEvent::SubagentCompleted {
+            parent_id,
+            child_id,
+            result,
+        } => {
             json!({ "parent_id": parent_id, "child_id": child_id, "result": result })
         }
-        AgentEvent::SubagentErrored { parent_id, child_id, error } => {
+        AgentEvent::SubagentErrored {
+            parent_id,
+            child_id,
+            error,
+        } => {
             json!({ "parent_id": parent_id, "child_id": child_id, "error": error })
         }
-        AgentEvent::TeamStarted { team_id, team_name, captain_id, member_ids } => {
+        AgentEvent::TeamStarted {
+            team_id,
+            team_name,
+            captain_id,
+            member_ids,
+        } => {
             json!({ "team_id": team_id, "team_name": team_name, "captain_id": captain_id, "member_ids": member_ids })
         }
-        AgentEvent::TeamMemberDone { team_id, member_id, member_name, round } => {
-            json!({ "team_id": team_id, "member_id": member_id, "member_name": member_name, "round": round })
+        AgentEvent::TeamMemberDone {
+            team_id,
+            member_name,
+            round,
+            prompt_tokens,
+            completion_tokens,
+            ..
+        } => {
+            json!({ "team_id": team_id, "member_name": member_name, "round": round, "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens })
         }
         AgentEvent::TeamRoundComplete { team_id, round } => {
             json!({ "team_id": team_id, "round": round })
         }
-        AgentEvent::TeamCompleted { team_id, session_id, summary } => {
+        AgentEvent::TeamCompleted {
+            team_id,
+            session_id,
+            summary,
+        } => {
             json!({ "team_id": team_id, "session_id": session_id, "summary": summary })
         }
-        AgentEvent::TeamMemberDelta { member_name, delta, .. } => {
+        AgentEvent::TeamMemberDelta {
+            member_name, delta, ..
+        } => {
             json!({ "member_name": member_name, "delta": delta })
         }
-        AgentEvent::TeamMemberStarted { member_name, session_id, .. } => {
+        AgentEvent::TeamMemberStarted {
+            member_name,
+            session_id,
+            ..
+        } => {
             json!({ "member_name": member_name, "session_id": session_id })
+        }
+        AgentEvent::SteeringQueued {
+            session_id,
+            pending_count,
+            guidance,
+        } => {
+            json!({ "session_id": session_id, "pending_count": pending_count, "guidance": guidance })
+        }
+        AgentEvent::SteeringConsumed {
+            session_id,
+            remaining_count,
+        } => {
+            json!({ "session_id": session_id, "remaining_count": remaining_count })
         }
         _ => json!({}),
     }

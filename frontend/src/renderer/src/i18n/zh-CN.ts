@@ -96,6 +96,8 @@ export const zhCN: TranslationMap = {
   'island.imConnected': '{platform} 已连接',
   'island.imDisconnected': '{platform} 已断开',
   'island.imMessageReceived': '{platform} 收到一条消息',
+  'island.configUpdated': '配置已更新',
+  'island.configSaved': '设置已保存',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': '会话',

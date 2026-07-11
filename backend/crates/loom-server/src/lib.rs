@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use axum::{Json, Router, extract::State, routing::get};
-use loom_core::Orchestrator;
 use loom_bridge::BridgeManager;
+use loom_core::Orchestrator;
 use tokio::sync;
 use tokio_util::sync::CancellationToken;
 
@@ -20,7 +20,7 @@ mod ws;
 
 pub use credential::{load_credentials, persist_credentials, save_key};
 pub use dispatch::SessionStore;
-pub use ws::{ws_handler, ConnectionEventLog};
+pub use ws::{ConnectionEventLog, ws_handler};
 
 /// Shared application state passed to all route handlers.
 pub struct AppState {
@@ -144,10 +144,7 @@ pub async fn serve(
             let _ = state.sessions.bind_agent(&id, &name).await;
         }
         // Restore persisted team binding
-        let team_id = state
-            .orchestrator
-            .memory_store_session_team_id(&id)
-            .await;
+        let team_id = state.orchestrator.memory_store_session_team_id(&id).await;
         if let Some(tid) = team_id {
             let _ = state.sessions.bind_team(&id, &tid).await;
         }
@@ -159,16 +156,16 @@ pub async fn serve(
     // Spawn background process GC — cleans up exited processes every 5 minutes.
     state.orchestrator.spawn_process_gc_loop();
 
-   // Spawn background monitor GC — cleans up exited monitors every 5 minutes.
-   state.orchestrator.spawn_monitor_gc_loop();
+    // Spawn background monitor GC — cleans up exited monitors every 5 minutes.
+    state.orchestrator.spawn_monitor_gc_loop();
 
-   // Register spawn_agent / spawn_agents tools so the captain (and any agent)
-   // can delegate work to sub-agents. Without this, process_message_with_team
-   // has no way to fan-out to team members.
-   state.orchestrator.init_spawn_agent(3, 300).await;
+    // Register spawn_agent / spawn_agents tools so the captain (and any agent)
+    // can delegate work to sub-agents. Without this, process_message_with_team
+    // has no way to fan-out to team members.
+    state.orchestrator.init_spawn_agent(3, 300).await;
 
-   // Initialise and start the cron scheduler (user-defined periodic tasks).
-   if let Err(e) = state.orchestrator.init_cron_scheduler().await {
+    // Initialise and start the cron scheduler (user-defined periodic tasks).
+    if let Err(e) = state.orchestrator.init_cron_scheduler().await {
         tracing::warn!(error = %e, "failed to initialise cron scheduler — periodic tasks disabled");
     }
 

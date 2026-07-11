@@ -23,7 +23,9 @@ const BACKOFF_MAX: Duration = Duration::from_secs(60);
 struct AppSecret(String);
 
 impl AppSecret {
-    fn reveal(&self) -> &str { &self.0 }
+    fn reveal(&self) -> &str {
+        &self.0
+    }
 }
 
 impl std::fmt::Debug for AppSecret {
@@ -155,7 +157,8 @@ impl FeishuAdapter {
 
     async fn get_tenant_access_token(&self) -> Result<String> {
         let url = format!("{}/auth/v3/tenant_access_token/internal", self.base_url());
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .json(&serde_json::json!({
                 "app_id": self.app_id,
@@ -187,10 +190,13 @@ impl FeishuAdapter {
         if let Some(pt) = page_token {
             url.push_str(&format!("&page_token={pt}"));
         }
-        client.get(&url)
+        client
+            .get(&url)
             .header("Authorization", format!("Bearer {token}"))
-            .send().await?
-            .json().await
+            .send()
+            .await?
+            .json()
+            .await
     }
 
     fn parse_message(item: &FeishuMessageItem) -> Option<BridgeMessage> {
@@ -202,11 +208,16 @@ impl FeishuAdapter {
             .unwrap_or_else(|| content_str.clone());
         let text = cap_inbound_text(&text);
 
-        let sender_id = item.sender.as_ref()
+        let sender_id = item
+            .sender
+            .as_ref()
             .and_then(|s| s.id.as_ref())
-            .and_then(|id| id.open_id.clone()
-                .or_else(|| id.user_id.clone())
-                .or_else(|| id.union_id.clone()))
+            .and_then(|id| {
+                id.open_id
+                    .clone()
+                    .or_else(|| id.user_id.clone())
+                    .or_else(|| id.union_id.clone())
+            })
             .unwrap_or_default();
 
         Some(BridgeMessage {
@@ -224,13 +235,15 @@ impl FeishuAdapter {
 
     async fn send_text(&self, token: &str, receive_id: &str, text: &str) -> Result<String> {
         let url = format!("{}/im/v1/messages?receive_id_type=chat_id", self.base_url());
-        let content_json = serde_json::to_string(&serde_json::json!({"text": text})).unwrap_or_default();
+        let content_json =
+            serde_json::to_string(&serde_json::json!({"text": text})).unwrap_or_default();
         let body = serde_json::json!({
             "receive_id": receive_id,
             "msg_type": "text",
             "content": content_json,
         });
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .header("Authorization", format!("Bearer {token}"))
             .json(&body)
@@ -250,14 +263,21 @@ impl FeishuAdapter {
 
 #[async_trait]
 impl ChannelAdapter for FeishuAdapter {
-    fn platform(&self) -> Platform { Platform::Feishu }
-    fn instance_id(&self) -> &str { &self.instance_id }
-    fn instance_name(&self) -> &str { &self.instance_name }
+    fn platform(&self) -> Platform {
+        Platform::Feishu
+    }
+    fn instance_id(&self) -> &str {
+        &self.instance_id
+    }
+    fn instance_name(&self) -> &str {
+        &self.instance_name
+    }
 
     async fn validate_credentials(&self) -> Result<()> {
         let token = self.get_tenant_access_token().await?;
         let url = format!("{}/bot/v3/info", self.base_url());
-        let resp = self.client
+        let resp = self
+            .client
             .get(&url)
             .header("Authorization", format!("Bearer {token}"))
             .send()
@@ -270,18 +290,26 @@ impl ChannelAdapter for FeishuAdapter {
             ));
         }
         let app_name = body.data.and_then(|d| d.app_name).unwrap_or_default();
-        tracing::info!("Feishu ({}) credentials validated, bot: {app_name}", self.instance_id);
+        tracing::info!(
+            "Feishu ({}) credentials validated, bot: {app_name}",
+            self.instance_id
+        );
         Ok(())
     }
 
     async fn get_bot_info(&self) -> Option<BotInfo> {
         let token = self.get_tenant_access_token().await.ok()?;
         let url = format!("{}/bot/v3/info", self.base_url());
-        let body: BotInfoResp = self.client
+        let body: BotInfoResp = self
+            .client
             .get(&url)
             .header("Authorization", format!("Bearer {token}"))
-            .send().await.ok()?
-            .json().await.ok()?;
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
         Some(BotInfo {
             username: body.data.as_ref().and_then(|d| d.app_name.clone()),
             display_name: Some(self.instance_name.clone()),
@@ -312,7 +340,9 @@ impl ChannelAdapter for FeishuAdapter {
             let mut backoff = BACKOFF_BASE;
 
             loop {
-                if abort.load(Ordering::SeqCst) { break; }
+                if abort.load(Ordering::SeqCst) {
+                    break;
+                }
 
                 // Get a fresh token each poll cycle
                 let resp = client
@@ -326,9 +356,7 @@ impl ChannelAdapter for FeishuAdapter {
 
                 let token = match resp {
                     Ok(r) => match r.json::<TenantAccessTokenResp>().await {
-                        Ok(resp) if resp.code == 0 => {
-                            resp.tenant_access_token.unwrap_or_default()
-                        }
+                        Ok(resp) if resp.code == 0 => resp.tenant_access_token.unwrap_or_default(),
                         _ => {
                             tracing::warn!("Feishu token refresh failed, backing off");
                             sleep_with_abort(backoff, &abort).await;
@@ -344,14 +372,24 @@ impl ChannelAdapter for FeishuAdapter {
                     }
                 };
 
-                match Self::list_messages_raw(&client, &base_url, &token, page_token.as_deref(), None).await {
+                match Self::list_messages_raw(
+                    &client,
+                    &base_url,
+                    &token,
+                    page_token.as_deref(),
+                    None,
+                )
+                .await
+                {
                     Ok(resp) if resp.code == 0 => {
                         backoff = BACKOFF_BASE;
                         if let Some(data) = &resp.data {
                             for item in &data.items {
                                 if let Some(bm) = Self::parse_message(item) {
                                     if tx.send(bm).await.is_err() {
-                                        tracing::warn!("Feishu inbound channel closed; stopping poll");
+                                        tracing::warn!(
+                                            "Feishu inbound channel closed; stopping poll"
+                                        );
                                         return;
                                     }
                                 }
@@ -386,7 +424,9 @@ impl ChannelAdapter for FeishuAdapter {
 
     async fn disconnect(&mut self) -> Result<()> {
         self.abort.store(true, Ordering::SeqCst);
-        if let Some(h) = self.poll_handle.take() { h.abort(); }
+        if let Some(h) = self.poll_handle.take() {
+            h.abort();
+        }
         self.health = AdapterHealth::Disconnected;
         tracing::info!("Feishu ({}) adapter disconnected", self.instance_id);
         Ok(())
@@ -398,12 +438,18 @@ impl ChannelAdapter for FeishuAdapter {
                 let token = self.get_tenant_access_token().await?;
                 self.send_text(&token, chat_id, text).await
             }
-            _ => Err(anyhow::anyhow!("Feishu only supports text messages currently")),
+            _ => Err(anyhow::anyhow!(
+                "Feishu only supports text messages currently"
+            )),
         }
     }
 
-    fn receive_rx(&mut self) -> &mut mpsc::Receiver<BridgeMessage> { &mut self.rx }
-    fn health(&self) -> AdapterHealth { self.health.clone() }
+    fn receive_rx(&mut self) -> &mut mpsc::Receiver<BridgeMessage> {
+        &mut self.rx
+    }
+    fn health(&self) -> AdapterHealth {
+        self.health.clone()
+    }
 }
 
 fn next_backoff(current: Duration) -> Duration {
@@ -413,9 +459,13 @@ fn next_backoff(current: Duration) -> Duration {
 async fn sleep_with_abort(dur: Duration, abort: &AtomicBool) {
     let deadline = tokio::time::Instant::now() + dur;
     loop {
-        if abort.load(Ordering::SeqCst) { return; }
+        if abort.load(Ordering::SeqCst) {
+            return;
+        }
         let step = Duration::from_millis(200).min(deadline - tokio::time::Instant::now());
-        if step.is_zero() { return; }
+        if step.is_zero() {
+            return;
+        }
         tokio::time::sleep(step).await;
     }
 }
@@ -454,8 +504,11 @@ mod tests {
     #[test]
     fn test_adapter_platform() {
         let adapter = FeishuAdapter::new(
-            "default".into(), "Feishu".into(),
-            "app1".into(), "secret1".into(), "feishu".into(),
+            "default".into(),
+            "Feishu".into(),
+            "app1".into(),
+            "secret1".into(),
+            "feishu".into(),
         );
         assert_eq!(adapter.platform(), Platform::Feishu);
         assert_eq!(adapter.instance_id(), "default");
@@ -464,9 +517,21 @@ mod tests {
 
     #[test]
     fn test_base_url_lark_vs_feishu() {
-        let fs = FeishuAdapter::new("d".into(), "n".into(), "a".into(), "s".into(), "feishu".into());
+        let fs = FeishuAdapter::new(
+            "d".into(),
+            "n".into(),
+            "a".into(),
+            "s".into(),
+            "feishu".into(),
+        );
         assert_eq!(fs.base_url(), FEISHU_BASE);
-        let lark = FeishuAdapter::new("d".into(), "n".into(), "a".into(), "s".into(), "lark".into());
+        let lark = FeishuAdapter::new(
+            "d".into(),
+            "n".into(),
+            "a".into(),
+            "s".into(),
+            "lark".into(),
+        );
         assert_eq!(lark.base_url(), LARK_BASE);
     }
 

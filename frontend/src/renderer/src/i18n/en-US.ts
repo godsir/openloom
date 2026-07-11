@@ -96,6 +96,8 @@ export const enUS: TranslationMap = {
   'island.imConnected': '{platform} connected',
   'island.imDisconnected': '{platform} disconnected',
   'island.imMessageReceived': '{platform} · new message',
+  'island.configUpdated': 'Settings updated',
+  'island.configSaved': 'Settings saved',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': 'Sessions',

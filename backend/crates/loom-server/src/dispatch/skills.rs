@@ -122,7 +122,7 @@ async fn handle_skills_delete(state: &AppState, p: &Value) -> Result<Value, Json
             return Err(err(
                 ErrorCode::MethodNotFound,
                 &format!("skill '{}' not found", name),
-            ))
+            ));
         }
     };
 
@@ -133,7 +133,7 @@ async fn handle_skills_delete(state: &AppState, p: &Value) -> Result<Value, Json
             return Err(err(
                 ErrorCode::InternalError,
                 "cannot resolve skill directory",
-            ))
+            ));
         }
     };
 

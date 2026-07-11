@@ -286,9 +286,7 @@ mod tests {
     fn make_msg(role: Role, text: &str) -> Message {
         Message {
             role,
-            content: vec![ContentPart::Text {
-                text: text.into(),
-            }],
+            content: vec![ContentPart::Text { text: text.into() }],
             timestamp: chrono::Utc::now(),
             usage: None,
         }

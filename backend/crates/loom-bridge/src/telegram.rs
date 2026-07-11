@@ -294,7 +294,10 @@ impl ChannelAdapter for TelegramAdapter {
         self.poll_handle = Some(handle);
         self.health = AdapterHealth::Connected;
         // Log the bot identity, never the token/URL.
-        tracing::info!("Telegram ({}) adapter connected as @{bot_username}", self.instance_id);
+        tracing::info!(
+            "Telegram ({}) adapter connected as @{bot_username}",
+            self.instance_id
+        );
         Ok(())
     }
 

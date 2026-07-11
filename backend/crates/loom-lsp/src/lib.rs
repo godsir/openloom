@@ -1,4 +1,4 @@
-﻿//! LSP (Language Server Protocol) client for openLoom v2.
+//! LSP (Language Server Protocol) client for openLoom v2.
 //!
 //! Manages language server processes via stdio JSON-RPC, supporting
 //! diagnostics, completion, hover, definition, references, and document symbols.
@@ -47,16 +47,16 @@ impl LspConnection {
 
     /// Read one Content-Length framed message body from `reader`.
     /// Returns the raw bytes of the JSON body.
-    async fn read_frame(
-        reader: &mut BufReader<tokio::process::ChildStdout>,
-    ) -> Result<Vec<u8>> {
+    async fn read_frame(reader: &mut BufReader<tokio::process::ChildStdout>) -> Result<Vec<u8>> {
         // Read headers up to the blank separator line.
         let mut header = String::new();
         loop {
             let mut line = String::new();
             let n = reader.read_line(&mut line).await?;
             if n == 0 {
-                return Err(anyhow!("LSP process closed its stdout before responding — the language server may have crashed on startup. Check that the command and its dependencies are correctly installed."));
+                return Err(anyhow!(
+                    "LSP process closed its stdout before responding — the language server may have crashed on startup. Check that the command and its dependencies are correctly installed."
+                ));
             }
             if line == "\r\n" || line == "\n" {
                 break;
@@ -294,7 +294,9 @@ pub fn binary_available(command: &str) -> bool {
     #[cfg(windows)]
     {
         let prog = command.split_whitespace().next().unwrap_or(command);
-        let found = std::process::Command::new("where").arg(prog).output()
+        let found = std::process::Command::new("where")
+            .arg(prog)
+            .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
         if !found {
@@ -304,7 +306,9 @@ pub fn binary_available(command: &str) -> bool {
     #[cfg(not(windows))]
     {
         let prog = command.split_whitespace().next().unwrap_or(command);
-        if !std::process::Command::new("which").arg(prog).output()
+        if !std::process::Command::new("which")
+            .arg(prog)
+            .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
         {
@@ -320,7 +324,9 @@ pub fn binary_available(command: &str) -> bool {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .output()
-            .map(|o| o.status.success() && !String::from_utf8_lossy(&o.stderr).contains("Unknown binary"))
+            .map(|o| {
+                o.status.success() && !String::from_utf8_lossy(&o.stderr).contains("Unknown binary")
+            })
             .unwrap_or(false);
     }
     true
@@ -330,7 +336,10 @@ pub fn binary_available(command: &str) -> bool {
 pub fn install_hint(language: &str, _command: &str) -> Option<(&'static str, &'static str)> {
     match language {
         "rust" => Some(("rustup", "rustup toolchain install stable -c rust-analyzer")),
-        "typescript" | "javascript" => Some(("npm", "npm install -g typescript typescript-language-server")),
+        "typescript" | "javascript" => Some((
+            "npm",
+            "npm install -g typescript typescript-language-server",
+        )),
         "python" => Some(("pip", "pip install python-lsp-server")),
         "go" => Some(("go", "go install golang.org/x/tools/gopls@latest")),
         "c" | "cpp" => Some(("scoop", "scoop install llvm  # provides clangd")),
@@ -364,7 +373,9 @@ pub fn install_hint(language: &str, _command: &str) -> Option<(&'static str, &'s
 pub fn uninstall_hint(language: &str) -> Option<&'static str> {
     match language {
         "rust" => Some("rustup component remove rust-analyzer"),
-        "typescript" | "javascript" => Some("npm uninstall -g typescript typescript-language-server"),
+        "typescript" | "javascript" => {
+            Some("npm uninstall -g typescript typescript-language-server")
+        }
         "python" => Some("pip uninstall -y python-lsp-server"),
         "csharp" => Some("dotnet tool uninstall -g OmniSharp"),
         "ruby" => Some("gem uninstall solargraph"),
@@ -481,7 +492,12 @@ impl OpenFiles {
     /// If this pushes the set past the cap, the least-recently-used document
     /// (other than `uri`) is removed and returned as `(uri, lang_key)` so the
     /// caller can send `textDocument/didClose` to its server.
-    fn insert(&mut self, uri: String, content: String, lang_key: String) -> Option<(String, String)> {
+    fn insert(
+        &mut self,
+        uri: String,
+        content: String,
+        lang_key: String,
+    ) -> Option<(String, String)> {
         self.docs.insert(uri.clone(), OpenDoc { content, lang_key });
         self.touch(&uri);
 

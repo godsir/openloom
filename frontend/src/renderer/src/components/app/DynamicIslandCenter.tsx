@@ -5,6 +5,7 @@ import type { StreamPhase } from '../../stores/streaming'
 import { IconMessageSquare, IconEdit, IconAlertCircle, IconDownload, IconSparkles, IconRotateCcw, IconBrain, IconEye, IconTerminal, IconCheck, IconChevronDown, IconUsers } from '../../utils/icons'
 import { useLocale } from '../../i18n'
 import PlatformIcon from '../shared/PlatformIcon'
+import { streamBufferManager } from '../../services/stream-buffer'
 import styles from './AppShell.module.css'
 
 export default function DynamicIslandCenter() {
@@ -63,7 +64,6 @@ export default function DynamicIslandCenter() {
     return activity
   }, [activity, activeStreamId, sessionTeamBindings])
   const phase: StreamPhase = effectiveActivity?.phase ?? 'generating'
-  const phaseActivity = effectiveActivity
 
   // Per-session token usage for the actively streaming session
   const usageBySession = useStore(s => s.usageBySession)
@@ -148,6 +148,28 @@ export default function DynamicIslandCenter() {
   const meta = phaseMeta[phase]
   const PhaseIcon = meta.icon
 
+  // Live buffer snapshot when expanded — shows running tools in the detail card.
+  // Computed inline (cheap: just filters a few arrays). The snapshot returns the
+  // live mutable BufferState, so repeated calls reflect the latest state.
+  const allRunningLive = islandExpanded && activeStreamId
+    ? (() => {
+        const snap = streamBufferManager.snapshot(activeStreamId)
+        if (!snap) return [] as Array<{ id: string; kind: 'skill' | 'tool' | 'proc'; name: string; detail: string }>
+        const shells = snap.shellCalls.filter(s => s.status === 'running')
+        const skills = snap.skillCalls.filter(s => s.status === 'running')
+        const procs = snap.processAcc.filter(p => !p.exited)
+        return [
+          ...skills.map(s => ({ id: s.id, kind: 'skill' as const, name: s.name, detail: '' })),
+          ...shells.map(s => {
+            const args = s.args ?? {}
+            const cmd = (args.command as string) || (args.path as string) || (args.pattern as string) || ''
+            return { id: s.id, kind: 'tool' as const, name: s.name, detail: cmd ? String(cmd).slice(0, 80) : '' }
+          }),
+          ...procs.map(p => ({ id: p.pid, kind: 'proc' as const, name: p.pid, detail: `${p.lines.length} lines` })),
+        ]
+      })()
+    : []
+
   // 展开态：详情卡片
   if (islandExpanded && expandable) {
     return (
@@ -170,18 +192,29 @@ export default function DynamicIslandCenter() {
                 <PlatformIcon platform={streamImSource.platform} size={14} />
               )}
             </div>
+            {/* Running items — what the AI is actually doing right now */}
+            {allRunningLive.length > 0 && (
+              <div className={styles.expandedDetail}>
+                {allRunningLive.slice(0, 5).map((item) => (
+                  <div key={item.id} className={styles.expandedItem}>
+                    <span className={styles.expandedItemKind}>
+                      {item.kind === 'skill' ? <IconSparkles size={10} /> : item.kind === 'proc' ? <IconTerminal size={10} /> : <IconTerminal size={10} />}
+                      {item.name}
+                    </span>
+                    {item.detail && <span className={styles.expandedItemDetail}>{item.detail}</span>}
+                  </div>
+                ))}
+                {allRunningLive.length > 5 && (
+                  <span className={styles.expandedMore}>...及另外 {allRunningLive.length - 5} 项</span>
+                )}
+              </div>
+            )}
             {/* Phase-specific real content */}
-            <div className={styles.expandedDetail}>
-              {phase === 'thinking' && (
-                <span>{t('island.thinkingHint')}</span>
-              )}
-              {phase === 'vision' && activity?.visionTotal != null && (
-                <span>{t('island.visionProgress', { done: activity.visionDone ?? 0, total: activity.visionTotal })}</span>
-              )}
-              {(phase === 'skill' || phase === 'tool') && activity?.detail && (
-                <span>{activity.detail}</span>
-              )}
-            </div>
+            {allRunningLive.length === 0 && (
+              <div className={styles.expandedDetail}>
+                {meta.sub && <span>{meta.sub}</span>}
+              </div>
+            )}
             {/* Token & model info — always visible during streaming */}
             <div className={styles.expandedHint}>
               {streamUsage ? (

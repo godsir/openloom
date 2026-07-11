@@ -92,10 +92,7 @@ pub async fn handle(
 // RPC implementations
 // ============================================================
 
-async fn handle_index_workspace(
-    state: &AppState,
-    p: &Value,
-) -> Result<Value, JsonRpcError> {
+async fn handle_index_workspace(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
     let workspace_root = p
         .get("workspace_root")
         .and_then(|v| v.as_str())
@@ -134,14 +131,8 @@ async fn handle_index_workspace(
     }
 }
 
-async fn handle_search_workspace(
-    state: &AppState,
-    p: &Value,
-) -> Result<Value, JsonRpcError> {
-    let query = p
-        .get("query")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+async fn handle_search_workspace(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let query = p.get("query").and_then(|v| v.as_str()).unwrap_or("");
     let top_k = p.get("top_k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
 
     if query.is_empty() {
@@ -157,7 +148,7 @@ async fn handle_search_workspace(
                 "ok": false,
                 "error": "no index built — call write.index_workspace first",
                 "results": []
-            }))
+            }));
         }
     };
 
@@ -199,8 +190,8 @@ async fn handle_search_workspace(
                     continue;
                 }
                 let doc_len = index.chunks[chunk_idx].text.len() as f64;
-                let tf_norm = (tf as f64 * (k1 + 1.0))
-                    / (tf as f64 + k1 * (1.0 - b + b * doc_len / avgdl));
+                let tf_norm =
+                    (tf as f64 * (k1 + 1.0)) / (tf as f64 + k1 * (1.0 - b + b * doc_len / avgdl));
                 let score = idf * tf_norm;
 
                 match scores.iter().position(|&(i, _)| i == chunk_idx) {
@@ -233,21 +224,18 @@ async fn handle_search_workspace(
     Ok(json!({ "ok": true, "results": results }))
 }
 
-async fn handle_reindex_file(
-    state: &AppState,
-    p: &Value,
-) -> Result<Value, JsonRpcError> {
+async fn handle_reindex_file(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
     let workspace_root = p
         .get("workspace_root")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let file_path = p
-        .get("path")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let file_path = p.get("path").and_then(|v| v.as_str()).unwrap_or("");
 
     if workspace_root.is_empty() || file_path.is_empty() {
-        return Err(err(ErrorCode::InvalidRequest, "workspace_root and path required"));
+        return Err(err(
+            ErrorCode::InvalidRequest,
+            "workspace_root and path required",
+        ));
     }
 
     let ws_path = PathBuf::from(workspace_root)
@@ -388,7 +376,14 @@ fn chunk_text(text: &str, chunk_size: usize) -> Vec<String> {
             let lookback = (end.saturating_sub(100)).max(start);
             for i in (lookback..end).rev() {
                 let c = chars[i];
-                if c == '\n' || c == '。' || c == '.' || c == '！' || c == '!' || c == '？' || c == '?' {
+                if c == '\n'
+                    || c == '。'
+                    || c == '.'
+                    || c == '！'
+                    || c == '!'
+                    || c == '？'
+                    || c == '?'
+                {
                     actual_end = i + 1;
                     break;
                 }

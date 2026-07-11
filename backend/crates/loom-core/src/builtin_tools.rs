@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use loom_memory::TodoItem;
 use loom_types::{ToolDefinition, ToolProgress};
 use std::sync::Arc;
-use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::tool_context::ToolContext;
 use crate::tool_registry::{AgentTool, ToolProvenance, ToolResult};
@@ -51,7 +51,7 @@ impl AgentTool for ShellTool {
     async fn execute(
         &self,
         arguments: serde_json::Value,
-        _progress: UnboundedSender<ToolProgress>,
+        progress: UnboundedSender<ToolProgress>,
         context: &ToolContext,
     ) -> Result<ToolResult> {
         let command = arguments["command"].as_str().unwrap_or("");
@@ -137,53 +137,128 @@ impl AgentTool for ShellTool {
             }
         };
 
-        // Wait with timeout
+        // Take stdout/stderr pipes for concurrent reading
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
+
+        // Channel for streaming output lines to the agent
+        let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<(String, bool)>(); // (line, is_stderr)
+
+        // Spawn reader tasks for stdout and stderr
+        if let Some(stdout) = stdout_pipe {
+            let tx = line_tx.clone();
+            tokio::spawn(async move {
+                let mut reader = tokio::io::BufReader::new(stdout);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match tokio::io::AsyncBufReadExt::read_line(&mut reader, &mut line).await {
+                        Ok(0) => break, // EOF
+                        Ok(_) => {
+                            let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
+                            if tx.send((trimmed.to_string(), false)).is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
+        if let Some(stderr) = stderr_pipe {
+            let tx = line_tx.clone();
+            tokio::spawn(async move {
+                let mut reader = tokio::io::BufReader::new(stderr);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match tokio::io::AsyncBufReadExt::read_line(&mut reader, &mut line).await {
+                        Ok(0) => break, // EOF
+                        Ok(_) => {
+                            let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
+                            if tx.send((trimmed.to_string(), true)).is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
+        // Drop the original sender so `line_rx` closes when all readers finish
+        drop(line_tx);
+
+        // Accumulate output and stream progress to the frontend
+        let mut stdout_lines: Vec<String> = Vec::new();
+        let mut stderr_lines: Vec<String> = Vec::new();
+        let max_bytes = prefs.file_read_max_output_kb * 1024;
+
+        // Wait with timeout — drain output lines concurrently with process exit
         let timeout_duration = std::time::Duration::from_secs(timeout_secs);
-        let wait_result = tokio::select! {
-            result = child.wait() => Ok(result),
-            _ = tokio::time::sleep(timeout_duration) => Err(()),
-        };
+        let wait_result = tokio::time::timeout(timeout_duration, async {
+            // While waiting for exit, continuously drain output lines
+            loop {
+                tokio::select! {
+                    result = child.wait() => {
+                        return result;
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                        // Drain any available lines
+                        while let Ok((line, is_stderr)) = line_rx.try_recv() {
+                            let prefix = if is_stderr { "[stderr] " } else { "" };
+                            let _ = progress.send(ToolProgress {
+                                progress: None,
+                                message: format!("{}{}", prefix, line),
+                                payload: None,
+                            });
+                            if is_stderr {
+                                stderr_lines.push(line);
+                            } else {
+                                stdout_lines.push(line);
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .await;
+
+        // Drain any remaining lines from the channel
+        while let Ok((line, is_stderr)) = line_rx.try_recv() {
+            let prefix = if is_stderr { "[stderr] " } else { "" };
+            let _ = progress.send(ToolProgress {
+                progress: None,
+                message: format!("{}{}", prefix, line),
+                payload: None,
+            });
+            if is_stderr {
+                stderr_lines.push(line);
+            } else {
+                stdout_lines.push(line);
+            }
+        }
 
         match wait_result {
             Ok(Ok(status)) => {
-                // Process completed — collect output
-                let stdout = if let Some(mut stdout_pipe) = child.stdout.take() {
-                    let mut buf = Vec::new();
-                    let _ = tokio::io::AsyncReadExt::read_to_end(&mut stdout_pipe, &mut buf).await;
-                    buf
-                } else {
-                    Vec::new()
-                };
-                let stderr = if let Some(mut stderr_pipe) = child.stderr.take() {
-                    let mut buf = Vec::new();
-                    let _ = tokio::io::AsyncReadExt::read_to_end(&mut stderr_pipe, &mut buf).await;
-                    buf
-                } else {
-                    Vec::new()
-                };
-
                 let is_error = !status.success();
-                let stdout_str = String::from_utf8_lossy(&stdout);
-                let stderr_str = String::from_utf8_lossy(&stderr);
                 let mut content = if is_error {
                     format!("[FAIL] exit code {}\n", status.code().unwrap_or(-1))
                 } else {
                     String::new()
                 };
-                if !stdout_str.is_empty() {
-                    content.push_str(&stdout_str);
+                if !stdout_lines.is_empty() {
+                    content.push_str(&stdout_lines.join("\n"));
                 }
-                if !stderr_str.is_empty() {
+                if !stderr_lines.is_empty() {
                     if !content.is_empty() {
                         content.push('\n');
                     }
                     content.push_str("[stderr]\n");
-                    content.push_str(&stderr_str);
+                    content.push_str(&stderr_lines.join("\n"));
                 }
                 if content.is_empty() {
                     content = "[ok] Command executed on local machine — no errors.".to_string();
                 }
-                let max_bytes = prefs.file_read_max_output_kb * 1024;
                 if content.len() > max_bytes {
                     content = format!(
                         "{}...\n[truncated at {}KB]",
@@ -294,7 +369,9 @@ impl AgentTool for FileListTool {
         "file_list"
     }
 
-    fn supports_parallel(&self) -> bool { true }
+    fn supports_parallel(&self) -> bool {
+        true
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -348,7 +425,13 @@ impl AgentTool for FileListTool {
             Ok(files) => {
                 for (name, size, is_dir, mtime) in &files {
                     let prefix = if *is_dir { "[DIR] " } else { "[FILE]" };
-                    result.push_str(&format!("{}  {}  {}  {}\n", prefix, format_size(*size), mtime, name));
+                    result.push_str(&format!(
+                        "{}  {}  {}  {}\n",
+                        prefix,
+                        format_size(*size),
+                        mtime,
+                        name
+                    ));
                 }
                 result.push_str(&format!("\n{} entries", files.len()));
                 Ok(ToolResult {
@@ -392,10 +475,16 @@ fn list_dir(
             String::new()
         };
         let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
-            let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(
-                modified.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64, 0
-            ).map(|d| d.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_else(|| "unknown".to_string());
-            entries.push((format!("{}{}", prefix, name), meta.len(), meta.is_dir(), dt));
+        let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(
+            modified
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64,
+            0,
+        )
+        .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+        entries.push((format!("{}{}", prefix, name), meta.len(), meta.is_dir(), dt));
 
         if recursive && meta.is_dir() {
             let sub = list_dir(&entry.path(), true, depth + 1, max_depth)?;
@@ -431,7 +520,9 @@ impl AgentTool for FileReadTool {
         "file_read"
     }
 
-    fn supports_parallel(&self) -> bool { true }
+    fn supports_parallel(&self) -> bool {
+        true
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -601,7 +692,10 @@ impl AgentTool for FileWriteTool {
         // Read-before-edit guard: existing files must have been read recently
         if path.exists() && !context.was_recently_read(&path) {
             return Ok(ToolResult {
-                content: format!("Read-before-edit guard: '{}' not read. Use file_read first.", path_str),
+                content: format!(
+                    "Read-before-edit guard: '{}' not read. Use file_read first.",
+                    path_str
+                ),
                 is_error: true,
                 structured_content: None,
             });
@@ -648,7 +742,9 @@ pub struct FileEditTool;
 
 #[async_trait]
 impl AgentTool for FileEditTool {
-    fn tool_name(&self) -> &str { "file_edit" }
+    fn tool_name(&self) -> &str {
+        "file_edit"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -668,49 +764,156 @@ impl AgentTool for FileEditTool {
         }
     }
 
-    async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, context: &ToolContext) -> Result<ToolResult> {
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        context: &ToolContext,
+    ) -> Result<ToolResult> {
         let path_str = arguments["path"].as_str().unwrap_or("");
         if path_str.is_empty() {
-            return Ok(ToolResult { content: "No path provided.".into(), is_error: true, structured_content: None });
+            return Ok(ToolResult {
+                content: "No path provided.".into(),
+                is_error: true,
+                structured_content: None,
+            });
         }
         let path = context.resolve_path(path_str);
-        if let Some(ref guard) = context.sandbox && let Err(reason) = guard.check_write(&path) {
-            return Ok(ToolResult { content: format!("Sandbox: {}", reason), is_error: true, structured_content: None });
+        if let Some(ref guard) = context.sandbox
+            && let Err(reason) = guard.check_write(&path)
+        {
+            return Ok(ToolResult {
+                content: format!("Sandbox: {}", reason),
+                is_error: true,
+                structured_content: None,
+            });
         }
         if path.exists() && !context.was_recently_read(&path) {
-            return Ok(ToolResult { content: format!("Read-before-edit guard: '{}' not read. Use file_read first.", path_str), is_error: true, structured_content: None });
+            return Ok(ToolResult {
+                content: format!(
+                    "Read-before-edit guard: '{}' not read. Use file_read first.",
+                    path_str
+                ),
+                is_error: true,
+                structured_content: None,
+            });
         }
-        let old_content = match std::fs::read_to_string(&path) { Ok(c) => c, Err(e) => return Ok(ToolResult { content: format!("Read failed: {}", e), is_error: true, structured_content: None }) };
+        let old_content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                return Ok(ToolResult {
+                    content: format!("Read failed: {}", e),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        };
         let normalized = old_content.replace("\r\n", "\n");
         let edits_raw: Vec<(&str, &str)> = if let Some(arr) = arguments["edits"].as_array() {
-            if arr.is_empty() { return Ok(ToolResult { content: "Empty edits array.".into(), is_error: true, structured_content: None }); }
-            arr.iter().map(|e| (e["oldText"].as_str().unwrap_or(""), e["newText"].as_str().unwrap_or(""))).collect()
+            if arr.is_empty() {
+                return Ok(ToolResult {
+                    content: "Empty edits array.".into(),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+            arr.iter()
+                .map(|e| {
+                    (
+                        e["oldText"].as_str().unwrap_or(""),
+                        e["newText"].as_str().unwrap_or(""),
+                    )
+                })
+                .collect()
         } else {
             let ot = arguments["oldText"].as_str().unwrap_or("");
-            if ot.is_empty() { return Ok(ToolResult { content: "No oldText provided.".into(), is_error: true, structured_content: None }); }
+            if ot.is_empty() {
+                return Ok(ToolResult {
+                    content: "No oldText provided.".into(),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
             vec![(ot, arguments["newText"].as_str().unwrap_or(""))]
         };
-        let edits: Vec<(String, String)> = edits_raw.into_iter().map(|(o,n)| (o.replace("\r\n", "\n"), n.replace("\r\n", "\n"))).collect();
-        struct EP { idx: usize, pos: usize, new: String }
+        let edits: Vec<(String, String)> = edits_raw
+            .into_iter()
+            .map(|(o, n)| (o.replace("\r\n", "\n"), n.replace("\r\n", "\n")))
+            .collect();
+        struct EP {
+            idx: usize,
+            pos: usize,
+            new: String,
+        }
         let mut eps: Vec<EP> = Vec::new();
         for (i, (old, new)) in edits.iter().enumerate() {
             let c = normalized.matches(old.as_str()).count();
-            if c == 0 { return Ok(ToolResult { content: format!("Edit #{}: oldText not found.", i+1), is_error: true, structured_content: None }); }
-            if c > 1 { return Ok(ToolResult { content: format!("Edit #{}: oldText appears {} times.", i+1, c), is_error: true, structured_content: None }); }
-            eps.push(EP { idx: i, pos: normalized.find(old.as_str()).unwrap(), new: new.clone() });
+            if c == 0 {
+                return Ok(ToolResult {
+                    content: format!("Edit #{}: oldText not found.", i + 1),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+            if c > 1 {
+                return Ok(ToolResult {
+                    content: format!("Edit #{}: oldText appears {} times.", i + 1, c),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+            eps.push(EP {
+                idx: i,
+                pos: normalized.find(old.as_str()).unwrap(),
+                new: new.clone(),
+            });
         }
-        eps.sort_by(|a,b| b.pos.cmp(&a.pos));
-        for i in 0..eps.len() { for j in i+1..eps.len() { if eps[j].pos + edits[eps[j].idx].0.len() > eps[i].pos { return Ok(ToolResult { content: format!("Overlap: edits #{} and #{}", eps[i].idx+1, eps[j].idx+1), is_error: true, structured_content: None }); } } }
+        eps.sort_by(|a, b| b.pos.cmp(&a.pos));
+        for i in 0..eps.len() {
+            for j in i + 1..eps.len() {
+                if eps[j].pos + edits[eps[j].idx].0.len() > eps[i].pos {
+                    return Ok(ToolResult {
+                        content: format!(
+                            "Overlap: edits #{} and #{}",
+                            eps[i].idx + 1,
+                            eps[j].idx + 1
+                        ),
+                        is_error: true,
+                        structured_content: None,
+                    });
+                }
+            }
+        }
         let mut result = normalized.clone();
-        for ep in &eps { result.replace_range(ep.pos..ep.pos+edits[ep.idx].0.len(), &ep.new); }
-        if old_content.contains("\r\n") { result = result.replace("\n", "\r\n"); }
-        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+        for ep in &eps {
+            result.replace_range(ep.pos..ep.pos + edits[ep.idx].0.len(), &ep.new);
+        }
+        if old_content.contains("\r\n") {
+            result = result.replace("\n", "\r\n");
+        }
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
         match std::fs::write(&path, &result) {
-            Ok(_) => Ok(ToolResult { content: format!("Edited: {} ({} changes)", path_str, eps.len()), is_error: false, structured_content: Some(serde_json::json!({"filePath":path_str,"fileName":file_name,"oldContent":old_content,"newContent":result})) }),
-            Err(e) => Ok(ToolResult { content: format!("Write failed: {}", e), is_error: true, structured_content: None }),
+            Ok(_) => Ok(ToolResult {
+                content: format!("Edited: {} ({} changes)", path_str, eps.len()),
+                is_error: false,
+                structured_content: Some(
+                    serde_json::json!({"filePath":path_str,"fileName":file_name,"oldContent":old_content,"newContent":result}),
+                ),
+            }),
+            Err(e) => Ok(ToolResult {
+                content: format!("Write failed: {}", e),
+                is_error: true,
+                structured_content: None,
+            }),
         }
     }
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ============================================================================
@@ -725,7 +928,9 @@ impl AgentTool for ContentSearchTool {
         "content_search"
     }
 
-    fn supports_parallel(&self) -> bool { true }
+    fn supports_parallel(&self) -> bool {
+        true
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -820,7 +1025,12 @@ fn file_name_matches(path: &Path, pattern: &str) -> bool {
         .is_some_and(|name| name.to_lowercase().contains(&pattern.to_lowercase()))
 }
 
-fn simple_content_search(path: &Path, pattern: &str, file_pattern: &str, max_results: usize) -> Result<Vec<String>> {
+fn simple_content_search(
+    path: &Path,
+    pattern: &str,
+    file_pattern: &str,
+    max_results: usize,
+) -> Result<Vec<String>> {
     let mut results = Vec::new();
     if path.is_dir() {
         for entry in std::fs::read_dir(path)? {
@@ -831,9 +1041,12 @@ fn simple_content_search(path: &Path, pattern: &str, file_pattern: &str, max_res
                     .file_name()
                     .is_some_and(|n| n == ".git" || n == "node_modules" || n == "target")
             {
-                if let Ok(sub) =
-                    simple_content_search(&p, pattern, file_pattern, max_results.saturating_sub(results.len()))
-                {
+                if let Ok(sub) = simple_content_search(
+                    &p,
+                    pattern,
+                    file_pattern,
+                    max_results.saturating_sub(results.len()),
+                ) {
                     results.extend(sub);
                 }
             } else if p.is_file()
@@ -1068,7 +1281,9 @@ pub struct AskUserTool;
 
 #[async_trait]
 impl AgentTool for AskUserTool {
-    fn tool_name(&self) -> &str { "ask_user" }
+    fn tool_name(&self) -> &str {
+        "ask_user"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -1087,23 +1302,45 @@ impl AgentTool for AskUserTool {
         }
     }
 
-    fn supports_parallel(&self) -> bool { false }
+    fn supports_parallel(&self) -> bool {
+        false
+    }
 
-    async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, _context: &ToolContext) -> Result<ToolResult> {
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
         let question = arguments["question"].as_str().unwrap_or("");
-        let options: Vec<String> = arguments["options"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+        let options: Vec<String> = arguments["options"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
         let multi_choice = arguments["multi_choice"].as_bool().unwrap_or(false);
 
         let mut content = format!("? {}", question);
         if !options.is_empty() {
             content.push_str("\n\nOptions:");
-            for (i, o) in options.iter().enumerate() { content.push_str(&format!("\n  {}. {}", i+1, o)); }
+            for (i, o) in options.iter().enumerate() {
+                content.push_str(&format!("\n  {}. {}", i + 1, o));
+            }
         }
         let sc = serde_json::json!({"question": question, "options": options, "multi_choice": multi_choice});
 
-        Ok(ToolResult { content, is_error: false, structured_content: Some(sc) })
+        Ok(ToolResult {
+            content,
+            is_error: false,
+            structured_content: Some(sc),
+        })
     }
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ============================================================================
@@ -1114,7 +1351,9 @@ pub struct LoopTool;
 
 #[async_trait]
 impl AgentTool for LoopTool {
-    fn tool_name(&self) -> &str { "loop" }
+    fn tool_name(&self) -> &str {
+        "loop"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -1131,9 +1370,16 @@ impl AgentTool for LoopTool {
         }
     }
 
-    fn supports_parallel(&self) -> bool { false }
+    fn supports_parallel(&self) -> bool {
+        false
+    }
 
-    async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, _context: &ToolContext) -> Result<ToolResult> {
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
         let prompt = arguments["prompt"].as_str().unwrap_or("继续");
         Ok(ToolResult {
             content: format!("[loop] {}", prompt),
@@ -1141,7 +1387,9 @@ impl AgentTool for LoopTool {
             structured_content: Some(serde_json::json!({"loop": true, "prompt": prompt})),
         })
     }
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ============================================================================
@@ -1152,7 +1400,9 @@ pub struct PushNotificationTool;
 
 #[async_trait]
 impl AgentTool for PushNotificationTool {
-    fn tool_name(&self) -> &str { "push_notification" }
+    fn tool_name(&self) -> &str {
+        "push_notification"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -1170,9 +1420,16 @@ impl AgentTool for PushNotificationTool {
         }
     }
 
-    fn supports_parallel(&self) -> bool { true }
+    fn supports_parallel(&self) -> bool {
+        true
+    }
 
-    async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, context: &ToolContext) -> Result<ToolResult> {
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        context: &ToolContext,
+    ) -> Result<ToolResult> {
         let title = arguments["title"].as_str().unwrap_or("openLoom");
         let body = arguments["body"].as_str().unwrap_or("");
 
@@ -1191,7 +1448,9 @@ impl AgentTool for PushNotificationTool {
             structured_content: Some(serde_json::json!({"title": title, "body": body})),
         })
     }
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ============================================================================
@@ -1202,7 +1461,9 @@ pub struct ReportFindingsTool;
 
 #[async_trait]
 impl AgentTool for ReportFindingsTool {
-    fn tool_name(&self) -> &str { "report_findings" }
+    fn tool_name(&self) -> &str {
+        "report_findings"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -1233,10 +1494,20 @@ impl AgentTool for ReportFindingsTool {
         }
     }
 
-    fn supports_parallel(&self) -> bool { true }
+    fn supports_parallel(&self) -> bool {
+        true
+    }
 
-    async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, context: &ToolContext) -> Result<ToolResult> {
-        let findings = arguments["findings"].as_array().cloned().unwrap_or_default();
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let findings = arguments["findings"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
 
         if findings.len() > 32 {
             return Ok(ToolResult {
@@ -1254,23 +1525,35 @@ impl AgentTool for ReportFindingsTool {
             });
         }
 
-        let summary: Vec<String> = findings.iter().map(|f| {
-            let sev = match f["severity"].as_str().unwrap_or("") {
-                "critical" => "CRIT", "important" => "IMPT", _ => "MINOR"
-            };
-            let file = f["file"].as_str().unwrap_or("?");
-            let line = f["line"].as_u64().map(|n| n.to_string()).unwrap_or_else(|| "-".into());
-            let msg = f["summary"].as_str().unwrap_or("");
-            format!("[{sev}] {file}:{line} — {msg}")
-        }).collect();
+        let summary: Vec<String> = findings
+            .iter()
+            .map(|f| {
+                let sev = match f["severity"].as_str().unwrap_or("") {
+                    "critical" => "CRIT",
+                    "important" => "IMPT",
+                    _ => "MINOR",
+                };
+                let file = f["file"].as_str().unwrap_or("?");
+                let line = f["line"]
+                    .as_u64()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "-".into());
+                let msg = f["summary"].as_str().unwrap_or("");
+                format!("[{sev}] {file}:{line} — {msg}")
+            })
+            .collect();
 
         Ok(ToolResult {
             content: format!("已上报 {} 条发现:\n{}", findings.len(), summary.join("\n")),
             is_error: false,
-            structured_content: Some(serde_json::json!({"count": findings.len(), "findings": findings})),
+            structured_content: Some(
+                serde_json::json!({"count": findings.len(), "findings": findings}),
+            ),
         })
     }
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ============================================================================
@@ -1281,7 +1564,9 @@ pub struct GlobTool;
 
 #[async_trait]
 impl AgentTool for GlobTool {
-    fn tool_name(&self) -> &str { "file_glob" }
+    fn tool_name(&self) -> &str {
+        "file_glob"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -1300,16 +1585,35 @@ impl AgentTool for GlobTool {
         }
     }
 
-    fn supports_parallel(&self) -> bool { true }
+    fn supports_parallel(&self) -> bool {
+        true
+    }
 
-    async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, context: &ToolContext) -> Result<ToolResult> {
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        context: &ToolContext,
+    ) -> Result<ToolResult> {
         let pattern = arguments["pattern"].as_str().unwrap_or("");
         let base = arguments["path"].as_str().unwrap_or(".");
         let max_results = arguments["max_results"].as_u64().unwrap_or(200) as usize;
-        if pattern.is_empty() { return Ok(ToolResult { content: "No pattern.".into(), is_error: true, structured_content: None }); }
+        if pattern.is_empty() {
+            return Ok(ToolResult {
+                content: "No pattern.".into(),
+                is_error: true,
+                structured_content: None,
+            });
+        }
         let resolved = context.resolve_path(base);
-        if let Some(ref guard) = context.sandbox && let Err(reason) = guard.check_read(&resolved) {
-            return Ok(ToolResult { content: format!("Sandbox: {}", reason), is_error: true, structured_content: None });
+        if let Some(ref guard) = context.sandbox
+            && let Err(reason) = guard.check_read(&resolved)
+        {
+            return Ok(ToolResult {
+                content: format!("Sandbox: {}", reason),
+                is_error: true,
+                structured_content: None,
+            });
         }
         context.record_read(resolved.clone());
         // Use glob crate
@@ -1318,22 +1622,50 @@ impl AgentTool for GlobTool {
         match glob::glob(&full_pattern) {
             Ok(paths) => {
                 for entry in paths.flatten() {
-                    if results.len() >= max_results { break; }
+                    if results.len() >= max_results {
+                        break;
+                    }
                     if let Ok(meta) = std::fs::metadata(&entry) {
-                        let rel = entry.strip_prefix(&resolved).unwrap_or(&entry).display().to_string();
+                        let rel = entry
+                            .strip_prefix(&resolved)
+                            .unwrap_or(&entry)
+                            .display()
+                            .to_string();
                         results.push((rel, meta.len()));
                     }
                 }
             }
-            Err(e) => { return Ok(ToolResult { content: format!("Glob error: {}", e), is_error: true, structured_content: None }); }
+            Err(e) => {
+                return Ok(ToolResult {
+                    content: format!("Glob error: {}", e),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
         }
-        if results.is_empty() { return Ok(ToolResult { content: format!("No files matching '{}'", pattern), is_error: false, structured_content: None }); }
+        if results.is_empty() {
+            return Ok(ToolResult {
+                content: format!("No files matching '{}'", pattern),
+                is_error: false,
+                structured_content: None,
+            });
+        }
         let mut out = format!("Found {} files matching '{}':\n", results.len(), pattern);
-        for (path, size) in &results { out.push_str(&format!("  {}  {}\n", format_size(*size), path)); }
-        if results.len() >= max_results { out.push_str(&format!("... truncated at {}\n", max_results)); }
-        Ok(ToolResult { content: out, is_error: false, structured_content: None })
+        for (path, size) in &results {
+            out.push_str(&format!("  {}  {}\n", format_size(*size), path));
+        }
+        if results.len() >= max_results {
+            out.push_str(&format!("... truncated at {}\n", max_results));
+        }
+        Ok(ToolResult {
+            content: out,
+            is_error: false,
+            structured_content: None,
+        })
     }
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ============================================================================
@@ -1344,7 +1676,9 @@ pub struct FindTool;
 
 #[async_trait]
 impl AgentTool for FindTool {
-    fn tool_name(&self) -> &str { "file_find" }
+    fn tool_name(&self) -> &str {
+        "file_find"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -1364,42 +1698,110 @@ impl AgentTool for FindTool {
         }
     }
 
-    fn supports_parallel(&self) -> bool { true }
+    fn supports_parallel(&self) -> bool {
+        true
+    }
 
-    async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, context: &ToolContext) -> Result<ToolResult> {
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        context: &ToolContext,
+    ) -> Result<ToolResult> {
         let dir = arguments["directory"].as_str().unwrap_or(".");
         let name_pat = arguments["name_pattern"].as_str().unwrap_or("");
         let max_depth = arguments["max_depth"].as_u64().unwrap_or(5) as usize;
         let max_results = arguments["max_results"].as_u64().unwrap_or(200) as usize;
-        if name_pat.is_empty() { return Ok(ToolResult { content: "No name_pattern.".into(), is_error: true, structured_content: None }); }
+        if name_pat.is_empty() {
+            return Ok(ToolResult {
+                content: "No name_pattern.".into(),
+                is_error: true,
+                structured_content: None,
+            });
+        }
         let resolved = context.resolve_path(dir);
-        if let Some(ref guard) = context.sandbox && let Err(reason) = guard.check_read(&resolved) {
-            return Ok(ToolResult { content: format!("Sandbox: {}", reason), is_error: true, structured_content: None });
+        if let Some(ref guard) = context.sandbox
+            && let Err(reason) = guard.check_read(&resolved)
+        {
+            return Ok(ToolResult {
+                content: format!("Sandbox: {}", reason),
+                is_error: true,
+                structured_content: None,
+            });
         }
         context.record_read(resolved.clone());
         let mut results = Vec::new();
-        find_walk(&resolved, &name_pat.to_lowercase(), 0, max_depth, max_results, &mut results);
-        if results.is_empty() { return Ok(ToolResult { content: format!("No files matching '{}'", name_pat), is_error: false, structured_content: None }); }
+        find_walk(
+            &resolved,
+            &name_pat.to_lowercase(),
+            0,
+            max_depth,
+            max_results,
+            &mut results,
+        );
+        if results.is_empty() {
+            return Ok(ToolResult {
+                content: format!("No files matching '{}'", name_pat),
+                is_error: false,
+                structured_content: None,
+            });
+        }
         let mut out = format!("Found {} files matching '{}':\n", results.len(), name_pat);
-        for (path, size) in &results { out.push_str(&format!("  {}  {}\n", format_size(*size), path)); }
-        if results.len() >= max_results { out.push_str(&format!("... truncated at {}\n", max_results)); }
-        Ok(ToolResult { content: out, is_error: false, structured_content: None })
+        for (path, size) in &results {
+            out.push_str(&format!("  {}  {}\n", format_size(*size), path));
+        }
+        if results.len() >= max_results {
+            out.push_str(&format!("... truncated at {}\n", max_results));
+        }
+        Ok(ToolResult {
+            content: out,
+            is_error: false,
+            structured_content: None,
+        })
     }
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
-fn find_walk(dir: &Path, pat: &str, depth: usize, max_depth: usize, max_results: usize, results: &mut Vec<(String, u64)>) {
-    if depth >= max_depth || results.len() >= max_results { return; }
-    if !dir.is_dir() { return; }
-    let iter = match std::fs::read_dir(dir) { Ok(i) => i, Err(_) => return };
+fn find_walk(
+    dir: &Path,
+    pat: &str,
+    depth: usize,
+    max_depth: usize,
+    max_results: usize,
+    results: &mut Vec<(String, u64)>,
+) {
+    if depth >= max_depth || results.len() >= max_results {
+        return;
+    }
+    if !dir.is_dir() {
+        return;
+    }
+    let iter = match std::fs::read_dir(dir) {
+        Ok(i) => i,
+        Err(_) => return,
+    };
     for entry in iter.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == ".git" || name == "node_modules" || name == "target" { continue; }
-        let meta = match entry.metadata() { Ok(m) => m, Err(_) => continue };
-        if meta.is_dir() { find_walk(&path, pat, depth + 1, max_depth, max_results, results); }
-        else if name.to_lowercase().contains(pat) {
-            let rel = path.strip_prefix(std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf())).unwrap_or(&path).display().to_string();
+        if name == ".git" || name == "node_modules" || name == "target" {
+            continue;
+        }
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.is_dir() {
+            find_walk(&path, pat, depth + 1, max_depth, max_results, results);
+        } else if name.to_lowercase().contains(pat) {
+            let rel = path
+                .strip_prefix(
+                    std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf()),
+                )
+                .unwrap_or(&path)
+                .display()
+                .to_string();
             results.push((rel, meta.len()));
         }
     }
@@ -1414,15 +1816,19 @@ fn find_walk(dir: &Path, pat: &str, depth: usize, max_depth: usize, max_results:
 /// the orchestrator's shared config so the values reflect the live session.
 pub struct SystemInfoTool {
     pub active_model_name: std::sync::Arc<tokio::sync::RwLock<Option<String>>>,
-    pub model_configs:
-        std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, loom_types::ModelConfig>>>,
+    pub model_configs: std::sync::Arc<
+        tokio::sync::RwLock<std::collections::HashMap<String, loom_types::ModelConfig>>,
+    >,
     pub sandbox_config: std::sync::Arc<tokio::sync::RwLock<loom_types::config::SandboxConfig>>,
+    pub tool_prefs: std::sync::Arc<tokio::sync::RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>>,
     pub data_dir: std::path::PathBuf,
 }
 
 #[async_trait]
 impl AgentTool for SystemInfoTool {
-    fn tool_name(&self) -> &str { "system_info" }
+    fn tool_name(&self) -> &str {
+        "system_info"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -1439,9 +1845,16 @@ impl AgentTool for SystemInfoTool {
         }
     }
 
-    fn supports_parallel(&self) -> bool { true }
+    fn supports_parallel(&self) -> bool {
+        true
+    }
 
-    async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, context: &ToolContext) -> Result<ToolResult> {
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        context: &ToolContext,
+    ) -> Result<ToolResult> {
         let query = arguments["query"].as_str().unwrap_or("all");
 
         // Resolve the active model line from live config.
@@ -1470,15 +1883,24 @@ impl AgentTool for SystemInfoTool {
         let perm_line = {
             let sb = self.sandbox_config.read().await;
             if sb.enabled {
-                let scope = if sb.workspace_only { "workspace-only" } else { "open" };
+                let scope = if sb.workspace_only {
+                    "workspace-only"
+                } else {
+                    "open"
+                };
                 format!(
                     "Permissions: sandbox ENABLED ({scope}); {} extra allowed path(s), {} denied path(s); .loom data access {}",
                     sb.allowed_paths.len(),
                     sb.denied_paths.len(),
-                    if sb.allow_loom_data { "permitted" } else { "blocked" }
+                    if sb.allow_loom_data {
+                        "permitted"
+                    } else {
+                        "blocked"
+                    }
                 )
             } else {
-                "Permissions: sandbox DISABLED (filesystem and shell access unrestricted)".to_string()
+                "Permissions: sandbox DISABLED (filesystem and shell access unrestricted)"
+                    .to_string()
             }
         };
 
@@ -1504,6 +1926,7 @@ impl AgentTool for SystemInfoTool {
                 info.push('\n');
                 info.push_str("Skills: use 'use_skill' tool to list available skills\n");
                 info.push_str("MCP: use 'mcp_list' tool to list connected MCP servers\n");
+                info.push_str("Config: use system_info query=config to view tool preferences\n");
             }
             "workspace" => {
                 info.push_str(&workspace_line);
@@ -1513,15 +1936,58 @@ impl AgentTool for SystemInfoTool {
                 info.push_str(&os_line);
                 info.push('\n');
             }
-            "model" => { info.push_str(&model_line); info.push('\n'); }
-            "permissions" => { info.push_str(&perm_line); info.push('\n'); }
-            "skills" => { info.push_str("Skills: use 'use_skill' tool to list available skills\n"); }
-            "mcp" => { info.push_str("MCP: use 'mcp_list' tool to list connected MCP servers\n"); }
-            _ => { info = format!("Unknown query '{query}'. Valid: model, permissions, workspace, skills, mcp, all"); }
+            "model" => {
+                info.push_str(&model_line);
+                info.push('\n');
+            }
+            "permissions" => {
+                info.push_str(&perm_line);
+                info.push('\n');
+            }
+            "skills" => {
+                info.push_str("Skills: use 'use_skill' tool to list available skills\n");
+            }
+            "mcp" => {
+                info.push_str("MCP: use 'mcp_list' tool to list connected MCP servers\n");
+            }
+            "config" => {
+                let prefs = self.tool_prefs.read().await;
+                info.push_str(&format!("## Current Tool Preferences\n\n"));
+                info.push_str(&format!("Shell:\n"));
+                info.push_str(&format!("  default_timeout: {}s\n", prefs.shell_default_timeout_secs));
+                info.push_str(&format!("  max_timeout: {}s\n", prefs.shell_max_timeout_secs));
+                info.push_str(&format!("File Read:\n"));
+                info.push_str(&format!("  max_output: {} KB\n", prefs.file_read_max_output_kb));
+                info.push_str(&format!("Web Search:\n"));
+                info.push_str(&format!("  engine: {:?}\n", prefs.web_search_engine));
+                info.push_str(&format!("  max_results: {}\n", prefs.web_search_max_results));
+                info.push_str(&format!("  searxng_url: {:?}\n", prefs.searxng_url));
+                info.push_str(&format!("  api_key: {}\n", if prefs.web_search_api_key.is_some() { "***" } else { "not set" }));
+                info.push_str(&format!("Network:\n"));
+                info.push_str(&format!("  proxy: {:?}\n", prefs.http_proxy));
+                info.push_str(&format!("  proxy_enabled: {}\n", prefs.proxy_enabled));
+                info.push_str(&format!("Web Fetch:\n"));
+                info.push_str(&format!("  max_chars: {}\n", prefs.web_fetch_max_chars));
+                info.push_str(&format!("Process Wait:\n"));
+                info.push_str(&format!("  max_timeout: {}s\n", prefs.process_wait_max_timeout_secs));
+                info.push_str(&format!("Monitor:\n"));
+                info.push_str(&format!("  default_timeout: {}ms\n", prefs.monitor_default_timeout_ms));
+            }
+            _ => {
+                info = format!(
+                    "Unknown query '{query}'. Valid: model, permissions, workspace, skills, mcp, config, all"
+                );
+            }
         }
-        Ok(ToolResult { content: info, is_error: false, structured_content: None })
+        Ok(ToolResult {
+            content: info,
+            is_error: false,
+            structured_content: None,
+        })
     }
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ============================================================================
@@ -1538,7 +2004,9 @@ pub struct TokenUsageTool {
 
 #[async_trait]
 impl AgentTool for TokenUsageTool {
-    fn tool_name(&self) -> &str { "token_usage" }
+    fn tool_name(&self) -> &str {
+        "token_usage"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -1549,9 +2017,16 @@ impl AgentTool for TokenUsageTool {
         }
     }
 
-    fn supports_parallel(&self) -> bool { true }
+    fn supports_parallel(&self) -> bool {
+        true
+    }
 
-    async fn execute(&self, _arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, _context: &ToolContext) -> Result<ToolResult> {
+    async fn execute(
+        &self,
+        _arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
         let guard = self.memory_store.read().await;
         let Some(store) = guard.as_ref() else {
             return Ok(ToolResult {
@@ -1606,9 +2081,15 @@ impl AgentTool for TokenUsageTool {
             }
         }
 
-        Ok(ToolResult { content: out, is_error: false, structured_content: Some(summary) })
+        Ok(ToolResult {
+            content: out,
+            is_error: false,
+            structured_content: Some(summary),
+        })
     }
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ============================================================================
@@ -1625,7 +2106,9 @@ pub struct MemorySearchTool {
 
 #[async_trait]
 impl AgentTool for MemorySearchTool {
-    fn tool_name(&self) -> &str { "memory_search" }
+    fn tool_name(&self) -> &str {
+        "memory_search"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -1643,17 +2126,32 @@ impl AgentTool for MemorySearchTool {
         }
     }
 
-    fn supports_parallel(&self) -> bool { true }
+    fn supports_parallel(&self) -> bool {
+        true
+    }
 
-    async fn execute(&self, arguments: serde_json::Value, _progress: UnboundedSender<ToolProgress>, _context: &ToolContext) -> Result<ToolResult> {
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
         let query = arguments["query"].as_str().unwrap_or("");
-        if query.is_empty() { return Ok(ToolResult { content: "No query provided.".into(), is_error: true, structured_content: None }); }
+        if query.is_empty() {
+            return Ok(ToolResult {
+                content: "No query provided.".into(),
+                is_error: true,
+                structured_content: None,
+            });
+        }
         let max_results = arguments["max_results"].as_u64().unwrap_or(5).clamp(1, 50) as usize;
 
         let guard = self.memory_store.read().await;
         let Some(store) = guard.as_ref() else {
             return Ok(ToolResult {
-                content: "Memory not available: no knowledge graph store is configured for this session.".into(),
+                content:
+                    "Memory not available: no knowledge graph store is configured for this session."
+                        .into(),
                 is_error: false,
                 structured_content: None,
             });
@@ -1688,7 +2186,11 @@ impl AgentTool for MemorySearchTool {
 
         let mut out = format!("Knowledge graph results for '{query}':\n");
         for (name, entity_type, description, confidence) in &hits {
-            let desc = if description.is_empty() { "(no description)" } else { description.as_str() };
+            let desc = if description.is_empty() {
+                "(no description)"
+            } else {
+                description.as_str()
+            };
             out.push_str(&format!(
                 "- {name} [{entity_type}] (confidence {confidence:.2}): {desc}\n"
             ));
@@ -1710,9 +2212,15 @@ impl AgentTool for MemorySearchTool {
             "context": kg_context,
         });
 
-        Ok(ToolResult { content: out, is_error: false, structured_content: Some(structured) })
+        Ok(ToolResult {
+            content: out,
+            is_error: false,
+            structured_content: Some(structured),
+        })
     }
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ============================================================================
@@ -1729,7 +2237,9 @@ impl AgentTool for WebSearchTool {
         "web_search"
     }
 
-    fn supports_parallel(&self) -> bool { true }
+    fn supports_parallel(&self) -> bool {
+        true
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -1773,76 +2283,107 @@ impl AgentTool for WebSearchTool {
         use loom_types::config::tool_prefs::ToolSearchEngine;
         let results = match prefs.web_search_engine {
             ToolSearchEngine::DuckDuckGoLite => search_ddg(&client, query, max_results).await,
-            ToolSearchEngine::Brave => {
-                match &prefs.web_search_api_key {
-                    Some(key) if !key.is_empty() => search_brave(&client, query, max_results, key).await,
-                    _ => return Ok(ToolResult {
-                        content: "Brave Search 需要 API key，请在设置中配置 web_search_api_key".into(),
-                        is_error: true, structured_content: None,
-                    }),
+            ToolSearchEngine::Brave => match &prefs.web_search_api_key {
+                Some(key) if !key.is_empty() => {
+                    search_brave(&client, query, max_results, key).await
                 }
-            }
-            ToolSearchEngine::SearXNG => {
-                match &prefs.searxng_url {
-                    Some(url) if !url.is_empty() => search_searxng(&client, query, max_results, url).await,
-                    _ => return Ok(ToolResult {
+                _ => {
+                    return Ok(ToolResult {
+                        content: "Brave Search 需要 API key，请在设置中配置 web_search_api_key"
+                            .into(),
+                        is_error: true,
+                        structured_content: None,
+                    });
+                }
+            },
+            ToolSearchEngine::SearXNG => match &prefs.searxng_url {
+                Some(url) if !url.is_empty() => {
+                    search_searxng(&client, query, max_results, url).await
+                }
+                _ => {
+                    return Ok(ToolResult {
                         content: "SearXNG 需要实例地址，请在设置中配置 searxng_url".into(),
-                        is_error: true, structured_content: None,
-                    }),
+                        is_error: true,
+                        structured_content: None,
+                    });
                 }
-            }
-            ToolSearchEngine::Google => {
-                match &prefs.web_search_api_key {
-                    Some(key) if !key.is_empty() => search_google(&client, query, max_results, key).await,
-                    _ => return Ok(ToolResult {
-                        content: "Google 搜索需要 API key，请在设置中配置 web_search_api_key".into(),
-                        is_error: true, structured_content: None,
-                    }),
+            },
+            ToolSearchEngine::Google => match &prefs.web_search_api_key {
+                Some(key) if !key.is_empty() => {
+                    search_google(&client, query, max_results, key).await
                 }
-            }
-            ToolSearchEngine::Bing => {
-                match &prefs.web_search_api_key {
-                    Some(key) if !key.is_empty() => search_bing(&client, query, max_results, key).await,
-                    _ => return Ok(ToolResult {
+                _ => {
+                    return Ok(ToolResult {
+                        content: "Google 搜索需要 API key，请在设置中配置 web_search_api_key"
+                            .into(),
+                        is_error: true,
+                        structured_content: None,
+                    });
+                }
+            },
+            ToolSearchEngine::Bing => match &prefs.web_search_api_key {
+                Some(key) if !key.is_empty() => search_bing(&client, query, max_results, key).await,
+                _ => {
+                    return Ok(ToolResult {
                         content: "Bing 搜索需要 API key，请在设置中配置 web_search_api_key".into(),
-                        is_error: true, structured_content: None,
-                    }),
+                        is_error: true,
+                        structured_content: None,
+                    });
                 }
-            }
-            ToolSearchEngine::Tavily => {
-                match &prefs.web_search_api_key {
-                    Some(key) if !key.is_empty() => search_tavily(&client, query, max_results, key).await,
-                    _ => return Ok(ToolResult {
-                        content: "Tavily 搜索需要 API key，请在设置中配置 web_search_api_key".into(),
-                        is_error: true, structured_content: None,
-                    }),
+            },
+            ToolSearchEngine::Tavily => match &prefs.web_search_api_key {
+                Some(key) if !key.is_empty() => {
+                    search_tavily(&client, query, max_results, key).await
                 }
-            }
-            ToolSearchEngine::Serper => {
-                match &prefs.web_search_api_key {
-                    Some(key) if !key.is_empty() => search_serper(&client, query, max_results, key).await,
-                    _ => return Ok(ToolResult {
-                        content: "Serper 搜索需要 API key，请在设置中配置 web_search_api_key".into(),
-                        is_error: true, structured_content: None,
-                    }),
+                _ => {
+                    return Ok(ToolResult {
+                        content: "Tavily 搜索需要 API key，请在设置中配置 web_search_api_key"
+                            .into(),
+                        is_error: true,
+                        structured_content: None,
+                    });
                 }
-            }
+            },
+            ToolSearchEngine::Serper => match &prefs.web_search_api_key {
+                Some(key) if !key.is_empty() => {
+                    search_serper(&client, query, max_results, key).await
+                }
+                _ => {
+                    return Ok(ToolResult {
+                        content: "Serper 搜索需要 API key，请在设置中配置 web_search_api_key"
+                            .into(),
+                        is_error: true,
+                        structured_content: None,
+                    });
+                }
+            },
         };
 
         match results {
             Ok(items) if items.is_empty() => Ok(ToolResult {
                 content: format!("No results found for '{}'.", query),
-                is_error: false, structured_content: None,
+                is_error: false,
+                structured_content: None,
             }),
             Ok(items) => {
-                let out = items.iter().enumerate()
-                    .map(|(i, (title, snippet, link))| format!("{}. {}\n   {}\n   {}", i + 1, title, snippet, link))
-                    .collect::<Vec<_>>().join("\n\n");
-                Ok(ToolResult { content: out, is_error: false, structured_content: None })
+                let out = items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (title, snippet, link))| {
+                        format!("{}. {}\n   {}\n   {}", i + 1, title, snippet, link)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                Ok(ToolResult {
+                    content: out,
+                    is_error: false,
+                    structured_content: None,
+                })
             }
             Err(e) => Ok(ToolResult {
                 content: format!("搜索 '{}' 失败: {}", query, e),
-                is_error: true, structured_content: None,
+                is_error: true,
+                structured_content: None,
             }),
         }
     }
@@ -1855,26 +2396,50 @@ impl AgentTool for WebSearchTool {
 // ── search backends ───────────────────────────────────────────────────────
 
 async fn search_ddg(
-    client: &reqwest::Client, query: &str, max_results: usize,
+    client: &reqwest::Client,
+    query: &str,
+    max_results: usize,
 ) -> Result<Vec<(String, String, String)>, String> {
     let url = format!("https://lite.duckduckgo.com/lite/?q={}", urlencoding(query));
-    let html = match retry_with_backoff(|| async {
-        let resp = client.get(&url).send().await.map_err(|e| anyhow::anyhow!("{}", e))?;
-        let status = resp.status();
-        let text = resp.text().await.map_err(|e| anyhow::anyhow!("{}", e))?;
-        if !status.is_success() { anyhow::bail!("DDG Lite HTTP {}", status.as_u16()); }
-        Ok(text)
-    }, 2).await {
+    let html = match retry_with_backoff(
+        || async {
+            let resp = client
+                .get(&url)
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            let status = resp.status();
+            let text = resp.text().await.map_err(|e| anyhow::anyhow!("{}", e))?;
+            if !status.is_success() {
+                anyhow::bail!("DDG Lite HTTP {}", status.as_u16());
+            }
+            Ok(text)
+        },
+        2,
+    )
+    .await
+    {
         Ok(h) => h,
         Err(_) => {
             let html_url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding(query));
-            match retry_with_backoff(|| async {
-                let resp = client.get(&html_url).send().await.map_err(|e| anyhow::anyhow!("{}", e))?;
-                let status = resp.status();
-                let text = resp.text().await.map_err(|e| anyhow::anyhow!("{}", e))?;
-                if !status.is_success() { anyhow::bail!("DDG HTML HTTP {}", status.as_u16()); }
-                Ok(text)
-            }, 1).await {
+            match retry_with_backoff(
+                || async {
+                    let resp = client
+                        .get(&html_url)
+                        .send()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{}", e))?;
+                    let status = resp.status();
+                    let text = resp.text().await.map_err(|e| anyhow::anyhow!("{}", e))?;
+                    if !status.is_success() {
+                        anyhow::bail!("DDG HTML HTTP {}", status.as_u16());
+                    }
+                    Ok(text)
+                },
+                1,
+            )
+            .await
+            {
                 Ok(h) => h,
                 Err(_) => return Err("DDG 搜索服务暂时不可用".into()),
             }
@@ -1884,95 +2449,187 @@ async fn search_ddg(
 }
 
 async fn search_brave(
-    client: &reqwest::Client, query: &str, max_results: usize, api_key: &str,
+    client: &reqwest::Client,
+    query: &str,
+    max_results: usize,
+    api_key: &str,
 ) -> Result<Vec<(String, String, String)>, String> {
-    let url = format!("https://api.search.brave.com/res/v1/web/search?q={}&count={}", urlencoding(query), max_results.min(20));
-    let resp = client.get(&url)
+    let url = format!(
+        "https://api.search.brave.com/res/v1/web/search?q={}&count={}",
+        urlencoding(query),
+        max_results.min(20)
+    );
+    let resp = client
+        .get(&url)
         .header("Accept", "application/json")
         .header("Accept-Encoding", "gzip")
         .header("X-Subscription-Token", api_key)
-        .send().await.map_err(|e| format!("Brave 请求失败: {}", e))?;
+        .send()
+        .await
+        .map_err(|e| format!("Brave 请求失败: {}", e))?;
     let status = resp.status();
     let body = resp.text().await.map_err(|e| format!("{}", e))?;
-    if !status.is_success() { return Err(format!("Brave HTTP {}: {}", status.as_u16(), body.chars().take(200).collect::<String>())); }
-    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("Brave JSON 解析失败: {}", e))?;
-    let items: Vec<_> = v["web"]["results"].as_array().unwrap_or(&vec![])
-        .iter().take(max_results)
-        .filter_map(|r| Some((
-            r["title"].as_str()?.to_string(),
-            r["description"].as_str().unwrap_or("").to_string(),
-            r["url"].as_str()?.to_string(),
-        ))).collect();
+    if !status.is_success() {
+        return Err(format!(
+            "Brave HTTP {}: {}",
+            status.as_u16(),
+            body.chars().take(200).collect::<String>()
+        ));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("Brave JSON 解析失败: {}", e))?;
+    let items: Vec<_> = v["web"]["results"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .take(max_results)
+        .filter_map(|r| {
+            Some((
+                r["title"].as_str()?.to_string(),
+                r["description"].as_str().unwrap_or("").to_string(),
+                r["url"].as_str()?.to_string(),
+            ))
+        })
+        .collect();
     Ok(items)
 }
 
 async fn search_searxng(
-    client: &reqwest::Client, query: &str, max_results: usize, base_url: &str,
+    client: &reqwest::Client,
+    query: &str,
+    max_results: usize,
+    base_url: &str,
 ) -> Result<Vec<(String, String, String)>, String> {
     let base = base_url.trim_end_matches('/');
     let url = format!("{}/search?format=json&q={}", base, urlencoding(query));
-    let resp = client.get(&url).send().await.map_err(|e| format!("SearXNG 请求失败: {}", e))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("SearXNG 请求失败: {}", e))?;
     let status = resp.status();
     let body = resp.text().await.map_err(|e| format!("{}", e))?;
-    if !status.is_success() { return Err(format!("SearXNG HTTP {}: {}", status.as_u16(), body.chars().take(200).collect::<String>())); }
-    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("SearXNG JSON 解析失败: {}", e))?;
-    let items: Vec<_> = v["results"].as_array().unwrap_or(&vec![])
-        .iter().take(max_results)
-        .filter_map(|r| Some((
-            r["title"].as_str()?.to_string(),
-            r["content"].as_str().unwrap_or("").to_string(),
-            r["url"].as_str()?.to_string(),
-        ))).collect();
+    if !status.is_success() {
+        return Err(format!(
+            "SearXNG HTTP {}: {}",
+            status.as_u16(),
+            body.chars().take(200).collect::<String>()
+        ));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("SearXNG JSON 解析失败: {}", e))?;
+    let items: Vec<_> = v["results"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .take(max_results)
+        .filter_map(|r| {
+            Some((
+                r["title"].as_str()?.to_string(),
+                r["content"].as_str().unwrap_or("").to_string(),
+                r["url"].as_str()?.to_string(),
+            ))
+        })
+        .collect();
     Ok(items)
 }
 
 async fn search_google(
-    client: &reqwest::Client, query: &str, max_results: usize, api_key: &str,
+    client: &reqwest::Client,
+    query: &str,
+    max_results: usize,
+    api_key: &str,
 ) -> Result<Vec<(String, String, String)>, String> {
     // Uses Google Custom Search JSON API v1 with a default CX for web search
     let cx = "c7e6a7373e0a44649"; // openLoom default programmable search engine
     let url = format!(
         "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}&num={}",
-        api_key, cx, urlencoding(query), max_results.min(10)
+        api_key,
+        cx,
+        urlencoding(query),
+        max_results.min(10)
     );
-    let resp = client.get(&url).send().await.map_err(|e| format!("Google 请求失败: {}", e))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Google 请求失败: {}", e))?;
     let status = resp.status();
     let body = resp.text().await.map_err(|e| format!("{}", e))?;
-    if !status.is_success() { return Err(format!("Google HTTP {}: {}", status.as_u16(), body.chars().take(200).collect::<String>())); }
-    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("Google JSON 解析失败: {}", e))?;
-    let items: Vec<_> = v["items"].as_array().unwrap_or(&vec![])
-        .iter().take(max_results)
-        .filter_map(|r| Some((
-            r["title"].as_str()?.to_string(),
-            r["snippet"].as_str().unwrap_or("").to_string(),
-            r["link"].as_str()?.to_string(),
-        ))).collect();
+    if !status.is_success() {
+        return Err(format!(
+            "Google HTTP {}: {}",
+            status.as_u16(),
+            body.chars().take(200).collect::<String>()
+        ));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("Google JSON 解析失败: {}", e))?;
+    let items: Vec<_> = v["items"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .take(max_results)
+        .filter_map(|r| {
+            Some((
+                r["title"].as_str()?.to_string(),
+                r["snippet"].as_str().unwrap_or("").to_string(),
+                r["link"].as_str()?.to_string(),
+            ))
+        })
+        .collect();
     Ok(items)
 }
 
 async fn search_bing(
-    client: &reqwest::Client, query: &str, max_results: usize, api_key: &str,
+    client: &reqwest::Client,
+    query: &str,
+    max_results: usize,
+    api_key: &str,
 ) -> Result<Vec<(String, String, String)>, String> {
-    let url = format!("https://api.bing.microsoft.com/v7.0/search?q={}&count={}&mkt=zh-CN", urlencoding(query), max_results.min(50));
-    let resp = client.get(&url)
+    let url = format!(
+        "https://api.bing.microsoft.com/v7.0/search?q={}&count={}&mkt=zh-CN",
+        urlencoding(query),
+        max_results.min(50)
+    );
+    let resp = client
+        .get(&url)
         .header("Ocp-Apim-Subscription-Key", api_key)
-        .send().await.map_err(|e| format!("Bing 请求失败: {}", e))?;
+        .send()
+        .await
+        .map_err(|e| format!("Bing 请求失败: {}", e))?;
     let status = resp.status();
     let body = resp.text().await.map_err(|e| format!("{}", e))?;
-    if !status.is_success() { return Err(format!("Bing HTTP {}: {}", status.as_u16(), body.chars().take(200).collect::<String>())); }
-    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("Bing JSON 解析失败: {}", e))?;
-    let items: Vec<_> = v["webPages"]["value"].as_array().unwrap_or(&vec![])
-        .iter().take(max_results)
-        .filter_map(|r| Some((
-            r["name"].as_str()?.to_string(),
-            r["snippet"].as_str().unwrap_or("").to_string(),
-            r["url"].as_str()?.to_string(),
-        ))).collect();
+    if !status.is_success() {
+        return Err(format!(
+            "Bing HTTP {}: {}",
+            status.as_u16(),
+            body.chars().take(200).collect::<String>()
+        ));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("Bing JSON 解析失败: {}", e))?;
+    let items: Vec<_> = v["webPages"]["value"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .take(max_results)
+        .filter_map(|r| {
+            Some((
+                r["name"].as_str()?.to_string(),
+                r["snippet"].as_str().unwrap_or("").to_string(),
+                r["url"].as_str()?.to_string(),
+            ))
+        })
+        .collect();
     Ok(items)
 }
 
 async fn search_tavily(
-    client: &reqwest::Client, query: &str, max_results: usize, api_key: &str,
+    client: &reqwest::Client,
+    query: &str,
+    max_results: usize,
+    api_key: &str,
 ) -> Result<Vec<(String, String, String)>, String> {
     let body = serde_json::json!({
         "api_key": api_key,
@@ -1981,47 +2638,82 @@ async fn search_tavily(
         "search_depth": "basic",
         "include_answer": false,
     });
-    let resp = client.post("https://api.tavily.com/search")
+    let resp = client
+        .post("https://api.tavily.com/search")
         .header("Content-Type", "application/json")
         .json(&body)
-        .send().await.map_err(|e| format!("Tavily 请求失败: {}", e))?;
+        .send()
+        .await
+        .map_err(|e| format!("Tavily 请求失败: {}", e))?;
     let status = resp.status();
     let text = resp.text().await.map_err(|e| format!("{}", e))?;
-    if !status.is_success() { return Err(format!("Tavily HTTP {}: {}", status.as_u16(), text.chars().take(200).collect::<String>())); }
-    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("Tavily JSON 解析失败: {}", e))?;
-    let items: Vec<_> = v["results"].as_array().unwrap_or(&vec![])
-        .iter().take(max_results)
-        .filter_map(|r| Some((
-            r["title"].as_str()?.to_string(),
-            r["content"].as_str().unwrap_or("").to_string(),
-            r["url"].as_str()?.to_string(),
-        ))).collect();
+    if !status.is_success() {
+        return Err(format!(
+            "Tavily HTTP {}: {}",
+            status.as_u16(),
+            text.chars().take(200).collect::<String>()
+        ));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("Tavily JSON 解析失败: {}", e))?;
+    let items: Vec<_> = v["results"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .take(max_results)
+        .filter_map(|r| {
+            Some((
+                r["title"].as_str()?.to_string(),
+                r["content"].as_str().unwrap_or("").to_string(),
+                r["url"].as_str()?.to_string(),
+            ))
+        })
+        .collect();
     Ok(items)
 }
 
 async fn search_serper(
-    client: &reqwest::Client, query: &str, max_results: usize, api_key: &str,
+    client: &reqwest::Client,
+    query: &str,
+    max_results: usize,
+    api_key: &str,
 ) -> Result<Vec<(String, String, String)>, String> {
     let body = serde_json::json!({
         "q": query,
         "num": max_results.min(10),
     });
-    let resp = client.post("https://google.serper.dev/search")
+    let resp = client
+        .post("https://google.serper.dev/search")
         .header("X-API-KEY", api_key)
         .header("Content-Type", "application/json")
         .json(&body)
-        .send().await.map_err(|e| format!("Serper 请求失败: {}", e))?;
+        .send()
+        .await
+        .map_err(|e| format!("Serper 请求失败: {}", e))?;
     let status = resp.status();
     let text = resp.text().await.map_err(|e| format!("{}", e))?;
-    if !status.is_success() { return Err(format!("Serper HTTP {}: {}", status.as_u16(), text.chars().take(200).collect::<String>())); }
-    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("Serper JSON 解析失败: {}", e))?;
-    let items: Vec<_> = v["organic"].as_array().unwrap_or(&vec![])
-        .iter().take(max_results)
-        .filter_map(|r| Some((
-            r["title"].as_str()?.to_string(),
-            r["snippet"].as_str().unwrap_or("").to_string(),
-            r["link"].as_str()?.to_string(),
-        ))).collect();
+    if !status.is_success() {
+        return Err(format!(
+            "Serper HTTP {}: {}",
+            status.as_u16(),
+            text.chars().take(200).collect::<String>()
+        ));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("Serper JSON 解析失败: {}", e))?;
+    let items: Vec<_> = v["organic"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .take(max_results)
+        .filter_map(|r| {
+            Some((
+                r["title"].as_str()?.to_string(),
+                r["snippet"].as_str().unwrap_or("").to_string(),
+                r["link"].as_str()?.to_string(),
+            ))
+        })
+        .collect();
     Ok(items)
 }
 
@@ -2111,7 +2803,9 @@ impl AgentTool for WebFetchTool {
         "web_fetch"
     }
 
-    fn supports_parallel(&self) -> bool { true }
+    fn supports_parallel(&self) -> bool {
+        true
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -2157,12 +2851,14 @@ impl AgentTool for WebFetchTool {
             });
         }
 
-        let client = reqwest::Client::builder()
-            .user_agent("openLoom/0.2")
-            .timeout(std::time::Duration::from_secs(15))
-            .build()?;
+        let client = loom_inference::engine::build_http_client_with_ua();
 
-        let html = client.get(url).send().await?.text().await?;
+        // tokio timeout guards against slow/stalled servers beyond connect_timeout.
+        let html = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            client.get(url).send().await?.text().await
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("web_fetch timed out after 30s"))??;
         let text = extract_text(&html);
 
         if text.is_empty() {
@@ -2279,7 +2975,11 @@ impl AgentTool for ScheduleReminder {
 
         let cron = self.cron.read().await;
         let Some(scheduler) = cron.as_ref() else {
-            return Ok(ToolResult { content: "Cron scheduler not available".into(), is_error: true, structured_content: None });
+            return Ok(ToolResult {
+                content: "Cron scheduler not available".into(),
+                is_error: true,
+                structured_content: None,
+            });
         };
 
         let mode = loom_cron::job::SessionMode::Isolated;
@@ -2511,7 +3211,8 @@ impl AgentTool for TodoListTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "todo_list".into(),
-            description: "Read the current todo list for this session.\n读取当前会话的待办列表。".into(),
+            description: "Read the current todo list for this session.\n读取当前会话的待办列表。"
+                .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {},
@@ -2616,7 +3317,9 @@ pub struct ProcessSpawnTool {
 
 #[async_trait]
 impl AgentTool for ProcessSpawnTool {
-    fn tool_name(&self) -> &str { "process_spawn" }
+    fn tool_name(&self) -> &str {
+        "process_spawn"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -2644,15 +3347,32 @@ impl AgentTool for ProcessSpawnTool {
     ) -> Result<ToolResult> {
         let command = arguments["command"].as_str().unwrap_or("");
         if command.is_empty() {
-            return Ok(ToolResult { content: "command required".into(), is_error: true, structured_content: None });
+            return Ok(ToolResult {
+                content: "command required".into(),
+                is_error: true,
+                structured_content: None,
+            });
         }
         let cwd = arguments["cwd"].as_str();
         let name = arguments["name"].as_str();
-        let env: Option<std::collections::HashMap<String, String>> = arguments["env"]
-            .as_object()
-            .map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect());
+        let env: Option<std::collections::HashMap<String, String>> =
+            arguments["env"].as_object().map(|o| {
+                o.iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                    .collect()
+            });
 
-        match self.process_manager.spawn(command, cwd, env.as_ref(), name, _context.session_id.as_deref().unwrap_or("")).await {
+        match self
+            .process_manager
+            .spawn(
+                command,
+                cwd,
+                env.as_ref(),
+                name,
+                _context.session_id.as_deref().unwrap_or(""),
+            )
+            .await
+        {
             Ok((pid, name)) => Ok(ToolResult {
                 content: format!("进程已启动: pid={}, name={}", pid, name),
                 is_error: false,
@@ -2661,12 +3381,16 @@ impl AgentTool for ProcessSpawnTool {
             Err(e) => Ok(ToolResult {
                 content: format!("启动失败: {}", e),
                 is_error: true,
-                structured_content: Some(serde_json::json!({ "pid": null, "error": e.to_string() })),
+                structured_content: Some(
+                    serde_json::json!({ "pid": null, "error": e.to_string() }),
+                ),
             }),
         }
     }
 
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ============================================================================
@@ -2679,7 +3403,9 @@ pub struct ProcessKillTool {
 
 #[async_trait]
 impl AgentTool for ProcessKillTool {
-    fn tool_name(&self) -> &str { "process_kill" }
+    fn tool_name(&self) -> &str {
+        "process_kill"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -2704,7 +3430,11 @@ impl AgentTool for ProcessKillTool {
     ) -> Result<ToolResult> {
         let pid = arguments["pid"].as_str().unwrap_or("");
         if pid.is_empty() {
-            return Ok(ToolResult { content: "pid required".into(), is_error: true, structured_content: None });
+            return Ok(ToolResult {
+                content: "pid required".into(),
+                is_error: true,
+                structured_content: None,
+            });
         }
         match self.process_manager.kill(pid).await {
             Ok(true) => Ok(ToolResult {
@@ -2725,7 +3455,9 @@ impl AgentTool for ProcessKillTool {
         }
     }
 
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ============================================================================
@@ -2738,7 +3470,9 @@ pub struct ProcessStdinTool {
 
 #[async_trait]
 impl AgentTool for ProcessStdinTool {
-    fn tool_name(&self) -> &str { "process_stdin" }
+    fn tool_name(&self) -> &str {
+        "process_stdin"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -2765,7 +3499,11 @@ impl AgentTool for ProcessStdinTool {
         let pid = arguments["pid"].as_str().unwrap_or("");
         let input = arguments["input"].as_str().unwrap_or("");
         if pid.is_empty() || input.is_empty() {
-            return Ok(ToolResult { content: "pid and input required".into(), is_error: true, structured_content: None });
+            return Ok(ToolResult {
+                content: "pid and input required".into(),
+                is_error: true,
+                structured_content: None,
+            });
         }
         match self.process_manager.stdin_write(pid, input).await {
             Ok(true) => Ok(ToolResult {
@@ -2776,7 +3514,9 @@ impl AgentTool for ProcessStdinTool {
             Ok(false) => Ok(ToolResult {
                 content: format!("进程 {} 未找到或已退出", pid),
                 is_error: true,
-                structured_content: Some(serde_json::json!({ "ok": false, "error": "process not found" })),
+                structured_content: Some(
+                    serde_json::json!({ "ok": false, "error": "process not found" }),
+                ),
             }),
             Err(e) => Ok(ToolResult {
                 content: format!("写入失败: {}", e),
@@ -2786,7 +3526,9 @@ impl AgentTool for ProcessStdinTool {
         }
     }
 
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ============================================================================
@@ -2799,7 +3541,9 @@ pub struct ProcessListTool {
 
 #[async_trait]
 impl AgentTool for ProcessListTool {
-    fn tool_name(&self) -> &str { "process_list" }
+    fn tool_name(&self) -> &str {
+        "process_list"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -2825,7 +3569,9 @@ impl AgentTool for ProcessListTool {
         })
     }
 
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ── process_wait ────────────────────────────────────────────────────────────
@@ -2837,7 +3583,9 @@ pub struct ProcessWaitTool {
 
 #[async_trait]
 impl AgentTool for ProcessWaitTool {
-    fn tool_name(&self) -> &str { "process_wait" }
+    fn tool_name(&self) -> &str {
+        "process_wait"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -2876,7 +3624,11 @@ impl AgentTool for ProcessWaitTool {
             .min(prefs.process_wait_max_timeout_secs);
         let cancel = _context.cancel_token.clone();
 
-        match self.process_manager.wait(pid, timeout_secs, 256 * 1024, cancel).await {
+        match self
+            .process_manager
+            .wait(pid, timeout_secs, 256 * 1024, cancel)
+            .await
+        {
             Ok(result) => {
                 let output_text = if result.truncated {
                     format!("{}\n\n[输出已截断]", result.output)
@@ -2889,11 +3641,20 @@ impl AgentTool for ProcessWaitTool {
                 //          went quiet, or overall timeout reached — process alive)
                 //   -2   → PID not found (already GC'd / never existed)
                 let summary = if result.exit_code >= 0 {
-                    format!("进程 {} 已退出 (exit_code={})\n\n输出:\n{}\n\n进程已结束，无需再调用 process_wait。", pid, result.exit_code, output_text)
+                    format!(
+                        "进程 {} 已退出 (exit_code={})\n\n输出:\n{}\n\n进程已结束，无需再调用 process_wait。",
+                        pid, result.exit_code, output_text
+                    )
                 } else if result.exit_code == -2 {
-                    format!("进程 {} 未找到（可能已退出并被清理）\n\n输出:\n{}", pid, output_text)
+                    format!(
+                        "进程 {} 未找到（可能已退出并被清理）\n\n输出:\n{}",
+                        pid, output_text
+                    )
                 } else {
-                    format!("进程 {} 仍在运行，当前输出:\n{}\n\n【重要】进程尚未退出（exit_code=-1）。你必须立即再次调用 process_wait({}) 继续等待后续输出。进程还在运行，停止会导致数据丢失。", pid, output_text, pid)
+                    format!(
+                        "进程 {} 仍在运行，当前输出:\n{}\n\n【重要】进程尚未退出（exit_code=-1）。你必须立即再次调用 process_wait({}) 继续等待后续输出。进程还在运行，停止会导致数据丢失。",
+                        pid, output_text, pid
+                    )
                 };
                 Ok(ToolResult {
                     content: summary,
@@ -2915,7 +3676,9 @@ impl AgentTool for ProcessWaitTool {
         }
     }
 
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ── process_peek ────────────────────────────────────────────────────────────
@@ -2925,7 +3688,9 @@ pub struct ProcessPeekTool {
 
 #[async_trait]
 impl AgentTool for ProcessPeekTool {
-    fn tool_name(&self) -> &str { "process_peek" }
+    fn tool_name(&self) -> &str {
+        "process_peek"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -2950,21 +3715,33 @@ impl AgentTool for ProcessPeekTool {
     ) -> Result<ToolResult> {
         let pid = arguments["pid"].as_str().unwrap_or("");
         if pid.is_empty() {
-            return Ok(ToolResult { content: "pid is required".into(), is_error: true, structured_content: None });
+            return Ok(ToolResult {
+                content: "pid is required".into(),
+                is_error: true,
+                structured_content: None,
+            });
         }
         match self.process_manager.peek(pid).await {
             Some(r) => {
                 let guidance = if r.running {
-                    format!("。\n\n【提示】进程仍在运行。用 process_wait({}) 阻塞等待后续输出，或继续用 process_peek 定时检查。", r.pid)
+                    format!(
+                        "。\n\n【提示】进程仍在运行。用 process_wait({}) 阻塞等待后续输出，或继续用 process_peek 定时检查。",
+                        r.pid
+                    )
                 } else {
                     format!("。进程已结束。")
                 };
                 Ok(ToolResult {
-                    content: format!("进程 {} ({}) running={} exit_code={:?}{}", r.name, r.pid, r.running, r.exit_code, guidance),
+                    content: format!(
+                        "进程 {} ({}) running={} exit_code={:?}{}",
+                        r.name, r.pid, r.running, r.exit_code, guidance
+                    ),
                     is_error: false,
-                    structured_content: Some(serde_json::json!({ "pid": r.pid, "name": r.name, "running": r.running, "exit_code": r.exit_code })),
+                    structured_content: Some(
+                        serde_json::json!({ "pid": r.pid, "name": r.name, "running": r.running, "exit_code": r.exit_code }),
+                    ),
                 })
-            },
+            }
             None => Ok(ToolResult {
                 content: format!("进程 {} 未找到", pid),
                 is_error: true,
@@ -2973,7 +3750,9 @@ impl AgentTool for ProcessPeekTool {
         }
     }
 
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ============================================================================
@@ -2987,7 +3766,9 @@ pub struct MonitorTool {
 
 #[async_trait]
 impl AgentTool for MonitorTool {
-    fn tool_name(&self) -> &str { "monitor" }
+    fn tool_name(&self) -> &str {
+        "monitor"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -3066,12 +3847,16 @@ impl AgentTool for MonitorTool {
                 Ok(true) => Ok(ToolResult {
                     content: format!("监控 {} 已终止", mid),
                     is_error: false,
-                    structured_content: Some(serde_json::json!({ "killed": true, "monitor_id": mid })),
+                    structured_content: Some(
+                        serde_json::json!({ "killed": true, "monitor_id": mid }),
+                    ),
                 }),
                 Ok(false) => Ok(ToolResult {
                     content: format!("监控 {} 未找到或已退出", mid),
                     is_error: true,
-                    structured_content: Some(serde_json::json!({ "killed": false, "monitor_id": mid })),
+                    structured_content: Some(
+                        serde_json::json!({ "killed": false, "monitor_id": mid }),
+                    ),
                 }),
                 Err(e) => Ok(ToolResult {
                     content: format!("终止失败: {}", e),
@@ -3085,15 +3870,20 @@ impl AgentTool for MonitorTool {
         let command = arguments["command"].as_str();
         let description = arguments["description"].as_str().unwrap_or("monitor");
         let cwd = arguments["cwd"].as_str();
-        let ws_config = arguments["ws"].as_object().map(|obj| {
-            crate::monitor_manager::MonitorWsConfig {
-                url: obj["url"].as_str().unwrap_or("").to_string(),
-                protocols: obj["protocols"]
-                    .as_array()
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                    .unwrap_or_default(),
-            }
-        });
+        let ws_config =
+            arguments["ws"]
+                .as_object()
+                .map(|obj| crate::monitor_manager::MonitorWsConfig {
+                    url: obj["url"].as_str().unwrap_or("").to_string(),
+                    protocols: obj["protocols"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                });
 
         // Validate: ws URL must not be empty if provided
         if let Some(ref ws_cfg) = ws_config {
@@ -3113,9 +3903,11 @@ impl AgentTool for MonitorTool {
             .min(3_600_000);
         let persistent = arguments["persistent"].as_bool().unwrap_or(false);
 
-        let env: Option<HashMap<String, String>> = arguments["env"]
-            .as_object()
-            .map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect());
+        let env: Option<HashMap<String, String>> = arguments["env"].as_object().map(|o| {
+            o.iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                .collect()
+        });
 
         let session_id = _context.session_id.as_deref().unwrap_or("");
 
@@ -3127,7 +3919,17 @@ impl AgentTool for MonitorTool {
 
         match self
             .monitor_manager
-            .spawn(command, ws_config, cwd, env.as_ref(), description, timeout_ms, persistent, session_id, cancel)
+            .spawn(
+                command,
+                ws_config,
+                cwd,
+                env.as_ref(),
+                description,
+                timeout_ms,
+                persistent,
+                session_id,
+                cancel,
+            )
             .await
         {
             Ok(info) => Ok(ToolResult {
@@ -3146,7 +3948,9 @@ impl AgentTool for MonitorTool {
         }
     }
 
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ── monitor_list ─────────────────────────────────────────────────────────────
@@ -3157,7 +3961,9 @@ pub struct MonitorListTool {
 
 #[async_trait]
 impl AgentTool for MonitorListTool {
-    fn tool_name(&self) -> &str { "monitor_list" }
+    fn tool_name(&self) -> &str {
+        "monitor_list"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -3193,7 +3999,9 @@ impl AgentTool for MonitorListTool {
         })
     }
 
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ── monitor_kill ─────────────────────────────────────────────────────────────
@@ -3204,12 +4012,16 @@ pub struct MonitorKillTool {
 
 #[async_trait]
 impl AgentTool for MonitorKillTool {
-    fn tool_name(&self) -> &str { "monitor_kill" }
+    fn tool_name(&self) -> &str {
+        "monitor_kill"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "monitor_kill".into(),
-            description: "终止指定的后台监控任务。等同于 monitor 工具的 kill 模式。需要提供 monitor_id。".into(),
+            description:
+                "终止指定的后台监控任务。等同于 monitor 工具的 kill 模式。需要提供 monitor_id。"
+                    .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -3254,7 +4066,9 @@ impl AgentTool for MonitorKillTool {
         }
     }
 
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ── monitor_wait ─────────────────────────────────────────────────────────────
@@ -3265,7 +4079,9 @@ pub struct MonitorWaitTool {
 
 #[async_trait]
 impl AgentTool for MonitorWaitTool {
-    fn tool_name(&self) -> &str { "monitor_wait" }
+    fn tool_name(&self) -> &str {
+        "monitor_wait"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -3300,7 +4116,11 @@ impl AgentTool for MonitorWaitTool {
         let timeout_secs = arguments["timeout"].as_u64().unwrap_or(30).min(3600);
         let cancel = _context.cancel_token.clone();
 
-        match self.monitor_manager.wait(monitor_id, timeout_secs, 256 * 1024, cancel).await {
+        match self
+            .monitor_manager
+            .wait(monitor_id, timeout_secs, 256 * 1024, cancel)
+            .await
+        {
             Ok(result) => {
                 let output_text = if result.truncated {
                     format!("{}\n\n[输出已截断]", result.output)
@@ -3308,11 +4128,20 @@ impl AgentTool for MonitorWaitTool {
                     result.output.clone()
                 };
                 let summary = if result.exit_code >= 0 {
-                    format!("Monitor {} 已退出 (exit_code={})\n\n输出:\n{}\n\n监控已结束，无需再调用 monitor_wait。", monitor_id, result.exit_code, output_text)
+                    format!(
+                        "Monitor {} 已退出 (exit_code={})\n\n输出:\n{}\n\n监控已结束，无需再调用 monitor_wait。",
+                        monitor_id, result.exit_code, output_text
+                    )
                 } else if result.exit_code == -2 {
-                    format!("Monitor {} 未找到（可能已退出并被清理）\n\n输出:\n{}", monitor_id, output_text)
+                    format!(
+                        "Monitor {} 未找到（可能已退出并被清理）\n\n输出:\n{}",
+                        monitor_id, output_text
+                    )
                 } else {
-                    format!("Monitor {} 仍在运行，当前输出:\n{}\n\n【重要】监控任务尚未结束（exit_code=-1）。你必须立即再次调用 monitor_wait({}) 继续读取后续输出并做出反应。在此停止会导致监控数据丢失。", monitor_id, output_text, monitor_id)
+                    format!(
+                        "Monitor {} 仍在运行，当前输出:\n{}\n\n【重要】监控任务尚未结束（exit_code=-1）。你必须立即再次调用 monitor_wait({}) 继续读取后续输出并做出反应。在此停止会导致监控数据丢失。",
+                        monitor_id, output_text, monitor_id
+                    )
                 };
                 Ok(ToolResult {
                     content: summary,
@@ -3334,7 +4163,9 @@ impl AgentTool for MonitorWaitTool {
         }
     }
 
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }
 
 // ── monitor_peek ─────────────────────────────────────────────────────────────
@@ -3345,7 +4176,9 @@ pub struct MonitorPeekTool {
 
 #[async_trait]
 impl AgentTool for MonitorPeekTool {
-    fn tool_name(&self) -> &str { "monitor_peek" }
+    fn tool_name(&self) -> &str {
+        "monitor_peek"
+    }
 
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -3380,13 +4213,23 @@ impl AgentTool for MonitorPeekTool {
             Some(result) => {
                 let status = if result.running { "running" } else { "exited" };
                 let guidance = if result.running {
-                    format!("\n\n【提示】监控 {} 仍在运行。用 monitor_wait({}) 阻塞等待后续输出，或继续用 monitor_peek 定时检查。", result.monitor_id, result.monitor_id)
+                    format!(
+                        "\n\n【提示】监控 {} 仍在运行。用 monitor_wait({}) 阻塞等待后续输出，或继续用 monitor_peek 定时检查。",
+                        result.monitor_id, result.monitor_id
+                    )
                 } else {
                     String::new()
                 };
                 Ok(ToolResult {
-                    content: format!("Monitor {} ({}) status={} exit_code={:?}\n\n当前输出:\n{}{}",
-                        result.name, result.monitor_id, status, result.exit_code, result.output, guidance),
+                    content: format!(
+                        "Monitor {} ({}) status={} exit_code={:?}\n\n当前输出:\n{}{}",
+                        result.name,
+                        result.monitor_id,
+                        status,
+                        result.exit_code,
+                        result.output,
+                        guidance
+                    ),
                     is_error: false,
                     structured_content: Some(serde_json::json!({
                         "monitor_id": result.monitor_id,
@@ -3405,5 +4248,268 @@ impl AgentTool for MonitorPeekTool {
         }
     }
 
-    fn provenance(&self) -> ToolProvenance { ToolProvenance::Builtin }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
+}
+
+// ============================================================================
+// UpdateConfigTool — AI-editable Loom settings via natural language
+// ============================================================================
+
+/// Maps the AI's natural-language config request to live config and persists it.
+///
+/// The AI translates the user's natural language into structured `updates`, and
+/// this tool applies them atomically.  All changes are saved to disk immediately
+/// and take effect in the running session.
+pub struct UpdateConfigTool {
+    pub tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>>,
+    pub data_dir: std::path::PathBuf,
+}
+
+#[async_trait]
+impl AgentTool for UpdateConfigTool {
+    fn tool_name(&self) -> &str {
+        "update_config"
+    }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "update_config".into(),
+            description: "Update Loom settings. Use when the user wants to change a preference in natural language (e.g. \"把默认 shell 超时改成 120 秒\" or \"切换到 Brave 搜索引擎\"). Map their intent to the matching field name and value.\n\nAvailable fields:\n- shell_default_timeout_secs (u64, max shell timeout in seconds)\n- shell_max_timeout_secs (u64, capped at 300)\n- file_read_max_output_kb (u64, max file read size in KB)\n- web_search_engine (string: \"duckduckgo_lite\" | \"brave\" | \"searxng\" | \"google\" | \"bing\" | \"tavily\" | \"serper\")\n- web_search_max_results (u64)\n- searxng_url (string or null)\n- web_search_api_key (string or null)\n- http_proxy (string or null, e.g. \"http://127.0.0.1:7890\")\n- proxy_enabled (bool)\n- web_fetch_max_chars (u64)\n- process_wait_max_timeout_secs (u64)\n- monitor_default_timeout_ms (u64)".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "updates": {
+                        "type": "object",
+                        "description": "Key-value pairs to update. Only include fields the user wants to change."
+                    }
+                },
+                "required": ["updates"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    fn supports_parallel(&self) -> bool {
+        true
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let updates = match arguments.get("updates").and_then(|v| v.as_object()) {
+            Some(obj) => obj,
+            None => {
+                return Ok(ToolResult {
+                    content: "Missing required 'updates' object.".into(),
+                    is_error: true,
+                    structured_content: None,
+                });
+            }
+        };
+
+        if updates.is_empty() {
+            return Ok(ToolResult {
+                content: "No config keys provided in 'updates'.".into(),
+                is_error: true,
+                structured_content: None,
+            });
+        }
+
+        // Hold the write lock for the entire read-modify-write cycle so we
+        // serialise with save_tool_prefs (called by the Settings UI RPC handler).
+        // Reading from the Arc instead of disk avoids the TOCTOU race where both
+        // this tool and the RPC handler would read-disk-then-write-disk and the
+        // slower writer silently overwrites the faster one.
+        let mut config = {
+            let guard = self.tool_prefs.read().await;
+            guard.clone()
+        };
+
+        let mut changed: Vec<String> = Vec::new();
+        let mut errors: Vec<String> = Vec::new();
+
+        for (key, val) in updates {
+            match key.as_str() {
+                "shell_default_timeout_secs" => {
+                    if let Some(v) = val.as_u64() {
+                        let old = config.shell_default_timeout_secs;
+                        config.shell_default_timeout_secs = v;
+                        changed.push(format!("shell_default_timeout_secs: {old} → {v}"));
+                    } else {
+                        errors.push(format!("{key} must be a positive integer"));
+                    }
+                }
+                "shell_max_timeout_secs" => {
+                    if let Some(v) = val.as_u64() {
+                        let old = config.shell_max_timeout_secs;
+                        config.shell_max_timeout_secs = v;
+                        changed.push(format!("shell_max_timeout_secs: {old} → {v}"));
+                    } else {
+                        errors.push(format!("{key} must be a positive integer"));
+                    }
+                }
+                "file_read_max_output_kb" => {
+                    if let Some(v) = val.as_u64() {
+                        let old = config.file_read_max_output_kb;
+                        config.file_read_max_output_kb = v as usize;
+                        changed.push(format!("file_read_max_output_kb: {old} → {v}"));
+                    } else {
+                        errors.push(format!("{key} must be a positive integer"));
+                    }
+                }
+                "web_search_engine" => {
+                    if let Some(v) = val.as_str() {
+                        let old = format!("{:?}", config.web_search_engine);
+                        config.web_search_engine = serde_json::from_value(
+                            serde_json::Value::String(v.to_string()),
+                        )
+                        .unwrap_or_default();
+                        changed.push(format!("web_search_engine: {old} → {v}"));
+                    } else {
+                        errors.push(format!(
+                            "{key} must be a string: duckduckgo_lite, brave, searxng, google, bing, tavily, serper"
+                        ));
+                    }
+                }
+                "web_search_max_results" => {
+                    if let Some(v) = val.as_u64() {
+                        let old = config.web_search_max_results;
+                        config.web_search_max_results = v as usize;
+                        changed.push(format!("web_search_max_results: {old} → {v}"));
+                    } else {
+                        errors.push(format!("{key} must be a positive integer"));
+                    }
+                }
+                "searxng_url" => {
+                    if val.is_null() {
+                        let old = config.searxng_url.clone();
+                        config.searxng_url = None;
+                        changed.push(format!("searxng_url: {old:?} → None"));
+                    } else if let Some(v) = val.as_str() {
+                        let old = config.searxng_url.clone();
+                        config.searxng_url = if v.is_empty() { None } else { Some(v.to_string()) };
+                        changed.push(format!("searxng_url: {old:?} → {:?}", config.searxng_url));
+                    } else {
+                        errors.push(format!("{key} must be a string or null"));
+                    }
+                }
+                "web_search_api_key" => {
+                    if val.is_null() {
+                        config.web_search_api_key = None;
+                        changed.push("web_search_api_key: updated (set to null)".into());
+                    } else if let Some(v) = val.as_str() {
+                        config.web_search_api_key = if v.is_empty() { None } else { Some(v.to_string()) };
+                        changed.push("web_search_api_key: updated".into());
+                    } else {
+                        errors.push(format!("{key} must be a string or null"));
+                    }
+                }
+                "http_proxy" => {
+                    if val.is_null() {
+                        let old = config.http_proxy.clone();
+                        config.http_proxy = None;
+                        changed.push(format!("http_proxy: {old:?} → None"));
+                    } else if let Some(v) = val.as_str() {
+                        let old = config.http_proxy.clone();
+                        config.http_proxy = if v.is_empty() { None } else { Some(v.to_string()) };
+                        changed.push(format!("http_proxy: {old:?} → {:?}", config.http_proxy));
+                    } else {
+                        errors.push(format!("{key} must be a string or null"));
+                    }
+                }
+                "proxy_enabled" => {
+                    if let Some(v) = val.as_bool() {
+                        let old = config.proxy_enabled;
+                        config.proxy_enabled = v;
+                        changed.push(format!("proxy_enabled: {old} → {v}"));
+                    } else {
+                        errors.push(format!("{key} must be a boolean"));
+                    }
+                }
+                "web_fetch_max_chars" => {
+                    if let Some(v) = val.as_u64() {
+                        let old = config.web_fetch_max_chars;
+                        config.web_fetch_max_chars = v as usize;
+                        changed.push(format!("web_fetch_max_chars: {old} → {v}"));
+                    } else {
+                        errors.push(format!("{key} must be a positive integer"));
+                    }
+                }
+                "process_wait_max_timeout_secs" => {
+                    if let Some(v) = val.as_u64() {
+                        let old = config.process_wait_max_timeout_secs;
+                        config.process_wait_max_timeout_secs = v;
+                        changed.push(format!("process_wait_max_timeout_secs: {old} → {v}"));
+                    } else {
+                        errors.push(format!("{key} must be a positive integer"));
+                    }
+                }
+                "monitor_default_timeout_ms" => {
+                    if let Some(v) = val.as_u64() {
+                        let old = config.monitor_default_timeout_ms;
+                        config.monitor_default_timeout_ms = v;
+                        changed.push(format!("monitor_default_timeout_ms: {old} → {v}"));
+                    } else {
+                        errors.push(format!("{key} must be a positive integer"));
+                    }
+                }
+                _ => {
+                    errors.push(format!("Unknown config key: {key}"));
+                }
+            }
+        }
+
+        if changed.is_empty() && !errors.is_empty() {
+            return Ok(ToolResult {
+                content: format!("No changes applied. Errors:\n{}", errors.join("\n")),
+                is_error: true,
+                structured_content: None,
+            });
+        }
+
+        // Persist to disk + update in-memory state (same pattern as orchestrator::save_tool_prefs)
+        let path = self.data_dir.join("tool_prefs.json");
+        let _ = tokio::fs::create_dir_all(&self.data_dir).await;
+        let json = serde_json::to_string_pretty(&config)?;
+        tokio::fs::write(&path, json).await?;
+
+        // Atomically update in-memory so all tools see the new config immediately.
+        // This also serialises with save_tool_prefs via the write lock.
+        {
+            let mut guard = self.tool_prefs.write().await;
+            *guard = config.clone();
+        }
+
+        // Sync global proxy so all HTTP clients pick up the change
+        loom_inference::engine::set_global_proxy(
+            config.http_proxy.clone(),
+            config.proxy_enabled,
+        );
+
+        let mut response = "Configuration updated:\n".to_string();
+        for c in &changed {
+            response.push_str(&format!("  - {c}\n"));
+        }
+        if !errors.is_empty() {
+            response.push_str("\nWarnings:\n");
+            for e in &errors {
+                response.push_str(&format!("  - {e}\n"));
+            }
+        }
+
+        Ok(ToolResult {
+            content: response,
+            is_error: false,
+            structured_content: Some(serde_json::to_value(&config).unwrap_or_default()),
+        })
+    }
+
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
 }

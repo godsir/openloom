@@ -21,8 +21,7 @@ use serde::{Deserialize, Serialize};
 pub fn compute_health_score(report: &MemoryQualityReport) -> f64 {
     let relevance = (report.avg_relevance * 100.0).min(100.0);
     let freshness = if report.total_entities > 0 {
-        (report.entities_accessed_recently as f64 / report.total_entities as f64 * 100.0)
-            .min(100.0)
+        (report.entities_accessed_recently as f64 / report.total_entities as f64 * 100.0).min(100.0)
     } else {
         0.0
     };
@@ -34,11 +33,8 @@ pub fn compute_health_score(report: &MemoryQualityReport) -> f64 {
         100.0
     };
 
-    let score = 0.30 * relevance
-        + 0.25 * freshness
-        + 0.20 * coverage
-        + 0.15 * confidence
-        + 0.10 * dedup;
+    let score =
+        0.30 * relevance + 0.25 * freshness + 0.20 * coverage + 0.15 * confidence + 0.10 * dedup;
 
     (score * 10.0).round() / 10.0 // round to 1 decimal place
 }
@@ -934,10 +930,7 @@ impl<'a> GraphStore<'a> {
                    AND entity_type != 'Person'
                  LIMIT ?2",
             )?;
-            let rows = stmt.query_map(
-                rusqlite::params![cutoff, max_count as i64],
-                |r| r.get(0),
-            )?;
+            let rows = stmt.query_map(rusqlite::params![cutoff, max_count as i64], |r| r.get(0))?;
             rows.filter_map(|r| r.ok()).collect()
         };
 
@@ -987,10 +980,9 @@ impl<'a> GraphStore<'a> {
             )?;
 
             // 5. Delete the stale nodes themselves
-            let deleted = self.conn.execute(
-                &format!("DELETE FROM kg_nodes WHERE id IN ({id_list})"),
-                [],
-            )?;
+            let deleted = self
+                .conn
+                .execute(&format!("DELETE FROM kg_nodes WHERE id IN ({id_list})"), [])?;
 
             self.conn.execute_batch("COMMIT;")?;
             Ok(deleted)
@@ -2503,15 +2495,36 @@ mod tests {
 
         // Create a node with an edge, alias, and evidence
         let node_id = store
-            .upsert_node("test_entity", "concept", "a test entity", 0.8, "global", None)
+            .upsert_node(
+                "test_entity",
+                "concept",
+                "a test entity",
+                0.8,
+                "global",
+                None,
+            )
             .unwrap();
         let other_id = store
-            .upsert_node("other_entity", "concept", "another entity", 0.7, "global", None)
+            .upsert_node(
+                "other_entity",
+                "concept",
+                "another entity",
+                0.7,
+                "global",
+                None,
+            )
             .unwrap();
 
         // Edge referencing this node
         store
-            .upsert_edge(node_id, other_id, "related_to", "test relation", 0.9, "global")
+            .upsert_edge(
+                node_id,
+                other_id,
+                "related_to",
+                "test relation",
+                0.9,
+                "global",
+            )
             .unwrap();
 
         // Alias for this node

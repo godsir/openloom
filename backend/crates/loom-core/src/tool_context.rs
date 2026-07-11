@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::event_bus::EventBus;
 use loom_memory::TodoStore;
 use loom_security::sandbox::SandboxGuard;
-use crate::event_bus::EventBus;
 
 /// Context passed to tool execution, containing session-level information
 /// such as the workspace path, optional sandbox guard, and read-before-edit
@@ -134,7 +134,10 @@ impl std::fmt::Debug for ToolContext {
         f.debug_struct("ToolContext")
             .field("workspace_path", &self.workspace_path)
             .field("sandbox", &self.sandbox)
-            .field("recently_read_count", &self.recently_read.lock().map(|m| m.len()).unwrap_or(0))
+            .field(
+                "recently_read_count",
+                &self.recently_read.lock().map(|m| m.len()).unwrap_or(0),
+            )
             .field("session_id", &self.session_id)
             .field("todo_store", &self.todo_store.as_ref().map(|_| "TodoStore"))
             .field("event_bus", &self.event_bus.as_ref().map(|_| "EventBus"))

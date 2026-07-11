@@ -1,8 +1,9 @@
 import { getWs, onWsConnected, setLastSeq } from './websocket'
 import type { JsonRpcRequest, JsonRpcResponse } from '../types/bindings'
+import { useStore } from '../stores'
 
 let nextId = 1
-const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
+const pending = new Map<number, { method: string; resolve: (v: unknown) => void; reject: (e: Error) => void }>()
 
 // Pending sends — queued until WS is open
 let sendQueue: Array<() => void> = []
@@ -46,6 +47,7 @@ function doSend<T>(method: string, params: Record<string, unknown>): Promise<T> 
     }, timeout)
 
     pending.set(id, {
+      method,
       resolve: (v: unknown) => { clearTimeout(timer); resolve(v as T) },
       reject: (e: Error) => { clearTimeout(timer); reject(e) },
     })
@@ -113,11 +115,18 @@ export function handleWsMessage(data: string): void {
     if ('id' in msg && msg.id != null) {
       const entry = pending.get(msg.id)
       if (entry) {
+        const method = entry.method
         pending.delete(msg.id)
         if (msg.error) {
           entry.reject(new Error(msg.error.message ?? 'RPC error'))
         } else {
           entry.resolve(msg.result)
+          // Flash dynamic island on successful config saves
+          if (method.startsWith('config.set_') && !method.includes('active')) {
+            import('../i18n').then(({ t }) => {
+              useStore.getState().showIslandTransient(t('island.configSaved'), 2000)
+            })
+          }
         }
       }
     } else if ('method' in msg && msg.method) {

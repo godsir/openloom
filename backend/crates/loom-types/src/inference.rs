@@ -14,6 +14,8 @@ pub struct TokenUsage {
     pub prompt_tokens: usize,
     pub completion_tokens: usize,
     #[serde(default)]
+    pub model: String,
+    #[serde(default)]
     pub cached_tokens: usize,
     #[serde(default)]
     pub cache_read_tokens: usize,

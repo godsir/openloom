@@ -292,7 +292,9 @@ pub struct AgentConfig {
     pub auto_continue_max_rounds: usize,
 }
 
-fn default_auto_continue_max_rounds() -> usize { 10 }
+fn default_auto_continue_max_rounds() -> usize {
+    10
+}
 
 fn default_max_subagents() -> usize {
     5

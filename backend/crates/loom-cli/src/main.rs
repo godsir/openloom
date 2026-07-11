@@ -89,12 +89,20 @@ fn sync_builtin_resources(loom_dir: &std::path::Path) {
     if ss.exists() {
         for e in std::fs::read_dir(&ss).into_iter().flatten().flatten() {
             let sp = e.path();
-            if !sp.is_dir() { continue; }
+            if !sp.is_dir() {
+                continue;
+            }
             let n = sp.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if n.is_empty() || !sp.join("SKILL.md").exists() { continue; }
+            if n.is_empty() || !sp.join("SKILL.md").exists() {
+                continue;
+            }
             let dp = sd.join(n);
-            if dp.exists() { continue; }
-            if copy_dir_entries(&sp, &dp).is_ok() { sc += 1; }
+            if dp.exists() {
+                continue;
+            }
+            if copy_dir_entries(&sp, &dp).is_ok() {
+                sc += 1;
+            }
         }
     }
 
@@ -213,8 +221,8 @@ async fn main() -> anyhow::Result<()> {
 
     // TUI chat: send tracing to a file so it doesn't corrupt the terminal.
     // Bare REPL (pipe) and all other commands: stderr as usual.
-    let is_tui_chat = matches!(cli.command, Command::Chat { .. })
-        && std::io::stdout().is_terminal();
+    let is_tui_chat =
+        matches!(cli.command, Command::Chat { .. }) && std::io::stdout().is_terminal();
 
     if is_tui_chat {
         let log_dir = data_dir();
@@ -270,6 +278,9 @@ async fn main() -> anyhow::Result<()> {
                     if let Err(e) = orchestrator.load_team_configs().await {
                         eprintln!("[server] load team configs failed: {}", e);
                     }
+                    // Load tool prefs BEFORE load_model_configs so GLOBAL_PROXY
+                    // is populated before try_build_cloud_client creates HTTP clients.
+                    let _ = orchestrator.load_tool_prefs().await;
                     // load_model_configs calls try_build_cloud_client which needs the key_store.
                     if let Err(e) = orchestrator.load_model_configs().await {
                         eprintln!("[server] load model configs failed: {}", e);
@@ -324,7 +335,9 @@ async fn main() -> anyhow::Result<()> {
                         && cfg.args.iter().any(|a| a.contains("@anthropic/github-mcp"))
                     {
                         let _ = orchestrator.delete_saved_mcp_server("github").await;
-                        tracing::info!("[mcp] removed broken 'github' default (no valid npm package)");
+                        tracing::info!(
+                            "[mcp] removed broken 'github' default (no valid npm package)"
+                        );
                     }
                 }
 
@@ -392,7 +405,9 @@ async fn main() -> anyhow::Result<()> {
                                         cfg.instance_name.clone(),
                                         token.to_string(),
                                     );
-                                    bridge_manager.register(cfg.clone(), Box::new(adapter)).await;
+                                    bridge_manager
+                                        .register(cfg.clone(), Box::new(adapter))
+                                        .await;
                                 }
                             }
                             loom_bridge::Platform::Feishu => {
@@ -419,7 +434,9 @@ async fn main() -> anyhow::Result<()> {
                                         app_secret.to_string(),
                                         domain.to_string(),
                                     );
-                                    bridge_manager.register(cfg.clone(), Box::new(adapter)).await;
+                                    bridge_manager
+                                        .register(cfg.clone(), Box::new(adapter))
+                                        .await;
                                 }
                             }
                             loom_bridge::Platform::Wechat => {
@@ -428,7 +445,9 @@ async fn main() -> anyhow::Result<()> {
                                         cfg.instance_id.clone(),
                                         cfg.instance_name.clone(),
                                     );
-                                    bridge_manager.register(cfg.clone(), Box::new(adapter)).await;
+                                    bridge_manager
+                                        .register(cfg.clone(), Box::new(adapter))
+                                        .await;
                                 }
                             }
                             _ => {
@@ -476,8 +495,15 @@ async fn main() -> anyhow::Result<()> {
                     token.cancel();
                 });
             }
-            loom_server::serve(&host, port, orchestrator.clone(), bridge_manager.clone(), &loom_dir, shutdown_token)
-                .await?;
+            loom_server::serve(
+                &host,
+                port,
+                orchestrator.clone(),
+                bridge_manager.clone(),
+                &loom_dir,
+                shutdown_token,
+            )
+            .await?;
 
             // Drain inflight agent loops (10s timeout) + close SQLite
             tracing::info!("server loop exited — draining inflight agents");
@@ -856,6 +882,9 @@ async fn run_chat_demo(
             if let Err(e) = orchestrator.load_agent_configs().await {
                 eprintln!("[memory] load agent configs failed: {}", e);
             }
+            // Load tool prefs BEFORE load_model_configs so GLOBAL_PROXY
+            // is populated before the cloud client is built.
+            let _ = orchestrator.load_tool_prefs().await;
             if let Err(e) = orchestrator.load_model_configs().await {
                 eprintln!("[memory] load model configs failed: {}", e);
             }
@@ -955,7 +984,9 @@ async fn run_chat_demo(
                                 cfg.instance_name.clone(),
                                 token.to_string(),
                             );
-                            bridge_manager.register(cfg.clone(), Box::new(adapter)).await;
+                            bridge_manager
+                                .register(cfg.clone(), Box::new(adapter))
+                                .await;
                         }
                     }
                     loom_bridge::Platform::Feishu => {
@@ -982,7 +1013,9 @@ async fn run_chat_demo(
                                 app_secret.to_string(),
                                 domain.to_string(),
                             );
-                            bridge_manager.register(cfg.clone(), Box::new(adapter)).await;
+                            bridge_manager
+                                .register(cfg.clone(), Box::new(adapter))
+                                .await;
                         }
                     }
                     loom_bridge::Platform::Wechat => {
@@ -991,7 +1024,9 @@ async fn run_chat_demo(
                                 cfg.instance_id.clone(),
                                 cfg.instance_name.clone(),
                             );
-                            bridge_manager.register(cfg.clone(), Box::new(adapter)).await;
+                            bridge_manager
+                                .register(cfg.clone(), Box::new(adapter))
+                                .await;
                         }
                     }
                     _ => {
@@ -1038,7 +1073,9 @@ async fn run_bare_repl(
     // in bare-stdout mode (no ratatui buffer isolation).
     fn safe_print(s: &str) {
         for c in s.chars() {
-            if c == '\x1b' || c == '\u{9b}' || (c.is_control() && c != '\n' && c != '\t' && c != '\r')
+            if c == '\x1b'
+                || c == '\u{9b}'
+                || (c.is_control() && c != '\n' && c != '\t' && c != '\r')
             {
                 continue;
             }
@@ -1144,8 +1181,16 @@ async fn run_bare_repl(
         // Drain remaining deltas
         while let Ok(delta) = rx.try_recv() {
             match delta {
-                StreamDelta::Text(t) => { safe_print(&t); std::io::stdout().flush().ok(); }
-                StreamDelta::Usage { prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens } => {
+                StreamDelta::Text(t) => {
+                    safe_print(&t);
+                    std::io::stdout().flush().ok();
+                }
+                StreamDelta::Usage {
+                    prompt_tokens,
+                    completion_tokens,
+                    cache_read_tokens,
+                    cache_write_tokens,
+                } => {
                     prompt += prompt_tokens;
                     completion += completion_tokens;
                     cache_read += cache_read_tokens;
@@ -1165,11 +1210,20 @@ async fn run_bare_repl(
                 }
                 println!();
                 let mut parts = vec![format!("in {}", prompt), format!("out {}", completion)];
-                if cache_read > 0 { parts.push(format!("cr {}", cache_read)); }
-                else if turn.cached_tokens > 0 { parts.push(format!("cr ~{}", turn.cached_tokens)); }
-                if cache_write > 0 { parts.push(format!("cw {}", cache_write)); }
-                if turn.tool_calls_made > 0 { parts.push(format!("{} tools", turn.tool_calls_made)); }
-                if turn.iterations > 1 { parts.push(format!("{} iters", turn.iterations)); }
+                if cache_read > 0 {
+                    parts.push(format!("cr {}", cache_read));
+                } else if turn.cached_tokens > 0 {
+                    parts.push(format!("cr ~{}", turn.cached_tokens));
+                }
+                if cache_write > 0 {
+                    parts.push(format!("cw {}", cache_write));
+                }
+                if turn.tool_calls_made > 0 {
+                    parts.push(format!("{} tools", turn.tool_calls_made));
+                }
+                if turn.iterations > 1 {
+                    parts.push(format!("{} iters", turn.iterations));
+                }
                 println!("[{}]\n", parts.join(" | "));
             }
             Err(e) => println!("\n[error] {}\n", e),

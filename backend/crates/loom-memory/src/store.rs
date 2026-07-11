@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, params, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -177,9 +177,12 @@ impl<'a> CognitionStore<'a> {
 
     pub fn delete(&self, id: i64) -> Result<bool> {
         // Cascade: delete snapshots first (FK without ON DELETE CASCADE)
-        self.conn
-            .execute("DELETE FROM cognition_snapshots WHERE cognition_id = ?1", params![id])?;
-        let affected = self.conn
+        self.conn.execute(
+            "DELETE FROM cognition_snapshots WHERE cognition_id = ?1",
+            params![id],
+        )?;
+        let affected = self
+            .conn
             .execute("DELETE FROM cognitions WHERE id = ?1", params![id])?;
         Ok(affected > 0)
     }
@@ -779,12 +782,10 @@ impl<'a> TeamConfigStore<'a> {
 
     /// 获取单个团队配置
     pub fn get_team_config(&self, id: &str) -> Result<Option<loom_types::TeamConfig>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT config_json FROM team_configs WHERE id = ?1",
-        )?;
-        let result: Option<String> = stmt
-            .query_row(params![id], |row| row.get(0))
-            .optional()?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT config_json FROM team_configs WHERE id = ?1")?;
+        let result: Option<String> = stmt.query_row(params![id], |row| row.get(0)).optional()?;
         match result {
             Some(json) => Ok(Some(serde_json::from_str(&json)?)),
             None => Ok(None),
@@ -793,9 +794,9 @@ impl<'a> TeamConfigStore<'a> {
 
     /// 列出所有团队配置
     pub fn list_team_configs(&self) -> Result<Vec<loom_types::TeamConfig>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT config_json FROM team_configs ORDER BY name",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT config_json FROM team_configs ORDER BY name")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         let mut configs = Vec::new();
         for row in rows {
@@ -806,7 +807,8 @@ impl<'a> TeamConfigStore<'a> {
 
     /// 删除团队配置
     pub fn delete_team_config(&self, id: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM team_configs WHERE id = ?1", params![id])?;
+        self.conn
+            .execute("DELETE FROM team_configs WHERE id = ?1", params![id])?;
         Ok(())
     }
 }

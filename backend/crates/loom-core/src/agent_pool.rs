@@ -96,7 +96,6 @@ impl AgentPool {
                 child_id: agent.id.clone(),
                 child_name: agent.config.name.clone(),
             });
-
         }
 
         self.register(agent).await

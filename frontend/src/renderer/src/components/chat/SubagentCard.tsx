@@ -11,7 +11,16 @@ export default function SubagentCard({ block }: { block: ContentBlock }) {
   const status = (block.streamStatus as string) || 'running'
   const summary = (block.summary as string) || ''
   const body = (block.body as string) || ''
+  const promptTokens = (block.promptTokens as number) || 0
+  const completionTokens = (block.completionTokens as number) || 0
+  const totalTokens = promptTokens + completionTokens
   const [expanded, setExpanded] = useState(true)
+
+  function fmtTokens(n: number): string {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+    return String(n)
+  }
 
   const displayHtml = body
     ? sanitizeHtml(renderMarkdown(body
@@ -51,6 +60,11 @@ export default function SubagentCard({ block }: { block: ContentBlock }) {
           </span>
         )}
         <span style={{ flex: 1 }} />
+        {totalTokens > 0 && (
+          <span style={{ fontSize: 10, color: 'var(--text-muted)', padding: '1px 6px', borderRadius: 'var(--r-xs)', background: 'var(--bg-subtle)', fontWeight: 500, whiteSpace: 'nowrap' }}>
+            {fmtTokens(totalTokens)} tokens
+          </span>
+        )}
         <span>
           {status === 'done'
             ? <IconCheck size={11} style={{ color: 'var(--green)' }} />

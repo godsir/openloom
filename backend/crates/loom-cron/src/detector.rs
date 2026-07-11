@@ -38,8 +38,9 @@ pub fn pre_scan(message: &str) -> bool {
             remind|reminder|alarm|timer|schedule|scheduled|tomorrow|tonight|
             every\s+\d+\s*(?:sec|min|hour|day|week)s?|
             later\s+at|at\s+\d{1,2}(:\d{2})?|in\s+\d+\s+(?:second|minute|hour|day|week)s?
-            "
-        ).expect("task detector regex should compile")
+            ",
+        )
+        .expect("task detector regex should compile")
     });
     re.is_match(message)
 }
@@ -188,8 +189,7 @@ pub fn parse_extraction_response(json_text: &str) -> Result<DetectedTask> {
                 if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(at) {
                     format!(
                         "{} AI 执行「{}」",
-                        dt.with_timezone(&chrono::Local)
-                            .format("%Y-%m-%d %H:%M"),
+                        dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M"),
                         task_label
                     )
                 } else {
@@ -316,7 +316,9 @@ mod tests {
         let json = r#"{"shouldCreate":true,"kind":"interval","aiInstruction":"检查服务器","taskName":"巡检"}"#;
         let r = parse_extraction_response(json).unwrap();
         assert!(r.should_create);
-        let expr = r.cron_expression.expect("interval must yield an expression");
+        let expr = r
+            .cron_expression
+            .expect("interval must yield an expression");
         assert!(
             cron::Schedule::from_str(&expr).is_ok(),
             "generated interval expr must parse: {expr}"

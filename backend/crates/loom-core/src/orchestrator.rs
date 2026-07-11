@@ -13,15 +13,16 @@ use loom_lsp::LspClient;
 use loom_mcp::McpClient;
 use loom_memory::{
     EntityExtractor, ExtractedEntity, ExtractedRelationship, LLM_EXTRACTION_PROMPT,
-    RuleBasedEntityExtractor, parse_llm_extraction, TodoItem, TodoStore,
+    RuleBasedEntityExtractor, TodoItem, TodoStore, parse_llm_extraction,
 };
 use loom_security::merge_multi_permissions;
 use loom_skills::SkillPermissionConfig;
+use loom_types::StopReason;
 use loom_types::{
     AgentConfig, CompactionConfig, CompletionRequest, ContentPart, EngineEvent, Message,
     ModelBackend, PipelineStage, Role, SandboxConfig, SessionId, SkillPermissions, StreamDelta,
+    TokenUsage,
 };
-use loom_types::StopReason;
 use tokio::sync::{RwLock, mpsc};
 
 use crate::todo_context::build_todo_continuation_instruction;
@@ -66,14 +67,23 @@ pub fn adapt_behavior(persona_text: &str) -> String {
     if persona_text.contains("Beginner") {
         hints.push("Include more explanation and examples as the user is learning.");
     } else if persona_text.contains("Expert") {
-        hints.push("Skip basic explanations — the user is experienced and prefers advanced discussions.");
+        hints.push(
+            "Skip basic explanations — the user is experienced and prefers advanced discussions.",
+        );
     }
 
     if hints.is_empty() {
         return String::new();
     }
 
-    format!("## Behavior Adaptation\n{}\n", hints.iter().map(|h| format!("- {}", h)).collect::<Vec<_>>().join("\n"))
+    format!(
+        "## Behavior Adaptation\n{}\n",
+        hints
+            .iter()
+            .map(|h| format!("- {}", h))
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
 }
 
 /// 大小写不敏感地定位目录下的 Loom.md（兼容 `loom.md` / `LOOM.MD` 等变体）。
@@ -86,7 +96,11 @@ fn locate_loom_md(dir: &std::path::Path) -> Option<std::path::PathBuf> {
     }
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
-            if entry.file_name().to_string_lossy().eq_ignore_ascii_case("loom.md") {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case("loom.md")
+            {
                 return Some(entry.path());
             }
         }
@@ -113,7 +127,10 @@ fn read_loom_md_nonempty(path: &std::path::Path) -> Option<String> {
 ///
 /// 文件名大小写不敏感。已存在但为空/不可读的 Loom.md 视为用户主动禁用：
 /// 不会被默认内容覆盖，直接返回 None 走硬编码兜底。
-pub fn load_loom_md(workspace_path: Option<&std::path::Path>, loom_dir: &std::path::Path) -> Option<String> {
+pub fn load_loom_md(
+    workspace_path: Option<&std::path::Path>,
+    loom_dir: &std::path::Path,
+) -> Option<String> {
     // Priority 1: workspace-level Loom.md (case-insensitive)
     if let Some(ws) = workspace_path {
         if let Some(path) = locate_loom_md(ws) {
@@ -253,7 +270,9 @@ use crate::agent_pool::{AgentPool, AgentSummary};
 use crate::event_bus::{AgentEvent, EventBus};
 use crate::process_manager::ProcessManager;
 use crate::slash_router::SlashRouter;
-use crate::tool_registry::{AgentTool, SpawnAgentTool, SpawnAgentsTool, SpawnContext, ToolRegistry};
+use crate::tool_registry::{
+    AgentTool, SpawnAgentTool, SpawnAgentsTool, SpawnContext, ToolRegistry,
+};
 use loom_cron::CronScheduler;
 
 /// The central orchestrator for openLoom v2.
@@ -282,7 +301,8 @@ pub struct Orchestrator {
     /// Set via set_key_store() after construction, before any cloud client is built.
     key_store: Arc<RwLock<HashMap<String, String>>>,
     /// Pending permission approvals for "ask" mode (call_id → oneshot sender).
-    pending_permissions: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<loom_types::PermissionResponse>>>>,
+    pending_permissions:
+        Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<loom_types::PermissionResponse>>>>,
     data_dir: PathBuf,
     /// Global default: max LLM iterations per turn (overridable per agent).
     default_max_iterations: Arc<RwLock<usize>>,
@@ -314,7 +334,8 @@ pub struct Orchestrator {
     /// Uses tokio::sync::broadcast (type-erased after creation) — the same
     /// infrastructure as AgentEvent, but a separate typed sender for
     /// compaction, heartbeat, token-usage, and other infrastructure events.
-    #[allow(dead_code)] // CompactionPerformed emitter removed in T12; field retained for future events
+    #[allow(dead_code)]
+    // CompactionPerformed emitter removed in T12; field retained for future events
     engine_events: tokio::sync::broadcast::Sender<EngineEvent>,
     /// Background process manager for long-lived child processes.
     process_manager: Arc<ProcessManager>,
@@ -334,6 +355,9 @@ pub struct Orchestrator {
     session_todos: RwLock<HashMap<String, Vec<TodoItem>>>,
     /// Sessions where automatic memory extraction is disabled (record → extraction skipped).
     memory_disabled_sessions: RwLock<HashSet<String>>,
+    /// Per-session steering queues — user guidance pending injection into agent loop.
+    /// Each entry holds the entries for one session, consumed FIFO at each iteration.
+    session_steering_queues: RwLock<HashMap<String, Arc<RwLock<Vec<String>>>>>,
 }
 
 /// Trait for memory backends (SqliteEventStore, etc.)
@@ -351,6 +375,7 @@ pub trait MemoryStore: Send + Sync {
         cached_read_tokens: usize,
         cached_write_tokens: usize,
         context_window: usize,
+        model: &str,
         // JSON-serialised content of each tool message (tool calls + results).
         tool_msgs_json: &[String],
         // If true, the user message was already persisted at the start of the
@@ -471,7 +496,13 @@ pub trait MemoryStore: Send + Sync {
     }
     // Conversation summary (P0 memory optimization)
     async fn get_summary(&self, session_id: &str) -> Result<Option<String>>;
-    async fn save_summary(&self, session_id: &str, summary: &str, at_count: usize, model_name: &str) -> Result<()>;
+    async fn save_summary(
+        &self,
+        session_id: &str,
+        summary: &str,
+        at_count: usize,
+        model_name: &str,
+    ) -> Result<()>;
     async fn get_summary_at_count(&self, session_id: &str) -> Result<usize>;
     async fn get_message_count(&self, session_id: &str) -> Result<usize>;
     // Memory maintenance (P2)
@@ -867,8 +898,9 @@ impl Orchestrator {
         data_dir: PathBuf,
     ) -> Self {
         let mut registry = ToolRegistry::new();
-        let tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>> =
-            Arc::new(RwLock::new(loom_types::config::tool_prefs::ToolPrefsConfig::default()));
+        let tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>> = Arc::new(
+            RwLock::new(loom_types::config::tool_prefs::ToolPrefsConfig::default()),
+        );
         let _ = registry.register(Arc::new(crate::builtin_tools::ShellTool {
             tool_prefs: tool_prefs.clone(),
         }));
@@ -917,6 +949,7 @@ impl Orchestrator {
             active_model_name: active_model_name.clone(),
             model_configs: model_configs.clone(),
             sandbox_config: sandbox_config.clone(),
+            tool_prefs: tool_prefs.clone(),
             data_dir: data_dir.clone(),
         }));
         let _ = registry.register(Arc::new(crate::builtin_tools::TokenUsageTool {
@@ -1014,6 +1047,12 @@ impl Orchestrator {
         // Claude Code alias: skills reference "Monitor" (capital M)
         let _ = registry.register_alias("Monitor", "monitor");
 
+        // Natural-language config editor — AI can update Loom settings on the user's behalf
+        let _ = registry.register(Arc::new(crate::builtin_tools::UpdateConfigTool {
+            tool_prefs: tool_prefs.clone(),
+            data_dir: data_dir.clone(),
+        }));
+
         Self {
             pool,
             tool_registry: Arc::new(RwLock::new(registry)),
@@ -1060,6 +1099,7 @@ impl Orchestrator {
             todo_store,
             session_todos: RwLock::new(HashMap::new()),
             memory_disabled_sessions: RwLock::new(HashSet::new()),
+            session_steering_queues: RwLock::new(HashMap::new()),
         }
     }
 
@@ -1094,9 +1134,7 @@ impl Orchestrator {
 
         // Wire event publisher for real-time UI updates via WebSocket.
         scheduler
-            .set_event_publisher(Arc::new(LoomCronEventPublisher {
-                bus: event_bus,
-            }))
+            .set_event_publisher(Arc::new(LoomCronEventPublisher { bus: event_bus }))
             .await;
 
         let handle = scheduler.start();
@@ -1141,10 +1179,12 @@ impl Orchestrator {
             .insert(session_id.to_string(), fresh.clone());
         // Push real-time update to the frontend so the Todo panel refreshes
         // regardless of who called replace_todos (tool or plan sync).
-        self.pool.event_bus().publish(crate::event_bus::AgentEvent::TodosReplaced {
-            session_id: session_id.to_string(),
-            todos: serde_json::to_value(&fresh).unwrap_or_default(),
-        });
+        self.pool
+            .event_bus()
+            .publish(crate::event_bus::AgentEvent::TodosReplaced {
+                session_id: session_id.to_string(),
+                todos: serde_json::to_value(&fresh).unwrap_or_default(),
+            });
         Ok(())
     }
 
@@ -1229,17 +1269,24 @@ impl Orchestrator {
             subagent_max_iterations: 20,
             max_retries: 2,
         });
-       let _ = self
-           .tool_registry
-           .write()
-           .await
-           .register(Arc::new(SpawnAgentTool {
-               max_depth,
-               default_timeout_secs,
-               context: ctx.clone(),
-           }));
-       let _ = self.tool_registry.write().await.register(Arc::new(SpawnAgentsTool { max_parallel: 8, context: ctx }));
-   }
+        let _ = self
+            .tool_registry
+            .write()
+            .await
+            .register(Arc::new(SpawnAgentTool {
+                max_depth,
+                default_timeout_secs,
+                context: ctx.clone(),
+            }));
+        let _ = self
+            .tool_registry
+            .write()
+            .await
+            .register(Arc::new(SpawnAgentsTool {
+                max_parallel: 8,
+                context: ctx,
+            }));
+    }
 
     // === Inference ===
 
@@ -1286,7 +1333,11 @@ impl Orchestrator {
 
     /// Check whether automatic memory extraction is enabled for a session (default: true).
     pub async fn is_session_memory_enabled(&self, session_id: &str) -> bool {
-        !self.memory_disabled_sessions.read().await.contains(session_id)
+        !self
+            .memory_disabled_sessions
+            .read()
+            .await
+            .contains(session_id)
     }
 
     /// Get the current sandbox configuration (defaults to disabled).
@@ -1919,9 +1970,15 @@ impl Orchestrator {
 
     /// Run a forgetting cycle: prune low-importance, stale entities (Phase 3).
     /// Returns a JSON-serialised ForgettingReport.
-    pub async fn run_forgetting_cycle(&self, min_importance: f64, max_age_days: i64) -> Result<String> {
+    pub async fn run_forgetting_cycle(
+        &self,
+        min_importance: f64,
+        max_age_days: i64,
+    ) -> Result<String> {
         if let Some(ref store) = *self.memory_store.read().await {
-            store.run_forgetting_cycle(min_importance, max_age_days).await
+            store
+                .run_forgetting_cycle(min_importance, max_age_days)
+                .await
         } else {
             Ok(r#"{"summary":"noop"}"#.into())
         }
@@ -1960,7 +2017,11 @@ impl Orchestrator {
     /// Passes the query text as a fallback for FTS5 when vector embeddings
     /// are not yet available; full embedding-based search will be wired
     /// in a follow-up phase.
-    pub async fn search_similar_entities(&self, query: &str, limit: usize) -> Result<Vec<loom_types::KgNode>> {
+    pub async fn search_similar_entities(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<loom_types::KgNode>> {
         if let Some(ref store) = *self.memory_store.read().await {
             store.search_similar_entities(query, &[], limit).await
         } else {
@@ -2133,7 +2194,12 @@ impl Orchestrator {
         // Strip surrounding quotes/brackets the model sometimes adds,
         // then keep only printable non-control characters, collapse whitespace.
         let stripped = raw_title
-            .trim_matches(|c| matches!(c, '"' | '\'' | '「' | '」' | '《' | '》' | '【' | '】' | '(' | ')' | '（' | '）'))
+            .trim_matches(|c| {
+                matches!(
+                    c,
+                    '"' | '\'' | '「' | '」' | '《' | '》' | '【' | '】' | '(' | ')' | '（' | '）'
+                )
+            })
             .trim();
         let sanitized: String = stripped
             .chars()
@@ -2147,8 +2213,16 @@ impl Orchestrator {
         // Split on sentence-ending characters and keep the LAST non-empty
         // segment — the title almost always comes after any echo.
         let title = sanitized
-            .split(|c| c == '。' || c == '！' || c == '？' || c == '，'
-                      || c == '\n' || c == '\r' || c == '：' || c == ':')
+            .split(|c| {
+                c == '。'
+                    || c == '！'
+                    || c == '？'
+                    || c == '，'
+                    || c == '\n'
+                    || c == '\r'
+                    || c == '：'
+                    || c == ':'
+            })
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .last()
@@ -2565,7 +2639,10 @@ impl Orchestrator {
         if let Some(ref s) = *store
             && let Some(cfg) = s.get_team_config(id).await?
         {
-            self.team_configs.write().await.insert(id.to_string(), cfg.clone());
+            self.team_configs
+                .write()
+                .await
+                .insert(id.to_string(), cfg.clone());
             return Ok(cfg);
         }
         anyhow::bail!("team config '{}' not found", id)
@@ -2783,7 +2860,8 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
     ) -> Result<TurnResult> {
         let team = self.team_config_get(team_config_id).await?;
         let existing_agents = self.agent_config_list().await;
-        let member_configs = crate::team_orchestrator::resolve_member_configs(&team, &existing_agents);
+        let member_configs =
+            crate::team_orchestrator::resolve_member_configs(&team, &existing_agents);
 
         if member_configs.is_empty() {
             anyhow::bail!("team '{}' has no valid members", team.name);
@@ -2815,12 +2893,14 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             .iter()
             .map(|_| loom_types::AgentId::new())
             .collect();
-        self.pool.event_bus().publish(crate::event_bus::AgentEvent::TeamStarted {
-            team_id: team.id.clone(),
-            team_name: team.name.clone(),
-            captain_id: loom_types::AgentId::new(),
-            member_ids: member_ids.clone(),
-        });
+        self.pool
+            .event_bus()
+            .publish(crate::event_bus::AgentEvent::TeamStarted {
+                team_id: team.id.clone(),
+                team_name: team.name.clone(),
+                captain_id: loom_types::AgentId::new(),
+                member_ids: member_ids.clone(),
+            });
 
         let result = self
             .process_message_with_config(
@@ -2841,25 +2921,33 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             }
         }
 
-        let summary = result.as_ref().map(|r| r.response.clone()).unwrap_or_default();
+        let summary = result
+            .as_ref()
+            .map(|r| r.response.clone())
+            .unwrap_or_default();
 
         // Persist team card block so it survives session reload
         // Use user-visible member names from team config, not internal __team_xxx names
-        let member_display_names: Vec<String> = team.members.iter().map(|m| m.name.clone()).collect();
+        let member_display_names: Vec<String> =
+            team.members.iter().map(|m| m.name.clone()).collect();
         let team_card = serde_json::json!([
             {"type": "team", "teamName": team.name, "members": member_display_names.iter().map(|n|
                 serde_json::json!({"name": n, "status": "done"})
             ).collect::<Vec<_>>()}
         ]);
         if let Some(store) = self.memory_store.read().await.as_ref() {
-            let _ = store.append_message(session_id, "assistant", &team_card.to_string(), None).await;
+            let _ = store
+                .append_message(session_id, "assistant", &team_card.to_string(), None)
+                .await;
         }
 
-        self.pool.event_bus().publish(crate::event_bus::AgentEvent::TeamCompleted {
-            team_id: team.id.clone(),
-            session_id: session_id.to_string(),
-            summary: summary.clone(),
-        });
+        self.pool
+            .event_bus()
+            .publish(crate::event_bus::AgentEvent::TeamCompleted {
+                team_id: team.id.clone(),
+                session_id: session_id.to_string(),
+                summary: summary.clone(),
+            });
 
         result
     }
@@ -3351,7 +3439,12 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
     }
     /// Map the active model to the correct tokenizer for accurate context-window budgeting.
     pub async fn tokenizer_for_active_model(&self) -> loom_context::TokenizerId {
-        let model_name = self.active_model_name.read().await.clone().unwrap_or_default();
+        let model_name = self
+            .active_model_name
+            .read()
+            .await
+            .clone()
+            .unwrap_or_default();
         let backend = self
             .model_configs
             .read()
@@ -3557,21 +3650,36 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         if llm_client.is_none() {
             // Pure-local fallback: connect directly from model config.
             // No auxiliary.json or prior cloud_client needed.
-            if let Some(model_name) = self.active_model_name.try_read().ok().and_then(|g| g.clone()) {
+            if let Some(model_name) = self
+                .active_model_name
+                .try_read()
+                .ok()
+                .and_then(|g| g.clone())
+            {
                 let configs = self.model_configs.read().await;
                 if let Some(config) = configs.get(&model_name) {
                     if let Some(ref model) = config.model {
-                        let base_url = config.base_url.clone().unwrap_or_else(|| {
-                            match config.backend {
-                                loom_types::ModelBackend::LmStudio => "http://localhost:1234/v1".into(),
-                                loom_types::ModelBackend::Ollama => "http://localhost:11434/v1".into(),
-                                loom_types::ModelBackend::Custom => "http://localhost:8080/v1".into(),
-                                _ => String::new(),
-                            }
-                        });
+                        let base_url =
+                            config
+                                .base_url
+                                .clone()
+                                .unwrap_or_else(|| match config.backend {
+                                    loom_types::ModelBackend::LmStudio => {
+                                        "http://localhost:1234/v1".into()
+                                    }
+                                    loom_types::ModelBackend::Ollama => {
+                                        "http://localhost:11434/v1".into()
+                                    }
+                                    loom_types::ModelBackend::Custom => {
+                                        "http://localhost:8080/v1".into()
+                                    }
+                                    _ => String::new(),
+                                });
                         if !base_url.is_empty() {
                             match loom_inference::InferenceEngine::connect(
-                                &base_url, model, config.context_size,
+                                &base_url,
+                                model,
+                                config.context_size,
                             )
                             .await
                             {
@@ -4026,7 +4134,9 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         // 1. System instructions — Loom.md 是共享纪律基座（类似 CLAUDE.md），
         // 对所有 agent 始终加载：workspace 级 > 全局 > 硬编码默认。
         // 放在最前面作为"平台层规则"，后续由 Agent persona 覆盖身份声明。
-        let ws_path = workspace_path.as_ref().map(|s| std::path::Path::new(s.as_str()));
+        let ws_path = workspace_path
+            .as_ref()
+            .map(|s| std::path::Path::new(s.as_str()));
         let base = if let Some(loom_md) = load_loom_md(ws_path, &self.data_dir) {
             loom_md
         } else {
@@ -4070,7 +4180,9 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         let mut injected_count = 0usize;
         if !selected_skills.is_empty() {
             let bodies = self.skill_state.read().await.bodies.clone();
-            let mut skills_text = String::from("## Active Skills (User Selected)\nThe following skills are activated for this conversation. Follow their instructions directly — do NOT call use_skill for these.\n");
+            let mut skills_text = String::from(
+                "## Active Skills (User Selected)\nThe following skills are activated for this conversation. Follow their instructions directly — do NOT call use_skill for these.\n",
+            );
             for name in selected_skills {
                 if injected_count >= MAX_ACTIVE_SKILLS {
                     tracing::warn!(
@@ -4116,7 +4228,11 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                 let bodies = self.skill_state.read().await.bodies.clone();
                 let mut aa_text = format!(
                     "\n\n## Active Skills ({})\nThe following skills are activated automatically for this conversation. Follow their instructions directly — do NOT call use_skill for these.\n",
-                    if first_time { "Auto-Activated" } else { "Also Auto-Activated" }
+                    if first_time {
+                        "Auto-Activated"
+                    } else {
+                        "Also Auto-Activated"
+                    }
                 );
                 for name in &always_active_names {
                     if !selected_skills.contains(name)
@@ -4342,11 +4458,8 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                 .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
                 .clone()
         };
-        let lock_guard = tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            session_lock.lock(),
-        )
-        .await;
+        let lock_guard =
+            tokio::time::timeout(std::time::Duration::from_secs(15), session_lock.lock()).await;
         if lock_guard.is_err() {
             tracing::warn!(
                 session_id,
@@ -4384,14 +4497,20 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         if !skip_user_message {
             let user_msg_full = build_user_message(user_message, &attached_images);
             let mut user_parts = user_msg_full.content.clone();
-            if let Err(e) = self.convert_images_to_refs(session_id, &mut user_parts).await {
+            if let Err(e) = self
+                .convert_images_to_refs(session_id, &mut user_parts)
+                .await
+            {
                 tracing::warn!(session_id, error = %e, "failed to convert user images to file refs (early persist)");
             }
-            let user_content_json = serde_json::to_string(&user_parts)
-                .unwrap_or_else(|_| user_message.to_string());
+            let user_content_json =
+                serde_json::to_string(&user_parts).unwrap_or_else(|_| user_message.to_string());
             let mem = self.memory_store.read().await;
             if let Some(ref store) = *mem {
-                if let Err(e) = store.save_interrupted_turn(session_id, &user_content_json).await {
+                if let Err(e) = store
+                    .save_interrupted_turn(session_id, &user_content_json)
+                    .await
+                {
                     tracing::warn!(session_id, error = %e, "failed to persist user message at turn start");
                 }
             }
@@ -4499,7 +4618,11 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                     }
                 }
             }
-            if any_has_allowlist { Some(union.into_iter().collect()) } else { None }
+            if any_has_allowlist {
+                Some(union.into_iter().collect())
+            } else {
+                None
+            }
         };
 
         // Get workspace path for this session
@@ -4556,7 +4679,9 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             dc.push_str("- 你可以使用只读工具（Read、Grep、Glob）和搜索工具分析代码库。\n");
             dc.push_str("- **允许使用 `todo_write`**：将分析出的实施步骤写入 todo 列表，帮助用户跟踪进度。\n");
             dc.push_str("- 你应当深入分析代码库，探索相关文件，创建一个详细的实施方案。\n");
-            dc.push_str("- 方案应包含：需要修改的文件、架构决策、分步实施计划、边界情况和潜在风险。\n");
+            dc.push_str(
+                "- 方案应包含：需要修改的文件、架构决策、分步实施计划、边界情况和潜在风险。\n",
+            );
             dc.push_str("- 使用清晰的 Markdown 标题、列表和代码片段呈现方案。\n");
             dc.push_str("- 用户审核方案后，会切换到 **Operate（操作）** 模式来开始实施。\n");
             dynamic_context = Some(dc);
@@ -4615,7 +4740,12 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             if let Some(ref store) = *mem {
                 let existing = store.get_summary(session_id).await.unwrap_or(None);
                 let at = store.get_summary_at_count(session_id).await.unwrap_or(0);
-                let name = self.active_model_name.read().await.clone().unwrap_or_default();
+                let name = self
+                    .active_model_name
+                    .read()
+                    .await
+                    .clone()
+                    .unwrap_or_default();
                 let cw = self
                     .model_configs
                     .read()
@@ -4630,7 +4760,10 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         }; // lock released
 
         let tid = self.tokenizer_for_active_model().await;
-        let history_tokens: usize = history.iter().map(|m| loom_context::message_tokens_with_id(m, tid)).sum();
+        let history_tokens: usize = history
+            .iter()
+            .map(|m| loom_context::message_tokens_with_id(m, tid))
+            .sum();
         // ── Include stable prefix in the occupancy estimate ──
         // The stable prefix (system prompt + persona + summary + KG + tool catalog)
         // is sent on every turn and can consume 10 K–80 K+ tokens.  Without this
@@ -4640,7 +4773,12 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             // Agent persona (base identity)
             let persona = agent_config.persona.len().saturating_sub(2).max(0) / 4;
             // System prompt override
-            let overr = agent_config.system_prompt_override.as_deref().unwrap_or("").len() / 4;
+            let overr = agent_config
+                .system_prompt_override
+                .as_deref()
+                .unwrap_or("")
+                .len()
+                / 4;
             // User profile
             let userp = user_persona.len() / 4;
             // Current summary (if any)
@@ -4658,14 +4796,20 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         );
 
         let (summary, new_at_count) = if should {
-            tracing::info!(session_id, history_tokens, context_window, "summarization triggered (80% token threshold)");
+            tracing::info!(
+                session_id,
+                history_tokens,
+                context_window,
+                "summarization triggered (80% token threshold)"
+            );
             let total_msgs = history.len();
             // Use the same effective context window as the trigger check so
             // context_window=0 doesn't collapse recent_count to 0 (which would
             // send the entire history to the summariser, exceeding its context).
             let effective_cw = context_window.max(100_000);
-            let recent_count = ((effective_cw as f32 * self.compaction_config.keep_recent_tokens_pct) as usize)
-                .min(total_msgs);
+            let recent_count =
+                ((effective_cw as f32 * self.compaction_config.keep_recent_tokens_pct) as usize)
+                    .min(total_msgs);
             let recent_boundary = total_msgs.saturating_sub(recent_count);
             let prompt = loom_memory::SummaryEngine::build_prompt_segmented(
                 &history,
@@ -4683,13 +4827,22 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                 };
             if let Some(sc) = summary_client {
                 let saved_hash = sc.prefix_hash_snapshot();
-                let timeout = std::time::Duration::from_millis(self.compaction_config.summarization_timeout_ms);
+                let timeout = std::time::Duration::from_millis(
+                    self.compaction_config.summarization_timeout_ms,
+                );
                 match tokio::time::timeout(timeout, sc.complete(request)).await {
                     Ok(Ok(resp)) if !resp.text.is_empty() => {
                         sc.prefix_hash_restore(saved_hash);
                         let mem = self.memory_store.read().await;
                         if let Some(ref store) = *mem {
-                            let _ = store.save_summary(session_id, &resp.text, recent_boundary, sc.model_name()).await;
+                            let _ = store
+                                .save_summary(
+                                    session_id,
+                                    &resp.text,
+                                    recent_boundary,
+                                    sc.model_name(),
+                                )
+                                .await;
                             if resp.prompt_tokens > 0 || resp.completion_tokens > 0 {
                                 let _ = store
                                     .record_token_usage(
@@ -4705,7 +4858,11 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                                     .await;
                             }
                         }
-                        tracing::info!(chars = resp.text.len(), at_count = recent_boundary, "conversation summarized");
+                        tracing::info!(
+                            chars = resp.text.len(),
+                            at_count = recent_boundary,
+                            "conversation summarized"
+                        );
                         (Some(resp.text), recent_boundary)
                     }
                     _ => {
@@ -4731,7 +4888,10 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             },
             // Inject continuation note when the previous turn was interrupted or
             // truncated — tells the LLM to keep going rather than starting fresh.
-            continuation_note: Self::continuation_note_for(self.get_last_stop_reason(session_id).await, None),
+            continuation_note: Self::continuation_note_for(
+                self.get_last_stop_reason(session_id).await,
+                None,
+            ),
             summary,
             temperature: agent_config.temperature.unwrap_or(0.0),
             max_iterations: agent_config.max_iterations.unwrap_or(default_max_iters),
@@ -4751,8 +4911,18 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             default_permissions,
             max_prompt_budget,
             context_window: {
-                let name = self.active_model_name.read().await.clone().unwrap_or_default();
-                self.model_configs.read().await.get(&name).map(|c| c.context_size).filter(|s| *s > 0)
+                let name = self
+                    .active_model_name
+                    .read()
+                    .await
+                    .clone()
+                    .unwrap_or_default();
+                self.model_configs
+                    .read()
+                    .await
+                    .get(&name)
+                    .map(|c| c.context_size)
+                    .filter(|s| *s > 0)
             },
             summary_at_count: new_at_count,
             session_id: session_id.to_string(),
@@ -4783,7 +4953,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                 )))
             },
             lazy_tools: effective_selected_skills.is_empty(),
-            steering_queue: Some(Arc::new(RwLock::new(Vec::new()))),
+            steering_queue: Some(self.get_or_create_steering_queue(session_id).await),
             todo_store: Some(self.todo_store.clone()),
             ..Default::default()
         };
@@ -4878,6 +5048,11 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             let mut partial_cache_read: u64 = 0;
             let mut partial_cache_write: u64 = 0;
             let mut usage_pending = false;
+            // Track final merged usage for incremental-save metadata at flush.
+            let mut final_prompt: u64 = 0;
+            let mut final_completion: u64 = 0;
+            let mut final_cache_read: u64 = 0;
+            let mut final_cache_write: u64 = 0;
 
             while let Some(delta) = delta_rx.recv().await {
                 match delta {
@@ -4899,12 +5074,25 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                                 let snapshot = full_text.clone();
                                 let mem = memory_store.read().await;
                                 if let Some(ref store) = *mem {
-                                    let content_json = serde_json::to_string(
-                                        &[loom_types::ContentPart::Text { text: snapshot.clone() }],
-                                    )
-                                    .unwrap_or_else(|_| format!("[{{\"text\":{}}}]", serde_json::Value::String(snapshot)));
+                                    let content_json =
+                                        serde_json::to_string(&[loom_types::ContentPart::Text {
+                                            text: snapshot.clone(),
+                                        }])
+                                        .unwrap_or_else(
+                                            |_| {
+                                                format!(
+                                                    "[{{\"text\":{}}}]",
+                                                    serde_json::Value::String(snapshot)
+                                                )
+                                            },
+                                        );
                                     let _ = store
-                                        .update_message(&forward_session_id, seq, &content_json, None)
+                                        .update_message(
+                                            &forward_session_id,
+                                            seq,
+                                            &content_json,
+                                            None,
+                                        )
                                         .await;
                                 }
                             }
@@ -4929,6 +5117,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                                 call_id: id.clone(),
                                 tool_name: name.clone(),
                                 args: serde_json::json!({}),
+                                session_id: forward_session_id.clone(),
                             });
                         }
                         // Also track for later args accumulation
@@ -4957,6 +5146,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                             success,
                             result: result.clone(),
                             structured_content,
+                            session_id: forward_session_id.clone(),
                         });
                         // Persist this tool result to the DB immediately — tool
                         // results are the bulk of a long task's history (game
@@ -4974,8 +5164,8 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                                 timestamp: chrono::Utc::now(),
                                 usage: None,
                             };
-                            let tool_json = serde_json::to_string(&tool_msg.content)
-                                .unwrap_or_default();
+                            let tool_json =
+                                serde_json::to_string(&tool_msg.content).unwrap_or_default();
                             let mem = memory_store.read().await;
                             if let Some(ref store) = *mem {
                                 if let Err(e) = store
@@ -5009,7 +5199,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                         // OpenAI / local engines send complete usage in a single delta.
                         let (p_tokens, c_tokens, cr_tokens, cw_tokens) = if prompt_tokens > 0
                             && completion_tokens == 0
-                                                {
+                        {
                             // Anthropic message_start — store partial, don't publish yet
                             partial_prompt = prompt_tokens;
                             partial_cache_read = cache_read_tokens;
@@ -5046,6 +5236,11 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                                 cache_write_tokens,
                             )
                         };
+                        // Record final merged values for incremental-save metadata
+                        final_prompt = p_tokens;
+                        final_completion = c_tokens;
+                        final_cache_read = cr_tokens;
+                        final_cache_write = cw_tokens;
                         event_bus.publish(AgentEvent::TokenUsage {
                             agent_id: forward_agent_id.clone(),
                             session_id: forward_session_id.clone(),
@@ -5141,6 +5336,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                         call_id: id,
                         tool_name: name,
                         args,
+                        session_id: forward_session_id.clone(),
                     });
                 }
             }
@@ -5157,20 +5353,36 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                     success: true,
                     result: None,
                     structured_content: None,
+                    session_id: forward_session_id.clone(),
                 });
             }
             // Final flush: update the assistant placeholder with the complete
-            // text so the DB has the full response, not just the last periodic
-            // snapshot. This runs when delta_rx closes (stream finished).
+            // text and usage metadata so the DB has the full response and tokens.
+            // This runs when delta_rx closes (stream finished).
             if let Some(seq) = assistant_seq {
-                let content_json = serde_json::to_string(
-                    &[loom_types::ContentPart::Text { text: full_text.clone() }],
-                )
-                .unwrap_or_else(|_| format!("[{{\"text\":{}}}]", serde_json::Value::String(full_text.clone())));
+                let content_json = serde_json::to_string(&[loom_types::ContentPart::Text {
+                    text: full_text.clone(),
+                }])
+                .unwrap_or_else(|_| {
+                    format!(
+                        "[{{\"text\":{}}}]",
+                        serde_json::Value::String(full_text.clone())
+                    )
+                });
+                // Write usage metadata so load_history recovers token info after restart.
+                let meta_json = serde_json::json!({
+                    "model": usage_model,
+                    "prompt_tokens": final_prompt,
+                    "completion_tokens": final_completion,
+                    "cached_tokens": final_cache_read + final_cache_write,
+                    "cache_read_tokens": final_cache_read,
+                    "cache_write_tokens": final_cache_write,
+                    "context_window": usage_ctx,
+                }).to_string();
                 let mem = memory_store.read().await;
                 if let Some(ref store) = *mem {
                     if let Err(e) = store
-                        .update_message(&forward_session_id, seq, &content_json, None)
+                        .update_message(&forward_session_id, seq, &content_json, Some(&meta_json))
                         .await
                     {
                         tracing::warn!(session_id = %forward_session_id, error = %e, "failed to finalize assistant message in incremental save");
@@ -5185,7 +5397,11 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                 full_response: full_text,
             });
             // Return assistant seq so we can fix the text-only placeholder
-            if incremental_save { assistant_seq } else { None }
+            if incremental_save {
+                assistant_seq
+            } else {
+                None
+            }
         });
 
         // Run the agent turn with streaming
@@ -5275,9 +5491,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
 
         // ── Auto-continue: BudgetExhausted / MaxIterations → auto-restart ──
         let mut auto_round = 0usize;
-        while auto_round < agent_config.auto_continue_max_rounds
-            && agent_config.auto_continue
-        {
+        while auto_round < agent_config.auto_continue_max_rounds && agent_config.auto_continue {
             let stop = match &result {
                 Ok(t) => match t.stop_reason {
                     StopReason::BudgetExhausted | StopReason::MaxIterations => false,
@@ -5285,7 +5499,9 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                 },
                 Err(_) => true,
             };
-            if stop { break; }
+            if stop {
+                break;
+            }
 
             auto_round += 1;
             let prev = match &result {
@@ -5295,10 +5511,8 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
 
             self.force_summarize_session(session_id).await;
 
-            let cont_note = Self::continuation_note_for(
-                Some(prev.stop_reason),
-                Some(&prev.progress),
-            );
+            let cont_note =
+                Self::continuation_note_for(Some(prev.stop_reason), Some(&prev.progress));
 
             let mut cont_config = loop_config.clone();
             cont_config.continuation_note = cont_note;
@@ -5357,7 +5571,10 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         let incremental_save_done: Option<i64> = forward_handle.await.ok().flatten();
 
         if let Ok(ref turn) = result {
-            self.last_stop_reasons.write().await.insert(session_id.to_string(), turn.stop_reason);
+            self.last_stop_reasons
+                .write()
+                .await
+                .insert(session_id.to_string(), turn.stop_reason);
             let was_interrupted = turn.stop_reason == StopReason::UserCancelled;
 
             // Stop hook is already fired by agent_loop on cancellation; do not double-fire.
@@ -5422,7 +5639,16 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                         role: Role::Assistant,
                         content: assistant_parts.clone(),
                         timestamp: chrono::Utc::now(),
-                        usage: None,
+                        usage: Some(TokenUsage {
+                            model: active_model_name.clone(),
+                            prompt_tokens: turn.prompt_tokens,
+                            completion_tokens: turn.completion_tokens,
+                            cached_tokens: turn.cached_tokens,
+                            cache_read_tokens: turn.cache_read_tokens,
+                            cache_write_tokens: turn.cache_write_tokens,
+                            context_window: turn.context_window,
+                            latency_ms: 0,
+                        }),
                     },
                 )
                 .await;
@@ -5449,22 +5675,23 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                             .collect();
                         if let Err(e) = store
                             .save_turn(
-                            session_id,
-                            &user_content_json,
-                            &content_json,
-                            turn.tool_calls_made,
-                            turn.prompt_tokens,
-                            turn.completion_tokens,
-                            turn.cache_read_tokens,
-                            turn.cache_write_tokens,
-                            0, // context_window recorded via record_token_usage
-                            &tool_json,
-                            !skip_user_message,
-                        )
-                        .await
-                    {
-                        tracing::warn!(session_id, error = %e, "failed to persist interrupted turn");
-                    }
+                                session_id,
+                                &user_content_json,
+                                &content_json,
+                                turn.tool_calls_made,
+                                turn.prompt_tokens,
+                                turn.completion_tokens,
+                                turn.cache_read_tokens,
+                                turn.cache_write_tokens,
+                                turn.context_window,
+                                &active_model_name,
+                                &tool_json,
+                                !skip_user_message,
+                            )
+                            .await
+                        {
+                            tracing::warn!(session_id, error = %e, "failed to persist interrupted turn");
+                        }
                     } // end if !incremental_save_done
                 }
             } else {
@@ -5514,7 +5741,16 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                         role: Role::Assistant,
                         content: assistant_parts.clone(),
                         timestamp: chrono::Utc::now(),
-                        usage: None,
+                        usage: Some(TokenUsage {
+                            model: active_model_name.clone(),
+                            prompt_tokens: turn.prompt_tokens,
+                            completion_tokens: turn.completion_tokens,
+                            cached_tokens: turn.cached_tokens,
+                            cache_read_tokens: turn.cache_read_tokens,
+                            cache_write_tokens: turn.cache_write_tokens,
+                            context_window: turn.context_window,
+                            latency_ms: 0,
+                        }),
                     },
                 )
                 .await;
@@ -5548,7 +5784,8 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                                 turn.completion_tokens,
                                 turn.cache_read_tokens,
                                 turn.cache_write_tokens,
-                                0, // context_window recorded via record_token_usage
+                                turn.context_window,
+                                &active_model_name,
                                 &tool_json,
                                 !skip_user_message,
                             )
@@ -5560,9 +5797,20 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                         // Update it with the full structured content_parts
                         // (Thinking, Text, Image blocks) so reload from DB
                         // after restart shows proper UI blocks, not raw JSON.
+                        // Also write usage metadata so load_history recovers
+                        // token counts and context_window.
                         if let Some(seq) = incremental_save_done {
+                            let usage_meta = serde_json::json!({
+                                "model": active_model_name,
+                                "prompt_tokens": turn.prompt_tokens,
+                                "completion_tokens": turn.completion_tokens,
+                                "cached_tokens": turn.cache_read_tokens + turn.cache_write_tokens,
+                                "cache_read_tokens": turn.cache_read_tokens,
+                                "cache_write_tokens": turn.cache_write_tokens,
+                                "context_window": turn.context_window,
+                            }).to_string();
                             let _ = store
-                                .update_message(session_id, seq, &content_json, None)
+                                .update_message(session_id, seq, &content_json, Some(&usage_meta))
                                 .await;
                         }
                         0i64
@@ -5613,7 +5861,6 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                     )
                     .await;
                 }
-
             } // end else (not interrupted)
         } else {
             let _ = self
@@ -5765,6 +6012,14 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             None
         };
 
+        // ── Resolve active model name for save and context ──
+        let active_model_name = self
+            .active_model_name
+            .read()
+            .await
+            .clone()
+            .unwrap_or_default();
+
         // ── Summary check (token-based 80% threshold) ──
         // Phase 1: read existing summary + context window (lock held briefly)
         let (existing_summary, summary_at_count, context_window) = {
@@ -5772,12 +6027,11 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             if let Some(ref store) = *mem {
                 let existing = store.get_summary(session_id).await.unwrap_or(None);
                 let at = store.get_summary_at_count(session_id).await.unwrap_or(0);
-                let name = self.active_model_name.read().await.clone().unwrap_or_default();
                 let cw = self
                     .model_configs
                     .read()
                     .await
-                    .get(&name)
+                    .get(&active_model_name)
                     .map(|c| c.context_size)
                     .unwrap_or(0);
                 (existing, at, cw)
@@ -5787,11 +6041,19 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         }; // lock dropped here
 
         let tid = self.tokenizer_for_active_model().await;
-        let history_tokens: usize = history.iter().map(|m| loom_context::message_tokens_with_id(m, tid)).sum();
+        let history_tokens: usize = history
+            .iter()
+            .map(|m| loom_context::message_tokens_with_id(m, tid))
+            .sum();
         // ── Include stable prefix in the occupancy estimate ──
         let prefix_estimate: usize = {
             let persona = agent_config.persona.len().saturating_sub(2).max(0) / 4;
-            let overr = agent_config.system_prompt_override.as_deref().unwrap_or("").len() / 4;
+            let overr = agent_config
+                .system_prompt_override
+                .as_deref()
+                .unwrap_or("")
+                .len()
+                / 4;
             let userp = user_persona.len() / 4;
             let sum = existing_summary.as_deref().unwrap_or("").len() / 4;
             persona + overr + userp + sum + 4096
@@ -5810,8 +6072,9 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             // context_window=0 doesn't collapse recent_count to 0 (which would
             // send the entire history to the summariser, exceeding its context).
             let effective_cw = context_window.max(100_000);
-            let recent_count = ((effective_cw as f32 * self.compaction_config.keep_recent_tokens_pct) as usize)
-                .min(total_msgs);
+            let recent_count =
+                ((effective_cw as f32 * self.compaction_config.keep_recent_tokens_pct) as usize)
+                    .min(total_msgs);
             let recent_boundary = total_msgs.saturating_sub(recent_count);
             let prompt = loom_memory::SummaryEngine::build_prompt_segmented(
                 &history,
@@ -5833,7 +6096,8 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                 };
 
             let saved_hash = summary_client.prefix_hash_snapshot();
-            let timeout = std::time::Duration::from_millis(self.compaction_config.summarization_timeout_ms);
+            let timeout =
+                std::time::Duration::from_millis(self.compaction_config.summarization_timeout_ms);
             let result = tokio::time::timeout(timeout, summary_client.complete(request)).await;
             summary_client.prefix_hash_restore(saved_hash);
             match result {
@@ -5861,9 +6125,15 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                     }
                     // Phase 3: save summary with cursor advanced to recent boundary
                     if let Some(ref store) = *self.memory_store.read().await {
-                        let _ = store.save_summary(session_id, &new_summary, recent_boundary, &summary_model).await;
+                        let _ = store
+                            .save_summary(session_id, &new_summary, recent_boundary, &summary_model)
+                            .await;
                     }
-                    tracing::info!(chars = new_summary.len(), at_count = recent_boundary, "conversation summarized");
+                    tracing::info!(
+                        chars = new_summary.len(),
+                        at_count = recent_boundary,
+                        "conversation summarized"
+                    );
                     (Some(new_summary), recent_boundary)
                 }
                 _ => {
@@ -5942,7 +6212,11 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                     }
                 }
             }
-            if any_has_allowlist { Some(union.into_iter().collect()) } else { None }
+            if any_has_allowlist {
+                Some(union.into_iter().collect())
+            } else {
+                None
+            }
         };
         let base_permissions = SkillPermissions {
             shell: true,
@@ -5968,7 +6242,8 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             let todos = self.list_todos(session_id).await.unwrap_or_default();
             build_todo_continuation_instruction(&todos)
         };
-        let continuation_note = Self::continuation_note_for(self.get_last_stop_reason(session_id).await, None);
+        let continuation_note =
+            Self::continuation_note_for(self.get_last_stop_reason(session_id).await, None);
 
         let config = AgentLoopConfig {
             system_prompt: stable_prompt,
@@ -5984,8 +6259,18 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             default_permissions,
             max_prompt_budget,
             context_window: {
-                let name = self.active_model_name.read().await.clone().unwrap_or_default();
-                self.model_configs.read().await.get(&name).map(|c| c.context_size).filter(|s| *s > 0)
+                let name = self
+                    .active_model_name
+                    .read()
+                    .await
+                    .clone()
+                    .unwrap_or_default();
+                self.model_configs
+                    .read()
+                    .await
+                    .get(&name)
+                    .map(|c| c.context_size)
+                    .filter(|s| *s > 0)
             },
             summary_at_count: new_at_count,
             session_id: session_id.to_string(),
@@ -6048,7 +6333,10 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         drop(registry);
 
         if let Ok(ref turn) = result {
-            self.last_stop_reasons.write().await.insert(session_id.to_string(), turn.stop_reason);
+            self.last_stop_reasons
+                .write()
+                .await
+                .insert(session_id.to_string(), turn.stop_reason);
             let was_interrupted = turn.stop_reason == StopReason::UserCancelled;
 
             // Stop hook is already fired by agent_loop on cancellation; do not double-fire.
@@ -6108,7 +6396,16 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                         role: Role::Assistant,
                         content: assistant_parts.clone(),
                         timestamp: chrono::Utc::now(),
-                        usage: None,
+                        usage: Some(TokenUsage {
+                            model: active_model_name.clone(),
+                            prompt_tokens: turn.prompt_tokens,
+                            completion_tokens: turn.completion_tokens,
+                            cached_tokens: turn.cached_tokens,
+                            cache_read_tokens: turn.cache_read_tokens,
+                            cache_write_tokens: turn.cache_write_tokens,
+                            context_window: turn.context_window,
+                            latency_ms: 0,
+                        }),
                     },
                 )
                 .await;
@@ -6139,7 +6436,8 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                             turn.completion_tokens,
                             turn.cache_read_tokens,
                             turn.cache_write_tokens,
-                            0, // context_window recorded via record_token_usage
+                            turn.context_window,
+                            &active_model_name,
                             &tool_json,
                             false,
                         )
@@ -6192,7 +6490,16 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                         role: Role::Assistant,
                         content: assistant_parts.clone(),
                         timestamp: chrono::Utc::now(),
-                        usage: None,
+                        usage: Some(TokenUsage {
+                            model: active_model_name.clone(),
+                            prompt_tokens: turn.prompt_tokens,
+                            completion_tokens: turn.completion_tokens,
+                            cached_tokens: turn.cached_tokens,
+                            cache_read_tokens: turn.cache_read_tokens,
+                            cache_write_tokens: turn.cache_write_tokens,
+                            context_window: turn.context_window,
+                            latency_ms: 0,
+                        }),
                     },
                 )
                 .await;
@@ -6222,7 +6529,8 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                             turn.completion_tokens,
                             turn.cache_read_tokens,
                             turn.cache_write_tokens,
-                            0, // context_window recorded via record_token_usage
+                            turn.context_window,
+                            &active_model_name,
                             &tool_json,
                             false,
                         )
@@ -6272,7 +6580,6 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                     )
                     .await;
                 }
-
             } // end else (not interrupted)
         } else {
             let _ = self
@@ -6340,8 +6647,10 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
     /// Get a clone of the pending permissions map for "ask" mode tool approval.
     pub async fn pending_permissions(
         &self,
-    ) -> tokio::sync::RwLockWriteGuard<'_, HashMap<String, tokio::sync::oneshot::Sender<loom_types::PermissionResponse>>>
-    {
+    ) -> tokio::sync::RwLockWriteGuard<
+        '_,
+        HashMap<String, tokio::sync::oneshot::Sender<loom_types::PermissionResponse>>,
+    > {
         self.pending_permissions.write().await
     }
 
@@ -6366,7 +6675,59 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                 killed += 1;
             }
         }
+        // Clear any pending steering queue items
+        if let Some(q) = self.session_steering_queues.read().await.get(session_id) {
+            q.write().await.clear();
+        }
         Ok(killed)
+    }
+
+    /// Push a steering guidance message into the session's queue.
+    /// These messages are injected into the agent loop at the top of every iteration
+    /// as System messages, allowing the LLM to adapt mid-turn without canceling.
+    /// Returns the new pending count.
+    pub async fn steer_session(&self, session_id: &str, guidance: &str) -> usize {
+        let mut queues = self.session_steering_queues.write().await;
+        let queue = queues
+            .entry(session_id.to_string())
+            .or_insert_with(|| Arc::new(RwLock::new(Vec::new())))
+            .clone();
+        let mut msgs = queue.write().await;
+        msgs.push(guidance.to_string());
+        let count = msgs.len();
+        drop(msgs);
+        drop(queues);
+
+        self.pool.event_bus().publish(AgentEvent::SteeringQueued {
+            session_id: session_id.to_string(),
+            pending_count: count,
+            guidance: guidance.to_string(),
+        });
+        count
+    }
+
+    /// Get the shared steering queue Arc for a session, creating it if needed.
+    /// This Arc is passed into AgentLoopConfig.steering_queue so the agent loop
+    /// drains from the same queue that steer_session writes into.
+    pub async fn get_or_create_steering_queue(
+        &self,
+        session_id: &str,
+    ) -> Arc<RwLock<Vec<String>>> {
+        let mut queues = self.session_steering_queues.write().await;
+        queues
+            .entry(session_id.to_string())
+            .or_insert_with(|| Arc::new(RwLock::new(Vec::new())))
+            .clone()
+    }
+
+    /// Get the current steering queue entries for a session (non-destructive peek).
+    pub async fn peek_steering_queue(&self, session_id: &str) -> Vec<String> {
+        let queues = self.session_steering_queues.read().await;
+        if let Some(q) = queues.get(session_id) {
+            q.read().await.clone()
+        } else {
+            Vec::new()
+        }
     }
 
     /// Force summarization of a session's conversation history.
@@ -6382,7 +6743,10 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             let mem = self.memory_store.read().await;
             if let Some(ref store) = *mem {
                 let existing = store.get_summary(session_id).await.unwrap_or(None);
-                let total = store.get_message_count(session_id).await.unwrap_or(history.len());
+                let total = store
+                    .get_message_count(session_id)
+                    .await
+                    .unwrap_or(history.len());
                 (existing, total)
             } else {
                 (None, history.len())
@@ -6390,8 +6754,13 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         };
 
         // Always summarize when explicitly requested — skip the threshold check
-        tracing::info!(session_id, msg_count = total_msgs, "force summarization requested");
-        let prompt = loom_memory::SummaryEngine::build_prompt(&history, existing_summary.as_deref());
+        tracing::info!(
+            session_id,
+            msg_count = total_msgs,
+            "force summarization requested"
+        );
+        let prompt =
+            loom_memory::SummaryEngine::build_prompt(&history, existing_summary.as_deref());
         let request = loom_memory::SummaryEngine::build_request(&prompt);
 
         let summary_client = if let Some(aux) = self.build_auxiliary_client("summary").await {
@@ -6407,7 +6776,9 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                     sc.prefix_hash_restore(saved_hash);
                     let mem = self.memory_store.read().await;
                     if let Some(ref store) = *mem {
-                        let _ = store.save_summary(session_id, &resp.text, history.len(), sc.model_name()).await;
+                        let _ = store
+                            .save_summary(session_id, &resp.text, history.len(), sc.model_name())
+                            .await;
                         if resp.prompt_tokens > 0 || resp.completion_tokens > 0 {
                             let _ = store
                                 .record_token_usage(
@@ -6415,7 +6786,10 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                                     &format!("{} (summary)", sc.model_name()),
                                     resp.prompt_tokens,
                                     resp.completion_tokens,
-                                    0, 0, 0, 0,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
                                 )
                                 .await;
                         }
@@ -6535,10 +6909,14 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
     /// Returns default if the file does not exist or cannot be parsed.
     pub async fn load_tool_prefs(&self) -> loom_types::config::tool_prefs::ToolPrefsConfig {
         let path = self.data_dir.join("tool_prefs.json");
-        match tokio::fs::read_to_string(&path).await {
+        let config = match tokio::fs::read_to_string(&path).await {
             Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
             Err(_) => loom_types::config::tool_prefs::ToolPrefsConfig::default(),
-        }
+        };
+        // Sync global proxy on load so it's available immediately after restart,
+        // without requiring the user to re-save tool prefs.
+        loom_inference::engine::set_global_proxy(config.http_proxy.clone(), config.proxy_enabled);
+        config
     }
 
     /// Save built-in tool preferences to `data_dir/tool_prefs.json`.
@@ -6552,6 +6930,8 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         tokio::fs::write(&path, json).await?;
         // Update in-memory state so tools see the new config immediately
         *self.tool_prefs.write().await = config.clone();
+        // Sync global proxy so all HTTP clients pick up the change
+        loom_inference::engine::set_global_proxy(config.http_proxy.clone(), config.proxy_enabled);
         Ok(())
     }
 }
@@ -6986,8 +7366,8 @@ impl CronEventPublisher for LoomCronEventPublisher {
 // CronPromptExecutor — bridges the cron scheduler to the AI backend
 // ============================================================================
 
-use loom_cron::PromptExecutor;
 use crate::tool_context::ToolContext;
+use loom_cron::PromptExecutor;
 
 /// System prompt for cron job execution.
 /// Gives the AI context about its role, available tools, and execution expectations.
@@ -7029,7 +7409,8 @@ impl PromptExecutor for CronPromptExecutor {
         &self,
         prompt: &str,
         timeout_secs: u64,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + '_>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + '_>>
+    {
         let client_opt = self.cloud_client.clone();
         let prompt = prompt.to_string();
         let tool_registry = self.tool_registry.clone();
@@ -7042,9 +7423,9 @@ impl PromptExecutor for CronPromptExecutor {
         Box::pin(async move {
             let client = {
                 let guard = client_opt.read().await;
-                guard
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("No cloud client configured — set up a model first"))?
+                guard.clone().ok_or_else(|| {
+                    anyhow::anyhow!("No cloud client configured — set up a model first")
+                })?
             };
 
             // Build tool definitions from the registry, filtered by permissions.
@@ -7106,7 +7487,7 @@ impl PromptExecutor for CronPromptExecutor {
                         return Err(anyhow::anyhow!(
                             "AI request timed out after {}s",
                             per_turn_timeout
-                        ))
+                        ));
                     }
                 };
 
@@ -7154,7 +7535,10 @@ impl PromptExecutor for CronPromptExecutor {
                     // Permission check
                     let (allowed, _risk) = loom_security::check_permission(&tc.name, &permissions);
                     let tool_result = if !allowed {
-                        format!("Permission denied: tool '{}' is not allowed for cron jobs. Check your permission configuration.", tc.name)
+                        format!(
+                            "Permission denied: tool '{}' is not allowed for cron jobs. Check your permission configuration.",
+                            tc.name
+                        )
                     } else {
                         match registry.find(&tc.name) {
                             Some(tool) => {
@@ -7173,11 +7557,7 @@ impl PromptExecutor for CronPromptExecutor {
                             None => format!("Unknown tool: {}", tc.name),
                         }
                     };
-                    messages.push(loom_types::Message::tool(
-                        &tc.id,
-                        &tc.name,
-                        &tool_result,
-                    ));
+                    messages.push(loom_types::Message::tool(&tc.id, &tc.name, &tool_result));
                     last_text = tool_result;
                 }
             }

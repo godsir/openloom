@@ -16,7 +16,11 @@ use super::err;
 use loom_types::ErrorCode;
 
 /// Handle plan.* and todo.* JSON-RPC methods.
-pub async fn handle(state: &AppState, method: &str, p: &Value) -> Option<Result<Value, loom_types::JsonRpcError>> {
+pub async fn handle(
+    state: &AppState,
+    method: &str,
+    p: &Value,
+) -> Option<Result<Value, loom_types::JsonRpcError>> {
     match method {
         "plan.create" => Some(handle_plan_create(state, p).await),
         "plan.get" => Some(handle_plan_get(state, p).await),
@@ -40,7 +44,10 @@ fn meta_for_plan(workspace_root: &str, id: &str) -> PathBuf {
     plans_dir(workspace_root).join(format!("{}.meta.json", id))
 }
 
-async fn handle_plan_create(_state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
+async fn handle_plan_create(
+    _state: &AppState,
+    p: &Value,
+) -> Result<Value, loom_types::JsonRpcError> {
     let req: CreatePlanRequest = serde_json::from_value(p.clone())
         .map_err(|e| err(ErrorCode::InvalidRequest, &e.to_string()))?;
 
@@ -70,8 +77,7 @@ async fn handle_plan_create(_state: &AppState, p: &Value) -> Result<Value, loom_
     // In-memory cache
     PLANS.write().await.insert(id.clone(), plan.clone());
 
-    Ok(serde_json::to_value(&plan)
-        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?)
+    Ok(serde_json::to_value(&plan).map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?)
 }
 
 fn plan_md_path(workspace_root: &str, id: &str) -> PathBuf {
@@ -83,14 +89,22 @@ async fn sync_checkboxes_to_todos(state: &AppState, content: &str, thread_id: &s
     let mut todos: Vec<loom_memory::TodoItem> = Vec::new();
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.len() < 5 { continue; }
+        if trimmed.len() < 5 {
+            continue;
+        }
         let prefix = &trimmed[..3];
-        if prefix != "- [" && prefix != "* [" { continue; }
+        if prefix != "- [" && prefix != "* [" {
+            continue;
+        }
         let after = &trimmed[3..];
-        if !after.starts_with("] ") { continue; }
+        if !after.starts_with("] ") {
+            continue;
+        }
         let checked = &trimmed[1..4] != "- [ "; // "- [x]" or "- [X]"
         let text = trimmed[5..].trim();
-        if text.is_empty() { continue; }
+        if text.is_empty() {
+            continue;
+        }
         let status = if checked { "completed" } else { "pending" };
         todos.push(loom_memory::TodoItem {
             id: uuid::Uuid::now_v7().to_string(),
@@ -111,8 +125,12 @@ async fn handle_plan_get(state: &AppState, p: &Value) -> Result<Value, loom_type
     let plan_id = p.get("plan_id").and_then(|v| v.as_str()).unwrap_or("");
 
     let plans = PLANS.read().await;
-    let plan = plans.get(plan_id)
-        .ok_or_else(|| err(ErrorCode::InternalError, &format!("plan {} not found", plan_id)))?;
+    let plan = plans.get(plan_id).ok_or_else(|| {
+        err(
+            ErrorCode::InternalError,
+            &format!("plan {} not found", plan_id),
+        )
+    })?;
 
     // Read plan markdown content from filesystem
     let md_path = plan_md_path(&plan.workspace_root, plan_id);
@@ -129,7 +147,10 @@ async fn handle_plan_get(state: &AppState, p: &Value) -> Result<Value, loom_type
 }
 
 async fn handle_plan_list(_state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
-    let workspace = p.get("workspace_root").and_then(|v| v.as_str()).unwrap_or("");
+    let workspace = p
+        .get("workspace_root")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
     // Scan filesystem for plan metadata
     let mut list: Vec<PlanArtifact> = Vec::new();
@@ -160,15 +181,21 @@ async fn handle_plan_list(_state: &AppState, p: &Value) -> Result<Value, loom_ty
     // Deduplicate and sort by updated_at desc
     list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
-    Ok(serde_json::to_value(&list)
-        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?)
+    Ok(serde_json::to_value(&list).map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?)
 }
 
-async fn handle_plan_update(state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
+async fn handle_plan_update(
+    state: &AppState,
+    p: &Value,
+) -> Result<Value, loom_types::JsonRpcError> {
     let plan_id = p.get("plan_id").and_then(|v| v.as_str()).unwrap_or("");
     let mut plans = PLANS.write().await;
-    let plan = plans.get_mut(plan_id)
-        .ok_or_else(|| err(ErrorCode::InternalError, &format!("plan {} not found", plan_id)))?;
+    let plan = plans.get_mut(plan_id).ok_or_else(|| {
+        err(
+            ErrorCode::InternalError,
+            &format!("plan {} not found", plan_id),
+        )
+    })?;
 
     if let Some(status) = p.get("status").and_then(|v| v.as_str()) {
         plan.status = serde_json::from_value(serde_json::Value::String(status.into()))
@@ -192,11 +219,13 @@ async fn handle_plan_update(state: &AppState, p: &Value) -> Result<Value, loom_t
         }
     }
 
-    Ok(serde_json::to_value(&plan)
-        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?)
+    Ok(serde_json::to_value(&plan).map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?)
 }
 
-async fn handle_plan_delete(_state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
+async fn handle_plan_delete(
+    _state: &AppState,
+    p: &Value,
+) -> Result<Value, loom_types::JsonRpcError> {
     let plan_id = p.get("plan_id").and_then(|v| v.as_str()).unwrap_or("");
     let plan = PLANS.write().await.remove(plan_id);
     if let Some(plan) = &plan {
@@ -208,13 +237,18 @@ async fn handle_plan_delete(_state: &AppState, p: &Value) -> Result<Value, loom_
 
 async fn handle_todo_list(state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
     let session_id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
-    let todos = state.orchestrator.list_todos(session_id).await
+    let todos = state
+        .orchestrator
+        .list_todos(session_id)
+        .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
-    Ok(serde_json::to_value(&todos)
-        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?)
+    Ok(serde_json::to_value(&todos).map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?)
 }
 
-async fn handle_todo_update_status(state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
+async fn handle_todo_update_status(
+    state: &AppState,
+    p: &Value,
+) -> Result<Value, loom_types::JsonRpcError> {
     let req: UpdateTodoStatusRequest = serde_json::from_value(p.clone())
         .map_err(|e| err(ErrorCode::InvalidRequest, &e.to_string()))?;
     let status_str = match req.status {
@@ -222,14 +256,20 @@ async fn handle_todo_update_status(state: &AppState, p: &Value) -> Result<Value,
         loom_types::plan::TodoStatus::InProgress => "in_progress",
         loom_types::plan::TodoStatus::Completed => "completed",
     };
-    state.orchestrator.update_todo_status(&req.session_id, &req.todo_id, status_str).await
+    state
+        .orchestrator
+        .update_todo_status(&req.session_id, &req.todo_id, status_str)
+        .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
     Ok(Value::Bool(true))
 }
 
 async fn handle_todo_clear(state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
     let session_id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
-    state.orchestrator.clear_todos(session_id).await
+    state
+        .orchestrator
+        .clear_todos(session_id)
+        .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
     Ok(Value::Bool(true))
 }
@@ -245,16 +285,17 @@ async fn handle_goal_set(_state: &AppState, p: &Value) -> Result<Value, loom_typ
     };
     let mut goals = GOALS.write().await;
     goals.insert(goal.session_id.clone(), goal.clone());
-    Ok(serde_json::to_value(&goal)
-        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?)
+    Ok(serde_json::to_value(&goal).map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?)
 }
 
-async fn handle_goal_status(_state: &AppState, p: &Value) -> Result<Value, loom_types::JsonRpcError> {
+async fn handle_goal_status(
+    _state: &AppState,
+    p: &Value,
+) -> Result<Value, loom_types::JsonRpcError> {
     let session_id = p.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
     let goals = GOALS.read().await;
     let goal = goals.get(session_id).cloned();
-    Ok(serde_json::to_value(&goal)
-        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?)
+    Ok(serde_json::to_value(&goal).map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?)
 }
 
 // In-memory storage for active sessions

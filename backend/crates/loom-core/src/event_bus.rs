@@ -39,6 +39,7 @@ pub enum AgentEvent {
         call_id: String,
         tool_name: String,
         args: serde_json::Value,
+        session_id: String,
     },
     /// Tool execution completed.
     ToolCompleted {
@@ -48,6 +49,16 @@ pub enum AgentEvent {
         success: bool,
         result: Option<String>,
         structured_content: Option<serde_json::Value>,
+        session_id: String,
+    },
+    /// Tool produced a line of output (streaming, e.g. shell stdout/stderr).
+    ToolOutput {
+        agent_id: AgentId,
+        call_id: String,
+        tool_name: String,
+        line: String,
+        stream: String,
+        session_id: String,
     },
     /// LLM token streaming delta.
     StreamDelta {
@@ -93,11 +104,21 @@ pub enum AgentEvent {
     /// A plan was updated.
     PlanUpdated { plan_id: String },
     /// A session goal was set.
-    GoalSet { session_id: String, description: String },
+    GoalSet {
+        session_id: String,
+        description: String,
+    },
     /// A todo item status changed.
-    TodoStatusChanged { session_id: String, todo_id: String, status: String },
+    TodoStatusChanged {
+        session_id: String,
+        todo_id: String,
+        status: String,
+    },
     /// The entire todo list was replaced (todo_write called by AI).
-    TodosReplaced { session_id: String, todos: serde_json::Value },
+    TodosReplaced {
+        session_id: String,
+        todos: serde_json::Value,
+    },
     /// AI wants to push a desktop notification to the user.
     PushNotification {
         session_id: String,
@@ -130,10 +151,7 @@ pub enum AgentEvent {
         error: String,
     },
     /// A cron job was created, updated, or deleted.
-    CronJobChanged {
-        job_id: String,
-        action: String,
-    },
+    CronJobChanged { job_id: String, action: String },
     /// Background process emitted a line on stdout or stderr.
     ProcessOutput {
         pid: String,
@@ -188,12 +206,12 @@ pub enum AgentEvent {
         member_id: AgentId,
         member_name: String,
         round: usize,
+        /// Token usage for this member's turn.
+        prompt_tokens: usize,
+        completion_tokens: usize,
     },
     /// 团队一轮完成
-    TeamRoundComplete {
-        team_id: String,
-        round: usize,
-    },
+    TeamRoundComplete { team_id: String, round: usize },
     /// 团队执行完毕
     TeamCompleted {
         team_id: String,
@@ -212,6 +230,20 @@ pub enum AgentEvent {
         team_id: String,
         member_name: String,
         session_id: String,
+    },
+    /// 用户插话已加入 steering queue，等待 agent 下一轮迭代消费
+    SteeringQueued {
+        session_id: String,
+        /** 当前队列中的插话数量 */
+        pending_count: usize,
+        /** 本次加入的插话内容 */
+        guidance: String,
+    },
+    /// Agent 已消费一条 steering queue 中的插话
+    SteeringConsumed {
+        session_id: String,
+        /** 队列中剩余的插话数量 */
+        remaining_count: usize,
     },
 }
 

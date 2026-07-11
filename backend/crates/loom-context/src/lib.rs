@@ -14,8 +14,11 @@ use sha2::{Digest, Sha256};
 
 pub mod compaction;
 pub mod tokenizers;
-pub use tokenizers::{TokenizerId, tokenizer_for_model, bpe};
-pub use compaction::{CompactionResult, CompactionStrategy, compact_history, compact_history_with_tokenizer, mid_turn_safety_truncate};
+pub use compaction::{
+    CompactionResult, CompactionStrategy, compact_history, compact_history_with_tokenizer,
+    mid_turn_safety_truncate,
+};
+pub use tokenizers::{TokenizerId, bpe, tokenizer_for_model};
 
 /// Deterministic SHA256 fingerprint of the stable prompt prefix.
 ///
@@ -45,7 +48,6 @@ pub struct PrefixDigest {
     /// Estimated token count of the stable prefix (via tiktoken cl100k_base).
     pub prefix_token_count: usize,
 }
-
 
 /// Fixed per-message token overhead approximating the role/delimiter framing
 /// that chat APIs add around every message (e.g. `<|im_start|>role ... <|im_end|>`).
@@ -185,7 +187,8 @@ impl ContextAssembler {
         // max_history_tokens is now the recent-history token budget set by the caller
         // (context_window × keep_recent_pct). No more hardcoded /2.
         let recent_limit = self.max_history_tokens.max(1024);
-        let recent = self.truncate_history_with_summary(&opts.history, recent_limit, opts.summary_at_count);
+        let recent =
+            self.truncate_history_with_summary(&opts.history, recent_limit, opts.summary_at_count);
         messages.extend(recent);
 
         Ok(messages)
@@ -281,7 +284,11 @@ impl ContextAssembler {
         }
 
         let combined_hash = hex::encode(Sha256::digest(combined.as_bytes()));
-        let prefix_token_count = self.tokenizer_id.get().encode_with_special_tokens(&combined).len();
+        let prefix_token_count = self
+            .tokenizer_id
+            .get()
+            .encode_with_special_tokens(&combined)
+            .len();
 
         PrefixDigest {
             combined_hash,
@@ -388,7 +395,9 @@ mod tests {
             Message {
                 role: Role::Assistant,
                 content: vec![
-                    ContentPart::Text { text: "let me check".into() },
+                    ContentPart::Text {
+                        text: "let me check".into(),
+                    },
                     ContentPart::ToolCall {
                         id: "c1".into(),
                         name: "shell".into(),
@@ -402,9 +411,12 @@ mod tests {
         ];
         let truncated = assembler.truncate_history_with_summary(&history, 8192, 0);
         let has_tool_part = truncated.iter().any(|m| {
-            m.content
-                .iter()
-                .any(|p| matches!(p, ContentPart::ToolCall { .. } | ContentPart::ToolResult { .. }))
+            m.content.iter().any(|p| {
+                matches!(
+                    p,
+                    ContentPart::ToolCall { .. } | ContentPart::ToolResult { .. }
+                )
+            })
         });
         assert!(
             has_tool_part,
@@ -428,11 +440,24 @@ mod tests {
         let assembler = ContextAssembler::new("sys", 8192);
         let history: Vec<Message> = (0..10).map(|i| Message::user(format!("m{}", i))).collect();
         let truncated = assembler.truncate_history_with_summary(&history, 8192, 5);
-        let texts: Vec<String> = truncated.iter().filter_map(|m| {
-            if let ContentPart::Text { text } = &m.content[0] { Some(text.clone()) } else { None }
-        }).collect();
-        assert!(!texts.iter().any(|t| t.contains("m0")), "已总结的 m0 应被丢弃");
-        assert!(!texts.iter().any(|t| t.contains("m4")), "已总结的 m4 应被丢弃");
+        let texts: Vec<String> = truncated
+            .iter()
+            .filter_map(|m| {
+                if let ContentPart::Text { text } = &m.content[0] {
+                    Some(text.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            !texts.iter().any(|t| t.contains("m0")),
+            "已总结的 m0 应被丢弃"
+        );
+        assert!(
+            !texts.iter().any(|t| t.contains("m4")),
+            "已总结的 m4 应被丢弃"
+        );
         assert!(texts.iter().any(|t| t.contains("m9")), "近期 m9 应保留");
     }
 }

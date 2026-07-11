@@ -28,15 +28,22 @@ fn spawn_install(_language: String, command: String) -> String {
     let tasks = INSTALL_TASKS.clone();
     let id = task_id.clone();
 
-    tasks.lock().unwrap().insert(id.clone(), InstallTask {
-        lines: vec![],
-        done: false,
-        ok: false,
-        exit_code: None,
-    });
+    tasks.lock().unwrap().insert(
+        id.clone(),
+        InstallTask {
+            lines: vec![],
+            done: false,
+            ok: false,
+            exit_code: None,
+        },
+    );
 
     tokio::spawn(async move {
-        let (shell, shell_arg) = if cfg!(windows) { ("cmd".to_string(), "/C".to_string()) } else { ("sh".to_string(), "-c".to_string()) };
+        let (shell, shell_arg) = if cfg!(windows) {
+            ("cmd".to_string(), "/C".to_string())
+        } else {
+            ("sh".to_string(), "-c".to_string())
+        };
 
         let mut child = match tokio::process::Command::new(&shell)
             .args([shell_arg.as_str(), &command])
@@ -319,8 +326,7 @@ async fn handle_lsp_check(state: &AppState) -> Result<Value, JsonRpcError> {
     let client = state.orchestrator.lsp_client();
     let supported = client.supported_languages();
     let running: Vec<String> = client.list_servers().await;
-    let running_set: std::collections::HashSet<&str> =
-        running.iter().map(|s| s.as_str()).collect();
+    let running_set: std::collections::HashSet<&str> = running.iter().map(|s| s.as_str()).collect();
 
     let items: Vec<Value> = supported
         .iter()
@@ -370,11 +376,12 @@ async fn handle_lsp_all_diagnostics(state: &AppState) -> Result<Value, JsonRpcEr
         .map(|(lang, files)| {
             let file_list: Vec<Value> = files
                 .into_iter()
-                .map(|(path, count)| {
-                    json!({ "file": path, "count": count })
-                })
+                .map(|(path, count)| json!({ "file": path, "count": count }))
                 .collect();
-            let total: usize = file_list.iter().filter_map(|v| v["count"].as_u64().map(|n| n as usize)).sum();
+            let total: usize = file_list
+                .iter()
+                .filter_map(|v| v["count"].as_u64().map(|n| n as usize))
+                .sum();
             json!({
                 "language": lang,
                 "total": total,
@@ -392,10 +399,17 @@ async fn handle_lsp_install(state: &AppState, p: &Value) -> Result<Value, JsonRp
     let language = p.get("language").and_then(|v| v.as_str()).unwrap_or("");
     let command = p.get("command").and_then(|v| v.as_str()).unwrap_or("");
     if language.is_empty() || command.is_empty() {
-        return Err(err(ErrorCode::InvalidRequest, "language and command required"));
+        return Err(err(
+            ErrorCode::InvalidRequest,
+            "language and command required",
+        ));
     }
-    let hint = install_hint(language, command)
-        .ok_or_else(|| err(ErrorCode::MethodNotFound, "No install recipe for this language server"))?;
+    let hint = install_hint(language, command).ok_or_else(|| {
+        err(
+            ErrorCode::MethodNotFound,
+            "No install recipe for this language server",
+        )
+    })?;
     let task_id = spawn_install(language.to_string(), hint.1.to_string());
     Ok(json!({ "task_id": task_id }))
 }
@@ -408,8 +422,12 @@ async fn handle_lsp_uninstall(state: &AppState, p: &Value) -> Result<Value, Json
     if language.is_empty() {
         return Err(err(ErrorCode::InvalidRequest, "language required"));
     }
-    let cmd = uninstall_hint(language)
-        .ok_or_else(|| err(ErrorCode::MethodNotFound, "No uninstall recipe for this language server"))?;
+    let cmd = uninstall_hint(language).ok_or_else(|| {
+        err(
+            ErrorCode::MethodNotFound,
+            "No uninstall recipe for this language server",
+        )
+    })?;
     let task_id = spawn_install(language.to_string(), cmd.to_string());
     Ok(json!({ "task_id": task_id }))
 }
@@ -434,7 +452,10 @@ async fn handle_lsp_install_status(state: &AppState, p: &Value) -> Result<Value,
             });
             Ok(res)
         }
-        None => Err(err(ErrorCode::MethodNotFound, "Task not found (may have been cleaned up)")),
+        None => Err(err(
+            ErrorCode::MethodNotFound,
+            "Task not found (may have been cleaned up)",
+        )),
     }
 }
 
@@ -460,9 +481,13 @@ async fn handle_lsp_start(state: &AppState, p: &Value) -> Result<Value, JsonRpcE
     }
     if !binary_available(command) {
         let hint = install_hint(language, command);
-        let detail = hint.map(|(mgr, cmd)| format!(" Install it via: {} — {}", mgr, cmd)).unwrap_or_default();
-        return Err(err(ErrorCode::InternalError,
-            &format!("'{}' not found on PATH.{}", command, detail)));
+        let detail = hint
+            .map(|(mgr, cmd)| format!(" Install it via: {} — {}", mgr, cmd))
+            .unwrap_or_default();
+        return Err(err(
+            ErrorCode::InternalError,
+            &format!("'{}' not found on PATH.{}", command, detail),
+        ));
     }
     state
         .orchestrator

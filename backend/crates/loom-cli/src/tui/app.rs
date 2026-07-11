@@ -124,16 +124,19 @@ impl AppState {
     pub fn push(&mut self, item: HistoryItem) {
         self.history.push(item);
         self.prune();
-        if self.scroll_following { self.scroll_offset = 0; }
+        if self.scroll_following {
+            self.scroll_offset = 0;
+        }
     }
 
     /// Find or create the current assistant message and return the
     /// last Markdown block's text buffer for appending. If no
     /// Markdown block exists, creates one.
     pub fn append_assistant_text(&mut self, text: &str) {
-        let has_last = self.history.last().map_or(false, |h| {
-            matches!(h, HistoryItem::Assistant { .. })
-        });
+        let has_last = self
+            .history
+            .last()
+            .map_or(false, |h| matches!(h, HistoryItem::Assistant { .. }));
         if !has_last {
             self.history.push(HistoryItem::Assistant {
                 blocks: vec![ContentBlock::Markdown(text.to_string())],
@@ -146,26 +149,35 @@ impl AppState {
             }
         }
         self.prune();
-        if self.scroll_following { self.scroll_offset = 0; }
+        if self.scroll_following {
+            self.scroll_offset = 0;
+        }
     }
 
     /// Flush accumulated thinking text.
     pub fn flush_thinking(&mut self, text: String) {
-        if text.is_empty() { return; }
+        if text.is_empty() {
+            return;
+        }
         self.push(HistoryItem::Thinking { text });
     }
 
     /// Start or replace the current-turn ToolGroup.
     pub fn set_tool_group(&mut self, tools: Vec<ToolCall>) {
         // Find and remove existing incomplete ToolGroup
-        self.history.retain(|h| !matches!(h, HistoryItem::ToolGroup { .. }));
+        self.history
+            .retain(|h| !matches!(h, HistoryItem::ToolGroup { .. }));
         self.push(HistoryItem::ToolGroup { tools });
     }
 
     /// Get current tool calls for mutation.
     pub fn tool_group_mut(&mut self) -> Option<&mut Vec<ToolCall>> {
         self.history.iter_mut().rev().find_map(|h| {
-            if let HistoryItem::ToolGroup { tools } = h { Some(tools) } else { None }
+            if let HistoryItem::ToolGroup { tools } = h {
+                Some(tools)
+            } else {
+                None
+            }
         })
     }
 
@@ -185,7 +197,9 @@ impl AppState {
     // ── Input helpers ──
 
     fn prune(&mut self) {
-        if self.history.len() <= self.max_history { return; }
+        if self.history.len() <= self.max_history {
+            return;
+        }
         let remove = self.history.len() - self.max_history;
         let drained = remove.saturating_mul(3) as u16; // rough line estimate
         self.history.drain(0..remove);
@@ -199,34 +213,50 @@ impl AppState {
     }
 
     pub fn input_backspace(&mut self) {
-        if self.cursor == 0 { return; }
+        if self.cursor == 0 {
+            return;
+        }
         let mut prev = self.cursor - 1;
-        while prev > 0 && !self.input.is_char_boundary(prev) { prev -= 1; }
+        while prev > 0 && !self.input.is_char_boundary(prev) {
+            prev -= 1;
+        }
         self.input.remove(prev);
         self.cursor = prev;
     }
 
     pub fn input_delete(&mut self) {
-        if self.cursor < self.input.len() { self.input.remove(self.cursor); }
+        if self.cursor < self.input.len() {
+            self.input.remove(self.cursor);
+        }
     }
 
     pub fn cursor_left(&mut self) {
-        if self.cursor == 0 { return; }
+        if self.cursor == 0 {
+            return;
+        }
         let mut prev = self.cursor - 1;
-        while prev > 0 && !self.input.is_char_boundary(prev) { prev -= 1; }
+        while prev > 0 && !self.input.is_char_boundary(prev) {
+            prev -= 1;
+        }
         self.cursor = prev;
     }
 
     pub fn cursor_right(&mut self) {
         if self.cursor < self.input.len() {
             let mut next = self.cursor + 1;
-            while next < self.input.len() && !self.input.is_char_boundary(next) { next += 1; }
+            while next < self.input.len() && !self.input.is_char_boundary(next) {
+                next += 1;
+            }
             self.cursor = next;
         }
     }
 
-    pub fn cursor_home(&mut self) { self.cursor = 0; }
-    pub fn cursor_end(&mut self)  { self.cursor = self.input.len(); }
+    pub fn cursor_home(&mut self) {
+        self.cursor = 0;
+    }
+    pub fn cursor_end(&mut self) {
+        self.cursor = self.input.len();
+    }
 }
 
 pub const HELP_TEXT: &str = "\

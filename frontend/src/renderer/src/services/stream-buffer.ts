@@ -6,8 +6,6 @@ import { renderMarkdown } from '../utils/markdown'
 import { sanitizeHtml } from '../utils/markdown-sanitizer'
 import { t } from '../i18n'
 
-const FLUSH_INTERVAL = 16
-
 interface BufferState {
   messageId: string | null
   textAcc: string
@@ -45,11 +43,10 @@ interface BufferState {
     result?: string
   }>
   rafId: number | null
-  _lastFlush: number
-  _lastTextLen: number
-  _lastThinkLen: number
-  /** True when the stream was auto-registered for an IM-originated session. */
   imOrigin: boolean
+  /** External activity override set by bootstrap (team, monitor) — survives flush
+   *  cycles so team/monitor phases don't get overwritten by deriveActivity. */
+  overrideActivity: StreamingActivity | null
 }
 
 class StreamBufferManager {
@@ -81,6 +78,7 @@ class StreamBufferManager {
     buf.inVision = false
     buf.visionDone = false
     buf.visionBatches = []
+    buf.overrideActivity = null
     if (buf.rafId) { cancelAnimationFrame(buf.rafId); buf.rafId = null }
     useStore.getState().setStreamingActivity(sessionId, { phase: 'generating' })
   }
@@ -116,10 +114,8 @@ class StreamBufferManager {
         visionDone: false,
         visionBatches: [],
         rafId: null,
-        _lastFlush: 0,
-        _lastTextLen: 0,
-        _lastThinkLen: 0,
         imOrigin: false,
+        overrideActivity: null,
       })
     }
     return this.buffers.get(sessionId)!
@@ -339,7 +335,6 @@ class StreamBufferManager {
     if (!this.ensureStreamingForIM(sessionId)) return
     const buf = this.ensureBuffer(sessionId)
     if (!buf.messageId) return
-    console.log('[stream-buffer] Tool started:', tool.name, tool.id)
     if (tool.name === 'use_skill') {
       const skillName = (tool.args?.skill_name as string) || 'loading...'
       buf.skillCalls.push({
@@ -378,6 +373,12 @@ class StreamBufferManager {
       shell.status = 'done'
       shell.result = result
       if (details) shell.details = details
+      // Flash island transient when config is updated by AI
+      if (shell.name === 'update_config' && result && !result.includes('No changes applied')) {
+        import('../i18n').then(({ t }) => {
+          useStore.getState().showIslandTransient(t('island.configUpdated'), 2500)
+        })
+      }
     }
     const skill = buf.skillCalls.find((t) => t.id === toolId)
     if (skill) {
@@ -407,6 +408,23 @@ class StreamBufferManager {
       })
     }
     this.scheduleFlush(buf, sessionId)
+  }
+
+  handleToolOutput(
+    sessionId: string,
+    toolId: string,
+    line: string,
+  ): void {
+    if (!this.ensureStreamingForIM(sessionId)) return
+    const buf = this.ensureBuffer(sessionId)
+    if (!buf.messageId) return
+    const shell = buf.shellCalls.find((t) => t.id === toolId)
+    if (shell) {
+      // Append line to result in real-time
+      const prev = shell.result || ''
+      shell.result = prev ? prev + '\n' + line : line
+      this.scheduleFlush(buf, sessionId)
+    }
   }
 
   handleStreamEnd(sessionId: string): void {
@@ -520,69 +538,15 @@ class StreamBufferManager {
     }
   }
 
-  private createPlaceholderIfNeeded(
-    buf: BufferState,
-    sessionId: string,
-  ): void {
-    if (buf.messageId) return
-    // If we reach here, the stream started without a registered placeholder.
-    // Check if there's an existing empty assistant message we can adopt.
-    const msgs = useStore.getState().messagesBySession.get(sessionId)
-    if (msgs) {
-      const empty = msgs.find(m => m.role === 'assistant' && m.blocks.length === 0)
-      if (empty) {
-        buf.messageId = empty.id
-        useStore.getState().addStreamingSession(sessionId)
-        return
-      }
-    }
-    // No existing placeholder — create one as last resort
-    buf.messageId = crypto.randomUUID()
-    useStore.getState().addStreamingSession(sessionId)
-    useStore.getState().ensureSession(sessionId)
-    useStore.getState().appendMessage(sessionId, {
-      id: buf.messageId,
-      role: 'assistant',
-      blocks: [],
-      timestamp: new Date().toISOString(),
-    })
-  }
-
-  private scheduleFlush(buf: BufferState, sessionId: string): void {
-    if (buf.rafId) return
-    const now = performance.now()
-    const elapsed = now - buf._lastFlush
-    if (elapsed < FLUSH_INTERVAL) {
-      // Too soon since last flush — schedule a delayed rAF
-      buf.rafId = requestAnimationFrame(() => {
-        buf.rafId = null
-        this.flush(buf, sessionId)
-        buf._lastFlush = performance.now()
-      })
-    } else {
-      // Flush immediately on next frame
-      buf.rafId = requestAnimationFrame(() => {
-        buf.rafId = null
-        this.flush(buf, sessionId)
-        buf._lastFlush = performance.now()
-      })
-    }
-  }
-
   private flush(buf: BufferState, sessionId: string, final = false): void {
     if (!buf.messageId) return
 
     const store = useStore.getState()
     const allMsgs = store.messagesBySession.get(sessionId) || []
     const msgIdx = allMsgs.findIndex((m) => m.id === buf.messageId)
-    const blocks: Array<{ type: string; [key: string]: unknown }> = []
+    if (msgIdx < 0) return
 
-    console.log('[stream-buffer] Flushing buffer:', {
-      skillCalls: buf.skillCalls.length,
-      thinking: buf.thinkingAcc.length > 0,
-      text: buf.textAcc.length > 0,
-      final,
-    })
+    const blocks: Array<{ type: string; [key: string]: unknown }> = []
 
     // Display order: vision → thinking → shells → skills → images → text
     // Thinking above tools so the user sees reasoning first, then what was executed.
@@ -647,7 +611,6 @@ class StreamBufferManager {
     }
 
     for (const sc of buf.skillCalls) {
-      console.log('[stream-buffer] Creating skill block:', sc.name, sc.status)
       blocks.push({
         type: 'skill',
         id: sc.id,
@@ -674,23 +637,42 @@ class StreamBufferManager {
       blocks.push({ type: 'text', html, source: buf.textAcc })
     }
 
-    // Preserve team and subagent blocks added by bootstrap events across flushes
-    if (msgIdx >= 0) {
-      for (const b of allMsgs[msgIdx]?.blocks || []) {
-        if ((b as any).type === 'team' || (b as any).type === 'subagent') {
-          blocks.push(b)
-        }
+    // Preserve team and subagent blocks added by bootstrap events across flushes.
+    // All other block types are fully rebuilt from buffer state each flush.
+    const existingBlocks = allMsgs[msgIdx].blocks
+    for (const b of existingBlocks) {
+      if ((b as any).type === 'team' || (b as any).type === 'subagent') {
+        blocks.push(b)
       }
     }
 
-    // Replace all blocks in the message
-    if (msgIdx >= 0) {
-      const next = new Map(store.messagesBySession)
-      const updatedMsgs = [...allMsgs]
-      updatedMsgs[msgIdx] = { ...allMsgs[msgIdx], blocks }
-      next.set(sessionId, updatedMsgs)
-      useStore.setState({ messagesBySession: next })
+    // Diff guard: skip setState if blocks are structurally identical
+    if (blocks.length === existingBlocks.length) {
+      let same = true
+      for (let i = 0; i < blocks.length; i++) {
+        // Shallow compare keys of each block (same as what React memo checks)
+        const a = blocks[i] as Record<string, unknown>
+        const b = existingBlocks[i] as Record<string, unknown>
+        const aKeys = Object.keys(a)
+        const bKeys = Object.keys(b)
+        if (aKeys.length !== bKeys.length) { same = false; break }
+        for (const k of aKeys) {
+          if (a[k] !== b[k]) { same = false; break }
+        }
+        if (!same) break
+      }
+      if (same) {
+        // Still push activity (phase may have changed even if blocks haven't)
+        this.pushActivity(sessionId, buf)
+        return
+      }
     }
+
+    const next = new Map(store.messagesBySession)
+    const updatedMsgs = [...allMsgs]
+    updatedMsgs[msgIdx] = { ...allMsgs[msgIdx], blocks }
+    next.set(sessionId, updatedMsgs)
+    useStore.setState({ messagesBySession: next })
 
     // 同步生成子阶段到灵动岛
     this.pushActivity(sessionId, buf)
@@ -727,17 +709,45 @@ class StreamBufferManager {
     const runningTool = buf.shellCalls.find(s => s.status === 'running')
     if (runningTool) {
       // Show the actual operation, not just the tool name.
-      // e.g. "shell: npm run build" or "file_read: config.toml"
       const args = runningTool.args
       const cmd = (args?.command as string) || (args?.path as string) || (args?.pattern as string) || ''
-      const label = cmd ? `${runningTool.name}: ${String(cmd).slice(0, 60)}` : runningTool.name
+      if (cmd) {
+        return { phase: 'tool', detail: `${runningTool.name}: ${String(cmd).slice(0, 60)}` }
+      }
+      // update_config: show which keys are being changed
+      if (runningTool.name === 'update_config' && args?.updates) {
+        const keys = Object.keys(args.updates as Record<string, unknown>)
+        if (keys.length > 0) {
+          const suffix = keys.length > 2 ? `${keys.slice(0, 2).join(', ')}...` : keys.join(', ')
+          return { phase: 'tool', detail: `update_config: ${suffix}` }
+        }
+      }
+      return { phase: 'tool', detail: runningTool.name }
+    }
+    // Background processes / monitors — show as tool phase while any are still running
+    const runningProc = buf.processAcc.find(p => !p.exited)
+    if (runningProc) {
+      const label = runningProc.pid.length > 8
+        ? `进程 ${runningProc.pid.slice(0, 8)}...`
+        : `进程 ${runningProc.pid}`
       return { phase: 'tool', detail: label }
     }
     return { phase: 'generating' }
   }
 
   private pushActivity(sessionId: string, buf: BufferState): void {
-    useStore.getState().setStreamingActivity(sessionId, this.deriveActivity(buf))
+    useStore.getState().setStreamingActivity(sessionId, buf.overrideActivity ?? this.deriveActivity(buf))
+  }
+
+  /** Set an external activity override that survives flush cycles.
+   *  Used by bootstrap for team/monitor phases that don't originate from
+   *  shell/skill call state.  Pass null to clear the override and let
+   *  deriveActivity take over again. */
+  setOverrideActivity(sessionId: string, activity: StreamingActivity | null): void {
+    const buf = this.ensureBuffer(sessionId)
+    buf.overrideActivity = activity
+    // Push immediately so the Dynamic Island updates without waiting for the next flush
+    useStore.getState().setStreamingActivity(sessionId, activity ?? this.deriveActivity(buf))
   }
 
   snapshot(sessionId: string): BufferState | null {

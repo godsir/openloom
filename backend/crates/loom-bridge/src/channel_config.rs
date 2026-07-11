@@ -7,7 +7,7 @@ use crate::types::{AccessMode, Platform};
 /// Single platform instance persistent config
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceConfig {
-    pub id: String,             // uuid
+    pub id: String, // uuid
     pub platform: Platform,
     pub instance_id: String,   // "default" / "work" / ...
     pub instance_name: String, // "个人微信" / "工作飞书"

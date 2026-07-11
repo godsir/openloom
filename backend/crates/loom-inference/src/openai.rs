@@ -74,7 +74,10 @@ impl OpenAIClient {
             .unwrap_or_else(|| anyhow::anyhow!("no completion attempts were made")))
     }
 
-    async fn try_complete(&self, req: &CompletionRequest) -> Result<CompletionResponse, RetryableError> {
+    async fn try_complete(
+        &self,
+        req: &CompletionRequest,
+    ) -> Result<CompletionResponse, RetryableError> {
         let digest = self.pending_digest.lock().unwrap().clone();
         let (cache_status, _, reasons) = self.prefix_cache.check_digest(&digest);
         match cache_status {
@@ -88,7 +91,9 @@ impl OpenAIClient {
             CacheStatus::BreakingMiss => {
                 tracing::info!(?reasons, "KV cache miss (breaking) -- prefix changed")
             }
-            CacheStatus::ColdStart => tracing::info!("KV cache cold start -- first request in sequence"),
+            CacheStatus::ColdStart => {
+                tracing::info!("KV cache cold start -- first request in sequence")
+            }
         }
         let eff = req.effective_messages();
         let messages = self.lower_messages(&eff);
@@ -115,7 +120,15 @@ impl OpenAIClient {
         body["temperature"] = req.temperature.into();
         if let Some(budget) = req.thinking_budget {
             if budget > 0 {
-                let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else if budget <= 32768 { "high" } else { "max" };
+                let effort = if budget <= 2048 {
+                    "low"
+                } else if budget <= 8192 {
+                    "medium"
+                } else if budget <= 32768 {
+                    "high"
+                } else {
+                    "max"
+                };
                 body["reasoning_effort"] = serde_json::json!(effort);
             }
             // budget == 0: skip reasoning_effort entirely.
@@ -420,7 +433,15 @@ impl CloudClient for OpenAIClient {
         body["temperature"] = req.temperature.into();
         if let Some(budget) = req.thinking_budget {
             if budget > 0 {
-                let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else if budget <= 32768 { "high" } else { "max" };
+                let effort = if budget <= 2048 {
+                    "low"
+                } else if budget <= 8192 {
+                    "medium"
+                } else if budget <= 32768 {
+                    "high"
+                } else {
+                    "max"
+                };
                 body["reasoning_effort"] = serde_json::json!(effort);
             }
         }
@@ -540,8 +561,12 @@ impl CloudClient for OpenAIClient {
         let (cache_status, _, _reasons) = self.prefix_cache.check_digest(&digest);
         match cache_status {
             CacheStatus::Hit => tracing::info!("KV cache hit (structured stream)"),
-            CacheStatus::BreakingMiss => tracing::info!("KV cache miss (structured stream -- breaking)"),
-            CacheStatus::AdditiveMiss => tracing::info!("KV cache miss (structured stream -- additive)"),
+            CacheStatus::BreakingMiss => {
+                tracing::info!("KV cache miss (structured stream -- breaking)")
+            }
+            CacheStatus::AdditiveMiss => {
+                tracing::info!("KV cache miss (structured stream -- additive)")
+            }
             CacheStatus::ColdStart => tracing::info!("KV cache cold start (structured stream)"),
         }
         let messages = self.lower_messages(&eff);
@@ -555,7 +580,15 @@ impl CloudClient for OpenAIClient {
         body["temperature"] = req.temperature.into();
         if let Some(budget) = req.thinking_budget {
             if budget > 0 {
-                let effort = if budget <= 2048 { "low" } else if budget <= 8192 { "medium" } else if budget <= 32768 { "high" } else { "max" };
+                let effort = if budget <= 2048 {
+                    "low"
+                } else if budget <= 8192 {
+                    "medium"
+                } else if budget <= 32768 {
+                    "high"
+                } else {
+                    "max"
+                };
                 body["reasoning_effort"] = serde_json::json!(effort);
             }
         }
@@ -583,8 +616,14 @@ impl CloudClient for OpenAIClient {
                 serde_json::json!({"i":i,"r":m["role"],"ct":ct,"tc":m.get("tool_calls").is_some(),"tcid":m.get("tool_call_id").is_some()})
             }).collect();
             tracing::error!(status=%resp.status(), n=shapes.len(), shapes=%serde_json::to_string(&shapes).unwrap_or_default(), "API400");
-            if messages.len() > 3 { tracing::error!(msg3=%serde_json::to_string(&messages[3]).unwrap_or_default(), "API400 msg[3]"); }
-            anyhow::bail!("API error {}: {}", resp.status(), resp.text().await.unwrap_or_default());
+            if messages.len() > 3 {
+                tracing::error!(msg3=%serde_json::to_string(&messages[3]).unwrap_or_default(), "API400 msg[3]");
+            }
+            anyhow::bail!(
+                "API error {}: {}",
+                resp.status(),
+                resp.text().await.unwrap_or_default()
+            );
         }
         use futures::StreamExt;
         let mut stream = resp.bytes_stream();
@@ -749,11 +788,7 @@ pub fn create_cloud_client(config: &ModelConfig, api_key: &str) -> Result<Box<dy
     // default. Falling through to https://api.openai.com (the old behaviour)
     // silently sent Custom traffic to OpenAI. Validate before defaulting below.
     if matches!(config.backend, ModelBackend::Custom) {
-        let configured = config
-            .base_url
-            .as_deref()
-            .map(|u| u.trim())
-            .unwrap_or("");
+        let configured = config.base_url.as_deref().map(|u| u.trim()).unwrap_or("");
         if configured.is_empty() {
             anyhow::bail!(
                 "base_url is required for the Custom backend (no default endpoint); set it to your gateway URL"
@@ -1327,10 +1362,9 @@ mod tests {
 
     #[test]
     fn custom_backend_remote_requires_key() {
-        let err =
-            create_cloud_client(&custom_config(Some("https://gateway.example.com/v1")), "")
-                .map(|_| ())
-                .unwrap_err();
+        let err = create_cloud_client(&custom_config(Some("https://gateway.example.com/v1")), "")
+            .map(|_| ())
+            .unwrap_err();
         assert!(
             err.to_string().contains("API key not set"),
             "unexpected error: {err}"
@@ -1339,16 +1373,18 @@ mod tests {
 
     #[test]
     fn custom_backend_localhost_allows_empty_key() {
-        let ok = create_cloud_client(&custom_config(Some("http://localhost:8000/v1")), "")
-            .map(|_| ());
+        let ok =
+            create_cloud_client(&custom_config(Some("http://localhost:8000/v1")), "").map(|_| ());
         assert!(ok.is_ok(), "localhost Custom should allow keyless: {ok:?}");
     }
 
     #[test]
     fn custom_backend_remote_with_key_ok() {
-        let ok =
-            create_cloud_client(&custom_config(Some("https://gateway.example.com/v1")), "sk-key")
-                .map(|_| ());
+        let ok = create_cloud_client(
+            &custom_config(Some("https://gateway.example.com/v1")),
+            "sk-key",
+        )
+        .map(|_| ());
         assert!(ok.is_ok(), "remote Custom with key should build: {ok:?}");
     }
 }

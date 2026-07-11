@@ -12,9 +12,9 @@ pub mod event_bus;
 pub mod monitor_manager;
 pub mod orchestrator;
 pub mod plan_prompts;
-pub mod team_orchestrator;
 pub mod process_manager;
 pub mod slash_router;
+pub mod team_orchestrator;
 pub mod todo_context;
 pub mod tool_context;
 pub mod tool_registry;
@@ -24,16 +24,14 @@ pub use agent::{Agent, AgentConfig, AgentStatus};
 pub use agent_loop::{AgentLoopConfig, TurnResult, run_agent_turn, run_agent_turn_streaming};
 pub use agent_pool::AgentPool;
 pub use event_bus::{AgentEvent, EventBus};
-pub use orchestrator::{
-    MemoryStore, Orchestrator, PipelineScheduler, adapt_behavior,
-};
-pub use process_manager::{ProcessInfo, ProcessManager};
-pub use monitor_manager::{MonitorInfo, MonitorManager, MonitorWsConfig};
 pub use loom_types::{
     BehaviorProfile, ForgettingReport, MemoryHealth, PipelineStage, QualityEvaluation,
 };
+pub use monitor_manager::{MonitorInfo, MonitorManager, MonitorWsConfig};
+pub use orchestrator::{MemoryStore, Orchestrator, PipelineScheduler, adapt_behavior};
+pub use process_manager::{ProcessInfo, ProcessManager};
 pub use slash_router::{SlashIntercept, SlashRouter};
 pub use tool_registry::{
-   AgentTool, SpawnAgentTool, SpawnContext, ToolProvenance, ToolRegistry, ToolResult,
-   SpawnAgentsTool,
+    AgentTool, SpawnAgentTool, SpawnAgentsTool, SpawnContext, ToolProvenance, ToolRegistry,
+    ToolResult,
 };

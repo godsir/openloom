@@ -82,14 +82,23 @@ impl SessionStore {
         self.create(path).await
     }
 
-    pub async fn add_message(&self, session_id: &str, role: &str, content: &str) {
+    pub async fn add_message(
+        &self,
+        session_id: &str,
+        role: &str,
+        content: &str,
+        usage: Option<loom_types::TokenUsage>,
+    ) {
         let mut sessions = self.sessions.write().await;
         if let Some(s) = sessions.get_mut(session_id) {
-            let msg = match role {
+            let mut msg = match role {
                 "user" => LoomMessage::user(content),
                 "assistant" => LoomMessage::assistant(content),
                 _ => LoomMessage::user(content),
             };
+            if let Some(u) = usage {
+                msg = msg.with_usage(u);
+            }
             s.messages.push(msg);
             s.message_count = s.messages.len();
             s.updated_at = chrono::Utc::now().to_rfc3339();
@@ -159,11 +168,7 @@ impl SessionStore {
             .and_then(|s| s.agent_config_name.clone())
     }
 
-    pub async fn bind_team(
-        &self,
-        session_id: &str,
-        team_config_id: &str,
-    ) -> Result<(), String> {
+    pub async fn bind_team(&self, session_id: &str, team_config_id: &str) -> Result<(), String> {
         let mut sessions = self.sessions.write().await;
         match sessions.get_mut(session_id) {
             Some(s) => {
@@ -428,7 +433,10 @@ async fn handle_session_bind_team(state: &AppState, p: &Value) -> Result<Value, 
 
 // --- session.set_memory_enabled ---
 
-async fn handle_session_set_memory_enabled(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+async fn handle_session_set_memory_enabled(
+    state: &AppState,
+    p: &Value,
+) -> Result<Value, JsonRpcError> {
     let session_id = p
         .get("session_id")
         .and_then(|v| v.as_str())

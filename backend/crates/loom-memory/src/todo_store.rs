@@ -55,7 +55,10 @@ impl TodoStore {
     pub fn replace_todos(&self, session_id: &str, todos: &[TodoItem]) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let tx = conn.unchecked_transaction()?;
-        tx.execute("DELETE FROM thread_todos WHERE session_id = ?1", params![session_id])?;
+        tx.execute(
+            "DELETE FROM thread_todos WHERE session_id = ?1",
+            params![session_id],
+        )?;
         for todo in todos {
             tx.execute(
                 "INSERT INTO thread_todos (id, session_id, content, status, plan_id, created_at, updated_at)
