@@ -35,7 +35,7 @@ export default function InputArea() {
   const [text, setText] = useState('')
 
   // Commands that accept trailing text as argument
-  const argCommands = useMemo(() => new Set(['loop', 'goal']), [])
+  const argCommands = useMemo(() => new Set(['loop', 'goal', 'config']), [])
 
   // 点击外部关闭发送快捷键下拉
   useEffect(() => {
@@ -212,14 +212,18 @@ export default function InputArea() {
       const cursorPos = textareaRef.current?.selectionStart ?? text.length
       const before = text.slice(0, cursorPos)
       const slashIdx = before.lastIndexOf('/')
-      // Extract arg after command name (e.g. "/loop review my PR" → "review my PR")
       let arg = ''
       if (slashIdx !== -1) {
         const afterSlash = text.slice(slashIdx + 1)
         const spaceIdx = afterSlash.indexOf(' ')
         arg = spaceIdx !== -1 ? afterSlash.slice(spaceIdx + 1).trim() : ''
         const after = text.slice(cursorPos)
-        setText(before.slice(0, slashIdx) + after)
+        if (cmd.keepPrefix) {
+          // Keep "/config" in the message so the backend SlashRouter can intercept it
+          setText(before.slice(0, slashIdx) + '/' + cmd.name + ' ' + after)
+        } else {
+          setText(before.slice(0, slashIdx) + after)
+        }
       }
       closeSlashMenu()
       if (cmd.execute) {

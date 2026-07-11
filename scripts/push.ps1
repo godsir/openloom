@@ -55,7 +55,7 @@ Write-Host "  package.json: $pkgVer -> $newVer"
 Push-Location $RootDir
 try {
     git add Cargo.toml frontend/package.json
-    git commit -m "chore: bump version to $newVer"
+    git commit --amend --no-edit --no-verify
 
     Write-Host ""
     Write-Host "Version bumped to $newVer and committed, pushing..."

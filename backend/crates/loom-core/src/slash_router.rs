@@ -19,13 +19,17 @@ pub struct SlashIntercept {
     pub stripped_message: String,
 }
 
-/// Pre-processor that intercepts /skillname commands before the model sees them.
+/// Pre-processor that intercepts /skillname + /builtin commands before the
+/// model sees them.
 ///
-/// Populated from SkillState whenever skills are reloaded. The router does a
-/// simple prefix match — no LLM inference needed for slash commands.
+/// Builtin commands (like `/loom`) are registered at startup. Intercepted
+/// builtin commands inject guard instructions so the model knows to use the
+/// right management tool.
 pub struct SlashRouter {
     /// Map of skill name → skill body for direct lookup.
     skill_bodies: HashMap<String, String>,
+    /// Map of builtin command name → guard prompt body.
+    builtins: HashMap<String, String>,
 }
 
 impl SlashRouter {
@@ -33,6 +37,7 @@ impl SlashRouter {
     pub fn new() -> Self {
         Self {
             skill_bodies: HashMap::new(),
+            builtins: HashMap::new(),
         }
     }
 
@@ -41,39 +46,39 @@ impl SlashRouter {
         self.skill_bodies = bodies;
     }
 
+    /// Register a builtin slash command with its guard prompt.
+    /// The guard prompt is injected as a system message telling the model
+    /// which tools to use for the user's intent.
+    pub fn register_builtin(&mut self, name: &str, guard_prompt: &str) {
+        self.builtins
+            .insert(name.to_string(), guard_prompt.to_string());
+    }
+
     /// Try to intercept a slash command.
     ///
-    /// Returns `Some(SlashIntercept)` if the message starts with "/<skillname>"
-    /// matching a known skill. Returns `None` if no match (message passes through
-    /// to the model unchanged).
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let router = SlashRouter::new();
-    /// router.rebuild(skill_bodies);
-    ///
-    /// // Exact match returns the skill body
-    /// let result = router.intercept("/brainstorming design a login page");
-    /// assert!(result.is_some());
-    ///
-    /// // Non-slash messages pass through
-    /// let result = router.intercept("help me design a login page");
-    /// assert!(result.is_none());
-    /// ```
+    /// Checks builtins first, then installed skills. Returns
+    /// `Some(SlashIntercept)` if the message starts with "/<cmd>" matching
+    /// either a builtin or a skill. Returns `None` for unmatched messages.
     pub fn intercept(&self, user_message: &str) -> Option<SlashIntercept> {
         let trimmed = user_message.trim();
         let slash_name = trimmed.strip_prefix('/')?;
 
-        // Extract the command name (before first space or end of string)
         let cmd = slash_name.split_whitespace().next().unwrap_or("");
-
         if cmd.is_empty() {
             return None;
         }
 
+        // Builtins take priority over skills
+        if let Some(body) = self.builtins.get(cmd) {
+            let rest = slash_name[cmd.len()..].trim();
+            return Some(SlashIntercept {
+                skill_body: body.clone(),
+                skill_name: cmd.to_string(),
+                stripped_message: rest.to_string(),
+            });
+        }
+
         self.skill_bodies.get(cmd).map(|body| {
-            // Strip "/cmd" from the message, keeping the rest
             let rest = slash_name[cmd.len()..].trim();
             SlashIntercept {
                 skill_body: body.clone(),
@@ -86,6 +91,11 @@ impl SlashRouter {
     /// Check if a skill name is registered in the router.
     pub fn has_skill(&self, name: &str) -> bool {
         self.skill_bodies.contains_key(name)
+    }
+
+    /// Check if a name is a registered builtin command.
+    pub fn is_builtin(&self, name: &str) -> bool {
+        self.builtins.contains_key(name)
     }
 
     /// Number of registered slash commands.

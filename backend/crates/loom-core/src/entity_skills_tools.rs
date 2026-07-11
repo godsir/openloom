@@ -30,7 +30,7 @@ impl AgentTool for ManageSkillsTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "manage_skills".into(),
-            description: "Manage installed skills. Use when user says list/import/delete/reload a skill.\n\nActions: list, import, delete, reload. Required: action. For import: name + files (array of {path, content}), or source_dir. For delete: name.".into(),
+            description: "Manage installed skills (技能). Use when user wants to list skills, import a new skill, delete a skill, or reload all skills from disk.\n\nCommon scenarios:\n- \"show installed skills\": action=list\n- \"import a skill from /path/to/skill-dir\": action=import, source_dir=/path\n- \"delete the pdf skill\": action=delete, name=pdf\n- \"reload all skills after editing\": action=reload\n\nActions: list | import | delete | reload.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {

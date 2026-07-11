@@ -9,7 +9,7 @@ import { initPet, registerPetProtocol } from './pet'
 import { startConfigWatcher } from './config-watcher'
 import { join } from 'path'
 import { homedir } from 'os'
-import { existsSync, mkdirSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync } from 'fs'
 import Database from 'better-sqlite3'
 import { IMStore, IMGatewayManager } from './im'
 import { ImBridge } from './im/imBridge'
@@ -33,6 +33,29 @@ if (process.platform === 'win32') {
     app.disableHardwareAcceleration()
   }
 }
+
+// Configure system proxy for Electron on startup (before app.ready).
+// Reads from tool_prefs.json which is the same source the AI config tool and
+// the Settings UI both write to.
+function configureElectronProxy() {
+  try {
+    const prefsPath = join(homedir(), '.loom', 'tool_prefs.json')
+    if (existsSync(prefsPath)) {
+      const prefs = JSON.parse(readFileSync(prefsPath, 'utf-8'))
+      if (prefs.proxy_enabled && prefs.http_proxy) {
+        app.commandLine.appendSwitch('proxy-server', prefs.http_proxy)
+        console.log('[proxy] Using custom proxy from prefs:', prefs.http_proxy)
+        return
+      }
+    }
+    // Fall back to system proxy auto-detection
+    app.commandLine.appendSwitch('proxy-auto-detect')
+    console.log('[proxy] Auto-detecting system proxy')
+  } catch (e) {
+    console.error('[proxy] Failed to configure proxy:', e)
+  }
+}
+configureElectronProxy()
 
 let port = 0
 let isQuitting = false

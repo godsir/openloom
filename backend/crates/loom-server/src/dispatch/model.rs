@@ -1,6 +1,7 @@
 //! Model dispatch handlers — model.list / model.switch / model.config.* / model.save_key /
 //! model.check_key / model.discover
 
+use loom_inference::engine::build_http_client;
 use loom_types::{ErrorCode, JsonRpcError, ModelConfig};
 use serde_json::{Value, json};
 
@@ -421,7 +422,7 @@ async fn handle_model_discover(state: &AppState, p: &Value) -> Result<Value, Jso
         })
         .unwrap_or_default();
     drop(guard);
-    let client = reqwest::Client::new();
+    let client = build_http_client();
 
     // Standard OpenAI-compatible /models endpoint
     let url = if api_format == "anthropic" {

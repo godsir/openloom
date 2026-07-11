@@ -64,7 +64,7 @@ impl AgentTool for ManageMcpTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "manage_mcp".into(),
-            description: "Manage MCP (Model Context Protocol) servers. Use when user says connect/add/remove/disconnect an MCP server or wants to see which MCP servers are available.\n\nActions: list (list connected + saved servers), connect (connect and register a server), disconnect (disconnect a live server), delete (disconnect + remove saved config). Required: action. For connect: name + transport + (command if stdio, url if http). For disconnect/delete: name.".into(),
+            description: "Manage MCP servers (MCP工具服务器). Use when user wants to connect an MCP server, disconnect one, list all servers, or delete a saved server config.\n\nCommon scenarios:\n- \"connect to a filesystem MCP server\": action=connect, name=filesystem, transport=stdio, command=npx, args=[-y, @modelcontextprotocol/server-filesystem, /path]\n- \"connect to a remote MCP server\": action=connect, name=my-server, transport=http, url=http://localhost:3000/mcp\n- \"show connected MCP servers\": action=list\n- \"disconnect the slack server\": action=disconnect, name=slack\n- \"remove old MCP config\": action=delete, name=old-server\n\nActions: list | connect | disconnect | delete.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {

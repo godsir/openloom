@@ -43,7 +43,7 @@ impl AgentTool for ManageCronTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "manage_cron".into(),
-            description: "Manage scheduled cron jobs. Use when user wants to list, create, update, delete, pause, resume, run, or view history of scheduled AI tasks.\n\nActions: list, get, create, update, delete, pause, resume, run_now, history. Required: action. For get/delete/pause/resume/run_now/history: id. For create: name, prompt, cron_expression. For update: id + any fields to change.".into(),
+            description: "Manage scheduled cron jobs (定时任务). Use when user wants to schedule a recurring task, pause a schedule, resume it, run it now, or delete it.\n\nCommon scenarios:\n- \"run a daily code review every morning at 9am\": action=create, name + prompt + cron_expression=0 9 * * *\n- \"stop the daily report\": action=pause, id=<job_id>\n- \"run the weekly backup now\": action=run_now, id=<job_id>\n- \"show all scheduled tasks\": action=list\n- \"delete the old reminder\": action=delete, id=<job_id>\n\nActions: list | get | create | update | delete | pause | resume | run_now | history.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {

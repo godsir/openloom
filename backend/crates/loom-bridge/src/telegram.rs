@@ -72,7 +72,7 @@ impl TelegramAdapter {
             instance_id,
             instance_name,
             bot_token: BotToken::new(bot_token),
-            client: reqwest::Client::new(),
+            client: loom_inference::engine::build_http_client(),
             health: AdapterHealth::Disconnected,
             rx,
             tx,

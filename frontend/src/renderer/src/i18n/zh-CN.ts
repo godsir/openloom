@@ -218,6 +218,7 @@ export const zhCN: TranslationMap = {
   'slash.compactFailed': '压缩失败 — 检查模型是否已配置',
   'slash.loopDesc': '循环任务 — AI 持续多轮执行，直到你手动停止',
   'slash.goalDesc': '设定目标 — 设定条件后 AI 自动多轮工作直到达成',
+  'slash.configDesc': '配置 OpenLoom — 修改设置、管理智能体、切换模型、管理团队等',
 
   // ── Input ───────────────────────────────────────────────────────
   'input.startChat': '开始新对话...',

@@ -457,13 +457,10 @@ impl McpClient {
                 reqwest::header::ACCEPT,
                 reqwest::header::HeaderValue::from_static("application/json, text/event-stream"),
             );
-            let client = reqwest::Client::builder()
+            let client_builder = reqwest::Client::builder()
                 .timeout(Duration::from_secs(60))
-                .connect_timeout(Duration::from_secs(10))
-                .build()?;
-
-            // Bound the HTTP handshake by the configured startup timeout. (The
-            // reqwest client also has its own request timeout above.)
+                .connect_timeout(Duration::from_secs(10));
+            let client = loom_inference::engine::apply_proxy(client_builder).build()?;
             let startup = resolve_startup_timeout(config.startup_timeout_secs);
             let r = tokio::time::timeout(
                 Duration::from_secs(startup),

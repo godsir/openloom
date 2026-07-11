@@ -218,6 +218,7 @@ export const enUS: TranslationMap = {
   'slash.compactFailed': 'Compaction failed — check if a model is configured',
   'slash.loopDesc': 'Loop task — AI runs multiple turns until you stop it',
   'slash.goalDesc': 'Set goal — AI loops until condition is met',
+  'slash.configDesc': 'Configure OpenLoom — settings, agents, models, teams, etc.',
 
   // ── Input ───────────────────────────────────────────────────────
   'input.startChat': 'Start a new chat...',

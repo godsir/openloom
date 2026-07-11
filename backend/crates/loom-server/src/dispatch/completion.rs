@@ -3,6 +3,7 @@
 //! Model config (supplier settings) provides the actual base_url, model ID, and api_key.
 
 use crate::AppState;
+use loom_inference::engine::build_http_client;
 use loom_types::JsonRpcError;
 use loom_types::config::model_config::ModelBackend;
 use serde_json::{Value, json};
@@ -170,7 +171,7 @@ async fn handle_completion_fim(state: &AppState, p: &Value) -> Result<Value, Jso
         model
     };
 
-    let client = reqwest::Client::new();
+    let client = loom_inference::engine::build_http_client();
     let body = serde_json::json!({
         "model": model,
         "prompt": prefix,
@@ -292,7 +293,7 @@ async fn handle_completion_chat(state: &AppState, p: &Value) -> Result<Value, Js
         return Ok(serde_json::json!({ "ok": false, "message": "no active model configured" }));
     };
 
-    let client = reqwest::Client::new();
+    let client = build_http_client();
     let body = serde_json::json!({
         "model": model_id,
         "messages": messages,

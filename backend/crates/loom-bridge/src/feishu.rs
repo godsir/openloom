@@ -139,7 +139,7 @@ impl FeishuAdapter {
             app_id,
             app_secret: AppSecret(app_secret),
             domain,
-            client: reqwest::Client::new(),
+            client: loom_inference::engine::build_http_client(),
             health: AdapterHealth::Disconnected,
             rx,
             tx,

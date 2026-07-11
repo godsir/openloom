@@ -7,6 +7,7 @@ export interface SlashCommand {
   kind: 'builtin'
   execute?: (arg: string) => void
   needsArg?: boolean
+  keepPrefix?: boolean
 }
 
 interface Props {
@@ -107,6 +108,7 @@ export function makeBuiltinCommands(args: {
     { name: 'compact', description: t('slash.compactDesc'), kind: 'builtin', execute: () => { compactSession() } },
     { name: 'loop', description: t('slash.loopDesc'), kind: 'builtin', needsArg: true, execute: onLoop ? (arg: string) => { onLoop(arg) } : undefined },
     { name: 'goal', description: t('slash.goalDesc'), kind: 'builtin', needsArg: true, execute: onGoal ? (arg: string) => { onGoal(arg) } : undefined },
+    { name: 'config', description: t('slash.configDesc'), kind: 'builtin', needsArg: true, keepPrefix: true, execute: () => {} },
   ]
 }
 
@@ -116,11 +118,12 @@ export function getSlashQuery(text: string, cursorPos: number, argCommands?: Set
   if (slashIdx === -1) return null
   if (slashIdx > 0 && before[slashIdx - 1] !== ' ' && before[slashIdx - 1] !== '\n') return null
   const afterSlash = before.slice(slashIdx + 1)
-  // Commands that take args: "/loop <task>" or "/goal <condition>"
+  // Commands that take args: "/loop <task>" or "/goal <condition>" or "/config <action>"
+  // Once the user has typed a space (i.e. is entering the argument), close the menu
   const spaceIdx = afterSlash.indexOf(' ')
   if (spaceIdx !== -1) {
     const cmdName = afterSlash.slice(0, spaceIdx)
-    if (argCommands?.has(cmdName)) return cmdName
+    if (argCommands?.has(cmdName)) return null // user is typing the argument, close menu
     return null
   }
   if (/\s/.test(afterSlash)) return null

@@ -6,6 +6,7 @@ description = "MCP client for openLoom v2 �?connect to MCP servers, list tools
 
 [dependencies]
 loom-types = { path = "../loom-types" }
+loom-inference = { path = "../loom-inference" }
 tokio = { version = "1", features = ["rt", "sync", "macros", "process", "time", "io-util"] }
 tokio-util = "0.7"
 anyhow = "1"

@@ -27,7 +27,7 @@ pub fn set_global_proxy(url: Option<String>, enabled: bool) {
 
 /// Resolve the effective proxy URL: global setting first, then env vars.
 /// Respects proxy_enabled flag — when false, returns None (direct connection).
-fn get_effective_proxy() -> Option<String> {
+pub fn get_effective_proxy() -> Option<String> {
     // Check global proxy config (set via tool_prefs)
     if let Some(lock) = GLOBAL_PROXY.get() {
         if let Ok(guard) = lock.lock() {
@@ -70,8 +70,13 @@ pub fn build_http_client_with_ua() -> HttpClient {
 
 /// 构建统一 HTTP 客户端（无 UA，给 API 调用用），支持全局代理
 pub fn build_http_client() -> HttpClient {
-    let mut builder = HttpClient::builder().connect_timeout(std::time::Duration::from_secs(10));
+    apply_proxy(HttpClient::builder().connect_timeout(std::time::Duration::from_secs(10))).build().unwrap_or_default()
+}
 
+/// Apply global proxy settings to a reqwest ClientBuilder. Returns the builder
+/// with proxy configured, or unchanged if no proxy is set or proxy is disabled.
+pub fn apply_proxy(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    let mut builder = builder;
     if let Some(url) = get_effective_proxy() {
         if let Ok(proxy) = build_proxy(&url) {
             builder = builder.proxy(proxy);
@@ -79,8 +84,7 @@ pub fn build_http_client() -> HttpClient {
             tracing::warn!(%url, "invalid proxy URL, connections will go direct");
         }
     }
-
-    builder.build().unwrap_or_default()
+    builder
 }
 
 /// Build a reqwest::Proxy that routes through `proxy_url` but bypasses

@@ -1,6 +1,7 @@
 //! Entity management tools - CRUD wrappers for agent, model, and team configs.
 //! Each tool delegates to the MemoryStore trait which persists to SQLite.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -28,6 +29,7 @@ fn resolve_ms<'a>(
 
 pub struct ManageAgentTool {
     pub memory_store: Arc<RwLock<Option<Box<dyn MemoryStore>>>>,
+    pub cache: Arc<RwLock<HashMap<String, loom_types::AgentConfig>>>,
 }
 
 #[async_trait]
@@ -76,7 +78,7 @@ impl AgentTool for ManageAgentTool {
         let action = arguments["action"].as_str().unwrap_or("");
         let guard = self.memory_store.read().await;
         let ms = resolve_ms(&guard)?;
-        let result = exec_agent(action, &arguments, ms).await?;
+        let result = exec_agent(action, &arguments, ms, &self.cache).await?;
         Ok(ToolResult {
             content: result,
             is_error: false,
@@ -93,6 +95,7 @@ async fn exec_agent(
     action: &str,
     args: &serde_json::Value,
     ms: &dyn MemoryStore,
+    cache: &Arc<RwLock<HashMap<String, loom_types::AgentConfig>>>,
 ) -> Result<String> {
     match action {
         "list" => {
@@ -124,6 +127,7 @@ async fn exec_agent(
             patch_agent(&mut cfg, args);
             cfg.name = name.to_string();
             ms.save_agent_config(&cfg).await?;
+            cache.write().await.insert(name.to_string(), cfg.clone());
             Ok(format!(
                 "Agent \"{name}\" {}d.",
                 if action == "create" { "create" } else { "update" }
@@ -135,6 +139,7 @@ async fn exec_agent(
                 return Err(anyhow::anyhow!("cannot delete the 'default' agent"));
             }
             ms.delete_agent_config(name).await?;
+            cache.write().await.remove(name);
             Ok(format!("Agent \"{name}\" deleted."))
         }
         _ => Err(anyhow::anyhow!(
@@ -162,6 +167,8 @@ fn patch_agent(cfg: &mut loom_types::AgentConfig, args: &serde_json::Value) {
 
 pub struct ManageModelTool {
     pub memory_store: Arc<RwLock<Option<Box<dyn MemoryStore>>>>,
+    pub cache: Arc<RwLock<HashMap<String, loom_types::ModelConfig>>>,
+    pub active_model_name: Arc<RwLock<Option<String>>>,
 }
 
 #[async_trait]
@@ -207,7 +214,7 @@ impl AgentTool for ManageModelTool {
         let action = arguments["action"].as_str().unwrap_or("");
         let guard = self.memory_store.read().await;
         let ms = resolve_ms(&guard)?;
-        let result = exec_model(action, &arguments, ms).await?;
+        let result = exec_model(action, &arguments, ms, &self.cache, &self.active_model_name).await?;
         Ok(ToolResult {
             content: result,
             is_error: false,
@@ -224,6 +231,8 @@ async fn exec_model(
     action: &str,
     args: &serde_json::Value,
     ms: &dyn MemoryStore,
+    cache: &Arc<RwLock<HashMap<String, loom_types::ModelConfig>>>,
+    active_model_name: &Arc<RwLock<Option<String>>>,
 ) -> Result<String> {
     match action {
         "list" => {
@@ -263,6 +272,7 @@ async fn exec_model(
             patch_model(&mut cfg, args);
             cfg.name = name.to_string();
             ms.save_model_config(&cfg).await?;
+            cache.write().await.insert(name.to_string(), cfg.clone());
             Ok(format!(
                 "Model \"{name}\" {}d.",
                 if action == "create" { "create" } else { "update" }
@@ -271,11 +281,13 @@ async fn exec_model(
         "delete" => {
             let name = req_str(args, "name")?;
             ms.delete_model_config(name).await?;
+            cache.write().await.remove(name);
             Ok(format!("Model \"{name}\" deleted."))
         }
         "set_active" => {
             let name = req_str(args, "name")?;
             ms.set_active_model(name).await?;
+            active_model_name.write().await.replace(name.to_string());
             Ok(format!("Active model set to \"{name}\"."))
         }
         _ => Err(anyhow::anyhow!("Unknown action: {action}.")),
@@ -313,6 +325,7 @@ fn patch_model(cfg: &mut loom_types::ModelConfig, args: &serde_json::Value) {
 
 pub struct ManageTeamTool {
     pub memory_store: Arc<RwLock<Option<Box<dyn MemoryStore>>>>,
+    pub cache: Arc<RwLock<HashMap<String, loom_types::TeamConfig>>>,
 }
 
 #[async_trait]
@@ -324,17 +337,18 @@ impl AgentTool for ManageTeamTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "manage_team".into(),
-            description: "Manage expert teams. Use when user says create/delete a team or form an expert panel.\n\nActions: list, get, create, update, delete. Required: action. For create: name. For get/update/delete: id. Optional: description, strategy (synthesize/debate), captain_model, captain_persona, members (array of {name, source: {Inline:{persona,model}} | {AgentRef:\"name\"}}).".into(),
+            description: "Manage expert teams (专家团). Use when user wants to create/delete a team, add members, remove members, change strategy, or list teams.\n\nCommon: 给XX团队添加成员 -> action=add_members, id + members. 从XX团队移除YY -> action=remove_member, id + member_name. 创建团队 -> action=create, name + members. 列出团队 -> action=list.\n\nActions: list | get | create | update | delete | add_members | remove_member.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "enum": ["list", "get", "create", "update", "delete"] },
+                    "action": { "type": "string", "enum": ["list", "get", "create", "update", "delete", "add_members", "remove_member"] },
                     "id": { "type": "string" },
                     "name": { "type": "string" },
                     "description": { "type": "string" },
                     "strategy": { "type": "string", "enum": ["synthesize", "debate"] },
                     "captain_model": { "type": "string" },
                     "captain_persona": { "type": "string" },
+                    "member_name": { "type": "string", "description": "Name of member to remove (remove_member only)" },
                     "members": { "type": "array" }
                 },
                 "required": ["action"]
@@ -356,7 +370,7 @@ impl AgentTool for ManageTeamTool {
         let action = arguments["action"].as_str().unwrap_or("");
         let guard = self.memory_store.read().await;
         let ms = resolve_ms(&guard)?;
-        let result = exec_team(action, &arguments, ms).await?;
+        let result = exec_team(action, &arguments, ms, &self.cache).await?;
         Ok(ToolResult {
             content: result,
             is_error: false,
@@ -373,6 +387,7 @@ async fn exec_team(
     action: &str,
     args: &serde_json::Value,
     ms: &dyn MemoryStore,
+    cache: &Arc<RwLock<HashMap<String, loom_types::TeamConfig>>>,
 ) -> Result<String> {
     match action {
         "list" => {
@@ -390,6 +405,7 @@ async fn exec_team(
             let cfg = build_team(args)?;
             let name = cfg.name.clone();
             ms.save_team_config(&cfg).await?;
+            cache.write().await.insert(cfg.id.clone(), cfg.clone());
             Ok(format!("Team \"{name}\" created (id: {}).", cfg.id))
         }
         "update" => {
@@ -400,12 +416,38 @@ async fn exec_team(
                 .ok_or_else(|| anyhow::anyhow!("Team \"{id}\" not found"))?;
             patch_team(&mut cfg, args);
             ms.save_team_config(&cfg).await?;
+            cache.write().await.insert(id.to_string(), cfg.clone());
             Ok(format!("Team \"{}\" updated.", cfg.name))
         }
         "delete" => {
             let id = req_str(args, "id")?;
             ms.delete_team_config(id).await?;
+            cache.write().await.remove(id);
             Ok(format!("Team \"{id}\" deleted."))
+        }
+        "add_members" => {
+            let id = req_str(args, "id")?;
+            let mut cfg = ms.get_team_config(id).await?
+                .ok_or_else(|| anyhow::anyhow!("Team \"{id}\" not found"))?;
+            if let Some(arr) = args["members"].as_array() {
+                let new = parse_members(arr);
+                cfg.members.extend(new);
+            }
+            ms.save_team_config(&cfg).await?;
+            cache.write().await.insert(id.to_string(), cfg.clone());
+            Ok(format!("Team \"{}\" updated ({} members).", cfg.name, cfg.members.len()))
+        }
+        "remove_member" => {
+            let id = req_str(args, "id")?;
+            let mname = req_str(args, "member_name")?;
+            let mut cfg = ms.get_team_config(id).await?
+                .ok_or_else(|| anyhow::anyhow!("Team \"{id}\" not found"))?;
+            let before = cfg.members.len();
+            cfg.members.retain(|m| m.name != mname);
+            let removed = before - cfg.members.len();
+            ms.save_team_config(&cfg).await?;
+            cache.write().await.insert(id.to_string(), cfg.clone());
+            Ok(format!("Removed {} member(s) from team \"{}.", removed, cfg.name))
         }
         _ => Err(anyhow::anyhow!("Unknown action: {action}.")),
     }

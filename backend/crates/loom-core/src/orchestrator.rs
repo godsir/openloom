@@ -920,7 +920,21 @@ impl Orchestrator {
         let _ = registry.register(Arc::new(crate::builtin_tools::LoopTool));
 
         let skill_state = Arc::new(RwLock::new(loom_skills::SkillState::default()));
-        let slash_router = Arc::new(RwLock::new(SlashRouter::new()));
+        let slash_router = {
+            let mut router = SlashRouter::new();
+            let guard_prompt = r#"You are managing openLoom itself. The user wants to configure or manage openLoom settings, entities, or behavior. Use these tools as appropriate:
+- update_config — for settings/preferences (theme, language, model, permissions, etc.)
+- manage_agent — for creating, editing, or deleting AI agents
+- manage_model — for adding, switching, or removing model providers
+- manage_team — for creating, updating, or managing expert teams (add/remove members)
+- manage_cron — for scheduling, pausing, or deleting recurring tasks
+- manage_skills — for listing, importing, or removing skills
+- manage_mcp — for connecting, disconnecting, or listing MCP servers
+- system_info — for checking current config/system state
+Do NOT search the filesystem or use file/process tools for loom configuration tasks."#;
+            router.register_builtin("config", guard_prompt);
+            Arc::new(RwLock::new(router))
+        };
         let _ = registry.register(Arc::new(crate::builtin_tools::UseSkillTool {
             skill_state: skill_state.clone(),
         }));
@@ -1055,14 +1069,26 @@ impl Orchestrator {
         }));
 
         // Entity management tools — AI can CRUD agent/model/team configs
+        // Share caches with the orchestrator so writes are immediately visible in the UI.
+        let agent_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::AgentConfig>>> =
+            Arc::new(RwLock::new(std::collections::HashMap::from([(
+                "default".to_string(),
+                loom_types::AgentConfig::default(),
+            )])));
         let _ = registry.register(Arc::new(crate::entity_tools::ManageAgentTool {
             memory_store: memory_store.clone(),
+            cache: agent_configs.clone(),
         }));
         let _ = registry.register(Arc::new(crate::entity_tools::ManageModelTool {
             memory_store: memory_store.clone(),
+            cache: model_configs.clone(),
+            active_model_name: active_model_name.clone(),
         }));
+        let team_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::TeamConfig>>> =
+            Arc::new(RwLock::new(std::collections::HashMap::new()));
         let _ = registry.register(Arc::new(crate::entity_tools::ManageTeamTool {
             memory_store: memory_store.clone(),
+            cache: team_configs.clone(),
         }));
 
         // Cron/skills/MCP tools
@@ -1090,11 +1116,8 @@ impl Orchestrator {
             slash_router,
             persona_context: Arc::new(RwLock::new(String::new())),
             memory_store,
-            agent_configs: Arc::new(RwLock::new(std::collections::HashMap::from([(
-                "default".to_string(),
-                loom_types::AgentConfig::default(),
-            )]))),
-            team_configs: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            agent_configs,
+            team_configs,
             model_configs,
             active_model_name,
             model_switch_lock: tokio::sync::Mutex::new(()),
@@ -4566,18 +4589,17 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         // sees it. The skill body is injected directly into the system prompt
         // and the slash prefix is stripped from the user message.
         let (effective_message, slash_skill_body) = {
-            if agent_config.cc_dispatch {
-                let router = self.slash_router.read().await;
-                if let Some(intercept) = router.intercept(user_message) {
+            let router = self.slash_router.read().await;
+            if let Some(intercept) = router.intercept(user_message) {
+                if router.is_builtin(&intercept.skill_name) || agent_config.cc_dispatch {
                     tracing::info!(
                         skill = %intercept.skill_name,
-                        "slash command intercepted, injecting skill body"
+                        builtin = router.is_builtin(&intercept.skill_name),
+                        "slash command intercepted"
                     );
-                    let skill_header = format!(
-                        "## Active Skill (Loaded by /{})\nThe following skill was activated by slash command. Follow its instructions directly — do NOT call use_skill for this.\n\n### Skill: {}\n{}",
-                        intercept.skill_name, intercept.skill_name, intercept.skill_body
-                    );
-                    (intercept.stripped_message, Some(skill_header))
+                    let label = if router.is_builtin(&intercept.skill_name) { "System Directive" } else { "Active Skill" };
+                    let header = format!("## {}\n{}", label, intercept.skill_body);
+                    (intercept.stripped_message, Some(header))
                 } else {
                     (user_message.to_string(), None)
                 }
@@ -5965,9 +5987,9 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
 
         // ── Slash-command pre-processing (Claude Code-style dispatch) ──
         let (effective_message, slash_skill_body) = {
-            if agent_config.cc_dispatch {
-                let router = self.slash_router.read().await;
-                if let Some(intercept) = router.intercept(user_message) {
+            let router = self.slash_router.read().await;
+            if let Some(intercept) = router.intercept(user_message) {
+                if router.is_builtin(&intercept.skill_name) || agent_config.cc_dispatch {
                     tracing::info!(
                         skill = %intercept.skill_name,
                         "streaming: slash command intercepted, injecting skill body"

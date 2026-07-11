@@ -7,6 +7,7 @@ description = "HTTP/WebSocket server for openLoom v2 �?Axum routes, JSON-RPC d
 [dependencies]
 loom-types = { path = "../loom-types" }
 loom-core = { path = "../loom-core" }
+loom-inference = { path = "../loom-inference" }
 loom-mcp = { path = "../loom-mcp" }
 loom-skills = { path = "../loom-skills" }
 loom-lsp = { path = "../loom-lsp" }
