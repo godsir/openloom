@@ -177,7 +177,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
       window.loom.getPreference('taskCompleteNotification', false),
       loomRpc<{ http_proxy?: string; proxy_enabled?: boolean }>('config.get_tool_prefs').then(p => {
         // 无自定义代理且已启用 → 使用系统代理
-        setUseSystemProxy(!p.http_proxy && p.proxy_enabled !== false)
+        setUseSystemProxy(!p.http_proxy && p.proxy_enabled === true)
       }).catch(() => {}),
       window.loom.getPlatform(),
     ]).then(([as, ct, st, at, uf, cf, cc, dha, te, toe, se, tcn, plat]) => {
