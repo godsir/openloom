@@ -1027,6 +1027,10 @@ export const enUS: TranslationMap = {
   'settings.toolsGroup': 'Tools & Extensions',
   'settings.systemGroup': 'System',
   'settings.agent': 'Agents',
+  'settings.agentAndTeam': 'Agents & Teams',
+  'settings.agentAndTeamDesc': 'Manage individual agent configs and expert teams (multi-agent collaboration), message orchestration and collaboration strategies',
+  'settings.agentSection': 'Agents',
+  'settings.teamSection': 'Expert Teams',
   'settings.loomMd': 'Loom.md',
   'settings.loomMdDesc': 'Global agent discipline file, applies to every session (like CLAUDE.md)',
   'settings.loomMdTitle': 'Loom.md Discipline File',
@@ -1065,6 +1069,7 @@ export const enUS: TranslationMap = {
 
   // ── Import Conversations ─────────────────────────────────────────
   'settings.importConversations': 'Import Claude Code Conversations',
+  'settings.importConversationsDesc': 'Scan local Claude Code project directories and import conversations as openLoom sessions',
   'settings.searchConversations': 'Search title / project',
   'settings.rescan': 'Rescan',
   'settings.scanning': 'Scanning…',
@@ -1073,6 +1078,14 @@ export const enUS: TranslationMap = {
   'settings.importSelected': 'Import selected',
   'settings.importDone': 'Import complete',
   'settings.scanFailed': 'Scan failed, please retry',
+  'settings.importStatsFound': 'Found',
+  'settings.importStatsPending': 'To Import',
+  'settings.importStatsImported': 'Imported',
+  'settings.importStatsProjects': 'Projects',
+  'settings.filterAll': 'All',
+  'settings.filterPending': 'To Import',
+  'settings.filterImported': 'Imported',
+  'settings.importedCollapsed': '{n} imported conversations',
 
   'bt.shell': 'Execute shell commands and wait for results',
   'bt.file_list': 'List directory contents with optional recursion',

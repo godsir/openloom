@@ -1019,6 +1019,10 @@ export const zhTW: TranslationMap = {
   'settings.toolsGroup': '工具与擴展',
   'settings.systemGroup': '系統',
   'settings.agent': '智慧體',
+  'settings.agentAndTeam': '智慧體與專家團',
+  'settings.agentAndTeamDesc': '管理普通智慧體配置和專家團（多智慧體協作），專家的訊息編排和協作策略',
+  'settings.agentSection': '智慧體',
+  'settings.teamSection': '專家團',
   'settings.loomMd': 'Loom.md',
   'settings.loomMdDesc': '全域 Agent 紀律檔案，對所有工作階段生效（類似 CLAUDE.md）',
   'settings.loomMdTitle': 'Loom.md 紀律檔案',
@@ -1054,6 +1058,7 @@ export const zhTW: TranslationMap = {
 
   // ── Import Conversations ─────────────────────────────────────────
   'settings.importConversations': '匯入 Claude Code 對話',
+  'settings.importConversationsDesc': '掃描本地 Claude Code 專案目錄，選擇對話匯入為 openLoom 會話',
   'settings.searchConversations': '搜尋標題 / 專案',
   'settings.rescan': '重新掃描',
   'settings.scanning': '掃描中…',
@@ -1062,6 +1067,14 @@ export const zhTW: TranslationMap = {
   'settings.importSelected': '匯入選中',
   'settings.importDone': '匯入完成',
   'settings.scanFailed': '掃描失敗，請重試',
+  'settings.importStatsFound': '發現對話',
+  'settings.importStatsPending': '待匯入',
+  'settings.importStatsImported': '已匯入',
+  'settings.importStatsProjects': '專案目錄',
+  'settings.filterAll': '全部',
+  'settings.filterPending': '待匯入',
+  'settings.filterImported': '已匯入',
+  'settings.importedCollapsed': '{n} 個已匯入對話',
 
   'bt.shell': '執行 Shell 命令並等待返回結果',
   'bt.file_list': '列出目錄內容，支援遞迴',

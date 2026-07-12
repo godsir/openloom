@@ -23,7 +23,7 @@ import TeamTab from './TeamTab'
 import ImportConversationsTab from './ImportConversationsTab'
 import { WriteSettingsSection } from '../write/WriteSettingsSection'
 
-type Tab = 'software' | 'agent' | 'team' | 'loom' | 'models' | 'workspace' | 'mcp' | 'skills' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'write' | 'about' | 'im' | 'builtin_tools' | 'import'
+type Tab = 'software' | 'agent' | 'loom' | 'models' | 'workspace' | 'mcp' | 'skills' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'write' | 'about' | 'im' | 'builtin_tools' | 'import'
 
 function GlobalDefaultsSection() {
   const { t } = useLocale()
@@ -99,8 +99,7 @@ function useSettingsTabs() {
     {
       label: t('settings.assistantGroup'),
       items: [
-        { id: 'agent' as Tab, label: t('settings.agent'), icon: <IconBot size={14} /> },
-        { id: 'team' as Tab, label: t('settings.team'), icon: <IconUsers size={14} /> },
+        { id: 'agent' as Tab, label: t('settings.agentAndTeam'), icon: <IconBot size={14} /> },
         { id: 'loom' as Tab, label: t('settings.loomMd'), icon: <IconFileText size={14} /> },
         { id: 'models' as Tab, label: t('settings.models'), icon: <IconBox size={14} /> },
         { id: 'kg' as Tab, label: t('settings.memorySystem'), icon: <IconBrain size={14} /> },
@@ -205,24 +204,15 @@ export default function SettingsPage() {
         {tab === 'agent' && (
           <>
             <div className={styles.contentHeader}>
-              <h3 className={styles.sectionTitle}>{t('settings.agentConfig')}</h3>
-              <p className={styles.sectionDesc}>{t('settings.agentConfigDesc')}</p>
+              <h3 className={styles.sectionTitle}>{t('settings.agentAndTeam')}</h3>
+              <p className={styles.sectionDesc}>{t('settings.agentAndTeamDesc')}</p>
             </div>
             <div className={styles.contentBody}>
               <GlobalDefaultsSection />
-              <AgentConfigPanel />
-            </div>
-          </>
-        )}
-
-        {tab === 'team' && (
-          <>
-            <div className={styles.contentHeader}>
-              <h3 className={styles.sectionTitle}>{t('settings.teamConfig')}</h3>
-              <p className={styles.sectionDesc}>{t('settings.teamConfigDesc')}</p>
-            </div>
-            <div className={styles.contentBody}>
-              <TeamTab />
+              <div className={styles.sectionLabel}>{t('settings.agentSection')}</div>
+              <AgentConfigPanel embedded />
+              <div className={styles.sectionLabel}>{t('settings.teamSection')}</div>
+              <TeamTab embedded />
             </div>
           </>
         )}
@@ -301,7 +291,17 @@ export default function SettingsPage() {
           </>
         )}
 
-        {tab === 'import' && <ImportConversationsTab />}
+        {tab === 'import' && (
+          <>
+            <div className={styles.contentHeader}>
+              <h3 className={styles.sectionTitle}>{t('settings.importConversations')}</h3>
+              <p className={styles.sectionDesc}>{t('settings.importConversationsDesc')}</p>
+            </div>
+            <div className={styles.contentBody}>
+              <ImportConversationsTab />
+            </div>
+          </>
+        )}
 
         {tab === 'pet' && (
           <>

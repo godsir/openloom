@@ -1027,6 +1027,10 @@ export const zhCN: TranslationMap = {
   'settings.toolsGroup': '工具与扩展',
   'settings.systemGroup': '系统',
   'settings.agent': '智能体',
+  'settings.agentAndTeam': '智能体与专家团',
+  'settings.agentAndTeamDesc': '管理普通智能体配置和专家团（多智能体协作），专家的消息编排和协作策略',
+  'settings.agentSection': '智能体',
+  'settings.teamSection': '专家团',
   'settings.loomMd': 'Loom.md',
   'settings.loomMdDesc': '全局 Agent 纪律文件，对所有会话生效（类似 CLAUDE.md）',
   'settings.loomMdTitle': 'Loom.md 纪律文件',
@@ -1065,6 +1069,7 @@ export const zhCN: TranslationMap = {
 
   // ── Import Conversations ─────────────────────────────────────────
   'settings.importConversations': '导入 Claude Code 对话',
+  'settings.importConversationsDesc': '扫描本地 Claude Code 项目目录，选择对话导入为 openLoom 会话',
   'settings.searchConversations': '搜索标题 / 项目',
   'settings.rescan': '重新扫描',
   'settings.scanning': '扫描中…',
@@ -1073,6 +1078,14 @@ export const zhCN: TranslationMap = {
   'settings.importSelected': '导入选中',
   'settings.importDone': '导入完成',
   'settings.scanFailed': '扫描失败，请重试',
+  'settings.importStatsFound': '发现对话',
+  'settings.importStatsPending': '待导入',
+  'settings.importStatsImported': '已导入',
+  'settings.importStatsProjects': '项目目录',
+  'settings.filterAll': '全部',
+  'settings.filterPending': '待导入',
+  'settings.filterImported': '已导入',
+  'settings.importedCollapsed': '{n} 个已导入对话',
 
   'bt.shell': '执行 Shell 命令并等待返回结果',
   'bt.file_list': '列出目录内容，支持递归',

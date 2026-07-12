@@ -676,6 +676,24 @@
   margin: 10px 0;
 }
 
+.sectionLabel {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  padding: 12px 0 4px;
+}
+
+.sectionDividerLabel {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  padding: 12px 0 4px;
+}
+
 .mcpAddForm {
   display: flex;
   flex-direction: column;
