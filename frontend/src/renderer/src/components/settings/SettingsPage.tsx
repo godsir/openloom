@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useStore } from '../../stores'
-import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconBug, IconChevronUp, IconCommand, IconEdit, IconFileText, IconMessageSquare, IconUsers } from '../../utils/icons'
+import { IconFolder, IconSettings, IconBot, IconBox, IconBrain, IconBarChart, IconTerminal, IconSparkles, IconPawPrint, IconInfo, IconBug, IconChevronUp, IconCommand, IconEdit, IconFileText, IconMessageSquare, IconUsers, IconDownload } from '../../utils/icons'
 import AgentConfigPanel from '../shared/AgentConfigPanel'
 import LoomMdSection from '../shared/LoomMdSection'
 import { loomRpc } from '../../services/jsonrpc'
@@ -20,9 +20,10 @@ import TokenTab from './TokenTab'
 import KgTab from './KgTab'
 import ImTab from './ImTab'
 import TeamTab from './TeamTab'
+import ImportConversationsTab from './ImportConversationsTab'
 import { WriteSettingsSection } from '../write/WriteSettingsSection'
 
-type Tab = 'software' | 'agent' | 'team' | 'loom' | 'models' | 'workspace' | 'mcp' | 'skills' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'write' | 'about' | 'im' | 'builtin_tools'
+type Tab = 'software' | 'agent' | 'team' | 'loom' | 'models' | 'workspace' | 'mcp' | 'skills' | 'pet' | 'kg' | 'token' | 'shortcuts' | 'devtest' | 'write' | 'about' | 'im' | 'builtin_tools' | 'import'
 
 function GlobalDefaultsSection() {
   const { t } = useLocale()
@@ -115,6 +116,7 @@ function useSettingsTabs() {
         { id: 'write' as Tab, label: t('write.settings', '写作设置'), icon: <IconEdit size={14} /> },
         { id: 'im' as Tab, label: t('settings.im', 'IM 接入'), icon: <IconMessageSquare size={14} /> },
         { id: 'builtin_tools' as Tab, label: t('settings.builtinTools'), icon: <IconSettings size={14} /> },
+        { id: 'import' as Tab, label: t('settings.importConversations', '导入对话'), icon: <IconDownload size={14} /> },
       ],
     },
     {
@@ -298,6 +300,8 @@ export default function SettingsPage() {
             </div>
           </>
         )}
+
+        {tab === 'import' && <ImportConversationsTab />}
 
         {tab === 'pet' && (
           <>

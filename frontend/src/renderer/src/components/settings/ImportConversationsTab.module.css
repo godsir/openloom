@@ -1,0 +1,17 @@
+.wrap { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
+.header { display: flex; align-items: center; gap: 8px; }
+.title { font-size: 15px; font-weight: 600; color: var(--text); margin: 0; }
+.toolbar { display: flex; align-items: center; gap: 8px; }
+.search { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 6px; }
+.scanBtn { display: inline-flex; align-items: center; gap: 6px; background: var(--accent); color: #fff; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+.scanBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.group { display: flex; flex-direction: column; gap: 4px; }
+.groupLabel { font-size: 12px; color: var(--text-muted); padding: 4px 0; }
+.row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.row:hover { background: var(--bg); }
+.rowDisabled { opacity: 0.5; cursor: default; }
+.rowContent { display: flex; flex-direction: column; }
+.meta { font-size: 12px; color: var(--text-muted); }
+.importBtn { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; background: var(--accent); color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+.importBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.empty { color: var(--text-muted); padding: 24px 0; text-align: center; }
