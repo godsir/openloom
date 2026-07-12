@@ -29,6 +29,7 @@ pub enum StopReason {
 pub mod config;
 pub mod event;
 pub mod id;
+pub mod import;
 pub mod inference;
 pub mod jsonrpc;
 pub mod kg;
@@ -51,6 +52,7 @@ pub use config::team::{MemberSource, TeamCaptain, TeamConfig, TeamMember, TeamSt
 pub use config::*;
 pub use event::*;
 pub use id::*;
+pub use import::{ImportOutcome, ImportPayload};
 pub use inference::*;
 pub use jsonrpc::*;
 pub use kg::*;
