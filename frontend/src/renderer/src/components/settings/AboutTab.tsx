@@ -120,9 +120,45 @@ export default function AboutTab({ wsState }: { wsState: string }) {
                    update.status === 'downloaded' ? t('about.readyToInstall') :
                    update.status === 'error' ? update.error :
                    t('about.upToDate')}
-                  <span className={styles.aboutChannelBadge}>{t(updateChannel === 'beta' ? 'about.channelBeta' : 'about.channelStable')}</span>
                 </span>
               </div>
+
+              {/* Update Controls */}
+              <div className={styles.aboutUpdateControls}>
+                <Select
+                  value={updateChannel}
+                  options={channelOptions}
+                  onChange={ch => { setUpdateChannel(ch); window.loom.setUpdateChannel(ch) }}
+                  variant="pill"
+                />
+                {(update.status === 'idle' || update.status === 'no-update' || update.status === 'error') && (
+                  <button className={styles.aboutActionBtnPrimary} onClick={checkUpdate}>
+                    {t('about.checkUpdate')}
+                  </button>
+                )}
+                {update.status === 'available' && (
+                  <button className={styles.aboutActionBtnPrimary} onClick={downloadUpdate}>
+                    {t('about.downloadUpdate')}
+                  </button>
+                )}
+                {update.status === 'downloaded' && (
+                  <button className={styles.aboutActionBtnPrimary} onClick={installUpdate}>
+                    {t('about.restartNow')}
+                  </button>
+                )}
+                {isDev && (
+                  <button className={styles.aboutActionBtn} onClick={simulateUpdateFlow}>
+                    {t('about.testUpdate')}
+                  </button>
+                )}
+              </div>
+
+              {/* Download Progress */}
+              {update.status === 'downloading' && (
+                <div className={styles.aboutProgressBar}>
+                  <div className={styles.aboutProgressFill} style={{ width: `${update.progress}%` }} />
+                </div>
+              )}
             </div>
           </div>
 
@@ -137,40 +173,7 @@ export default function AboutTab({ wsState }: { wsState: string }) {
             >
               GitHub
             </a>
-            <Select
-              value={updateChannel}
-              options={channelOptions}
-              onChange={ch => { setUpdateChannel(ch); window.loom.setUpdateChannel(ch) }}
-              variant="pill"
-            />
-            {(update.status === 'idle' || update.status === 'no-update' || update.status === 'error') && (
-              <button className={styles.aboutActionBtnPrimary} onClick={checkUpdate}>
-                {t('about.checkUpdate')}
-              </button>
-            )}
-            {update.status === 'available' && (
-              <button className={styles.aboutActionBtnPrimary} onClick={downloadUpdate}>
-                {t('about.downloadUpdate')}
-              </button>
-            )}
-            {update.status === 'downloaded' && (
-              <button className={styles.aboutActionBtnPrimary} onClick={installUpdate}>
-                {t('about.restartNow')}
-              </button>
-            )}
-            {isDev && (
-              <button className={styles.aboutActionBtn} onClick={simulateUpdateFlow}>
-                {t('about.testUpdate')}
-              </button>
-            )}
           </div>
-
-          {/* ── Download Progress ── */}
-          {update.status === 'downloading' && (
-            <div className={styles.aboutProgressBar}>
-              <div className={styles.aboutProgressFill} style={{ width: `${update.progress}%` }} />
-            </div>
-          )}
     </div>
   )
 }

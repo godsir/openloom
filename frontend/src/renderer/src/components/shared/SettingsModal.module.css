@@ -635,6 +635,13 @@
   vertical-align: middle;
 }
 
+.aboutUpdateControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
 /* ── Actions row ── */
 
 .aboutActionsC3 {
