@@ -2325,6 +2325,21 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
         }
     }
 
+    /// Import a fully-parsed conversation into the memory store.
+    /// `payload.id` becomes the session id (idempotent); `replace=true`
+    /// deletes prior messages first.
+    pub async fn import_session_persisted(
+        &self,
+        payload: &loom_types::ImportPayload,
+        replace: bool,
+    ) -> Result<loom_types::ImportOutcome> {
+        let s = self.memory_store.read().await;
+        let s = s
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("memory store not set"))?;
+        s.import_session(payload, replace).await
+    }
+
     /// Persist a session rename to the memory store.
     pub async fn rename_session_persisted(&self, id: &str, title: &str) {
         let store = self.memory_store.read().await;

@@ -14,6 +14,7 @@ loom-lsp = { path = "../loom-lsp" }
 loom-bridge = { path = "../loom-bridge" }
 loom-cron = { path = "../loom-cron" }
 loom-memory = { path = "../loom-memory" }
+loom-import = { path = "../loom-import" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "signal"] }
 tokio-util = { workspace = true }
 anyhow = "1"

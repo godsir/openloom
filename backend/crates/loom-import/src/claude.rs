@@ -8,7 +8,7 @@ use loom_types::{ContentPart, ImportPayload, Message, Role, TokenUsage};
 use serde_json::Value;
 
 /// Lightweight metadata for one Claude Code conversation (scan pass).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ConversationSummary {
     pub session_uuid: String,
     pub project_dir: String,

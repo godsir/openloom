@@ -1811,6 +1811,7 @@ dependencies = [
  "loom-bridge",
  "loom-core",
  "loom-cron",
+ "loom-import",
  "loom-inference",
  "loom-lsp",
  "loom-mcp",

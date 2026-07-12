@@ -8,6 +8,7 @@
 
 mod bridge;
 mod chat;
+mod claude_import;
 mod completion;
 mod cron;
 mod kg;
@@ -69,6 +70,9 @@ pub async fn dispatch_method(
         return result;
     }
     if let Some(result) = session::handle(state, method, &p).await {
+        return result;
+    }
+    if let Some(result) = claude_import::handle(state, method, &p).await {
         return result;
     }
     if let Some(result) = model::handle(state, method, &p).await {
