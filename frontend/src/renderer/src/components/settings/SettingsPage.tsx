@@ -210,6 +210,7 @@ export default function SettingsPage() {
             <div className={styles.contentBody}>
               <GlobalDefaultsSection />
               <AgentConfigPanel sectionTitle={t('settings.agentSection')} />
+              <hr className={styles.sectionDivider} />
               <TeamTab sectionTitle={t('settings.teamSection')} />
             </div>
           </>
