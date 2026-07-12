@@ -229,7 +229,11 @@ export default function SettingsModal({
             </>
           )}
           {tab === 'token' && <TokenTab />}
-          {tab === 'about' && <AboutTab wsState={wsState} />}
+          {tab === 'about' && (
+            <div className={styles.contentBody}>
+              <AboutTab wsState={wsState} />
+            </div>
+          )}
         </div>
       </div>
     </Overlay>

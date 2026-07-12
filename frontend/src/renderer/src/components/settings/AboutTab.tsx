@@ -48,13 +48,7 @@ export default function AboutTab({ wsState }: { wsState: string }) {
   ], [t])
 
   return (
-    <>
-      <div className={styles.contentHeader}>
-        <h3 className={styles.sectionTitle}>{t('about.title')}</h3>
-        <p className={styles.sectionDesc}>{t('about.subtitle')}</p>
-      </div>
-      <div className={styles.contentBody}>
-        <div className={styles.aboutLayout}>
+    <div className={styles.aboutLayout}>
 
           {/* ── Hero ── */}
           <div className={styles.aboutHeroC3}>
@@ -178,7 +172,6 @@ export default function AboutTab({ wsState }: { wsState: string }) {
             </div>
           )}
         </div>
-      </div>
-    </>
+    </div>
   )
 }

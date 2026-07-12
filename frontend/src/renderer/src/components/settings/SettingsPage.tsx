@@ -327,7 +327,11 @@ export default function SettingsPage() {
         )}
         {tab === 'token' && <TokenTab />}
         {tab === 'devtest' && <DevTestTab />}
-        {tab === 'about' && <AboutTab wsState={wsState} />}
+        {tab === 'about' && (
+          <div className={styles.contentBody}>
+            <AboutTab wsState={wsState} />
+          </div>
+        )}
         </div>
 
         {/* Scroll-to-top */}
