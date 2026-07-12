@@ -1068,12 +1068,12 @@ export const enUS: TranslationMap = {
   'settings.builtinToolsDesc': 'View and adjust built-in tool defaults',
 
   // ── Import Conversations ─────────────────────────────────────────
-  'settings.importConversations': 'Import Claude Code Conversations',
-  'settings.importConversationsDesc': 'Scan local Claude Code project directories and import conversations as openLoom sessions',
+  'settings.importConversations': 'Import Conversations',
+  'settings.importConversationsDesc': 'Import conversations from Claude Code and other tools as openLoom sessions',
   'settings.searchConversations': 'Search title / project',
   'settings.rescan': 'Rescan',
   'settings.scanning': 'Scanning…',
-  'settings.noConversations': 'No Claude Code conversations found (path: ~/.claude/projects)',
+  'settings.noConversations': 'No importable conversations found (path: ~/.claude/projects)',
   'settings.imported': 'Imported',
   'settings.importSelected': 'Import selected',
   'settings.importDone': 'Import complete',

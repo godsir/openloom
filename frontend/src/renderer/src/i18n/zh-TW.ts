@@ -1057,12 +1057,12 @@ export const zhTW: TranslationMap = {
   'settings.builtinToolsDesc': '檢視與調整內置工具的預設參數',
 
   // ── Import Conversations ─────────────────────────────────────────
-  'settings.importConversations': '匯入 Claude Code 對話',
-  'settings.importConversationsDesc': '掃描本地 Claude Code 專案目錄，選擇對話匯入為 openLoom 會話',
+  'settings.importConversations': '匯入歷史對話',
+  'settings.importConversationsDesc': '從 Claude Code 等工具匯入歷史會話到 openLoom',
   'settings.searchConversations': '搜尋標題 / 專案',
   'settings.rescan': '重新掃描',
   'settings.scanning': '掃描中…',
-  'settings.noConversations': '未發現 Claude Code 對話（路徑：~/.claude/projects）',
+  'settings.noConversations': '未發現可匯入的對話（路徑：~/.claude/projects）',
   'settings.imported': '已匯入',
   'settings.importSelected': '匯入選中',
   'settings.importDone': '匯入完成',
