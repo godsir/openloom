@@ -15,7 +15,7 @@ export default function AgentSelector() {
     setSelected(bindingName || '')
   }, [bindingName])
 
-  const validAgents = agents.filter((a) => a.name && a.name !== 'default')
+  const validAgents = agents.filter((a) => a.name && a.name !== 'default' && !a.name.startsWith('__team_'))
   const options = useMemo(
     () => [
       { value: '', label: t('input.defaultAgent') },

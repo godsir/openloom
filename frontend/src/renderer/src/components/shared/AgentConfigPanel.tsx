@@ -268,7 +268,7 @@ export default function AgentConfigPanel() {
     [models, t],
   )
 
-  const filteredAgents = agents.filter((a) => a.name)
+  const filteredAgents = agents.filter((a) => a.name && !a.name.startsWith('__team_'))
 
   return (
     <div className={styles.panel}>

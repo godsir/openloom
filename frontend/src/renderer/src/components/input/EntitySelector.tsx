@@ -65,7 +65,7 @@ export default function EntitySelector() {
     }
   }, [open])
 
-  const validAgents = agents.filter((a) => a.name && a.name !== 'default')
+  const validAgents = agents.filter((a) => a.name && a.name !== 'default' && !a.name.startsWith('__team_'))
 
   const handleSelectAgent = useCallback(
     (name: string) => {

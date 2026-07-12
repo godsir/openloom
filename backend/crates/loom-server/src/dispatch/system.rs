@@ -99,7 +99,10 @@ async fn handle_agent_kill(state: &AppState, p: &Value) -> Result<Value, JsonRpc
 // --- agent.config.list ---
 
 async fn handle_agent_config_list(state: &AppState) -> Result<Value, JsonRpcError> {
-    let configs = state.orchestrator.agent_config_list().await;
+    let mut configs = state.orchestrator.agent_config_list().await;
+    // Filter out internal __team_ synthetic configs — they should not appear in
+    // user-facing agent selectors or the agent config settings panel.
+    configs.retain(|c| !c.name.starts_with("__team_captain_") && !c.name.starts_with("__team_"));
     Ok(json!({ "configs": configs }))
 }
 

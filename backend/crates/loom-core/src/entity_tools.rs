@@ -99,7 +99,10 @@ async fn exec_agent(
 ) -> Result<String> {
     match action {
         "list" => {
-            let configs = ms.list_agent_configs().await?;
+            let mut configs = ms.list_agent_configs().await?;
+            // Hide __team_* synthetic configs — these are runtime artifacts for
+            // inline team members and should not be visible to the LLM or user.
+            configs.retain(|c| !c.name.starts_with("__team_"));
             Ok(serde_json::to_string_pretty(&configs).unwrap_or_else(|e| e.to_string()))
         }
         "get" => {
