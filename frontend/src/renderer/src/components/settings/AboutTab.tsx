@@ -171,7 +171,6 @@ export default function AboutTab({ wsState }: { wsState: string }) {
               <div className={styles.aboutProgressFill} style={{ width: `${update.progress}%` }} />
             </div>
           )}
-        </div>
     </div>
   )
 }
