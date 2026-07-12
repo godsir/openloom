@@ -1063,6 +1063,16 @@ export const enUS: TranslationMap = {
   'settings.builtinTools': 'Built-in Tools',
   'settings.builtinToolsDesc': 'View and adjust built-in tool defaults',
 
+  // ── Import Conversations ─────────────────────────────────────────
+  'settings.importConversations': 'Import Claude Code Conversations',
+  'settings.searchConversations': 'Search title / project',
+  'settings.rescan': 'Rescan',
+  'settings.scanning': 'Scanning…',
+  'settings.noConversations': 'No Claude Code conversations found (path: ~/.claude/projects)',
+  'settings.imported': 'Imported',
+  'settings.importSelected': 'Import selected',
+  'settings.importDone': 'Import complete',
+
   'bt.shell': 'Execute shell commands and wait for results',
   'bt.file_list': 'List directory contents with optional recursion',
   'bt.file_read': 'Read file contents',

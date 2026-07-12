@@ -60,7 +60,7 @@ export default function ImportConversationsTab() {
   const importSelected = async () => {
     setImporting(true)
     try {
-      await rpc('claude_import.run', { ids: selected }, t('settings.importDone', '导入完成'))
+      await rpc('claude_import.run', { ids: selected }, t('settings.importDone'))
       await scan()
       await loadSessions()
     } catch {
@@ -73,27 +73,33 @@ export default function ImportConversationsTab() {
   return (
     <div className={styles.wrap}>
       <div className={styles.header}>
-        <h3 className={styles.title}>{t('settings.importConversations', '导入 Claude Code 对话')}</h3>
+        <h3 className={styles.title}>{t('settings.importConversations')}</h3>
       </div>
       <div className={styles.toolbar}>
+        <input
+          type="checkbox"
+          className={styles.selectAll}
+          checked={allSel}
+          onChange={() => setSelected(allSel ? [] : importable.map((c) => c.session_uuid))}
+        />
         <IconSearch size={14} />
         <input
           className={styles.search}
-          placeholder={t('settings.searchConversations', '搜索标题 / 项目')}
+          placeholder={t('settings.searchConversations')}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
         <button className={styles.scanBtn} onClick={scan} disabled={scanning}>
           {scanning ? <IconLoader size={14} /> : <IconRefresh size={14} />}
-          {t('settings.rescan', '重新扫描')}
+          {t('settings.rescan')}
         </button>
       </div>
 
       {filtered.length === 0 && (
         <div className={styles.empty}>
           {scanning
-            ? (t('settings.scanning', '扫描中…'))
-            : (t('settings.noConversations', '未发现 Claude Code 对话（路径：~/.claude/projects）'))}
+            ? (t('settings.scanning'))
+            : (t('settings.noConversations'))}
         </div>
       )}
 
@@ -118,7 +124,7 @@ export default function ImportConversationsTab() {
                   <span>{c.title || c.first_message || c.session_uuid}</span>
                   <span className={styles.meta}>
                     {c.message_count} 条 · {c.model ?? '?'} · {c.started_at.slice(0, 10)}
-                    {disabled ? ` · ${t('settings.imported', '已导入')}` : ''}
+                    {disabled ? ` · ${t('settings.imported')}` : ''}
                   </span>
                 </div>
               </label>
@@ -133,7 +139,7 @@ export default function ImportConversationsTab() {
         disabled={selected.length === 0 || importing}
       >
         {importing ? <IconLoader size={14} /> : <IconDownload size={14} />}
-        {t('settings.importSelected', '导入选中')} ({selected.length})
+        {t('settings.importSelected')} ({selected.length})
       </button>
     </div>
   )

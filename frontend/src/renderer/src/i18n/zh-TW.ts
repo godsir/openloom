@@ -1052,6 +1052,16 @@ export const zhTW: TranslationMap = {
   'settings.builtinTools': '內置工具',
   'settings.builtinToolsDesc': '檢視與調整內置工具的預設參數',
 
+  // ── Import Conversations ─────────────────────────────────────────
+  'settings.importConversations': '匯入 Claude Code 對話',
+  'settings.searchConversations': '搜尋標題 / 專案',
+  'settings.rescan': '重新掃描',
+  'settings.scanning': '掃描中…',
+  'settings.noConversations': '未發現 Claude Code 對話（路徑：~/.claude/projects）',
+  'settings.imported': '已匯入',
+  'settings.importSelected': '匯入選中',
+  'settings.importDone': '匯入完成',
+
   'bt.shell': '執行 Shell 命令並等待返回結果',
   'bt.file_list': '列出目錄內容，支援遞迴',
   'bt.file_read': '讀取檔案內容',

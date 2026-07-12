@@ -116,7 +116,7 @@ function useSettingsTabs() {
         { id: 'write' as Tab, label: t('write.settings', '写作设置'), icon: <IconEdit size={14} /> },
         { id: 'im' as Tab, label: t('settings.im', 'IM 接入'), icon: <IconMessageSquare size={14} /> },
         { id: 'builtin_tools' as Tab, label: t('settings.builtinTools'), icon: <IconSettings size={14} /> },
-        { id: 'import' as Tab, label: t('settings.importConversations', '导入对话'), icon: <IconDownload size={14} /> },
+        { id: 'import' as Tab, label: t('settings.importConversations'), icon: <IconDownload size={14} /> },
       ],
     },
     {

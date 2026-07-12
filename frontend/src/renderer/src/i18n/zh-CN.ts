@@ -1063,6 +1063,16 @@ export const zhCN: TranslationMap = {
   'settings.builtinTools': '内置工具',
   'settings.builtinToolsDesc': '查看和调整内置工具的默认参数',
 
+  // ── Import Conversations ─────────────────────────────────────────
+  'settings.importConversations': '导入 Claude Code 对话',
+  'settings.searchConversations': '搜索标题 / 项目',
+  'settings.rescan': '重新扫描',
+  'settings.scanning': '扫描中…',
+  'settings.noConversations': '未发现 Claude Code 对话（路径：~/.claude/projects）',
+  'settings.imported': '已导入',
+  'settings.importSelected': '导入选中',
+  'settings.importDone': '导入完成',
+
   'bt.shell': '执行 Shell 命令并等待返回结果',
   'bt.file_list': '列出目录内容，支持递归',
   'bt.file_read': '读取文件内容',

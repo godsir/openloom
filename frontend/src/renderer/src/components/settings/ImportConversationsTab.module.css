@@ -2,6 +2,7 @@
 .header { display: flex; align-items: center; gap: 8px; }
 .title { font-size: 15px; font-weight: 600; color: var(--text); margin: 0; }
 .toolbar { display: flex; align-items: center; gap: 8px; }
+.selectAll { cursor: pointer; }
 .search { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 6px; }
 .scanBtn { display: inline-flex; align-items: center; gap: 6px; background: var(--accent); color: #fff; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
 .scanBtn:disabled { opacity: 0.5; cursor: not-allowed; }
