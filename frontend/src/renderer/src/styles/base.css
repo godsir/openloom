@@ -101,6 +101,7 @@
    ================================================================ */
 
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html{width:100vw;height:100vh;overflow:hidden;background:transparent}
 html,body,#root{width:100vw;height:100vh;overflow:hidden}
 body{
   background:var(--bg);

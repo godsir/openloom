@@ -26,7 +26,8 @@ export function createMainWindow(port: number): BrowserWindow {
     minHeight: 400,
     frame: false,
     titleBarStyle: 'hidden',
-    backgroundColor: '#0B0F14',
+    transparent: true,
+    backgroundColor: '#00000000',
     show: false,
     icon: getIconPath(),
     webPreferences: {
