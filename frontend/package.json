@@ -1,6 +1,6 @@
 {
   "name": "openloom-desktop",
-  "version": "0.4.24",
+  "version": "0.4.25",
   "description": "openLoom — local-first private AI assistant",
   "main": "./out/main/index.js",
   "scripts": {
