@@ -308,6 +308,13 @@ export const enUS: TranslationMap = {
   'about.agentCount': 'Configured Agents',
   'about.activeAgentCount': 'Active Agents',
   'about.toolCount': 'Tool Count',
+  'about.groupSystem': 'System',
+  'about.groupStorage': 'Storage',
+  'about.connection': 'Connection',
+  'about.agent': 'Agents',
+  'about.tools': 'Tools',
+  'about.data': 'Data',
+  'about.update': 'Update',
 
   // ── Cron ────────────────────────────────────────────────────────
   'cron.title': 'Scheduled Tasks',

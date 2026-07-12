@@ -300,6 +300,13 @@ export const zhTW: TranslationMap = {
   'about.agentCount': '已配置 Agent',
   'about.activeAgentCount': '活躍 Agent',
   'about.toolCount': '工具數量',
+  'about.groupSystem': '系統',
+  'about.groupStorage': '其他',
+  'about.connection': '連接',
+  'about.agent': 'Agent',
+  'about.tools': '工具',
+  'about.data': '資料',
+  'about.update': '更新',
 
   // ── Cron ────────────────────────────────────────────────────────
   'cron.title': '定時任務',

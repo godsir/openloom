@@ -308,6 +308,13 @@ export const zhCN: TranslationMap = {
   'about.agentCount': '已配置 Agent',
   'about.activeAgentCount': '活跃 Agent',
   'about.toolCount': '工具数量',
+  'about.groupSystem': '系统',
+  'about.groupStorage': '其他',
+  'about.connection': '连接',
+  'about.agent': 'Agent',
+  'about.tools': '工具',
+  'about.data': '数据',
+  'about.update': '更新',
 
   // ── Cron ────────────────────────────────────────────────────────
   'cron.title': '定时任务',

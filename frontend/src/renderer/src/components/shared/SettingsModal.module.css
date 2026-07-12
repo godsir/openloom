@@ -498,6 +498,206 @@
   color: var(--text-secondary);
 }
 
+/* ── About C3: brand hero + grouped info list ── */
+
+.aboutHeroC3 {
+  text-align: center;
+  padding: 24px 20px;
+  border-radius: var(--r-lg);
+  background: linear-gradient(180deg, rgba(var(--accent-rgb, 99,102,241), 0.05), transparent);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.aboutHeroC3Icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  object-fit: contain;
+  margin-bottom: 10px;
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.15);
+}
+
+.aboutHeroC3Name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+}
+
+.aboutHeroC3Version {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  padding: 2px 10px;
+  border-radius: 100px;
+  margin: 6px 0;
+}
+
+.aboutHeroC3Desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  max-width: 300px;
+  margin: 8px 0 0;
+  line-height: 1.5;
+}
+
+.aboutHeroC3Link {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  opacity: 0.5;
+  margin-top: 8px;
+  text-decoration: none;
+  transition: opacity 0.15s;
+}
+.aboutHeroC3Link:hover {
+  opacity: 0.8;
+}
+
+/* ── Info list ── */
+
+.aboutList {
+  max-width: 400px;
+  margin: 0 auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.aboutListGroup {
+  display: flex;
+  flex-direction: column;
+}
+
+.aboutListGroup + .aboutListGroup {
+  margin-top: 18px;
+}
+
+.aboutListGroupLabel {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 0 0 6px;
+}
+
+.aboutListRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  font-size: 12px;
+}
+.aboutListRow:last-child {
+  border-bottom: none;
+}
+
+.aboutListRowLabel {
+  color: var(--text-muted);
+}
+
+.aboutListRowValue {
+  color: var(--text);
+}
+
+.aboutListRowOk {
+  color: var(--green, #22c55e);
+}
+
+.aboutListRowWarn {
+  color: var(--amber, #f59e0b);
+}
+
+.aboutListRowValueMono {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aboutChannelBadge {
+  display: inline-block;
+  font-size: 9px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 1px 5px;
+  border-radius: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+/* ── Actions row ── */
+
+.aboutActionsC3 {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.aboutActionBtn {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  transition: all 0.15s ease;
+}
+.aboutActionBtn:hover {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.aboutActionBtnPrimary {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border: 1px solid rgba(var(--accent-rgb), 0.20);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.aboutActionBtnPrimary:hover {
+  background: var(--accent-medium);
+}
+
+/* ── Progress bar ── */
+
+.aboutProgressBar {
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.aboutProgressFill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
 /* Shared tools styles (reused by MCP) */
 .toolsBadgeGrid {
   display: flex;
