@@ -1031,7 +1031,7 @@ export const enUS: TranslationMap = {
   'settings.agentAndTeamDesc': 'Manage individual agent configs and expert teams (multi-agent collaboration), message orchestration and collaboration strategies',
   'settings.agentSection': 'Agents',
   'settings.teamSection': 'Expert Teams',
-  'settings.loomMd': 'Loom.md',
+  'settings.loomMd': 'Rules',
   'settings.loomMdDesc': 'Global agent discipline file, applies to every session (like CLAUDE.md)',
   'settings.loomMdTitle': 'Loom.md Discipline File',
   'settings.loomMdHint': 'Edits here apply to every agent on every turn. Leave empty to disable Loom.md and fall back to the built-in default prompt.',

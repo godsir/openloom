@@ -1023,7 +1023,7 @@ export const zhTW: TranslationMap = {
   'settings.agentAndTeamDesc': '管理普通智慧體配置和專家團（多智慧體協作），專家的訊息編排和協作策略',
   'settings.agentSection': '智慧體',
   'settings.teamSection': '專家團',
-  'settings.loomMd': 'Loom.md',
+  'settings.loomMd': '規則檔案',
   'settings.loomMdDesc': '全域 Agent 紀律檔案，對所有工作階段生效（類似 CLAUDE.md）',
   'settings.loomMdTitle': 'Loom.md 紀律檔案',
   'settings.loomMdHint': '編輯全域紀律，對所有 Agent 的每次對話生效。留空則停用 Loom.md，回退到內建預設提示。',

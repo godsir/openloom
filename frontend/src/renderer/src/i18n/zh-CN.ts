@@ -1031,7 +1031,7 @@ export const zhCN: TranslationMap = {
   'settings.agentAndTeamDesc': '管理普通智能体配置和专家团（多智能体协作），专家的消息编排和协作策略',
   'settings.agentSection': '智能体',
   'settings.teamSection': '专家团',
-  'settings.loomMd': 'Loom.md',
+  'settings.loomMd': '规则文件',
   'settings.loomMdDesc': '全局 Agent 纪律文件，对所有会话生效（类似 CLAUDE.md）',
   'settings.loomMdTitle': 'Loom.md 纪律文件',
   'settings.loomMdHint': '编辑全局纪律，对所有 Agent 的每次对话生效。留空则禁用 Loom.md，回退到内置默认提示。',
