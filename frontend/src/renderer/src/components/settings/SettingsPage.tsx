@@ -210,9 +210,9 @@ export default function SettingsPage() {
             <div className={styles.contentBody}>
               <GlobalDefaultsSection />
               <div className={styles.sectionLabel}>{t('settings.agentSection')}</div>
-              <AgentConfigPanel embedded />
+              <AgentConfigPanel />
               <div className={styles.sectionLabel}>{t('settings.teamSection')}</div>
-              <TeamTab embedded />
+              <TeamTab />
             </div>
           </>
         )}

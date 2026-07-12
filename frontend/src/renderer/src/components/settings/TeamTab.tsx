@@ -27,7 +27,7 @@ const genSteps = [
   { key: 'done', label: (_name: string) => '生成完成' },
 ]
 
-export default function TeamTab({ embedded = false }: { embedded?: boolean }) {
+export default function TeamTab() {
   const { t } = useLocale()
   const teams = useStore((s) => s.teams)
   const agents = useStore((s) => s.agents)
@@ -668,7 +668,6 @@ export default function TeamTab({ embedded = false }: { embedded?: boolean }) {
 
   return (
     <div className={styles.panel}>
-      {!embedded && (
       <div className={styles.header}>
         {!isEditing && !isCreating && (
           <div className={styles.headerButtons}>
@@ -676,7 +675,6 @@ export default function TeamTab({ embedded = false }: { embedded?: boolean }) {
           </div>
         )}
       </div>
-      )}
 
       {isCreating && renderForm(false)}
 
