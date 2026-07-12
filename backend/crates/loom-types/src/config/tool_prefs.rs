@@ -7,9 +7,10 @@
 use serde::{Deserialize, Serialize};
 
 /// Supported search backends for the built-in `web_search` tool.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolSearchEngine {
+    #[default]
     DuckDuckGoLite,
     Brave,
     SearXNG,
@@ -17,12 +18,6 @@ pub enum ToolSearchEngine {
     Bing,
     Tavily,
     Serper,
-}
-
-impl Default for ToolSearchEngine {
-    fn default() -> Self {
-        Self::DuckDuckGoLite
-    }
 }
 
 /// User-tunable parameters for built-in tools, persisted to `~/.loom/tool_prefs.json`.
