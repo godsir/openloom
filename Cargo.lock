@@ -1700,6 +1700,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "loom-import"
+version = "0.4.14"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "loom-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "loom-inference"
 version = "0.4.1"
 dependencies = [

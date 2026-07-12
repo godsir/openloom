@@ -1,0 +1,5 @@
+{"type":"last-prompt","leafUuid":"u1","sessionId":"session-aa"}
+{"type":"ai-title","aiTitle":"My Cool Chat","sessionId":"session-aa"}
+{"type":"user","message":{"role":"user","content":"hello world"},"uuid":"m1","timestamp":"2026-07-10T01:00:00.000Z","cwd":"C:/proj-a","sessionId":"session-aa","isSidechain":false}
+{"type":"assistant","message":{"role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"hi there"}],"usage":{"input_tokens":10,"output_tokens":5}},"uuid":"m2","timestamp":"2026-07-10T01:01:00.000Z","sessionId":"session-aa","isSidechain":false}
+{"type":"user","message":{"role":"user","content":"again"},"uuid":"m3","timestamp":"2026-07-10T02:00:00.000Z","cwd":"C:/proj-a","sessionId":"session-aa","isSidechain":false}
