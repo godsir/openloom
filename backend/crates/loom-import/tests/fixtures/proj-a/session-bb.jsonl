@@ -1,0 +1,9 @@
+{"type":"last-prompt","leafUuid":"u1","sessionId":"session-bb"}
+{"type":"ai-title","aiTitle":"Block Party","sessionId":"session-bb"}
+{"type":"user","message":{"role":"user","content":"please run the tool"},"uuid":"m1","timestamp":"2026-07-11T01:00:00.000Z","cwd":"C:/proj-a","sessionId":"session-bb","isSidechain":false}
+{"type":"assistant","message":{"role":"assistant","model":"glm-5.2","content":[{"type":"thinking","thinking":"plan"},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"echo hi"}},{"type":"text","text":"done"}],"usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":8,"cache_creation_input_tokens":4}},"uuid":"m2","timestamp":"2026-07-11T01:01:00.000Z","sessionId":"session-bb","isSidechain":false}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"hi\n"}]},"uuid":"m3","timestamp":"2026-07-11T01:02:00.000Z","cwd":"C:/proj-a","sessionId":"session-bb","isSidechain":false}
+{"type":"user","message":{"role":"user","content":"sidechain noise"},"isSidechain":true,"uuid":"m4","timestamp":"2026-07-11T01:03:00.000Z","sessionId":"session-bb"}
+{"type":"attachment","attachment":{"type":"hook_success"},"uuid":"m5","timestamp":"2026-07-11T01:04:00.000Z","sessionId":"session-bb"}
+{"type":"assistant","message":{"role":"assistant","model":"glm-5.2","content":[{"type":"text","text":"all set"}],"usage":{"input_tokens":50,"output_tokens":5}},"uuid":"m6","timestamp":"2026-07-11T02:00:00.000Z","cwd":"C:/proj-a","sessionId":"session-bb","isSidechain":false}
+{"this is not valid json"

@@ -4,4 +4,4 @@
 
 mod claude;
 
-pub use claude::{ConversationSummary, scan};
+pub use claude::{ConversationSummary, build_payload, scan};

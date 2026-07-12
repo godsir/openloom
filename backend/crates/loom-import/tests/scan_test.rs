@@ -7,8 +7,12 @@ fn fixtures_dir() -> PathBuf {
 #[test]
 fn scan_reads_metadata_for_each_jsonl() {
     let summaries = loom_import::scan(&fixtures_dir()).expect("scan ok");
-    assert_eq!(summaries.len(), 1);
-    let s = &summaries[0];
+    // proj-a now holds two fixtures: session-aa (this test) + session-bb (build_test, Task 3).
+    assert_eq!(summaries.len(), 2);
+    let s = summaries
+        .iter()
+        .find(|s| s.session_uuid == "session-aa")
+        .expect("session-aa present");
     assert_eq!(s.session_uuid, "session-aa");
     assert_eq!(s.project_dir, "proj-a");
     assert_eq!(s.title.as_deref(), Some("My Cool Chat"));
