@@ -1394,6 +1394,7 @@ impl MemoryStore for LoomMemoryStore {
         let sess = self.session_db.lock().expect("lock poisoned");
         let conn = sess.conn();
 
+        // Read-only check outside the transaction — no writes here.
         let existed: bool = conn
             .query_row(
                 "SELECT 1 FROM sessions WHERE id = ?1",
@@ -1405,8 +1406,13 @@ impl MemoryStore for LoomMemoryStore {
         if existed && !replace {
             return Ok(ImportOutcome::AlreadyExists);
         }
+
+        // Wrap all writes in one transaction so a mid-loop failure or process
+        // kill rolls back the DELETE + partial inserts (no half-imported
+        // state). `?` on an error drops the Transaction → automatic ROLLBACK.
+        let tx = conn.unchecked_transaction()?;
         if existed && replace {
-            conn.execute(
+            tx.execute(
                 "DELETE FROM message_history WHERE session_id = ?1",
                 rusqlite::params![payload.id],
             )?;
@@ -1414,7 +1420,7 @@ impl MemoryStore for LoomMemoryStore {
 
         let created = payload.created_at.format("%Y-%m-%d %H:%M:%S").to_string();
         let updated = payload.updated_at.format("%Y-%m-%d %H:%M:%S").to_string();
-        conn.execute(
+        tx.execute(
             "INSERT OR IGNORE INTO sessions (id, created_at, updated_at, message_count, title, workspace_path)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![
@@ -1428,7 +1434,7 @@ impl MemoryStore for LoomMemoryStore {
         )?;
         // If the row pre-existed without replace (shouldn't reach here) or INSERT OR IGNORE no-op'd,
         // still sync the metadata columns so re-imports refresh title/timestamps/counts.
-        conn.execute(
+        tx.execute(
             "UPDATE sessions SET created_at = ?2, updated_at = ?3, message_count = ?4, title = ?5, workspace_path = ?6
              WHERE id = ?1",
             rusqlite::params![
@@ -1459,17 +1465,18 @@ impl MemoryStore for LoomMemoryStore {
                 .to_string()
             });
             if let Some(meta) = usage_meta {
-                conn.execute(
+                tx.execute(
                     "INSERT INTO message_history (session_id, seq, role, content, timestamp, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     rusqlite::params![payload.id, seq, role, content, ts, meta],
                 )?;
             } else {
-                conn.execute(
+                tx.execute(
                     "INSERT INTO message_history (session_id, seq, role, content, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
                     rusqlite::params![payload.id, seq, role, content, ts],
                 )?;
             }
         }
+        tx.commit()?;
         Ok(if existed {
             ImportOutcome::Replaced
         } else {

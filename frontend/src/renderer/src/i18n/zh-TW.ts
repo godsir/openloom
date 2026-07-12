@@ -1061,6 +1061,7 @@ export const zhTW: TranslationMap = {
   'settings.imported': '已匯入',
   'settings.importSelected': '匯入選中',
   'settings.importDone': '匯入完成',
+  'settings.scanFailed': '掃描失敗，請重試',
 
   'bt.shell': '執行 Shell 命令並等待返回結果',
   'bt.file_list': '列出目錄內容，支援遞迴',

@@ -34,12 +34,14 @@ export default function ImportConversationsTab() {
       const r = await loomRpc<{ conversations: ConvSummary[] }>('claude_import.scan')
       setConvs(r.conversations ?? [])
       setSelected([])
+    } catch {
+      useStore.getState().addToast({ type: 'error', message: t('settings.scanFailed') })
     } finally {
       setScanning(false)
     }
-  }, [])
+  }, [t])
 
-  useEffect(() => { scan() }, [scan])
+  useEffect(() => { scan().catch(() => {}) }, [scan])
 
   const filtered = convs.filter((c) => {
     if (!query) return true

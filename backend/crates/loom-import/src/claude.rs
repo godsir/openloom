@@ -24,13 +24,19 @@ pub struct ConversationSummary {
     pub already_imported: bool,
 }
 
-/// Scan every `*.jsonl` under `projects_dir/<project_dir>/`. Reads only the
-/// metadata needed to list/preview conversations — does not parse full content.
+/// Scan every `*.jsonl` under `projects_dir/<project_dir>/`. Reads metadata
+/// fields (type, timestamp, aiTitle, message content preview) from every line
+/// to count messages and find time bounds — O(total file size), acceptable
+/// for Phase 1. Does not build `Message`s (that's `build_payload`'s job).
 pub fn scan(projects_dir: &Path) -> Result<Vec<ConversationSummary>> {
     let mut out = Vec::new();
     if !projects_dir.exists() {
         return Ok(out);
     }
+    // Dedup by session_uuid (file stem): if the same stem appears in two
+    // project dirs, only the first-encountered wins. read_dir order is
+    // nondeterministic, so this is a best-effort edge-case guard.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for entry in std::fs::read_dir(projects_dir)
         .with_context(|| format!("read {}", projects_dir.display()))?
     {
@@ -53,6 +59,9 @@ pub fn scan(projects_dir: &Path) -> Result<Vec<ConversationSummary>> {
                 .and_then(|s| s.to_str())
                 .unwrap_or_default()
                 .to_string();
+            if !seen.insert(stem.clone()) {
+                continue;
+            }
             match scan_one(&path, &stem, &project_dir) {
                 Ok(Some(s)) => out.push(s),
                 Ok(None) => {}
@@ -214,40 +223,42 @@ pub fn build_payload(jsonl_path: &Path) -> Result<ImportPayload> {
         {
             continue;
         }
+        let ty = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
         let ts = obj
             .get("timestamp")
             .and_then(|v| v.as_str())
             .and_then(parse_ts);
-        if let Some(t) = ts {
-            if created_at.is_none() {
-                created_at = Some(t);
-            }
-            updated_at = Some(t);
-        }
         if let Some(cwd) = obj.get("cwd").and_then(|v| v.as_str())
             && !cwd.is_empty()
         {
             workspace_path = Some(cwd.to_string());
         }
-        let ty = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
         match ty {
             "ai-title" => {
                 if let Some(t) = obj.get("aiTitle").and_then(|v| v.as_str()) {
                     title = Some(t.to_string());
                 }
             }
-            "user" => {
-                if let Some(msg) = obj.get("message")
-                    && let Some(m) = map_user_message(msg, ts)
-                {
-                    messages.push(m);
+            "user" | "assistant" => {
+                // Only track timestamps for real messages, matching scan_one.
+                if let Some(t) = ts {
+                    if created_at.is_none() {
+                        created_at = Some(t);
+                    }
+                    updated_at = Some(t);
                 }
-            }
-            "assistant" => {
-                if let Some(msg) = obj.get("message")
-                    && let Some(m) = map_assistant_message(msg, ts)
-                {
-                    messages.push(m);
+                if ty == "user" {
+                    if let Some(msg) = obj.get("message")
+                        && let Some(m) = map_user_message(msg, ts)
+                    {
+                        messages.push(m);
+                    }
+                } else {
+                    if let Some(msg) = obj.get("message")
+                        && let Some(m) = map_assistant_message(msg, ts)
+                    {
+                        messages.push(m);
+                    }
                 }
             }
             _ => {}
@@ -260,7 +271,16 @@ pub fn build_payload(jsonl_path: &Path) -> Result<ImportPayload> {
         id,
         created_at,
         updated_at: updated_at.unwrap_or(created_at),
-        title: title.or_else(|| messages.first().map(|m| m.text_content())),
+        title: title
+            .filter(|t| !t.is_empty())
+            .or_else(|| {
+                messages
+                    .iter()
+                    .find(|m| m.role == Role::User)
+                    .map(|m| m.text_content())
+                    .filter(|t| !t.is_empty())
+            })
+            .or_else(|| Some("未命名".to_string())),
         workspace_path,
         messages,
     })
@@ -313,46 +333,50 @@ fn map_user_message(msg: &Value, ts: Option<DateTime<Utc>>) -> Option<Message> {
 }
 
 fn map_assistant_message(msg: &Value, ts: Option<DateTime<Utc>>) -> Option<Message> {
-    let arr = msg.get("content")?.as_array()?;
-    let parts: Vec<ContentPart> = arr
-        .iter()
-        .filter_map(|b| {
-            match b.get("type").and_then(|v| v.as_str()) {
-                Some("text") => b
-                    .get("text")
-                    .and_then(|v| v.as_str())
-                    .map(|t| ContentPart::Text {
-                        text: t.to_string(),
-                    }),
-                Some("thinking") => {
-                    b.get("thinking")
-                        .and_then(|v| v.as_str())
-                        .map(|t| ContentPart::Thinking {
-                            text: t.to_string(),
-                        })
-                }
-                Some("tool_use") => {
-                    let id = b
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let name = b
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let arguments = b.get("input").cloned().unwrap_or(Value::Null);
-                    Some(ContentPart::ToolCall {
-                        id,
-                        name,
-                        arguments,
-                    })
-                }
-                _ => None, // images etc. skipped
-            }
-        })
-        .collect();
+    let content_val = msg.get("content")?;
+    let parts: Vec<ContentPart> = match content_val {
+        Value::String(s) => vec![ContentPart::Text { text: s.clone() }],
+        Value::Array(arr) => {
+            arr.iter()
+                .filter_map(|b| {
+                    match b.get("type").and_then(|v| v.as_str()) {
+                        Some("text") => {
+                            b.get("text")
+                                .and_then(|v| v.as_str())
+                                .map(|t| ContentPart::Text {
+                                    text: t.to_string(),
+                                })
+                        }
+                        Some("thinking") => b.get("thinking").and_then(|v| v.as_str()).map(|t| {
+                            ContentPart::Thinking {
+                                text: t.to_string(),
+                            }
+                        }),
+                        Some("tool_use") => {
+                            let id = b
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let name = b
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let arguments = b.get("input").cloned().unwrap_or(Value::Null);
+                            Some(ContentPart::ToolCall {
+                                id,
+                                name,
+                                arguments,
+                            })
+                        }
+                        _ => None, // images etc. skipped
+                    }
+                })
+                .collect::<Vec<_>>()
+        }
+        _ => return None,
+    };
     if parts.is_empty() {
         return None;
     }

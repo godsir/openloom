@@ -60,3 +60,66 @@ fn build_payload_title_falls_back_to_first_user_message() {
     let res = loom_import::build_payload(&p);
     assert!(res.is_err());
 }
+
+#[test]
+fn build_payload_title_from_first_user_message_when_no_ai_title() {
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let jsonl = dir.path().join("no-title.jsonl");
+    std::fs::write(
+        &jsonl,
+        "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hello\"},\"timestamp\":\"2026-07-11T01:00:00.000Z\",\"sessionId\":\"no-title\"}\n",
+    )
+    .unwrap();
+    let payload = loom_import::build_payload(&jsonl).expect("parse ok");
+    assert_eq!(payload.title.as_deref(), Some("hello"));
+}
+
+#[test]
+fn build_payload_title_skips_assistant_uses_first_user_message() {
+    // No ai-title; first message is assistant, then a user message "world".
+    // Title should come from the first USER message, not the assistant.
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let jsonl = dir.path().join("assistant-first.jsonl");
+    std::fs::write(
+        &jsonl,
+        "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"model\":\"m\",\"content\":[{\"type\":\"text\",\"text\":\"I speak first\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":2}},\"timestamp\":\"2026-07-11T01:00:00.000Z\",\"sessionId\":\"assistant-first\"}\n\
+         {\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"world\"},\"timestamp\":\"2026-07-11T01:01:00.000Z\",\"sessionId\":\"assistant-first\"}\n",
+    )
+    .unwrap();
+    let payload = loom_import::build_payload(&jsonl).expect("parse ok");
+    assert_eq!(payload.title.as_deref(), Some("world"));
+}
+
+#[test]
+fn build_payload_title_unnamed_when_no_user_message() {
+    // No ai-title, only an assistant message — title should fall back to "未命名".
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let jsonl = dir.path().join("no-user.jsonl");
+    std::fs::write(
+        &jsonl,
+        "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"model\":\"m\",\"content\":[{\"type\":\"text\",\"text\":\"solo\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":2}},\"timestamp\":\"2026-07-11T01:00:00.000Z\",\"sessionId\":\"no-user\"}\n",
+    )
+    .unwrap();
+    let payload = loom_import::build_payload(&jsonl).expect("parse ok");
+    assert_eq!(payload.title.as_deref(), Some("未命名"));
+}
+
+#[test]
+fn build_payload_maps_assistant_string_content() {
+    // Claude Code always uses arrays, but guard against a string content
+    // (symmetry with map_user_message) — should map to a Text part, not drop.
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let jsonl = dir.path().join("string-content.jsonl");
+    std::fs::write(
+        &jsonl,
+        "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"model\":\"m\",\"content\":\"plain string\",\"usage\":{\"input_tokens\":1,\"output_tokens\":2}},\"timestamp\":\"2026-07-11T01:00:00.000Z\",\"sessionId\":\"string-content\"}\n",
+    )
+    .unwrap();
+    let payload = loom_import::build_payload(&jsonl).expect("parse ok");
+    assert_eq!(payload.messages.len(), 1);
+    let m = &payload.messages[0];
+    assert_eq!(m.role, loom_types::Role::Assistant);
+    assert!(
+        matches!(&m.content[0], loom_types::ContentPart::Text { text } if text == "plain string")
+    );
+}

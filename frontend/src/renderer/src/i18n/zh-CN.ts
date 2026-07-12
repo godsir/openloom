@@ -1072,6 +1072,7 @@ export const zhCN: TranslationMap = {
   'settings.imported': '已导入',
   'settings.importSelected': '导入选中',
   'settings.importDone': '导入完成',
+  'settings.scanFailed': '扫描失败，请重试',
 
   'bt.shell': '执行 Shell 命令并等待返回结果',
   'bt.file_list': '列出目录内容，支持递归',

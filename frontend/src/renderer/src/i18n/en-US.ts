@@ -1072,6 +1072,7 @@ export const enUS: TranslationMap = {
   'settings.imported': 'Imported',
   'settings.importSelected': 'Import selected',
   'settings.importDone': 'Import complete',
+  'settings.scanFailed': 'Scan failed, please retry',
 
   'bt.shell': 'Execute shell commands and wait for results',
   'bt.file_list': 'List directory contents with optional recursion',
