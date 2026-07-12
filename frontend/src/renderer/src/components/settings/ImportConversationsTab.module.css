@@ -5,6 +5,75 @@
   gap: 14px;
 }
 
+/* ── Source Tabs ── */
+.sourceRow {
+  display: flex;
+  gap: 4px;
+}
+
+.sourceTab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.sourceTab:hover:not(:disabled) {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+.sourceTabActive {
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border-color: rgba(var(--accent-rgb), 0.25);
+}
+.sourceTab:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.comingSoon {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg-active);
+  padding: 1px 5px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* ── Placeholder Box ── */
+.placeholderBox {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 40px 20px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--text-muted);
+}
+
+.placeholderTitle {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.placeholderSub {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
 /* ── Stats Cards ── */
 .statsRow {
   display: grid;

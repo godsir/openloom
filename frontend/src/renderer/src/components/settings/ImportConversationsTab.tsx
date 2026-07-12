@@ -29,6 +29,13 @@ interface ConvSummary {
 }
 
 type FilterKey = 'all' | 'pending' | 'imported'
+type SourceKey = 'claude' | 'openclaw' | 'codex'
+
+const SOURCES: { key: SourceKey; labelKey: string; available: boolean }[] = [
+  { key: 'claude', labelKey: 'settings.importSourceClaude', available: true },
+  { key: 'openclaw', labelKey: 'settings.importSourceOpenclaw', available: false },
+  { key: 'codex', labelKey: 'settings.importSourceCodex', available: false },
+]
 
 export default function ImportConversationsTab() {
   const { t } = useLocale()
@@ -39,6 +46,7 @@ export default function ImportConversationsTab() {
   const [importing, setImporting] = useState(false)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<FilterKey>('all')
+  const [source, setSource] = useState<SourceKey>('claude')
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [expandedImported, setExpandedImported] = useState<Set<string>>(new Set())
 
@@ -190,6 +198,29 @@ export default function ImportConversationsTab() {
 
   return (
     <div className={styles.wrap}>
+      {/* ── Source Picker ── */}
+      <div className={styles.sourceRow}>
+        {SOURCES.map((s) => (
+          <button
+            key={s.key}
+            className={`${styles.sourceTab} ${source === s.key ? styles.sourceTabActive : ''}`}
+            disabled={!s.available}
+            onClick={() => s.available && setSource(s.key)}
+            title={!s.available ? t('settings.comingSoon') : undefined}
+          >
+            {t(s.labelKey)}
+            {!s.available && <span className={styles.comingSoon}>{t('settings.comingSoon')}</span>}
+          </button>
+        ))}
+      </div>
+
+      {source !== 'claude' ? (
+        <div className={styles.placeholderBox}>
+          <span className={styles.placeholderTitle}>{t(s.labelKey)}</span>
+          <span className={styles.placeholderSub}>{t('settings.importComingSoon')}</span>
+        </div>
+      ) : (
+        <>
       {/* ── Stats Cards ── */}
       <div className={styles.statsRow}>
         <div className={styles.statCard}>
@@ -325,6 +356,8 @@ export default function ImportConversationsTab() {
           </div>
         )
       })}
+        </>
+      )}
     </div>
   )
 }
