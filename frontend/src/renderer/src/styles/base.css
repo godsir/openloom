@@ -104,6 +104,8 @@
 html,body,#root{width:100vw;height:100vh;overflow:hidden}
 body{
   background:var(--bg);
+  border-radius:12px;
+  overflow:hidden;
   color:var(--text);
   font-family:var(--font);
   font-size:14px;
