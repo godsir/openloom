@@ -9,7 +9,9 @@ use loom_memory::{
     NewEvent, RichPersonaProvider, TeamConfigStore, config_db::ConfigDb, memory_db::MemoryDb,
     session_db::SessionDb,
 };
-use loom_types::{AgentConfig, Message, ModelConfig, PersonaProvider, TeamConfig};
+use loom_types::{
+    AgentConfig, ImportOutcome, ImportPayload, Message, ModelConfig, PersonaProvider, TeamConfig,
+};
 
 pub struct LoomMemoryStore {
     pub config_db: std::sync::Mutex<ConfigDb>,
@@ -1384,6 +1386,97 @@ impl MemoryStore for LoomMemoryStore {
         Ok(())
     }
 
+    async fn import_session(
+        &self,
+        payload: &ImportPayload,
+        replace: bool,
+    ) -> Result<ImportOutcome> {
+        let sess = self.session_db.lock().expect("lock poisoned");
+        let conn = sess.conn();
+
+        let existed: bool = conn
+            .query_row(
+                "SELECT 1 FROM sessions WHERE id = ?1",
+                rusqlite::params![payload.id],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+
+        if existed && !replace {
+            return Ok(ImportOutcome::AlreadyExists);
+        }
+        if existed && replace {
+            conn.execute(
+                "DELETE FROM message_history WHERE session_id = ?1",
+                rusqlite::params![payload.id],
+            )?;
+        }
+
+        let created = payload.created_at.format("%Y-%m-%d %H:%M:%S").to_string();
+        let updated = payload.updated_at.format("%Y-%m-%d %H:%M:%S").to_string();
+        conn.execute(
+            "INSERT OR IGNORE INTO sessions (id, created_at, updated_at, message_count, title, workspace_path)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                payload.id,
+                created,
+                updated,
+                payload.messages.len() as i64,
+                payload.title,
+                payload.workspace_path,
+            ],
+        )?;
+        // If the row pre-existed without replace (shouldn't reach here) or INSERT OR IGNORE no-op'd,
+        // still sync the metadata columns so re-imports refresh title/timestamps/counts.
+        conn.execute(
+            "UPDATE sessions SET created_at = ?2, updated_at = ?3, message_count = ?4, title = ?5, workspace_path = ?6
+             WHERE id = ?1",
+            rusqlite::params![
+                payload.id,
+                created,
+                updated,
+                payload.messages.len() as i64,
+                payload.title,
+                payload.workspace_path,
+            ],
+        )?;
+
+        for (i, msg) in payload.messages.iter().enumerate() {
+            let seq = (i as i64) + 1;
+            let role = msg.role.as_str();
+            let content = serde_json::to_string(&msg.content)?;
+            let ts = msg.timestamp.to_rfc3339();
+            let usage_meta = msg.usage.as_ref().map(|u| {
+                serde_json::json!({
+                    "model": u.model,
+                    "prompt_tokens": u.prompt_tokens,
+                    "completion_tokens": u.completion_tokens,
+                    "cached_tokens": u.cache_read_tokens + u.cache_write_tokens,
+                    "cache_read_tokens": u.cache_read_tokens,
+                    "cache_write_tokens": u.cache_write_tokens,
+                    "context_window": u.context_window,
+                })
+                .to_string()
+            });
+            if let Some(meta) = usage_meta {
+                conn.execute(
+                    "INSERT INTO message_history (session_id, seq, role, content, timestamp, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    rusqlite::params![payload.id, seq, role, content, ts, meta],
+                )?;
+            } else {
+                conn.execute(
+                    "INSERT INTO message_history (session_id, seq, role, content, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![payload.id, seq, role, content, ts],
+                )?;
+            }
+        }
+        Ok(if existed {
+            ImportOutcome::Replaced
+        } else {
+            ImportOutcome::Created
+        })
+    }
+
     async fn get_summary(&self, session_id: &str) -> Result<Option<String>> {
         let store = self.session_db.lock().expect("lock poisoned");
         let result = store.conn().query_row(
@@ -2128,5 +2221,118 @@ impl MemoryStore for LoomMemoryStore {
         let json =
             serde_json::to_string(&status).unwrap_or_else(|_| r#"{"status":"error"}"#.into());
         Ok(json)
+    }
+}
+
+#[cfg(test)]
+mod import_tests {
+    use super::*;
+    use loom_import::build_payload;
+    use loom_types::{ContentPart, ImportOutcome, Message, Role};
+
+    fn store_in_tmp() -> LoomMemoryStore {
+        let dir = tempfile::tempdir().expect("tmpdir");
+        LoomMemoryStore::open(dir.path()).expect("open")
+    }
+
+    fn sample_payload(id: &str) -> loom_types::ImportPayload {
+        loom_types::ImportPayload {
+            id: id.into(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            title: Some("Imported".into()),
+            workspace_path: Some("C:/proj".into()),
+            messages: vec![
+                Message {
+                    role: Role::User,
+                    content: vec![ContentPart::Text { text: "hi".into() }],
+                    timestamp: chrono::Utc::now(),
+                    usage: None,
+                },
+                Message {
+                    role: Role::Assistant,
+                    content: vec![ContentPart::Text {
+                        text: "hello".into(),
+                    }],
+                    timestamp: chrono::Utc::now(),
+                    usage: Some(loom_types::inference::TokenUsage {
+                        prompt_tokens: 10,
+                        completion_tokens: 5,
+                        model: "glm-5.2".into(),
+                        ..Default::default()
+                    }),
+                },
+            ],
+        }
+    }
+
+    #[tokio::test]
+    async fn import_persists_session_and_messages() {
+        let store = store_in_tmp();
+        let payload = sample_payload("s1");
+        let outcome = store.import_session(&payload, false).await.expect("import");
+        assert_eq!(outcome, ImportOutcome::Created);
+
+        let msgs = store.load_history("s1", 1000).await.expect("load");
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, Role::User);
+        assert_eq!(msgs[1].role, Role::Assistant);
+        let u = msgs[1].usage.as_ref().expect("usage");
+        assert_eq!(u.prompt_tokens, 10);
+        assert_eq!(u.model, "glm-5.2");
+    }
+
+    #[tokio::test]
+    async fn import_is_idempotent_without_replace() {
+        let store = store_in_tmp();
+        let payload = sample_payload("s2");
+        assert_eq!(
+            store.import_session(&payload, false).await.unwrap(),
+            ImportOutcome::Created
+        );
+        assert_eq!(
+            store.import_session(&payload, false).await.unwrap(),
+            ImportOutcome::AlreadyExists
+        );
+        let msgs = store.load_history("s2", 1000).await.unwrap();
+        assert_eq!(msgs.len(), 2, "no duplicate messages");
+    }
+
+    #[tokio::test]
+    async fn import_replace_rebuilds_messages() {
+        let store = store_in_tmp();
+        let mut payload = sample_payload("s3");
+        assert_eq!(
+            store.import_session(&payload, false).await.unwrap(),
+            ImportOutcome::Created
+        );
+        // mutate: add a third message, replace
+        payload.messages.push(Message::user("extra"));
+        assert_eq!(
+            store.import_session(&payload, true).await.unwrap(),
+            ImportOutcome::Replaced
+        );
+        let msgs = store.load_history("s3", 1000).await.unwrap();
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[2].text_content(), "extra");
+    }
+
+    #[tokio::test]
+    async fn build_payload_then_import_roundtrips() {
+        // Ensures the parser output survives a persist+load cycle.
+        let dir = tempfile::tempdir().expect("tmpdir");
+        let jsonl = dir.path().join("x.jsonl");
+        std::fs::write(
+            &jsonl,
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"round\"},\"timestamp\":\"2026-07-11T01:00:00.000Z\",\"cwd\":\"C:/p\",\"sessionId\":\"x\"}\n\
+             {\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"model\":\"m\",\"content\":[{\"type\":\"text\",\"text\":\"trip\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":2}},\"timestamp\":\"2026-07-11T01:01:00.000Z\",\"sessionId\":\"x\"}\n",
+        )
+        .unwrap();
+        let payload = build_payload(&jsonl).expect("build");
+        let store = LoomMemoryStore::open(dir.path()).expect("open");
+        store.import_session(&payload, false).await.expect("import");
+        let msgs = store.load_history(&payload.id, 1000).await.expect("load");
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[1].text_content(), "trip");
     }
 }

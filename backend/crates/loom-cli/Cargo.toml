@@ -16,6 +16,7 @@ loom-inference = { path = "../loom-inference" }
 loom-memory = { path = "../loom-memory", features = ["sqlite-vec"] }
 loom-mcp = { path = "../loom-mcp" }
 loom-skills = { path = "../loom-skills" }
+loom-import = { path = "../loom-import" }
 
 loom-bridge = { path = "../loom-bridge" }
 rusqlite = "0.32"
@@ -35,3 +36,6 @@ toml = "0.9"
 ratatui = "0.29"
 crossterm = "0.28"
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
+
+[dev-dependencies]
+tempfile = "3"

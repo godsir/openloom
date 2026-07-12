@@ -577,6 +577,13 @@ pub trait MemoryStore: Send + Sync {
     async fn ensure_session(&self, id: &str) -> Result<()>;
     async fn delete_session(&self, id: &str) -> Result<()>;
     async fn rename_session(&self, id: &str, title: &str) -> Result<()>;
+    /// Import a fully-parsed conversation. `payload.id` becomes `sessions.id`
+    /// (INSERT OR IGNORE → idempotent). `replace=true` deletes prior messages first.
+    async fn import_session(
+        &self,
+        payload: &loom_types::ImportPayload,
+        replace: bool,
+    ) -> Result<loom_types::ImportOutcome>;
 
     // Token usage tracking
     async fn record_token_usage(
