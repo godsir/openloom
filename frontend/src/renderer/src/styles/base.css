@@ -104,7 +104,7 @@
 html{width:100vw;height:100vh;overflow:hidden;background:transparent}
 html,body,#root{width:100vw;height:100vh;overflow:hidden}
 body{
-  background:var(--bg);
+  background:transparent;
   border-radius:12px;
   overflow:hidden;
   color:var(--text);
@@ -114,6 +114,11 @@ body{
   -webkit-font-smoothing:antialiased;
   -moz-osx-font-smoothing:grayscale;
   user-select:none;
+}
+#root{
+  background:var(--bg);
+  border-radius:12px;
+  overflow:hidden;
 }
 
 ::selection{background:rgba(0,227,199,.22);color:#fff}
