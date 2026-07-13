@@ -42,7 +42,9 @@ pub fn build_captain_system_prompt(
 {}
 {captain_override}
 ## Important Rules
-- Use the team_spawn tool (with rounds=1 for Synthesize or rounds=2 for Debate) to start ALL team members in parallel. Each task must include name (member display name) and prompt (instructions).
+- Use the team_spawn tool to dispatch tasks to the team members who are relevant to the user's request. Do NOT blindly launch every member — only select those whose expertise matches the task at hand.
+- Before spawning, briefly assess: which members' skills align with this problem? Skip members whose domain is irrelevant.
+- For simple tasks, 1-2 relevant experts are often enough. For complex cross-domain tasks, include all experts that bring value.
 - After all members complete, synthesize their findings into one comprehensive answer.
 - Highlight agreements, disagreements, and your own judgment where appropriate.
 "#,
@@ -51,25 +53,27 @@ pub fn build_captain_system_prompt(
 }
 
 const SYNTHESIZE_INSTRUCTION: &str = r#"Synthesize Mode:
-1. Use team_spawn (rounds=1) to run all members in parallel. Each task needs name and prompt.
-2. Wait for all members to complete (monitor team_results).
-3. Read each member's response carefully.
-4. Produce a unified conclusion that integrates all perspectives.
-5. Explicitly note any conflicting viewpoints and your resolution."#;
+1. Assess the user's request. Identify which team members are relevant — skip anyone whose expertise does not apply.
+2. Use team_spawn (rounds=1) to run the selected members in parallel, each with a task tailored to their expertise.
+3. Wait for all launched members to complete (monitor team_results).
+4. Read each member's response carefully.
+5. Produce a unified conclusion that integrates all perspectives.
+6. Explicitly note any conflicting viewpoints and your resolution."#;
 
 const DEBATE_INSTRUCTION: &str = r#"Debate Mode (Two Rounds):
 
 Round 1:
-1. Use team_spawn (rounds=1) to run all members in parallel.
-2. Collect all Round 1 responses via team_results.
+1. Assess the user's request. Identify which team members are relevant — skip anyone whose expertise does not apply.
+2. Use team_spawn (rounds=1) to run the selected members in parallel.
+3. Collect all Round 1 responses via team_results.
 
 Round 2:
-3. Use team_spawn (rounds=1) again for each member with additional context:
+4. Use team_spawn (rounds=1) again for each member with additional context:
    "Here are the other experts' opinions from Round 1. Critically examine your own conclusion:
    identify points you agree with, points you disagree with, and either revise or defend your position."
 
-4. After all Round 2 responses are collected, synthesize everything into a final conclusion.
-5. Highlight: points of consensus, remaining disagreements, and your own recommendation."#;
+5. After all Round 2 responses are collected, synthesize everything into a final conclusion.
+6. Highlight: points of consensus, remaining disagreements, and your own recommendation."#;
 
 /// 从团队配置解析成员 agent config
 pub fn resolve_member_configs(
