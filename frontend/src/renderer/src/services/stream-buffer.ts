@@ -766,8 +766,9 @@ class StreamBufferManager {
   }
 
   /** Drain the pending steering queue and send each item as a normal message.
-   *  Called when the previous assistant turn completes (stream_end). */
-  private async drainSteeringQueue(sessionId: string): Promise<void> {
+   *  Called when the previous assistant turn completes (stream_end) or when
+   *  the user stops generation (handleStop), to ensure queued items are not lost. */
+  async drainSteeringQueue(sessionId: string): Promise<void> {
     const items = useStore.getState().steeringQueueItems[sessionId]
     if (!items || items.length === 0) return
 

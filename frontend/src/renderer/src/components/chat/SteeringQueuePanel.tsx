@@ -22,10 +22,12 @@ export default function SteeringQueuePanel({ sessionId }: Props) {
     // Stop current streaming
     try { await loomRpc('chat.stop', { session_id: sessionId }) } catch { /* ignore */ }
     useStore.getState().removeStreamingSession(sessionId)
-    streamBufferManager.clear(sessionId)
-    // Remove this item from queue
+    // Remove this item from queue (save other items before clearing)
     useStore.getState().removeSteeringItems(sessionId, [itemId])
-    // Send as a brand-new normal message
+    // Drain any remaining items so they're sent as follow-up messages
+    await streamBufferManager.drainSteeringQueue(sessionId)
+    streamBufferManager.clear(sessionId)
+    // Send this item as a brand-new normal message
     const { sendMessage } = await import('../../services/sendMessage')
     useStore.getState().ensureSession(sessionId)
     await sendMessage({ sessionId, content: text })

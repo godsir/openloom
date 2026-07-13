@@ -398,6 +398,9 @@ export default function InputArea() {
       // ignore
     }
     // 清除前端 streaming 状态，关闭打断/发送按钮
+    // 先排空插话队列再清除 buffer，否则 handleStreamEnd 会因为 buffer 已被
+    // clear() 删除而提前返回，永远执行不到 drainSteeringQueue。
+    await streamBufferManager.drainSteeringQueue(sessionId)
     useStore.getState().removeStreamingSession(sessionId)
     streamBufferManager.clear(sessionId)
     interruptingRef.current = false
