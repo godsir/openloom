@@ -3,14 +3,7 @@ chcp 65001 >nul
 cd /d "%~dp0\.."
 
 echo [0/6] sync version to NSIS info.nsi...
-for /f "tokens=*" %%a in ('powershell -NoProfile -Command "(Get-Content package.json -Raw | ConvertFrom-Json).version"') do set "PKG_VERSION=%%a"
-set "NSIS_FOUR=%PKG_VERSION%.0"
-powershell -NoProfile -Command ^
-  "$nsisFile = 'installer\SetupScripts\openloom\info.nsi';" ^
-  "$content = Get-Content $nsisFile -Raw -Encoding UTF8;" ^
-  "$content = $content -replace 'PRODUCT_VERSION\s+\"[^\"]+\"', ('PRODUCT_VERSION       \"%NSIS_FOUR%\"');" ^
-  "$content = $content -replace 'INSTALL_OUTPUT_NAME\s+\"openLoom\.Setup\.[^\"]+\"', ('INSTALL_OUTPUT_NAME    \"openLoom.Setup.%PKG_VERSION%.exe\"');" ^
-  "[System.IO.File]::WriteAllText($nsisFile, $content, [System.Text.UTF8Encoding]::new($false))"
+powershell -ExecutionPolicy Bypass -File scripts\sync-nsis-version.ps1
 if errorlevel 1 exit /b 1
 
 echo [1/6] fetch bajins toolchain...
