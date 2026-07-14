@@ -3002,12 +3002,13 @@ impl AgentTool for WebFetchTool {
         .await
         .map_err(|_| anyhow::anyhow!("web_fetch timed out after 30s"))??;
         let text = extract_text(&html);
+        let title = extract_title(&html);
 
         if text.is_empty() {
             Ok(ToolResult {
                 content: "Page returned no readable text content.".into(),
                 is_error: false,
-                structured_content: Some(serde_json::json!({"url": url, "text_length": 0})),
+                structured_content: Some(serde_json::json!({"url": url, "title": title, "text_length": 0})),
             })
         } else if text.len() > max_chars {
             Ok(ToolResult {
@@ -3018,14 +3019,14 @@ impl AgentTool for WebFetchTool {
                     text.len()
                 ),
                 is_error: false,
-                structured_content: Some(serde_json::json!({"url": url, "text_length": text.len()})),
+                structured_content: Some(serde_json::json!({"url": url, "title": title, "text_length": text.len()})),
             })
         } else {
             let text_len = text.len();
             Ok(ToolResult {
                 content: text,
                 is_error: false,
-                structured_content: Some(serde_json::json!({"url": url, "text_length": text_len})),
+                structured_content: Some(serde_json::json!({"url": url, "title": title, "text_length": text_len})),
             })
         }
     }
