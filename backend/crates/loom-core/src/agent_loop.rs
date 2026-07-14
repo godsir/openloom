@@ -259,7 +259,7 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = concat!(
     "- todo_write { todos } — 写入/更新任务列表，用于跟踪复杂任务的进度。\n",
     "- todo_list — 列出当前任务。\n",
     "- schedule_reminder — 设置定时提醒。\n",
-    "- push_notification { message } — 发送桌面通知。\n",
+    "- push_notification { title, body } — 发送桌面通知。\n",
     "\n",
     "### 系统\n",
     "- system_info — 获取系统信息（CPU/内存/OS）。\n",

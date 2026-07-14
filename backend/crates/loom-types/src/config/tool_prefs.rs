@@ -44,6 +44,9 @@ pub struct ToolPrefsConfig {
     /// Google / Bing API key（engine=google 或 bing 时必填）
     #[serde(default)]
     pub web_search_api_key: Option<String>,
+    /// Google Custom Search Engine ID (CX)，仅 engine=google 时生效
+    #[serde(default)]
+    pub web_search_google_cx: Option<String>,
 
     // --- network ---
     /// HTTP/HTTPS 代理地址（覆盖环境变量 HTTP_PROXY/HTTPS_PROXY）
@@ -56,6 +59,8 @@ pub struct ToolPrefsConfig {
     // --- web_fetch ---
     #[serde(default = "default_web_fetch_max_chars")]
     pub web_fetch_max_chars: usize,
+    #[serde(default = "default_web_fetch_timeout")]
+    pub web_fetch_timeout_secs: u64,
 
     // --- process_wait ---
     #[serde(default = "default_process_wait_max_timeout")]
@@ -81,6 +86,9 @@ fn default_web_search_max_results() -> usize {
 fn default_web_fetch_max_chars() -> usize {
     5000
 }
+fn default_web_fetch_timeout() -> u64 {
+    30
+}
 fn default_process_wait_max_timeout() -> u64 {
     3600
 }
@@ -101,9 +109,11 @@ impl Default for ToolPrefsConfig {
             web_search_max_results: default_web_search_max_results(),
             searxng_url: None,
             web_search_api_key: None,
+            web_search_google_cx: None,
             http_proxy: None,
             proxy_enabled: false,
             web_fetch_max_chars: default_web_fetch_max_chars(),
+            web_fetch_timeout_secs: default_web_fetch_timeout(),
             process_wait_max_timeout_secs: default_process_wait_max_timeout(),
             monitor_default_timeout_ms: default_monitor_timeout_ms(),
         }

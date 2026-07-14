@@ -970,7 +970,7 @@ impl AgentTool for ContentSearchTool {
                 "properties": {
                     "pattern": { "type": "string", "description": "Substring pattern to search for (case-insensitive)" },
                     "path": { "type": "string", "description": "Directory to search in (default: current dir)", "default": "." },
-                    "file_pattern": { "type": "string", "description": "Glob pattern for files to search (e.g., '*.rs', '*.md')", "default": "*" },
+                    "file_pattern": { "type": "string", "description": "File name pattern (substring match, case-insensitive). Not a glob.", "default": "*" },
                     "max_results": { "type": "integer", "description": "Max results to return", "default": 30 }
                 },
                 "required": ["pattern"]
@@ -1386,55 +1386,6 @@ impl AgentTool for AskUserTool {
             content,
             is_error: false,
             structured_content: Some(sc),
-        })
-    }
-    fn provenance(&self) -> ToolProvenance {
-        ToolProvenance::Builtin
-    }
-}
-
-// ============================================================================
-// Loop — AI requests to continue in another turn
-// ============================================================================
-
-pub struct LoopTool;
-
-#[async_trait]
-impl AgentTool for LoopTool {
-    fn tool_name(&self) -> &str {
-        "loop"
-    }
-
-    fn tool_definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: "loop".into(),
-            description: "要求继续执行下一轮。当你完成了当前轮的工作但还有更多要做时调用。prompt 告诉下一轮的你接下来做什么。不要滥用——每轮最多一次。".into(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "prompt": {"type":"string","description":"告诉下一轮的自己接下来要做什么"}
-                },
-                "required": ["prompt"]
-            }),
-            tags: vec![],
-        }
-    }
-
-    fn supports_parallel(&self) -> bool {
-        false
-    }
-
-    async fn execute(
-        &self,
-        arguments: serde_json::Value,
-        _progress: UnboundedSender<ToolProgress>,
-        _context: &ToolContext,
-    ) -> Result<ToolResult> {
-        let prompt = arguments["prompt"].as_str().unwrap_or("继续");
-        Ok(ToolResult {
-            content: format!("[loop] {}", prompt),
-            is_error: false,
-            structured_content: Some(serde_json::json!({"loop": true, "prompt": prompt})),
         })
     }
     fn provenance(&self) -> ToolProvenance {
@@ -1962,10 +1913,10 @@ impl AgentTool for SystemInfoTool {
         };
 
         let workspace_line = match context.workspace_path {
-            Some(ref ws) => format!("Workspace: {ws}"),
+            Some(ref ws) => format!("Workspace: {}", Path::new(ws).file_name().and_then(|n| n.to_str()).unwrap_or(ws)),
             None => "Workspace: not set".to_string(),
         };
-        let data_dir_line = format!("Data dir: {}", self.data_dir.display());
+        let data_dir_line = format!("Data dir: {}", Path::new(self.data_dir.as_path()).file_name().and_then(|n| n.to_str()).unwrap_or("unknown"));
         let os_line = format!("OS: {} ({})", std::env::consts::OS, std::env::consts::ARCH);
 
         let mut info = String::new();
@@ -2449,7 +2400,8 @@ impl AgentTool for WebSearchTool {
             },
             ToolSearchEngine::Google => match &prefs.web_search_api_key {
                 Some(key) if !key.is_empty() => {
-                    search_google(&client, query, max_results, key).await
+                    let cx = prefs.web_search_google_cx.as_deref().unwrap_or("c7e6a7373e0a44649");
+                    search_google(&client, query, max_results, key, cx).await
                 }
                 _ => {
                     return Ok(ToolResult {
@@ -2681,9 +2633,8 @@ async fn search_google(
     query: &str,
     max_results: usize,
     api_key: &str,
+    cx: &str,
 ) -> Result<Vec<(String, String, String)>, String> {
-    // Uses Google Custom Search JSON API v1 with a default CX for web search
-    let cx = "c7e6a7373e0a44649"; // openLoom default programmable search engine
     let url = format!(
         "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}&num={}",
         api_key,
@@ -2996,11 +2947,12 @@ impl AgentTool for WebFetchTool {
         let client = loom_inference::engine::build_http_client_with_ua();
 
         // tokio timeout guards against slow/stalled servers beyond connect_timeout.
-        let html = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let timeout_secs = prefs.web_fetch_timeout_secs.max(1);
+        let html = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
             client.get(url).send().await?.text().await
         })
         .await
-        .map_err(|_| anyhow::anyhow!("web_fetch timed out after 30s"))??;
+        .map_err(|_| anyhow::anyhow!("web_fetch timed out after {}s", timeout_secs))??;
         let text = extract_text(&html);
         let title = extract_title(&html);
 
