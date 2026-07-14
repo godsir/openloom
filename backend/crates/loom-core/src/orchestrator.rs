@@ -871,12 +871,6 @@ fn extract_entity_candidates(text: &str) -> Vec<String> {
     candidates
 }
 
-    candidates.sort();
-    candidates.dedup();
-    candidates.truncate(20);
-    candidates
-}
-
 fn is_cjk_char(c: char) -> bool {
     matches!(c,
         '\u{4E00}'..='\u{9FFF}'    // CJK Unified

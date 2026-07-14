@@ -676,10 +676,10 @@ impl<'a> GraphStore<'a> {
                 if !seen_entities.insert(r.name.clone()) {
                     continue;
                 }
-                // Natural-language line: prefer the edge's fact text if available
-                // (e.g. "USER prefers raw SQL over ORM"), otherwise use description.
+                // Natural-language line: prefer the node's description which is
+                // already a human-readable fact (e.g. "用户偏好手写SQL而非ORM").
                 let fact_text = if r.description.is_empty() {
-                    format!("{} 与 {} 相关", r.name, r.entity_type)
+                    format!("{}（类型: {}）", r.name, r.entity_type)
                 } else {
                     r.description.clone()
                 };

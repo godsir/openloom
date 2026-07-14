@@ -779,8 +779,13 @@ impl MemoryStore for LoomMemoryStore {
 
     async fn remember_fact(&self, fact: &str, category: &str, importance: f64) -> Result<()> {
         let store = self.memory_db.lock().expect("lock poisoned");
-        let graph = GraphStore::new(store.conn());
-        let cognition = CognitionStore::new(store.conn());
+        let conn = store.conn();
+        let graph = GraphStore::new(conn);
+        let cognition = CognitionStore::new(conn);
+
+        // Wrap in a transaction so upsert_node + cognition insert
+        // are atomic — a crash between the two cannot leave orphaned data.
+        conn.execute_batch("BEGIN;")?;
 
         // Upsert a KG node for the fact at global scope (no promotion needed)
         let _ = graph.upsert_node(fact, category, fact, importance, "global", None);
@@ -788,6 +793,8 @@ impl MemoryStore for LoomMemoryStore {
         // Also store as a cognition so persona builder can see it
         let trait_name = format!("remembered_{}", category);
         let _ = cognition.insert("USER", &trait_name, fact, importance, 1, "global");
+
+        conn.execute_batch("COMMIT;")?;
 
         tracing::info!(fact, category, importance, "memory_remember: fact persisted");
         Ok(())
