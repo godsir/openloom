@@ -515,6 +515,8 @@ pub trait MemoryStore: Send + Sync {
     async fn get_message_count(&self, session_id: &str) -> Result<usize>;
     // Memory maintenance (P2)
     async fn prune_memory(&self) -> Result<usize>;
+    /// Apply confidence decay to KG nodes not accessed in 7+ days.
+    async fn decay_stale_confidence(&self) -> Result<usize>;
     // Cross-session knowledge search (P2)
     async fn search_knowledge(
         &self,
@@ -4120,6 +4122,20 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                             }
                             Err(e) => {
                                 tracing::warn!(error = %e, "periodic consolidation: promote_to_global failed");
+                            }
+                        }
+                        // Apply confidence decay for stale memories (not accessed in 7+ days)
+                        match store.decay_stale_confidence().await {
+                            Ok(decayed) => {
+                                if decayed > 0 {
+                                    tracing::info!(
+                                        decayed,
+                                        "periodic consolidation: decayed stale entity confidence"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "periodic consolidation: decay_stale_confidence failed");
                             }
                         }
                         // Prune stale entities to keep KG lean

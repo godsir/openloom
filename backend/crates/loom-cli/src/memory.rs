@@ -1123,6 +1123,16 @@ impl MemoryStore for LoomMemoryStore {
         Ok(pruned)
     }
 
+    async fn decay_stale_confidence(&self) -> Result<usize> {
+        let store = self.memory_db.lock().expect("lock poisoned");
+        let graph = GraphStore::new(store.conn());
+        let decayed = graph.decay_stale_confidence()?;
+        if decayed > 0 {
+            tracing::info!(decayed, "decayed stale entity confidence");
+        }
+        Ok(decayed)
+    }
+
     async fn search_knowledge(
         &self,
         query: &str,

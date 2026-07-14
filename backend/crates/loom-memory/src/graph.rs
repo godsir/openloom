@@ -233,10 +233,14 @@ impl<'a> GraphStore<'a> {
     // ========================================================================
 
     /// Record a node access (increment counter, update last_accessed).
+    /// Also applies a micro-boost to confidence — memories that are frequently
+    /// retrieved gain confidence over time (capped at 1.0).
     fn touch_node(&self, node_id: i64) -> Result<()> {
         let now = Utc::now().timestamp();
         self.conn.execute(
-            "UPDATE kg_nodes SET access_count = access_count + 1, last_accessed = ?1 WHERE id = ?2",
+            "UPDATE kg_nodes SET access_count = access_count + 1, last_accessed = ?1,
+             confidence = MIN(1.0, confidence + 0.005)
+             WHERE id = ?2",
             rusqlite::params![now, node_id],
         )?;
         Ok(())
@@ -248,6 +252,24 @@ impl<'a> GraphStore<'a> {
             let _ = self.touch_node(r.node_id);
         }
         Ok(())
+    }
+
+    /// Apply confidence decay to nodes not accessed recently.
+    /// Each 7 days without access reduces confidence by ~10% of its current value,
+    /// mimicking human forgetting.  Returns the number of nodes decayed.
+    pub fn decay_stale_confidence(&self) -> Result<usize> {
+        let now = Utc::now().timestamp();
+        let threshold_7d = now - 7 * 86400;
+        // Decay: confidence *= 0.9 for nodes with last_accessed older than 7 days,
+        // but never drop below 0.1 so they can recover if accessed again.
+        let affected = self.conn.execute(
+            "UPDATE kg_nodes SET confidence = MAX(0.1, confidence * 0.9)
+             WHERE last_accessed IS NOT NULL AND last_accessed < ?1
+               AND confidence > 0.1
+               AND entity_type != 'Person'",
+            rusqlite::params![threshold_7d],
+        )?;
+        Ok(affected)
     }
 
     /// Link a node to a source event in kg_evidence.
