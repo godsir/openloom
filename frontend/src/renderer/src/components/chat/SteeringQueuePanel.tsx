@@ -19,18 +19,21 @@ export default function SteeringQueuePanel({ sessionId }: Props) {
 
   const handleForceSend = useCallback(async (itemId: string, text: string) => {
     if (!sessionId) return
-    // Stop current streaming
+    // Mark current generation as cancelled so the stale StreamEnd from the
+    // killed turn is absorbed instead of terminating the replacement turn.
+    streamBufferManager.markCancelled(sessionId)
     try { await loomRpc('chat.stop', { session_id: sessionId }) } catch { /* ignore */ }
+    // Collect remaining items + this one, clear queue, send combined
+    const items = useStore.getState().steeringQueueItems[sessionId] || []
+    const remaining = items.filter(it => it.id !== itemId).map(it => it.text)
+    useStore.getState().clearSteeringItems(sessionId)
     useStore.getState().removeStreamingSession(sessionId)
-    // Remove this item from queue (save other items before clearing)
-    useStore.getState().removeSteeringItems(sessionId, [itemId])
-    // Drain any remaining items so they're sent as follow-up messages
-    await streamBufferManager.drainSteeringQueue(sessionId)
     streamBufferManager.clear(sessionId)
-    // Send this item as a brand-new normal message
+    // Combine into one user message — avoids dual-send race with drainSteeringQueue
+    const allTexts = [...remaining, text]
+    const combined = allTexts.join('\n')
     const { sendMessage } = await import('../../services/sendMessage')
-    useStore.getState().ensureSession(sessionId)
-    await sendMessage({ sessionId, content: text })
+    await sendMessage({ sessionId, content: combined })
   }, [sessionId])
 
   const handleRemoveOne = useCallback((itemId: string) => {

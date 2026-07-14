@@ -551,6 +551,20 @@ export async function bootstrapApp(): Promise<() => void> {
         }
         break
       }
+      case 'memory.extraction_started':
+        // Show extraction phase in dynamic island while async pipeline runs
+        useStore.getState().addStreamingSession(sessionId)
+        useStore.getState().setStreamingActivity(sessionId, { phase: 'extracting' })
+        break
+      case 'memory.updated':
+        // Backend finished entity extraction — refresh KG node list so the
+        // star graph panel picks up new entities without manual reload.
+        // Also clear the extracting state from the dynamic island.
+        useStore.getState().removeStreamingSession(sessionId)
+        import('../stores').then(({ useStore }) => {
+          useStore.getState().kgListNodes()
+        })
+        break
       case 'preferences.changed': {
         const updates = (p?.updates ?? {}) as Record<string, unknown>
         for (const [key, val] of Object.entries(updates)) applyPreference(key, val)
@@ -721,6 +735,20 @@ export async function bootstrapApp(): Promise<() => void> {
         }
         break
       }
+      case 'memory.extraction_started':
+        // Show extraction phase in dynamic island while async pipeline runs
+        useStore.getState().addStreamingSession(sessionId)
+        useStore.getState().setStreamingActivity(sessionId, { phase: 'extracting' })
+        break
+      case 'memory.updated':
+        // Backend finished entity extraction — refresh KG node list so the
+        // star graph panel picks up new entities without manual reload.
+        // Also clear the extracting state from the dynamic island.
+        useStore.getState().removeStreamingSession(sessionId)
+        import('../stores').then(({ useStore }) => {
+          useStore.getState().kgListNodes()
+        })
+        break
       case 'preferences.changed': {
         const updates = p?.updates as Record<string, unknown> || {}
         for (const [key, val] of Object.entries(updates)) {

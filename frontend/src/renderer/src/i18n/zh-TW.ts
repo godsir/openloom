@@ -97,6 +97,8 @@ export const zhTW: TranslationMap = {
   'island.imMessageReceived': '{platform} 收到一條訊息',
   'island.configUpdated': '配置已更新',
   'island.configSaved': '設定已儲存',
+  'island.extracting': '記憶提取中',
+  'island.extractingHint': '從對話中提取記憶節點',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': '對話',

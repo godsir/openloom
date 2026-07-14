@@ -8,6 +8,11 @@ import { t } from '../i18n'
 
 interface BufferState {
   messageId: string | null
+  /** Monotonic generation counter — bumped on each startStream.
+   *  WS events from a previous turn (stale generation) are silently dropped
+   *  so a late-arriving stream_end from a cancelled turn cannot terminate
+   *  the new turn that replaced it. */
+  generation: number
   textAcc: string
   thinkingAcc: string
   imageAcc: Array<{ mimeType: string; data: string }>
@@ -56,6 +61,13 @@ class StreamBufferManager {
  /** Sessions whose stream has been ended (buffer deleted).
   *  Late-arriving deltas/tool events for ended sessions must be ignored. */
  private endedSessions = new Set<string>()
+ /** Sessions whose current turn was intentionally cancelled via chat.stop.
+  *  Absorbs exactly one stale StreamEnd event from the cancelled turn,
+  *  preventing it from terminating the replacement turn that follows.
+  *  Set by chat.stop → consumed by the next handleStreamEnd → cleared by
+  *  clear() if the stale event never arrived.
+  *  Maps sessionId → generation number at time of cancellation. */
+ private cancelledSessions = new Map<string, number>()
 
   /** Register an existing assistant placeholder message for streaming updates.
    *  Resets any stale state from a previous stream on the same session. */
@@ -66,6 +78,7 @@ class StreamBufferManager {
       this.removeMessage(sessionId, old.messageId)
     }
     const buf = this.ensureBuffer(sessionId)
+    buf.generation = (buf.generation || 0) + 1
     buf.messageId = messageId
     buf.textAcc = ''
     buf.thinkingAcc = ''
@@ -101,6 +114,7 @@ class StreamBufferManager {
     if (!this.buffers.has(sessionId)) {
       this.buffers.set(sessionId, {
         messageId: null,
+        generation: 0,
         textAcc: '',
         thinkingAcc: '',
         imageAcc: [],
@@ -155,11 +169,6 @@ class StreamBufferManager {
  }
 
   handleStreamDelta(sessionId: string, delta: string): void {
-    // Handle cancellation marker — treat as stream end
-    if (delta === '[已中断]') {
-      this.handleStreamEnd(sessionId)
-      return
-    }
     // Ignore deltas arriving after stream has ended (late WebSocket frames)
     if (!this.ensureStreamingForIM(sessionId)) {
       return
@@ -171,11 +180,6 @@ class StreamBufferManager {
   /** IM bridge variant — skip if main WS already handled this session. */
   handleStreamDeltaIM(sessionId: string, delta: string): void {
     if (this.wsStreamSessions.has(sessionId)) return  // already handled by main WS
-    // Handle cancellation marker — treat as stream end
-    if (delta === '[已中断]') {
-      this.handleStreamEnd(sessionId)
-      return
-    }
     if (!this.ensureStreamingForIM(sessionId)) return
     // Mark IM origin so handleStreamEnd triggers syncIMSessionHistory
     // for IM sessions (which need history reload from DB).
@@ -427,6 +431,22 @@ class StreamBufferManager {
   }
 
   handleStreamEnd(sessionId: string): void {
+    // Absorb stale StreamEnd from a previously cancelled turn.
+    // When chat.stop kills a turn, the backend sends one last StreamEnd
+    // for it asynchronously. If a new turn (higher generation) has already
+    // started, this stale event must be absorbed to prevent terminating
+    // the new turn.
+    const cancelledGen = this.cancelledSessions.get(sessionId)
+    if (cancelledGen !== undefined) {
+      const buf = this.buffers.get(sessionId)
+      if (buf && buf.generation > cancelledGen) {
+        // Stale StreamEnd from old turn — new turn already started, absorb
+        this.cancelledSessions.delete(sessionId)
+        return
+      }
+      // Same generation — this IS the StreamEnd from the cancelled turn
+      this.cancelledSessions.delete(sessionId)
+    }
     // Guard re-entry: stream_end can fire from up to 3 sources for the same
     // session (WS chat.stream_end, the chat.send finally, and a safety timer).
     // The first call deletes the buffer below; subsequent callers must no-op,
@@ -759,10 +779,20 @@ class StreamBufferManager {
     return this.buffers.get(sessionId) ?? null
   }
 
+  /** Record the current generation as cancelled so the next handleStreamEnd
+   *  can distinguish the stale StreamEnd from the cancelled turn vs a fresh one.
+   *  Called by handleStop / handleForceSend BEFORE starting the replacement turn. */
+  markCancelled(sessionId: string): void {
+    const buf = this.buffers.get(sessionId)
+    const gen = buf ? buf.generation : 0
+    this.cancelledSessions.set(sessionId, gen)
+  }
+
   clear(sessionId: string): void {
     const buf = this.buffers.get(sessionId)
     if (buf?.rafId) cancelAnimationFrame(buf.rafId)
     this.buffers.delete(sessionId)
+    this.cancelledSessions.delete(sessionId)
   }
 
   /** Drain the pending steering queue and send each item as a normal message.

@@ -98,6 +98,8 @@ export const enUS: TranslationMap = {
   'island.imMessageReceived': '{platform} · new message',
   'island.configUpdated': 'Settings updated',
   'island.configSaved': 'Settings saved',
+  'island.extracting': 'Extracting memories',
+  'island.extractingHint': 'Extracting knowledge from conversation',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': 'Sessions',

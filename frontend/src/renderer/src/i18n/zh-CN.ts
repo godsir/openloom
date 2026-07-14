@@ -98,6 +98,8 @@ export const zhCN: TranslationMap = {
   'island.imMessageReceived': '{platform} 收到一条消息',
   'island.configUpdated': '配置已更新',
   'island.configSaved': '设置已保存',
+  'island.extracting': '记忆提取中',
+  'island.extractingHint': '从对话中提取记忆节点',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': '会话',

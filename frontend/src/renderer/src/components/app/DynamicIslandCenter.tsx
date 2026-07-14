@@ -144,6 +144,7 @@ export default function DynamicIslandCenter() {
     tool: { icon: IconTerminal, title: t('island.tool'), sub: activity?.detail ?? '' },
     team: { icon: IconUsers, title: t('island.team'), sub: activity?.detail ?? '' },
     generating: { icon: IconSparkles, title: t('app.generating'), sub: t('app.generatingHint') },
+    extracting: { icon: IconBrain, title: t('island.extracting'), sub: t('island.extractingHint') },
   }
   const meta = phaseMeta[phase]
   const PhaseIcon = meta.icon

@@ -392,17 +392,22 @@ export default function InputArea() {
     if (!sessionId) return
     interruptingRef.current = true
     sendingRef.current = false
+    // Mark current generation as cancelled so the stale StreamEnd from the
+    // killed turn is absorbed instead of terminating the replacement turn.
+    streamBufferManager.markCancelled(sessionId)
     try {
       await loomRpc('chat.stop', { session_id: sessionId })
     } catch {
       // ignore
     }
-    // 清除前端 streaming 状态，关闭打断/发送按钮
-    // 先排空插话队列再清除 buffer，否则 handleStreamEnd 会因为 buffer 已被
-    // clear() 删除而提前返回，永远执行不到 drainSteeringQueue。
+    // Drain steering queue — may start a new turn via sendMessage.
+    // If it does, DON'T removeStreamingSession/clear afterwards, because
+    // the new turn owns the streaming state now.
     await streamBufferManager.drainSteeringQueue(sessionId)
-    useStore.getState().removeStreamingSession(sessionId)
-    streamBufferManager.clear(sessionId)
+    if (!useStore.getState().streamingSessionIds.has(sessionId)) {
+      useStore.getState().removeStreamingSession(sessionId)
+      streamBufferManager.clear(sessionId)
+    }
     interruptingRef.current = false
   }
 
