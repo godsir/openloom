@@ -1,6 +1,7 @@
 # sync-nsis-version.ps1 - read package.json version and write it into info.nsi
+# Called from build-installer.bat which cd's to the frontend dir first.
 $ErrorActionPreference = "Stop"
-$pkg = Get-Content "frontend\package.json" -Raw | ConvertFrom-Json
+$pkg = Get-Content "package.json" -Raw | ConvertFrom-Json
 $ver = $pkg.version
 
 $nsisFile = "installer\SetupScripts\openloom\info.nsi"
