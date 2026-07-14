@@ -279,11 +279,12 @@ impl AgentTool for ShellTool {
                     );
                 }
                 let exit_code = status.code().unwrap_or(-1);
-                let stdout_copy = content.clone();
+                let stdout_len = content.len();
+                let stdout_preview: String = content.chars().take(200).collect();
                 Ok(ToolResult {
                     content,
                     is_error,
-                    structured_content: Some(serde_json::json!({"exit_code": exit_code, "stdout": stdout_copy})),
+                    structured_content: Some(serde_json::json!({"exit_code": exit_code, "stdout_length": stdout_len, "stdout_preview": stdout_preview})),
                 })
             }
             Ok(Err(e)) => Ok(ToolResult {
@@ -619,10 +620,11 @@ impl AgentTool for FileReadTool {
                         max_output_bytes / 1024
                     );
                 }
+                let content_preview: String = result.chars().take(200).collect();
                 Ok(ToolResult {
                     content: result,
                     is_error: false,
-                    structured_content: Some(serde_json::json!({"path": path_str, "total_lines": total})),
+                    structured_content: Some(serde_json::json!({"path": path_str, "total_lines": total, "content_preview": content_preview})),
                 })
             }
             Err(e) => Ok(ToolResult {
@@ -2390,7 +2392,7 @@ impl AgentTool for WebSearchTool {
             return Ok(ToolResult {
                 content: "No search query provided.".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "No search query"})),
             });
         }
 
@@ -2408,7 +2410,7 @@ impl AgentTool for WebSearchTool {
                         content: "Brave Search 需要 API key，请在设置中配置 web_search_api_key"
                             .into(),
                         is_error: true,
-                        structured_content: None,
+                        structured_content: Some(serde_json::json!({"error": "Brave Search requires API key"})),
                     });
                 }
             },
@@ -2420,7 +2422,7 @@ impl AgentTool for WebSearchTool {
                     return Ok(ToolResult {
                         content: "SearXNG 需要实例地址，请在设置中配置 searxng_url".into(),
                         is_error: true,
-                        structured_content: None,
+                        structured_content: Some(serde_json::json!({"error": "SearXNG requires instance URL"})),
                     });
                 }
             },
@@ -2433,7 +2435,7 @@ impl AgentTool for WebSearchTool {
                         content: "Google 搜索需要 API key，请在设置中配置 web_search_api_key"
                             .into(),
                         is_error: true,
-                        structured_content: None,
+                        structured_content: Some(serde_json::json!({"error": "Google Search requires API key"})),
                     });
                 }
             },
@@ -2443,7 +2445,7 @@ impl AgentTool for WebSearchTool {
                     return Ok(ToolResult {
                         content: "Bing 搜索需要 API key，请在设置中配置 web_search_api_key".into(),
                         is_error: true,
-                        structured_content: None,
+                        structured_content: Some(serde_json::json!({"error": "Bing Search requires API key"})),
                     });
                 }
             },
@@ -2456,7 +2458,7 @@ impl AgentTool for WebSearchTool {
                         content: "Tavily 搜索需要 API key，请在设置中配置 web_search_api_key"
                             .into(),
                         is_error: true,
-                        structured_content: None,
+                        structured_content: Some(serde_json::json!({"error": "Tavily Search requires API key"})),
                     });
                 }
             },
@@ -2469,7 +2471,7 @@ impl AgentTool for WebSearchTool {
                         content: "Serper 搜索需要 API key，请在设置中配置 web_search_api_key"
                             .into(),
                         is_error: true,
-                        structured_content: None,
+                        structured_content: Some(serde_json::json!({"error": "Serper Search requires API key"})),
                     });
                 }
             },
@@ -2479,9 +2481,12 @@ impl AgentTool for WebSearchTool {
             Ok(items) if items.is_empty() => Ok(ToolResult {
                 content: format!("No results found for '{}'.", query),
                 is_error: false,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"query": query, "results": []})),
             }),
             Ok(items) => {
+                let results_json: Vec<serde_json::Value> = items.iter().map(|(title, snippet, link)| {
+                    serde_json::json!({"title": title, "snippet": snippet, "url": link})
+                }).collect();
                 let out = items
                     .iter()
                     .enumerate()
@@ -2493,13 +2498,13 @@ impl AgentTool for WebSearchTool {
                 Ok(ToolResult {
                     content: out,
                     is_error: false,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"query": query, "results": results_json})),
                 })
             }
             Err(e) => Ok(ToolResult {
                 content: format!("搜索 '{}' 失败: {}", query, e),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"query": query, "error": format!("{}", e)})),
             }),
         }
     }
@@ -3024,6 +3029,12 @@ fn extract_text(html: &str) -> String {
 
     let text = dom.text().collect::<Vec<_>>().join(" ");
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn extract_title(html: &str) -> Option<String> {
+    let document = scraper::Html::parse_document(html);
+    let sel = scraper::Selector::parse("title").ok()?;
+    document.select(&sel).next().map(|e| e.text().collect::<Vec<_>>().join(" ").trim().to_string())
 }
 
 // ============================================================================
