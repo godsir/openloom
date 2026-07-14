@@ -227,8 +227,15 @@ async fn handle_agent_config_optimize(state: &AppState, p: &Value) -> Result<Val
 // --- tools.list ---
 
 async fn handle_tools_list(state: &AppState) -> Result<Value, JsonRpcError> {
-    let names = state.orchestrator.tool_registry().await.list_names();
-    Ok(json!({ "tools": names }))
+    let tools: Vec<serde_json::Value> = state
+        .orchestrator
+        .tool_registry()
+        .await
+        .all_definitions()
+        .into_iter()
+        .map(|t| json!({ "name": t.name, "description": t.description }))
+        .collect();
+    Ok(json!({ "tools": tools }))
 }
 
 // --- workspace.git_remote ---

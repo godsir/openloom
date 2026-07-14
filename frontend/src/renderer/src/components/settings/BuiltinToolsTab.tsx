@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { loomRpc } from '../../services/jsonrpc'
 import { useLocale } from '../../i18n'
 import { IconChevronDown, IconSearch } from '../../utils/icons'
@@ -19,6 +19,11 @@ interface ToolPrefs {
   monitor_default_timeout_ms: number
 }
 
+interface ToolInfo {
+  name: string
+  description: string
+}
+
 interface ConfigDef {
   key: string
   labelKey: string
@@ -31,15 +36,13 @@ interface ConfigDef {
   msToSec?: boolean
   placeholder?: string
   visibleWhen?: { key: string; values: string[] }
-  /** 在同一行跟在 select 后面 */
   inline?: boolean
-  /** inline text 的触发值 */
   inlineFor?: string[]
 }
 
 interface ToolDef {
   name: string
-  descKey: string
+  description: string
   configs?: ConfigDef[]
   category: string
 }
@@ -49,67 +52,52 @@ interface CategoryDef {
   labelKey: string
 }
 
-function buildTools(): ToolDef[] {
-  return [
-    { name: 'shell', descKey: 'bt.shell', category: 'files', configs: [
-      { key: 'shell_default_timeout_secs', labelKey: 'bt.shellDefaultTimeout', type: 'slider', min: 10, max: 300, step: 5, unit: 's' },
-      { key: 'shell_max_timeout_secs', labelKey: 'bt.shellMaxTimeout', type: 'slider', min: 60, max: 600, step: 10, unit: 's' },
+/** Per-tool config definitions — keys determine which UI controls to render.
+ *  Tool names come from the backend via tools.list; this map provides the
+ *  editable preference controls for tools that have configurable settings. */
+const TOOL_CONFIGS: Record<string, ConfigDef[]> = {
+  shell: [
+    { key: 'shell_default_timeout_secs', labelKey: 'bt.shellDefaultTimeout', type: 'slider', min: 10, max: 300, step: 5, unit: 's' },
+    { key: 'shell_max_timeout_secs', labelKey: 'bt.shellMaxTimeout', type: 'slider', min: 60, max: 600, step: 10, unit: 's' },
+  ],
+  file_read: [
+    { key: 'file_read_max_output_kb', labelKey: 'bt.fileReadMaxKb', type: 'slider', min: 8, max: 512, step: 8, unit: 'KB' },
+  ],
+  web_search: [
+    { key: 'web_search_engine', labelKey: 'bt.webSearchEngine', type: 'select', options: [
+      { value: 'duckduckgo_lite', label: 'DuckDuckGo' },
+      { value: 'brave', label: 'Brave Search' },
+      { value: 'google', label: 'Google' },
+      { value: 'bing', label: 'Bing' },
+      { value: 'tavily', label: 'Tavily' },
+      { value: 'serper', label: 'Serper' },
+      { value: 'searxng', label: 'SearXNG' },
     ]},
-    { name: 'file_list', descKey: 'bt.file_list', category: 'files' },
-    { name: 'file_read', descKey: 'bt.file_read', category: 'files', configs: [
-      { key: 'file_read_max_output_kb', labelKey: 'bt.fileReadMaxKb', type: 'slider', min: 8, max: 512, step: 8, unit: 'KB' },
-    ]},
-    { name: 'file_write', descKey: 'bt.file_write', category: 'files' },
-    { name: 'file_edit', descKey: 'bt.file_edit', category: 'files' },
-    { name: 'file_delete', descKey: 'bt.file_delete', category: 'files' },
-    { name: 'file_glob', descKey: 'bt.file_glob', category: 'files' },
-    { name: 'file_find', descKey: 'bt.file_find', category: 'files' },
-    { name: 'content_search', descKey: 'bt.content_search', category: 'files' },
-    { name: 'web_search', descKey: 'bt.web_search', category: 'web', configs: [
-      { key: 'web_search_engine', labelKey: 'bt.webSearchEngine', type: 'select', options: [
-        { value: 'duckduckgo_lite', label: 'DuckDuckGo' },
-        { value: 'brave', label: 'Brave Search' },
-        { value: 'google', label: 'Google' },
-        { value: 'bing', label: 'Bing' },
-        { value: 'tavily', label: 'Tavily' },
-        { value: 'serper', label: 'Serper' },
-        { value: 'searxng', label: 'SearXNG' },
-      ]},
-      { key: 'searxng_url', inline: true, labelKey: 'bt.searxngUrl', type: 'text', placeholder: 'https://searx.example.com', visibleWhen: { key: 'web_search_engine', values: ['searxng'] }, inlineFor: ['searxng'] },
-      { key: 'web_search_api_key', inline: true, labelKey: 'bt.webSearchApiKey', type: 'text', placeholder: 'api-key...', visibleWhen: { key: 'web_search_engine', values: ['brave', 'google', 'bing', 'tavily', 'serper'] }, inlineFor: ['brave', 'google', 'bing', 'tavily', 'serper'] },
-      { key: 'web_search_max_results', labelKey: 'bt.webSearchMaxResults', type: 'slider', min: 1, max: 10 },
-    ]},
-    { name: 'web_fetch', descKey: 'bt.web_fetch', category: 'web', configs: [
-      { key: 'web_fetch_max_chars', labelKey: 'bt.webFetchMaxChars', type: 'slider', min: 1000, max: 20000, step: 500, unit: 'chars' },
-    ]},
-    { name: 'process_spawn', descKey: 'bt.process_spawn', category: 'processes' },
-    { name: 'process_kill', descKey: 'bt.process_kill', category: 'processes' },
-    { name: 'process_stdin', descKey: 'bt.process_stdin', category: 'processes' },
-    { name: 'process_list', descKey: 'bt.process_list', category: 'processes' },
-    { name: 'process_wait', descKey: 'bt.process_wait', category: 'processes', configs: [
-      { key: 'process_wait_max_timeout_secs', labelKey: 'bt.processWaitMaxTimeout', type: 'slider', min: 60, max: 7200, step: 60, unit: 's' },
-    ]},
-    { name: 'process_peek', descKey: 'bt.process_peek', category: 'processes' },
-    { name: 'monitor', descKey: 'bt.monitor', category: 'monitors', configs: [
-      { key: 'monitor_default_timeout_ms', labelKey: 'bt.monitorDefaultTimeout', type: 'slider', min: 60, max: 1800, step: 30, unit: 's', msToSec: true },
-    ]},
-    { name: 'monitor_list', descKey: 'bt.monitor_list', category: 'monitors' },
-    { name: 'monitor_kill', descKey: 'bt.monitor_kill', category: 'monitors' },
-    { name: 'monitor_wait', descKey: 'bt.monitor_wait', category: 'monitors' },
-    { name: 'monitor_peek', descKey: 'bt.monitor_peek', category: 'monitors' },
-    { name: 'memory_search', descKey: 'bt.memory_search', category: 'system' },
-    { name: 'memory_remember', descKey: 'bt.memory_remember', category: 'system' },
-    { name: 'todo_write', descKey: 'bt.todo_write', category: 'system' },
-    { name: 'todo_list', descKey: 'bt.todo_list', category: 'system' },
-    { name: 'schedule_reminder', descKey: 'bt.schedule_reminder', category: 'system' },
-    { name: 'system_info', descKey: 'bt.system_info', category: 'system' },
-    { name: 'token_usage', descKey: 'bt.token_usage', category: 'system' },
-    { name: 'use_skill', descKey: 'bt.use_skill', category: 'system' },
-    { name: 'ask_user', descKey: 'bt.ask_user', category: 'system' },
-    { name: 'loop', descKey: 'bt.loop', category: 'system' },
-    { name: 'push_notification', descKey: 'bt.push_notification', category: 'system' },
-    { name: 'report_findings', descKey: 'bt.report_findings', category: 'system' },
-  ]
+    { key: 'searxng_url', inline: true, labelKey: 'bt.searxngUrl', type: 'text', placeholder: 'https://searx.example.com', visibleWhen: { key: 'web_search_engine', values: ['searxng'] }, inlineFor: ['searxng'] },
+    { key: 'web_search_api_key', inline: true, labelKey: 'bt.webSearchApiKey', type: 'text', placeholder: 'api-key...', visibleWhen: { key: 'web_search_engine', values: ['brave', 'google', 'bing', 'tavily', 'serper'] }, inlineFor: ['brave', 'google', 'bing', 'tavily', 'serper'] },
+    { key: 'web_search_max_results', labelKey: 'bt.webSearchMaxResults', type: 'slider', min: 1, max: 10 },
+  ],
+  web_fetch: [
+    { key: 'web_fetch_max_chars', labelKey: 'bt.webFetchMaxChars', type: 'slider', min: 1000, max: 20000, step: 500, unit: 'chars' },
+  ],
+  process_wait: [
+    { key: 'process_wait_max_timeout_secs', labelKey: 'bt.processWaitMaxTimeout', type: 'slider', min: 60, max: 7200, step: 60, unit: 's' },
+  ],
+  monitor: [
+    { key: 'monitor_default_timeout_ms', labelKey: 'bt.monitorDefaultTimeout', type: 'slider', min: 60, max: 1800, step: 30, unit: 's', msToSec: true },
+  ],
+}
+
+/** Assign a category based on tool name prefix.  Categories match the
+ *  i18n keys bt.category_*. New tools fall into `system` unless they
+ *  match a known prefix. */
+function toolCategory(name: string): string {
+  if (name.startsWith('file_')) return 'files'
+  if (name === 'shell' || name === 'content_search') return 'files'
+  if (name.startsWith('web_')) return 'web'
+  if (name.startsWith('process_')) return 'processes'
+  if (name.startsWith('monitor')) return 'monitors'
+  return 'system'
 }
 
 function buildCategories(): CategoryDef[] {
@@ -229,7 +217,7 @@ function renderTool(
       <div className={styles.toolHeader} onClick={() => toggleTool(tool.name)}>
         <span className={`${styles.configDot} ${hasConfig ? styles.configDotActive : styles.configDotNone}`} />
         <span className={styles.toolName}>{tool.name}</span>
-        <span className={styles.toolDesc}>{t(tool.descKey)}</span>
+        <span className={styles.toolDesc}>{tool.description}</span>
         <span className={`${styles.toolBadge} ${hasConfig ? styles.toolBadgeConfig : styles.toolBadgeDefault}`}>
           {hasConfig ? t('bt.configurable') : t('bt.systemDefault')}
         </span>
@@ -257,21 +245,28 @@ function renderTool(
 
 export default function BuiltinToolsTab() {
   const { t } = useLocale()
-  const allTools = useMemo(() => buildTools(), [])
-  const categories = useMemo(() => buildCategories(), [])
-
+  const [serverTools, setServerTools] = useState<ToolInfo[]>([])
   const [prefs, setPrefs] = useState<ToolPrefs | null>(null)
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set())
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(categories.map(c => c.id)))
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(['files', 'web', 'processes', 'monitors', 'system']))
   const [search, setSearch] = useState('')
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    loomRpc<ToolPrefs>('config.get_tool_prefs').then(p => {
-      setPrefs(p)
-      setLoaded(true)
-    }).catch(() => setLoaded(true))
+    Promise.all([
+      loomRpc<{ tools: ToolInfo[] }>('tools.list').then(r => setServerTools(r.tools || [])),
+      loomRpc<ToolPrefs>('config.get_tool_prefs').then(p => setPrefs(p)),
+    ]).catch(() => {}).finally(() => setLoaded(true))
   }, [])
+
+  // Merge backend tool info with local config definitions
+  const allTools: ToolDef[] = (serverTools || []).map(ti => ({
+    name: ti.name,
+    description: ti.description,
+    configs: TOOL_CONFIGS[ti.name],
+    category: toolCategory(ti.name),
+  }))
+  const categories = buildCategories()
 
   const toggleTool = (name: string) => {
     setExpandedTools(prev => {
@@ -298,7 +293,7 @@ export default function BuiltinToolsTab() {
 
   const setPref = useCallback(async (key: string, val: string | number) => {
     const next: Partial<ToolPrefs> = {}
-    const allConfigs = allTools.flatMap(tl => tl.configs || [])
+    const allConfigs = Object.values(TOOL_CONFIGS).flat()
     const cfg = allConfigs.find(c => c.key === key)
     if (cfg?.msToSec && typeof val === 'number') {
       (next as any)[key] = val * 1000
@@ -311,13 +306,13 @@ export default function BuiltinToolsTab() {
       await loomRpc('config.set_tool_prefs', next)
       setPrefs(prev => prev ? { ...prev, ...next } : prev)
     } catch {}
-  }, [allTools])
+  }, [])
 
   const searchLower = search.toLowerCase().trim()
   const filteredTools = searchLower
     ? allTools.filter(tool =>
       tool.name.toLowerCase().includes(searchLower) ||
-      t(tool.descKey).toLowerCase().includes(searchLower)
+      (tool.description || '').toLowerCase().includes(searchLower)
     )
     : allTools
 
