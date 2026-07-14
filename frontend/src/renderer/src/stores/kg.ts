@@ -1,6 +1,6 @@
 import { StateCreator } from 'zustand'
 import { loomRpc } from '../services/jsonrpc'
-import type { KgNode, KgEdge, KgGraph, KgStats, Cognition, CognitionHistory, MemoryHealth, MemoryQualityReport, PersonaData, SessionPatternReport, ConsolidationReport, ForgettingReport, PipelineStatus, LayerStats, VectorSearchResult } from '../types/bindings'
+import type { KgNode, KgEdge, KgGraph, KgStats, Cognition, CognitionHistory, MemoryHealth, MemoryQualityReport, PersonaData, SessionPatternReport, ConsolidationReport, ForgettingReport, PipelineStatus, LayerStats } from '../types/bindings'
 
 export interface KgSlice {
   kgSearchResults: KgNode[]
@@ -21,7 +21,6 @@ export interface KgSlice {
   forgettingReport: ForgettingReport | null
   pipelineStatus: PipelineStatus[]
   layerStats: LayerStats[]
-  vectorResults: VectorSearchResult[]
   activeTab: 'graph' | 'health' | 'persona' | 'patterns' | 'maintenance'
   kgSearch: (query: string) => Promise<void>
   kgExpandNode: (nodeName: string, scope?: string) => Promise<void>
@@ -48,7 +47,6 @@ export interface KgSlice {
   kgLoadPipelineStatus: () => Promise<void>
   kgLoadLayerStats: () => Promise<void>
   kgPromoteToLayer: (nodeName: string, targetLayer: string) => Promise<void>
-  kgVectorSearch: (query: string, limit?: number) => Promise<void>
   kgSetActiveTab: (tab: 'graph' | 'health' | 'persona' | 'patterns' | 'maintenance') => void
 }
 
@@ -71,7 +69,6 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
   forgettingReport: null,
   pipelineStatus: [],
   layerStats: [],
-  vectorResults: [],
   activeTab: 'graph',
 
   kgSearch: async (query) => {
@@ -428,18 +425,6 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
     } catch (err) {
       console.error('[kgPromoteToLayer] failed:', err)
       throw err
-    }
-  },
-
-  kgVectorSearch: async (query, limit) => {
-    try {
-      const result = await loomRpc<{ results: VectorSearchResult[] }>('memory.vector_search', {
-        query,
-        limit: limit ?? 20,
-      })
-      set({ vectorResults: result.results ?? [] })
-    } catch (err) {
-      console.error('[kgVectorSearch] failed:', err)
     }
   },
 

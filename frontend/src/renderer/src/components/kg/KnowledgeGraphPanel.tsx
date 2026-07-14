@@ -6,12 +6,11 @@ import MaintenanceTab from './MaintenanceTab'
 import MemoryHealthPanel from './MemoryHealthPanel'
 import { PersonaPanelConnected } from './PersonaPanel'
 import PatternPanel from './PatternPanel'
-import VectorSearchPanel from './VectorSearchPanel'
 import styles from './KnowledgeGraphPanel.module.css'
 
 export default function KnowledgeGraphPanel() {
   const { t } = useLocale()
-  const [activeTab, setActiveTab] = useState<'graph' | 'kg' | 'vector' | 'persona' | 'patterns' | 'health' | 'maintenance'>('graph')
+  const [activeTab, setActiveTab] = useState<'graph' | 'kg' | 'persona' | 'patterns' | 'health' | 'maintenance'>('graph')
 
   // ── Pattern data (connected wrapper inline) ──
   const patternReport = useStore(s => s.patternReport)
@@ -38,10 +37,6 @@ export default function KnowledgeGraphPanel() {
           onClick={() => setActiveTab('kg')}
         >{t('kg.tab.knowledgeBase')}</button>
         <button
-          className={`${styles.mainTab} ${activeTab === 'vector' ? styles.mainTabActive : ''}`}
-          onClick={() => setActiveTab('vector')}
-        >{t('kg.tab.semantic')}</button>
-        <button
           className={`${styles.mainTab} ${activeTab === 'persona' ? styles.mainTabActive : ''}`}
           onClick={() => setActiveTab('persona')}
         >{t('kg.tab.persona')}</button>
@@ -60,11 +55,6 @@ export default function KnowledgeGraphPanel() {
       </div>
       {activeTab === 'graph' && <KnowledgeGraphTab initialSubTab="graph" />}
       {activeTab === 'kg' && <KnowledgeGraphTab initialSubTab="list" />}
-      {activeTab === 'vector' && (
-        <VectorSearchPanel
-          onEntitySelected={() => setActiveTab('kg')}
-        />
-      )}
       {activeTab === 'persona' && <PersonaPanelConnected />}
       {activeTab === 'patterns' && (
         <PatternPanel

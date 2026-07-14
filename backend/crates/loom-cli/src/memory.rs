@@ -1845,41 +1845,6 @@ impl MemoryStore for LoomMemoryStore {
         Ok(())
     }
 
-    // ── Vector embedding & semantic similarity search ──────────────────────
-
-    async fn embed_entity(&self, name: &str, embedding: Vec<f32>) -> Result<()> {
-        let store = self.memory_db.lock().expect("lock poisoned");
-        let graph = loom_memory::GraphStore::new(store.conn());
-        graph.embed_node(name, &embedding)
-    }
-
-    async fn search_similar_entities(
-        &self,
-        query: &str,
-        embedding: &[f32],
-        limit: usize,
-    ) -> Result<Vec<loom_types::KgNode>> {
-        let store = self.memory_db.lock().expect("lock poisoned");
-        let graph = loom_memory::GraphStore::new(store.conn());
-        // Use the query text as a FTS5 fallback when embeddings are not yet
-        // available for the query (embedding vector is empty or absent).
-        let fallback = if query.is_empty() { None } else { Some(query) };
-        let rows = graph.search_similar(embedding, limit, fallback, None)?;
-        Ok(rows
-            .iter()
-            .map(|(row, score)| loom_types::KgNode {
-                node_id: row.node_id,
-                name: row.name.clone(),
-                entity_type: row.entity_type.clone(),
-                description: row.description.clone(),
-                confidence: row.confidence,
-                scope: row.scope.clone(),
-                layer: "semantic".to_string(),
-                similarity: *score,
-            })
-            .collect())
-    }
-
     // ── Memory quality feedback loop ───────────────────────────────────────
 
     async fn record_memory_quality(

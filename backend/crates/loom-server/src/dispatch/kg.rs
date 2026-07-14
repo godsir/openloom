@@ -42,7 +42,6 @@ pub async fn handle(
         "memory.promote_to_layer" => Some(handle_memory_promote_to_layer(state, p).await),
         "memory.pipeline_status" => Some(handle_memory_pipeline_status(state).await),
         "memory.layer_stats" => Some(handle_memory_layer_stats(state).await),
-        "memory.vector_search" => Some(handle_memory_vector_search(state, p).await),
         _ => None,
     }
 }
@@ -454,20 +453,4 @@ async fn handle_memory_promote_to_layer(
         .await
         .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
     Ok(json!({ "ok": true }))
-}
-
-// --- memory.vector_search ---
-
-async fn handle_memory_vector_search(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
-    let query = p.get("query").and_then(|v| v.as_str()).unwrap_or("");
-    if query.is_empty() {
-        return Err(err(ErrorCode::InvalidRequest, "query required"));
-    }
-    let limit = p.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
-    let results = state
-        .orchestrator
-        .search_similar_entities(query, limit)
-        .await
-        .map_err(|e| err(ErrorCode::InternalError, &e.to_string()))?;
-    Ok(json!({ "results": results }))
 }

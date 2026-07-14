@@ -394,17 +394,12 @@ export const enUS: TranslationMap = {
   'tokens.getHistoryFailed': 'Failed to get history',
 
   // ── Knowledge Graph ─────────────────────────────────────────────
-  'kg.semanticSearch': 'Semantic Search',
   'kg.searching': 'Searching...',
   'kg.search': 'Search',
-  'kg.searchHint': 'Similar entity search based on semantic vectors',
+  'kg.searchHint': 'Search knowledge graph entities',
   'kg.promoteTitle': 'Promote Session Memory to Global',
   'kg.selectSession': 'Select Session',
   'kg.promote': 'Promote',
-  'kg.samplePython': 'Python',
-  'kg.sampleML': 'Machine Learning',
-  'kg.sampleFrontend': 'Frontend Dev',
-  'kg.samplePerf': 'Performance',
 
   // Entity types
   'kg.entityType.Technology': 'Technology',
@@ -470,19 +465,10 @@ export const enUS: TranslationMap = {
   // Tab labels (KnowledgeGraphPanel)
   'kg.tab.graph': 'Star Map',
   'kg.tab.knowledgeBase': 'Knowledge Base',
-  'kg.tab.semantic': 'Semantic',
   'kg.tab.persona': 'Persona',
   'kg.tab.patterns': 'Patterns',
   'kg.tab.health': 'Health',
   'kg.tab.maintenance': 'Maintenance',
-
-  // Vector search
-  'kg.vectorHint': 'Similar entity search based on semantic vectors. Find conceptually related knowledge graph entities.',
-  'kg.vectorUnavailable': 'Vector search unavailable',
-  'kg.vectorSearching': 'Searching semantically similar entities...',
-  'kg.vectorEmptyTitle': 'Semantic Search',
-  'kg.vectorEmptyHint': 'Enter concepts, descriptions or keywords to find semantically similar knowledge graph entities via vector embeddings.',
-  'kg.tryThese': 'Try:',
 
   // Promote dialog
   'kg.promote.confidenceThreshold': 'Confidence Threshold',

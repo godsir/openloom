@@ -23,10 +23,7 @@ pub use extractor::{
     EntityExtractor, ExtractedEntity, ExtractedRelationship, LLM_EXTRACTION_PROMPT,
     RuleBasedEntityExtractor, parse_llm_extraction,
 };
-pub use graph::{
-    DEFAULT_EMBEDDING_DIM, GraphStore, PruningResult, blob_to_f32_vec, compute_health_score,
-    cosine_similarity, f32_slice_to_blob,
-};
+pub use graph::{ GraphStore, PruningResult, compute_health_score };
 pub use layers::{Layer, LayerConfig};
 pub use pattern::{
     LearningPath, SessionPatternDetector, SessionPatternReport, TimePattern, ToolPreference,

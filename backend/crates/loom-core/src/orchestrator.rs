@@ -616,25 +616,6 @@ pub trait MemoryStore: Send + Sync {
     ) -> Result<serde_json::Value>;
     async fn reset_token_usage(&self) -> Result<()>;
 
-    // ── Vector embedding & semantic similarity search ──────────────────────
-
-    /// Store a float32 embedding vector for a named entity node.
-    /// Enables semantic similarity search across the knowledge graph.
-    async fn embed_entity(&self, _name: &str, _embedding: Vec<f32>) -> Result<()> {
-        Ok(())
-    }
-    /// Search for entities whose stored embeddings are most similar to the
-    /// query string. Falls back to FTS5 text search when embeddings are not
-    /// yet available for the query.
-    async fn search_similar_entities(
-        &self,
-        _query: &str,
-        _embedding: &[f32],
-        _limit: usize,
-    ) -> Result<Vec<loom_types::KgNode>> {
-        Ok(Vec::new())
-    }
-
     // ── Memory quality feedback loop ───────────────────────────────────────
 
     /// Record a memory quality injection log entry. Returns the log ID for
@@ -2064,22 +2045,6 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
             store.get_layer_stats().await
         } else {
             Ok(vec![])
-        }
-    }
-
-    /// Search for entities by semantic similarity to a query string.
-    /// Passes the query text as a fallback for FTS5 when vector embeddings
-    /// are not yet available; full embedding-based search will be wired
-    /// in a follow-up phase.
-    pub async fn search_similar_entities(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<loom_types::KgNode>> {
-        if let Some(ref store) = *self.memory_store.read().await {
-            store.search_similar_entities(query, &[], limit).await
-        } else {
-            Ok(Vec::new())
         }
     }
 

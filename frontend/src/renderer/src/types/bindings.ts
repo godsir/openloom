@@ -283,15 +283,3 @@ export interface LayerStats {
   layer_name: string
   node_count: number
 }
-
-// === Vector Search ===
-
-export interface VectorSearchResult {
-  node_id: number
-  name: string
-  entity_type: string
-  description: string
-  confidence: number
-  scope: string
-  similarity: number
-}

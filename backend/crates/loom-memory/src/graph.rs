@@ -8,8 +8,6 @@ use loom_types::MemoryQualityReport;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-/// Default embedding dimension, matching common embedding models
-/// (e.g., text-embedding-3-small, all-mpnet-base-v2: 768).
 /// Compute the weighted health score (0-100) from the report's metrics.
 ///
 /// Weights:
@@ -38,15 +36,6 @@ pub fn compute_health_score(report: &MemoryQualityReport) -> f64 {
 
     (score * 10.0).round() / 10.0 // round to 1 decimal place
 }
-
-pub const DEFAULT_EMBEDDING_DIM: usize = 768;
-
-/// Maximum number of embedded nodes loaded into memory for the brute-force
-/// cosine scan in `GraphStore::search_similar`. When more embedded nodes than
-/// this exist, candidates are first ordered by recency/corroboration so the cap
-/// truncates deterministically (see `search_similar` docs). Raising this trades
-/// recall for per-query memory/CPU; a real fix is ANN/sqlite-vec indexing.
-pub const SEARCH_SIMILAR_CANDIDATE_CAP: usize = 5000;
 
 /// A row from a graph query.
 #[derive(Debug, Clone)]
@@ -1639,162 +1628,6 @@ impl<'a> GraphStore<'a> {
     }
 
     // ========================================================================
-    // Vector embedding — semantic similarity search
-    // ========================================================================
-
-    /// Store a float32 embedding vector for a named entity node.
-    /// The embedding is serialised as a BLOB of little-endian f32 values.
-    /// If the node does not exist, a minimal node is created automatically.
-    pub fn embed_node(&self, name: &str, embedding: &[f32]) -> Result<()> {
-        let bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
-        let affected = self.conn.execute(
-            "UPDATE kg_nodes SET embedding = ?1 WHERE name = ?2",
-            rusqlite::params![bytes, name],
-        )?;
-        if affected == 0 {
-            // Node doesn't exist yet — upsert a minimal node with embedding
-            let now = Utc::now().timestamp();
-            self.conn.execute(
-                "INSERT INTO kg_nodes (name, entity_type, description, confidence, evidence_count,
-                 first_seen, last_updated, scope, embedding)
-                 VALUES (?1, 'concept', '', 0.5, 1, ?2, ?2, 'global', ?3)",
-                rusqlite::params![name, now, bytes],
-            )?;
-        }
-        Ok(())
-    }
-
-    /// Retrieve the stored embedding vector for a node. Returns `None` if the
-    /// node has no embedding or does not exist.
-    pub fn get_embedding(&self, name: &str) -> Result<Option<Vec<f32>>> {
-        let result: Option<Vec<u8>> = self
-            .conn
-            .query_row(
-                "SELECT embedding FROM kg_nodes WHERE name = ?1 AND embedding IS NOT NULL",
-                rusqlite::params![name],
-                |row| row.get(0),
-            )
-            .ok();
-        match result {
-            Some(blob) => Ok(Some(blob_to_f32_vec(&blob))),
-            None => Ok(None),
-        }
-    }
-
-    /// Search for entities whose stored embeddings are most similar to the
-    /// query embedding via cosine similarity. Returns up to `limit` results
-    /// sorted by descending similarity, each paired with its similarity score.
-    ///
-    /// Falls back to FTS5 text search when no nodes have embeddings or when
-    /// `fallback_query` is provided and the vector search yields no results.
-    ///
-    /// # Candidate cap
-    /// This performs a brute-force cosine scan in Rust, so the candidate set is
-    /// capped at [`SEARCH_SIMILAR_CANDIDATE_CAP`] embedded nodes. The candidates
-    /// are ordered `last_accessed DESC, evidence_count DESC, id ASC` *before* the
-    /// cap, so when more than the cap exist the truncation is deterministic and
-    /// keeps the most recently-used / best-corroborated rows rather than an
-    /// arbitrary subset. (Full ANN / sqlite-vec indexing is out of scope here.)
-    pub fn search_similar(
-        &self,
-        embedding: &[f32],
-        limit: usize,
-        fallback_query: Option<&str>,
-        scope: Option<&str>,
-    ) -> Result<Vec<(GraphRow, f64)>> {
-        // Build scope filter clause
-        let scope_clause = if scope.is_some() {
-            "AND (n.scope = ?1 OR n.scope = 'global')"
-        } else {
-            ""
-        };
-
-        // Deterministic, relevance-biased ordering before the candidate cap so
-        // that, once more than the cap of embedded nodes exist, the retained
-        // subset is stable across calls and favours recently-accessed /
-        // well-corroborated entities instead of an arbitrary BLOB order.
-        // `last_accessed` is nullable; NULLs sort last under SQLite's default
-        // ASC NULLs-first → with DESC they sort first, so coalesce to 0.
-        let sql = format!(
-            "SELECT n.id, n.name, n.entity_type, n.description, n.confidence, n.scope, n.embedding
-             FROM kg_nodes n WHERE n.embedding IS NOT NULL {scope_clause}
-             ORDER BY COALESCE(n.last_accessed, 0) DESC, n.evidence_count DESC, n.id ASC
-             LIMIT {SEARCH_SIMILAR_CANDIDATE_CAP}"
-        );
-
-        let mut stmt = self.conn.prepare(&sql)?;
-        let rows: Vec<_> = if let Some(scope_str) = scope {
-            stmt.query_map(rusqlite::params![scope_str], |row| {
-                let emb_bytes: Vec<u8> = row.get(6)?;
-                let stored: Vec<f32> = blob_to_f32_vec(&emb_bytes);
-                Ok((
-                    GraphRow {
-                        node_id: row.get(0)?,
-                        name: row.get(1)?,
-                        entity_type: row.get(2)?,
-                        description: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                        confidence: row.get(4)?,
-                        relation_type: None,
-                        distance: None,
-                        scope: row.get(5)?,
-                        layer: "semantic".to_string(),
-                    },
-                    stored,
-                ))
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?
-        } else {
-            stmt.query_map([], |row| {
-                let emb_bytes: Vec<u8> = row.get(6)?;
-                let stored: Vec<f32> = blob_to_f32_vec(&emb_bytes);
-                Ok((
-                    GraphRow {
-                        node_id: row.get(0)?,
-                        name: row.get(1)?,
-                        entity_type: row.get(2)?,
-                        description: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                        confidence: row.get(4)?,
-                        relation_type: None,
-                        distance: None,
-                        scope: row.get(5)?,
-                        layer: "semantic".to_string(),
-                    },
-                    stored,
-                ))
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?
-        };
-
-        if !rows.is_empty() {
-            // Vector search path: compute cosine similarity and rank
-            let mut scored: Vec<(GraphRow, f64)> = rows
-                .into_iter()
-                .filter(|(_, emb)| emb.len() == embedding.len())
-                .map(|(row, emb)| {
-                    let sim = cosine_similarity(embedding, &emb);
-                    (row, sim)
-                })
-                .collect();
-
-            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            scored.truncate(limit);
-
-            let result_rows: Vec<GraphRow> = scored.iter().map(|(r, _)| r.clone()).collect();
-            let _ = self.touch_rows(&result_rows);
-            return Ok(scored);
-        }
-
-        // Fallback: no embeddings available — use FTS5 text search if query provided
-        if let Some(query) = fallback_query {
-            let text_results = self.search_entities(query, limit, scope)?;
-            let scored: Vec<(GraphRow, f64)> = text_results.into_iter().map(|r| (r, 0.0)).collect();
-            return Ok(scored);
-        }
-
-        Ok(Vec::new())
-    }
-
-    // ========================================================================
     // Active Forgetting — importance-based pruning
     // ========================================================================
 
@@ -2043,47 +1876,6 @@ impl<'a> GraphStore<'a> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Vector helpers
-// ---------------------------------------------------------------------------
-
-/// Convert a `[f32]` slice into a BLOB of little-endian bytes.
-#[allow(dead_code)]
-pub fn f32_slice_to_blob(v: &[f32]) -> Vec<u8> {
-    v.iter().flat_map(|f| f.to_le_bytes()).collect()
-}
-
-/// Decode a BLOB of little-endian bytes into a `Vec<f32>`.
-pub fn blob_to_f32_vec(blob: &[u8]) -> Vec<f32> {
-    blob.chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect()
-}
-
-/// Compute cosine similarity between two float slices.
-pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
-    let dot: f64 = a
-        .iter()
-        .zip(b.iter())
-        .map(|(x, y)| (*x as f64) * (*y as f64))
-        .sum();
-    let norm_a: f64 = a
-        .iter()
-        .map(|x| (*x as f64) * (*x as f64))
-        .sum::<f64>()
-        .sqrt();
-    let norm_b: f64 = b
-        .iter()
-        .map(|x| (*x as f64) * (*x as f64))
-        .sum::<f64>()
-        .sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 {
-        0.0
-    } else {
-        dot / (norm_a * norm_b)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2211,101 +2003,6 @@ mod tests {
         let neighbors = store.neighbors("Rust", None, 10).unwrap();
         assert_eq!(neighbors.len(), 1);
         assert_eq!(neighbors[0].name, "openLoom");
-    }
-
-    #[test]
-    fn test_embedding_store_and_search() {
-        let conn = setup_db();
-        let store = GraphStore::new(&conn);
-
-        // Create nodes with embeddings
-        let emb_rust = vec![1.0f32, 0.0, 0.0]; // dim=3 for testing
-        let emb_python = vec![0.0, 1.0, 0.0];
-        let emb_loom = vec![0.9, 0.1, 0.0]; // close to emb_rust
-
-        store
-            .upsert_node("Rust", "Technology", "PL", 0.9, "global", None)
-            .unwrap();
-        store.embed_node("Rust", &emb_rust).unwrap();
-
-        store
-            .upsert_node("Python", "Technology", "PL", 0.85, "global", None)
-            .unwrap();
-        store.embed_node("Python", &emb_python).unwrap();
-
-        store
-            .upsert_node("openLoom", "Project", "AI kernel", 0.9, "global", None)
-            .unwrap();
-        store.embed_node("openLoom", &emb_loom).unwrap();
-
-        // embed_node should also work for non-existing nodes (auto-creates)
-        store.embed_node("NewTech", &vec![0.5, 0.5, 0.0]).unwrap();
-        assert!(store.resolve_node("NewTech").unwrap().is_some());
-
-        // Search: query embedding close to emb_rust
-        let query = vec![0.95, 0.05, 0.0];
-        let results = store.search_similar(&query, 5, None, None).unwrap();
-        assert!(
-            results.len() >= 3,
-            "expected at least 3 results, got {}",
-            results.len()
-        );
-        // Rust-like embeddings should rank highest
-        let top = &results[0];
-        assert!(
-            top.0.name == "Rust" || top.0.name == "openLoom" || top.0.name == "NewTech",
-            "top result should be close to query, got {}",
-            top.0.name
-        );
-        assert!(top.1 > 0.9, "similarity should be high, got {}", top.1);
-
-        // get_embedding
-        let retrieved = store.get_embedding("Rust").unwrap();
-        assert!(retrieved.is_some());
-        let retrieved = retrieved.unwrap();
-        assert_eq!(retrieved.len(), 3);
-        assert!((retrieved[0] - 1.0).abs() < 1e-6);
-        assert!((retrieved[1] - 0.0).abs() < 1e-6);
-        assert!((retrieved[2] - 0.0).abs() < 1e-6);
-
-        // Node without embedding returns None
-        store
-            .upsert_node("NoEmb", "Concept", "desc", 0.5, "global", None)
-            .unwrap();
-        assert!(store.get_embedding("NoEmb").unwrap().is_none());
-    }
-
-    #[test]
-    fn test_embedding_fallback_to_fts() {
-        let conn = setup_db();
-        let store = GraphStore::new(&conn);
-
-        // No nodes have embeddings — search_similar should fall back to FTS5
-        store
-            .upsert_node(
-                "RustLang",
-                "Technology",
-                "Rust programming",
-                0.9,
-                "global",
-                None,
-            )
-            .unwrap();
-
-        let query = vec![0.5f32; 768];
-        let results = store
-            .search_similar(&query, 10, Some("rust"), None)
-            .unwrap();
-        // Falls back to FTS5 search with score 0.0
-        assert!(!results.is_empty(), "FTS5 fallback should return results");
-        assert_eq!(results[0].1, 0.0, "FTS5 fallback results have score 0.0");
-
-        // Without fallback_query, returns empty
-        let no_results = store.search_similar(&query, 10, None, None).unwrap();
-        assert!(
-            no_results.is_empty(),
-            "without fallback query, should be empty"
-        );
     }
 
     // ========================================================================

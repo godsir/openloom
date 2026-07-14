@@ -386,17 +386,12 @@ export const zhTW: TranslationMap = {
   'tokens.getHistoryFailed': '获取歷史資料失敗',
 
   // ── Knowledge Graph ─────────────────────────────────────────────
-  'kg.semanticSearch': '語意搜尋',
   'kg.searching': '搜尋中...',
   'kg.search': '搜尋',
-  'kg.searchHint': '基于語意向量的相似實體搜尋',
+  'kg.searchHint': '搜尋知識圖譜實體',
   'kg.promoteTitle': '提升對話記憶为全局',
   'kg.selectSession': '選擇對話',
   'kg.promote': '提升',
-  'kg.samplePython': 'Python',
-  'kg.sampleML': '机器学习',
-  'kg.sampleFrontend': '前端开发',
-  'kg.samplePerf': '性能优化',
 
   // Entity types
   'kg.entityType.Technology': '技术',
@@ -462,19 +457,10 @@ export const zhTW: TranslationMap = {
   // Tab labels (KnowledgeGraphPanel)
   'kg.tab.graph': '星图',
   'kg.tab.knowledgeBase': '知识库',
-  'kg.tab.semantic': '語意',
   'kg.tab.persona': '畫像',
   'kg.tab.patterns': '模式',
   'kg.tab.health': '健康',
   'kg.tab.maintenance': '维护',
-
-  // Vector search
-  'kg.vectorHint': '基于語意向量的相似實體搜尋，查找概念上相近的知識圖譜實體',
-  'kg.vectorUnavailable': '向量搜尋暫不可用',
-  'kg.vectorSearching': '正在搜尋語意相似的實體...',
-  'kg.vectorEmptyTitle': '語意搜尋',
-  'kg.vectorEmptyHint': '輸入概念、說明或关键词，基于向量嵌入查找語意相近的知識圖譜實體',
-  'kg.tryThese': '试试：',
 
   // Promote dialog
   'kg.promote.confidenceThreshold': '置信度阈值',
