@@ -769,7 +769,11 @@ impl MemoryStore for LoomMemoryStore {
             let trait_name = match e.entity_type.to_lowercase().as_str() {
                 "technology" => format!("uses_{}", clean_name.to_lowercase()),
                 "interest" => format!("interest_{}", clean_name.to_lowercase()),
-                other => format!("entity_{}", other),
+                "preference" => format!("prefers_{}", clean_name.to_lowercase()),
+                "goal" => format!("goal_{}", clean_name.to_lowercase()),
+                "habit" => format!("habit_{}", clean_name.to_lowercase()),
+                "background" => format!("background_{}", clean_name.to_lowercase()),
+                other => format!("entity_{}_{}", other, clean_name.to_lowercase()),
             };
             let _ = cognition.insert("USER", &trait_name, &value, e.confidence, 1, scope);
             tracing::info!(entity = %e.name, scope, "cognition inserted with scope");
@@ -788,11 +792,11 @@ impl MemoryStore for LoomMemoryStore {
         conn.execute_batch("BEGIN;")?;
 
         // Upsert a KG node for the fact at global scope (no promotion needed)
-        let _ = graph.upsert_node(fact, category, fact, importance, "global", None);
+        graph.upsert_node(fact, category, fact, importance, "global", None)?;
 
         // Also store as a cognition so persona builder can see it
         let trait_name = format!("remembered_{}", category);
-        let _ = cognition.insert("USER", &trait_name, fact, importance, 1, "global");
+        cognition.insert("USER", &trait_name, fact, importance, 1, "global")?;
 
         conn.execute_batch("COMMIT;")?;
 

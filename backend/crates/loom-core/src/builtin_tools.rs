@@ -2261,7 +2261,7 @@ impl AgentTool for MemoryRememberTool {
                 "properties": {
                     "fact": {"type":"string","description":"要记住的内容，用自然语言描述（例如：用户偏好手写SQL而非ORM）"},
                     "category": {"type":"string","description":"事实类别","enum":["preference","knowledge","context","goal"]},
-                    "importance": {"type":"integer","description":"重要程度 1-5，5=非常重要","minimum":1,"maximum":5}
+                    "importance": {"type":"number","description":"重要程度 1-5，5=非常重要","minimum":1,"maximum":5}
                 },
                 "required": ["fact", "category"]
             }),
