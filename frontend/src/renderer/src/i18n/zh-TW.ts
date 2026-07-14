@@ -1102,6 +1102,7 @@ export const zhTW: TranslationMap = {
   'bt.web_search': '網路搜尋',
   'bt.web_fetch': '擷取網頁並提取文字',
   'bt.memory_search': '搜尋知識圖譜（長期記憶）',
+  'bt.memory_remember': '主動記住重要資訊（偏好、背景、目標）',
   'bt.use_skill': '按名稱啟用已安裝技能',
   'bt.todo_write': '寫入/替換待辦列表',
   'bt.todo_list': '讀取目前待辦列表',

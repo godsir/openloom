@@ -1113,6 +1113,7 @@ export const zhCN: TranslationMap = {
   'bt.web_search': '网络搜索',
   'bt.web_fetch': '抓取网页并提取文本',
   'bt.memory_search': '搜索知识图谱（长记忆）',
+  'bt.memory_remember': '主动记住重要信息（偏好、背景、目标）',
   'bt.use_skill': '按名称激活已安装技能',
   'bt.todo_write': '写入/替换待办列表',
   'bt.todo_list': '读取当前待办列表',

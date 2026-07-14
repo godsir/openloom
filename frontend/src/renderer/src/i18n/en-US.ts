@@ -1113,6 +1113,7 @@ export const enUS: TranslationMap = {
   'bt.web_search': 'Web search',
   'bt.web_fetch': 'Fetch and extract text from web pages',
   'bt.memory_search': 'Search knowledge graph (long-term memory)',
+  'bt.memory_remember': 'Actively remember important info (preferences, background, goals)',
   'bt.use_skill': 'Activate an installed skill by name',
   'bt.todo_write': 'Write/replace the todo list',
   'bt.todo_list': 'Read the current todo list',

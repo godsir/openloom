@@ -98,6 +98,7 @@ function buildTools(): ToolDef[] {
     { name: 'monitor_wait', descKey: 'bt.monitor_wait', category: 'monitors' },
     { name: 'monitor_peek', descKey: 'bt.monitor_peek', category: 'monitors' },
     { name: 'memory_search', descKey: 'bt.memory_search', category: 'system' },
+    { name: 'memory_remember', descKey: 'bt.memory_remember', category: 'system' },
     { name: 'todo_write', descKey: 'bt.todo_write', category: 'system' },
     { name: 'todo_list', descKey: 'bt.todo_list', category: 'system' },
     { name: 'schedule_reminder', descKey: 'bt.schedule_reminder', category: 'system' },
