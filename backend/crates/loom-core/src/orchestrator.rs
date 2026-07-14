@@ -3707,6 +3707,11 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             return;
         }
 
+        // Publish extraction-started so frontend can mirror it in the dynamic island
+        self.pool.event_bus().publish(crate::event_bus::AgentEvent::MemoryExtractionStarted {
+            session_id: session_id.clone(),
+        });
+
         // Build LLM client before spawning.
         // Three-tier fallback:
         //   1. Dedicated entity model from ~/.loom/auxiliary.json

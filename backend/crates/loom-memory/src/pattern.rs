@@ -34,7 +34,7 @@ pub struct TopicPattern {
 /// A tool the user invokes repeatedly, with usage statistics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolPreference {
-    /// Tool name as it appears in `tool_use` blocks (e.g. "Bash", "Read").
+    /// Tool name as it appears in `tool_call` blocks (e.g. "shell", "file_read").
     pub tool: String,
     /// Total number of invocations across all sessions.
     pub usage_count: i64,
@@ -201,12 +201,12 @@ impl<'a> SessionPatternDetector<'a> {
     // 2. Tool Preferences
     // ------------------------------------------------------------------------
 
-    /// Detect tool preferences by parsing `tool_use` blocks from the assistant
+    /// Detect tool preferences by parsing `tool_call` blocks from the assistant
     /// response embedded in event payloads.
     ///
     /// The payload JSON has an `assistant_response` field containing a JSON
-    /// array of Anthropic content blocks. We scan these for `tool_use` blocks
-    /// and aggregate usage counts per tool name.
+    /// array of ContentPart blocks (serde externally-tagged enum format).
+    /// We scan these for `tool_call` blocks and aggregate usage counts per tool name.
     pub fn detect_tool_preferences(&self) -> Result<Vec<ToolPreference>> {
         let mut stmt = self.conn.prepare(
             "SELECT payload, confidence
@@ -243,11 +243,13 @@ impl<'a> SessionPatternDetector<'a> {
                 Err(_) => continue,
             };
 
-            // Collect tool names from tool_use blocks in this event
+            // Collect tool names from tool_call blocks in this event
             let mut seen_in_event: HashSet<String> = HashSet::new();
             for block in &blocks {
-                if block.get("type").and_then(|t| t.as_str()) == Some("tool_use")
-                    && let Some(name) = block.get("name").and_then(|n| n.as_str())
+                // ContentPart::ToolCall serializes as {"tool_call": {"name": "...", ...}}
+                // (serde externally-tagged enum, rename_all = "snake_case")
+                if let Some(tc) = block.get("tool_call")
+                    && let Some(name) = tc.get("name").and_then(|n| n.as_str())
                 {
                     seen_in_event.insert(name.to_string());
                 }
@@ -260,7 +262,7 @@ impl<'a> SessionPatternDetector<'a> {
                 entry.1 += *confidence;
             }
 
-            // Also count tools even if no tool_use blocks found but tool_calls > 0
+            // Also count tools even if no tool_call blocks found but tool_calls > 0
             let tool_calls_count = payload
                 .get("tool_calls")
                 .and_then(|v| v.as_u64())
@@ -835,12 +837,14 @@ mod tests {
     fn test_tool_preferences_from_payload() {
         let conn = setup_memory_db();
 
+        // ContentPart::ToolCall serializes as {"tool_call": {"name": "...", ...}}
+        // (serde externally-tagged enum, rename_all = "snake_case")
         let payload = serde_json::json!({
             "assistant_response": serde_json::to_string(&serde_json::json!([
-                {"type": "text", "text": "Let me check the file."},
-                {"type": "tool_use", "id": "toolu_01", "name": "Read", "input": {"file_path": "/tmp/x"}},
-                {"type": "text", "text": "Now let me run a command."},
-                {"type": "tool_use", "id": "toolu_02", "name": "Bash", "input": {"command": "ls"}}
+                {"text": "Let me check the file."},
+                {"tool_call": {"id": "toolu_01", "name": "Read", "arguments": {"file_path": "/tmp/x"}}},
+                {"text": "Now let me run a command."},
+                {"tool_call": {"id": "toolu_02", "name": "Bash", "arguments": {"command": "ls"}}}
             ])).unwrap(),
             "tool_calls": 2
         });
@@ -887,10 +891,11 @@ mod tests {
     fn test_tool_preferences_unknown_tool() {
         let conn = setup_memory_db();
 
-        // Payload with tool_calls > 0 but no tool_use blocks in assistant_response
+        // Payload with tool_calls > 0 but no tool_call blocks in assistant_response
+        // (e.g. tool calls were made but the content_parts only has text)
         let payload = serde_json::json!({
             "assistant_response": serde_json::to_string(&serde_json::json!([
-                {"type": "text", "text": "Done."}
+                {"text": "Done."}
             ])).unwrap(),
             "tool_calls": 3
         });
@@ -1033,7 +1038,7 @@ mod tests {
 
         let payload = serde_json::json!({
             "assistant_response": serde_json::to_string(&serde_json::json!([
-                {"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}
+                {"tool_call": {"id": "t1", "name": "Bash", "arguments": {}}}
             ])).unwrap(),
             "tool_calls": 1
         });
@@ -1053,7 +1058,7 @@ mod tests {
         // Second session
         let payload2 = serde_json::json!({
             "assistant_response": serde_json::to_string(&serde_json::json!([
-                {"type": "tool_use", "id": "t2", "name": "Bash", "input": {}}
+                {"tool_call": {"id": "t2", "name": "Bash", "arguments": {}}}
             ])).unwrap(),
             "tool_calls": 1
         });

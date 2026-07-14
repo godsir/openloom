@@ -104,6 +104,9 @@ pub enum AgentEvent {
         args: serde_json::Value,
         risk: String,
     },
+    /// Memory extraction pipeline started (async, after turn completes).
+    /// Frontend can show an extraction phase in the dynamic island.
+    MemoryExtractionStarted { session_id: String },
     /// Memory (KG/cognitions) was updated for a session — frontend can refresh KG display.
     MemoryUpdated { session_id: String },
     /// A new plan was created.
