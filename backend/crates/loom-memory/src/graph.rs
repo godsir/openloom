@@ -93,21 +93,21 @@ pub struct PruningResult {
 
 /// Translate a relation_type code into natural Chinese for LLM context injection.
 /// e.g. "prefers" → "偏好", "dislikes" → "不喜欢"
-fn rel_human(rel: &str) -> &'static str {
+fn rel_human(rel: &str) -> &str {
     match rel {
         "uses" => "使用",
         "works_on" => "参与",
         "knows" => "了解",
-        "interested_in" => "对…感兴趣",
+        "interested_in" => "感兴趣",
         "dislikes" => "不喜欢",
         "depends_on" => "依赖于",
         "part_of" => "属于",
         "created_by" => "由…创建",
-        "related_to" => "与…相关",
+        "related_to" => "相关",
         "prefers" => "偏好",
         "wants_to" => "想要",
         "habitually" => "习惯",
-        "role_is" => "是",
+        "role_is" => "身份是",
         other => other,
     }
 }
@@ -606,8 +606,9 @@ impl<'a> GraphStore<'a> {
                 let n = r?;
                 if n.confidence >= MIN_CONFIDENCE {
                     // Use the edge's fact if available, otherwise a simple relation phrase
-                    // e.g. "USER prefers 手写SQL" or "用户使用 Rust"
-                    let fact_text = format!("用户 {} {}", rel_human(rel), n.name);
+                    // e.g. "用户偏好 Rust" or "User uses Rust"
+                    let rel = n.relation_type.as_deref().unwrap_or("related_to");
+                    let fact_text = format!("用户{} {}", rel_human(rel), n.name);
                     lines.push(format!(
                         "- {}（confidence: {:.2}）",
                         fact_text, n.confidence
