@@ -91,6 +91,27 @@ pub struct PruningResult {
     pub skipped_protected: i64,
 }
 
+/// Translate a relation_type code into natural Chinese for LLM context injection.
+/// e.g. "prefers" → "偏好", "dislikes" → "不喜欢"
+fn rel_human(rel: &str) -> &'static str {
+    match rel {
+        "uses" => "使用",
+        "works_on" => "参与",
+        "knows" => "了解",
+        "interested_in" => "对…感兴趣",
+        "dislikes" => "不喜欢",
+        "depends_on" => "依赖于",
+        "part_of" => "属于",
+        "created_by" => "由…创建",
+        "related_to" => "与…相关",
+        "prefers" => "偏好",
+        "wants_to" => "想要",
+        "habitually" => "习惯",
+        "role_is" => "是",
+        other => other,
+    }
+}
+
 /// Health snapshot of the in-memory knowledge graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphHealth {
@@ -562,10 +583,12 @@ impl<'a> GraphStore<'a> {
             for r in rows {
                 let n = r?;
                 if n.confidence >= MIN_CONFIDENCE {
-                    let rel = n.relation_type.as_deref().unwrap_or("related_to");
+                    // Use the edge's fact if available, otherwise a simple relation phrase
+                    // e.g. "USER prefers 手写SQL" or "用户使用 Rust"
+                    let fact_text = format!("用户 {} {}", rel_human(rel), n.name);
                     lines.push(format!(
-                        "- USER {} {} (confidence: {:.2})",
-                        rel, n.name, n.confidence
+                        "- {}（confidence: {:.2}）",
+                        fact_text, n.confidence
                     ));
                 }
             }
@@ -630,64 +653,17 @@ impl<'a> GraphStore<'a> {
                 if !seen_entities.insert(r.name.clone()) {
                     continue;
                 }
+                // Natural-language line: prefer the edge's fact text if available
+                // (e.g. "USER prefers raw SQL over ORM"), otherwise use description.
+                let fact_text = if r.description.is_empty() {
+                    format!("{} 与 {} 相关", r.name, r.entity_type)
+                } else {
+                    r.description.clone()
+                };
                 lines.push(format!(
-                    "- {} is a {}: {} (confidence: {:.2})",
-                    r.name, r.entity_type, r.description, r.confidence
+                    "- {}（confidence: {:.2}）",
+                    fact_text, r.confidence
                 ));
-
-                // Get immediate neighbors with layer+scope filter
-                let layer_ph: String = eligible_layers
-                    .iter()
-                    .enumerate()
-                    .map(|(i, _)| format!("?{}", i + 2))
-                    .collect::<Vec<_>>()
-                    .join(",");
-                let n_scope_ph = eligible_layers.len() + 2;
-                let neigh_sql = format!(
-                    "SELECT n2.id, n2.name, n2.entity_type, n2.description,
-                            e2.relation_type, n2.confidence, n2.scope
-                     FROM kg_nodes n1
-                     JOIN kg_edges e2 ON (e2.source_id = n1.id OR e2.target_id = n1.id)
-                     JOIN kg_nodes n2 ON (
-                        (e2.source_id = n2.id AND e2.target_id = n1.id) OR
-                        (e2.target_id = n2.id AND e2.source_id = n1.id)
-                     )
-                     WHERE n1.name = ?1
-                       AND n2.layer IN ({})
-                       AND (n2.scope = ?{} OR n2.scope = 'global')
-                     ORDER BY e2.confidence DESC LIMIT 3",
-                    layer_ph, n_scope_ph,
-                );
-                let mut nparams: Vec<Box<dyn rusqlite::types::ToSql>> =
-                    vec![Box::new(r.name.clone())];
-                for l in &eligible_layers {
-                    nparams.push(Box::new((*l).to_string()));
-                }
-                nparams.push(Box::new(scope_val.to_string()));
-                let mut nstmt = self.conn.prepare(&neigh_sql)?;
-                let nparam_refs: Vec<&dyn rusqlite::types::ToSql> =
-                    nparams.iter().map(|p| p.as_ref()).collect();
-                let neigh_rows = nstmt.query_map(nparam_refs.as_slice(), |nrow| {
-                    Ok(GraphRow {
-                        node_id: nrow.get(0)?,
-                        name: nrow.get(1)?,
-                        entity_type: nrow.get(2)?,
-                        description: nrow.get(3)?,
-                        confidence: nrow.get(5)?,
-                        relation_type: nrow.get::<_, Option<String>>(4)?,
-                        distance: Some(2),
-                        scope: nrow.get(6)?,
-                        layer: "semantic".to_string(),
-                    })
-                })?;
-                for nr in neigh_rows {
-                    let n = nr?;
-                    if n.name == "USER" || n.name == r.name || n.confidence < MIN_CONFIDENCE {
-                        continue;
-                    }
-                    let rel = n.relation_type.as_deref().unwrap_or("related_to");
-                    lines.push(format!("  └ {} {} {}", r.name, rel, n.name));
-                }
             }
         }
 
@@ -695,7 +671,8 @@ impl<'a> GraphStore<'a> {
         if lines.is_empty() {
             Ok(String::new())
         } else {
-            Ok(format!("## Knowledge Graph\n{}", lines.join("\n")))
+            let meta = "以下是你对用户的已知信息。请自然地参考这些信息来个性化你的回答，不要刻意复述「我记得...」，像人类的记忆一样自然融入对话。与当前话题无关的信息可以忽略。";
+            Ok(format!("## 你记得的事情\n{}\n\n{}", lines.join("\n"), meta))
         }
     }
 

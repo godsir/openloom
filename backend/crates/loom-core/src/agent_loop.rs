@@ -265,6 +265,7 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = concat!(
     "- system_info — 获取系统信息（CPU/内存/OS）。\n",
     "- token_usage — 查询当前对话的 token 使用情况。\n",
     "- memory_search { query } — 搜索知识图谱和历史记忆。\n",
+    "- memory_remember { fact, category, importance } — 主动记住重要信息（偏好、背景、目标等），供以后对话参考。\n",
     "\n",
     "### 子代理\n",
     "- spawn_agent { description, prompt } — 派生子代理执行独立任务，完成后返回结果。适合并行处理多个独立子任务。\n",
@@ -539,6 +540,7 @@ fn match_tools(reason: &str, all: &[ToolDefinition]) -> Vec<ToolDefinition> {
         "system_info",
         "token_usage",
         "memory_search",
+        "memory_remember",
         "todo_write",
         "todo_list",
         "process_spawn",
@@ -2691,6 +2693,7 @@ async fn run_agent_turn_streaming_inner(
                             "system_info",
                             "token_usage",
                             "memory_search",
+                            "memory_remember",
                             "todo_write",
                             "todo_list",
                         ];

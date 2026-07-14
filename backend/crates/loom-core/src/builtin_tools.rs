@@ -2236,6 +2236,88 @@ impl AgentTool for MemorySearchTool {
 }
 
 // ============================================================================
+// MemoryRemember — AI can actively remember important facts
+// ============================================================================
+
+/// Lets the AI actively persist a fact to the knowledge graph, bypassing the
+/// async extraction pipeline. This gives the model agency over what gets
+/// remembered — like a human deciding "I should write this down."
+pub struct MemoryRememberTool {
+    pub memory_store: std::sync::Arc<tokio::sync::RwLock<Option<Box<dyn crate::MemoryStore>>>>,
+}
+
+#[async_trait]
+impl AgentTool for MemoryRememberTool {
+    fn tool_name(&self) -> &str {
+        "memory_remember"
+    }
+
+    fn tool_definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "memory_remember".into(),
+            description: "记住一条重要信息，供以后对话参考。当你发现用户说了值得记住的事情（偏好、背景、目标等），主动调用此工具记录。".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "fact": {"type":"string","description":"要记住的内容，用自然语言描述（例如：用户偏好手写SQL而非ORM）"},
+                    "category": {"type":"string","description":"事实类别","enum":["preference","knowledge","context","goal"]},
+                    "importance": {"type":"integer","description":"重要程度 1-5，5=非常重要","minimum":1,"maximum":5}
+                },
+                "required": ["fact", "category"]
+            }),
+            tags: vec![],
+        }
+    }
+
+    fn supports_parallel(&self) -> bool {
+        true
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        _progress: UnboundedSender<ToolProgress>,
+        _context: &ToolContext,
+    ) -> Result<ToolResult> {
+        let fact = arguments["fact"].as_str().unwrap_or("").to_string();
+        if fact.is_empty() {
+            return Ok(ToolResult {
+                content: "未提供要记住的内容。".into(),
+                is_error: true,
+                structured_content: None,
+            });
+        }
+        let category = arguments["category"].as_str().unwrap_or("knowledge").to_string();
+        let importance = arguments["importance"].as_f64().unwrap_or(3.0).clamp(1.0, 5.0) / 5.0;
+
+        let guard = self.memory_store.read().await;
+        let Some(store) = guard.as_ref() else {
+            return Ok(ToolResult {
+                content: "记忆系统不可用。".into(),
+                is_error: true,
+                structured_content: None,
+            });
+        };
+
+        match store.remember_fact(&fact, &category, importance).await {
+            Ok(()) => Ok(ToolResult {
+                content: format!("已记住：{}", fact),
+                is_error: false,
+                structured_content: Some(serde_json::json!({"fact": fact, "category": category, "importance": importance})),
+            }),
+            Err(e) => Ok(ToolResult {
+                content: format!("记忆保存失败：{}", e),
+                is_error: true,
+                structured_content: None,
+            }),
+        }
+    }
+    fn provenance(&self) -> ToolProvenance {
+        ToolProvenance::Builtin
+    }
+}
+
+// ============================================================================
 // WebSearch — multi-engine web search (DDG Lite / Brave / SearXNG / Google / Bing)
 // ============================================================================
 

@@ -777,6 +777,22 @@ impl MemoryStore for LoomMemoryStore {
         Ok(())
     }
 
+    async fn remember_fact(&self, fact: &str, category: &str, importance: f64) -> Result<()> {
+        let store = self.memory_db.lock().expect("lock poisoned");
+        let graph = GraphStore::new(store.conn());
+        let cognition = CognitionStore::new(store.conn());
+
+        // Upsert a KG node for the fact at global scope (no promotion needed)
+        let _ = graph.upsert_node(fact, category, fact, importance, "global", None);
+
+        // Also store as a cognition so persona builder can see it
+        let trait_name = format!("remembered_{}", category);
+        let _ = cognition.insert("USER", &trait_name, fact, importance, 1, "global");
+
+        tracing::info!(fact, category, importance, "memory_remember: fact persisted");
+        Ok(())
+    }
+
     async fn save_agent_config(&self, config: &AgentConfig) -> Result<()> {
         let store = self.config_db.lock().expect("lock poisoned");
         AgentConfigStore::new(store.conn()).upsert(config)

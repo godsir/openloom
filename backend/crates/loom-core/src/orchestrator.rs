@@ -430,6 +430,14 @@ pub trait MemoryStore: Send + Sync {
         relationships: &[loom_memory::ExtractedRelationship],
         scope: &str,
     ) -> Result<()>;
+    /// Persist a user-requested fact (from memory_remember tool) directly into
+    /// the knowledge graph at global scope, bypassing the extraction pipeline.
+    async fn remember_fact(
+        &self,
+        fact: &str,
+        category: &str,
+        importance: f64,
+    ) -> Result<()>;
     // Agent config CRUD
     async fn save_agent_config(&self, config: &loom_types::AgentConfig) -> Result<()>;
     async fn get_agent_config(&self, name: &str) -> Result<Option<loom_types::AgentConfig>>;
@@ -778,9 +786,9 @@ AgentConfig 的字段说明：
 只输出 JSON，放在 ```json 代码块中，不要包含任何其他解释。"#;
 
 fn extract_entity_candidates(text: &str) -> Vec<String> {
-    let mut candidates: Vec<String> = Vec::new();
+    let mut candidates: Vec<String> = vec!["USER".to_string()];
 
-    // English: split by whitespace, keep capitalized words
+    // English: split by whitespace, keep capitalized words (>=3 chars)
     for w in text.split_whitespace() {
         let trimmed = w.trim_matches(|c: char| !c.is_alphabetic());
         if trimmed.len() >= 3 && trimmed.chars().next().is_some_and(|c| c.is_uppercase()) {
@@ -790,26 +798,9 @@ fn extract_entity_candidates(text: &str) -> Vec<String> {
 
     // Hardcoded allowlist of common lowercase tech terms
     let tech_allowlist: &[&str] = &[
-        "rust",
-        "python",
-        "typescript",
-        "javascript",
-        "golang",
-        "docker",
-        "kubernetes",
-        "linux",
-        "sqlite",
-        "redis",
-        "git",
-        "react",
-        "vue",
-        "electron",
-        "tauri",
-        "node",
-        "postgres",
-        "llm",
-        "mcp",
-        "lsp",
+        "rust", "python", "typescript", "javascript", "golang", "docker",
+        "kubernetes", "linux", "sqlite", "redis", "git", "react", "vue",
+        "electron", "tauri", "node", "postgres", "llm", "mcp", "lsp",
     ];
     let lower_text = text.to_lowercase();
     for term in tech_allowlist {
@@ -818,7 +809,10 @@ fn extract_entity_candidates(text: &str) -> Vec<String> {
         }
     }
 
-    // Chinese: sliding window of 2-5 CJK characters on consecutive runs
+    // Chinese: extract up to 5 meaningful CJK phrases (2+ consecutive CJK chars),
+    // filtering stopwords. Unlike the old n-gram approach that generated many
+    // meaningless substrings, we only take the longest CJK runs and split by
+    // punctuation to get actual phrases.
     let chinese_stopwords: &[&str] = &[
         "的", "了", "是", "在", "和", "与", "或", "而", "我", "你", "他", "她", "它", "们", "这",
         "那", "吗", "呢", "吧", "啊", "哦", "嗯", "一个", "这个", "那个", "什么", "怎么", "因为",
@@ -827,47 +821,53 @@ fn extract_entity_candidates(text: &str) -> Vec<String> {
     ];
 
     let chars: Vec<char> = text.chars().collect();
-    let cjk_indices: Vec<usize> = chars
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| is_cjk_char(**c))
-        .map(|(i, _)| i)
-        .collect();
+    let mut phrases: Vec<String> = Vec::new();
 
-    let mut run_start = 0usize;
-    while run_start < cjk_indices.len() {
-        let mut run_end = run_start;
-        while run_end + 1 < cjk_indices.len()
-            && cjk_indices[run_end + 1] == cjk_indices[run_end] + 1
-        {
-            run_end += 1;
+    // Find runs of CJK chars, split by punctuation/whitespace into phrases
+    let mut i = 0usize;
+    while i < chars.len() {
+        // Skip non-CJK chars (punctuation, whitespace, ASCII)
+        if !is_cjk_char(chars[i]) {
+            i += 1;
+            continue;
         }
-        let run_len = run_end - run_start + 1;
-        if run_len >= 2 {
-            // Whole run
-            if run_len <= 5 {
-                let s: String = chars[cjk_indices[run_start]..=cjk_indices[run_end]]
-                    .iter()
-                    .collect();
-                if !is_cjk_stopword(&s, chinese_stopwords) {
-                    candidates.push(s);
-                }
+        // Collect a run of CJK chars
+        let run_start = i;
+        while i < chars.len() && is_cjk_char(chars[i]) {
+            i += 1;
+        }
+        let run_len = i - run_start;
+        if run_len >= 2 && run_len <= 8 {
+            // Take the whole run as one phrase if reasonable length
+            let phrase: String = chars[run_start..i].iter().collect();
+            if !is_cjk_stopword(&phrase, chinese_stopwords) {
+                phrases.push(phrase);
             }
-            // Sub-ngrams (2-4 chars)
-            for n in 2..=5.min(run_len) {
-                for i in 0..=(run_len - n) {
-                    let s: String = chars
-                        [cjk_indices[run_start + i]..=cjk_indices[run_start + i + n - 1]]
-                        .iter()
-                        .collect();
-                    if !is_cjk_stopword(&s, chinese_stopwords) {
-                        candidates.push(s);
-                    }
+        } else if run_len > 8 {
+            // Long run: split into 2-5 char maximum chunks
+            let mut j = run_start;
+            while j < i {
+                let chunk_end = (j + 5).min(i);
+                let chunk: String = chars[j..chunk_end].iter().collect();
+                if !is_cjk_stopword(&chunk, chinese_stopwords) {
+                    phrases.push(chunk);
                 }
+                j += 3; // overlap slightly
             }
         }
-        run_start = run_end + 1;
     }
+
+    // Deduplicate and limit
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for p in phrases {
+        let lower = p.to_lowercase();
+        if seen.contains(&lower) { continue; }
+        seen.insert(lower);
+        candidates.push(p);
+    }
+    candidates.truncate(12); // keep total manageable
+    candidates
+}
 
     candidates.sort();
     candidates.dedup();
@@ -977,6 +977,9 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
             memory_store: memory_store.clone(),
         }));
         let _ = registry.register(Arc::new(crate::builtin_tools::MemorySearchTool {
+            memory_store: memory_store.clone(),
+        }));
+        let _ = registry.register(Arc::new(crate::builtin_tools::MemoryRememberTool {
             memory_store: memory_store.clone(),
         }));
 
