@@ -326,11 +326,17 @@ impl ProcessManager {
     /// Non-blocking status check — returns immediately without waiting.
     pub async fn peek(&self, pid: &str) -> Option<ProcessPeekResult> {
         let procs = self.processes.read().await;
-        procs.get(pid).map(|e| ProcessPeekResult {
+        let e = procs.get(pid)?;
+        let output = {
+            let buf = e.output_buffer.lock().await;
+            buf.join("\n")
+        };
+        Some(ProcessPeekResult {
             pid: e.id.clone(),
             name: e.name.clone(),
             running: e.exit_code.is_none(),
             exit_code: e.exit_code,
+            output,
         })
     }
 
@@ -602,4 +608,5 @@ pub struct ProcessPeekResult {
     pub name: String,
     pub running: bool,
     pub exit_code: Option<i32>,
+    pub output: String,
 }

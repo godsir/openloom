@@ -768,13 +768,14 @@ impl AgentTool for FileEditTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "file_edit".into(),
-            description: "Edit a file using exact text replacement. Supports single edit (oldText/newText) or batch edits (edits array). Edits applied back-to-front. oldText must be unique. Use file_read first.".into(),
+            description: "Edit a file using exact text replacement. Supports single edit (oldText/newText) or batch edits (edits array). Use replace_all to replace all occurrences. Edits applied back-to-front. Use file_read first.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "path": {"type":"string","description":"Path to edit"},
                     "oldText": {"type":"string","description":"Text to replace"},
                     "newText": {"type":"string","description":"Replacement"},
+                    "replace_all": {"type":"boolean","description":"Replace all occurrences (default false)"},
                     "edits": {"type":"array","items":{"type":"object","properties":{"oldText":{"type":"string"},"newText":{"type":"string"}},"required":["oldText","newText"]}}
                 },
                 "required": ["path"]
@@ -864,6 +865,7 @@ impl AgentTool for FileEditTool {
             pos: usize,
             new: String,
         }
+        let replace_all = arguments["replace_all"].as_bool().unwrap_or(false);
         let mut eps: Vec<EP> = Vec::new();
         for (i, (old, new)) in edits.iter().enumerate() {
             let c = normalized.matches(old.as_str()).count();
@@ -874,18 +876,26 @@ impl AgentTool for FileEditTool {
                     structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": format!("Edit #{}: oldText not found", i + 1)})),
                 });
             }
-            if c > 1 {
+            if c > 1 && !replace_all {
                 return Ok(ToolResult {
-                    content: format!("Edit #{}: oldText appears {} times.", i + 1, c),
+                    content: format!("Edit #{}: oldText appears {} times. Use replace_all: true to replace all occurrences.", i + 1, c),
                     is_error: true,
                     structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": format!("Edit #{}: oldText appears {} times", i + 1, c)})),
                 });
             }
-            eps.push(EP {
-                idx: i,
-                pos: normalized.find(old.as_str()).unwrap(),
-                new: new.clone(),
-            });
+            if replace_all && c > 1 {
+                let mut pos = 0usize;
+                while let Some(p) = normalized[pos..].find(old.as_str()) {
+                    eps.push(EP { idx: i, pos: pos + p, new: new.clone() });
+                    pos += p + old.len();
+                }
+            } else {
+                eps.push(EP {
+                    idx: i,
+                    pos: normalized.find(old.as_str()).unwrap(),
+                    new: new.clone(),
+                });
+            }
         }
         eps.sort_by(|a, b| b.pos.cmp(&a.pos));
         for i in 0..eps.len() {
@@ -958,7 +968,7 @@ impl AgentTool for ContentSearchTool {
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "pattern": { "type": "string", "description": "Text or regex pattern to search for" },
+                    "pattern": { "type": "string", "description": "Substring pattern to search for (case-insensitive)" },
                     "path": { "type": "string", "description": "Directory to search in (default: current dir)", "default": "." },
                     "file_pattern": { "type": "string", "description": "Glob pattern for files to search (e.g., '*.rs', '*.md')", "default": "*" },
                     "max_results": { "type": "integer", "description": "Max results to return", "default": 30 }
@@ -1147,6 +1157,17 @@ impl AgentTool for FileDeleteTool {
                 content: format!("Path does not exist: {}", path_str),
                 is_error: true,
                 structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": "Path does not exist"})),
+            });
+        }
+        // Read-before-delete guard — same as file_write
+        if path.exists() && !context.was_recently_read(&path) {
+            return Ok(ToolResult {
+                content: format!(
+                    "Read-before-delete guard: '{}' not read. Use file_read first.",
+                    path_str
+                ),
+                is_error: true,
+                structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": "Read-before-delete guard"})),
             });
         }
         let result = if path.is_dir() {
@@ -3866,7 +3887,7 @@ impl AgentTool for ProcessPeekTool {
                     ),
                     is_error: false,
                     structured_content: Some(
-                        serde_json::json!({ "pid": r.pid, "name": r.name, "running": r.running, "exit_code": r.exit_code }),
+                        serde_json::json!({ "pid": r.pid, "name": r.name, "running": r.running, "exit_code": r.exit_code, "output": r.output }),
                     ),
                 })
             }
