@@ -59,7 +59,7 @@ impl AgentTool for ShellTool {
             return Ok(ToolResult {
                 content: "No command provided.".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "No command provided."})),
             });
         }
 
@@ -89,7 +89,7 @@ impl AgentTool for ShellTool {
             return Ok(ToolResult {
                 content: format!("沙盒拒绝: {}", reason),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": format!("沙盒拒绝: {}", reason)})),
             });
         }
 
@@ -132,7 +132,7 @@ impl AgentTool for ShellTool {
                 return Ok(ToolResult {
                     content: format!("Shell execution failed: {}", e),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"exit_code": -1, "stdout": "", "error": format!("{}", e)})),
                 });
             }
         };
@@ -278,16 +278,18 @@ impl AgentTool for ShellTool {
                         max_bytes / 1024
                     );
                 }
+                let exit_code = status.code().unwrap_or(-1);
+                let stdout_copy = content.clone();
                 Ok(ToolResult {
                     content,
                     is_error,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"exit_code": exit_code, "stdout": stdout_copy})),
                 })
             }
             Ok(Err(e)) => Ok(ToolResult {
                 content: format!("Shell execution failed: {}", e),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"exit_code": -1, "stdout": "", "error": format!("{}", e)})),
             }),
             Err(_) => {
                 // Timeout — kill the child process
@@ -298,7 +300,7 @@ impl AgentTool for ShellTool {
                         timeout_secs
                     ),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"exit_code": -1, "stdout": "", "error": "timeout"})),
                 })
             }
         }
@@ -420,7 +422,7 @@ impl AgentTool for FileListTool {
             return Ok(ToolResult {
                 content: format!("沙盒拒绝: {}", reason),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": format!("沙盒拒绝: {}", reason)})),
             });
         }
 
@@ -428,7 +430,7 @@ impl AgentTool for FileListTool {
             return Ok(ToolResult {
                 content: format!("Path does not exist: {}", path_str),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": format!("Path does not exist: {}", path_str)})),
             });
         }
 
@@ -446,16 +448,19 @@ impl AgentTool for FileListTool {
                     ));
                 }
                 result.push_str(&format!("\n{} entries", files.len()));
+                let entries_json: Vec<serde_json::Value> = files.iter().map(|(name, size, is_dir, _mtime)| {
+                    serde_json::json!({"name": name, "size_bytes": size, "is_dir": is_dir})
+                }).collect();
                 Ok(ToolResult {
                     content: result,
                     is_error: false,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"entries": entries_json, "count": files.len()})),
                 })
             }
             Err(e) => Ok(ToolResult {
                 content: format!("Failed to list directory: {}", e),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": format!("{}", e)})),
             }),
         }
     }
@@ -573,7 +578,7 @@ impl AgentTool for FileReadTool {
             return Ok(ToolResult {
                 content: format!("沙盒拒绝: {}", reason),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": format!("沙盒拒绝: {}", reason)})),
             });
         }
 
@@ -581,14 +586,14 @@ impl AgentTool for FileReadTool {
             return Ok(ToolResult {
                 content: format!("File does not exist: {}", path_str),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"path": path_str, "error": "File does not exist"})),
             });
         }
         if !path.is_file() {
             return Ok(ToolResult {
                 content: format!("Not a file: {}", path_str),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"path": path_str, "error": "Not a file"})),
             });
         }
 
@@ -617,13 +622,13 @@ impl AgentTool for FileReadTool {
                 Ok(ToolResult {
                     content: result,
                     is_error: false,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"path": path_str, "total_lines": total})),
                 })
             }
             Err(e) => Ok(ToolResult {
                 content: format!("Failed to read file: {}", e),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"path": path_str, "error": format!("{}", e)})),
             }),
         }
     }
@@ -683,9 +688,9 @@ impl AgentTool for FileWriteTool {
                 )
             };
             return Ok(ToolResult {
-                content: msg,
+                content: msg.clone(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"path": "", "ok": false, "error": msg})),
             });
         }
 
@@ -698,7 +703,7 @@ impl AgentTool for FileWriteTool {
             return Ok(ToolResult {
                 content: format!("沙盒拒绝: {}", reason),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": format!("沙盒拒绝: {}", reason)})),
             });
         }
         // Read-before-edit guard: existing files must have been read recently
@@ -709,7 +714,7 @@ impl AgentTool for FileWriteTool {
                     path_str
                 ),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": "Read-before-edit guard"})),
             });
         }
         let old_content = std::fs::read_to_string(&path).unwrap_or_default();
@@ -736,7 +741,7 @@ impl AgentTool for FileWriteTool {
             Err(e) => Ok(ToolResult {
                 content: format!("Failed to write file: {}", e),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": format!("{}", e)})),
             }),
         }
     }
@@ -787,7 +792,7 @@ impl AgentTool for FileEditTool {
             return Ok(ToolResult {
                 content: "No path provided.".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"path": "", "ok": false, "error": "No path provided"})),
             });
         }
         let path = context.resolve_path(path_str);
@@ -797,7 +802,7 @@ impl AgentTool for FileEditTool {
             return Ok(ToolResult {
                 content: format!("Sandbox: {}", reason),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": format!("Sandbox: {}", reason)})),
             });
         }
         if path.exists() && !context.was_recently_read(&path) {
@@ -807,7 +812,7 @@ impl AgentTool for FileEditTool {
                     path_str
                 ),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": "Read-before-edit guard"})),
             });
         }
         let old_content = match std::fs::read_to_string(&path) {
@@ -816,7 +821,7 @@ impl AgentTool for FileEditTool {
                 return Ok(ToolResult {
                     content: format!("Read failed: {}", e),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": format!("Read failed: {}", e)})),
                 });
             }
         };
@@ -826,7 +831,7 @@ impl AgentTool for FileEditTool {
                 return Ok(ToolResult {
                     content: "Empty edits array.".into(),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": "Empty edits array"})),
                 });
             }
             arr.iter()
@@ -843,7 +848,7 @@ impl AgentTool for FileEditTool {
                 return Ok(ToolResult {
                     content: "No oldText provided.".into(),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": "No oldText provided"})),
                 });
             }
             vec![(ot, arguments["newText"].as_str().unwrap_or(""))]
@@ -864,14 +869,14 @@ impl AgentTool for FileEditTool {
                 return Ok(ToolResult {
                     content: format!("Edit #{}: oldText not found.", i + 1),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": format!("Edit #{}: oldText not found", i + 1)})),
                 });
             }
             if c > 1 {
                 return Ok(ToolResult {
                     content: format!("Edit #{}: oldText appears {} times.", i + 1, c),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": format!("Edit #{}: oldText appears {} times", i + 1, c)})),
                 });
             }
             eps.push(EP {
@@ -891,7 +896,7 @@ impl AgentTool for FileEditTool {
                             eps[j].idx + 1
                         ),
                         is_error: true,
-                        structured_content: None,
+                        structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": "Overlap: edits"})),
                     });
                 }
             }
@@ -919,7 +924,7 @@ impl AgentTool for FileEditTool {
             Err(e) => Ok(ToolResult {
                 content: format!("Write failed: {}", e),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": format!("Write failed: {}", e)})),
             }),
         }
     }
@@ -977,7 +982,7 @@ impl AgentTool for ContentSearchTool {
             return Ok(ToolResult {
                 content: "No search pattern provided.".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "No pattern"})),
             });
         }
 
@@ -990,7 +995,7 @@ impl AgentTool for ContentSearchTool {
             return Ok(ToolResult {
                 content: format!("沙盒拒绝: {}", reason),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": format!("沙盒拒绝: {}", reason)})),
             });
         }
         // Always use recursive walker — more reliable than findstr on Windows
@@ -1000,9 +1005,19 @@ impl AgentTool for ContentSearchTool {
                     Ok(ToolResult {
                         content: format!("No matches for '{}' in {}", pattern, search_path),
                         is_error: false,
-                        structured_content: None,
+                        structured_content: Some(serde_json::json!({"matches": [], "count": 0})),
                     })
                 } else {
+                    let matches_json: Vec<serde_json::Value> = results.iter().filter_map(|r| {
+                        // r is in format "path:line: text"
+                        let colon1 = r.find(':')?;
+                        let colon2 = r[colon1+1..].find(':')?;
+                        let file = &r[..colon1];
+                        let line_str = &r[colon1+1..colon1+1+colon2];
+                        let text = r[colon1+1+colon2+1..].trim();
+                        let line_num = line_str.parse::<u64>().ok()?;
+                        Some(serde_json::json!({"file": file, "line": line_num, "text": text}))
+                    }).collect();
                     Ok(ToolResult {
                         content: format!(
                             "Found {} matches for '{}':\n\n{}",
@@ -1011,14 +1026,14 @@ impl AgentTool for ContentSearchTool {
                             results.join("\n")
                         ),
                         is_error: false,
-                        structured_content: None,
+                        structured_content: Some(serde_json::json!({"matches": matches_json, "count": results.len()})),
                     })
                 }
             }
             Err(e) => Ok(ToolResult {
                 content: format!("Search error: {}", e),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": format!("{}", e)})),
             }),
         }
     }
@@ -1122,14 +1137,14 @@ impl AgentTool for FileDeleteTool {
             return Ok(ToolResult {
                 content: format!("沙盒拒绝: {}", reason),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": format!("沙盒拒绝: {}", reason)})),
             });
         }
         if !path.exists() {
             return Ok(ToolResult {
                 content: format!("Path does not exist: {}", path_str),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": "Path does not exist"})),
             });
         }
         let result = if path.is_dir() {
@@ -1141,12 +1156,12 @@ impl AgentTool for FileDeleteTool {
             Ok(_) => Ok(ToolResult {
                 content: format!("Deleted: {}", path_str),
                 is_error: false,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"path": path_str, "ok": true})),
             }),
             Err(e) => Ok(ToolResult {
                 content: format!("Delete failed: {}", e),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": format!("{}", e)})),
             }),
         }
     }
@@ -1228,7 +1243,7 @@ impl AgentTool for UseSkillTool {
                 return Ok(ToolResult {
                     content: "没有安装任何技能。你可以在设置 → 技能中导入技能。".into(),
                     is_error: false,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"skill_name": "", "skills": []})),
                 });
             }
             return Ok(ToolResult {
@@ -1241,7 +1256,7 @@ impl AgentTool for UseSkillTool {
                         .join(", ")
                 ),
                 is_error: false,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"skill_name": "", "skills": available})),
             });
         }
         let state = self.skill_state.read().await;
@@ -1264,7 +1279,7 @@ impl AgentTool for UseSkillTool {
             Ok(ToolResult {
                 content: format!("Skill '{}' not found. Available: {:?}", name, available),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"skill_name": name, "error": "Skill not found"})),
             })
         }
     }
@@ -1525,7 +1540,7 @@ impl AgentTool for ReportFindingsTool {
             return Ok(ToolResult {
                 content: "最多 32 条发现。".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "Max 32 findings"})),
             });
         }
 
@@ -1614,7 +1629,7 @@ impl AgentTool for GlobTool {
             return Ok(ToolResult {
                 content: "No pattern.".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "No pattern."})),
             });
         }
         let resolved = context.resolve_path(base);
@@ -1624,13 +1639,13 @@ impl AgentTool for GlobTool {
             return Ok(ToolResult {
                 content: format!("Sandbox: {}", reason),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": format!("Sandbox: {}", reason)})),
             });
         }
         context.record_read(resolved.clone());
         // Use glob crate
         let full_pattern = format!("{}/{}", resolved.display(), pattern);
-        let mut results = Vec::new();
+        let mut results: Vec<(String, u64, std::time::SystemTime)> = Vec::new();
         match glob::glob(&full_pattern) {
             Ok(paths) => {
                 for entry in paths.flatten() {
@@ -1643,7 +1658,7 @@ impl AgentTool for GlobTool {
                             .unwrap_or(&entry)
                             .display()
                             .to_string();
-                        results.push((rel, meta.len()));
+                        results.push((rel, meta.len(), meta.modified().unwrap_or(std::time::UNIX_EPOCH)));
                     }
                 }
             }
@@ -1651,20 +1666,25 @@ impl AgentTool for GlobTool {
                 return Ok(ToolResult {
                     content: format!("Glob error: {}", e),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"error": format!("Glob error: {}", e)})),
                 });
             }
         }
         if results.is_empty() {
+            let files_json: Vec<serde_json::Value> = Vec::new();
             return Ok(ToolResult {
                 content: format!("No files matching '{}'", pattern),
                 is_error: false,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"files": files_json, "count": 0})),
             });
         }
+        // Sort by modification time descending (most recent first)
+        results.sort_by(|a, b| b.2.cmp(&a.2));
         let mut out = format!("Found {} files matching '{}':\n", results.len(), pattern);
-        for (path, size) in &results {
+        let mut files_json: Vec<serde_json::Value> = Vec::new();
+        for (path, size, _mtime) in &results {
             out.push_str(&format!("  {}  {}\n", format_size(*size), path));
+            files_json.push(serde_json::json!({"path": path, "size_bytes": size}));
         }
         if results.len() >= max_results {
             out.push_str(&format!("... truncated at {}\n", max_results));
@@ -1672,7 +1692,7 @@ impl AgentTool for GlobTool {
         Ok(ToolResult {
             content: out,
             is_error: false,
-            structured_content: None,
+            structured_content: Some(serde_json::json!({"files": files_json, "count": results.len()})),
         })
     }
     fn provenance(&self) -> ToolProvenance {
@@ -1728,7 +1748,7 @@ impl AgentTool for FindTool {
             return Ok(ToolResult {
                 content: "No name_pattern.".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "No name_pattern"})),
             });
         }
         let resolved = context.resolve_path(dir);
@@ -1738,7 +1758,7 @@ impl AgentTool for FindTool {
             return Ok(ToolResult {
                 content: format!("Sandbox: {}", reason),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": format!("Sandbox: {}", reason)})),
             });
         }
         context.record_read(resolved.clone());
@@ -1755,12 +1775,14 @@ impl AgentTool for FindTool {
             return Ok(ToolResult {
                 content: format!("No files matching '{}'", name_pat),
                 is_error: false,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"files": [], "count": 0})),
             });
         }
         let mut out = format!("Found {} files matching '{}':\n", results.len(), name_pat);
+        let mut files_json: Vec<serde_json::Value> = Vec::new();
         for (path, size) in &results {
             out.push_str(&format!("  {}  {}\n", format_size(*size), path));
+            files_json.push(serde_json::json!({"path": path, "size_bytes": size}));
         }
         if results.len() >= max_results {
             out.push_str(&format!("... truncated at {}\n", max_results));
@@ -1768,7 +1790,7 @@ impl AgentTool for FindTool {
         Ok(ToolResult {
             content: out,
             is_error: false,
-            structured_content: None,
+            structured_content: Some(serde_json::json!({"files": files_json, "count": results.len()})),
         })
     }
     fn provenance(&self) -> ToolProvenance {
@@ -1994,7 +2016,7 @@ impl AgentTool for SystemInfoTool {
         Ok(ToolResult {
             content: info,
             is_error: false,
-            structured_content: None,
+            structured_content: Some(serde_json::json!({"os": std::env::consts::OS, "arch": std::env::consts::ARCH})),
         })
     }
     fn provenance(&self) -> ToolProvenance {
@@ -2044,7 +2066,7 @@ impl AgentTool for TokenUsageTool {
             return Ok(ToolResult {
                 content: "Token usage tracking is not available in this build (no stats store configured). Monitor your context window and iteration count manually.".into(),
                 is_error: false,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"total_prompt_tokens": 0, "total_completion_tokens": 0, "total_cached_tokens": 0, "total_requests": 0, "cache_hit_rate": 0.0, "avg_latency_ms": 0.0})),
             });
         };
 
@@ -2056,7 +2078,7 @@ impl AgentTool for TokenUsageTool {
                 return Ok(ToolResult {
                     content: format!("Failed to read token usage: {e}"),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"error": format!("{}", e), "total_prompt_tokens": 0, "total_completion_tokens": 0, "total_cached_tokens": 0, "total_requests": 0, "cache_hit_rate": 0.0, "avg_latency_ms": 0.0})),
                 });
             }
         };
@@ -2153,7 +2175,7 @@ impl AgentTool for MemorySearchTool {
             return Ok(ToolResult {
                 content: "No query provided.".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "No query"})),
             });
         }
         let max_results = arguments["max_results"].as_u64().unwrap_or(5).clamp(1, 50) as usize;
@@ -2165,7 +2187,7 @@ impl AgentTool for MemorySearchTool {
                     "Memory not available: no knowledge graph store is configured for this session."
                         .into(),
                 is_error: false,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"query": query, "entities": []})),
             });
         };
 
@@ -2176,7 +2198,7 @@ impl AgentTool for MemorySearchTool {
                 return Ok(ToolResult {
                     content: format!("Knowledge graph search failed: {e}"),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"query": query, "error": format!("{}", e)})),
                 });
             }
         };
@@ -2185,7 +2207,7 @@ impl AgentTool for MemorySearchTool {
             return Ok(ToolResult {
                 content: format!("No knowledge-graph entries found for '{query}'."),
                 is_error: false,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"query": query, "entities": []})),
             });
         }
 
@@ -2284,7 +2306,7 @@ impl AgentTool for MemoryRememberTool {
             return Ok(ToolResult {
                 content: "未提供要记住的内容。".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "No fact provided"})),
             });
         }
         let category = arguments["category"].as_str().unwrap_or("knowledge").to_string();
@@ -2295,7 +2317,7 @@ impl AgentTool for MemoryRememberTool {
             return Ok(ToolResult {
                 content: "记忆系统不可用。".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "Memory not available"})),
             });
         };
 
@@ -2308,7 +2330,7 @@ impl AgentTool for MemoryRememberTool {
             Err(e) => Ok(ToolResult {
                 content: format!("记忆保存失败：{}", e),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": format!("{}", e)})),
             }),
         }
     }
@@ -2934,14 +2956,14 @@ impl AgentTool for WebFetchTool {
             return Ok(ToolResult {
                 content: "No URL provided.".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"url": "", "text_length": 0, "error": "No URL"})),
             });
         }
         if !url.starts_with("http://") && !url.starts_with("https://") {
             return Ok(ToolResult {
                 content: format!("Invalid URL (must start with http/https): {}", url),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"url": url, "text_length": 0, "error": "Invalid URL"})),
             });
         }
 
@@ -2959,7 +2981,7 @@ impl AgentTool for WebFetchTool {
             Ok(ToolResult {
                 content: "Page returned no readable text content.".into(),
                 is_error: false,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"url": url, "text_length": 0})),
             })
         } else if text.len() > max_chars {
             Ok(ToolResult {
@@ -2970,13 +2992,14 @@ impl AgentTool for WebFetchTool {
                     text.len()
                 ),
                 is_error: false,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"url": url, "text_length": text.len()})),
             })
         } else {
+            let text_len = text.len();
             Ok(ToolResult {
                 content: text,
                 is_error: false,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"url": url, "text_length": text_len})),
             })
         }
     }
@@ -3063,7 +3086,7 @@ impl AgentTool for ScheduleReminder {
             return Ok(ToolResult {
                 content: "cron_expression is required".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "cron_expression is required"})),
             });
         }
 
@@ -3072,7 +3095,7 @@ impl AgentTool for ScheduleReminder {
             return Ok(ToolResult {
                 content: "Cron scheduler not available".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "Cron scheduler not available"})),
             });
         };
 
@@ -3095,7 +3118,7 @@ impl AgentTool for ScheduleReminder {
             Err(e) => Ok(ToolResult {
                 content: format!("创建定时任务失败: {}", e),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": format!("{}", e)})),
             }),
         }
     }
@@ -3162,7 +3185,7 @@ impl AgentTool for TodoWriteTool {
             return Ok(ToolResult {
                 content: "Too many todos — max 50 items allowed.".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "Max 50 items"})),
             });
         }
 
@@ -3181,7 +3204,7 @@ impl AgentTool for TodoWriteTool {
                 return Ok(ToolResult {
                     content: format!("Todo item #{} has empty content.", i + 1),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"error": format!("Empty content at item {}", i + 1)})),
                 });
             }
 
@@ -3196,7 +3219,7 @@ impl AgentTool for TodoWriteTool {
                             i + 1
                         ),
                         is_error: true,
-                        structured_content: None,
+                        structured_content: Some(serde_json::json!({"error": format!("Invalid status: {}", s)})),
                     });
                 }
             }
@@ -3208,7 +3231,7 @@ impl AgentTool for TodoWriteTool {
                     return Ok(ToolResult {
                         content: "At most one todo item can be in_progress at a time.".into(),
                         is_error: true,
-                        structured_content: None,
+                        structured_content: Some(serde_json::json!({"error": "At most one in_progress"})),
                     });
                 }
             }
@@ -3238,7 +3261,7 @@ impl AgentTool for TodoWriteTool {
                 return Ok(ToolResult {
                     content: "No session_id in tool context — todo store unavailable.".into(),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"error": "No session_id"})),
                 });
             }
         };
@@ -3250,7 +3273,7 @@ impl AgentTool for TodoWriteTool {
                 return Ok(ToolResult {
                     content: "Todo store not configured in this build.".into(),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"error": "No todo store"})),
                 });
             }
         };
@@ -3328,7 +3351,7 @@ impl AgentTool for TodoListTool {
                 return Ok(ToolResult {
                     content: "No session_id in tool context — todo store unavailable.".into(),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"error": "No session_id"})),
                 });
             }
         };
@@ -3339,7 +3362,7 @@ impl AgentTool for TodoListTool {
                 return Ok(ToolResult {
                     content: "Todo store not configured in this build.".into(),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"error": "No todo store"})),
                 });
             }
         };
@@ -3444,7 +3467,7 @@ impl AgentTool for ProcessSpawnTool {
             return Ok(ToolResult {
                 content: "command required".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "command required"})),
             });
         }
         let cwd = arguments["cwd"].as_str();
@@ -3527,24 +3550,24 @@ impl AgentTool for ProcessKillTool {
             return Ok(ToolResult {
                 content: "pid required".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"pid": "", "ok": false, "error": "pid required"})),
             });
         }
         match self.process_manager.kill(pid).await {
             Ok(true) => Ok(ToolResult {
                 content: format!("进程 {} 已终止", pid),
                 is_error: false,
-                structured_content: Some(serde_json::json!({ "killed": true })),
+                structured_content: Some(serde_json::json!({ "pid": pid, "ok": true })),
             }),
             Ok(false) => Ok(ToolResult {
                 content: format!("进程 {} 未找到或已退出", pid),
                 is_error: true,
-                structured_content: Some(serde_json::json!({ "killed": false })),
+                structured_content: Some(serde_json::json!({ "pid": pid, "ok": false })),
             }),
             Err(e) => Ok(ToolResult {
                 content: format!("终止失败: {}", e),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"pid": pid, "ok": false, "error": format!("{}", e)})),
             }),
         }
     }
@@ -3596,7 +3619,7 @@ impl AgentTool for ProcessStdinTool {
             return Ok(ToolResult {
                 content: "pid and input required".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"ok": false, "error": "pid and input required"})),
             });
         }
         match self.process_manager.stdin_write(pid, input).await {
@@ -3615,7 +3638,7 @@ impl AgentTool for ProcessStdinTool {
             Err(e) => Ok(ToolResult {
                 content: format!("写入失败: {}", e),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"ok": false, "error": format!("{}", e)})),
             }),
         }
     }
@@ -3708,7 +3731,7 @@ impl AgentTool for ProcessWaitTool {
             return Ok(ToolResult {
                 content: "pid is required".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"pid": "", "error": "pid required"})),
             });
         }
         let prefs = self.tool_prefs.read().await;
@@ -3765,7 +3788,7 @@ impl AgentTool for ProcessWaitTool {
             Err(e) => Ok(ToolResult {
                 content: format!("process_wait 失败: {}", e),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"pid": pid, "error": format!("{}", e)})),
             }),
         }
     }
@@ -3812,7 +3835,7 @@ impl AgentTool for ProcessPeekTool {
             return Ok(ToolResult {
                 content: "pid is required".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"pid": "", "error": "pid required"})),
             });
         }
         match self.process_manager.peek(pid).await {
@@ -3839,7 +3862,7 @@ impl AgentTool for ProcessPeekTool {
             None => Ok(ToolResult {
                 content: format!("进程 {} 未找到", pid),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"pid": pid, "error": "not found"})),
             }),
         }
     }
@@ -3934,7 +3957,7 @@ impl AgentTool for MonitorTool {
                 return Ok(ToolResult {
                     content: "kill=true 需要提供 monitor_id".into(),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"error": "monitor_id required"})),
                 });
             }
             return match self.monitor_manager.kill(mid).await {
@@ -3955,7 +3978,7 @@ impl AgentTool for MonitorTool {
                 Err(e) => Ok(ToolResult {
                     content: format!("终止失败: {}", e),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"error": format!("{}", e)})),
                 }),
             };
         }
@@ -3985,7 +4008,7 @@ impl AgentTool for MonitorTool {
                 return Ok(ToolResult {
                     content: "ws.url is required when ws is provided".into(),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"error": "ws.url required"})),
                 });
             }
         }
@@ -4037,7 +4060,7 @@ impl AgentTool for MonitorTool {
             Err(e) => Ok(ToolResult {
                 content: format!("启动监控失败: {}", e),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": format!("{}", e)})),
             }),
         }
     }
@@ -4138,7 +4161,7 @@ impl AgentTool for MonitorKillTool {
             return Ok(ToolResult {
                 content: "monitor_id is required".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "monitor_id required"})),
             });
         }
         match self.monitor_manager.kill(mid).await {
@@ -4155,7 +4178,7 @@ impl AgentTool for MonitorKillTool {
             Err(e) => Ok(ToolResult {
                 content: format!("终止失败: {}", e),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"monitor_id": mid, "ok": false, "error": format!("{}", e)})),
             }),
         }
     }
@@ -4204,7 +4227,7 @@ impl AgentTool for MonitorWaitTool {
             return Ok(ToolResult {
                 content: "monitor_id is required".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "monitor_id required"})),
             });
         }
         let timeout_secs = arguments["timeout"].as_u64().unwrap_or(30).min(3600);
@@ -4252,7 +4275,7 @@ impl AgentTool for MonitorWaitTool {
             Err(e) => Ok(ToolResult {
                 content: format!("monitor_wait 失败: {}", e),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"monitor_id": monitor_id, "error": format!("{}", e)})),
             }),
         }
     }
@@ -4300,7 +4323,7 @@ impl AgentTool for MonitorPeekTool {
             return Ok(ToolResult {
                 content: "monitor_id is required".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "monitor_id required"})),
             });
         }
         match self.monitor_manager.peek(monitor_id).await {
@@ -4337,7 +4360,7 @@ impl AgentTool for MonitorPeekTool {
             None => Ok(ToolResult {
                 content: format!("Monitor {} 未找到", monitor_id),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"monitor_id": monitor_id, "error": "not found"})),
             }),
         }
     }
@@ -4456,7 +4479,7 @@ impl AgentTool for UpdateConfigTool {
                 return Ok(ToolResult {
                     content: "Missing required 'updates' object.".into(),
                     is_error: true,
-                    structured_content: None,
+                    structured_content: Some(serde_json::json!({"error": "Missing updates object"})),
                 });
             }
         };
@@ -4465,7 +4488,7 @@ impl AgentTool for UpdateConfigTool {
             return Ok(ToolResult {
                 content: "No config keys provided in 'updates'.".into(),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "No config keys"})),
             });
         }
 
@@ -4811,7 +4834,7 @@ impl AgentTool for UpdateConfigTool {
             return Ok(ToolResult {
                 content: format!("No changes applied. Errors:\n{}", errors.join("\n")),
                 is_error: true,
-                structured_content: None,
+                structured_content: Some(serde_json::json!({"error": "No changes applied"})),
             });
         }
 
