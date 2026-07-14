@@ -259,13 +259,15 @@ export default function BuiltinToolsTab() {
     ]).catch(() => {}).finally(() => setLoaded(true))
   }, [])
 
-  // Merge backend tool info with local config definitions
-  const allTools: ToolDef[] = (serverTools || []).map(ti => ({
-    name: ti.name,
-    description: ti.description,
-    configs: TOOL_CONFIGS[ti.name],
-    category: toolCategory(ti.name),
-  }))
+  // Merge backend tool info with local config definitions, sorted by name
+  const allTools: ToolDef[] = (serverTools || [])
+    .map(ti => ({
+      name: ti.name,
+      description: ti.description,
+      configs: TOOL_CONFIGS[ti.name],
+      category: toolCategory(ti.name),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name))
   const categories = buildCategories()
 
   const toggleTool = (name: string) => {

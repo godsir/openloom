@@ -253,7 +253,7 @@ impl RichPersona {
 /// Build tech_stack from `uses_*` cognitions and kg_nodes of type "Technology".
 fn assemble_tech_stack(conn: &Connection) -> Result<Vec<TechProficiency>> {
     let cognition = CognitionStore::new(conn);
-    let rows = cognition.query_by_subject("USER", Some("global"), 200, 0)?;
+    let rows = cognition.query_by_subject("USER", None, 200, 0)?;
 
     let mut tech_map: HashMap<String, (f64, i64)> = HashMap::new();
 
@@ -311,7 +311,7 @@ fn assemble_tech_stack(conn: &Connection) -> Result<Vec<TechProficiency>> {
 /// and English equivalents (prefers_*, dislikes_*).
 fn assemble_preferences(conn: &Connection) -> Result<Vec<Preference>> {
     let cognition = CognitionStore::new(conn);
-    let rows = cognition.query_by_subject("USER", Some("global"), 200, 0)?;
+    let rows = cognition.query_by_subject("USER", None, 200, 0)?;
 
     let mut prefs: Vec<Preference> = Vec::new();
 
@@ -391,7 +391,7 @@ fn assemble_preferences(conn: &Connection) -> Result<Vec<Preference>> {
 /// and English equivalents (goal_*).
 fn assemble_goals(conn: &Connection) -> Result<Vec<Goal>> {
     let cognition = CognitionStore::new(conn);
-    let rows = cognition.query_by_subject("USER", Some("global"), 200, 0)?;
+    let rows = cognition.query_by_subject("USER", None, 200, 0)?;
 
     let mut goals: Vec<Goal> = Vec::new();
 
@@ -452,7 +452,7 @@ fn assemble_goals(conn: &Connection) -> Result<Vec<Goal>> {
 /// Infer working style from conversation-pattern cognitions.
 fn assemble_working_style(conn: &Connection) -> Result<WorkingStyle> {
     let cognition = CognitionStore::new(conn);
-    let rows = cognition.query_by_subject("USER", Some("global"), 50, 0)?;
+    let rows = cognition.query_by_subject("USER", None, 50, 0)?;
 
     let mut code_first = 0u32;
     let mut plan_first = 0u32;
@@ -533,7 +533,7 @@ fn assemble_working_style(conn: &Connection) -> Result<WorkingStyle> {
 /// and language-related cognitions.
 fn assemble_communication(conn: &Connection) -> Result<CommunicationStyle> {
     let cognition = CognitionStore::new(conn);
-    let rows = cognition.query_by_subject("USER", Some("global"), 50, 0)?;
+    let rows = cognition.query_by_subject("USER", None, 50, 0)?;
 
     let mut lang_signal = String::new();
     let mut casual = 0u32;
@@ -752,7 +752,7 @@ fn assemble_expertise_areas(conn: &Connection) -> Result<Vec<String>> {
 /// Surface recurring behavioural patterns from cognitions.
 fn assemble_behavioural_patterns(conn: &Connection) -> Result<Vec<String>> {
     let cognition = CognitionStore::new(conn);
-    let rows = cognition.query_by_subject("USER", Some("global"), 100, 0)?;
+    let rows = cognition.query_by_subject("USER", None, 100, 0)?;
 
     let mut patterns: Vec<String> = Vec::new();
 
