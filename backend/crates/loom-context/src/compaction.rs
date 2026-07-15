@@ -140,24 +140,48 @@ pub fn compact_history_with_tokenizer(
 }
 
 /// Mid-turn safety truncation: no LLM, only trims oversized tool results.
-/// `file_read` results are exempt (never truncate user source code).
 /// Used inside the agent loop iteration to prevent single-turn blowups.
+/// Truncates:
+/// - any ToolResult longer than `max_tool_output_chars` (head+tail);
+/// - all but the most recent KEEP_RECENT tool results, regardless of size,
+///   so many small results stacked across iterations also get compacted.
+/// Called only when mid-turn safety triggers (token occupancy > threshold),
+/// so file_read and other large results are untouched on normal turns.
 pub fn mid_turn_safety_truncate(
     messages: &[Message],
     max_tool_output_chars: usize,
 ) -> Vec<Message> {
     let keep_head = 500;
     let keep_tail = 200;
+    const KEEP_RECENT: usize = 3;
+
+    // Collect (msg_idx, part_idx) of every ToolResult, in document order.
+    let mut locs: Vec<(usize, usize)> = Vec::new();
+    for (mi, msg) in messages.iter().enumerate() {
+        for (pi, part) in msg.content.iter().enumerate() {
+            if matches!(part, ContentPart::ToolResult { .. }) {
+                locs.push((mi, pi));
+            }
+        }
+    }
+    // Older tool results (all except the most recent KEEP_RECENT) are force-truncated,
+    // preventing accumulation of many small results across iterations.
+    let force_truncate: std::collections::HashSet<(usize, usize)> = locs
+        .len()
+        .checked_sub(KEEP_RECENT)
+        .map(|n| locs[..n].iter().copied().collect())
+        .unwrap_or_default();
+
     messages
         .iter()
-        .map(|msg| {
+        .enumerate()
+        .map(|(mi, msg)| {
             let mut new_msg = msg.clone();
-            // file_read 不再无条件跳过：mid-turn safety 触发（超阈值）时 file_read
-            // 的大结果也必须截断，否则单 turn tool 累积会把上下文顶满。平时
-            // mid-turn safety 不触发，file_read 不受影响。
-            for part in &mut new_msg.content {
+            for (pi, part) in new_msg.content.iter_mut().enumerate() {
                 if let ContentPart::ToolResult { result, .. } = part {
-                    if result.len() > max_tool_output_chars && !has_signal_markers(result) {
+                    let over_size = result.len() > max_tool_output_chars;
+                    let is_old = force_truncate.contains(&(mi, pi));
+                    if (over_size || is_old) && !has_signal_markers(result) {
                         let head: String = result.chars().take(keep_head).collect();
                         let tail: String = result
                             .chars()
@@ -682,5 +706,37 @@ mod tests {
         assert_eq!(c.mid_turn_threshold_pct, 0.6);
         assert_eq!(c.summary_max_tokens, 1024);
         assert_eq!(c.summarization_timeout_ms, 60000);
+    }
+
+    #[test]
+    fn mid_turn_truncates_old_tool_results_when_many_accumulated() {
+        use loom_types::{ContentPart, Role};
+        // 5 个小 tool result（每个 <2000，单条不触发 over_size 截断），累积时最近
+        // 3 个保留全文，更旧 2 个被强制 head+tail 截断——单条截断管不到的场景。
+        let mut msgs: Vec<Message> = Vec::new();
+        for i in 0..5u32 {
+            msgs.push(Message {
+                role: Role::Tool,
+                content: vec![ContentPart::ToolResult {
+                    tool_call_id: format!("c{i}"),
+                    name: "file_list".into(),
+                    result: format!("result-{i}: {}", "x".repeat(500)),
+                }],
+                timestamp: chrono::Utc::now(),
+                usage: None,
+            });
+        }
+        let out = mid_turn_safety_truncate(&msgs, 2000);
+        let truncated: Vec<bool> = out
+            .iter()
+            .map(|m| {
+                m.content.iter().any(|p| {
+                    matches!(p, ContentPart::ToolResult { result, .. } if result.contains("[truncated"))
+                })
+            })
+            .collect();
+        // 旧 2 个（index 0,1）截断，最近 3 个（2,3,4）保留全文
+        assert!(truncated[0] && truncated[1], "旧 2 个应被累积截断: {truncated:?}");
+        assert!(!truncated[2] && !truncated[3] && !truncated[4], "最近 3 个应保留全文: {truncated:?}");
     }
 }
