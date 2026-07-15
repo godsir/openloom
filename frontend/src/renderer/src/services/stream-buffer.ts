@@ -463,9 +463,9 @@ class StreamBufferManager {
       useStore.getState().setMessageUsage(sessionId, buf.messageId, { ...usage })
     }
    useStore.getState().removeStreamingSession(sessionId)
-   // Drain pending steering queue: drain items and send each as a normal
-   // message now that the previous turn has completed.
-   this.drainSteeringQueue(sessionId)
+   // 插话已通过 chat.steer 在 turn 进行中注入（agent_loop 迭代 drain 为
+   // [用户指引] System 消息，不打断当前生成）。未消费的项留在后端 queue，
+   // 下次 chat.send 时注入。stream_end 不再发新消息，避免与 chat.steer 重复注入。
    // If this was an IM-originated stream, the user message (sent via IM) and
    // the final assistant response aren't in the renderer store — only the
    // streamed blocks are. Sync the full history from the engine so the
@@ -793,27 +793,6 @@ class StreamBufferManager {
     if (buf?.rafId) cancelAnimationFrame(buf.rafId)
     this.buffers.delete(sessionId)
     this.cancelledSessions.delete(sessionId)
-  }
-
-  /** Drain the pending steering queue and send each item as a normal message.
-   *  Called when the previous assistant turn completes (stream_end) or when
-   *  the user stops generation (handleStop), to ensure queued items are not lost. */
-  async drainSteeringQueue(sessionId: string): Promise<void> {
-    const items = useStore.getState().steeringQueueItems[sessionId]
-    if (!items || items.length === 0) return
-
-    // Clear the queue first to prevent re-entry
-    useStore.getState().clearSteeringItems(sessionId)
-
-    // Combine all pending items into one user message, separated by newlines.
-    // Then send as a single chat.send to avoid overlapping streaming sessions.
-    const combined = items.map(it => it.text).join('\n')
-    try {
-      const { sendMessage } = await import('./sendMessage')
-      await sendMessage({ sessionId, content: combined })
-    } catch {
-      // Best-effort; if send fails the user can re-send manually
-    }
   }
 }
 

@@ -23,6 +23,11 @@ export default function SteeringQueuePanel({ sessionId }: Props) {
     // killed turn is absorbed instead of terminating the replacement turn.
     streamBufferManager.markCancelled(sessionId)
     try { await loomRpc('chat.stop', { session_id: sessionId }) } catch { /* ignore */ }
+    // 清后端 steering queue 残留：这些项已由 chat.steer 推入后端但尚未被消费，
+    // 若不清，下方新 chat.send 会在首轮迭代作为 [用户指引] 重复注入，与 combined
+    // 的 user 消息内容重叠。forceSend 的语义是把插话变成正式 user 消息触发新 turn，
+    // 故后端 pending 残留必须一并清掉。
+    try { await loomRpc('chat.steer_clear', { session_id: sessionId }) } catch { /* ignore */ }
     // Collect remaining items + this one, clear queue, send combined
     const items = useStore.getState().steeringQueueItems[sessionId] || []
     const remaining = items.filter(it => it.id !== itemId).map(it => it.text)

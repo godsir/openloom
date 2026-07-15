@@ -157,6 +157,7 @@ export const enUS: TranslationMap = {
   'chat.steeringQueueClear': 'Clear All',
   'chat.steeringPending': '{n} pending',
   'chat.steeringForceSend': 'Break & Send',
+  'chat.steerFailed': 'Steering failed, please retry',
   'chat.stop': 'Stop',
   'chat.stopped': 'Generation stopped',
   'chat.empty': 'Send a message to start',

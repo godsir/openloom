@@ -157,6 +157,7 @@ export const zhCN: TranslationMap = {
   'chat.steeringQueueClear': '清空全部',
   'chat.steeringPending': '{n} 条插话等待中',
   'chat.steeringForceSend': '立即截断发送',
+  'chat.steerFailed': '插话发送失败，请重试',
   'chat.stop': '停止',
   'chat.stopped': '已停止生成',
   'chat.empty': '发送消息开始对话',

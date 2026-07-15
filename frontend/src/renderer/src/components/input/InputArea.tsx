@@ -400,10 +400,15 @@ export default function InputArea() {
     } catch {
       // ignore
     }
-    // Drain steering queue — may start a new turn via sendMessage.
-    // If it does, DON'T removeStreamingSession/clear afterwards, because
-    // the new turn owns the streaming state now.
-    await streamBufferManager.drainSteeringQueue(sessionId)
+    // 停止当前 turn 时，放弃尚未消费的插话：清空前端队列 UI 与后端 steering queue。
+    // 不发新消息（用户意图是停止，而非触发新 turn）；后端未注入的指引不应在下次
+    // chat.send 时被意外注入。
+    useStore.getState().clearSteeringItems(sessionId)
+    try {
+      await loomRpc('chat.steer_clear', { session_id: sessionId })
+    } catch {
+      // ignore
+    }
     if (!useStore.getState().streamingSessionIds.has(sessionId)) {
       useStore.getState().removeStreamingSession(sessionId)
       streamBufferManager.clear(sessionId)
@@ -412,15 +417,20 @@ export default function InputArea() {
   }
 
   const handleInterruptSend = async () => {
-    // 插话：先进入等待区，等当前消息输出完毕后再发送。
-    // 不直接发 chat.steer 也不插入聊天区。
+    // 插话：通过 chat.steer 把指引注入当前正在进行的 turn（mid-turn）。
+    // 后端 steer_session 推进 session_steering_queues，agent_loop 在下一轮
+    // 迭代作为 [用户指引] System 消息注入，不打断当前生成（不产生 [已中断]）。
+    // 队列 UI 与聊天区插入均由 steering.queued/consumed 事件驱动（bootstrap）。
     if (!sessionId) return
     const contentToSend = text.trim()
     if (!contentToSend) return
-
-    // 写入前端等待区
-    const item = { id: crypto.randomUUID(), text: contentToSend }
-    useStore.getState().addSteeringItem(sessionId, item)
+    try {
+      await loomRpc('chat.steer', { session_id: sessionId, guidance: contentToSend })
+    } catch {
+      // chat.steer 失败：保留输入内容，提示重试，避免插话丢失
+      useStore.getState().addToast({ type: 'error', message: t('chat.steerFailed') })
+      return
+    }
     setText('')
   }
 
@@ -429,9 +439,8 @@ export default function InputArea() {
     const { quotedSelections } = useStore.getState()
     const hasContent = content || attachedFiles.length > 0 || quotedSelections.length > 0
     if (!hasContent) return
-    // 如果有正在跑的 streaming，先停后发（不受 sendingRef 阻塞——
-    // 原始 handleSend 的 sendingRef 在整个 streaming 期间为 true，
-    // 这里必须绕过它才能触发打断发送）
+    // streaming 中走插话路径：chat.steer 把指引注入当前 turn（mid-turn，不打断）。
+    // sendingRef 在 streaming 期间为 true，这里绕过它才能触发插话发送。
     if (sessionId && useStore.getState().streamingSessionIds.has(sessionId)) {
       if (interruptingRef.current) return
       handleInterruptSend()

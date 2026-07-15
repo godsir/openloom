@@ -5743,6 +5743,25 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                         {
                             tracing::warn!(session_id, error = %e, "failed to persist interrupted turn");
                         }
+                    } else if let Some(seq) = incremental_save_done {
+                        // forward_handle 已增量存了 assistant placeholder（streaming 中的
+                        // partial 文本快照）+ tool results。用最终的 content_parts（含
+                        // [已中断] + synthetic ToolCall + thinking）覆盖 placeholder，
+                        // 否则重启后 load_history 会看到 partial 快照 + orphaned tool
+                        // results，导致历史会话显示错乱。与下方正常完成分支对称。
+                        let usage_meta = serde_json::json!({
+                            "model": active_model_name,
+                            "prompt_tokens": turn.prompt_tokens,
+                            "completion_tokens": turn.completion_tokens,
+                            "cached_tokens": turn.cache_read_tokens + turn.cache_write_tokens,
+                            "cache_read_tokens": turn.cache_read_tokens,
+                            "cache_write_tokens": turn.cache_write_tokens,
+                            "context_window": turn.context_window,
+                        })
+                        .to_string();
+                        let _ = store
+                            .update_message(session_id, seq, &content_json, Some(&usage_meta))
+                            .await;
                     } // end if !incremental_save_done
                 }
             } else {
