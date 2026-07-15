@@ -33,9 +33,11 @@ type SourceKey = 'claude' | 'openclaw' | 'codex'
 
 const SOURCES: { key: SourceKey; labelKey: string; available: boolean }[] = [
   { key: 'claude', labelKey: 'settings.importSourceClaude', available: true },
-  { key: 'openclaw', labelKey: 'settings.importSourceOpenclaw', available: false },
-  { key: 'codex', labelKey: 'settings.importSourceCodex', available: false },
+  { key: 'openclaw', labelKey: 'settings.importSourceOpenclaw', available: true },
+  { key: 'codex', labelKey: 'settings.importSourceCodex', available: true },
 ]
+
+const rpcFor = (s: SourceKey) => `${s}_import`
 
 export default function ImportConversationsTab() {
   const { t } = useLocale()
@@ -53,7 +55,7 @@ export default function ImportConversationsTab() {
   const scan = useCallback(async () => {
     setScanning(true)
     try {
-      const r = await loomRpc<{ conversations: ConvSummary[] }>('claude_import.scan')
+      const r = await loomRpc<{ conversations: ConvSummary[] }>(`${rpcFor(source)}.scan`)
       setConvs(r.conversations ?? [])
       setSelected([])
     } catch {
@@ -61,7 +63,7 @@ export default function ImportConversationsTab() {
     } finally {
       setScanning(false)
     }
-  }, [t])
+  }, [t, source])
 
   useEffect(() => { scan().catch(() => {}) }, [scan])
 
@@ -123,7 +125,7 @@ export default function ImportConversationsTab() {
   const importSelected = async () => {
     setImporting(true)
     try {
-      await rpc('claude_import.run', { ids: selected }, t('settings.importDone'))
+      await rpc(`${rpcFor(source)}.run`, { ids: selected }, t('settings.importDone'))
       await scan()
       await loadSessions()
     } finally {
@@ -214,13 +216,7 @@ export default function ImportConversationsTab() {
         ))}
       </div>
 
-      {source !== 'claude' ? (
-        <div className={styles.placeholderBox}>
-          <span className={styles.placeholderTitle}>{t(s.labelKey)}</span>
-          <span className={styles.placeholderSub}>{t('settings.importComingSoon')}</span>
-        </div>
-      ) : (
-        <>
+      <>
       {/* ── Stats Cards ── */}
       <div className={styles.statsRow}>
         <div className={styles.statCard}>
@@ -357,7 +353,6 @@ export default function ImportConversationsTab() {
         )
       })}
         </>
-      )}
     </div>
   )
 }

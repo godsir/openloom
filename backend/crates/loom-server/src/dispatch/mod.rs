@@ -9,6 +9,7 @@
 mod bridge;
 mod chat;
 mod claude_import;
+mod codex_import;
 mod completion;
 mod cron;
 mod kg;
@@ -16,6 +17,7 @@ mod lsp;
 mod mcp;
 mod model;
 mod monitor;
+mod openclaw_import;
 mod plan;
 mod process;
 pub mod session;
@@ -73,6 +75,12 @@ pub async fn dispatch_method(
         return result;
     }
     if let Some(result) = claude_import::handle(state, method, &p).await {
+        return result;
+    }
+    if let Some(result) = codex_import::handle(state, method, &p).await {
+        return result;
+    }
+    if let Some(result) = openclaw_import::handle(state, method, &p).await {
         return result;
     }
     if let Some(result) = model::handle(state, method, &p).await {

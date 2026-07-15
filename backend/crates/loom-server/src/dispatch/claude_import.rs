@@ -115,7 +115,7 @@ async fn handle_run(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> 
 /// absolute paths, nested separators). Only a single plain file-stem-like
 /// name (e.g. a UUID) is allowed — this is a filesystem-path concern; SQL
 /// is parameterized regardless.
-fn is_safe_id(id: &str) -> bool {
+pub(super) fn is_safe_id(id: &str) -> bool {
     let comps: Vec<_> = std::path::Path::new(id).components().collect();
     !id.is_empty() && comps.len() == 1 && matches!(comps[0], std::path::Component::Normal(_))
 }
@@ -136,7 +136,7 @@ fn resolve_jsonl(projects_dir: &Path, id: &str) -> Option<PathBuf> {
 }
 
 /// Mark summaries whose `session_uuid` already exists as `already_imported`.
-fn mark_already_imported(
+pub(super) fn mark_already_imported(
     mut convs: Vec<ConversationSummary>,
     existing: &[String],
 ) -> Vec<ConversationSummary> {
