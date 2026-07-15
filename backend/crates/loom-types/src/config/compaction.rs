@@ -37,7 +37,7 @@ impl Default for CompactionConfig {
         Self {
             enabled: true,
             trigger_threshold_pct: 0.8,
-            mid_turn_threshold_pct: 0.9,
+            mid_turn_threshold_pct: 0.6,
             max_tool_output_chars: 2000,
             keep_recent_tokens_pct: 0.25,
             use_llm_summarization: true,

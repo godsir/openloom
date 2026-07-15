@@ -197,7 +197,9 @@ impl ContextAssembler {
     /// Keep the most recent messages that fit within `max_tokens`, scanning
     /// newest→oldest within the [summary_at_count, len) range. Messages before
     /// `summary_at_count` are dropped (covered by the LLM summary, not re-sent).
-    /// `Tool`-role messages are excluded (orphaned-tool-message 400 errors).
+    /// Tool-role messages are included (so tool results aren't silently lost);
+    /// any that lose their preceding assistant ToolCall are later dropped by
+    /// sanitize_message_sequence (orphan-tool-message 400 guard).
     fn truncate_history_with_summary(
         &self,
         history: &[Message],
@@ -210,9 +212,6 @@ impl ContextAssembler {
         let start = summary_at_count.min(history.len());
         for i in (start..history.len()).rev() {
             let msg = &history[i];
-            if msg.role == loom_types::Role::Tool {
-                continue;
-            }
             let msg_tokens = message_tokens(msg, bpe);
             if token_count + msg_tokens > max_tokens && !included.is_empty() {
                 break;

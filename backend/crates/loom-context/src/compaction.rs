@@ -152,13 +152,9 @@ pub fn mid_turn_safety_truncate(
         .iter()
         .map(|msg| {
             let mut new_msg = msg.clone();
-            let is_file_read = new_msg
-                .content
-                .iter()
-                .any(|p| matches!(p, ContentPart::ToolResult { name, .. } if name == "file_read"));
-            if is_file_read {
-                return new_msg;
-            }
+            // file_read 不再无条件跳过：mid-turn safety 触发（超阈值）时 file_read
+            // 的大结果也必须截断，否则单 turn tool 累积会把上下文顶满。平时
+            // mid-turn safety 不触发，file_read 不受影响。
             for part in &mut new_msg.content {
                 if let ContentPart::ToolResult { result, .. } = part {
                     if result.len() > max_tool_output_chars && !has_signal_markers(result) {
@@ -650,8 +646,12 @@ mod tests {
     }
 
     #[test]
-    fn test_mid_turn_safety_truncate_preserves_file_read() {
+    fn test_mid_turn_safety_truncate_truncates_file_read_when_over_threshold() {
         use loom_types::{ContentPart, Role};
+        // 修复前 file_read 无条件跳过截断；修复后超 max_tool_output_chars 也截断，
+        // 防止单 turn tool 累积（尤其 file_read 大文件）把上下文顶满。
+        // 注意：mid_turn_safety_truncate 仅在 mid-turn safety 触发时被调用，
+        // 平时 file_read 不受影响。
         let long = "x".repeat(5000);
         let msgs = vec![Message {
             role: Role::Tool,
@@ -665,11 +665,12 @@ mod tests {
         }];
         let out = mid_turn_safety_truncate(&msgs, 2000);
         if let ContentPart::ToolResult { result, .. } = &out[0].content[0] {
-            assert_eq!(
-                result.len(),
-                long.len(),
-                "file_read results must NOT be truncated"
+            assert!(
+                result.len() < long.len(),
+                "file_read 超阈值应被截断, got len={}",
+                result.len()
             );
+            assert!(result.contains("[truncated"), "应含截断标记");
         }
     }
 
@@ -678,7 +679,7 @@ mod tests {
         let c = loom_types::CompactionConfig::default();
         assert!(c.enabled, "enabled 应默认 true");
         assert_eq!(c.keep_recent_tokens_pct, 0.25);
-        assert_eq!(c.mid_turn_threshold_pct, 0.9);
+        assert_eq!(c.mid_turn_threshold_pct, 0.6);
         assert_eq!(c.summary_max_tokens, 1024);
         assert_eq!(c.summarization_timeout_ms, 60000);
     }
