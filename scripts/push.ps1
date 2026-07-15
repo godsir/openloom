@@ -1,5 +1,5 @@
-# push.ps1 - 自动统一版本号 + bump patch + push
-# 用法: .\scripts\push.ps1 [git push 的额外参数]
+# push.ps1 - unify version + bump patch + push
+# Usage: .\scripts\push.ps1 [extra git push args]
 [CmdletBinding()]
 param(
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -11,22 +11,22 @@ $RootDir = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $CargoToml = Join-Path $RootDir "Cargo.toml"
 $PkgJson = Join-Path $RootDir "frontend\package.json"
 
-# --- 读取当前版本 ---
+# --- read current version ---
 $cargoContent = Get-Content $CargoToml -Raw -Encoding UTF8
 $pkgContent = Get-Content $PkgJson -Raw -Encoding UTF8
 
 $cargoMatch = [regex]::Match($cargoContent, 'version = "([^"]+)"')
 $pkgMatch   = [regex]::Match($pkgContent, '"version": "([^"]+)"')
 
-if (-not $cargoMatch.Success) { throw "无法从 Cargo.toml 读取版本" }
-if (-not $pkgMatch.Success)   { throw "无法从 package.json 读取版本" }
+if (-not $cargoMatch.Success) { throw "Cannot read version from Cargo.toml" }
+if (-not $pkgMatch.Success)   { throw "Cannot read version from package.json" }
 
 $cargoVer = $cargoMatch.Groups[1].Value
 $pkgVer   = $pkgMatch.Groups[1].Value
 
 Write-Host "Current version: Cargo.toml=$cargoVer  package.json=$pkgVer"
 
-# --- 取较高的 patch 版本作为基准，再 +1 ---
+# --- use the higher patch version as base, then +1 ---
 $cargoPatch = [int]($cargoVer -split '\.')[-1]
 $pkgPatch   = [int]($pkgVer -split '\.')[-1]
 
@@ -41,17 +41,17 @@ $newVer = "$($parts[0]).$($parts[1]).$([int]$parts[2] + 1)"
 
 Write-Host "New version: $newVer"
 
-# --- 写入 Cargo.toml ---
+# --- write Cargo.toml ---
 $cargoContent = $cargoContent -replace [regex]::Escape("version = `"$cargoVer`""), "version = `"$newVer`""
 [System.IO.File]::WriteAllText($CargoToml, $cargoContent, [System.Text.UTF8Encoding]::new($false))
 Write-Host "  Cargo.toml: $cargoVer -> $newVer"
 
-# --- 写入 frontend/package.json ---
+# --- write frontend/package.json ---
 $pkgContent = $pkgContent -replace [regex]::Escape("`"version`": `"$pkgVer`""), "`"version`": `"$newVer`""
 [System.IO.File]::WriteAllText($PkgJson, $pkgContent, [System.Text.UTF8Encoding]::new($false))
 Write-Host "  package.json: $pkgVer -> $newVer"
 
-# --- 提交版本变更 ---
+# --- commit version change ---
 Push-Location $RootDir
 try {
     git add Cargo.toml frontend/package.json
@@ -61,7 +61,7 @@ try {
     Write-Host "Version bumped to $newVer and committed, pushing..."
     Write-Host ""
 
-    # --- Push ---
+    # --- push ---
     $pushArgs = @("push")
     if ($GitArgs) { $pushArgs += $GitArgs }
     git @pushArgs
