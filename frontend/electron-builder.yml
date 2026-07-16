@@ -29,6 +29,13 @@ win:
   icon: src/asset/icon.ico
   target:
     - nsis
+nsis:
+  # electron-builder 26.15's one-click template references a multi-user
+  # variable it does not declare. Assisted mode also lets users choose the
+  # install scope while retaining NSIS differential updates.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
 mac:
   target:
     - dmg

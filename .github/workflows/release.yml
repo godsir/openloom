@@ -40,16 +40,30 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - name: Install Linux system dependencies
+        if: matrix.name == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+
       - name: Build backend
         run: cargo build -p loom-cli --release
+
+      - name: Configure macOS code signing
+        if: matrix.name == 'macOS'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -n "$MACOS_CERTIFICATE" ]; then
+            echo "CSC_LINK=$MACOS_CERTIFICATE" >> "$GITHUB_ENV"
+            echo "CSC_KEY_PASSWORD=$MACOS_CERTIFICATE_PASSWORD" >> "$GITHUB_ENV"
+          fi
 
       - name: Build Electron package and updater metadata
         working-directory: frontend
         env:
           ENGINE_BINARY: ${{ matrix.engine_binary }}
-          # A signed macOS app is required for Electron to install updates.
-          CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
         run: |
           npm ci
           npm run package:updater
