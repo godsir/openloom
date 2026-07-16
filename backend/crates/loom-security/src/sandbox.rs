@@ -107,6 +107,11 @@ impl SandboxGuard {
         self.check_access(cwd, "exec")
     }
 
+    /// Whether restrictive sandbox mode is enabled by the user.
+    pub fn is_enabled(&self) -> bool {
+        self.config.enabled
+    }
+
     /// Return the built-in deny pattern descriptions (for display/diagnostics).
     pub fn builtin_deny_patterns(&self) -> &[String] {
         &self.builtin_deny_patterns
@@ -140,7 +145,7 @@ impl SandboxGuard {
     /// make security decisions.
     pub fn canonicalize_safe(&self, path: &Path) -> PathBuf {
         // --- Step 1: tilde expansion ---
-        let expanded = expand_tilde(path, &self.home);
+        let expanded = expand_tilde(&expand_env_vars(path), &self.home);
 
         // --- Step 2: relative → workspace ---
         let resolved = if expanded.is_relative() {
@@ -267,12 +272,9 @@ impl SandboxGuard {
         if self.config.allowed_paths.is_empty() {
             return false;
         }
-        let path_str = path.to_string_lossy();
         self.config.allowed_paths.iter().any(|entry| {
-            let expanded = expand_tilde(Path::new(entry), &self.home);
-            let canon = dunce::canonicalize(&expanded).unwrap_or(expanded);
-            let allow_str = canon.to_string_lossy();
-            path_str.starts_with(allow_str.as_ref())
+            let canon = self.canonicalize_safe(Path::new(entry));
+            path.starts_with(&canon)
         })
     }
 
@@ -281,12 +283,9 @@ impl SandboxGuard {
         if self.config.denied_paths.is_empty() {
             return false;
         }
-        let path_str = path.to_string_lossy();
         self.config.denied_paths.iter().any(|entry| {
-            let expanded = expand_tilde(Path::new(entry), &self.home);
-            let canon = dunce::canonicalize(&expanded).unwrap_or(expanded);
-            let deny_str = canon.to_string_lossy();
-            path_str.starts_with(deny_str.as_ref())
+            let canon = self.canonicalize_safe(Path::new(entry));
+            path.starts_with(&canon)
         })
     }
 }
@@ -383,6 +382,79 @@ fn expand_tilde(path: &Path, home_dir: &Path) -> PathBuf {
         return home_dir.join(remainder);
     }
     path.to_path_buf()
+}
+
+/// Expand the portable environment variable forms accepted in sandbox paths:
+/// `$VAR`, `${VAR}`, and `%VAR%`. Unknown variables are left unchanged so a
+/// typo cannot accidentally broaden access.
+fn expand_env_vars(path: &Path) -> PathBuf {
+    let source = path.to_string_lossy();
+    let mut out = String::with_capacity(source.len());
+    let chars: Vec<char> = source.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '$' {
+            let (start, end) = if chars.get(i + 1) == Some(&'{') {
+                match chars[i + 2..].iter().position(|c| *c == '}') {
+                    Some(relative_end) => (i + 2, i + 2 + relative_end),
+                    None => {
+                        out.push(chars[i]);
+                        i += 1;
+                        continue;
+                    }
+                }
+            } else {
+                let end = chars[i + 1..]
+                    .iter()
+                    .position(|c| !(*c == '_' || c.is_ascii_alphanumeric()))
+                    .map(|offset| i + 1 + offset)
+                    .unwrap_or(chars.len());
+                (i + 1, end)
+            };
+            if start == end {
+                out.push(chars[i]);
+                i += 1;
+                continue;
+            }
+            let name: String = chars[start..end].iter().collect();
+            if let Ok(value) = std::env::var(&name) {
+                out.push_str(&value);
+            } else {
+                out.extend(
+                    &chars[i..if chars.get(i + 1) == Some(&'{') {
+                        end + 1
+                    } else {
+                        end
+                    }],
+                );
+            }
+            i = if chars.get(i + 1) == Some(&'{') {
+                end + 1
+            } else {
+                end
+            };
+        } else if chars[i] == '%' {
+            if let Some(relative_end) = chars[i + 1..].iter().position(|c| *c == '%') {
+                let end = i + 1 + relative_end;
+                let name: String = chars[i + 1..end].iter().collect();
+                if !name.is_empty() {
+                    if let Ok(value) = std::env::var(&name) {
+                        out.push_str(&value);
+                    } else {
+                        out.extend(&chars[i..=end]);
+                    }
+                    i = end + 1;
+                    continue;
+                }
+            }
+            out.push(chars[i]);
+            i += 1;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    PathBuf::from(out)
 }
 
 /// Normalize `.` and `..` components without touching the filesystem.
@@ -583,6 +655,45 @@ mod tests {
     fn no_tilde_passthrough() {
         let p = Path::new("/absolute/path");
         assert_eq!(expand_tilde(p, Path::new("/home/other")), p);
+    }
+
+    #[test]
+    fn expands_environment_variables() {
+        // The process environment is shared across tests; use an existing
+        // variable rather than mutating it.
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap();
+        let (name, value) = if std::env::var("HOME").is_ok() {
+            ("HOME", home)
+        } else {
+            ("USERPROFILE", home)
+        };
+        assert_eq!(
+            expand_env_vars(Path::new(&format!("${{{name}}}/work"))),
+            PathBuf::from(&value).join("work")
+        );
+        assert_eq!(
+            expand_env_vars(Path::new(&format!("%{name}%/work"))),
+            PathBuf::from(&value).join("work")
+        );
+    }
+
+    #[test]
+    fn path_prefix_is_not_a_path_boundary() {
+        let root = std::env::temp_dir().join("loom-sandbox-prefix-test");
+        let allowed = root.join("safe");
+        let sibling = root.join("safe-evil");
+        std::fs::create_dir_all(&allowed).unwrap();
+        std::fs::create_dir_all(&sibling).unwrap();
+        let mut cfg = SandboxConfig::default();
+        cfg.enabled = true;
+        cfg.workspace_only = false;
+        cfg.allowed_paths = vec![allowed.to_string_lossy().to_string()];
+        let guard = SandboxGuard::new(cfg, None);
+        assert!(guard.check_read(&allowed.join("ok.txt")).is_ok());
+        assert!(guard.check_read(&sibling.join("no.txt")).is_err());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // ------------------------------------------------------------------

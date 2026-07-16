@@ -435,7 +435,13 @@ impl AgentTool for FileListTool {
         }
 
         let mut result = format!("Contents of '{}':\n\n", path.display());
-        match list_dir(&path, recursive, 0, if recursive { 3 } else { 1 }) {
+        match list_dir(
+            &path,
+            recursive,
+            0,
+            if recursive { 3 } else { 1 },
+            context.sandbox.as_deref(),
+        ) {
             Ok(files) => {
                 for (name, size, is_dir, mtime) in &files {
                     let prefix = if *is_dir { "[DIR] " } else { "[FILE]" };
@@ -475,6 +481,7 @@ fn list_dir(
     recursive: bool,
     depth: usize,
     max_depth: usize,
+    sandbox: Option<&loom_security::sandbox::SandboxGuard>,
 ) -> Result<Vec<(String, u64, bool, String)>> {
     let mut entries = Vec::new();
     if depth >= max_depth {
@@ -484,6 +491,9 @@ fn list_dir(
     let dir = std::fs::read_dir(path)?;
     for entry in dir {
         let entry = entry?;
+        if sandbox.is_some_and(|guard| guard.check_read(&entry.path()).is_err()) {
+            continue;
+        }
         let meta = entry.metadata()?;
         let name = entry.file_name().to_string_lossy().to_string();
         let prefix = if depth > 0 {
@@ -504,7 +514,7 @@ fn list_dir(
         entries.push((format!("{}{}", prefix, name), meta.len(), meta.is_dir(), dt));
 
         if recursive && meta.is_dir() {
-            let sub = list_dir(&entry.path(), true, depth + 1, max_depth)?;
+            let sub = list_dir(&entry.path(), true, depth + 1, max_depth, sandbox)?;
             entries.extend(sub);
         }
     }
@@ -1010,7 +1020,13 @@ impl AgentTool for ContentSearchTool {
             });
         }
         // Always use recursive walker — more reliable than findstr on Windows
-        match simple_content_search(&resolved_path, pattern, file_pattern, max_results) {
+        match simple_content_search(
+            &resolved_path,
+            pattern,
+            file_pattern,
+            max_results,
+            context.sandbox.as_deref(),
+        ) {
             Ok(results) => {
                 if results.is_empty() {
                     Ok(ToolResult {
@@ -1068,12 +1084,16 @@ fn simple_content_search(
     pattern: &str,
     file_pattern: &str,
     max_results: usize,
+    sandbox: Option<&loom_security::sandbox::SandboxGuard>,
 ) -> Result<Vec<String>> {
     let mut results = Vec::new();
     if path.is_dir() {
         for entry in std::fs::read_dir(path)? {
             let entry = entry?;
             let p = entry.path();
+            if sandbox.is_some_and(|guard| guard.check_read(&p).is_err()) {
+                continue;
+            }
             if p.is_dir()
                 && !p
                     .file_name()
@@ -1084,6 +1104,7 @@ fn simple_content_search(
                     pattern,
                     file_pattern,
                     max_results.saturating_sub(results.len()),
+                    sandbox,
                 ) {
                     results.extend(sub);
                 }
@@ -1624,6 +1645,13 @@ impl AgentTool for GlobTool {
                 for entry in paths.flatten() {
                     if results.len() >= max_results {
                         break;
+                    }
+                    if context
+                        .sandbox
+                        .as_ref()
+                        .is_some_and(|guard| guard.check_read(&entry).is_err())
+                    {
+                        continue;
                     }
                     if let Ok(meta) = std::fs::metadata(&entry) {
                         let rel = entry

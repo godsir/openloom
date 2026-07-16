@@ -211,6 +211,23 @@ impl ToolRegistry {
         let tool = self
             .find(name)
             .ok_or_else(|| anyhow::anyhow!("unknown tool: {}", name))?;
+        // A filesystem path guard cannot safely constrain arbitrary processes
+        // or external integrations. Keep these escape hatches unavailable in
+        // restrictive sandbox mode at the single dispatch point, including
+        // aliases and dynamically registered MCP tools.
+        if context.sandbox.as_ref().is_some_and(|guard| guard.is_enabled())
+            && is_blocked_by_sandbox(tool.tool_name())
+        {
+            let message = format!(
+                "Sandbox enabled: '{}' is unavailable because it can access resources outside the configured filesystem boundary.",
+                tool.tool_name()
+            );
+            return Ok(ToolResult {
+                content: message.clone(),
+                is_error: true,
+                structured_content: Some(serde_json::json!({"error": message})),
+            });
+        }
         tool.execute(arguments, progress, context).await
     }
 
@@ -233,6 +250,16 @@ impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Tools that are not enforceable by the path-level sandbox. This intentionally
+/// uses canonical registered names, after aliases have been resolved.
+fn is_blocked_by_sandbox(name: &str) -> bool {
+    name == "shell"
+        || name == "manage_mcp"
+        || name.starts_with("mcp__")
+        || name.starts_with("process_")
+        || name.starts_with("monitor")
 }
 
 // ============================================================================
@@ -773,6 +800,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Minimal AgentTool stub for unit-testing ToolRegistry.
     struct TestTool {
@@ -830,6 +858,118 @@ mod tests {
     fn test_mcp_tool_prefix() {
         let prefix = ToolRegistry::mcp_tool_prefix("github");
         assert_eq!(prefix, "mcp__github__");
+    }
+
+    struct CountingTool {
+        name: String,
+        runs: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl AgentTool for CountingTool {
+        fn tool_name(&self) -> &str {
+            &self.name
+        }
+
+        fn tool_definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                name: self.name.clone(),
+                description: "counting test tool".into(),
+                input_schema: json!({"type": "object", "properties": {}}),
+                tags: vec![],
+            }
+        }
+
+        async fn execute(
+            &self,
+            _arguments: serde_json::Value,
+            _progress: UnboundedSender<ToolProgress>,
+            _context: &ToolContext,
+        ) -> Result<ToolResult> {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            Ok(ToolResult {
+                content: "executed".into(),
+                is_error: false,
+                structured_content: None,
+            })
+        }
+
+        fn provenance(&self) -> ToolProvenance {
+            ToolProvenance::Builtin
+        }
+    }
+
+    fn sandbox_context(enabled: bool) -> ToolContext {
+        let mut config = loom_types::config::SandboxConfig::default();
+        config.enabled = enabled;
+        ToolContext::with_workspace_and_sandbox(
+            None,
+            Some(Arc::new(loom_security::sandbox::SandboxGuard::new(config, None))),
+        )
+    }
+
+    #[test]
+    fn sandbox_blocks_unconstrainable_tool_families() {
+        for name in [
+            "shell",
+            "process_spawn",
+            "process_stdin",
+            "monitor",
+            "monitor_wait",
+            "manage_mcp",
+            "mcp__github__create_issue",
+        ] {
+            assert!(is_blocked_by_sandbox(name), "{name} should be blocked");
+        }
+        assert!(!is_blocked_by_sandbox("file_read"));
+    }
+
+    #[tokio::test]
+    async fn sandbox_dispatch_rejects_blocked_tools_before_execution() {
+        let runs = Arc::new(AtomicUsize::new(0));
+        let mut registry = ToolRegistry::new();
+        registry
+            .register(Arc::new(CountingTool {
+                name: "shell".into(),
+                runs: runs.clone(),
+            }))
+            .unwrap();
+        registry.register_alias("Bash", "shell").unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let result = registry
+            .execute("Bash", json!({}), tx, &sandbox_context(true))
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert_eq!(runs.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn sandbox_dispatch_keeps_safe_tools_and_disabled_sandbox_available() {
+        let runs = Arc::new(AtomicUsize::new(0));
+        let mut registry = ToolRegistry::new();
+        for name in ["file_read", "shell"] {
+            registry
+                .register(Arc::new(CountingTool {
+                    name: name.into(),
+                    runs: runs.clone(),
+                }))
+                .unwrap();
+        }
+        let (safe_tx, _safe_rx) = tokio::sync::mpsc::unbounded_channel();
+        registry
+            .execute("file_read", json!({}), safe_tx, &sandbox_context(true))
+            .await
+            .unwrap();
+        let (shell_tx, _shell_rx) = tokio::sync::mpsc::unbounded_channel();
+        registry
+            .execute("shell", json!({}), shell_tx, &sandbox_context(false))
+            .await
+            .unwrap();
+
+        assert_eq!(runs.load(Ordering::SeqCst), 2);
     }
 
     #[test]

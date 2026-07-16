@@ -1067,7 +1067,7 @@ async fn run_agent_turn_inner(
     // Create tool context with workspace path for file operations
     let tool_context = ToolContext {
         workspace_path: config.workspace_path.clone(),
-        sandbox: None,
+        sandbox: config.sandbox.clone(),
         recently_read: Arc::new(std::sync::Mutex::new(HashMap::new())),
         session_id: Some(config.session_id.clone()),
         todo_store: config.todo_store.clone(),
@@ -2084,7 +2084,7 @@ async fn run_agent_turn_streaming_inner(
     // Create tool context with workspace path for file operations
     let tool_context = ToolContext {
         workspace_path: config.workspace_path.clone(),
-        sandbox: None,
+        sandbox: config.sandbox.clone(),
         recently_read: Arc::new(std::sync::Mutex::new(HashMap::new())),
         session_id: Some(config.session_id.clone()),
         todo_store: config.todo_store.clone(),

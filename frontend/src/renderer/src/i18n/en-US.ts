@@ -1062,6 +1062,11 @@ export const enUS: TranslationMap = {
   // ── Builtin Tools Settings ────────────────────────────────────────
   'settings.builtinTools': 'Built-in Tools',
   'settings.builtinToolsDesc': 'View and adjust built-in tool defaults',
+  'settings.otherTools': 'Other Tools',
+  'settings.otherToolsDesc': 'Manage rules files and import conversation history from other tools',
+  'settings.searchPlaceholder': 'Search settings',
+  'settings.searchResults': 'Search Results',
+  'settings.noSearchResults': 'No matching settings',
 
   // ── Import Conversations ─────────────────────────────────────────
   'settings.importConversations': 'Import Conversations',
@@ -1646,16 +1651,16 @@ export const enUS: TranslationMap = {
   'token.description': 'View token consumption statistics and history',
 
   // ── Themes ──────────────────────────────────────────────────────
-  'theme.dark': 'Dark',
+  'theme.dark': 'Deep Dark',
   'theme.light': 'Light',
-  'theme.midnight': 'Starry Night',
+  'theme.midnight': 'Midnight Blue',
   'theme.warm-paper': 'Warm Paper',
   'theme.neon-pink': 'Neon Pink',
   'theme.ember': 'Ember',
   'theme.navy-gold': 'Navy Gold',
-  'theme.umber-cream': 'Mocha',
-  'theme.mono': 'Bone',
-  'theme.mono-inv': 'Ink',
+  'theme.umber-cream': 'Mocha Brown',
+  'theme.mono': 'Pure Black',
+  'theme.mono-inv': 'Pure White',
   'theme.custom': 'Custom',
   'agent.default': 'Default',
   'common.imageLoadError': 'Image failed to load, closing...',

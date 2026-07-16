@@ -1051,6 +1051,11 @@ export const zhTW: TranslationMap = {
   // ── Builtin Tools Settings ────────────────────────────────────────
   'settings.builtinTools': '內置工具',
   'settings.builtinToolsDesc': '檢視與調整內置工具的預設參數',
+  'settings.otherTools': '其他工具',
+  'settings.otherToolsDesc': '管理規則檔案，並匯入其他工具中的歷史會話',
+  'settings.searchPlaceholder': '搜尋設定',
+  'settings.searchResults': '搜尋結果',
+  'settings.noSearchResults': '沒有匹配的設定項目',
 
   // ── Import Conversations ─────────────────────────────────────────
   'settings.importConversations': '匯入歷史對話',
@@ -1634,16 +1639,16 @@ export const zhTW: TranslationMap = {
   'token.description': '查看 Token 消耗统计和歷史趋势',
 
   // ── Themes ──────────────────────────────────────────────────────
-  'theme.dark': '暗色',
-  'theme.light': '亮色',
-  'theme.midnight': '星夜',
-  'theme.warm-paper': '素笺',
-  'theme.neon-pink': '紫夜',
-  'theme.ember': '熔岩',
-  'theme.navy-gold': '鎏金',
-  'theme.umber-cream': '摩卡',
-  'theme.mono': '墨白',
-  'theme.mono-inv': '白墨',
+  'theme.dark': '深色',
+  'theme.light': '淺色',
+  'theme.midnight': '午夜藍',
+  'theme.warm-paper': '暖紙',
+  'theme.neon-pink': '霓虹粉',
+  'theme.ember': '熾焰',
+  'theme.navy-gold': '海軍藍金',
+  'theme.umber-cream': '摩卡棕',
+  'theme.mono': '純黑',
+  'theme.mono-inv': '純白',
   'theme.custom': '自訂',
   'agent.default': '預設',
   'common.imageLoadError': '圖片載入失敗，即将關閉...',

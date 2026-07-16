@@ -7520,12 +7520,9 @@ impl PromptExecutor for CronPromptExecutor {
             ];
 
             // Build a sandbox guard from the current config so cron tool calls
-            // honor the same filesystem deny floor as interactive turns. The
-            // cron workspace is the data dir (~/.loom), so allow operating there
-            // — the credential-store carve-out still protects credentials.json.
+            // use exactly the same policy as interactive turns.
             let sandbox: Option<Arc<loom_security::sandbox::SandboxGuard>> = {
-                let mut sc = sandbox_config.read().await.clone();
-                sc.allow_loom_data = true;
+                let sc = sandbox_config.read().await.clone();
                 let ws = workspace_path.as_ref().map(std::path::PathBuf::from);
                 Some(Arc::new(loom_security::sandbox::SandboxGuard::new(sc, ws)))
             };
@@ -7606,21 +7603,19 @@ impl PromptExecutor for CronPromptExecutor {
                             tc.name
                         )
                     } else {
-                        match registry.find(&tc.name) {
-                            Some(tool) => {
-                                let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-                                match tool.execute(tc.arguments.clone(), tx, &tool_ctx).await {
-                                    Ok(r) => {
-                                        if r.is_error {
-                                            format!("Tool error: {}", r.content)
-                                        } else {
-                                            r.content
-                                        }
-                                    }
-                                    Err(e) => format!("Tool execution error: {}", e),
+                        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+                        match registry
+                            .execute(&tc.name, tc.arguments.clone(), tx, &tool_ctx)
+                            .await
+                        {
+                            Ok(r) => {
+                                if r.is_error {
+                                    format!("Tool error: {}", r.content)
+                                } else {
+                                    r.content
                                 }
                             }
-                            None => format!("Unknown tool: {}", tc.name),
+                            Err(e) => format!("Tool execution error: {}", e),
                         }
                     };
                     messages.push(loom_types::Message::tool(&tc.id, &tc.name, &tool_result));

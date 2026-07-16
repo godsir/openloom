@@ -5,7 +5,7 @@
 
 /* Left nav */
 .nav {
-  width: 200px;
+  width: 240px;
   flex-shrink: 0;
   background: var(--bg-surface);
   border-right: 1px solid var(--border);
@@ -709,6 +709,81 @@
   letter-spacing: 0.5px;
   color: var(--text-muted);
   padding: 12px 0 4px;
+}
+
+.settingsSearch {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 4px 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--text-muted);
+  background: var(--bg);
+}
+
+.settingsSearch:focus-within {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.settingsSearch input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.settingsSearch input::placeholder {
+  color: var(--text-muted);
+}
+
+.settingsSearchEmpty {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.settingsSearchResultLabel {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.settingsSearchResultLabel > span {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.otherToolsSectionHeader {
+  margin-bottom: 12px;
+}
+
+.otherToolsSectionTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.otherToolsSectionDesc {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
 }
 
 .mcpAddForm {
