@@ -27,6 +27,9 @@ extraResources:
     to: builtin
 win:
   icon: src/asset/icon.ico
+  # Keep the uploaded GitHub asset name identical to electron-updater's
+  # latest.yml entry. GitHub Actions otherwise normalizes spaces to dots.
+  artifactName: ${productName}-Setup-${version}.${ext}
   target:
     - nsis
 nsis:
