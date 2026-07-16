@@ -2,7 +2,6 @@ appId: com.openloom.app
 productName: openLoom
 electronDist: ./node_modules/electron/dist
 files:
-  - "!installer/**"
   - "!scripts/**"
   - "!dist/**"
   - "!src/**"
@@ -19,12 +18,24 @@ extraResources:
     filter:
       - icon.ico
       - icon.png
-  - from: ../target/release/loom.exe
-    to: engine/loom.exe
+  # Rust binaries are produced natively in CI. Do not hard-code the Windows
+  # suffix here: macOS/Linux packages contain `loom`, Windows contains
+  # `loom.exe`.
+  - from: ../target/release/${env.ENGINE_BINARY}
+    to: engine/${env.ENGINE_BINARY}
   - from: ../resources/builtin
     to: builtin
 win:
   icon: src/asset/icon.ico
+  target:
+    - nsis
+mac:
+  target:
+    - dmg
+    - zip
+linux:
+  target:
+    - AppImage
 publish:
   provider: github
   owner: godsir

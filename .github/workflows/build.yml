@@ -5,82 +5,97 @@ on:
     branches: [main]
     tags-ignore: ['v*']
 
-jobs:
-  build:
-    runs-on: windows-latest
-    permissions:
-      contents: write
+permissions:
+  contents: write
 
+jobs:
+  package:
+    name: Package ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            engine_binary: loom.exe
+            artifact: windows-release
+          - name: macOS
+            os: macos-latest
+            engine_binary: loom
+            artifact: macos-release
+          - name: Linux
+            os: ubuntu-latest
+            engine_binary: loom
+            artifact: linux-release
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set beta version
+        run: node frontend/scripts/set-beta-version.js
+
+      - name: Build backend
+        run: cargo build -p loom-cli --release
+
+      - name: Build Electron package and updater metadata
+        working-directory: frontend
+        env:
+          ENGINE_BINARY: ${{ matrix.engine_binary }}
+          # A signed macOS app is required for Electron to install updates.
+          CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          npm ci
+          npm run package:updater
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            frontend/dist/*.exe
+            frontend/dist/*.exe.blockmap
+            frontend/dist/*.dmg
+            frontend/dist/*.zip
+            frontend/dist/*.zip.blockmap
+            frontend/dist/*.AppImage
+            frontend/dist/*.AppImage.blockmap
+            frontend/dist/latest*.yml
+            frontend/dist/*beta*.yml
+          if-no-files-found: error
+
+  release:
+    needs: package
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
       - name: Set beta version
-        shell: pwsh
-        run: |
-          $pkg = Get-Content frontend/package.json -Raw | ConvertFrom-Json
-          $betaVersion = "$($pkg.version)-beta.${{ github.run_number }}"
-          $pkg.version = $betaVersion
-          $pkg | ConvertTo-Json -Depth 32 | Set-Content frontend/package.json -Encoding utf8
-          "BETA_VERSION=$betaVersion" >> $env:GITHUB_ENV
-          Write-Host "Beta version: $betaVersion"
+        run: echo "BETA_VERSION=$(node -p \"require('./frontend/package.json').version\")-beta.${{ github.run_number }}" >> "$GITHUB_ENV"
 
-      - name: Generate changelog
-        shell: bash
-        run: |
-          # 找最近的一次 release tag（正式或 beta），从其之后生成 changelog
-          LAST_TAG=$(git tag --list 'v*' --sort=-version:refname | head -1)
-          if [ -z "$LAST_TAG" ]; then
-            RANGE="HEAD~30..HEAD"
-          else
-            RANGE="${LAST_TAG}..HEAD"
-          fi
-          echo "Last tag: $LAST_TAG"
-          echo "Changelog range: $RANGE"
-          COMMITS=$(git log "$RANGE" --pretty=format:'* %s' --no-merges)
-          {
-            echo "🚧 自动构建的测试版"
-            echo ""
-            echo "**版本**: \`${BETA_VERSION}\`"
-            echo "**构建号**: #${{ github.run_number }}"
-            echo ""
-            echo "## 更新内容"
-            echo ""
-            echo "$COMMITS"
-            echo ""
-            echo "⚠️ 这是开发中的测试版本，可能有 bug。"
-          } > release-notes.md
-          echo "--- generated notes ---"
-          cat release-notes.md
-
-      - name: Build backend
-        run: cargo build -p loom-cli --release
-
-      - name: Build & package frontend
-        working-directory: frontend
-        run: |
-          npm install
-          npm run package:installer
+      - name: Download all platform packages
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
 
       - name: Create beta release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v${{ env.BETA_VERSION }}"
-          name: "Beta ${{ env.BETA_VERSION }}"
+          tag_name: v${{ env.BETA_VERSION }}
+          name: Beta ${{ env.BETA_VERSION }}
           prerelease: true
-          body_path: release-notes.md
-          files: |
-            frontend/dist/*.exe
-            frontend/dist/*.exe.blockmap
-            frontend/dist/*.yml
+          generate_release_notes: true
+          files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -28,15 +28,16 @@ function findProjectRoot(): string {
 }
 
 function findLoomExe(): string {
+  const executableName = process.platform === 'win32' ? 'loom.exe' : 'loom'
   if (app.isPackaged) {
-    return join(process.resourcesPath, 'engine', 'loom.exe')
+    return join(process.resourcesPath, 'engine', executableName)
   }
   const root = findProjectRoot()
-  const release = join(root, 'target', 'release', 'loom.exe')
+  const release = join(root, 'target', 'release', executableName)
   if (existsSync(release)) return release
-  const debug = join(root, 'target', 'debug', 'loom.exe')
+  const debug = join(root, 'target', 'debug', executableName)
   if (existsSync(debug)) return debug
-  throw new Error(`loom.exe not found in ${root}/target/release or debug`)
+  throw new Error(`${executableName} not found in ${root}/target/release or debug`)
 }
 
 export function getEnginePort(): number | null {
