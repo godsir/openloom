@@ -1676,6 +1676,7 @@ dependencies = [
  "scraper",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
@@ -1854,6 +1855,9 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 

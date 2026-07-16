@@ -868,8 +868,8 @@ impl MonitorManager {
 
         loop {
             // Check cancel token
-            if let Some(ref ct) = cancel {
-                if ct.is_cancelled() {
+            if let Some(ref ct) = cancel
+                && ct.is_cancelled() {
                     return Ok(MonitorWaitResult {
                         exit_code: -1,
                         output,
@@ -877,7 +877,6 @@ impl MonitorManager {
                         running: true,
                     });
                 }
-            }
 
             // Drain buffered output + check exit status
             {
@@ -926,8 +925,8 @@ impl MonitorManager {
             }
 
             // Idle-return: have output and been quiet → likely waiting for input
-            if let Some(lo) = last_output_at {
-                if lo.elapsed() >= idle_window && !output.is_empty() {
+            if let Some(lo) = last_output_at
+                && lo.elapsed() >= idle_window && !output.is_empty() {
                     return Ok(MonitorWaitResult {
                         exit_code: -1,
                         output,
@@ -935,7 +934,6 @@ impl MonitorManager {
                         running: true,
                     });
                 }
-            }
 
             // Compute wait duration
             let no_output_window = Duration::from_secs(3);
@@ -991,7 +989,7 @@ impl MonitorManager {
                 if last_output_at.is_some() {
                     continue;
                 }
-                let is_overall_timeout = overall_remaining.map_or(false, |r| r.is_zero());
+                let is_overall_timeout = overall_remaining.is_some_and(|r| r.is_zero());
                 return Ok(MonitorWaitResult {
                     exit_code: -1,
                     output: if is_overall_timeout {

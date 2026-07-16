@@ -4,12 +4,12 @@ import { registerIpcHandlers } from './ipc'
 import { startEngine, stopEngine } from './engine'
 import { createTray } from './tray'
 import { setupAutoUpdater, checkForUpdates } from './updater'
-import { getStoreKey } from './store'
+import { getStoreKey, readToolPrefs } from './store'
 import { initPet, registerPetProtocol } from './pet'
 import { startConfigWatcher } from './config-watcher'
 import { join } from 'path'
 import { homedir } from 'os'
-import { existsSync, mkdirSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync } from 'fs'
 import Database from 'better-sqlite3'
 import { IMStore, IMGatewayManager } from './im'
 import { ImBridge } from './im/imBridge'
@@ -35,18 +35,15 @@ if (process.platform === 'win32') {
 }
 
 // Configure system proxy for Electron on startup (before app.ready).
-// Reads from tool_prefs.json which is the same source the AI config tool and
-// the Settings UI both write to.
+// Reads from ~/.loom/config.json (tool_prefs section) — the same source the
+// AI config tool and the Settings UI both write to.
 function configureElectronProxy() {
   try {
-    const prefsPath = join(homedir(), '.loom', 'tool_prefs.json')
-    if (existsSync(prefsPath)) {
-      const prefs = JSON.parse(readFileSync(prefsPath, 'utf-8'))
-      if (prefs.proxy_enabled && prefs.http_proxy) {
-        app.commandLine.appendSwitch('proxy-server', prefs.http_proxy)
-        console.log('[proxy] Using custom proxy from prefs:', prefs.http_proxy)
-        return
-      }
+    const prefs = readToolPrefs() as { proxy_enabled?: boolean; http_proxy?: string }
+    if (prefs.proxy_enabled && prefs.http_proxy) {
+      app.commandLine.appendSwitch('proxy-server', prefs.http_proxy)
+      console.log('[proxy] Using custom proxy from prefs:', prefs.http_proxy)
+      return
     }
     // Fall back to system proxy auto-detection
     app.commandLine.appendSwitch('proxy-auto-detect')

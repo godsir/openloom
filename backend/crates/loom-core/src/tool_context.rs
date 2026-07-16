@@ -114,11 +114,10 @@ impl ToolContext {
 
     /// Check whether a path has been recently read (within the grace period).
     pub fn was_recently_read(&self, path: &Path) -> bool {
-        if let Ok(map) = self.recently_read.lock() {
-            if let Some(t) = map.get(path) {
+        if let Ok(map) = self.recently_read.lock()
+            && let Some(t) = map.get(path) {
                 return t.elapsed() <= Self::READ_GRACE_PERIOD;
             }
-        }
         false
     }
 }

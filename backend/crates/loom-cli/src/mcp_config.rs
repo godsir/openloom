@@ -99,6 +99,7 @@ pub fn default_mcp_server_configs() -> Vec<loom_mcp::McpServerConfig> {
 /// The default includes two bundled MCP servers: playwright (browser
 /// automation) and context7 (documentation lookup).  Users can edit or
 /// remove any entry.
+#[allow(dead_code)]
 pub fn ensure_default_mcp_config(data_dir: &Path) {
     let user_path = data_dir.join("mcp.json");
     if user_path.exists() {

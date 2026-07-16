@@ -1,4 +1,4 @@
-//! Built-in tools registered by default in the ToolRegistry.
+﻿//! Built-in tools registered by default in the ToolRegistry.
 //!
 //! These provide essential capabilities without needing MCP servers:
 //! shell, file_list, file_read, file_write, file_edit, content_search.
@@ -207,14 +207,13 @@ impl AgentTool for ShellTool {
                     _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
                         // Check for cancellation each tick — if the user hit stop,
                         // kill the child process so it doesn't become orphaned.
-                        if let Some(ref c) = cancel {
-                            if c.is_cancelled() {
+                        if let Some(ref c) = cancel
+                            && c.is_cancelled() {
                                 let _ = child.kill().await;
                                 let _ = child.wait().await;
                                 tracing::info!("shell tool: killed child process due to user cancellation");
                                 return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
                             }
-                        }
                         // Drain any available lines
                         while let Ok((line, is_stderr)) = line_rx.try_recv() {
                             let prefix = if is_stderr { "[stderr] " } else { "" };
@@ -1960,25 +1959,25 @@ impl AgentTool for SystemInfoTool {
             }
             "config" => {
                 let prefs = self.tool_prefs.read().await;
-                info.push_str(&format!("## Current Tool Preferences\n\n"));
-                info.push_str(&format!("Shell:\n"));
+                info.push_str(&"## Current Tool Preferences\n\n".to_string());
+                info.push_str(&"Shell:\n".to_string());
                 info.push_str(&format!("  default_timeout: {}s\n", prefs.shell_default_timeout_secs));
                 info.push_str(&format!("  max_timeout: {}s\n", prefs.shell_max_timeout_secs));
-                info.push_str(&format!("File Read:\n"));
+                info.push_str(&"File Read:\n".to_string());
                 info.push_str(&format!("  max_output: {} KB\n", prefs.file_read_max_output_kb));
-                info.push_str(&format!("Web Search:\n"));
+                info.push_str(&"Web Search:\n".to_string());
                 info.push_str(&format!("  engine: {:?}\n", prefs.web_search_engine));
                 info.push_str(&format!("  max_results: {}\n", prefs.web_search_max_results));
                 info.push_str(&format!("  searxng_url: {:?}\n", prefs.searxng_url));
                 info.push_str(&format!("  api_key: {}\n", if prefs.web_search_api_key.is_some() { "***" } else { "not set" }));
-                info.push_str(&format!("Network:\n"));
+                info.push_str(&"Network:\n".to_string());
                 info.push_str(&format!("  proxy: {:?}\n", prefs.http_proxy));
                 info.push_str(&format!("  proxy_enabled: {}\n", prefs.proxy_enabled));
-                info.push_str(&format!("Web Fetch:\n"));
+                info.push_str(&"Web Fetch:\n".to_string());
                 info.push_str(&format!("  max_chars: {}\n", prefs.web_fetch_max_chars));
-                info.push_str(&format!("Process Wait:\n"));
+                info.push_str(&"Process Wait:\n".to_string());
                 info.push_str(&format!("  max_timeout: {}s\n", prefs.process_wait_max_timeout_secs));
-                info.push_str(&format!("Monitor:\n"));
+                info.push_str(&"Monitor:\n".to_string());
                 info.push_str(&format!("  default_timeout: {}ms\n", prefs.monitor_default_timeout_ms));
             }
             _ => {
@@ -3831,7 +3830,7 @@ impl AgentTool for ProcessPeekTool {
                         r.pid
                     )
                 } else {
-                    format!("。进程已结束。")
+                    "。进程已结束。".to_string()
                 };
                 Ok(ToolResult {
                     content: format!(
@@ -3988,15 +3987,14 @@ impl AgentTool for MonitorTool {
                 });
 
         // Validate: ws URL must not be empty if provided
-        if let Some(ref ws_cfg) = ws_config {
-            if ws_cfg.url.is_empty() {
+        if let Some(ref ws_cfg) = ws_config
+            && ws_cfg.url.is_empty() {
                 return Ok(ToolResult {
                     content: "ws.url is required when ws is provided".into(),
                     is_error: true,
                     structured_content: Some(serde_json::json!({"error": "ws.url required"})),
                 });
             }
-        }
 
         let prefs = self.tool_prefs.read().await;
         let timeout_ms = arguments["timeout_ms"]
@@ -4388,6 +4386,7 @@ pub struct UpdateConfigTool {
     pub tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>>,
     pub data_dir: std::path::PathBuf,
     pub event_bus: Option<crate::event_bus::EventBus>,
+    pub config_store: Arc<loom_types::config::unified::ConfigStore>,
 }
 
 #[async_trait]
@@ -4862,10 +4861,10 @@ impl AgentTool for UpdateConfigTool {
                 config.shell_default_timeout_secs = config.shell_max_timeout_secs;
             }
 
-            let path = self.data_dir.join("tool_prefs.json");
-            let _ = tokio::fs::create_dir_all(&self.data_dir).await;
-            let json = serde_json::to_string_pretty(&config)?;
-            tokio::fs::write(&path, json).await?;
+            self.config_store.save_tool_prefs(config.clone()).await?;
+
+
+
 
             {
                 let mut guard = self.tool_prefs.write().await;

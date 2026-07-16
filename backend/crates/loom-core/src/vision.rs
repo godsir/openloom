@@ -1,4 +1,4 @@
-//! Vision auxiliary — processes images via a vision-capable model when the
+﻿//! Vision auxiliary — processes images via a vision-capable model when the
 //! main model lacks vision capabilities.
 
 use anyhow::Result;
@@ -7,16 +7,11 @@ use chrono::Utc;
 use loom_inference::engine::CloudClient;
 use loom_inference::openai::OpenAIClient;
 use loom_types::{CompletionRequest, ContentPart, Message, ModelBackend, Role};
-use serde::Deserialize;
+use loom_types::config::unified::VisionConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-#[derive(Debug, Deserialize, Default)]
-pub struct VisionConfig {
-    pub enabled: bool,
-    pub model: Option<String>,
-}
 
 const VISION_PROMPT: &str = r#"Analyze this image for another text-only model. Return a concise note with these exact sections:
 image_overview: fixed basic description of what the image is.
@@ -31,11 +26,25 @@ uncertainty: anything unclear, hidden, or guessed.
 Do not mention that you are a tool or a separate model. Output the note as plain text, no Markdown fences, no JSON."#;
 
 pub fn load_vision_config() -> VisionConfig {
-    let home = dirs::home_dir()
+    let loom_dir = dirs::home_dir()
         .unwrap_or_default()
-        .join(".loom")
-        .join("vision.json");
-    std::fs::read_to_string(&home)
+        .join(".loom");
+    load_vision_config_from(&loom_dir)
+}
+
+/// Load vision config from a specific data directory's config.json.
+pub fn load_vision_config_from(loom_dir: &std::path::Path) -> VisionConfig {
+    let config_path = loom_dir.join("config.json");
+    if config_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&config_path)
+            && let Ok(config) =
+                serde_json::from_str::<loom_types::config::unified::UnifiedConfig>(&content)
+            {
+                return config.vision;
+            }
+    // Fallback: legacy vision.json
+    let legacy = loom_dir.join("vision.json");
+    std::fs::read_to_string(&legacy)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()

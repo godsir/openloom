@@ -132,8 +132,8 @@ pub fn load_loom_md(
     loom_dir: &std::path::Path,
 ) -> Option<String> {
     // Priority 1: workspace-level Loom.md (case-insensitive)
-    if let Some(ws) = workspace_path {
-        if let Some(path) = locate_loom_md(ws) {
+    if let Some(ws) = workspace_path
+        && let Some(path) = locate_loom_md(ws) {
             if let Some(content) = read_loom_md_nonempty(&path) {
                 tracing::info!(path = %path.display(), "loaded workspace-level Loom.md");
                 return Some(content);
@@ -143,7 +143,6 @@ pub fn load_loom_md(
             tracing::info!(path = %path.display(), "workspace Loom.md is empty — treating as disabled");
             return None;
         }
-    }
 
     // Priority 2: global ~/.loom/Loom.md (case-insensitive)
     if let Some(path) = locate_loom_md(loom_dir) {
@@ -310,8 +309,10 @@ pub struct Orchestrator {
     default_max_prompt_budget: Arc<RwLock<usize>>,
     /// Sandbox configuration for file and shell access control.
     sandbox_config: Arc<RwLock<loom_types::config::SandboxConfig>>,
-    /// Builtin-tool tunables persisted to tool_prefs.json.
+    /// Builtin-tool tunables persisted to config.json (tool_prefs section).
     tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>>,
+    /// Unified config store — single source of truth for ~/.loom/config.json.
+    config_store: Arc<loom_types::config::unified::ConfigStore>,
     /// Semaphore to limit concurrent entity extraction tasks (prevents unbounded LLM calls).
     extraction_semaphore: Arc<tokio::sync::Semaphore>,
     /// Separate semaphore for lightweight consolidation tasks to avoid deadlock with
@@ -820,7 +821,7 @@ fn extract_entity_candidates(text: &str) -> Vec<String> {
             i += 1;
         }
         let run_len = i - run_start;
-        if run_len >= 2 && run_len <= 8 {
+        if (2..=8).contains(&run_len) {
             // Take the whole run as one phrase if reasonable length
             let phrase: String = chars[run_start..i].iter().collect();
             if !is_cjk_stopword(&phrase, chinese_stopwords) {
@@ -882,9 +883,24 @@ impl Orchestrator {
         data_dir: PathBuf,
     ) -> Self {
         let mut registry = ToolRegistry::new();
-        let tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>> = Arc::new(
-            RwLock::new(loom_types::config::tool_prefs::ToolPrefsConfig::default()),
+
+        // Load the unified config store first. This migrates legacy
+        // per-file configs into ~/.loom/config.json on first run and gives
+        // us the seeded values for tool_prefs / sandbox_config below.
+        let config_store = Arc::new(
+            loom_types::config::unified::ConfigStore::load_or_default(&data_dir),
         );
+        // Read a snapshot synchronously. ConfigStore wraps a std::sync::RwLock
+        // internally (not tokio), so blocking_get() is safe even while `new()`
+        // runs on a runtime thread.
+        let cfg = config_store.blocking_get();
+        // Seed tool_prefs directly from the unified config at construction time.
+        // We initialize the tokio::sync::RwLock with the value rather than
+        // defaulting-then-overwriting: blocking_write() on a tokio RwLock panics
+        // when called from inside the async runtime, and `new()` is invoked on
+        // a runtime thread from `main`.
+        let tool_prefs: Arc<RwLock<loom_types::config::tool_prefs::ToolPrefsConfig>> =
+            Arc::new(RwLock::new(cfg.tool_prefs.clone()));
         let _ = registry.register(Arc::new(crate::builtin_tools::ShellTool {
             tool_prefs: tool_prefs.clone(),
         }));
@@ -939,8 +955,10 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
         let model_configs: Arc<RwLock<std::collections::HashMap<String, loom_types::ModelConfig>>> =
             Arc::new(RwLock::new(std::collections::HashMap::new()));
         let active_model_name: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
+        // Seed sandbox_config directly from the unified config snapshot read
+        // above (same rationale as tool_prefs — never use blocking_write()).
         let sandbox_config: Arc<RwLock<loom_types::config::SandboxConfig>> =
-            Arc::new(RwLock::new(loom_types::config::SandboxConfig::default()));
+            Arc::new(RwLock::new(cfg.sandbox.clone()));
 
         let _ = registry.register(Arc::new(crate::builtin_tools::SystemInfoTool {
             active_model_name: active_model_name.clone(),
@@ -1052,6 +1070,7 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
             tool_prefs: tool_prefs.clone(),
             data_dir: data_dir.clone(),
             event_bus: Some(pool.event_bus().clone()),
+            config_store: config_store.clone(),
         }));
 
         // Entity management tools — AI can CRUD agent/model/team configs
@@ -1087,7 +1106,7 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
         let mcp_client = Arc::new(McpClient::new());
         let _ = registry.register(Arc::new(crate::entity_mcp_tools::ManageMcpTool {
             mcp_client: mcp_client.clone(),
-            data_dir: data_dir.clone(),
+            memory_store: memory_store.clone(),
         }));
 
         Self {
@@ -1114,6 +1133,7 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
             default_max_prompt_budget: Arc::new(RwLock::new(0)),
             sandbox_config,
             tool_prefs,
+            config_store,
             session_processing_locks: RwLock::new(HashMap::new()),
             extraction_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
             consolidation_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
@@ -1358,11 +1378,10 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
             disabled.insert(session_id.to_string());
         }
         // Persist to DB
-        if let Some(ref store) = *self.memory_store.read().await {
-            if let Err(e) = store.set_session_memory_enabled(session_id, enabled).await {
+        if let Some(ref store) = *self.memory_store.read().await
+            && let Err(e) = store.set_session_memory_enabled(session_id, enabled).await {
                 tracing::warn!(session_id, error = %e, "failed to persist memory_enabled flag");
             }
-        }
     }
 
     /// Check whether automatic memory extraction is enabled for a session (default: true).
@@ -1408,8 +1427,8 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
             _ => return None,
         };
         let mut note = base.to_string();
-        if let Some(p) = progress {
-            if !p.completed_steps.is_empty() {
+        if let Some(p) = progress
+            && !p.completed_steps.is_empty() {
                 note.push_str("\n\n## 已完成的操作:\n");
                 for step in &p.completed_steps {
                     note.push_str(&format!("- {}\n", step));
@@ -1419,7 +1438,6 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
                 }
                 note.push_str("\n请从上次中断处继续，不要重复以上已完成的操作。");
             }
-        }
         Some(note)
     }
 
@@ -2243,7 +2261,7 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
             })
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
-            .last()
+            .next_back()
             .unwrap_or(&sanitized)
             .chars()
             .take(20)
@@ -2326,11 +2344,10 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
     /// Persist a session-team binding to the memory store.
     pub async fn bind_team_persisted(&self, session_id: &str, team_id: &str) {
         let store = self.memory_store.read().await;
-        if let Some(ref s) = *store {
-            if let Err(e) = s.save_session_team_id(session_id, team_id).await {
+        if let Some(ref s) = *store
+            && let Err(e) = s.save_session_team_id(session_id, team_id).await {
                 tracing::warn!(?session_id, ?team_id, error = %e, "failed to persist team binding");
             }
-        }
     }
 
     /// Read a persisted session-team binding from the memory store.
@@ -2901,11 +2918,10 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         }
 
         for (config_name, config) in &member_configs {
-            if config_name.starts_with("__team_") {
-                if self.agent_config_get(config_name).await.is_err() {
+            if config_name.starts_with("__team_")
+                && self.agent_config_get(config_name).await.is_err() {
                     let _ = self.agent_config_create(config.clone()).await;
                 }
-            }
         }
 
         let member_info: Vec<(String, String, Option<String>)> = member_configs
@@ -3287,24 +3303,18 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         }
     }
 
-    /// Set the default workspace path.
+    /// Set the default workspace path (single source: ~/.loom/config.json via ConfigStore).
     pub async fn set_default_workspace(&self, path: &str) -> Result<()> {
-        let store = self.memory_store.read().await;
-        if let Some(ref s) = *store {
-            s.set_default_workspace(path).await
-        } else {
-            Err(anyhow::anyhow!("memory store not available"))
-        }
+        let ws = loom_types::config::unified::WorkspaceConfig {
+            default_workspace: Some(path.to_string()),
+        };
+        self.config_store.save_workspace(ws).await
     }
 
-    /// Get the default workspace path.
+    /// Get the default workspace path (single source: ~/.loom/config.json via ConfigStore).
     pub async fn get_default_workspace(&self) -> Result<Option<String>> {
-        let store = self.memory_store.read().await;
-        if let Some(ref s) = *store {
-            s.get_default_workspace().await
-        } else {
-            Ok(None)
-        }
+        let ws = self.config_store.workspace().await;
+        Ok(ws.default_workspace.filter(|s| !s.is_empty()))
     }
 
     // === Model Config Management ===
@@ -3570,19 +3580,12 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
     /// Read auxiliary model config for a specific task type.
     /// Returns the configured model name, or None if not configured.
     async fn read_auxiliary_model(&self, task: &str) -> Option<String> {
-        let home = dirs::home_dir()?.join(".loom").join("auxiliary.json");
-        let content = std::fs::read_to_string(&home).ok()?;
-        let config: serde_json::Value = serde_json::from_str(&content).ok()?;
-        let key = match task {
-            "summary" => "summary_model",
-            "entity" => "entity_model",
-            _ => return None,
-        };
-        config
-            .get(key)
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
+        let aux = self.config_store.auxiliary().await;
+        match task {
+            "summary" => aux.summary_model.filter(|s| !s.is_empty()),
+            "entity" => aux.entity_model.filter(|s| !s.is_empty()),
+            _ => None,
+        }
     }
 
     /// Build a CloudClient for an auxiliary model task.
@@ -3677,7 +3680,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
 
         // Build LLM client before spawning.
         // Three-tier fallback:
-        //   1. Dedicated entity model from ~/.loom/auxiliary.json
+        //   1. Dedicated entity model (from config.json auxiliary section)
         //   2. Current chat model (cloud_client)
         //   3. Direct connect from active model config (handles pure-local Ollama/LM Studio)
         let mut llm_client: Option<Arc<dyn CloudClient>> = self
@@ -3687,7 +3690,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
 
         if llm_client.is_none() {
             // Pure-local fallback: connect directly from model config.
-            // No auxiliary.json or prior cloud_client needed.
+            // No auxiliary model or prior cloud_client needed.
             if let Some(model_name) = self
                 .active_model_name
                 .try_read()
@@ -3695,8 +3698,8 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                 .and_then(|g| g.clone())
             {
                 let configs = self.model_configs.read().await;
-                if let Some(config) = configs.get(&model_name) {
-                    if let Some(ref model) = config.model {
+                if let Some(config) = configs.get(&model_name)
+                    && let Some(ref model) = config.model {
                         let base_url =
                             config
                                 .base_url
@@ -3732,7 +3735,6 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                             }
                         }
                     }
-                }
             }
         }
 
@@ -4558,14 +4560,13 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             let user_content_json =
                 serde_json::to_string(&user_parts).unwrap_or_else(|_| user_message.to_string());
             let mem = self.memory_store.read().await;
-            if let Some(ref store) = *mem {
-                if let Err(e) = store
+            if let Some(ref store) = *mem
+                && let Err(e) = store
                     .save_interrupted_turn(session_id, &user_content_json)
                     .await
                 {
                     tracing::warn!(session_id, error = %e, "failed to persist user message at turn start");
                 }
-            }
             drop(mem);
         }
 
@@ -4660,14 +4661,13 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             let mut union: std::collections::HashSet<String> = std::collections::HashSet::new();
             let mut any_has_allowlist = false;
             for name in &effective_selected_skills {
-                if let Some(allowed) = state.allowed_tools.get(name) {
-                    if !allowed.is_empty() {
+                if let Some(allowed) = state.allowed_tools.get(name)
+                    && !allowed.is_empty() {
                         any_has_allowlist = true;
                         for tool_name in allowed {
                             union.insert(tool_name.clone());
                         }
                     }
-                }
             }
             if any_has_allowlist {
                 Some(union.into_iter().collect())
@@ -4682,7 +4682,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             if session_ws.is_some() {
                 session_ws
             } else {
-                store.get_default_workspace().await.ok().flatten()
+                self.get_default_workspace().await.ok().flatten()
             }
         } else {
             None
@@ -4822,7 +4822,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         // and fires too late (or never).
         let prefix_estimate: usize = {
             // Agent persona (base identity)
-            let persona = agent_config.persona.len().saturating_sub(2).max(0) / 4;
+            let persona = agent_config.persona.len().saturating_sub(2) / 4;
             // System prompt override
             let overr = agent_config
                 .system_prompt_override
@@ -5119,8 +5119,8 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                         });
                         // Periodically persist the accumulating assistant text
                         // (every 1s) so a crash mid-stream doesn't lose it.
-                        if let Some(seq) = assistant_seq {
-                            if last_save.elapsed() >= std::time::Duration::from_secs(1) {
+                        if let Some(seq) = assistant_seq
+                            && last_save.elapsed() >= std::time::Duration::from_secs(1) {
                                 last_save = std::time::Instant::now();
                                 let snapshot = full_text.clone();
                                 let mem = memory_store.read().await;
@@ -5147,7 +5147,6 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                                         .await;
                                 }
                             }
-                        }
                     }
                     StreamDelta::Reasoning(t) => {
                         event_bus.publish(AgentEvent::StreamDelta {
@@ -5218,14 +5217,13 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                             let tool_json =
                                 serde_json::to_string(&tool_msg.content).unwrap_or_default();
                             let mem = memory_store.read().await;
-                            if let Some(ref store) = *mem {
-                                if let Err(e) = store
+                            if let Some(ref store) = *mem
+                                && let Err(e) = store
                                     .append_message(&forward_session_id, "tool", &tool_json, None)
                                     .await
                                 {
                                     tracing::warn!(session_id = %forward_session_id, error = %e, "failed to persist tool result incrementally");
                                 }
-                            }
                         }
                         if let Some(r) = result {
                             tool_result_contents.insert(call_id, r);
@@ -5431,14 +5429,13 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                     "context_window": usage_ctx,
                 }).to_string();
                 let mem = memory_store.read().await;
-                if let Some(ref store) = *mem {
-                    if let Err(e) = store
+                if let Some(ref store) = *mem
+                    && let Err(e) = store
                         .update_message(&forward_session_id, seq, &content_json, Some(&meta_json))
                         .await
                     {
                         tracing::warn!(session_id = %forward_session_id, error = %e, "failed to finalize assistant message in incremental save");
                     }
-                }
             }
 
             // Send StreamEnd when channel closes
@@ -6076,7 +6073,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             if session_ws.is_some() {
                 session_ws
             } else {
-                store.get_default_workspace().await.ok().flatten()
+                self.get_default_workspace().await.ok().flatten()
             }
         } else {
             None
@@ -6117,7 +6114,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             .sum();
         // ── Include stable prefix in the occupancy estimate ──
         let prefix_estimate: usize = {
-            let persona = agent_config.persona.len().saturating_sub(2).max(0) / 4;
+            let persona = agent_config.persona.len().saturating_sub(2) / 4;
             let overr = agent_config
                 .system_prompt_override
                 .as_deref()
@@ -6273,14 +6270,13 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             let mut union: std::collections::HashSet<String> = std::collections::HashSet::new();
             let mut any_has_allowlist = false;
             for name in &effective_selected_skills {
-                if let Some(allowed) = state.allowed_tools.get(name) {
-                    if !allowed.is_empty() {
+                if let Some(allowed) = state.allowed_tools.get(name)
+                    && !allowed.is_empty() {
                         any_has_allowlist = true;
                         for tool_name in allowed {
                             union.insert(tool_name.clone());
                         }
                     }
-                }
             }
             if any_has_allowlist {
                 Some(union.into_iter().collect())
@@ -6965,56 +6961,40 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
 
     // === Sandbox Config ===
 
-    /// Load sandbox configuration from `data_dir/sandbox.json`.
-    /// Returns default if the file does not exist or cannot be parsed.
-    pub async fn load_sandbox_config(&self) -> SandboxConfig {
-        let path = self.data_dir.join("sandbox.json");
-        match tokio::fs::read_to_string(&path).await {
-            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-            Err(_) => SandboxConfig::default(),
-        }
+    /// Get a reference to the unified config store.
+    pub fn config_store(&self) -> &loom_types::config::unified::ConfigStore {
+        &self.config_store
     }
 
-    /// Save sandbox configuration to `data_dir/sandbox.json`.
+    // === Sandbox Config ===
+
+    pub async fn load_sandbox_config(&self) -> SandboxConfig {
+        let config = self.config_store.sandbox().await;
+        *self.sandbox_config.write().await = config.clone();
+        config
+    }
+
     pub async fn save_sandbox_config(&self, config: &SandboxConfig) -> Result<()> {
-        let _ = tokio::fs::create_dir_all(&self.data_dir).await;
-        let path = self.data_dir.join("sandbox.json");
-        let contents =
-            serde_json::to_string_pretty(config).context("failed to serialize sandbox config")?;
-        tokio::fs::write(&path, &contents)
-            .await
-            .context("failed to write sandbox.json")?;
-        // Update in-memory state so enforcement uses the new config immediately
+        self.config_store.save_sandbox(config.clone()).await?;
         *self.sandbox_config.write().await = config.clone();
         Ok(())
     }
 
     // === Tool Prefs ===
 
-    /// Load built-in tool preferences from `data_dir/tool_prefs.json`.
-    /// Returns default if the file does not exist or cannot be parsed.
     pub async fn load_tool_prefs(&self) -> loom_types::config::tool_prefs::ToolPrefsConfig {
-        let path = self.data_dir.join("tool_prefs.json");
-        let config = match tokio::fs::read_to_string(&path).await {
-            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-            Err(_) => loom_types::config::tool_prefs::ToolPrefsConfig::default(),
-        };
+        let config = self.config_store.tool_prefs().await;
         // Sync global proxy on load so it's available immediately after restart,
         // without requiring the user to re-save tool prefs.
         loom_inference::engine::set_global_proxy(config.http_proxy.clone(), config.proxy_enabled);
         config
     }
 
-    /// Save built-in tool preferences to `data_dir/tool_prefs.json`.
     pub async fn save_tool_prefs(
         &self,
         config: &loom_types::config::tool_prefs::ToolPrefsConfig,
     ) -> Result<()> {
-        let _ = tokio::fs::create_dir_all(&self.data_dir).await;
-        let path = self.data_dir.join("tool_prefs.json");
-        let json = serde_json::to_string_pretty(config)?;
-        tokio::fs::write(&path, json).await?;
-        // Update in-memory state so tools see the new config immediately
+        self.config_store.save_tool_prefs(config.clone()).await?;
         *self.tool_prefs.write().await = config.clone();
         // Sync global proxy so all HTTP clients pick up the change
         loom_inference::engine::set_global_proxy(config.http_proxy.clone(), config.proxy_enabled);
@@ -7418,14 +7398,14 @@ struct LoomCronEventPublisher {
 
 impl CronEventPublisher for LoomCronEventPublisher {
     fn job_triggered(&self, job_id: &str, job_name: &str, run_id: &str) {
-        let _ = self.bus.publish(AgentEvent::CronJobTriggered {
+        self.bus.publish(AgentEvent::CronJobTriggered {
             job_id: job_id.to_string(),
             job_name: job_name.to_string(),
             run_id: run_id.to_string(),
         });
     }
     fn job_completed(&self, job_id: &str, job_name: &str, run_id: &str, response: &str) {
-        let _ = self.bus.publish(AgentEvent::CronJobCompleted {
+        self.bus.publish(AgentEvent::CronJobCompleted {
             job_id: job_id.to_string(),
             job_name: job_name.to_string(),
             run_id: run_id.to_string(),
@@ -7433,7 +7413,7 @@ impl CronEventPublisher for LoomCronEventPublisher {
         });
     }
     fn job_failed(&self, job_id: &str, job_name: &str, run_id: &str, error: &str) {
-        let _ = self.bus.publish(AgentEvent::CronJobFailed {
+        self.bus.publish(AgentEvent::CronJobFailed {
             job_id: job_id.to_string(),
             job_name: job_name.to_string(),
             run_id: run_id.to_string(),
@@ -7441,7 +7421,7 @@ impl CronEventPublisher for LoomCronEventPublisher {
         });
     }
     fn job_changed(&self, job_id: &str, action: &str) {
-        let _ = self.bus.publish(AgentEvent::CronJobChanged {
+        self.bus.publish(AgentEvent::CronJobChanged {
             job_id: job_id.to_string(),
             action: action.to_string(),
         });

@@ -475,7 +475,7 @@ fn build_team(v: &serde_json::Value) -> Result<loom_types::TeamConfig> {
             model: v["captain_model"].as_str().map(|s| s.to_string()),
             system_prompt_override: v["captain_persona"].as_str().map(|s| s.to_string()),
         },
-        members: v["members"].as_array().map(|a| parse_members(a)).unwrap_or_default(),
+        members: v["members"].as_array().map(parse_members).unwrap_or_default(),
     })
 }
 

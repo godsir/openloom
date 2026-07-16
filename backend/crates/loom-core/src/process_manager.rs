@@ -283,14 +283,12 @@ impl ProcessManager {
     /// Write a line to a process's stdin.
     pub async fn stdin_write(&self, pid: &str, input: &str) -> Result<bool> {
         let procs = self.processes.read().await;
-        if let Some(entry) = procs.get(pid) {
-            if let Some(ref tx) = entry.stdin_tx {
-                if entry.exit_code.is_none() {
+        if let Some(entry) = procs.get(pid)
+            && let Some(ref tx) = entry.stdin_tx
+                && entry.exit_code.is_none() {
                     let _ = tx.send(input.to_string());
                     return Ok(true);
                 }
-            }
-        }
         Ok(false)
     }
 
@@ -375,15 +373,14 @@ impl ProcessManager {
 
         loop {
             // Check cancel token
-            if let Some(ref ct) = cancel {
-                if ct.is_cancelled() {
+            if let Some(ref ct) = cancel
+                && ct.is_cancelled() {
                     return Ok(ProcessWaitResult {
                         exit_code: -1,
                         output,
                         truncated: false,
                     });
                 }
-            }
             // Drain buffered output + check exit status in one lock.
             // Draining the buffer here is the KEY fix: events that arrived
             // between process_wait calls (while the agent was doing an LLM
@@ -440,15 +437,14 @@ impl ProcessManager {
             // Idle-return check: if we have output and the process has been
             // quiet for idle_window, it's likely waiting for input — return
             // so the caller (agent) can act on the output.
-            if let Some(lo) = last_output_at {
-                if lo.elapsed() >= idle_window && !output.is_empty() {
+            if let Some(lo) = last_output_at
+                && lo.elapsed() >= idle_window && !output.is_empty() {
                     return Ok(ProcessWaitResult {
                         exit_code: -1,
                         output,
                         truncated,
                     });
                 }
-            }
 
             // Compute the wait duration for this iteration:
             //  - If we have output (idle-return armed), cap at idle_window so we
@@ -521,7 +517,7 @@ impl ProcessManager {
                 // (no new output) instead of blocking the full timeout. This
                 // lets an agent detect an ended/idle process and decide to stop.
                 // If the overall deadline also expired, label it as a timeout.
-                let is_overall_timeout = overall_remaining.map_or(false, |r| r.is_zero());
+                let is_overall_timeout = overall_remaining.is_some_and(|r| r.is_zero());
                 return Ok(ProcessWaitResult {
                     exit_code: -1,
                     output: if is_overall_timeout {

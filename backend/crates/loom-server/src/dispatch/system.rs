@@ -1,4 +1,4 @@
-//! System dispatch handlers — system.health / agent.* / tools.list / config.*
+﻿//! System dispatch handlers — system.health / agent.* / tools.list / config.*
 
 use loom_types::{AgentConfig, ErrorCode, JsonRpcError, SandboxConfig};
 use serde_json::{Value, json};
@@ -31,12 +31,12 @@ pub async fn handle(
         // Workspace
         "workspace.git_remote" => Some(handle_workspace_git_remote(p).await),
         // Config (vision / auxiliary / fim)
-        "config.get_vision" => Some(handle_config_get_vision()),
-        "config.set_vision" => Some(handle_config_set_vision(p)),
-        "config.get_auxiliary" => Some(handle_config_get_auxiliary()),
-        "config.set_auxiliary" => Some(handle_config_set_auxiliary(p)),
-        "config.get_fim" => Some(handle_config_get_fim()),
-        "config.set_fim" => Some(handle_config_set_fim(p)),
+        "config.get_vision" => Some(handle_config_get_vision(state).await),
+        "config.set_vision" => Some(handle_config_set_vision(state, p).await),
+        "config.get_auxiliary" => Some(handle_config_get_auxiliary(state).await),
+        "config.set_auxiliary" => Some(handle_config_set_auxiliary(state, p).await),
+        "config.get_fim" => Some(handle_config_get_fim(state).await),
+        "config.set_fim" => Some(handle_config_set_fim(state, p).await),
         // Sandbox
         "config.get_sandbox" => Some(handle_config_get_sandbox(state).await),
         "config.set_sandbox" => Some(handle_config_set_sandbox(state, p).await),
@@ -263,107 +263,75 @@ async fn handle_workspace_git_remote(p: &Value) -> Result<Value, JsonRpcError> {
 
 // --- config.get_vision ---
 
-fn handle_config_get_vision() -> Result<Value, JsonRpcError> {
-    let home = dirs::home_dir().unwrap_or_default().join(".loom");
-    let config_file = home.join("vision.json");
-    let config: Value = std::fs::read_to_string(&config_file)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(json!({ "enabled": false, "model": null }));
-    Ok(config)
+async fn handle_config_get_vision(state: &AppState) -> Result<Value, JsonRpcError> {
+    let vision = state.orchestrator.config_store().vision().await;
+    Ok(json!({ "enabled": vision.enabled, "model": vision.model }))
 }
 
 // --- config.set_vision ---
 
-fn handle_config_set_vision(p: &Value) -> Result<Value, JsonRpcError> {
+async fn handle_config_set_vision(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
     let enabled = p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
-    let model = p
-        .get("model")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let home = dirs::home_dir().unwrap_or_default().join(".loom");
-    let _ = std::fs::create_dir_all(&home);
-    let config = json!({ "enabled": enabled, "model": model });
-    let config_file = home.join("vision.json");
-    std::fs::write(
-        &config_file,
-        serde_json::to_string_pretty(&config).unwrap_or_default(),
-    )
-    .map_err(|e| err(ErrorCode::InternalError, &format!("Write error: {}", e)))?;
+    let model = p.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let vision = loom_types::config::unified::VisionConfig { enabled, model };
+    state
+        .orchestrator
+        .config_store()
+        .save_vision(vision)
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &format!("Write error: {}", e)))?;
     Ok(json!({ "ok": true }))
 }
 
 // --- config.get_auxiliary ---
 
-fn handle_config_get_auxiliary() -> Result<Value, JsonRpcError> {
-    let home = dirs::home_dir().unwrap_or_default().join(".loom");
-    let config_file = home.join("auxiliary.json");
-    let config: Value = std::fs::read_to_string(&config_file)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(json!({ "summary_model": null, "entity_model": null }));
-    Ok(config)
+async fn handle_config_get_auxiliary(state: &AppState) -> Result<Value, JsonRpcError> {
+    let aux = state.orchestrator.config_store().auxiliary().await;
+    Ok(json!({ "summary_model": aux.summary_model, "entity_model": aux.entity_model }))
 }
 
 // --- config.set_auxiliary ---
 
-fn handle_config_set_auxiliary(p: &Value) -> Result<Value, JsonRpcError> {
-    let summary_model = p
-        .get("summary_model")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let entity_model = p
-        .get("entity_model")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let home = dirs::home_dir().unwrap_or_default().join(".loom");
-    let _ = std::fs::create_dir_all(&home);
-    let config = json!({ "summary_model": summary_model, "entity_model": entity_model });
-    let config_file = home.join("auxiliary.json");
-    std::fs::write(
-        &config_file,
-        serde_json::to_string_pretty(&config).unwrap_or_default(),
-    )
-    .map_err(|e| err(ErrorCode::InternalError, &format!("Write error: {}", e)))?;
+async fn handle_config_set_auxiliary(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let summary_model = p.get("summary_model").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let entity_model = p.get("entity_model").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let aux = loom_types::config::unified::AuxiliaryConfig {
+        summary_model,
+        entity_model,
+    };
+    state
+        .orchestrator
+        .config_store()
+        .save_auxiliary(aux)
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &format!("Write error: {}", e)))?;
     Ok(json!({ "ok": true }))
 }
 
 // --- config.get_fim ---
 
-fn handle_config_get_fim() -> Result<Value, JsonRpcError> {
-    let home = dirs::home_dir().unwrap_or_default().join(".loom");
-    let config_file = home.join("fim.json");
-    let config: Value = std::fs::read_to_string(&config_file)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(json!({ "model": null, "base_url": null, "api_key_env": null }));
-    Ok(config)
+async fn handle_config_get_fim(state: &AppState) -> Result<Value, JsonRpcError> {
+    let fim = state.orchestrator.config_store().fim().await;
+    Ok(json!({ "model": fim.model, "base_url": fim.base_url, "api_key_env": fim.api_key_env }))
 }
 
 // --- config.set_fim ---
 
-fn handle_config_set_fim(p: &Value) -> Result<Value, JsonRpcError> {
-    let model = p
-        .get("model")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let base_url = p
-        .get("base_url")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let api_key_env = p
-        .get("api_key_env")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let home = dirs::home_dir().unwrap_or_default().join(".loom");
-    let _ = std::fs::create_dir_all(&home);
-    let config = json!({ "model": model, "base_url": base_url, "api_key_env": api_key_env });
-    let config_file = home.join("fim.json");
-    std::fs::write(
-        &config_file,
-        serde_json::to_string_pretty(&config).unwrap_or_default(),
-    )
-    .map_err(|e| err(ErrorCode::InternalError, &format!("Write error: {}", e)))?;
+async fn handle_config_set_fim(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let model = p.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let base_url = p.get("base_url").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let api_key_env = p.get("api_key_env").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let fim = loom_types::config::unified::FimConfig {
+        model,
+        base_url,
+        api_key_env,
+    };
+    state
+        .orchestrator
+        .config_store()
+        .save_fim(fim)
+        .await
+        .map_err(|e| err(ErrorCode::InternalError, &format!("Write error: {}", e)))?;
     Ok(json!({ "ok": true }))
 }
 

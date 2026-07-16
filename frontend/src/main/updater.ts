@@ -1,10 +1,10 @@
 import { autoUpdater } from 'electron-updater'
 import { app, BrowserWindow } from 'electron'
-import { getStoreKey, setStoreKey, readStore } from './store'
+import { getStoreKey, setStoreKey } from './store'
 
 let initialized = false
 
-/** Read the preferred update channel from preferences.json. */
+/** Read the preferred update channel from config.json (preferences section). */
 export function getUpdateChannel(): 'stable' | 'beta' {
   return (getStoreKey<string>('update_channel', 'stable') === 'beta') ? 'beta' : 'stable'
 }

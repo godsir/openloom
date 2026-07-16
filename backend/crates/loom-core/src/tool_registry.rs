@@ -462,7 +462,7 @@ impl AgentTool for SpawnAgentTool {
 
                 Ok(ToolResult {
                     content: serde_json::to_string_pretty(&sub_result)
-                        .unwrap_or_else(|_| turn.response),
+                        .unwrap_or(turn.response),
                     is_error: false,
                     structured_content: Some(sub_result),
                 })

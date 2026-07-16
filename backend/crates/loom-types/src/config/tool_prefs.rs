@@ -1,6 +1,6 @@
 //! User-configurable built-in tool preferences.
 //!
-//! Persisted to `~/.loom/tool_prefs.json`.  Each field controls a knob on one of
+//! Persisted to the `tool_prefs` section of `~/.loom/config.json`.  Each field controls a knob on one of
 //! the built-in tools (shell, file_read, web_search, web_fetch, process_wait,
 //! monitor).
 
@@ -20,7 +20,7 @@ pub enum ToolSearchEngine {
     Serper,
 }
 
-/// User-tunable parameters for built-in tools, persisted to `~/.loom/tool_prefs.json`.
+/// User-tunable parameters for built-in tools, persisted to the `tool_prefs` section of `~/.loom/config.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolPrefsConfig {
     // --- shell ---

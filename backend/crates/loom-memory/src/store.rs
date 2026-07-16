@@ -1,4 +1,4 @@
-//! SQLite-backed event store with FTS5 full-text search.
+﻿//! SQLite-backed event store with FTS5 full-text search.
 //! Ported from crates/memory/src/store.rs with loom-types compatibility.
 
 use anyhow::Result;

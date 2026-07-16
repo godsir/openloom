@@ -876,8 +876,8 @@ async fn run_agent_turn_inner(
     // messages AFTER the stable prefix and few-shot examples — keeping
     // frequently-changing content out of the KV-cache so cache hit rates
     // stay high across turns.
-    if let Some(ref dc) = config.dynamic_context {
-        if !dc.is_empty() {
+    if let Some(ref dc) = config.dynamic_context
+        && !dc.is_empty() {
             let insert_pos = 1 + config.few_shots.len();
             messages.insert(
                 insert_pos,
@@ -889,10 +889,9 @@ async fn run_agent_turn_inner(
                 },
             );
         }
-    }
     // Inject todo context (after dynamic_context, before user/assistant history)
-    if let Some(ref tc) = config.todo_context {
-        if !tc.is_empty() {
+    if let Some(ref tc) = config.todo_context
+        && !tc.is_empty() {
             let insert_pos = 1
                 + config.few_shots.len()
                 + config
@@ -909,10 +908,9 @@ async fn run_agent_turn_inner(
                 },
             );
         }
-    }
     // Inject continuation note — tells LLM the user cancelled and is now giving follow-up
-    if let Some(ref note) = config.continuation_note {
-        if !note.is_empty() {
+    if let Some(ref note) = config.continuation_note
+        && !note.is_empty() {
             let insert_pos = 1
                 + config.few_shots.len()
                 + config
@@ -933,7 +931,6 @@ async fn run_agent_turn_inner(
                 },
             );
         }
-    }
     // Strip images from history — they were already processed by the vision
     // model in their original turn. Only the current user message's images
     // (appended below) should trigger vision auxiliary processing.
@@ -979,7 +976,10 @@ async fn run_agent_turn_inner(
         if main_has_vision {
             info!("main model is vision-capable, skipping vision auxiliary");
         } else {
-            let vision_cfg = crate::vision::load_vision_config();
+            let vision_cfg = match config.loom_dir.as_deref() {
+                Some(dir) => crate::vision::load_vision_config_from(dir),
+                None => crate::vision::load_vision_config(),
+            };
             if vision_cfg.enabled
                 && let Some(vision_model) = &vision_cfg.model
             {
@@ -1112,8 +1112,8 @@ async fn run_agent_turn_inner(
             items
         } else { Vec::new() };
         // Notify frontend when we consumed steering items
-        if !steering_consumed.is_empty() {
-            if let Some(ref bus) = config.event_bus {
+        if !steering_consumed.is_empty()
+            && let Some(ref bus) = config.event_bus {
                 let remaining = config.steering_queue.as_ref()
                     .map(|q| q.try_read().map(|q| q.len()).unwrap_or(0))
                     .unwrap_or(0);
@@ -1123,7 +1123,6 @@ async fn run_agent_turn_inner(
                     items: steering_consumed,
                 });
             }
-        }
         // Token budget check: stop if CURRENT window tokens exceed the budget
         // (was cumulative total_prompt, which falsely tripped after N iterations).
         let current_window_tokens: usize = if config.max_prompt_budget > 0 {
@@ -1611,7 +1610,7 @@ async fn run_agent_turn_inner(
                 }
 
                 // Storm breaker: detect consecutive identical tool calls
-                let storm_key = format!("{}|{}", tool_name, tc.arguments.to_string());
+                let storm_key = format!("{}|{}", tool_name, tc.arguments);
                 if last_storm_key.as_deref() != Some(&storm_key) {
                     storm_tracker.clear();
                     last_storm_key = Some(storm_key.clone());
@@ -1822,8 +1821,8 @@ async fn run_agent_turn_streaming_inner(
     // messages AFTER the stable prefix and few-shot examples — keeping
     // frequently-changing content out of the KV-cache so cache hit rates
     // stay high across turns.
-    if let Some(ref dc) = config.dynamic_context {
-        if !dc.is_empty() {
+    if let Some(ref dc) = config.dynamic_context
+        && !dc.is_empty() {
             let insert_pos = 1 + config.few_shots.len();
             messages.insert(
                 insert_pos,
@@ -1835,10 +1834,9 @@ async fn run_agent_turn_streaming_inner(
                 },
             );
         }
-    }
     // Inject continuation note — tells LLM the user cancelled and is now giving follow-up
-    if let Some(ref note) = config.continuation_note {
-        if !note.is_empty() {
+    if let Some(ref note) = config.continuation_note
+        && !note.is_empty() {
             let insert_pos = 1
                 + config.few_shots.len()
                 + config
@@ -1859,10 +1857,9 @@ async fn run_agent_turn_streaming_inner(
                 },
             );
         }
-    }
     // Inject todo context (after dynamic_context, before user/assistant history)
-    if let Some(ref tc) = config.todo_context {
-        if !tc.is_empty() {
+    if let Some(ref tc) = config.todo_context
+        && !tc.is_empty() {
             let insert_pos = 1
                 + config.few_shots.len()
                 + config
@@ -1879,7 +1876,6 @@ async fn run_agent_turn_streaming_inner(
                 },
             );
         }
-    }
     // Strip images from history — they were already processed by the vision
     // model in their original turn. Only the current user message's images
     // (appended below) should trigger vision auxiliary processing.
@@ -1953,7 +1949,10 @@ async fn run_agent_turn_streaming_inner(
         if main_has_vision {
             tracing::info!("main model is vision-capable, skipping vision auxiliary (streaming)");
         } else {
-            let vision_cfg = crate::vision::load_vision_config();
+            let vision_cfg = match config.loom_dir.as_deref() {
+                Some(dir) => crate::vision::load_vision_config_from(dir),
+                None => crate::vision::load_vision_config(),
+            };
             if vision_cfg.enabled
                 && let Some(vision_model) = &vision_cfg.model
             {
@@ -2130,8 +2129,8 @@ async fn run_agent_turn_streaming_inner(
             items
         } else { Vec::new() };
         // Notify frontend when we consumed steering items
-        if !steering_consumed.is_empty() {
-            if let Some(ref bus) = config.event_bus {
+        if !steering_consumed.is_empty()
+            && let Some(ref bus) = config.event_bus {
                 let remaining = config.steering_queue.as_ref()
                     .map(|q| q.try_read().map(|q| q.len()).unwrap_or(0))
                     .unwrap_or(0);
@@ -2141,7 +2140,6 @@ async fn run_agent_turn_streaming_inner(
                     items: steering_consumed,
                 });
             }
-        }
         // Token budget check: stop if CURRENT window tokens exceed the budget
         // (was cumulative total_prompt, which falsely tripped after N iterations).
         let current_window_tokens: usize = if config.max_prompt_budget > 0 {
@@ -2928,11 +2926,10 @@ async fn run_agent_turn_streaming_inner(
                         }
                         progress.tool_calls_executed += 1;
                         // Track file writes/edits
-                        if let Some(ref path) = maybe_file_path {
-                            if !progress.files_touched.contains(path) {
+                        if let Some(ref path) = maybe_file_path
+                            && !progress.files_touched.contains(path) {
                                 progress.files_touched.push(path.clone());
                             }
-                        }
 
                         let _ = delta_tx
                             .send(StreamDelta::ToolResult {

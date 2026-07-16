@@ -6,6 +6,7 @@ pub mod compaction;
 pub mod model_config;
 pub mod team;
 pub mod tool_prefs;
+pub mod unified;
 
 use serde::{Deserialize, Serialize};
 

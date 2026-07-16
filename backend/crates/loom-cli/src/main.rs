@@ -1,4 +1,4 @@
-//! openLoom v2 CLI — unified entry point.
+﻿//! openLoom v2 CLI — unified entry point.
 //!
 //! Commands:
 //!   loom serve     Start the HTTP/WebSocket server
@@ -341,21 +341,32 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                // 3) Seed defaults on first run (DB empty).
+                // 3) Seed on first run (DB empty). Seeds come from config.json's
+                // mcp section (migrated from legacy mcp.json) so user
+                // customizations survive into the DB; if that's empty, fall
+                // back to built-in defaults (playwright + context7).
                 if existing.is_empty() {
-                    for d in mcp_config::default_mcp_server_configs() {
+                    let migrated = orchestrator.config_store().mcp().await.mcp_servers;
+                    let seeds: Vec<loom_mcp::McpServerConfig> = if migrated.is_empty() {
+                        mcp_config::default_mcp_server_configs()
+                    } else {
+                        migrated
+                            .iter()
+                            .map(|(name, e)| {
+                                loom_core::entity_mcp_tools::mcp_entry_to_config(name, e)
+                            })
+                            .collect()
+                    };
+                    for d in seeds {
                         let name = d.name.clone();
                         if let Err(e) = orchestrator.save_mcp_server(&d, true).await {
-                            tracing::warn!("[mcp] seed default '{}' failed: {}", name, e);
+                            tracing::warn!("[mcp] seed '{}' failed: {}", name, e);
                         } else {
-                            tracing::info!("[mcp] seeded default '{}'", name);
+                            tracing::info!("[mcp] seeded '{}'", name);
                         }
                     }
                 }
             }
-            // Ensure default mcp.json exists on disk for user visibility/editing.
-            // (Not auto-loaded — DB is the runtime source of truth.)
-            mcp_config::ensure_default_mcp_config(&loom_dir);
             // Connect all DB-persisted servers marked autostart=true.
             // Servers the user disconnected (autostart=false) or deleted are skipped.
             orchestrator.autostart_mcp_servers().await;
@@ -595,14 +606,17 @@ fn mcp_add(
     args: Option<&str>,
     headers: &[String],
 ) -> anyhow::Result<()> {
+    use loom_types::config::unified::{McpServerEntry, UnifiedConfig};
+
     let dir = data_dir();
     std::fs::create_dir_all(&dir)?;
-    let config_path = dir.join("mcp.json");
+    let config_path = dir.join("config.json");
 
-    let mut config: mcp_config::McpConfigFile = if config_path.exists() {
-        serde_json::from_str(&std::fs::read_to_string(&config_path)?)?
+    let mut full_config: UnifiedConfig = if config_path.exists() {
+        serde_json::from_str(&std::fs::read_to_string(&config_path)?)
+            .unwrap_or_default()
     } else {
-        Default::default()
+        UnifiedConfig::default()
     };
 
     let mut hdrs = std::collections::HashMap::new();
@@ -612,7 +626,7 @@ fn mcp_add(
         }
     }
 
-    let entry = mcp_config::McpConfigEntry {
+    let entry = McpServerEntry {
         transport: transport.to_string(),
         command: command.unwrap_or("").to_string(),
         args: args
@@ -623,46 +637,46 @@ fn mcp_add(
         env: Default::default(),
     };
 
-    config.mcp_servers.insert(name.to_string(), entry);
-    std::fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
+    full_config.mcp.mcp_servers.insert(name.to_string(), entry);
+    std::fs::write(&config_path, serde_json::to_string_pretty(&full_config)?)?;
     println!("Added MCP server '{}' to {}", name, config_path.display());
     Ok(())
 }
 
 fn mcp_list() -> anyhow::Result<()> {
+    use loom_types::config::unified::UnifiedConfig;
+
     let dir = data_dir();
-    let config_path = dir.join("mcp.json");
+    let config_path = dir.join("config.json");
     if !config_path.exists() {
         println!(
-            "No MCP config found at {}\n  Use 'loom mcp add' to add servers.",
+            "No config found at {}\n  Use 'loom mcp add' to add servers.",
             config_path.display()
         );
         return Ok(());
     }
-    let config: mcp_config::McpConfigFile =
+    let config: UnifiedConfig =
         serde_json::from_str(&std::fs::read_to_string(&config_path)?)?;
     println!("MCP servers ({}):", config_path.display());
-    for (name, entry) in &config.mcp_servers {
+    for (name, entry) in &config.mcp.mcp_servers {
         match entry.transport.as_str() {
             "streamableHttp" | "http" | "sse" => {
-                println!("  {} → HTTP {}", name, entry.url.as_deref().unwrap_or("?"))
+                println!("  {} -> HTTP {}", name, entry.url.as_deref().unwrap_or("?"))
             }
             _ => println!(
-                "  {} → stdio {} {}",
+                "  {} -> stdio {} {}",
                 name,
                 entry.command,
                 entry.args.join(" ")
             ),
         }
     }
-    if config.mcp_servers.is_empty() {
+    if config.mcp.mcp_servers.is_empty() {
         println!("  (empty)");
     }
     Ok(())
 }
 
-/// Ensure a base URL ends with `/v1` for OpenAI-compatible endpoints.
-/// Anthropic endpoints (`/messages`) do NOT use `/v1` — do not call this for them.
 fn normalize_openai_url(url: &str) -> String {
     let trimmed = url.trim_end_matches('/');
     if trimmed.ends_with("/v1") {
@@ -909,26 +923,36 @@ async fn run_chat_demo(
         Err(e) => println!("[memory] unavailable: {}", e),
     }
 
-    // Seed default MCP servers into the DB on first run only.
-    // After that the DB is the single source of truth.
+    // Seed MCP servers into the DB on first run only. The DB is the runtime
+    // single source of truth that `autostart_mcp_servers` reads. Seeds come
+    // from config.json's mcp section (migrated from legacy mcp.json) so user
+    // customizations survive into the DB; if that's empty, fall back to the
+    // built-in defaults (playwright + context7).
     {
         let existing = orchestrator
             .list_saved_mcp_servers()
             .await
             .unwrap_or_default();
         if existing.is_empty() {
-            for d in mcp_config::default_mcp_server_configs() {
+            let migrated = orchestrator.config_store().mcp().await.mcp_servers;
+            let seeds: Vec<loom_mcp::McpServerConfig> = if migrated.is_empty() {
+                mcp_config::default_mcp_server_configs()
+            } else {
+                migrated
+                    .iter()
+                    .map(|(name, e)| loom_core::entity_mcp_tools::mcp_entry_to_config(name, e))
+                    .collect()
+            };
+            for d in seeds {
                 let name = d.name.clone();
                 if let Err(e) = orchestrator.save_mcp_server(&d, true).await {
-                    println!("[mcp] seed default '{}' failed: {}", name, e);
+                    println!("[mcp] seed '{}' failed: {}", name, e);
                 } else {
-                    println!("[mcp] seeded default '{}'", name);
+                    println!("[mcp] seeded '{}'", name);
                 }
             }
         }
     }
-    // Ensure default mcp.json exists on disk for user visibility/editing.
-    mcp_config::ensure_default_mcp_config(&loom_dir);
 
     // Connect DB-persisted servers marked autostart=true (no mcp.json reload).
     if load_config {

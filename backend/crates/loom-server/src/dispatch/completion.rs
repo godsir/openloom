@@ -6,7 +6,7 @@ use crate::AppState;
 use loom_inference::engine::build_http_client;
 use loom_types::JsonRpcError;
 use loom_types::config::model_config::ModelBackend;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// Fallback FIM endpoint — only used when nothing is configured.
 const DEFAULT_FIM_BASE_URL: &str = "https://api.deepseek.com/beta";
@@ -23,28 +23,10 @@ pub async fn handle(
     }
 }
 
-/// Load saved FIM config from ~/.loom/fim.json
-fn load_fim_config() -> (Option<String>, Option<String>, Option<String>) {
-    let home = dirs::home_dir().unwrap_or_default().join(".loom");
-    let config_file = home.join("fim.json");
-    let config: Value = std::fs::read_to_string(&config_file)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(json!({}));
-
-    let model = config
-        .get("model")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let base_url = config
-        .get("base_url")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let api_key_env = config
-        .get("api_key_env")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    (model, base_url, api_key_env)
+/// Load saved FIM config from the unified config store (~/.loom/config.json).
+async fn load_fim_config(state: &AppState) -> (Option<String>, Option<String>, Option<String>) {
+    let fim = state.orchestrator.config_store().fim().await;
+    (fim.model, fim.base_url, fim.api_key_env)
 }
 
 /// Resolve model ID, base_url, api_key_env, and backend from the user's model config (supplier settings).
@@ -102,7 +84,7 @@ async fn handle_completion_fim(state: &AppState, p: &Value) -> Result<Value, Jso
     }
 
     // 1. Resolve model name: saved FIM config (fresh from disk) → request param → default
-    let (saved_model, saved_fim_base_url, saved_fim_key_env) = load_fim_config();
+    let (saved_model, saved_fim_base_url, saved_fim_key_env) = load_fim_config(state).await;
 
     let model_name = saved_model
         .as_deref()
@@ -114,7 +96,7 @@ async fn handle_completion_fim(state: &AppState, p: &Value) -> Result<Value, Jso
         resolve_fim_model(state, model_name).await;
 
     // 3. base_url priority:
-    //    a) fim.json override (advanced users)
+    //    a) FIM config override (advanced users)
     //    b) Model config base_url (from supplier settings — what normal users configure)
     //    c) Backend-based default (matching orchestrator::try_build_cloud_client)
     //    d) Hardcoded fallback
@@ -132,7 +114,7 @@ async fn handle_completion_fim(state: &AppState, p: &Value) -> Result<Value, Jso
 
     // 4. API key priority:
     //    a) Request param (frontend override)
-    //    b) fim.json env name → key_store lookup
+    //    b) FIM config env name → key_store lookup
     //    c) Model config env name → key_store lookup
     //    d) Backend-based default env name → key_store lookup
     let api_key = p

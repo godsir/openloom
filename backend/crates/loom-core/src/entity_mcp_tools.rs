@@ -1,50 +1,25 @@
-//! MCP server management tool — connect, disconnect, list, and delete MCP servers.
-//! Persists configs to mcp.json in data_dir; delegates live operations to McpClient.
+//! MCP server management tool - connect, disconnect, list, and delete MCP servers.
+//!
+//! Runtime MCP config is persisted to the memory store DB, which is the
+//! single source of truth for `autostart_mcp_servers` at startup. This keeps
+//! connect/delete in sync with autostart (previously this tool wrote only to
+//! config.json.mcp, diverging from the DB that autostart reads). config.json's
+//! mcp section is now a declarative initial layer, seeded into the DB at startup.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
 use loom_mcp::{McpClient, McpServerConfig};
+use loom_types::config::unified::McpServerEntry;
 use loom_types::{ToolDefinition, ToolProgress};
-use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::RwLock;
 
 use crate::tool_context::ToolContext;
 use crate::tool_registry::{AgentTool, ToolProvenance, ToolResult};
-
-// ============================================================================
-// mcp.json file format (subset used by this tool)
-// ============================================================================
-
-#[derive(Debug, Serialize, Deserialize, Default)]
-struct McpJsonFile {
-    #[serde(default)]
-    #[serde(rename = "mcpServers")]
-    mcp_servers: HashMap<String, McpJsonEntry>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct McpJsonEntry {
-    #[serde(rename = "type", default = "default_transport")]
-    transport: String,
-    #[serde(default)]
-    command: String,
-    #[serde(default)]
-    args: Vec<String>,
-    #[serde(default)]
-    url: Option<String>,
-    #[serde(default)]
-    headers: HashMap<String, String>,
-    #[serde(default)]
-    env: HashMap<String, String>,
-}
-
-fn default_transport() -> String {
-    "stdio".into()
-}
+use crate::MemoryStore;
 
 // ============================================================================
 // ManageMcpTool
@@ -52,7 +27,10 @@ fn default_transport() -> String {
 
 pub struct ManageMcpTool {
     pub mcp_client: Arc<McpClient>,
-    pub data_dir: PathBuf,
+    /// Shared memory store (DB) — single source of truth for saved MCP
+    /// servers and their autostart flag. Replaces the old config.json.mcp
+    /// writer so connect/delete stay in sync with `autostart_mcp_servers`.
+    pub memory_store: Arc<RwLock<Option<Box<dyn MemoryStore>>>>,
 }
 
 #[async_trait]
@@ -64,7 +42,7 @@ impl AgentTool for ManageMcpTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "manage_mcp".into(),
-            description: "Manage MCP servers (MCP工具服务器). Use when user wants to connect an MCP server, disconnect one, list all servers, or delete a saved server config.\n\nCommon scenarios:\n- \"connect to a filesystem MCP server\": action=connect, name=filesystem, transport=stdio, command=npx, args=[-y, @modelcontextprotocol/server-filesystem, /path]\n- \"connect to a remote MCP server\": action=connect, name=my-server, transport=http, url=http://localhost:3000/mcp\n- \"show connected MCP servers\": action=list\n- \"disconnect the slack server\": action=disconnect, name=slack\n- \"remove old MCP config\": action=delete, name=old-server\n\nActions: list | connect | disconnect | delete.".into(),
+            description: "Manage MCP servers (MCP tool servers). Use when user wants to connect an MCP server, disconnect one, list all servers, or delete a saved server config.\n\nCommon scenarios:\n- \"connect to a filesystem MCP server\": action=connect, name=filesystem, transport=stdio, command=npx, args=[-y, @modelcontextprotocol/server-filesystem, /path]\n- \"connect to a remote MCP server\": action=my-server, transport=http, url=http://localhost:3000/mcp\n- \"show connected MCP servers\": action=list\n- \"disconnect the slack server\": action=disconnect, name=slack\n- \"remove old MCP config\": action=delete, name=old-server\n\nActions: list | connect | disconnect | delete.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -121,7 +99,7 @@ impl AgentTool for ManageMcpTool {
         _ctx: &ToolContext,
     ) -> Result<ToolResult> {
         let action = arguments["action"].as_str().unwrap_or("");
-        let result = exec_mcp(action, &arguments, &self.mcp_client, &self.data_dir).await?;
+        let result = exec_mcp(action, &arguments, &self.mcp_client, &self.memory_store).await?;
         Ok(ToolResult {
             content: result,
             is_error: false,
@@ -142,39 +120,71 @@ async fn exec_mcp(
     action: &str,
     args: &serde_json::Value,
     client: &McpClient,
-    data_dir: &PathBuf,
+    memory_store: &Arc<RwLock<Option<Box<dyn MemoryStore>>>>,
 ) -> Result<String> {
     match action {
         "list" => {
             let connected = client.server_names().await;
-            let saved = load_saved_configs(data_dir);
+            let saved = {
+                let store = memory_store.read().await;
+                if let Some(ref s) = *store {
+                    s.list_mcp_servers().await.unwrap_or_default()
+                } else {
+                    Vec::new()
+                }
+            };
+            let saved_configs: Vec<serde_json::Value> = saved
+                .iter()
+                .map(|(cfg, autostart)| {
+                    serde_json::json!({
+                        "name": cfg.name,
+                        "transport": cfg.transport,
+                        "command": cfg.command,
+                        "args": cfg.args,
+                        "url": cfg.url,
+                        "autostart": autostart,
+                    })
+                })
+                .collect();
             let result = serde_json::json!({
                 "connected": connected,
-                "saved": saved.keys().collect::<Vec<&String>>(),
-                "saved_configs": saved,
+                "saved": saved.iter().map(|(c, _)| c.name.clone()).collect::<Vec<_>>(),
+                "saved_configs": saved_configs,
             });
             Ok(serde_json::to_string_pretty(&result).unwrap_or_else(|e| e.to_string()))
         }
         "connect" => {
             let config = build_config(args)?;
             let name = config.name.clone();
-            client.connect(config).await?;
-            // Persist to mcp.json
-            save_config_to_json(data_dir, args, &name)?;
-            Ok(format!("MCP server \"{name}\" connected."))
+            client.connect(config.clone()).await?;
+            // Persist to the DB (runtime source of truth) so the server is
+            // reconnected by autostart on the next engine start.
+            let store = memory_store.read().await;
+            if let Some(ref s) = *store {
+                s.save_mcp_server(&config, true).await?;
+            } else {
+                tracing::warn!("memory store unavailable; MCP config not persisted");
+            }
+            Ok(format!("MCP server \"{name}\" connected and saved to DB (autostart=true)."))
         }
         "disconnect" => {
             let name = req_str(args, "name")?;
             client.disconnect(name).await?;
-            Ok(format!("MCP server \"{name}\" disconnected."))
+            Ok(format!("MCP server \"{name}\" disconnected. (DB config kept for reconnect.)"))
         }
         "delete" => {
             let name = req_str(args, "name")?;
             // Best-effort disconnect if live
             let _ = client.disconnect(name).await;
-            // Remove from mcp.json
-            remove_config_from_json(data_dir, name)?;
-            Ok(format!("MCP server \"{name}\" deleted."))
+            // Remove from the DB (runtime source of truth) so autostart no
+            // longer reconnects it on the next start.
+            let store = memory_store.read().await;
+            if let Some(ref s) = *store {
+                s.delete_mcp_server(name).await?;
+            } else {
+                tracing::warn!("memory store unavailable; cannot delete MCP config");
+            }
+            Ok(format!("MCP server \"{name}\" deleted from DB."))
         }
         _ => Err(anyhow::anyhow!(
             "Unknown action: {action}. Use list | connect | disconnect | delete."
@@ -246,87 +256,28 @@ fn build_config(args: &serde_json::Value) -> Result<McpServerConfig> {
     Ok(config)
 }
 
-// ============================================================================
-// mcp.json persistence helpers
-// ============================================================================
-
-fn mcp_json_path(data_dir: &PathBuf) -> PathBuf {
-    data_dir.join("mcp.json")
-}
-
-fn load_mcp_json_file(data_dir: &PathBuf) -> McpJsonFile {
-    let path = mcp_json_path(data_dir);
-    if path.exists() {
-        match std::fs::read_to_string(&path) {
-            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
-            Err(_) => McpJsonFile::default(),
-        }
-    } else {
-        McpJsonFile::default()
-    }
-}
-
-fn save_mcp_json_file(data_dir: &PathBuf, file: &McpJsonFile) -> Result<()> {
-    let path = mcp_json_path(data_dir);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let json = serde_json::to_string_pretty(file)?;
-    std::fs::write(&path, json)?;
-    Ok(())
-}
-
-fn load_saved_configs(data_dir: &PathBuf) -> HashMap<String, McpJsonEntry> {
-    load_mcp_json_file(data_dir).mcp_servers
-}
-
-fn save_config_to_json(data_dir: &PathBuf, args: &serde_json::Value, name: &str) -> Result<()> {
-    let mut file = load_mcp_json_file(data_dir);
-    let transport = args["transport"].as_str().unwrap_or("stdio");
-
-    let entry = McpJsonEntry {
-        transport: transport.to_string(),
-        command: args["command"].as_str().unwrap_or("").to_string(),
-        args: args["args"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        url: args["url"].as_str().map(|s| s.to_string()),
-        headers: args["headers"]
-            .as_object()
-            .map(|o| {
-                o.iter()
-                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        env: args["env"]
-            .as_object()
-            .map(|o| {
-                o.iter()
-                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                    .collect()
-            })
-            .unwrap_or_default(),
+/// Convert a `config.json` mcp section entry (the declarative initial layer)
+/// into a runtime `McpServerConfig`, used at startup to seed the DB from
+/// migrated legacy `mcp.json` content.
+pub fn mcp_entry_to_config(name: &str, e: &McpServerEntry) -> McpServerConfig {
+    let transport = match e.transport.as_str() {
+        "streamableHttp" | "sse" | "http" => "http",
+        _ => "stdio",
     };
-
-    file.mcp_servers.insert(name.to_string(), entry);
-    save_mcp_json_file(data_dir, &file)?;
-    tracing::info!(server = %name, "saved MCP config to mcp.json");
-    Ok(())
-}
-
-fn remove_config_from_json(data_dir: &PathBuf, name: &str) -> Result<()> {
-    let mut file = load_mcp_json_file(data_dir);
-    if file.mcp_servers.remove(name).is_some() {
-        save_mcp_json_file(data_dir, &file)?;
-        tracing::info!(server = %name, "removed MCP config from mcp.json");
+    McpServerConfig {
+        name: name.to_string(),
+        transport: transport.to_string(),
+        command: e.command.clone(),
+        args: e.args.clone(),
+        url: e.url.clone(),
+        headers: e.headers.clone(),
+        env: e.env.clone(),
+        cwd: None,
+        startup_timeout_secs: 120,
+        tool_timeout_secs: 60,
+        enabled_tools: None,
+        disabled_tools: None,
     }
-    Ok(())
 }
 
 // ============================================================================
@@ -347,29 +298,6 @@ fn req_str<'a>(args: &'a serde_json::Value, field: &str) -> Result<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Helper: create a temporary directory that is cleaned up on drop.
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("loom-test-mcp-{}", uuid::Uuid::new_v4()));
-            std::fs::create_dir_all(&path).unwrap();
-            TestDir { path }
-        }
-
-        fn data_dir(&self) -> PathBuf {
-            self.path.clone()
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
 
     #[test]
     fn test_build_config_stdio() {
@@ -459,36 +387,31 @@ mod tests {
     }
 
     #[test]
-    fn test_mcp_json_roundtrip() {
-        let dir = TestDir::new();
-        let data_dir = dir.data_dir();
+    fn test_mcp_entry_to_config() {
+        let entry = McpServerEntry {
+            transport: "stdio".into(),
+            command: "npx".into(),
+            args: vec!["-y".into(), "@playwright/mcp".into()],
+            url: None,
+            headers: HashMap::new(),
+            env: HashMap::new(),
+        };
+        let cfg = mcp_entry_to_config("playwright", &entry);
+        assert_eq!(cfg.name, "playwright");
+        assert_eq!(cfg.transport, "stdio");
+        assert_eq!(cfg.command, "npx");
+        assert_eq!(cfg.args, vec!["-y", "@playwright/mcp"]);
 
-        let args = serde_json::json!({
-            "name": "playwright",
-            "transport": "stdio",
-            "command": "npx",
-            "args": ["-y", "@playwright/mcp"],
-            "env": {"NODE_ENV": "test"}
-        });
-        save_config_to_json(&data_dir, &args, "playwright").unwrap();
-
-        let saved = load_saved_configs(&data_dir);
-        assert!(saved.contains_key("playwright"));
-        let entry = saved.get("playwright").unwrap();
-        assert_eq!(entry.transport, "stdio");
-        assert_eq!(entry.command, "npx");
-        assert_eq!(entry.args, vec!["-y", "@playwright/mcp"]);
-
-        remove_config_from_json(&data_dir, "playwright").unwrap();
-        let after = load_saved_configs(&data_dir);
-        assert!(!after.contains_key("playwright"));
-    }
-
-    #[test]
-    fn test_remove_nonexistent_ok() {
-        let dir = TestDir::new();
-        let data_dir = dir.data_dir();
-        // Should not error when removing a server that doesn't exist
-        assert!(remove_config_from_json(&data_dir, "nonexistent").is_ok());
+        let http_entry = McpServerEntry {
+            transport: "streamableHttp".into(),
+            command: String::new(),
+            args: Vec::new(),
+            url: Some("http://localhost:3000/mcp".into()),
+            headers: HashMap::new(),
+            env: HashMap::new(),
+        };
+        let cfg = mcp_entry_to_config("remote", &http_entry);
+        assert_eq!(cfg.transport, "http");
+        assert_eq!(cfg.url.as_deref(), Some("http://localhost:3000/mcp"));
     }
 }
