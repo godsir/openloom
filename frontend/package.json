@@ -2,13 +2,14 @@
   "name": "openloom-desktop",
   "version": "0.4.30",
   "description": "openLoom — local-first private AI assistant",
+  "author": "openLoom Contributors",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "package": "electron-vite build && electron-builder --publish never",
-    "package:updater": "electron-vite build && electron-builder --publish never",
+    "package": "node scripts/package.js",
+    "package:updater": "node scripts/package.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:e2e": "playwright test"
