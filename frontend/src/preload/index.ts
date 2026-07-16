@@ -18,6 +18,7 @@ export interface LoomApi {
   setPreference: (key: string, value: unknown) => Promise<void>
   checkForUpdates: () => Promise<void>
   downloadUpdate: () => Promise<void>
+  refreshUpdaterProxy: () => Promise<void>
   installUpdate: () => void
   getUpdateChannel: () => Promise<string>
   setUpdateChannel: (channel: string) => Promise<void>
@@ -137,6 +138,7 @@ contextBridge.exposeInMainWorld('loom', {
   setPreference: (key: string, value: unknown) => ipcRenderer.invoke('set-preference', key, value),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  refreshUpdaterProxy: () => ipcRenderer.invoke('refresh-updater-proxy'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
   getUpdateChannel: () => ipcRenderer.invoke('get-update-channel'),
   setUpdateChannel: (channel: string) => ipcRenderer.invoke('set-update-channel', channel),

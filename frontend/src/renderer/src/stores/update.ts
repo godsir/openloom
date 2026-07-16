@@ -1,5 +1,4 @@
 import { StateCreator } from 'zustand'
-import { t } from '../i18n'
 
 export interface UpdateState {
   status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'no-update' | 'error'
@@ -107,7 +106,9 @@ export const createUpdateSlice: StateCreator<UpdateSlice> = (set, get) => ({
     try {
       await window.loom.checkForUpdates()
     } catch {
-      set({ update: { ...get().update, status: 'error', error: t('updates.checkFailed') } })
+      // A failed metadata check (for example, no network) is not a failed
+      // update download. Leave the island idle and let the user retry later.
+      set({ update: { ...initialUpdate } })
     }
   },
 

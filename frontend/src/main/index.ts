@@ -3,8 +3,8 @@ import { createMainWindow, getMainWindow } from './window'
 import { registerIpcHandlers } from './ipc'
 import { startEngine, stopEngine } from './engine'
 import { createTray } from './tray'
-import { setupAutoUpdater, checkForUpdates } from './updater'
-import { getStoreKey, readToolPrefs } from './store'
+import { setupAutoUpdater, checkForUpdates, configureUpdaterProxy } from './updater'
+import { getStoreKey } from './store'
 import { initPet, registerPetProtocol } from './pet'
 import { startConfigWatcher } from './config-watcher'
 import { join } from 'path'
@@ -33,26 +33,6 @@ if (process.platform === 'win32') {
     app.disableHardwareAcceleration()
   }
 }
-
-// Configure system proxy for Electron on startup (before app.ready).
-// Reads from ~/.loom/config.json (tool_prefs section) — the same source the
-// AI config tool and the Settings UI both write to.
-function configureElectronProxy() {
-  try {
-    const prefs = readToolPrefs() as { proxy_enabled?: boolean; http_proxy?: string }
-    if (prefs.proxy_enabled && prefs.http_proxy) {
-      app.commandLine.appendSwitch('proxy-server', prefs.http_proxy)
-      console.log('[proxy] Using custom proxy from prefs:', prefs.http_proxy)
-      return
-    }
-    // Fall back to system proxy auto-detection
-    app.commandLine.appendSwitch('proxy-auto-detect')
-    console.log('[proxy] Auto-detecting system proxy')
-  } catch (e) {
-    console.error('[proxy] Failed to configure proxy:', e)
-  }
-}
-configureElectronProxy()
 
 let port = 0
 let isQuitting = false
@@ -84,6 +64,11 @@ if (!app.isPackaged || app.requestSingleInstanceLock()) {
 
 app.whenReady().then(async () => {
   registerPetProtocol()
+  try {
+    await configureUpdaterProxy()
+  } catch (e) {
+    console.error('[proxy] Failed to configure Electron proxy:', e)
+  }
 
   // Auto-start on boot — only apply in packaged/production builds.
   // In dev mode, force-disable to prevent polluting the user's OS startup items.
@@ -174,7 +159,7 @@ app.whenReady().then(async () => {
 
   // Auto-updater
   setupAutoUpdater(win)
-  checkForUpdates()
+  void checkForUpdates().catch(() => {})
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

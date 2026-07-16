@@ -128,7 +128,13 @@ export default function AboutTab({ wsState }: { wsState: string }) {
                 <Select
                   value={updateChannel}
                   options={channelOptions}
-                  onChange={ch => { setUpdateChannel(ch); window.loom.setUpdateChannel(ch) }}
+                  onChange={async ch => {
+                    setUpdateChannel(ch)
+                    // The preference has already been persisted. A failed
+                    // network check must not turn this UI event into an
+                    // unhandled rejection.
+                    await window.loom.setUpdateChannel(ch).catch(() => {})
+                  }}
                   variant="pill"
                 />
                 {(update.status === 'idle' || update.status === 'no-update' || update.status === 'error') && (

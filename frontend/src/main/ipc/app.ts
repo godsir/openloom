@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, app, Notification } from 'electron'
 import * as path from 'path'
 import { getStoreKey, setStoreKey } from '../store'
-import { checkForUpdates, downloadUpdate, installUpdate, getUpdateChannel, setUpdateChannel } from '../updater'
+import { checkForUpdates, configureUpdaterProxy, downloadUpdate, installUpdate, getUpdateChannel, setUpdateChannel } from '../updater'
 import { restartEngine } from '../engine'
 import { getGitBranches, switchGitBranch, createAndSwitchGitBranch, getUncommittedChanges, gitCommit, gitPush } from '../services/git-service'
 
@@ -60,6 +60,10 @@ export function registerAppIpc(): void {
 
   ipcMain.handle('download-update', async () => {
     await downloadUpdate()
+  })
+
+  ipcMain.handle('refresh-updater-proxy', async () => {
+    await configureUpdaterProxy()
   })
 
   ipcMain.handle('install-update', () => {

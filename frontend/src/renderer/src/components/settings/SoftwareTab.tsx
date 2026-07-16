@@ -749,9 +749,10 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                     className={`${styles.mcpTransportBtn} ${useSystemProxy ? styles.mcpTransportActive : ''}`}
                     onClick={() => {
                       setUseSystemProxy(true)
-                      loomRpc('config.set_tool_prefs', { http_proxy: '', proxy_enabled: true }).then(() =>
+                      loomRpc('config.set_tool_prefs', { http_proxy: '', proxy_enabled: true }).then(async () => {
+                        await window.loom.refreshUpdaterProxy()
                         useStore.getState().addToast({ type: 'success', message: t('software.proxySaved') })
-                      ).catch(() =>
+                      }).catch(() =>
                         useStore.getState().addToast({ type: 'error', message: t('common.failed') })
                       )
                     }}
@@ -762,9 +763,10 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                     className={`${styles.mcpTransportBtn} ${!useSystemProxy ? styles.mcpTransportActive : ''}`}
                     onClick={() => {
                       setUseSystemProxy(false)
-                      loomRpc('config.set_tool_prefs', { proxy_enabled: false }).then(() =>
+                      loomRpc('config.set_tool_prefs', { proxy_enabled: false }).then(async () => {
+                        await window.loom.refreshUpdaterProxy()
                         useStore.getState().addToast({ type: 'success', message: t('software.proxySaved') })
-                      ).catch(() =>
+                      }).catch(() =>
                         useStore.getState().addToast({ type: 'error', message: t('common.failed') })
                       )
                     }}
