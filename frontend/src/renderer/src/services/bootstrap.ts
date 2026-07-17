@@ -95,6 +95,9 @@ function applyPreference(key: string, val: unknown) {
   } else if (key === 'skill_expand') {
     window.loom.setPreference('skillExpandDefault', Boolean(val))
     window.dispatchEvent(new CustomEvent('loom-pref-changed', { detail: { key: 'skill_expand', val: Boolean(val) } }))
+  } else if (key === 'work_block_expand') {
+    window.loom.setPreference('workBlockExpandDefault', Boolean(val))
+    window.dispatchEvent(new CustomEvent('loom-pref-changed', { detail: { key: 'work_block_expand', val: Boolean(val) } }))
   } else if (key === 'task_notification') {
     window.loom.setPreference('taskCompleteNotification', Boolean(val))
     window.dispatchEvent(new CustomEvent('loom-pref-changed', { detail: { key: 'task_notification', val: Boolean(val) } }))

@@ -65,7 +65,7 @@ fallback_threshold = 0.7    # 降级到云端的阈值
 # ═══════════════════════════════════════════════════════════
 
 [agent]
-max_iterations = 3          # Agent Loop 最大工具调用轮次
+max_iterations = 50          # Agent Loop 最大工具调用轮次
 timeout_secs = 120          # 单次 Agent Loop 超时
 
 # ═══════════════════════════════════════════════════════════

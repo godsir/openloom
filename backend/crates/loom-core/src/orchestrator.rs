@@ -5003,7 +5003,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                     sc, ws_path,
                 )))
             },
-            lazy_tools: effective_selected_skills.is_empty(),
+            lazy_tools: false,
             steering_queue: Some(self.get_or_create_steering_queue(session_id).await),
             todo_store: Some(self.todo_store.clone()),
             ..Default::default()
@@ -6356,7 +6356,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             },
             // When selected_skills is non-empty, bypass lazy_tools so the LLM can
             // act on skill instructions immediately without a request_tools round-trip.
-            lazy_tools: effective_selected_skills.is_empty(),
+            lazy_tools: false,
             selected_skills: effective_selected_skills,
             skill_tool_allowlist,
             // Number of available skills — used for soft skill-first routing

@@ -1,17 +1,13 @@
 import { useMemo, memo } from 'react'
 import { useLocale } from '../../i18n'
-import type { Message } from '../../stores/chat'
+import type { Message, ContentBlock } from '../../stores/chat'
 import { useStore } from '../../stores'
 import ThinkingBlock from './ThinkingBlock'
 import SkillBlock from './SkillBlock'
-import ShellBlock from './ShellBlock'
-import ToolGroupBlock from './ToolGroupBlock'
 import TextBlock from './TextBlock'
-import FileBlock from './FileBlock'
-import SubagentCard from './SubagentCard'
-import TeamCard from './TeamCard'
 import VisionProcessingBlock from './VisionProcessingBlock'
 import ProcessOutputBlock from './ProcessOutputBlock'
+import WorkBlockPanel, { WORK_BLOCK_TYPES } from './WorkBlockPanel'
 import MessageFooterActions from './MessageFooterActions'
 import ContinueButton from './ContinueButton'
 import TypingIndicator from '../shared/TypingIndicator'
@@ -58,20 +54,39 @@ const AssistantMessage = memo(function AssistantMessage({
 
       <div className={styles.content}>
         {(() => {
-          // Derive a stable key per block so stateful blocks (Skill/Shell/
-          // Thinking — each holds local expanded/scroll state) are NOT remounted
-          // when block order/count shifts during streaming. Streaming shell/skill
-          // blocks carry a tool `id`; otherwise fall back to a type-derived key.
-          // A per-type occurrence counter disambiguates blocks that share an
-          // identity (e.g. multiple text blocks in hydrated history) so React
-          // keys stay unique.
+          // Partition blocks into contiguous segments.
+          // Consecutive work blocks (shell/tool_group/subagent/team/file)
+          // are grouped into a WorkBlockPanel; non-work blocks render individually.
+          // This keeps the original block order while folding hundreds of tool
+          // calls into one collapsible drawer per contiguous run.
+          const segments: Array<
+            | { type: 'work'; blocks: ContentBlock[] }
+            | { type: 'single'; block: ContentBlock; index: number }
+          > = []
+          {
+            let workBuffer: ContentBlock[] = []
+            for (let i = 0; i < message.blocks.length; i++) {
+              const b = message.blocks[i]
+              if (WORK_BLOCK_TYPES.has(b.type)) {
+                workBuffer.push(b)
+              } else {
+                if (workBuffer.length > 0) {
+                  segments.push({ type: 'work', blocks: workBuffer })
+                  workBuffer = []
+                }
+                segments.push({ type: 'single', block: b, index: i })
+              }
+            }
+            if (workBuffer.length > 0) {
+              segments.push({ type: 'work', blocks: workBuffer })
+            }
+          }
+
+          // Stable keys for non-work blocks (work blocks are handled inside the panel)
           const seen = new Map<string, number>()
-          const keyFor = (block: typeof message.blocks[number], i: number): string => {
+          const keyFor = (block: ContentBlock, i: number): string => {
             let base: string
             switch (block.type) {
-              case 'shell':
-                base = `shell:${(block.id as string) ?? i}`
-                break
               case 'skill':
                 base = `skill:${(block.id as string) ?? i}`
                 break
@@ -97,8 +112,21 @@ const AssistantMessage = memo(function AssistantMessage({
             seen.set(base, n + 1)
             return n === 0 ? base : `${base}#${n}`
           }
-          return message.blocks.map((block, i) => {
-            const key = keyFor(block, i)
+
+          let wpIdx = 0
+          return segments.map((seg) => {
+            if (seg.type === 'work') {
+              const idx = wpIdx++
+              return (
+                <WorkBlockPanel
+                  key={`wp-${idx}`}
+                  blocks={seg.blocks}
+                  defaultExpanded={isStreamingActive}
+                />
+              )
+            }
+            const block = seg.block
+            const key = keyFor(block, seg.index)
             switch (block.type) {
               case 'vision_processing':
                 return <VisionProcessingBlock key={key} block={block} />
@@ -108,10 +136,6 @@ const AssistantMessage = memo(function AssistantMessage({
                 return <ThinkingBlock key={key} block={block} />
               case 'skill':
                 return <SkillBlock key={key} block={block} />
-              case 'shell':
-                return <ShellBlock key={key} block={block} />
-              case 'tool_group':
-                return <ToolGroupBlock key={key} block={block} />
               case 'text':
                 return <TextBlock key={key} block={block} />
               case 'image': {
@@ -130,12 +154,6 @@ const AssistantMessage = memo(function AssistantMessage({
                   </div>
                 )
               }
-              case 'file':
-                return <FileBlock key={key} block={block} />
-              case 'subagent':
-                return <SubagentCard key={key} block={block} />
-              case 'team':
-                return <TeamCard key={key} block={block} />
               default:
                 return null
             }

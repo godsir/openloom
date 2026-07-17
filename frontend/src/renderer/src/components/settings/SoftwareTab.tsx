@@ -154,6 +154,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
   const [thinkingExpand, setThinkingExpand] = useState(false)
   const [toolExpand, setToolExpand] = useState(true)
   const [skillExpand, setSkillExpand] = useState(false)
+  const [workBlockExpand, setWorkBlockExpand] = useState(true)
   const [useSystemProxy, setUseSystemProxy] = useState(false)
   const [isWin32, setIsWin32] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -174,13 +175,14 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
       window.loom.getPreference('thinkingExpandDefault', false),
       window.loom.getPreference('toolExpandDefault', true),
       window.loom.getPreference('skillExpandDefault', false),
+      window.loom.getPreference('workBlockExpandDefault', true),
       window.loom.getPreference('taskCompleteNotification', false),
       loomRpc<{ http_proxy?: string; proxy_enabled?: boolean }>('config.get_tool_prefs').then(p => {
         // 无自定义代理且已启用 → 使用系统代理
         setUseSystemProxy(!p.http_proxy && p.proxy_enabled === true)
       }).catch(() => {}),
       window.loom.getPlatform(),
-    ]).then(([as, ct, st, at, uf, cf, cc, dha, te, toe, se, tcn, plat]) => {
+    ]).then(([as, ct, st, at, uf, cf, cc, dha, te, toe, se, wbe, tcn, plat]) => {
       setAutoStart(as)
       setCloseToTray(ct)
       setStartToTray(st)
@@ -197,6 +199,7 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
       setThinkingExpand(te as boolean)
       setToolExpand(toe as boolean)
       setSkillExpand(se as boolean)
+      setWorkBlockExpand(wbe as boolean)
       setTaskCompleteNotification(tcn as boolean)
       setIsWin32(plat === 'win32')
       setLoaded(true)
@@ -268,6 +271,12 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
     setSkillExpand(val)
     await window.loom.setPreference('skillExpandDefault', val)
     useStore.getState().addToast({ type: 'success', message: val ? t('software.skillExpanded') : t('software.skillCollapsed') })
+  }
+
+  const handleWorkBlockExpand = async (val: boolean) => {
+    setWorkBlockExpand(val)
+    await window.loom.setPreference('workBlockExpandDefault', val)
+    useStore.getState().addToast({ type: 'success', message: val ? t('software.workBlockExpanded') : t('software.workBlockCollapsed') })
   }
 
   const handleSendShortcut = (val: string) => {
@@ -607,6 +616,26 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
                   <button
                     className={`${styles.mcpTransportBtn} ${!skillExpand ? styles.mcpTransportActive : ''}`}
                     onClick={() => handleSkillExpand(false)}
+                  >
+                    {t('software.collapse')}
+                  </button>
+                </div>
+              </div>
+              <div className={styles.aboutRow}>
+                <div>
+                  <span className={styles.aboutLabel}>{t('software.workBlockExpand')}</span>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>{t('software.workBlockExpandDesc')}</p>
+                </div>
+                <div className={styles.mcpTransportToggle}>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${workBlockExpand ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleWorkBlockExpand(true)}
+                  >
+                    {t('software.expand')}
+                  </button>
+                  <button
+                    className={`${styles.mcpTransportBtn} ${!workBlockExpand ? styles.mcpTransportActive : ''}`}
+                    onClick={() => handleWorkBlockExpand(false)}
                   >
                     {t('software.collapse')}
                   </button>
