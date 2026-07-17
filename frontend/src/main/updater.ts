@@ -5,6 +5,7 @@ import { getStoreKey, readToolPrefs, setStoreKey } from './store'
 let initialized = false
 let activeCheck: Promise<void> | null = null
 let updateOperation: 'checking' | 'downloading' | null = null
+const BETA_UPDATE_URL = 'https://github.com/godsir/openloom/releases/download/beta'
 
 type ProxyPreferences = {
   proxy_enabled?: boolean
@@ -52,15 +53,20 @@ export async function setUpdateChannel(channel: 'stable' | 'beta'): Promise<void
 
 function configureUpdater(): void {
   const channel = getStoreKey<string>('update_channel', 'stable')
-  autoUpdater.setFeedURL({
-    provider: 'github',
-    owner: 'godsir',
-    repo: 'openloom',
-  })
   const isBeta = channel === 'beta'
   if (isBeta) {
+    // GitHubProvider's prerelease selection can choose the newest stable
+    // release from its Atom feed before it reads beta metadata. The dedicated
+    // beta release instead exposes beta.yml directly, so it cannot fall back
+    // to a stable release during a beta check.
+    autoUpdater.setFeedURL({ provider: 'generic', url: BETA_UPDATE_URL })
     autoUpdater.channel = 'beta'
   } else {
+    autoUpdater.setFeedURL({
+      provider: 'github',
+      owner: 'godsir',
+      repo: 'openloom',
+    })
     // The channel setter validates when transitioning from a non-null
     // value, preventing us from clearing it. Reset internal field directly.
     ;(autoUpdater as any)._channel = null
