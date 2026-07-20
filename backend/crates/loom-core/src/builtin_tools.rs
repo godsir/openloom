@@ -17,6 +17,22 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::tool_context::ToolContext;
 use crate::tool_registry::{AgentTool, ToolProvenance, ToolResult};
 
+/// Serialize a settings struct for tool output with secrets masked. The tool
+/// prefs contain `web_search_api_key`; returning the raw config would leak the
+/// key into the LLM context and session logs (a prompt-injection exfil vector).
+fn masked_settings_json<T: serde::Serialize>(config: &T) -> serde_json::Value {
+    let mut json = serde_json::to_value(config).unwrap_or_default();
+    if let Some(obj) = json.as_object_mut() {
+        let has_secret = obj
+            .get("web_search_api_key")
+            .is_some_and(|v| v.is_string());
+        if has_secret {
+            obj.insert("web_search_api_key".to_string(), serde_json::json!("***"));
+        }
+    }
+    json
+}
+
 // ============================================================================
 // Shell
 // ============================================================================
@@ -149,18 +165,15 @@ impl AgentTool for ShellTool {
             let tx = line_tx.clone();
             tokio::spawn(async move {
                 let mut reader = tokio::io::BufReader::new(stdout);
-                let mut line = String::new();
-                loop {
-                    line.clear();
-                    match tokio::io::AsyncBufReadExt::read_line(&mut reader, &mut line).await {
-                        Ok(0) => break, // EOF
-                        Ok(_) => {
-                            let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
-                            if tx.send((trimmed.to_string(), false)).is_err() {
-                                break;
-                            }
-                        }
-                        Err(_) => break,
+                let mut raw: Vec<u8> = Vec::new();
+                // Lossy byte-based reading: non-UTF-8 (e.g. Windows GBK) output
+                // must not silently stop the reader (read_line errors on the
+                // first invalid byte and drops everything after it).
+                while let Some(line) =
+                    crate::process_manager::next_lossy_line(&mut reader, &mut raw).await
+                {
+                    if tx.send((line, false)).is_err() {
+                        break;
                     }
                 }
             });
@@ -169,18 +182,12 @@ impl AgentTool for ShellTool {
             let tx = line_tx.clone();
             tokio::spawn(async move {
                 let mut reader = tokio::io::BufReader::new(stderr);
-                let mut line = String::new();
-                loop {
-                    line.clear();
-                    match tokio::io::AsyncBufReadExt::read_line(&mut reader, &mut line).await {
-                        Ok(0) => break, // EOF
-                        Ok(_) => {
-                            let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
-                            if tx.send((trimmed.to_string(), true)).is_err() {
-                                break;
-                            }
-                        }
-                        Err(_) => break,
+                let mut raw: Vec<u8> = Vec::new();
+                while let Some(line) =
+                    crate::process_manager::next_lossy_line(&mut reader, &mut raw).await
+                {
+                    if tx.send((line, true)).is_err() {
+                        break;
                     }
                 }
             });
@@ -191,6 +198,7 @@ impl AgentTool for ShellTool {
         // Accumulate output and stream progress to the frontend
         let mut stdout_lines: Vec<String> = Vec::new();
         let mut stderr_lines: Vec<String> = Vec::new();
+        let mut accumulated: usize = 0;
         let max_bytes = prefs.file_read_max_output_kb * 1024;
 
         // Wait with timeout — drain output lines concurrently with process exit.
@@ -222,11 +230,7 @@ impl AgentTool for ShellTool {
                                 message: format!("{}{}", prefix, line),
                                 payload: None,
                             });
-                            if is_stderr {
-                                stderr_lines.push(line);
-                            } else {
-                                stdout_lines.push(line);
-                            }
+                            shell_accumulate(&mut stdout_lines, &mut stderr_lines, &mut accumulated, max_bytes, line, is_stderr);
                         }
                     }
                 }
@@ -234,20 +238,46 @@ impl AgentTool for ShellTool {
         })
         .await;
 
-        // Drain any remaining lines from the channel
-        while let Ok((line, is_stderr)) = line_rx.try_recv() {
-            let prefix = if is_stderr { "[stderr] " } else { "" };
-            let _ = progress.send(ToolProgress {
-                progress: None,
-                message: format!("{}{}", prefix, line),
-                payload: None,
-            });
-            if is_stderr {
-                stderr_lines.push(line);
-            } else {
-                stdout_lines.push(line);
-            }
+        // On a wall-clock timeout the child is still running — kill and reap it
+        // FIRST so its pipes close and the reader tasks reach EOF. (The cancel
+        // path already killed the child inside the loop above.)
+        let killed = wait_result.is_err();
+        if killed {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
         }
+
+        // Drain ALL remaining output until the reader tasks finish (channel
+        // closes). Using recv().await — not a one-shot try_recv — is essential:
+        // child.wait() returning only means the process exited, NOT that the
+        // reader tasks have flushed the pipe buffer. A one-shot try_recv here
+        // raced the readers and silently dropped the final lines of normal-exit
+        // output. recv() awaits each pending line and returns None only once
+        // every reader hits EOF, so the tail is always captured.
+        //
+        // The drain is BOUNDED: on Windows, killing a shell does NOT kill its
+        // children, so an orphaned grandchild (e.g. `powershell -Command ping`)
+        // can keep the stdout pipe open indefinitely — waiting for EOF would
+        // hang. On a normal exit the readers reach EOF in microseconds, so a
+        // generous bound captures the full tail; after a kill we only wait
+        // briefly for already-buffered output and never for orphaned children.
+        let drain_budget = if killed {
+            std::time::Duration::from_millis(500)
+        } else {
+            std::time::Duration::from_secs(2)
+        };
+        let _ = tokio::time::timeout(drain_budget, async {
+            while let Some((line, is_stderr)) = line_rx.recv().await {
+                let prefix = if is_stderr { "[stderr] " } else { "" };
+                let _ = progress.send(ToolProgress {
+                    progress: None,
+                    message: format!("{}{}", prefix, line),
+                    payload: None,
+                });
+                shell_accumulate(&mut stdout_lines, &mut stderr_lines, &mut accumulated, max_bytes, line, is_stderr);
+            }
+        })
+        .await;
 
         match wait_result {
             Ok(Ok(status)) => {
@@ -292,8 +322,8 @@ impl AgentTool for ShellTool {
                 structured_content: Some(serde_json::json!({"exit_code": -1, "stdout": "", "error": format!("{}", e)})),
             }),
             Err(_) => {
-                // Timeout — kill the child process
-                let _ = child.kill().await;
+                // Timeout — the child was already killed and its buffered output
+                // drained above (see the bounded drain before this match).
                 Ok(ToolResult {
                     content: format!(
                         "[TIMEOUT] Command timed out after {} seconds and was killed.",
@@ -308,6 +338,31 @@ impl AgentTool for ShellTool {
 
     fn provenance(&self) -> ToolProvenance {
         ToolProvenance::Builtin
+    }
+}
+
+/// Append one shell output line to the stdout/stderr accumulator, capping the
+/// total stored bytes at `cap` so a chatty/long-running command cannot grow
+/// memory without bound (previously the Vecs accumulated the entire output and
+/// were only truncated when building the final result). Lines past the cap are
+/// dropped — the final result is truncated anyway — while live progress
+/// streaming to the frontend is unaffected.
+fn shell_accumulate(
+    stdout_lines: &mut Vec<String>,
+    stderr_lines: &mut Vec<String>,
+    accumulated: &mut usize,
+    cap: usize,
+    line: String,
+    is_stderr: bool,
+) {
+    if *accumulated >= cap {
+        return;
+    }
+    *accumulated += line.len();
+    if is_stderr {
+        stderr_lines.push(line);
+    } else {
+        stdout_lines.push(line);
     }
 }
 
@@ -664,12 +719,13 @@ impl AgentTool for FileWriteTool {
     fn tool_definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "file_write".into(),
-            description: "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Use with caution.".into(),
+            description: "Write content to a file. Creates the file if it doesn't exist. Overwrites by default; set append=true to add to the end instead — use that to write large files in chunks (write the first part, then append the rest) so a single call never exceeds the output limit.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "path": { "type": "string", "description": "Path to the file to write" },
-                    "content": { "type": "string", "description": "Content to write to the file" }
+                    "content": { "type": "string", "description": "Content to write to the file" },
+                    "append": { "type": "boolean", "description": "If true, append content to the end of the file instead of overwriting. Default false. Use to write large files in chunks." }
                 },
                 "required": ["path", "content"]
             }),
@@ -685,6 +741,7 @@ impl AgentTool for FileWriteTool {
     ) -> Result<ToolResult> {
         let path_str = arguments["path"].as_str().unwrap_or("");
         let content = arguments["content"].as_str().unwrap_or("");
+        let append = arguments["append"].as_bool().unwrap_or(false);
 
         if path_str.is_empty() {
             let msg = if content.is_empty() {
@@ -735,17 +792,37 @@ impl AgentTool for FileWriteTool {
             .unwrap_or("")
             .to_string();
 
-        match std::fs::write(&path, content) {
+        let write_result = if append {
+            use std::io::Write as _;
+            match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                Ok(mut f) => f.write_all(content.as_bytes()),
+                Err(e) => Err(e),
+            }
+        } else {
+            std::fs::write(&path, content)
+        };
+
+        match write_result {
             Ok(_) => {
+                // Mark as recently read so a follow-up append/edit on the file we
+                // just wrote passes the read-before-edit guard — this is what makes
+                // chunked writes (write part 1, then append parts 2..n) possible.
+                context.record_read(path.clone());
                 let len = content.len();
+                let new_content = if append {
+                    format!("{}{}", old_content, content)
+                } else {
+                    content.to_string()
+                };
+                let verb = if append { "appended to" } else { "written" };
                 Ok(ToolResult {
-                    content: format!("File written successfully: {} ({} bytes)", path_str, len),
+                    content: format!("File {}: {} ({} bytes)", verb, path_str, len),
                     is_error: false,
                     structured_content: Some(serde_json::json!({
                         "filePath": path_str,
                         "fileName": file_name,
                         "oldContent": old_content,
-                        "newContent": content,
+                        "newContent": new_content,
                     })),
                 })
             }
@@ -846,14 +923,22 @@ impl AgentTool for FileEditTool {
                     structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": "Empty edits array"})),
                 });
             }
-            arr.iter()
-                .map(|e| {
-                    (
-                        e["oldText"].as_str().unwrap_or(""),
-                        e["newText"].as_str().unwrap_or(""),
-                    )
-                })
-                .collect()
+            let mut collected: Vec<(&str, &str)> = Vec::with_capacity(arr.len());
+            for (n, e) in arr.iter().enumerate() {
+                let ot = e["oldText"].as_str().unwrap_or("");
+                // Reject empty oldText: `str::find("")` always matches at offset 0,
+                // which (with replace_all) spins the replacement loop forever and
+                // grows `eps` until OOM.
+                if ot.is_empty() {
+                    return Ok(ToolResult {
+                        content: format!("Edit #{}: oldText is empty.", n + 1),
+                        is_error: true,
+                        structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": format!("Edit #{}: empty oldText", n + 1)})),
+                    });
+                }
+                collected.push((ot, e["newText"].as_str().unwrap_or("")));
+            }
+            collected
         } else {
             let ot = arguments["oldText"].as_str().unwrap_or("");
             if ot.is_empty() {
@@ -896,7 +981,9 @@ impl AgentTool for FileEditTool {
                 let mut pos = 0usize;
                 while let Some(p) = normalized[pos..].find(old.as_str()) {
                     eps.push(EP { idx: i, pos: pos + p, new: new.clone() });
-                    pos += p + old.len();
+                    // `.max(1)` guards against an empty `old` (find would return 0
+                    // forever); empty oldText is also rejected above.
+                    pos += p + old.len().max(1);
                 }
             } else {
                 eps.push(EP {
@@ -1035,22 +1122,25 @@ impl AgentTool for ContentSearchTool {
                         structured_content: Some(serde_json::json!({"matches": [], "count": 0})),
                     })
                 } else {
-                    let matches_json: Vec<serde_json::Value> = results.iter().filter_map(|r| {
-                        // r is in format "path:line: text"
-                        let colon1 = r.find(':')?;
-                        let colon2 = r[colon1+1..].find(':')?;
-                        let file = &r[..colon1];
-                        let line_str = &r[colon1+1..colon1+1+colon2];
-                        let text = r[colon1+1+colon2+1..].trim();
-                        let line_num = line_str.parse::<u64>().ok()?;
-                        Some(serde_json::json!({"file": file, "line": line_num, "text": text}))
-                    }).collect();
+                    // Build structured matches directly from the parsed hits —
+                    // never re-parse a "path:line: text" string, since Windows
+                    // drive-letter colons (F:\...) break first-colon splitting.
+                    let matches_json: Vec<serde_json::Value> = results
+                        .iter()
+                        .map(|m| {
+                            serde_json::json!({"file": m.file, "line": m.line, "text": m.text.trim()})
+                        })
+                        .collect();
+                    let display: Vec<String> = results
+                        .iter()
+                        .map(|m| format!("{}:{}: {}", m.file, m.line, m.text))
+                        .collect();
                     Ok(ToolResult {
                         content: format!(
                             "Found {} matches for '{}':\n\n{}",
                             results.len(),
                             pattern,
-                            results.join("\n")
+                            display.join("\n")
                         ),
                         is_error: false,
                         structured_content: Some(serde_json::json!({"matches": matches_json, "count": results.len()})),
@@ -1079,13 +1169,22 @@ fn file_name_matches(path: &Path, pattern: &str) -> bool {
         .is_some_and(|name| name.to_lowercase().contains(&pattern.to_lowercase()))
 }
 
+/// A single structured content-search hit (file/line/text kept separate so
+/// callers never re-parse a joined string — Windows drive-letter colons would
+/// break any "first colon" splitting).
+struct ContentMatch {
+    file: String,
+    line: u64,
+    text: String,
+}
+
 fn simple_content_search(
     path: &Path,
     pattern: &str,
     file_pattern: &str,
     max_results: usize,
     sandbox: Option<&loom_security::sandbox::SandboxGuard>,
-) -> Result<Vec<String>> {
+) -> Result<Vec<ContentMatch>> {
     let mut results = Vec::new();
     if path.is_dir() {
         for entry in std::fs::read_dir(path)? {
@@ -1114,7 +1213,11 @@ fn simple_content_search(
             {
                 for (i, line) in content.lines().enumerate() {
                     if line.to_lowercase().contains(&pattern.to_lowercase()) {
-                        results.push(format!("{}:{}: {}", p.display(), i + 1, line));
+                        results.push(ContentMatch {
+                            file: p.display().to_string(),
+                            line: (i + 1) as u64,
+                            text: line.to_string(),
+                        });
                         if results.len() >= max_results {
                             return Ok(results);
                         }
@@ -1160,7 +1263,33 @@ impl AgentTool for FileDeleteTool {
         context: &ToolContext,
     ) -> Result<ToolResult> {
         let path_str = arguments["path"].as_str().unwrap_or("");
+        // Reject empty/blank paths: "" resolves to the workspace root, which must
+        // never be deleted.
+        if path_str.trim().is_empty() {
+            return Ok(ToolResult {
+                content: "No path provided for file_delete.".into(),
+                is_error: true,
+                structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": "No path provided"})),
+            });
+        }
         let path = context.resolve_path(path_str);
+
+        // Never delete the workspace root itself (path "." resolves to it). Deleting
+        // it would destroy the whole working directory.
+        if let Some(ref ws) = context.workspace_path {
+            let ws_path = Path::new(ws.as_str());
+            let same = match (path.canonicalize(), ws_path.canonicalize()) {
+                (Ok(a), Ok(b)) => a == b,
+                _ => path == ws_path,
+            };
+            if same {
+                return Ok(ToolResult {
+                    content: "Refusing to delete the workspace root directory.".into(),
+                    is_error: true,
+                    structured_content: Some(serde_json::json!({"path": path_str, "ok": false, "error": "Cannot delete workspace root"})),
+                });
+            }
+        }
 
         // Sandbox guard: check write permission (delete is a destructive write)
         if let Some(ref guard) = context.sandbox
@@ -2983,22 +3112,27 @@ impl AgentTool for WebFetchTool {
         let text = extract_text(&html);
         let title = extract_title(&html);
 
+        // Count characters (not bytes) so truncation honors `max_chars` and never
+        // slices the String at a non-char-boundary — byte-indexing panics on any
+        // multibyte (e.g. CJK) page.
+        let char_count = text.chars().count();
         if text.is_empty() {
             Ok(ToolResult {
                 content: "Page returned no readable text content.".into(),
                 is_error: false,
                 structured_content: Some(serde_json::json!({"url": url, "title": title, "text_length": 0})),
             })
-        } else if text.len() > max_chars {
+        } else if char_count > max_chars as usize {
+            let truncated: String = text.chars().take(max_chars as usize).collect();
             Ok(ToolResult {
                 content: format!(
                     "{}...\n\n[truncated at {} chars, full page: {} chars]",
-                    &text[..max_chars],
+                    truncated,
                     max_chars,
-                    text.len()
+                    char_count
                 ),
                 is_error: false,
-                structured_content: Some(serde_json::json!({"url": url, "title": title, "text_length": text.len()})),
+                structured_content: Some(serde_json::json!({"url": url, "title": title, "text_length": char_count})),
             })
         } else {
             let text_len = text.len();
@@ -3490,6 +3624,30 @@ impl AgentTool for ProcessSpawnTool {
                     .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
                     .collect()
             });
+
+        // Sandbox guard: check exec permission in the directory the process will
+        // run in. process_spawn previously skipped this entirely, so commands the
+        // sandbox denied for `shell` could still run via the background path.
+        if let Some(ref guard) = _context.sandbox {
+            let work_dir = cwd
+                .map(|s| _context.resolve_path(s))
+                .or_else(|| {
+                    _context
+                        .workspace_path
+                        .as_ref()
+                        .map(|ws| Path::new(ws).to_path_buf())
+                })
+                .unwrap_or_else(|| {
+                    std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf())
+                });
+            if let Err(reason) = guard.check_exec(&work_dir) {
+                return Ok(ToolResult {
+                    content: format!("沙盒拒绝: {}", reason),
+                    is_error: true,
+                    structured_content: Some(serde_json::json!({"error": format!("沙盒拒绝: {}", reason)})),
+                });
+            }
+        }
 
         match self
             .process_manager
@@ -4255,19 +4413,25 @@ impl AgentTool for MonitorWaitTool {
                 } else {
                     result.output.clone()
                 };
-                let summary = if result.exit_code >= 0 {
-                    format!(
-                        "Monitor {} 已退出 (exit_code={})\n\n输出:\n{}\n\n监控已结束，无需再调用 monitor_wait。",
-                        monitor_id, result.exit_code, output_text
-                    )
-                } else if result.exit_code == -2 {
+                // `running` is authoritative. A monitor that was killed, timed out
+                // or cancelled also carries exit_code=-1 — the same value the
+                // idle-return path uses for "still running". Branching on exit_code
+                // alone previously reported dead monitors as "仍在运行", sending the
+                // agent into an endless monitor_wait loop. Check not-found (-2)
+                // first, then `running`.
+                let summary = if result.exit_code == -2 {
                     format!(
                         "Monitor {} 未找到（可能已退出并被清理）\n\n输出:\n{}",
                         monitor_id, output_text
                     )
+                } else if !result.running {
+                    format!(
+                        "Monitor {} 已退出 (exit_code={})\n\n输出:\n{}\n\n监控已结束，无需再调用 monitor_wait。",
+                        monitor_id, result.exit_code, output_text
+                    )
                 } else {
                     format!(
-                        "Monitor {} 仍在运行，当前输出:\n{}\n\n【重要】监控任务尚未结束（exit_code=-1）。你必须立即再次调用 monitor_wait({}) 继续读取后续输出并做出反应。在此停止会导致监控数据丢失。",
+                        "Monitor {} 仍在运行，当前输出:\n{}\n\n【重要】监控任务尚未结束。你必须立即再次调用 monitor_wait({}) 继续读取后续输出并做出反应。在此停止会导致监控数据丢失。",
                         monitor_id, output_text, monitor_id
                     )
                 };
@@ -4740,16 +4904,13 @@ impl AgentTool for UpdateConfigTool {
                     }
                 }
                 "permission_mode" => {
-                    if let Some(v) = val.as_str() {
-                        const VALID: &[&str] = &["operate", "ask", "read_only", "plan"];
-                        if VALID.contains(&v) {
-                            changed.push(format!("permission_mode: → {v}"));
-                        } else {
-                            errors.push(format!("permission_mode must be one of: {}", VALID.join(", ")));
-                        }
-                    } else {
-                        errors.push("permission_mode must be a string".into());
-                    }
+                    // Security-sensitive: the tool permission mode must NOT be
+                    // settable by the AI itself — it's a classic prompt-injection
+                    // self-escalation target (flip to "operate" = auto-approve
+                    // everything). This is a user-only setting, toggled in the UI.
+                    errors.push(
+                        "permission_mode 是安全敏感设置，不能由 AI 修改。请告知用户在界面中手动切换权限模式（operate/ask/read_only/plan）。".into()
+                    );
                 }
                 "thinking_level" => {
                     if let Some(v) = val.as_str() {
@@ -4854,7 +5015,7 @@ impl AgentTool for UpdateConfigTool {
             return Ok(ToolResult {
                 content: "No changes applied — all values already match current settings.".into(),
                 is_error: false,
-                structured_content: Some(serde_json::to_value(&config).unwrap_or_default()),
+                structured_content: Some(masked_settings_json(&config)),
             });
         }
 
@@ -4948,5 +5109,284 @@ impl AgentTool for UpdateConfigTool {
 
     fn provenance(&self) -> ToolProvenance {
         ToolProvenance::Builtin
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// ToolContext rooted at a temp workspace; relative tool paths resolve inside it.
+    fn ctx(workspace: &std::path::Path) -> ToolContext {
+        ToolContext::with_workspace(Some(workspace.to_string_lossy().to_string()))
+    }
+
+    /// Progress sender for tool calls. The receiver is dropped immediately —
+    /// fine for these tools (they ignore progress-send failures).
+    fn progress() -> UnboundedSender<ToolProgress> {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<ToolProgress>();
+        tx
+    }
+
+    #[tokio::test]
+    async fn file_write_creates_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        let r = FileWriteTool
+            .execute(json!({"path": "a.txt", "content": "hello"}), progress(), &c)
+            .await
+            .unwrap();
+        assert!(!r.is_error);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "hello"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_write_overwrites_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        FileWriteTool
+            .execute(json!({"path": "a.txt", "content": "one"}), progress(), &c)
+            .await
+            .unwrap();
+        // Second write overwrites. It also passes the read-before-edit guard
+        // because the first write marked the file as recently known.
+        let r = FileWriteTool
+            .execute(json!({"path": "a.txt", "content": "two"}), progress(), &c)
+            .await
+            .unwrap();
+        assert!(!r.is_error);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "two"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_write_append_adds_to_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        FileWriteTool
+            .execute(json!({"path": "a.txt", "content": "foo"}), progress(), &c)
+            .await
+            .unwrap();
+        let r = FileWriteTool
+            .execute(
+                json!({"path": "a.txt", "content": "bar", "append": true}),
+                progress(),
+                &c,
+            )
+            .await
+            .unwrap();
+        assert!(
+            !r.is_error,
+            "append after our own write must pass the read-before-edit guard"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "foobar"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_write_append_creates_if_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        let r = FileWriteTool
+            .execute(
+                json!({"path": "new.txt", "content": "x", "append": true}),
+                progress(),
+                &c,
+            )
+            .await
+            .unwrap();
+        assert!(!r.is_error);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("new.txt")).unwrap(),
+            "x"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_write_chunked_sequence() {
+        // Exactly what the truncation-recovery guidance tells the model to do:
+        // write part 1, then append parts 2..n.
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        FileWriteTool
+            .execute(json!({"path": "big.txt", "content": "AAAA"}), progress(), &c)
+            .await
+            .unwrap();
+        for part in ["BBBB", "CCCC", "DDDD"] {
+            let r = FileWriteTool
+                .execute(
+                    json!({"path": "big.txt", "content": part, "append": true}),
+                    progress(),
+                    &c,
+                )
+                .await
+                .unwrap();
+            assert!(!r.is_error);
+        }
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("big.txt")).unwrap(),
+            "AAAABBBBCCCCDDDD"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_write_append_to_unread_existing_file_blocked() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create the file out-of-band so the tool has never "read" it.
+        std::fs::write(dir.path().join("pre.txt"), "existing").unwrap();
+        let c = ctx(dir.path());
+        let r = FileWriteTool
+            .execute(
+                json!({"path": "pre.txt", "content": "more", "append": true}),
+                progress(),
+                &c,
+            )
+            .await
+            .unwrap();
+        assert!(
+            r.is_error,
+            "append to a never-read existing file must be blocked by the guard"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("pre.txt")).unwrap(),
+            "existing"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_write_append_structured_content_concatenated() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        FileWriteTool
+            .execute(json!({"path": "a.txt", "content": "foo"}), progress(), &c)
+            .await
+            .unwrap();
+        let r = FileWriteTool
+            .execute(
+                json!({"path": "a.txt", "content": "bar", "append": true}),
+                progress(),
+                &c,
+            )
+            .await
+            .unwrap();
+        let sc = r.structured_content.unwrap();
+        assert_eq!(sc["oldContent"].as_str().unwrap(), "foo");
+        assert_eq!(sc["newContent"].as_str().unwrap(), "foobar");
+    }
+
+    #[tokio::test]
+    async fn file_write_empty_path_is_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        let r = FileWriteTool
+            .execute(json!({"path": "", "content": "x"}), progress(), &c)
+            .await
+            .unwrap();
+        assert!(r.is_error);
+    }
+
+    // ── file_edit ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn file_edit_empty_oldtext_rejected_without_hanging() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        std::fs::write(dir.path().join("a.txt"), "hello world").unwrap();
+        c.record_read(dir.path().join("a.txt"));
+        // Empty oldText + replace_all used to spin `str::find("")==Some(0)` forever
+        // (pos += 0), growing the edit list until OOM. It must now be rejected fast.
+        let r = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            FileEditTool.execute(
+                json!({"path": "a.txt", "edits": [{"newText": "x"}], "replace_all": true}),
+                progress(),
+                &c,
+            ),
+        )
+        .await
+        .expect("file_edit must not hang on empty oldText")
+        .unwrap();
+        assert!(r.is_error, "empty oldText should be rejected");
+    }
+
+    #[tokio::test]
+    async fn file_edit_replace_all_replaces_every_occurrence() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        std::fs::write(dir.path().join("a.txt"), "a-b-a-b-a").unwrap();
+        c.record_read(dir.path().join("a.txt"));
+        let r = FileEditTool
+            .execute(
+                json!({"path": "a.txt", "oldText": "a", "newText": "Z", "replace_all": true}),
+                progress(),
+                &c,
+            )
+            .await
+            .unwrap();
+        assert!(!r.is_error);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "Z-b-Z-b-Z"
+        );
+    }
+
+    // ── content_search ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn content_search_returns_structured_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        std::fs::write(
+            dir.path().join("code.rs"),
+            "fn main() {\n    let alpha = 1;\n}\n",
+        )
+        .unwrap();
+        let r = ContentSearchTool
+            .execute(json!({"path": ".", "pattern": "alpha"}), progress(), &c)
+            .await
+            .unwrap();
+        assert!(!r.is_error);
+        let sc = r.structured_content.unwrap();
+        let matches = sc["matches"].as_array().unwrap();
+        // Structured matches must be populated. On Windows this used to come back
+        // empty because the drive-letter colon (F:\...) broke the "path:line: text"
+        // re-parse; the search now returns structured hits directly.
+        assert!(!matches.is_empty(), "structured matches must not be empty");
+        assert_eq!(matches[0]["line"].as_u64().unwrap(), 2);
+        assert!(matches[0]["text"].as_str().unwrap().contains("alpha"));
+    }
+
+    // ── file_delete ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn file_delete_rejects_workspace_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        // "." resolves to the workspace root — must be refused, not deleted.
+        let r = FileDeleteTool
+            .execute(json!({"path": "."}), progress(), &c)
+            .await
+            .unwrap();
+        assert!(r.is_error, "deleting the workspace root must be refused");
+        assert!(dir.path().exists(), "workspace root must still exist");
+    }
+
+    #[tokio::test]
+    async fn file_delete_rejects_empty_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        let r = FileDeleteTool
+            .execute(json!({"path": ""}), progress(), &c)
+            .await
+            .unwrap();
+        assert!(r.is_error);
     }
 }

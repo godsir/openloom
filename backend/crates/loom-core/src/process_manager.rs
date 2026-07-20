@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tracing::info;
 use uuid::Uuid;
@@ -23,7 +23,10 @@ const MAX_LINE_BYTES: usize = 8192;
 struct ManagedProcess {
     id: String,
     name: String,
-    child: Arc<Mutex<Option<Child>>>,
+    /// Oneshot used by `kill()` to ask the exit waiter (which owns the Child
+    /// handle) to terminate the process. Without this, kill() can never reach
+    /// the Child — the waiter owns it.
+    kill_tx: Option<tokio::sync::oneshot::Sender<()>>,
     stdin_tx: Option<mpsc::UnboundedSender<String>>,
     #[allow(dead_code)]
     started_at: Instant,
@@ -45,6 +48,42 @@ struct ManagedProcess {
 
 /// Cap on buffered output lines to bound memory for long-running processes.
 const MAX_BUFFERED_LINES: usize = 10_000;
+
+/// Read one line of process output, decoding bytes **lossily**.
+///
+/// tokio's `lines()`/`next_line()` require valid UTF-8: on the first invalid
+/// byte (e.g. Windows GBK/CP936 console output) they return `Err`, which made
+/// the reader loop silently stop and drop all subsequent output. Reading raw
+/// bytes and decoding with `from_utf8_lossy` degrades undecodable bytes to U+FFFD
+/// instead, so CJK console output keeps flowing. Truncation uses a UTF-8 char
+/// boundary so a long multibyte line can no longer panic mid-character.
+pub(crate) async fn next_lossy_line<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut BufReader<R>,
+    raw: &mut Vec<u8>,
+) -> Option<String> {
+    raw.clear();
+    match reader.read_until(b'\n', raw).await {
+        Ok(0) => None, // EOF
+        Ok(_) => {
+            if raw.last() == Some(&b'\n') {
+                raw.pop();
+            }
+            if raw.last() == Some(&b'\r') {
+                raw.pop();
+            }
+            let mut line = String::from_utf8_lossy(raw).into_owned();
+            if line.len() > MAX_LINE_BYTES {
+                let mut end = MAX_LINE_BYTES;
+                while end > 0 && !line.is_char_boundary(end) {
+                    end -= 1;
+                }
+                line = format!("{}...", &line[..end]);
+            }
+            Some(line)
+        }
+        Err(_) => None,
+    }
+}
 
 /// Manages background child processes that survive WebSocket disconnects.
 pub struct ProcessManager {
@@ -112,13 +151,9 @@ impl ProcessManager {
         if let Some(stdout) = stdout {
             let sid_stdout = sid.clone();
             tokio::spawn(async move {
-                let mut reader = BufReader::new(stdout).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
-                    let data = if line.len() > MAX_LINE_BYTES {
-                        format!("{}...", &line[..MAX_LINE_BYTES])
-                    } else {
-                        line
-                    };
+                let mut reader = BufReader::new(stdout);
+                let mut raw: Vec<u8> = Vec::new();
+                while let Some(data) = next_lossy_line(&mut reader, &mut raw).await {
                     // Buffer the line so process_wait can drain it even if it
                     // arrives while no subscriber is listening (e.g. during an
                     // LLM call between process_wait calls).
@@ -148,13 +183,9 @@ impl ProcessManager {
         if let Some(stderr) = stderr {
             let sid_stderr = sid.clone();
             tokio::spawn(async move {
-                let mut reader = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
-                    let data = if line.len() > MAX_LINE_BYTES {
-                        format!("{}...", &line[..MAX_LINE_BYTES])
-                    } else {
-                        line
-                    };
+                let mut reader = BufReader::new(stderr);
+                let mut raw: Vec<u8> = Vec::new();
+                while let Some(data) = next_lossy_line(&mut reader, &mut raw).await {
                     {
                         let mut buf = stderr_buffer.lock().await;
                         if buf.len() >= MAX_BUFFERED_LINES {
@@ -192,27 +223,29 @@ impl ProcessManager {
             });
         }
 
-        // Wrap the child in Arc<Mutex<Option<Child>>> so the exit waiter and
-        // kill() can both access it.
-        let child_arc: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(Some(child)));
+        // Kill channel: kill() sends on kill_tx; the exit waiter (which owns the
+        // Child handle) selects on kill_rx and performs the actual start_kill.
+        let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
 
         // ── exit waiter ──
         let processes = self.processes.clone();
         let event_bus = self.event_bus.clone();
         let pid_clone = pid.clone();
-        let child_for_wait = child_arc.clone();
         let sid_exit = sid.clone();
 
         tokio::spawn(async move {
-            // Take the child out of the mutex so we can wait on it.
-            let owned_child = {
-                let mut guard = child_for_wait.lock().await;
-                guard.take()
-            };
-            let code = if let Some(mut c) = owned_child {
-                c.wait().await.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1)
-            } else {
-                -1
+            // The waiter owns the Child directly. kill() can't reach it here, so
+            // it signals through kill_rx instead.
+            let mut c = child;
+            let code = tokio::select! {
+                status = c.wait() => {
+                    status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1)
+                }
+                _ = kill_rx => {
+                    // Kill requested: terminate the child and reap it.
+                    let _ = c.start_kill();
+                    c.wait().await.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1)
+                }
             };
             info!(%pid_clone, code, "background process exited");
 
@@ -241,7 +274,7 @@ impl ProcessManager {
             ManagedProcess {
                 id: pid.clone(),
                 name: proc_name.clone(),
-                child: child_arc,
+                kill_tx: Some(kill_tx),
                 stdin_tx: Some(stdin_tx),
                 started_at: now,
                 started_at_ms: now_ms,
@@ -266,15 +299,16 @@ impl ProcessManager {
             if entry.exit_code.is_some() {
                 return Ok(true);
             }
-            let mut guard = entry.child.lock().await;
-            if let Some(ref mut child) = *guard {
-                let _ = child.start_kill();
+            // The exit waiter owns the Child handle, so signal it to terminate.
+            // (Reaching into entry.child would find None — the waiter took the
+            // Child at spawn time — which is why the old direct start_kill here
+            // silently did nothing and the process kept running.)
+            if let Some(tx) = entry.kill_tx.take() {
+                let _ = tx.send(());
             }
-            // Even if the exit waiter already took the child, mark it as killed.
-            drop(guard);
             entry.exit_code = Some(-1);
             entry.exited_at = Some(Instant::now());
-            info!(%pid, "process killed");
+            info!(%pid, "process kill requested");
             return Ok(true);
         }
         Ok(false)
@@ -605,4 +639,93 @@ pub struct ProcessPeekResult {
     pub running: bool,
     pub exit_code: Option<i32>,
     pub output: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event_bus::EventBus;
+
+    /// Regression: reading a line containing invalid UTF-8 (e.g. Windows GBK
+    /// console output) must NOT stop the reader. The old `lines()`-based approach
+    /// returned Err on the first invalid byte and silently dropped all following
+    /// output. `from_utf8_lossy` degrades bad bytes to U+FFFD and keeps reading.
+    #[tokio::test]
+    async fn next_lossy_line_handles_non_utf8() {
+        // "你好" in GBK/CP936 — invalid as UTF-8 — followed by a valid line.
+        let gbk: &[u8] = b"\xc4\xe3\xba\xc3\nsecond line\n";
+        let mut reader = tokio::io::BufReader::new(gbk);
+        let mut raw: Vec<u8> = Vec::new();
+
+        let first = next_lossy_line(&mut reader, &mut raw).await;
+        assert!(first.is_some(), "reader must not stop on non-UTF-8 bytes");
+        assert!(
+            first.unwrap().contains('\u{FFFD}'),
+            "GBK bytes should decode lossily to replacement chars"
+        );
+
+        // The subsequent valid line is still readable — the reader survived.
+        assert_eq!(
+            next_lossy_line(&mut reader, &mut raw).await.as_deref(),
+            Some("second line")
+        );
+        assert!(next_lossy_line(&mut reader, &mut raw).await.is_none());
+    }
+
+    /// Regression: truncating a long multibyte line must land on a UTF-8 char
+    /// boundary. The old `&line[..MAX_LINE_BYTES]` byte slice panicked when the
+    /// limit fell inside a multibyte char (very common for CJK output).
+    #[tokio::test]
+    async fn next_lossy_line_truncates_at_char_boundary() {
+        // "中" is 3 bytes in UTF-8; MAX_LINE_BYTES is not a multiple of 3, so a
+        // naive byte slice at MAX_LINE_BYTES would land mid-char and panic.
+        let line = "中".repeat(MAX_LINE_BYTES);
+        let input = format!("{line}\n");
+        let mut reader = tokio::io::BufReader::new(input.as_bytes());
+        let mut raw: Vec<u8> = Vec::new();
+        let out = next_lossy_line(&mut reader, &mut raw)
+            .await
+            .expect("line should be read without panicking");
+        assert!(out.ends_with("..."));
+        assert!(out.len() <= MAX_LINE_BYTES + 3, "truncated within bound + ellipsis");
+    }
+
+    /// Regression: process_kill must actually terminate the process. Before the
+    /// fix, the exit waiter owned the Child handle and kill()'s start_kill never
+    /// ran, so the process kept running while the registry claimed "killed".
+    #[tokio::test]
+    async fn kill_actually_terminates_process() {
+        let pm = ProcessManager::new(EventBus::new(1024));
+        let cmd = if cfg!(windows) {
+            "ping -n 60 127.0.0.1"
+        } else {
+            "sleep 60"
+        };
+        let (pid, _name) = pm
+            .spawn(cmd, None, None, Some("killtest"), "test-session")
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert!(
+            pm.list().await.iter().any(|p| p.pid == pid && p.running),
+            "process should be running before kill"
+        );
+
+        assert!(pm.kill(&pid).await.unwrap());
+
+        // The waiter must carry out the kill — the process exits promptly.
+        let mut exited = false;
+        for _ in 0..50 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if pm.list().await.iter().any(|p| p.pid == pid && !p.running) {
+                exited = true;
+                break;
+            }
+        }
+        assert!(
+            exited,
+            "process must actually terminate after kill() — the old bug left it running"
+        );
+    }
 }

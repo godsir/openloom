@@ -257,6 +257,7 @@ impl Default for ToolRegistry {
 fn is_blocked_by_sandbox(name: &str) -> bool {
     name == "shell"
         || name == "manage_mcp"
+        || name == "manage_skills"
         || name.starts_with("mcp__")
         || name.starts_with("process_")
         || name.starts_with("monitor")

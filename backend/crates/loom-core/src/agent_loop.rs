@@ -233,6 +233,7 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = concat!(
     "- 匹配失败时：扩大 old_string 上下文使其唯一，不要放弃去写文字方案。\n",
     "- 不要用 shell 写文件（echo/cat >）。\n",
     "- 新文件用 file_write；已有文件用 file_edit。\n",
+    "- 写入大文件：内容超过约 8000 字符时分块——先 file_write 第一部分，再用 file_write(append=true) 逐块追加，避免单次输出超限被截断。\n",
     "- 每次只改和任务相关的代码。\n",
     "\n",
     "## Shell 规则\n",
@@ -680,6 +681,39 @@ fn build_toolcall_parts(tool_messages: &[Message]) -> Vec<ContentPart> {
         }
     }
     parts
+}
+
+/// Build a recovery instruction for a tool call whose argument JSON could not be
+/// parsed. When `truncated` is true the cause is the output token ceiling cutting
+/// the call off mid-arguments — recoverable by chunking the work (file_write has
+/// an `append` flag exactly for this). Otherwise it's a genuine malformed call.
+fn tool_args_recovery_guidance(tool_name: &str, truncated: bool) -> String {
+    if !truncated {
+        return format!(
+            "工具 `{}` 的参数不是合法 JSON，无法解析。请检查参数格式后重新调用。",
+            tool_name
+        );
+    }
+    match tool_name {
+        "file_write" | "write_file" => {
+            "你的 file_write 调用因输出达到长度上限被截断——文件内容太大，无法一次发送。\n\
+             请分块写入（不要重复已写入的部分）：\n\
+             1. 先 file_write(path, <第一部分，约 8000 字符以内>)\n\
+             2. 再用 file_write(path, <下一部分>, append=true) 逐块追加，直到文件完整\n\
+             每次只发送一部分内容，避免再次被截断。"
+                .to_string()
+        }
+        "file_edit" => {
+            "你的 file_edit 调用因输出达到长度上限被截断。\n\
+             请拆分编辑：每次只提交一部分 edits（或缩短 newText），分多次调用完成。"
+                .to_string()
+        }
+        _ => format!(
+            "你的 `{}` 调用的参数在输出长度上限处被截断，无法解析。\n\
+             请用更短的参数重新调用，或把操作拆分成多次调用。",
+            tool_name
+        ),
+    }
 }
 
 /// Execute one agent turn: user message → LLM → tools → response.
@@ -2532,6 +2566,34 @@ async fn run_agent_turn_streaming_inner(
                                             StreamDelta::Finish { truncated } => {
                                                 this_truncated = truncated;
                                             }
+                                            // Tool-call deltas can also race into the drain
+                                            // window (observed: the final args chunk arriving
+                                            // after stream_fut completed, dropping the closing
+                                            // `}` and corrupting the JSON). Accumulate them
+                                            // exactly like the main loop does.
+                                            StreamDelta::ToolCallBegin { index, id, name } => {
+                                                attempt_pending.push((
+                                                    index,
+                                                    id.clone(),
+                                                    name.clone(),
+                                                    String::new(),
+                                                ));
+                                                let _ = delta_tx
+                                                    .send(StreamDelta::ToolCallBegin {
+                                                        index,
+                                                        id,
+                                                        name,
+                                                    })
+                                                    .await;
+                                            }
+                                            StreamDelta::ToolCallArgsChunk { index, chunk } => {
+                                                if let Some(tc) = attempt_pending
+                                                    .iter_mut()
+                                                    .find(|(i, _, _, _)| *i == index)
+                                                {
+                                                    tc.3.push_str(&chunk);
+                                                }
+                                            }
                                             _ => {}
                                         },
                                         _ => break,
@@ -2785,18 +2847,10 @@ async fn run_agent_turn_streaming_inner(
                                 tool_name = %tc_name,
                                 args_len = tc_args.len(),
                                 parse_err = %e,
-                                "tool arguments JSON truncated (token limit)"
+                                truncated = this_truncated,
+                                "tool arguments JSON unparseable (truncation or malformed)"
                             );
-                            let err_content = format!(
-                                "ERROR: Tool call '{}' 的参数 JSON 被截断（{} bytes），无法解析。\n\
-                                 原因：输出内容超过了模型的 max_tokens 限制。\n\
-                                 解决方案：\n\
-                                 1. 如果是 file_write/write_file：将内容拆成多次调用，每次不超过 8KB\n\
-                                 2. 如果是 use_skill：技能内容已在系统提示中加载，无需重复调用\n\
-                                 3. 如果是其他工具：减少参数中的内容量，或分步执行",
-                                tc_name,
-                                tc_args.len()
-                            );
+                            let err_content = tool_args_recovery_guidance(tc_name, this_truncated);
                             messages.push(Message::tool(tc_id, tc_name, &err_content));
                             tool_messages.push(messages.last().unwrap().clone());
                             let _ = delta_tx

@@ -36,6 +36,22 @@ pub fn check_permission(tool_name: &str, permissions: &SkillPermissions) -> (boo
         return (true, RiskLevel::Medium);
     }
 
+    // MCP server management — can spawn arbitrary commands (RCE) and persist
+    // across restarts via autostart. Treat like `shell`: gate on the shell
+    // permission and mark High so "ask" mode confirms and read-only/plan modes
+    // (which deny shell) block it.
+    if tool_name == "manage_mcp" {
+        let allowed = permissions.shell;
+        return (allowed, RiskLevel::High);
+    }
+
+    // Skill management — imports/removes files on disk (arbitrary write/delete).
+    // Gate on the fs_write permission and mark High for the same reason.
+    if tool_name == "manage_skills" {
+        let allowed = permissions.fs_write.is_some();
+        return (allowed, RiskLevel::High);
+    }
+
     // Unknown / meta tools (request_tools, use_skill, web_search, etc.)
     (true, RiskLevel::Low)
 }

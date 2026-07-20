@@ -124,10 +124,35 @@ async fn exec_manage_skills(
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| anyhow::anyhow!("name required for import"))?;
 
+            // Validate the skill name BEFORE building any path from it: it becomes
+            // a directory under skills_root, so it must be a plain name (no path
+            // separators, "..", or drive prefix). Otherwise skills_root.join(name)
+            // escapes the root (joining an absolute path replaces the base; "../"
+            // climbs out) — and the remove_dir_all cleanup further down could then
+            // recursively delete an arbitrary directory.
+            let name_ok = name != "."
+                && name != ".."
+                && !name.contains('/')
+                && !name.contains('\\')
+                && !name.contains(':')
+                && name
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'));
+            if !name_ok {
+                return Err(anyhow::anyhow!(
+                    "invalid skill name {:?}: only letters, digits, '-', '_', '.' are allowed",
+                    name
+                ));
+            }
+
             // Determine destination dir
             let home = dirs::home_dir().unwrap_or_default();
             let skills_root = home.join(".loom").join("skills");
             let skill_dir = skills_root.join(name);
+            // Defense in depth: the resolved dir must stay inside skills_root.
+            if !skill_dir.starts_with(&skills_root) {
+                return Err(anyhow::anyhow!("invalid skill name (escapes skills root)"));
+            }
 
             // Handle source_dir import
             if let Some(source_dir) = args["source_dir"].as_str() {
@@ -172,9 +197,14 @@ async fn exec_manage_skills(
                 if rel_path.is_empty() {
                     continue;
                 }
-                // Prevent path traversal
-                if rel_path.contains("..") {
-                    continue;
+                // Reject path traversal AND absolute paths. A rel_path like
+                // "C:\evil\x" or "../y" makes skill_dir.join() write outside the
+                // skill directory (joining an absolute path replaces the base).
+                if rel_path.contains("..") || std::path::Path::new(rel_path).is_absolute() {
+                    return Err(anyhow::anyhow!(
+                        "illegal file path in import: {:?} (no '..' or absolute paths allowed)",
+                        rel_path
+                    ));
                 }
                 if rel_path == "SKILL.md"
                     || rel_path.ends_with("/SKILL.md")
@@ -183,6 +213,13 @@ async fn exec_manage_skills(
                     has_skill_md = true;
                 }
                 let target = skill_dir.join(rel_path);
+                // Defense in depth: the resolved target must stay inside skill_dir.
+                if !target.starts_with(&skill_dir) {
+                    return Err(anyhow::anyhow!(
+                        "illegal file path in import: {:?} escapes the skill directory",
+                        rel_path
+                    ));
+                }
                 if let Some(parent) = target.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
