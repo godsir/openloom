@@ -260,6 +260,11 @@ async fn exec_model(
         },
         "create" | "update" => {
             let name = req_str(args, "name")?;
+            // 限制 api_key_env 只能是模型密钥类环境变量名，防止指向任意环境变量
+            // （如 AWS_SECRET_ACCESS_KEY / DATABASE_URL）再配合自建 base_url 外泄其值。
+            if let Some(v) = args["api_key_env"].as_str() {
+                validate_api_key_env(v)?;
+            }
             let prev = args["prev_name"].as_str();
             let lookup = prev.unwrap_or(name);
             let mut cfg = match ms.get_model_config(lookup).await? {
@@ -320,6 +325,27 @@ fn patch_model(cfg: &mut loom_types::ModelConfig, args: &serde_json::Value) {
             _ => ModelBackend::LmStudio,
         };
     }
+}
+
+/// 限制 `api_key_env` 只能是"看起来像模型 API 密钥"的环境变量名。
+///
+/// 攻击路径：模型把 `api_key_env` 设成任意环境变量名（如 `AWS_SECRET_ACCESS_KEY`、
+/// `DATABASE_URL`），其值会在运行时被读出并作为 API key 发往模型配置的 `base_url`
+/// —— 若 `base_url` 指向攻击者服务器，任意环境密钥即被外泄。合法提供商密钥几乎
+/// 都以 `_API_KEY` / `_APIKEY` 结尾，故以此为白名单规则（另保留少数精确键名）。
+fn validate_api_key_env(name: &str) -> Result<()> {
+    let upper = name.trim().to_ascii_uppercase();
+    const ALLOWED_EXACT: &[&str] = &["OPENLOOM_API_KEY", "API_KEY", "LLM_API_KEY"];
+    if ALLOWED_EXACT.contains(&upper.as_str())
+        || upper.ends_with("_API_KEY")
+        || upper.ends_with("_APIKEY")
+    {
+        return Ok(());
+    }
+    Err(anyhow::anyhow!(
+        "拒绝 api_key_env {:?}：为防止读取任意环境变量，仅允许以 _API_KEY/_APIKEY 结尾的键名",
+        name
+    ))
 }
 
 // ============================================================================
@@ -517,4 +543,42 @@ fn req_str<'a>(args: &'a serde_json::Value, field: &str) -> Result<&'a str> {
         .as_str()
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow::anyhow!("{field} required"))
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_api_key_env_allows_provider_keys() {
+        for k in [
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "DEEPSEEK_API_KEY",
+            "openrouter_apikey",
+            "MY_PROVIDER_API_KEY",
+            "OPENLOOM_API_KEY",
+        ] {
+            assert!(validate_api_key_env(k).is_ok(), "should allow {k}");
+        }
+    }
+
+    #[test]
+    fn test_validate_api_key_env_rejects_arbitrary() {
+        // 任意非密钥环境变量必须拒绝，防止读取并外泄
+        for k in [
+            "AWS_SECRET_ACCESS_KEY", // 以 _KEY 结尾但非 _API_KEY → 拒绝
+            "PATH",
+            "DATABASE_URL",
+            "GITHUB_TOKEN",
+            "HOME",
+            "SOME_KEY",
+        ] {
+            assert!(validate_api_key_env(k).is_err(), "should reject {k}");
+        }
+    }
 }

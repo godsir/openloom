@@ -521,6 +521,12 @@ async fn web_extremes() {
     no_hang(call(&fetch, json!({"url": "ftp://example.com/x"}), &c).await, "fetch 非http协议");
     // 不存在的 host —— 必须在短超时内优雅返回（超时守卫），不得挂起或 panic
     must_reject(call(&fetch, json!({"url": "http://nonexistent.invalid.domain.xyz/"}), &c).await, "fetch 坏host超时守卫");
+    // SSRF 防护：内网 / 环回 / 云元数据地址必须被立即拒绝（字面 IP，不发起连接）
+    must_reject(call(&fetch, json!({"url": "http://127.0.0.1/"}), &c).await, "fetch SSRF 环回");
+    must_reject(call(&fetch, json!({"url": "http://169.254.169.254/latest/meta-data/"}), &c).await, "fetch SSRF 云元数据");
+    must_reject(call(&fetch, json!({"url": "http://192.168.1.1/"}), &c).await, "fetch SSRF 私网");
+    must_reject(call(&fetch, json!({"url": "http://10.0.0.5/"}), &c).await, "fetch SSRF 私网10");
+    must_reject(call(&fetch, json!({"url": "http://[::1]/"}), &c).await, "fetch SSRF IPv6环回");
     // 带 unicode 的 url
     no_hang(call(&fetch, json!({"url": "http://example.com/中文"}), &c).await, "fetch unicode url");
     // max_chars = 0

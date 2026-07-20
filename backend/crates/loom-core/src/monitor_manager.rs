@@ -9,6 +9,7 @@
 //! buffered in a 10,000-line ring buffer.
 
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -35,6 +36,60 @@ const RATE_LIMIT_PER_SEC: usize = 50;
 
 /// Consecutive seconds of rate-limiting before auto-killing the monitor.
 const RATE_LIMIT_CONSECUTIVE_BEFORE_KILL: u32 = 3;
+
+// ── Output ring buffer ──────────────────────────────────────────────────────
+
+/// 输出的环形缓冲（最多保留 `MAX_BUFFERED_LINES` 行，超出从队首丢弃最旧行）。
+///
+/// 关键设计：消费方用的游标不是"缓冲内下标"，而是**累计已消费行数**
+/// （`total_consumed`，见 `MonitorInstance::read_cursor`）。早期实现用绝对
+/// 下标做游标，缓冲饱和后每次 `remove(0)` 让所有行下标前移、游标却停在旧值，
+/// 导致 `buf[cursor..]` 恒为空——**饱和后永久读不到新输出**。改用累计序号后，
+/// 丢弃旧行不再影响游标有效性：`drain_from` 把 `total_consumed` 映射回当前
+/// 缓冲窗口内的实际位置，落后的行按"已丢弃"处理。
+struct OutputRing {
+    lines: VecDeque<String>,
+    /// 累计追加过的行数（单调递增）。
+    total_appended: usize,
+}
+
+impl OutputRing {
+    fn new() -> Self {
+        Self {
+            lines: VecDeque::new(),
+            total_appended: 0,
+        }
+    }
+
+    /// 追加一行；超过容量时丢弃最旧行。
+    fn push(&mut self, line: String) {
+        if self.lines.len() >= MAX_BUFFERED_LINES {
+            self.lines.pop_front();
+        }
+        self.lines.push_back(line);
+        self.total_appended += 1;
+    }
+
+    /// 读取自 `consumed`（累计已消费数）之后的新行。
+    ///
+    /// 返回 `(新行, 是否发生丢弃, 推进后的 consumed)`：
+    /// - 现存行的序号区间为 `[total_appended - lines.len(), total_appended)`；
+    /// - 若 `consumed` 早于区间下界，说明落后的行已被环形缓冲丢弃，将其钳制到
+    ///   下界并置 `dropped=true`；
+    /// - 推进后的 `consumed` 恒等于 `total_appended`（读完当前所有可得行）。
+    fn drain_from(&self, consumed: usize) -> (Vec<String>, bool, usize) {
+        let oldest_available = self.total_appended - self.lines.len();
+        let mut consumed = consumed;
+        let mut dropped = false;
+        if consumed < oldest_available {
+            consumed = oldest_available;
+            dropped = true;
+        }
+        let start = consumed - oldest_available; // 缓冲窗口内起始下标
+        let new_lines = self.lines.iter().skip(start).cloned().collect();
+        (new_lines, dropped, self.total_appended)
+    }
+}
 
 // ── Public types ────────────────────────────────────────────────────────────
 
@@ -82,8 +137,9 @@ struct MonitorInstance {
     exit_code: Option<i32>,
 
     /// Ring buffer for output lines.
-    output_buffer: Arc<Mutex<Vec<String>>>,
-    /// Read cursor — index of the next unread line in output_buffer.
+    output_buffer: Arc<Mutex<OutputRing>>,
+    /// Read cursor — **累计已消费行数**（total_consumed，非缓冲内下标）。
+    /// 由 `OutputRing::drain_from` 映射回当前缓冲窗口位置，饱和丢弃旧行时不失效。
     read_cursor: usize,
 
     /// Session this monitor belongs to.
@@ -135,7 +191,7 @@ impl MonitorManager {
             .unwrap_or_default()
             .as_millis() as i64;
 
-        let output_buffer = Arc::new(Mutex::new(Vec::new()));
+        let output_buffer = Arc::new(Mutex::new(OutputRing::new()));
         let cancel_token = cancel.unwrap_or_default();
 
         let (source, source_str) = match (command, ws) {
@@ -249,7 +305,7 @@ impl MonitorManager {
         pid: &str,
         cancel: CancellationToken,
         timeout_ms: u64,
-        output_buffer: Arc<Mutex<Vec<String>>>,
+        output_buffer: Arc<Mutex<OutputRing>>,
         monitors: Arc<RwLock<HashMap<String, MonitorInstance>>>,
         session_id: String,
     ) {
@@ -458,7 +514,7 @@ impl MonitorManager {
         protocols: &[String],
         cancel: CancellationToken,
         timeout_ms: u64,
-        output_buffer: Arc<Mutex<Vec<String>>>,
+        output_buffer: Arc<Mutex<OutputRing>>,
         monitors: Arc<RwLock<HashMap<String, MonitorInstance>>>,
         session_id: String,
     ) {
@@ -776,9 +832,10 @@ impl MonitorManager {
         drop(monitors);
 
         let output = {
-            let buf = output_buffer.lock().await;
-            let cursor = read_cursor.min(buf.len());
-            buf[cursor..].join("\n")
+            let ring = output_buffer.lock().await;
+            // peek 只展示未读行、不推进游标（drain_from 的推进值此处丢弃）。
+            let (new_lines, _dropped, _consumed) = ring.drain_from(read_cursor);
+            new_lines.join("\n")
         };
 
         Some(MonitorPeekResult {
@@ -822,28 +879,13 @@ impl MonitorManager {
         {
             let mut monitors = self.monitors.write().await;
             if let Some(entry) = monitors.get_mut(&mid) {
-                let new_lines: Vec<String> = {
-                    let buf = entry.output_buffer.lock().await;
-                    let cursor = entry.read_cursor.min(buf.len());
-                    buf[cursor..].to_vec()
+                let cur = entry.read_cursor;
+                let (new_lines, dropped, new_consumed) = {
+                    let ring = entry.output_buffer.lock().await;
+                    ring.drain_from(cur)
                 };
-                if !new_lines.is_empty() {
-                    entry.read_cursor += new_lines.len();
-                    let buf_len = entry.output_buffer.lock().await.len();
-                    entry.read_cursor = entry.read_cursor.min(buf_len);
-                    for line in &new_lines {
-                        if output.len() + line.len() + 1 > max_output_bytes {
-                            if !truncated {
-                                output.push_str("[output truncated — max size reached]\n");
-                                truncated = true;
-                            }
-                            break;
-                        }
-                        if !output.is_empty() {
-                            output.push('\n');
-                        }
-                        output.push_str(line);
-                    }
+                entry.read_cursor = new_consumed;
+                if append_drained(new_lines, dropped, &mut output, max_output_bytes, &mut truncated) {
                     last_output_at = Some(Instant::now());
                 }
                 // Check exit status after draining
@@ -882,28 +924,13 @@ impl MonitorManager {
             {
                 let mut monitors = self.monitors.write().await;
                 if let Some(entry) = monitors.get_mut(&mid) {
-                    let new_lines: Vec<String> = {
-                        let buf = entry.output_buffer.lock().await;
-                        let cursor = entry.read_cursor.min(buf.len());
-                        buf[cursor..].to_vec()
+                    let cur = entry.read_cursor;
+                    let (new_lines, dropped, new_consumed) = {
+                        let ring = entry.output_buffer.lock().await;
+                        ring.drain_from(cur)
                     };
-                    if !new_lines.is_empty() {
-                        entry.read_cursor += new_lines.len();
-                        let buf_len = entry.output_buffer.lock().await.len();
-                        entry.read_cursor = entry.read_cursor.min(buf_len);
-                        for line in &new_lines {
-                            if output.len() + line.len() + 1 > max_output_bytes {
-                                if !truncated {
-                                    output.push_str("[output truncated — max size reached]\n");
-                                    truncated = true;
-                                }
-                                break;
-                            }
-                            if !output.is_empty() {
-                                output.push('\n');
-                            }
-                            output.push_str(line);
-                        }
+                    entry.read_cursor = new_consumed;
+                    if append_drained(new_lines, dropped, &mut output, max_output_bytes, &mut truncated) {
                         last_output_at = Some(Instant::now());
                     }
                     if let Some(code) = entry.exit_code {
@@ -1017,25 +1044,13 @@ impl MonitorManager {
                     // Drain any final buffered output
                     let mut monitors = self.monitors.write().await;
                     if let Some(entry) = monitors.get_mut(&mid) {
-                        let new_lines: Vec<String> = {
-                            let buf = entry.output_buffer.lock().await;
-                            let cursor = entry.read_cursor.min(buf.len());
-                            buf[cursor..].to_vec()
+                        let cur = entry.read_cursor;
+                        let (new_lines, dropped, new_consumed) = {
+                            let ring = entry.output_buffer.lock().await;
+                            ring.drain_from(cur)
                         };
-                        entry.read_cursor += new_lines.len();
-                        for line in &new_lines {
-                            if output.len() + line.len() + 1 > max_output_bytes {
-                                if !truncated {
-                                    output.push_str("[output truncated — max size reached]\n");
-                                    truncated = true;
-                                }
-                                break;
-                            }
-                            if !output.is_empty() {
-                                output.push('\n');
-                            }
-                            output.push_str(line);
-                        }
+                        entry.read_cursor = new_consumed;
+                        append_drained(new_lines, dropped, &mut output, max_output_bytes, &mut truncated);
                     }
                     return Ok(MonitorWaitResult {
                         exit_code,
@@ -1083,7 +1098,7 @@ async fn flush_batch(
     monitor_id: &str,
     batch: &mut Vec<String>,
     last_batch_at: &mut Option<Instant>,
-    output_buffer: &Arc<Mutex<Vec<String>>>,
+    output_buffer: &Arc<Mutex<OutputRing>>,
     stream: &str,
     session_id: &str,
 ) {
@@ -1101,13 +1116,39 @@ async fn flush_batch(
     });
 }
 
-/// Append a line to the ring buffer, trimming if over capacity.
-async fn append_to_buffer(buf: &Arc<Mutex<Vec<String>>>, line: &str) {
-    let mut b = buf.lock().await;
-    if b.len() >= MAX_BUFFERED_LINES {
-        b.remove(0);
+/// Append a line to the ring buffer, trimming the oldest if over capacity.
+async fn append_to_buffer(buf: &Arc<Mutex<OutputRing>>, line: &str) {
+    buf.lock().await.push(line.to_string());
+}
+
+/// 把 `OutputRing::drain_from` 的结果写入 `output`（受 `max_output_bytes` 约束）。
+/// 返回本次是否有新行。`dropped`（缓冲饱和丢弃过旧行）以一行提示体现并计入 truncated。
+fn append_drained(
+    new_lines: Vec<String>,
+    dropped: bool,
+    output: &mut String,
+    max_output_bytes: usize,
+    truncated: &mut bool,
+) -> bool {
+    if dropped && !*truncated {
+        output.push_str("[earlier output dropped — monitor buffer overrun]\n");
+        *truncated = true;
     }
-    b.push(line.to_string());
+    let had_new = !new_lines.is_empty();
+    for line in &new_lines {
+        if output.len() + line.len() + 1 > max_output_bytes {
+            if !*truncated {
+                output.push_str("[output truncated — max size reached]\n");
+                *truncated = true;
+            }
+            break;
+        }
+        if !output.is_empty() {
+            output.push('\n');
+        }
+        output.push_str(line);
+    }
+    had_new
 }
 
 /// Update the MonitorInstance exit status so that `list()` and `gc()` see the
@@ -1124,5 +1165,73 @@ async fn mark_monitor_exited(
     if let Some(instance) = guard.get_mut(monitor_id) {
         instance.exit_code = Some(exit_code);
         instance.exited_at = Some(Instant::now());
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 核心回归：缓冲饱和（触发从队首丢弃）后继续追加，消费者必须仍能读到新行。
+    /// 旧的"绝对下标游标"实现里，`remove(0)` 让所有行下标前移而游标停在 len，
+    /// 导致 `buf[cursor..]` 恒为空——饱和后永久读不到新输出（卡死）。
+    #[test]
+    fn output_ring_no_stuck_cursor_after_saturation() {
+        let mut ring = OutputRing::new();
+        // 填满并越过容量，触发队首丢弃
+        for i in 0..(MAX_BUFFERED_LINES + 5) {
+            ring.push(format!("line-{i}"));
+        }
+        // 模拟一个已读到 saturation 点的消费者
+        let consumed = MAX_BUFFERED_LINES;
+        // 饱和后继续追加新行
+        for i in 0..3 {
+            ring.push(format!("new-{i}"));
+        }
+        let (lines, _dropped, new_consumed) = ring.drain_from(consumed);
+        assert!(
+            lines.iter().any(|l| l == "new-2"),
+            "饱和后追加的新行必须可读（修复前会永久丢失）: tail={:?}",
+            &lines[lines.len().saturating_sub(3)..]
+        );
+        assert_eq!(new_consumed, ring.total_appended);
+        // 读完后再 drain 应无新行
+        let (lines2, _, _) = ring.drain_from(new_consumed);
+        assert!(lines2.is_empty(), "已读完不应再返回行");
+    }
+
+    /// 消费者落后于缓冲窗口（行已被丢弃）时应报告 dropped，并钳制到最早可得行。
+    #[test]
+    fn output_ring_reports_dropped_when_consumer_lags() {
+        let mut ring = OutputRing::new();
+        for i in 0..(MAX_BUFFERED_LINES + 10) {
+            ring.push(format!("l{i}"));
+        }
+        let (lines, dropped, consumed) = ring.drain_from(0);
+        assert!(dropped, "消费者落后于缓冲窗口应报告丢弃");
+        assert_eq!(lines.len(), MAX_BUFFERED_LINES);
+        assert_eq!(lines[0], "l10", "应从最早仍可得行开始");
+        assert_eq!(consumed, ring.total_appended);
+    }
+
+    /// 正常（未饱和）读取：顺序、完整、游标正确推进。
+    #[test]
+    fn output_ring_normal_sequential_read() {
+        let mut ring = OutputRing::new();
+        ring.push("a".into());
+        ring.push("b".into());
+        let (l1, d1, c1) = ring.drain_from(0);
+        assert_eq!(l1, vec!["a", "b"]);
+        assert!(!d1);
+        assert_eq!(c1, 2);
+        ring.push("c".into());
+        let (l2, d2, c2) = ring.drain_from(c1);
+        assert_eq!(l2, vec!["c"]);
+        assert!(!d2);
+        assert_eq!(c2, 3);
     }
 }

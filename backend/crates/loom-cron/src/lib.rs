@@ -85,6 +85,31 @@ fn next_fire_after(schedule: &cron::Schedule, after: DateTime<Utc>) -> Option<Da
     schedule.after(&after).next()
 }
 
+/// 定时任务的最小触发间隔（秒）。
+///
+/// 低于此频率的表达式（如秒级 `* * * * * *`、`*/5 * * * * *`）会让 agent 回合被
+/// 高频触发——每次触发都跑一个**带全部工具权限的无人值守执行**，既烧 token 又
+/// 扩大安全面。故对相邻两次未来触发时间的间隔设下限。
+const MIN_CRON_INTERVAL_SECS: i64 = 60;
+
+/// 校验 cron 表达式的触发频率不低于 [`MIN_CRON_INTERVAL_SECS`]。
+///
+/// 取从 `from` 起相邻的两次未来触发：间隔小于下限则拒绝。只有一次（或零次）
+/// 未来触发的表达式（一次性任务）不受此限制。
+fn validate_cron_frequency(schedule: &cron::Schedule, from: DateTime<Utc>) -> Result<()> {
+    let mut it = schedule.after(&from);
+    if let (Some(a), Some(b)) = (it.next(), it.next()) {
+        let gap = (b - a).num_seconds();
+        if gap < MIN_CRON_INTERVAL_SECS {
+            return Err(anyhow::anyhow!(
+                "定时任务触发过于频繁（间隔 {gap} 秒）：最小允许间隔为 {MIN_CRON_INTERVAL_SECS} 秒，\
+                 以免高频触发无人值守的 agent 执行（费用与安全风险）"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Compute the initial fire time for a job, honoring `last_run` for restart catch-up.
 ///
 /// If the job has a recorded `last_run`, the next fire is computed relative to that
@@ -244,6 +269,8 @@ impl CronScheduler {
         // Validate the cron expression.
         let schedule = cron::Schedule::from_str(cron_expression)
             .with_context(|| format!("invalid cron expression: {}", cron_expression))?;
+        // 频率下限：拒绝秒级等高频触发（防无人值守高频执行）。
+        validate_cron_frequency(&schedule, Utc::now())?;
 
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
@@ -305,6 +332,8 @@ impl CronScheduler {
         // Validate the cron expression.
         let schedule = cron::Schedule::from_str(cron_expression)
             .with_context(|| format!("invalid cron expression: {}", cron_expression))?;
+        // 频率下限：拒绝秒级等高频触发（防无人值守高频执行）。
+        validate_cron_frequency(&schedule, Utc::now())?;
 
         // Persist update.
         self.storage.update_job(
@@ -665,6 +694,32 @@ mod tests {
     use super::*;
     use std::pin::Pin;
 
+    #[test]
+    fn test_validate_cron_frequency_rejects_subminute() {
+        // 每秒 / 每 5 秒 / 每 30 秒触发 → 必须拒绝（高频无人值守执行风险）
+        for expr in ["* * * * * * *", "*/5 * * * * * *", "*/30 * * * * * *"] {
+            let s = cron::Schedule::from_str(expr)
+                .unwrap_or_else(|e| panic!("test expr {expr} should parse: {e}"));
+            assert!(
+                validate_cron_frequency(&s, Utc::now()).is_err(),
+                "应拒绝高频表达式 {expr}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_cron_frequency_allows_minute_plus() {
+        // 每分钟 / 每 6 小时 / 每天 9 点 → 允许
+        for expr in ["0 * * * * * *", "0 0 */6 * * * *", "0 0 9 * * * *"] {
+            let s = cron::Schedule::from_str(expr)
+                .unwrap_or_else(|e| panic!("test expr {expr} should parse: {e}"));
+            assert!(
+                validate_cron_frequency(&s, Utc::now()).is_ok(),
+                "应允许 >=1min 表达式 {expr}"
+            );
+        }
+    }
+
     /// A test executor that echoes the prompt back (no real AI).
     struct EchoExecutor;
 
@@ -1000,21 +1055,42 @@ mod tests {
     async fn test_scheduler_fires_via_next_fire() {
         // Proves the loop fires a sub-minute job WITHOUT relying on includes(now)
         // landing exactly on second 0 — the every-second schedule should fire.
+        //
+        // NOTE: 直接经 storage + active 注册，绕过 add_job 的频率下限策略
+        // （那是面向 agent 创建任务的安全策略）；这里测的是调度循环本身的点火
+        // 机制——引擎内部仍可对任意已注册的调度（含秒级）正常触发。
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("cron.db");
         let scheduler = Arc::new(CronScheduler::new(db_path).await.unwrap());
         scheduler.set_prompt_executor(Arc::new(EchoExecutor)).await;
 
-        let id = scheduler
-            .add_job(
-                "every second",
-                "* * * * * * *", // every second
-                "tick",
-                SessionMode::Isolated,
-                5,
-            )
-            .await
-            .unwrap();
+        let schedule = cron::Schedule::from_str("* * * * * * *").unwrap(); // every second
+        let now = Utc::now();
+        let next_fire = next_fire_after(&schedule, now);
+        let job = CronJob {
+            id: Uuid::new_v4().to_string(),
+            name: "every second".to_string(),
+            cron_expression: "* * * * * * *".to_string(),
+            prompt: "tick".to_string(),
+            enabled: true,
+            session_mode: SessionMode::Isolated,
+            timeout_secs: 5,
+            created_at: now.timestamp(),
+            last_run: None,
+            next_run: next_fire.map(|t| t.timestamp()),
+            run_count: 0,
+            error_count: 0,
+        };
+        let id = job.id.clone();
+        scheduler.storage.insert_job(&job).unwrap();
+        scheduler.active.write().await.insert(
+            id.clone(),
+            ActiveJob {
+                schedule,
+                job,
+                next_fire,
+            },
+        );
 
         let _handle = scheduler.start();
         // Wait long enough for several 1s ticks to elapse.

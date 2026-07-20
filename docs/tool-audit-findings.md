@@ -67,6 +67,28 @@
 
 ---
 
+## 第三轮：真实风险项修复（安全 + 功能性，5 项）
+
+> 范围：第一轮遗留的高危安全项 + 影响日常使用的功能性项。全部修复并附回归测试；
+> loom-core 52 测试 / extreme 14 测试 / loom-cron 38 测试全绿，clippy 无 error。
+
+| ID | 问题 | 修复 | 回归测试 |
+|----|------|------|----------|
+| N4 | manage_mcp RCE：command 零校验即 spawn + autostart 硬编码 true 持久化 | `validate_mcp_command` 拒绝 shell 解释器（cmd/bash/powershell/sh…）与空白/元字符；`autostart` 默认 false，显式传 true 才写自启 | `test_validate_mcp_command_*`（允许 npx/node/绝对路径，拒解释器与元字符）+ `test_build_config_rejects_shell_command` |
+| N1 | WebFetch SSRF：仅校验 scheme，可读云元数据/内网 | `validate_url_host` + `is_public_ip`：字面 IP 直判、域名 DNS 全量解析，拒环回/私网/链路本地/未指定/广播/CGNAT/IPv6 ULA 与 IPv4 映射 | extreme：`http://127.0.0.1`、`169.254.169.254`、`192.168.1.1`、`10.0.0.5`、`[::1]` 均被立即拒绝 |
+| N2 | WebFetch 重定向不校验目标（可 `公网→302→内网` 绕过 N1） | 客户端 `redirect::Policy::none()`，`fetch_with_ssrf_guard` 手动逐跳跟随并对每个 `Location` 重校验（≤5 跳）| 与 N1 同组 extreme 用例 |
+| N8 | manage_model `api_key_env` 可指向任意环境变量并经自建 base_url 外泄 | `validate_api_key_env` 仅允许 `_API_KEY`/`_APIKEY` 结尾或已知键名；list/get 回显的只是键名非密钥值 | `test_validate_api_key_env_*`（拒 `AWS_SECRET_ACCESS_KEY`/`PATH`/`GITHUB_TOKEN`/`SOME_KEY`）|
+| — | monitor 环形缓冲绝对 cursor 饱和后永久卡死（核心监控功能静默失效）| `OutputRing` 累计序号制：`read_cursor` 改为"累计已消费数"，`drain_from` 映射回窗口位置，丢弃旧行时游标不失效，落后则报 `dropped` | `output_ring_no_stuck_cursor_after_saturation` 等 3 例 |
+| — | schedule_reminder/manage_cron 无频率下限（秒级任务 → 费用爆炸 + 全工具无人值守执行）| `validate_cron_frequency` 在 `add_job`/`update_job` 强制相邻触发间隔 ≥60s（单一 choke point 覆盖两条创建路径）| `test_validate_cron_frequency_rejects_subminute` / `_allows_minute_plus` |
+
+**设计取舍说明**：
+- N4 不做可执行文件白名单（会误伤 npx/uvx/node/python 及本地二进制等合法 MCP 服务器）；采用"拒 shell 解释器 + 元字符 + autostart 默认关 + 权限层 High"组合覆盖主要攻击面。bypass 模式下用户已显式放弃确认，仍拦截解释器这一最坏形态。
+- N8 不对 `base_url` 禁私网——localhost 是本地推理（LM Studio/Ollama）的合法目标；真正外泄路径是 `api_key_env` 读任意变量，已收敛。
+- cron 频率下限定在引擎 `add_job`（唯一创建 choke point，同时覆盖 manage_cron / schedule_reminder / 未来的 detector 自动创建）；引擎调度循环本身仍可对任意已注册调度触发，仅创建 API 施加策略（故 `test_scheduler_fires_via_next_fire` 改为直接注册绕过策略，继续验证点火机制）。
+- N1 对域名做 DNS 全量解析校验，能拦截字面内网 IP 与已知内网域名；DNS rebinding（解析时公网、连接时切内网）属高级攻击，残留风险已记录。
+
+---
+
 ## 一、关键（系统性）
 
 | ID | 问题 | 位置 | 状态 |
@@ -84,10 +106,10 @@
 | C1 | UpdateConfig 明文回灌 web_search_api_key | builtin_tools.rs UpdateConfigTool | ✅ |
 | C2 | UpdateConfig 允许模型改 permission_mode 自提权 | builtin_tools.rs UpdateConfigTool | ✅ |
 | N5 | manage_skills 路径穿越 + remove_dir_all 删任意目录 | entity_skills_tools.rs | ✅ |
-| N4 | manage_mcp command/args/env 零校验立即 spawn + autostart 持久化 → RCE | entity_mcp_tools.rs | ⏳ 建议：风险定级 High 强制确认 + command 白名单 + autostart 默认 false |
-| N1 | WebFetch 仅校验 scheme，零 host/IP 校验 → SSRF（云元数据/内网） | builtin_tools.rs WebFetchTool | ⏳ 建议：私网/环回/链路本地 IP 黑名单 + 解析最终 IP 二次校验 |
-| N2 | WebFetch 默认跟随重定向且不校验目标 | builtin_tools.rs WebFetchTool | ⏳ 建议：redirect::Policy::none() 或逐跳校验 |
-| N8 | manage_model api_key_env 可读任意环境变量并外泄 + base_url SSRF | entity_tools.rs | ⏳ 建议：api_key_env 限已知键名 + base_url 禁私网 |
+| N4 | manage_mcp command/args/env 零校验立即 spawn + autostart 持久化 → RCE | entity_mcp_tools.rs | ✅ command 拒绝 shell 解释器/元字符（`validate_mcp_command`）+ autostart 默认 false（显式才持久化自启）+ 权限层 High 挂 shell 位 |
+| N1 | WebFetch 仅校验 scheme，零 host/IP 校验 → SSRF（云元数据/内网） | builtin_tools.rs WebFetchTool | ✅ host 校验：字面 IP 直判 + 域名 DNS 解析，拒环回/私网/链路本地/未指定/广播/CGNAT/IPv6 ULA（`is_public_ip`/`validate_url_host`）|
+| N2 | WebFetch 默认跟随重定向且不校验目标 | builtin_tools.rs WebFetchTool | ✅ 客户端 `redirect::Policy::none()`，手动逐跳跟随并对每个 Location 重新做 SSRF 校验（≤5 跳）|
+| N8 | manage_model api_key_env 可读任意环境变量并外泄 + base_url SSRF | entity_tools.rs | ✅ `api_key_env` 限 `_API_KEY`/`_APIKEY` 结尾或已知键名（`validate_api_key_env`），拒读任意环境变量。（base_url 保留 localhost 以支持本地推理，非 SSRF 主路径）|
 
 ## 三、高危 — 正确性 / 崩溃
 
@@ -111,13 +133,13 @@
 - file_read 全量加载后截断 → 大文件 OOM
 - shell 输出无上限累积；超时丢弃已采集输出；正常退出尾部竞态丢失
 - process_wait `-1` 哨兵与信号杀死撞车（P11）；timeout 实际不作硬上限
-- monitor 环形缓冲绝对 cursor → 饱和后永久卡死；超时在持续输出下失效；持写锁跨 await；订阅晚于启动丢早期输出
+- ~~monitor 环形缓冲绝对 cursor → 饱和后永久卡死~~（✅ 已改累计序号制 `OutputRing`，丢弃旧行游标不失效）；超时在持续输出下失效；持写锁跨 await；订阅晚于启动丢早期输出
 - UpdateConfig 读-改-写无锁 lost-update；UI-only 改动无 event_bus 时报成功未生效
 - PushNotification/ReportFindings 无 event_bus 时静默丢弃却报成功
 - manage_model list/get 明文回显 key；set_active 名字不存在静默清零
 - create 命中已存在实体静默覆盖（manage_agent/model/team）；删除无引用完整性检查
 - WebFetch 全量读响应体 OOM；WebSearch key 拼进 URL 经错误回流
-- schedule_reminder/manage_cron 无频率下限（每秒任务 → 费用爆炸）；定时 prompt 全工具权限无人值守执行；cron 按 UTC 求值与本地时区文案不符
+- ~~schedule_reminder/manage_cron 无频率下限（每秒任务 → 费用爆炸）~~（✅ `add_job`/`update_job` 强制最小间隔 60s，拒秒级高频，覆盖 manage_cron 与 schedule_reminder 两条创建路径）；定时 prompt 全工具权限无人值守执行；cron 按 UTC 求值与本地时区文案不符
 
 ## 五、低危（择要，⏳）
 

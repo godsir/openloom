@@ -94,6 +94,28 @@ pub fn build_http_client_with_ua() -> HttpClient {
     builder.build().unwrap_or_default()
 }
 
+/// 构建**不自动跟随重定向**的 HTTP 客户端（web_fetch 专用）。
+///
+/// 关闭自动重定向是为了让调用方能对每一跳目标地址做 SSRF 校验——reqwest 默认
+/// 跟随重定向且不校验目标，攻击者可用 `http://public/ → 302 → http://169.254.169.254/`
+/// 绕过对初始 URL 的检查。其余配置（UA / 超时 / 代理）与 `build_http_client_with_ua` 一致。
+pub fn build_http_client_no_redirect_with_ua() -> HttpClient {
+    let mut builder = HttpClient::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .user_agent("Mozilla/5.0 (compatible; openLoom/1.0; +https://github.com/godsir/openloom)")
+        .redirect(reqwest::redirect::Policy::none());
+
+    if let Some(url) = get_effective_proxy() {
+        if let Ok(proxy) = build_proxy(&url) {
+            builder = builder.proxy(proxy);
+        } else {
+            tracing::warn!(%url, "invalid proxy URL, connections will go direct");
+        }
+    }
+
+    builder.build().unwrap_or_default()
+}
+
 /// 构建统一 HTTP 客户端（无 UA，给 API 调用用），支持全局代理
 pub fn build_http_client() -> HttpClient {
     apply_proxy(HttpClient::builder().connect_timeout(std::time::Duration::from_secs(10))).build().unwrap_or_default()

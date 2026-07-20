@@ -3100,15 +3100,22 @@ impl AgentTool for WebFetchTool {
             });
         }
 
-        let client = loom_inference::engine::build_http_client_with_ua();
+        // SSRF 防护：解析 URL 并校验 host（拒绝环回 / 私网 / 链路本地 / 云元数据
+        // 等内网地址），且禁用自动重定向、对每一跳目标重新校验，防止
+        // `公网 URL → 302 → http://169.254.169.254/` 之类的重定向绕过。
+        let start_url =
+            reqwest::Url::parse(url).map_err(|e| anyhow::anyhow!("Invalid URL: {e}"))?;
+        let client = loom_inference::engine::build_http_client_no_redirect_with_ua();
 
         // tokio timeout guards against slow/stalled servers beyond connect_timeout.
         let timeout_secs = prefs.web_fetch_timeout_secs.max(1);
-        let html = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
-            client.get(url).send().await?.text().await
-        })
+        let html = tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            fetch_with_ssrf_guard(&client, start_url),
+        )
         .await
-        .map_err(|_| anyhow::anyhow!("web_fetch timed out after {}s", timeout_secs))??;
+        .map_err(|_| anyhow::anyhow!("web_fetch timed out after {}s", timeout_secs))?
+        .map_err(|e| anyhow::anyhow!("web_fetch failed: {e}"))?;
         let text = extract_text(&html);
         let title = extract_title(&html);
 
@@ -3146,6 +3153,114 @@ impl AgentTool for WebFetchTool {
 
     fn provenance(&self) -> ToolProvenance {
         ToolProvenance::Builtin
+    }
+}
+
+/// 跟随重定向抓取页面，**每一跳都重新做 SSRF 校验**。
+///
+/// 客户端已禁用自动重定向；这里手动处理 3xx：解析 `Location`（支持相对路径），
+/// 先校验新地址的 host 是公网地址再跟随，最多 5 跳。非重定向响应直接读取正文
+/// （保留旧行为：不区分 2xx/4xx，404 页面也抽取文本）。
+async fn fetch_with_ssrf_guard(
+    client: &reqwest::Client,
+    start: reqwest::Url,
+) -> Result<String, String> {
+    let mut current = start;
+    validate_url_host(&current).await?;
+    let mut hops = 0u32;
+    loop {
+        let resp = client
+            .get(current.clone())
+            .send()
+            .await
+            .map_err(|e| format!("请求失败: {e}"))?;
+        let status = resp.status();
+        if status.is_redirection() {
+            if hops >= 5 {
+                return Err("重定向次数过多（>5），已中止".to_string());
+            }
+            let location = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| "重定向响应缺少 Location 头".to_string())?;
+            let next = current
+                .join(location)
+                .map_err(|e| format!("非法重定向地址 {location:?}: {e}"))?;
+            // 关键：对重定向目标重新校验，堵住"公网→内网"跳转绕过。
+            validate_url_host(&next).await?;
+            current = next;
+            hops += 1;
+            continue;
+        }
+        return resp.text().await.map_err(|e| format!("读取响应失败: {e}"));
+    }
+}
+
+/// 校验 URL 的 host 必须解析到**公网**地址：拒绝环回 / 私网 / 链路本地 /
+/// 未指定 / 广播地址（含 IPv4 映射的 IPv6）。字面 IP 直接判断；域名则做 DNS
+/// 解析，只要有任一解析结果落在内网即拒绝。
+async fn validate_url_host(url: &reqwest::Url) -> Result<(), String> {
+    let host = url.host_str().ok_or_else(|| "URL 缺少 host".to_string())?;
+    // 字面 IP
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return if is_public_ip(&ip) {
+            Ok(())
+        } else {
+            Err(format!("出于安全考虑，拒绝访问内网/环回地址: {host}"))
+        };
+    }
+    // 域名：解析全部地址，任一为内网即拒绝（blocking DNS 放入阻塞线程池）
+    let host_owned = host.to_string();
+    let port = url.port_or_known_default().unwrap_or(80);
+    let addrs = tokio::task::spawn_blocking(move || {
+        use std::net::ToSocketAddrs;
+        (host_owned.as_str(), port)
+            .to_socket_addrs()
+            .map(|it| it.map(|sa| sa.ip()).collect::<Vec<_>>())
+    })
+    .await
+    .map_err(|_| "DNS 解析任务异常".to_string())?
+    .map_err(|e| format!("DNS 解析失败: {e}"))?;
+    if addrs.is_empty() {
+        return Err(format!("无法解析主机: {host}"));
+    }
+    for ip in &addrs {
+        if !is_public_ip(ip) {
+            return Err(format!(
+                "出于安全考虑，拒绝访问内网/环回地址: {host} → {ip}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// 判断 IP 是否为公网地址（非环回 / 私网 / 链路本地 / 未指定 / 广播 / CGNAT）。
+fn is_public_ip(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let [a, b, _, _] = v4.octets();
+            !(v4.is_loopback()          // 127.0.0.0/8
+                || v4.is_private()      // 10/8, 172.16/12, 192.168/16
+                || v4.is_link_local()   // 169.254.0.0/16（含云元数据 169.254.169.254）
+                || v4.is_unspecified()  // 0.0.0.0
+                || v4.is_broadcast()    // 255.255.255.255
+                || a == 0               // 0.0.0.0/8
+                || (a == 100 && (b & 0xC0) == 64)) // 100.64.0.0/10 CGNAT
+        }
+        std::net::IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_unspecified() {
+                return false;
+            }
+            // IPv4 映射地址（::ffff:a.b.c.d）按内层 IPv4 判断
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_public_ip(&std::net::IpAddr::V4(v4));
+            }
+            let seg = v6.segments();
+            let unique_local = (seg[0] & 0xfe00) == 0xfc00; // fc00::/7
+            let link_local = (seg[0] & 0xffc0) == 0xfe80; // fe80::/10
+            !(unique_local || link_local)
+        }
     }
 }
 
