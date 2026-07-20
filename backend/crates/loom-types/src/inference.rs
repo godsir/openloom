@@ -87,6 +87,10 @@ pub struct CompletionResponse {
     pub thinking: Option<String>,
     /// Image content blocks returned by the model (e.g. GPT-4o image generation).
     pub images: Vec<(String, String)>, // (media_type, base64_data)
+    /// True when the provider hit the output token ceiling
+    /// (`finish_reason == "length"` / `stop_reason == "max_tokens"`) instead of
+    /// stopping naturally — i.e. the `text` is cut off mid-sentence.
+    pub truncated: bool,
 }
 
 /// Structured streaming delta emitted during true streaming with tool support.
@@ -126,6 +130,14 @@ pub enum StreamDelta {
         model: String,
         prompt_tokens: u64,
         completion_tokens: u64,
+    },
+    /// Terminal signal emitted once at the very end of a structured stream.
+    /// `truncated = true` means the provider stopped because it hit the output
+    /// token ceiling (OpenAI `finish_reason == "length"`, Anthropic
+    /// `stop_reason == "max_tokens"`), NOT because the model finished naturally.
+    /// Consumers (agent loop) use this to seamlessly continue a cut-off reply.
+    Finish {
+        truncated: bool,
     },
 }
 

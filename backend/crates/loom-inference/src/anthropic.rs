@@ -251,6 +251,7 @@ impl AnthropicClient {
             latency_ms: 0,
             thinking,
             images: Vec::new(),
+            truncated: matches!(json["stop_reason"].as_str(), Some("max_tokens")),
         })
     }
 
@@ -510,6 +511,10 @@ impl CloudClient for AnthropicClient {
         use futures::StreamExt;
 
         let eff = req.effective_messages();
+        // Set when Anthropic stops due to the output token ceiling
+        // (stop_reason == "max_tokens"). Surfaced at stream end via Finish so
+        // the agent loop can seamlessly continue a cut-off reply.
+        let mut truncated = false;
         let digest = self.pending_digest.lock().unwrap().clone();
         let (cache_status, _, _reasons) = self.prefix_cache.check_digest(&digest);
         match cache_status {
@@ -641,6 +646,9 @@ impl CloudClient for AnthropicClient {
                                 _ => {}
                             },
                             Some("message_delta") => {
+                                if val["delta"]["stop_reason"].as_str() == Some("max_tokens") {
+                                    truncated = true;
+                                }
                                 let u = &val["usage"];
                                 // message_delta.usage only contains output_tokens;
                                 // cache_creation_input_tokens lives in message_start.message.usage.
@@ -677,6 +685,7 @@ impl CloudClient for AnthropicClient {
                 break;
             }
         }
+        let _ = tx.send(StreamDelta::Finish { truncated }).await;
         Ok(())
     }
 

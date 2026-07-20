@@ -366,6 +366,7 @@ impl InferenceEngine {
                 .filter(|s| !s.is_empty())
                 .map(String::from),
             images: Vec::new(),
+            truncated: matches!(json["choices"][0]["finish_reason"].as_str(), Some("length")),
         })
     }
 
@@ -680,6 +681,10 @@ impl CloudClient for InferenceEngine {
         tx: mpsc::Sender<StreamDelta>,
     ) -> Result<()> {
         let messages = lower_messages(&req.effective_messages());
+        // Set when the local model stops due to the output token ceiling
+        // (finish_reason == "length"). Surfaced at stream end via Finish so the
+        // agent loop can seamlessly continue a cut-off reply.
+        let mut truncated = false;
         let digest = self.pending_digest.lock().unwrap().clone();
         let (cache_status, _, _reasons) = self.prefix_cache.check_digest(&digest);
         match cache_status {
@@ -750,10 +755,14 @@ impl CloudClient for InferenceEngine {
                 for line in frame.lines() {
                     if let Some(data) = line.strip_prefix("data: ") {
                         if data == "[DONE]" {
+                            let _ = tx.send(StreamDelta::Finish { truncated }).await;
                             return Ok(());
                         }
                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
                             let d = &val["choices"][0]["delta"];
+                            if val["choices"][0]["finish_reason"].as_str() == Some("length") {
+                                truncated = true;
+                            }
                             if let Some(r) = d["reasoning_content"].as_str()
                                 && !r.is_empty()
                                 && tx
@@ -830,6 +839,7 @@ impl CloudClient for InferenceEngine {
                 break;
             }
         }
+        let _ = tx.send(StreamDelta::Finish { truncated }).await;
         Ok(())
     }
 

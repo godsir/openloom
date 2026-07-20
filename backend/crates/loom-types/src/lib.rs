@@ -22,6 +22,9 @@ pub enum StopReason {
     BudgetExhausted,
     /// Reached max_iterations without resolving.
     MaxIterations,
+    /// Final text was cut off by the output token ceiling and the in-turn
+    /// auto-continue budget was exhausted. The orchestrator may still continue.
+    Length,
     /// User clicked Stop / cancelled the turn.
     UserCancelled,
 }

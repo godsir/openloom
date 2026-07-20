@@ -6,6 +6,12 @@ import { renderMarkdown } from '../utils/markdown'
 import { sanitizeHtml } from '../utils/markdown-sanitizer'
 import { t } from '../i18n'
 
+/** Minimum interval between full markdown-it re-renders of the stable prefix
+ *  while streaming. Between re-renders, newly completed text is shown as escaped
+ *  plain text (imperceptible for <100ms), bounding markdown work to ~11 passes/s
+ *  instead of once per animation frame — the main fix for long-reply render jank. */
+const MD_RERENDER_THROTTLE_MS = 90
+
 interface BufferState {
   messageId: string | null
   /** Monotonic generation counter — bumped on each startStream.
@@ -51,6 +57,11 @@ interface BufferState {
   /** External activity override set by bootstrap (team, monitor) — survives flush
    *  cycles so team/monitor phases don't get overwritten by deriveActivity. */
   overrideActivity: StreamingActivity | null
+  /** Stable-prefix markdown cache (see renderMarkdown). textAcc only ever grows
+   *  by appending, so the rendered stable prefix stays valid across flushes. */
+  mdStable: string
+  mdStableHtml: string
+  mdLastRenderAt: number
 }
 
 class StreamBufferManager {
@@ -92,6 +103,9 @@ class StreamBufferManager {
     buf.visionDone = false
     buf.visionBatches = []
     buf.overrideActivity = null
+    buf.mdStable = ''
+    buf.mdStableHtml = ''
+    buf.mdLastRenderAt = 0
     if (buf.rafId) { cancelAnimationFrame(buf.rafId); buf.rafId = null }
     useStore.getState().setStreamingActivity(sessionId, { phase: 'generating' })
   }
@@ -129,6 +143,9 @@ class StreamBufferManager {
         rafId: null,
         imOrigin: false,
         overrideActivity: null,
+        mdStable: '',
+        mdStableHtml: '',
+        mdLastRenderAt: 0,
       })
     }
     return this.buffers.get(sessionId)!
@@ -658,7 +675,7 @@ class StreamBufferManager {
     }
 
     if (buf.textAcc) {
-      const html = this.renderMarkdown(buf.textAcc, final)
+      const html = this.renderMarkdown(buf, final)
       blocks.push({ type: 'text', html, source: buf.textAcc })
     }
 
@@ -706,14 +723,49 @@ class StreamBufferManager {
   // Render markdown at newline boundaries to avoid flicker (tables, code fences).
   // When final=true (stream end), render the entire source through markdown
   // to avoid leaving the last line as escaped HTML.
-  private renderMarkdown(source: string, final = false): string {
-    if (final) return sanitizeHtml(renderMarkdown(source))
-    // Only render complete lines — incomplete last line stays as source
+  //
+  // Performance: a full markdown-it + highlight + sanitize pass over the whole
+  // accumulated source every animation frame is O(N) per frame and janks on long
+  // replies. Since textAcc only grows by appending, the rendered "stable" prefix
+  // (everything up to the last newline) stays valid across flushes — so we cache
+  // it and:
+  //   • reuse the cache outright while only the in-progress tail line grows;
+  //   • re-render the stable prefix at most once per MD_RERENDER_THROTTLE_MS,
+  //     showing any brand-new complete lines as escaped plain text in between
+  //     (they're properly formatted on the next re-render — imperceptible).
+  // The final render always runs the full pipeline, so the persisted/final view
+  // is byte-for-byte the same as before this optimization.
+  private renderMarkdown(buf: BufferState, final = false): string {
+    const source = buf.textAcc
+    if (final) {
+      buf.mdStable = ''
+      buf.mdStableHtml = ''
+      return sanitizeHtml(renderMarkdown(source))
+    }
     const lastNewline = source.lastIndexOf('\n')
     const stable = lastNewline >= 0 ? source.slice(0, lastNewline) : ''
     const tail = lastNewline >= 0 ? source.slice(lastNewline + 1) : source
-    if (!stable) return sanitizeHtml(renderMarkdown(tail))
-    return sanitizeHtml(renderMarkdown(stable)) + '\n' + escapeHtml(tail)
+    // No complete line yet — render just the in-progress line (bounded cost,
+    // matches prior behavior).
+    if (!stable) {
+      return sanitizeHtml(renderMarkdown(tail))
+    }
+    // Fast path: stable prefix unchanged since the last render (token streaming
+    // within a single line) — zero markdown work this frame.
+    if (stable === buf.mdStable && buf.mdStableHtml) {
+      return buf.mdStableHtml + '\n' + escapeHtml(tail)
+    }
+    const now = performance.now()
+    if (!buf.mdStableHtml || now - buf.mdLastRenderAt >= MD_RERENDER_THROTTLE_MS) {
+      buf.mdStable = stable
+      buf.mdStableHtml = sanitizeHtml(renderMarkdown(stable))
+      buf.mdLastRenderAt = now
+      return buf.mdStableHtml + '\n' + escapeHtml(tail)
+    }
+    // Throttled: keep the previously rendered stable prefix and show everything
+    // appended after it as escaped plain text until the next re-render window.
+    const appended = source.slice(buf.mdStable.length)
+    return buf.mdStableHtml + escapeHtml(appended)
   }
 
   /** 从 buffer 状态推导当前生成子阶段，供灵动岛流转显示 */

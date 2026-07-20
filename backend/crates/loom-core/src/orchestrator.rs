@@ -1424,6 +1424,9 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
             Some(StopReason::MaxIterations) => {
                 "上轮任务因达到最大迭代次数而自动暂停。请从上次中断的地方继续执行，不要重复已完成的操作。"
             }
+            Some(StopReason::Length) => {
+                "上轮回复因输出长度达到上限而被截断。请从截断处无缝继续，直接输出后续内容，不要重复已输出的部分。"
+            }
             _ => return None,
         };
         let mut note = base.to_string();
@@ -5371,6 +5374,10 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                             tracing::warn!(error = %e, model = %model, "failed to record auxiliary model token usage (stream)");
                         }
                     }
+                    StreamDelta::Finish { .. } => {
+                        // Consumed by the agent loop to drive in-turn truncation
+                        // continuation; never forwarded to this forwarder in practice.
+                    }
                 }
             }
             // Emit ToolStarted for any tools that had no args chunks
@@ -5542,7 +5549,9 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         while auto_round < agent_config.auto_continue_max_rounds && agent_config.auto_continue {
             let stop = match &result {
                 Ok(t) => match t.stop_reason {
-                    StopReason::BudgetExhausted | StopReason::MaxIterations => false,
+                    StopReason::BudgetExhausted | StopReason::MaxIterations | StopReason::Length => {
+                        false
+                    }
                     _ => true,
                 },
                 Err(_) => true,

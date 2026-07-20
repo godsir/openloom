@@ -116,5 +116,8 @@ pub fn convert(delta: StreamDelta) -> AppEvent {
         StreamDelta::Image {
             media_type, data, ..
         } => AppEvent::TextChunk(format!("  [image: {} {}KB]", media_type, data.len() / 1024)),
+        // Terminal truncation signal — consumed by the agent loop to drive
+        // seamless continuation; never forwarded here in practice.
+        StreamDelta::Finish { .. } => AppEvent::TextChunk(String::new()),
     }
 }

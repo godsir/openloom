@@ -41,7 +41,7 @@ const AssistantMessage = memo(function AssistantMessage({
 
   const displayName = team ? team.name : (agent?.name && agent.name !== 'default') ? agent.name : 'Loom'
 
-  const isTruncated = message.stop_reason === 'budget_exhausted' || message.stop_reason === 'max_iterations'
+  const isTruncated = message.stop_reason === 'budget_exhausted' || message.stop_reason === 'max_iterations' || message.stop_reason === 'length'
 
   return (
     <div className={`${styles.message} ${isTruncated ? styles.truncated : ''}`} data-message-id={message.id}>

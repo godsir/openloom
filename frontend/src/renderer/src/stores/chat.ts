@@ -11,7 +11,7 @@ export interface Message {
   blocks: ContentBlock[]
   timestamp: string
   usage?: { prompt: number; completion: number; model?: string; contextWindow?: number; cached?: number; cacheRead?: number; cacheWrite?: number }
-  /** Backend stop_reason — 'budget_exhausted' | 'max_iterations' | 'user_cancelled' | null for normal completion. */
+  /** Backend stop_reason — 'budget_exhausted' | 'max_iterations' | 'length' | 'user_cancelled' | null for normal completion. */
   stop_reason?: string | null
 }
 

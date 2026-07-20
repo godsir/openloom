@@ -26,6 +26,12 @@ use crate::event_bus::EventBus;
 use crate::tool_context::ToolContext;
 use crate::tool_registry::ToolRegistry;
 
+/// Maximum number of in-turn continuations when the provider truncates output
+/// at the token ceiling (finish_reason == "length"). Keeps the reply seamless
+/// (like Codex) while bounding runaway continuation loops. Beyond this the turn
+/// ends with StopReason::Length so the orchestrator can fall back to auto-continue.
+const MAX_TRUNCATION_CONTINUATIONS: usize = 5;
+
 /// Checkpoint / progress tracking for long-running agent turns.
 /// Recorded each iteration so auto-continue can tell the LLM what's been done.
 #[derive(Debug, Clone, Default)]
@@ -996,6 +1002,9 @@ async fn run_agent_turn_inner(
     // CompletionResponse does not yet separate cache_read/cache_write.
     // The streaming path correctly accumulates via StreamDelta::Usage.
     let total_cache_write = 0usize;
+    // In-turn truncation continuations (see the streaming path for the full story).
+    let mut continuations = 0usize;
+    let mut accumulated_text = String::new();
 
     // Create tool context with workspace path for file operations
     let tool_context = ToolContext {
@@ -1565,12 +1574,49 @@ async fn run_agent_turn_inner(
             continue;
         }
 
-        // No tool calls — this is the final text response
-        let response_text = if response.text.is_empty() {
+        // No tool calls — this is the final text response.
+        // Truncation continuation: the model hit its output ceiling mid-reply.
+        // Feed the partial text back and continue in-turn (bounded), mirroring
+        // the streaming path so sub-agent replies aren't silently cut off.
+        if response.truncated
+            && !response.text.is_empty()
+            && continuations < MAX_TRUNCATION_CONTINUATIONS
+        {
+            continuations += 1;
+            tracing::info!(
+                iteration,
+                continuations,
+                chars = response.text.len(),
+                "output truncated at token ceiling — continuing in-turn (non-streaming)"
+            );
+            accumulated_text.push_str(&response.text);
+            messages.push(Message {
+                role: Role::Assistant,
+                content: vec![ContentPart::Text {
+                    text: response.text.clone(),
+                }],
+                timestamp: chrono::Utc::now(),
+                usage: None,
+            });
+            messages.push(Message {
+                role: Role::System,
+                content: vec![ContentPart::Text {
+                    text: "你上一条回复因输出长度限制被截断。请从截断处无缝继续，直接输出后续内容，不要重复已输出的部分，不要添加任何说明、道歉或前缀。".into(),
+                }],
+                timestamp: chrono::Utc::now(),
+                usage: None,
+            });
+            continue;
+        }
+
+        let mut full_text = accumulated_text.clone();
+        full_text.push_str(&response.text);
+        let response_text = if full_text.is_empty() {
             "[no response]".to_string()
         } else {
-            response.text.clone()
+            full_text
         };
+        let ended_truncated = response.truncated;
         let thinking_text = response.thinking.unwrap_or_default();
         let mut content_parts = Vec::new();
         if !thinking_text.is_empty() {
@@ -1604,7 +1650,11 @@ async fn run_agent_turn_inner(
             vision_usage: vision_usage.clone(),
             progress: ProgressCheckpoint::default(),
             context_window: config.effective_context_window(),
-            stop_reason: StopReason::Completed,
+            stop_reason: if ended_truncated {
+                StopReason::Length
+            } else {
+                StopReason::Completed
+            },
         });
     }
 
@@ -2013,6 +2063,10 @@ async fn run_agent_turn_streaming_inner(
     let mut captured_thinking = String::new();
     let mut captured_images: Vec<(String, String)> = Vec::new();
     let mut completed_iterations = 0usize;
+    // In-turn truncation continuations: when the provider hits its output token
+    // ceiling we feed the partial reply back and continue on the same stream.
+    let mut continuations = 0usize;
+    let mut ended_truncated = false;
 
     // Create tool context with workspace path for file operations
     let tool_context = ToolContext {
@@ -2290,6 +2344,8 @@ async fn run_agent_turn_streaming_inner(
         let mut pending_tool_calls: Vec<(usize, String, String, String)> = Vec::new();
         let mut this_text = String::new();
         let mut this_thinking = String::new();
+        // Set by StreamDelta::Finish when the provider hit the output token ceiling.
+        let mut this_truncated = false;
         // Declared OUTSIDE the retry loop below: the transient-error handler
         // retries via an unlabeled `continue` on that loop, so declaring the
         // counter inside it would reset it to 0 every retry and defeat the
@@ -2420,6 +2476,11 @@ async fn run_agent_turn_streaming_inner(
                                 // Forward auxiliary usage deltas as-is
                                 let _ = delta_tx.send(delta).await;
                             }
+                            StreamDelta::Finish { truncated } => {
+                                // Terminal truncation signal — consumed here, NOT
+                                // forwarded to the frontend; drives in-turn continue.
+                                this_truncated = truncated;
+                            }
                         }
                     }
                     r = &mut stream_fut => {
@@ -2467,6 +2528,9 @@ async fn run_agent_turn_streaming_inner(
                                                         cache_write_tokens,
                                                     })
                                                     .await;
+                                            }
+                                            StreamDelta::Finish { truncated } => {
+                                                this_truncated = truncated;
                                             }
                                             _ => {}
                                         },
@@ -2926,8 +2990,51 @@ async fn run_agent_turn_streaming_inner(
             continue;
         }
 
-        final_text = this_text;
-        captured_thinking = std::mem::take(&mut this_thinking);
+        // ── Truncation continuation ─────────────────────────────────────────
+        // The provider hit its output token ceiling mid-reply (finish_reason ==
+        // "length" / stop_reason == "max_tokens"). Rather than end the turn with
+        // a cut-off response, feed the partial text back and let the model keep
+        // going — on the same open delta channel, so the user sees one seamless
+        // stream (like Codex) instead of a silent stop.
+        if this_truncated && !this_text.is_empty() && continuations < MAX_TRUNCATION_CONTINUATIONS {
+            continuations += 1;
+            tracing::info!(
+                iteration,
+                continuations,
+                chars = this_text.len(),
+                "output truncated at token ceiling — continuing in-turn"
+            );
+            final_text.push_str(&this_text);
+            if !this_thinking.is_empty() {
+                captured_thinking.push_str(&this_thinking);
+                this_thinking.clear();
+            }
+            // Echo the partial assistant text so the model knows where it stopped.
+            messages.push(Message {
+                role: Role::Assistant,
+                content: vec![ContentPart::Text {
+                    text: this_text.clone(),
+                }],
+                timestamp: chrono::Utc::now(),
+                usage: None,
+            });
+            messages.push(Message {
+                role: Role::System,
+                content: vec![ContentPart::Text {
+                    text: "你上一条回复因输出长度限制被截断。请从截断处无缝继续，直接输出后续内容，不要重复已输出的部分，不要添加任何说明、道歉或前缀。".into(),
+                }],
+                timestamp: chrono::Utc::now(),
+                usage: None,
+            });
+            continue;
+        }
+
+        // Normal terminal (natural end, or continuation budget exhausted).
+        ended_truncated = this_truncated;
+        final_text.push_str(&this_text);
+        if !this_thinking.is_empty() {
+            captured_thinking.push_str(&this_thinking);
+        }
         content_parts.clear();
         if !captured_thinking.is_empty() {
             content_parts.push(ContentPart::Thinking {
@@ -2968,7 +3075,11 @@ async fn run_agent_turn_streaming_inner(
         tool_calls_made,
         context_window: config.effective_context_window(),
         stop_reason: if completed_iterations > 0 {
-            StopReason::Completed
+            if ended_truncated {
+                StopReason::Length
+            } else {
+                StopReason::Completed
+            }
         } else {
             StopReason::MaxIterations
         },
